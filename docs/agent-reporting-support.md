@@ -1,6 +1,6 @@
 # Agent reporting support record
 
-Claude contract review date: 2026-09-10. Retained discovery and native evidence verify exact **2.1.267** and **2.1.268**. These are an explicit allowlist; no minimum version or version range is certified. This record describes reporting research for the [Claude implementation plan](../plans/2026-09-09-claude-code-reporting.md); it does not declare the planned integration shipped.
+Claude contract review date: 2026-09-10. Retained discovery and native evidence verify exact **2.1.267** and **2.1.268**. These are tested releases, separate from the current [patch compatibility policy](agent-versions.md). This record describes reporting research for the [Claude implementation plan](../plans/2026-09-09-claude-code-reporting.md); it does not declare the planned integration shipped.
 
 The [remaining-requirement matrix](../research/claude-reporting-acceptance/remaining-matrix.md) reconciles this rolling record with the delivered callers, assertions, tested revisions and native evidence. It splits passing parts from open provider and platform clauses.
 
@@ -536,7 +536,7 @@ new task prompt, preserving the row/title and reference before another callback.
 the current invocation certifies the matching conversation. Process launch alone
 is not attachment. Inventory restoration does not run Claude.
 
-The existing admission contract remains exact Claude Code 2.1.267/2.1.268.
+The current admission range is stable Claude Code >=2.1.267 and <2.2.0; native evidence remains version-specific.
 Capture requires managed launch, configured synchronous native hooks and a
 certified root SessionStart with its exact transcript path. Saved configuration
 includes the executable, Claude configuration directory and conservative options:

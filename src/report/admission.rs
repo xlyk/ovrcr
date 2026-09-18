@@ -126,7 +126,7 @@ fn eligible_launch(argv: &[OsString], version: ClaudeVersion) -> Option<Eligible
             let (name, value) = arg
                 .split_once('=')
                 .map_or((arg, None), |(name, value)| (name, Some(value)));
-            if name == "--resume" || (name == "-r" && version == ClaudeVersion::V2_1_268) {
+            if name == "--resume" || (name == "-r" && version != ClaudeVersion::V2_1_267) {
                 if value.is_some() || resume.is_some() {
                     return None;
                 }
@@ -198,19 +198,20 @@ fn canonical_uuid_v4(value: &str) -> bool {
         && bytes[14] == b'4'
         && matches!(bytes[19], b'8' | b'9' | b'a' | b'b')
 }
-pub const SUPPORTED_CLAUDE_VERSIONS: &[&str] = &["2.1.267", "2.1.268"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClaudeVersion {
     V2_1_267,
     V2_1_268,
+    LaterPatch(u32),
 }
 
 impl ClaudeVersion {
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> String {
         match self {
-            Self::V2_1_267 => "2.1.267",
-            Self::V2_1_268 => "2.1.268",
+            Self::V2_1_267 => "2.1.267".into(),
+            Self::V2_1_268 => "2.1.268".into(),
+            Self::LaterPatch(patch) => format!("2.1.{patch}"),
         }
     }
 }
@@ -230,32 +231,33 @@ impl ClaudeVersionProbe {
         }
     }
 
-    pub fn observed(&self) -> Option<&str> {
+    pub fn observed(&self) -> Option<String> {
         match self {
             Self::Supported(version) => Some(version.as_str()),
-            Self::Unsupported(version) => Some(version),
+            Self::Unsupported(version) => Some(version.clone()),
             Self::Unavailable => None,
         }
     }
 }
 
 fn classify_version(bytes: &[u8]) -> ClaudeVersionProbe {
-    match bytes {
-        b"2.1.267 (Claude Code)\n" => ClaudeVersionProbe::Supported(ClaudeVersion::V2_1_267),
-        b"2.1.268 (Claude Code)\n" => ClaudeVersionProbe::Supported(ClaudeVersion::V2_1_268),
-        _ => std::str::from_utf8(bytes)
-            .ok()
-            .and_then(|output| output.strip_suffix(" (Claude Code)\n"))
-            .filter(|version| {
-                !version.is_empty()
-                    && version
-                        .bytes()
-                        .all(|byte| byte.is_ascii_digit() || byte == b'.')
-            })
-            .map_or(ClaudeVersionProbe::Unavailable, |version| {
-                ClaudeVersionProbe::Unsupported(version.to_owned())
-            }),
+    let Some(version) = std::str::from_utf8(bytes)
+        .ok()
+        .and_then(|s| s.strip_suffix(" (Claude Code)\n"))
+    else {
+        return ClaudeVersionProbe::Unavailable;
+    };
+    let Some([_, _, patch]) = super::versions::parse(version) else {
+        return ClaudeVersionProbe::Unavailable;
+    };
+    if !super::versions::CLAUDE.accepts(version) {
+        return ClaudeVersionProbe::Unsupported(version.into());
     }
+    ClaudeVersionProbe::Supported(match patch {
+        267 => ClaudeVersion::V2_1_267,
+        268 => ClaudeVersion::V2_1_268,
+        _ => ClaudeVersion::LaterPatch(patch),
+    })
 }
 
 pub fn pinned_version(executable: &OsStr) -> ClaudeVersionProbe {
@@ -1225,7 +1227,11 @@ mod tests {
             "sonnet",
             "--strict-mcp-config",
         ]);
-        for version in [ClaudeVersion::V2_1_267, ClaudeVersion::V2_1_268] {
+        for version in [
+            ClaudeVersion::V2_1_267,
+            ClaudeVersion::V2_1_268,
+            ClaudeVersion::LaterPatch(274),
+        ] {
             assert_eq!(
                 eligible_launch(&resume, version),
                 Some(EligibleLaunch::Resume(uuid.into()))
@@ -1313,7 +1319,7 @@ mod tests {
             ("2.1.267", 0, true),
             ("2.1.268", 0, true),
             ("2.1.266", 0, false),
-            ("2.1.269", 0, false),
+            ("2.1.274", 0, true),
             ("2.1.268", 1, false),
         ] {
             let root = tempfile::tempdir().unwrap();
@@ -1337,7 +1343,7 @@ mod tests {
             assert_eq!(probe.supported().is_some(), expected);
             assert_eq!(
                 probe.observed(),
-                (exit == 0).then_some(version),
+                (exit == 0).then(|| version.to_owned()),
                 "version diagnostic"
             );
             let ids = std::fs::read_to_string(&identity).unwrap();

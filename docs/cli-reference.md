@@ -176,15 +176,15 @@ do not close sessions.
 
 | Command | Contract |
 | --- | --- |
-| `agent run --provider claude -- claude [ARGS...]` | Supervise an exact Claude Code 2.1.267 or 2.1.268 fresh interactive invocation, or a separate-token `--resume UUID` invocation, inside an OVRCR PTY. Exact 2.1.268 also accepts separate-token `-r UUID`. Does not start a server. |
+| `agent run --provider claude -- claude [ARGS...]` | Supervise a stable Claude Code >=2.1.267 and <2.2.0 fresh interactive invocation, or a separate-token `--resume UUID` invocation, inside an OVRCR PTY. 2.1.268 and later compatible patches also accept separate-token `-r UUID`. Does not start a server. |
 | `agent run pi -- pi [ARGS...]` | Supervise an interactive Pi launch inside an OVRCR PTY; the owned reporting extension is loaded beside the user's own. Reports Busy, Ready (confirmed at Pi's settled boundary), Error and Idle; creates Unread and Ready alerts. Help, version, print, RPC, JSON, export and package commands run native with reporting unavailable. |
 | `agent run omp -- omp [ARGS...]` | Supervise an interactive Oh My Pi launch inside an OVRCR PTY; the owned reporting extension is loaded beside the user's own. Reports Busy, Ready (observed at an end without continuation), Error and Idle; creates Unread and Ready alerts. Headless modes run native with reporting unavailable. |
 | `agent setup pi\|omp --print` | Print the managed-launch contract; nothing to write. |
-| `agent doctor pi\|omp --json [--session ID] [--executable PATH]` | Probe `--version` (tested / unverified / unknown), inspect an optional `--session` (binding, delivery, activity, health, unread) and print remediation; no server is started. |
+| `agent doctor pi\|omp --json [--session ID] [--executable PATH]` | Probe `--version` (tested / compatible untested / outside range / unknown), inspect an optional `--session` (binding, delivery, activity, health, unread) and print remediation; no server is started. |
 | `agent setup codex --print [--settings PATH]` | Print composed Codex 0.153.0 TOML with five synchronous direct-exec reporters; preserve existing values and handler order. Explicit installation and native trust review are required. See [Codex setup](codex-reporting-setup.md). |
 | `agent doctor codex --json [--settings PATH] [--executable PATH]` | Defaults to `codex`; probes only `--version` and checks supplied TOML without a server or provider conversation. Hook trust/delivery and release acceptance remain unverified. |
 | `agent setup claude --print [--settings PATH]` | Print composed JSON; migration and removal notes go to stderr. Does not write provider settings. |
-| `agent doctor claude --json [--settings PATH] [--session ID] [--executable PATH]` | Probe the executable, report the detected version and exact supported-version list, and inspect supplied configuration and optional session health. Without `--session`, uses inherited `OVRCR_SESSION_ID` when present. Does not start a server. |
+| `agent doctor claude --json [--settings PATH] [--session ID] [--executable PATH]` | Probe the executable, report the detected version, compatible range and separately tested versions, and inspect supplied configuration and optional session health. Without `--session`, uses inherited `OVRCR_SESSION_ID` when present. Does not start a server. |
 | `session usage ID` | Emit JSON containing `agent_epoch`, raw `agent`, `reporting_unavailable`, and separate `measurement_age_ms` fields. Does not start a server. |
 | `session context ID` | Emit the legacy context sample and stale flag as JSON. Does not start a server. |
 | `report claude --stdin-json` | Route typed Claude command hooks through inherited reporting credentials. |

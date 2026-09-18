@@ -148,7 +148,7 @@ pub(super) fn setup(path: Option<&Path>) -> AppResult<()> {
             }
         }
         eprintln!(
-            "Review the printed JSON and merge it into the intended Claude settings file. No file was written. Use synchronous command hooks with Claude Code 2.1.267 or 2.1.268; supplied settings do not prove effective enterprise/plugin configuration. Fresh launcher inside an OVRCR session: {} agent run --provider claude -- claude. Initial resume launcher on either version: {} agent run --provider claude -- claude --resume UUID. Claude Code 2.1.268 also supports the exact separate-token form claude -r UUID",
+            "Review the printed JSON and merge it into the intended Claude settings file. No file was written. Use synchronous command hooks with stable Claude Code >=2.1.267 and <2.2.0; supplied settings do not prove effective enterprise/plugin configuration. Fresh launcher inside an OVRCR session: {} agent run --provider claude -- claude. Initial resume launcher throughout the range: {} agent run --provider claude -- claude --resume UUID. Claude Code 2.1.268 and later compatible patches also support the exact separate-token form claude -r UUID",
             quote(&executable),
             quote(&executable)
         );
@@ -176,9 +176,9 @@ pub(super) fn doctor(
     if supported.is_none() {
         remediation.push(match probe.observed() {
             Some(version) => format!(
-                "Detected Claude Code {version}; install/select exact Claude Code 2.1.267 or 2.1.268 and rerun doctor."
+                "Detected Claude Code {version}; install/select stable Claude Code >=2.1.267 and <2.2.0 and rerun doctor."
             ),
-            None => "The bounded executable version probe was unavailable; install/select exact Claude Code 2.1.267 or 2.1.268 and rerun doctor.".into(),
+            None => "The bounded executable version probe was unavailable; install/select stable Claude Code >=2.1.267 and <2.2.0 and rerun doctor.".into(),
         });
     }
     let mut issues = Vec::<String>::new();
@@ -276,7 +276,7 @@ pub(super) fn doctor(
                         "bound"
                     }
                     None => {
-                        remediation.push("Start Claude with ovrcr agent run --provider claude -- claude, or resume a known canonical UUIDv4 with claude --resume UUID. Exact Claude Code 2.1.268 also supports claude -r UUID.".into());
+                        remediation.push("Start Claude with ovrcr agent run --provider claude -- claude, or resume a known canonical UUIDv4 with claude --resume UUID. Claude Code 2.1.268 and later compatible patches also support claude -r UUID.".into());
                         "unbound"
                     }
                 },
@@ -300,11 +300,11 @@ pub(super) fn doctor(
     };
     let resume_forms: &[&str] = match supported {
         Some(ovrcr::report::admission::ClaudeVersion::V2_1_267) => &["--resume"],
-        Some(ovrcr::report::admission::ClaudeVersion::V2_1_268) => &["--resume", "-r"],
+        Some(_) => &["--resume", "-r"],
         None => &[],
     };
     println!("{}", serde_json::to_string_pretty(&json!({
-        "provider":"claude", "executable":executable.to_string_lossy(), "supported_versions":ovrcr::report::admission::SUPPORTED_CLAUDE_VERSIONS, "version":probe.observed(),
+        "provider":"claude", "executable":executable.to_string_lossy(), "compatible_versions":ovrcr::report::versions::CLAUDE.range(), "tested_versions":ovrcr::report::versions::CLAUDE.tested, "version_compatible":supported.is_some(), "version_tested":ovrcr::report::versions::CLAUDE.tested(probe.observed().as_deref()), "version":probe.observed(),
         "probe_status":probe_status,
         "configuration":{"status":configuration, "effective_configuration":"unverified", "issues":issues},
         "session_status":session_status, "binding":binding, "source_health":health,

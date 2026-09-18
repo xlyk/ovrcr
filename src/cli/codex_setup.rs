@@ -13,7 +13,7 @@ const HOOKS: &[&str] = &[
     "Interrupt",
     "SessionEnd",
 ];
-const REQUIREMENTS: &str = "Requires exact Codex CLI 0.153.0 and synchronous direct-exec command hooks. Review and trust these hooks in native Codex before the first tracked prompt; an initial prompt supplied during hook review may run untracked. Configuration presence does not prove hook trust or delivery. Hooks exit successfully with empty stdout (native no-op), never an approval decision. Inside an OVRCR terminal run: ovrcr agent run codex -- codex. Exact Codex CLI 0.153.0 hooks-only support passed acceptance. Managed root startup/prompt hooks also retain exact conversation identity for terminal reopen. Recovery uses codex resume UUID without a prompt; reporting stays unavailable for that resumed invocation. Native recovery acceptance is tracked separately in issue #128.";
+const REQUIREMENTS: &str = "Requires stable Codex CLI >=0.153.0 and <0.154.0 and synchronous direct-exec command hooks. Review and trust these hooks in native Codex before the first tracked prompt; an initial prompt supplied during hook review may run untracked. Configuration presence does not prove hook trust or delivery. Hooks exit successfully with empty stdout (native no-op), never an approval decision. Inside an OVRCR terminal run: ovrcr agent run codex -- codex. Exact Codex CLI 0.153.0 hooks-only support passed acceptance. Managed root startup/prompt hooks also retain exact conversation identity for terminal reopen. Recovery uses codex resume UUID without a prompt; reporting stays unavailable for that resumed invocation. Native recovery acceptance is tracked separately in issue #128.";
 const FORMS: &str = "Fresh interactive codex only (executable basename codex): optional --no-alt-screen, --full-auto; separate-token --model/-m, --profile/-p, --sandbox/-s, --ask-for-approval/-a, --cd/-C followed by a nonempty value not starting with '-'; at most one prompt (use -- before a prompt matching a subcommand). Resume, fork, picker, exec, remote, unknown options and other versions run natively with reporting unavailable.";
 
 fn settings(path: Option<&Path>) -> anyhow::Result<Value> {
@@ -93,16 +93,9 @@ pub(super) fn doctor(
 ) -> AppResult<()> {
     let probe = with_version_probe(|| ovrcr::report::admission::probe_version(executable))?;
     // Report only the native version grammar, never arbitrary executable output.
-    let version = probe
-        .as_deref()
-        .and_then(|bytes| std::str::from_utf8(bytes).ok())
-        .and_then(|s| s.strip_prefix("codex-cli ")?.strip_suffix('\n'))
-        .filter(|s| {
-            s.split('.').count() == 3
-                && s.split('.')
-                    .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
-        });
-    let supported = version == Some(ovrcr::report::codex::PINNED_VERSION);
+    let policy = ovrcr::report::versions::CODEX;
+    let version = probe.as_deref().and_then(ovrcr::report::codex::version);
+    let supported = version.is_some_and(|v| policy.accepts(v));
     let status = if supported {
         "supported"
     } else if probe.is_some() {
@@ -138,13 +131,13 @@ pub(super) fn doctor(
     };
     println!("{}", serde_json::to_string_pretty(&json!({
         "provider":"codex", "executable":executable.to_string_lossy(), "version":version,
-        "supported_versions":[ovrcr::report::codex::PINNED_VERSION], "probe_status":status,
-        "release_status":"accepted_exact_0.153.0_hooks_only",
+        "compatible_versions":policy.range(), "tested_versions":policy.tested, "version_compatible":supported, "version_tested":policy.tested(version), "probe_status":status,
+        "release_status":"patch_compatible_hooks_only",
         "configuration":{"status":configuration,"effective_configuration":"unverified","hook_trust":"unverified","delivery":"unverified","issues":issues},
         "session_status":if session.is_some() { "not_inspected_use_session_usage" } else { "not_requested" },
         "capabilities":{"initial_invocation":{"fresh":supported,"resume":false,"fork":false,"picker":false},"activity":"last_observed_root_turn","completion_quality":"observed","metrics":"unavailable","task_success":false},
         "requirements":REQUIREMENTS, "launch_forms":FORMS,
-        "remediation":"Run agent setup codex --print --settings PATH, review the composition and trust hooks through native Codex. Select exact codex-cli 0.153.0. Doctor only invokes --version; no server or provider conversation is required."
+        "remediation":"Run agent setup codex --print --settings PATH, review the composition and trust hooks through native Codex. Select stable codex-cli >=0.153.0 and <0.154.0. Doctor only invokes --version; no server or provider conversation is required."
     })).map_err(RuntimeError::internal)?);
     Ok(())
 }

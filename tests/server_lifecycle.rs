@@ -8639,6 +8639,11 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
 }
 
 #[test]
+fn agent_admission_later_patch_preserves_resume_identity_and_lifecycle() {
+    assert_agent_admission_resume("-r", "2.1.274");
+}
+
+#[test]
 fn agent_admission_ineligible_argv_and_probe_failures_preserve_native_arguments() {
     use std::os::unix::fs::PermissionsExt;
     let fixture = ControlFixture::new_bounded();
@@ -8669,7 +8674,7 @@ exit 19
         ("--unknown-mode", "2.1.267", "normal"),
         ("doctor", "2.1.267", "normal"),
         ("--model=sonnet", "2.1.266", "normal"),
-        ("--model=sonnet", "2.1.269", "normal"),
+        ("--model=sonnet", "2.2.0", "normal"),
         ("--model=sonnet", "fail", "normal"),
         ("--model=sonnet", "timeout", "normal"),
         ("--model=sonnet", "2.1.267", "blocked"),
@@ -9659,7 +9664,7 @@ fn codex_session_named(
 ) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
     use std::os::unix::fs::PermissionsExt;
     let native = fixture.root.path().join("codex");
-    std::fs::write(&native, "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'codex-cli 0.153.0\\n'; exit; fi\nexec \"$OVRCR_TEST_EXECUTABLE\" --ignored --exact codex_hook_native_helper --nocapture\n").unwrap();
+    std::fs::write(&native, "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'codex-cli 0.153.1\\n'; exit; fi\nexec \"$OVRCR_TEST_EXECUTABLE\" --ignored --exact codex_hook_native_helper --nocapture\n").unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
     let probe = fixture.root.path().join(format!("{name}-channel"));
     let summary = fixture.create_codex_session_summary(name, vec![
