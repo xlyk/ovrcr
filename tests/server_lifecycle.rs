@@ -5398,7 +5398,18 @@ impl ControlFixture {
     }
     fn only_session_id(&self) -> SessionId {
         match self.request(Request::List) {
-            Response::Hierarchy(snapshot) => snapshot.projects[0].workspaces[0].sessions[0].id,
+            Response::Hierarchy(snapshot) => {
+                snapshot
+                    .projects
+                    .into_iter()
+                    .filter(|project| project.name == PROJECT)
+                    .flat_map(|project| project.workspaces)
+                    .filter(|workspace| workspace.name == WORKSPACE)
+                    .flat_map(|workspace| workspace.sessions)
+                    .find(|session| session.name == "local")
+                    .expect("fixture workspace must have its local session")
+                    .id
+            }
             response => panic!("unexpected response: {response:?}"),
         }
     }
