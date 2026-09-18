@@ -63,6 +63,7 @@ while True:
     fn raw(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_ovrcr"))
             .args(args)
+            .env("SHELL", "/bin/sh")
             .env("OVRCR_CONFIG", self.root.path().join("config.toml"))
             .env("OVRCR_SOCKET", self.root.path().join("server.sock"))
             .env("OVRCR_PI_EXECUTABLE", self.root.path().join("pi-fixture"))
@@ -425,10 +426,17 @@ fn git_runs_fetch_remote_head_keep_files_and_preserve_branches_on_cleanup() {
     );
     assert_eq!(git(cwd, &["rev-parse", "HEAD"]), sha);
     assert!(
-        f.call(&["terminal", "list", "--project", "fixture"])
-            .as_array()
-            .unwrap()
-            .is_empty(),
+        f.call(&[
+            "terminal",
+            "list",
+            "--project",
+            "fixture",
+            "--path",
+            cwd.to_str().unwrap()
+        ])
+        .as_array()
+        .unwrap()
+        .is_empty(),
         "task preparation must not start a shell"
     );
     assert!(
@@ -610,25 +618,29 @@ fn git_task_fixture(f: &Fixture) -> (std::path::PathBuf, String) {
         .to_string();
     (repo, task)
 }
-fn create_unrelated_workspace(f: &Fixture, name: &str, branch: &str, new_branch: bool) {
-    let mut args = vec![
-        "workspace",
-        "create",
-        "--project",
-        "fixture",
-        "--name",
-        name,
-        if new_branch {
-            "--new-branch"
-        } else {
-            "--branch"
+fn create_unrelated_workspace(f: &Fixture, id: &str, branch: &str, new_branch: bool) {
+    let mut stream = ovrcr::protocol::connect_server(f.root.path().join("server.sock")).unwrap();
+    let response = ovrcr::protocol::client::request(
+        &mut stream,
+        1,
+        ovrcr::protocol::Request::CreateWorkspaceWithLaunch {
+            project: "fixture".into(),
+            id: id.into(),
+            branch: if new_branch {
+                ovrcr::protocol::BranchRequest::New {
+                    branch: branch.into(),
+                    base: "main".into(),
+                }
+            } else {
+                ovrcr::protocol::BranchRequest::Existing {
+                    branch: branch.into(),
+                }
+            },
+            launch: None,
         },
-        branch,
-    ];
-    if new_branch {
-        args.extend(["--base", "main"]);
-    }
-    f.call(&args);
+    )
+    .unwrap();
+    assert_eq!(response, ovrcr::protocol::Response::Ok);
     for session in f
         .call(&["terminal", "list", "--project", "fixture"])
         .as_array()
@@ -662,8 +674,8 @@ fn git_run_cleanup_rejects_a_workspace_that_preexisted_preparation() {
             "get",
             "--project",
             "fixture",
-            "--name",
-            "task-1-run-1",
+            "--branch",
+            branch,
         ]);
         git(
             &repo,
@@ -700,8 +712,8 @@ fn git_workspace_removal_refuses_a_running_task_in_a_clean_worktree() {
         "remove",
         "--project",
         "fixture",
-        "--name",
-        "task-1-run-1",
+        "--path",
+        cwd.to_str().unwrap(),
     ]);
     assert!(
         !removed.status.success(),
@@ -742,8 +754,8 @@ fn git_run_cleanup_rejects_a_replacement_workspace_after_cleanup() {
                 "remove",
                 "--project",
                 "fixture",
-                "--name",
-                "task-1-run-1",
+                "--path",
+                cwd.to_str().unwrap(),
             ]);
         }
         create_unrelated_workspace(&f, "task-1-run-1", branch, new_branch);
@@ -758,8 +770,8 @@ fn git_run_cleanup_rejects_a_replacement_workspace_after_cleanup() {
             "get",
             "--project",
             "fixture",
-            "--name",
-            "task-1-run-1",
+            "--branch",
+            branch,
         ]);
         git(
             &repo,

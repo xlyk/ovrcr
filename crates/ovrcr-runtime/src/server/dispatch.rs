@@ -13,6 +13,7 @@ pub enum DispatchMessage {
     RefreshSession {
         session: SessionId,
     },
+    RefreshHierarchy,
     SetView {
         owner: Arc<()>,
         request_id: u64,
@@ -80,6 +81,7 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: ReportingReceiver<Dispa
             DispatchMessage::RefreshSession { session } => {
                 dispatch_refresh_session(&state, session)
             }
+            DispatchMessage::RefreshHierarchy => dispatch_refresh_hierarchy(&state),
             DispatchMessage::SetView {
                 owner,
                 request_id,
@@ -441,6 +443,17 @@ fn dispatch_session_event(state: &Arc<ServerState>, event: SessionEvent) {
 
 fn dispatch_refresh_session(state: &Arc<ServerState>, id: SessionId) {
     publish_session_changed(state, id);
+}
+
+fn dispatch_refresh_hierarchy(state: &ServerState) {
+    if !state.dashboard.is_claimed() || state.stopping.load(std::sync::atomic::Ordering::Acquire) {
+        return;
+    }
+    state
+        .dashboard
+        .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+            snapshot_from_state(state),
+        )));
 }
 
 fn view_error(

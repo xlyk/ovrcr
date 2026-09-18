@@ -221,7 +221,7 @@ fn demo_shells_inherit_paths_and_cli_reaches_fixture() -> Result<()> {
             );
             let records: serde_json::Value = serde_json::from_slice(&std::fs::read(list_file)?)?;
             let records = records.as_array().unwrap();
-            anyhow::ensure!(records.len() == 10, "CLI did not return the demo sessions");
+            anyhow::ensure!(records.len() == 12, "CLI did not return the demo sessions");
             let mut child_pgids: Vec<_> = records
                 .iter()
                 .map(|record| unsafe { libc::getpgid(record["pid"].as_i64().unwrap() as i32) })
@@ -323,28 +323,50 @@ fn demo_session_groups(root: &Path) -> Result<Vec<i32>> {
             .map(|(project, workspace, name, _, _)| (*project, *workspace, *name))
             .collect::<Vec<_>>(),
         vec![
-            ("consigint", "auth-handoff", "local"),
-            ("consigint", "auth-handoff", "review auth handoff",),
-            ("consigint", "worktree-lifecycle", "local"),
+            ("consigint", "gui-consigint-auth-handoff", "local"),
             (
                 "consigint",
-                "worktree-lifecycle",
-                "implement lifecycle cleanup",
+                "gui-consigint-auth-handoff",
+                "review auth handoff"
+            ),
+            ("consigint", "gui-consigint-worktree-lifecycle", "local"),
+            (
+                "consigint",
+                "gui-consigint-worktree-lifecycle",
+                "implement lifecycle cleanup"
             ),
             (
                 "consigint",
-                "worktree-lifecycle",
-                "review websocket shutdown",
+                "gui-consigint-worktree-lifecycle",
+                "review websocket shutdown"
             ),
-            ("consigint", "worktree-lifecycle", "plan snapshot restore",),
-            ("spacelift-agent", "pipeline-progress-v2", "local",),
+            (
+                "consigint",
+                "gui-consigint-worktree-lifecycle",
+                "plan snapshot restore"
+            ),
+            ("consigint", "main", "local"),
             (
                 "spacelift-agent",
-                "pipeline-progress-v2",
-                "build pipeline progress",
+                "gui-spacelift-agent-pipeline-progress-v2",
+                "local"
             ),
-            ("spacelift-agent", "scope-quality", "local",),
-            ("spacelift-agent", "scope-quality", "review scope quality",),
+            (
+                "spacelift-agent",
+                "gui-spacelift-agent-pipeline-progress-v2",
+                "build pipeline progress"
+            ),
+            (
+                "spacelift-agent",
+                "gui-spacelift-agent-scope-quality",
+                "local"
+            ),
+            (
+                "spacelift-agent",
+                "gui-spacelift-agent-scope-quality",
+                "review scope quality"
+            ),
+            ("spacelift-agent", "main", "local"),
         ]
     );
     assert_eq!(
@@ -367,7 +389,7 @@ fn demo_session_groups(root: &Path) -> Result<Vec<i32>> {
         .filter_map(|(_, _, _, _, pid)| pid)
         .map(|pid| unsafe { libc::getpgid(pid as i32) })
         .collect();
-    assert_eq!(pgids.len(), 10);
+    assert_eq!(pgids.len(), 12);
     assert!(pgids.iter().all(|pgid| *pgid > 1));
     Ok(pgids)
 }

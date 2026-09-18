@@ -222,7 +222,11 @@ resize.
 
 Each project is a section: its name in upper case with a rule to the sidebar
 edge, and a blank line before every project after the first. Workspaces follow
-with a branch glyph and a bold name. Each session takes one line: a status
+with a branch glyph and the current branch name in bold. The repository-root
+workspace also shows a `root` marker. A warning marker appears when that
+checkout is not on the default branch. Duplicate visible names include the
+worktree path. A branch change updates the label in place; selection and panes
+stay on that workspace. Each session takes one line: a status
 glyph, the session name, and the agent name from its label right-aligned in the
 provider colour. A long name clips with `…` before the agent name, and the agent name is
 dropped when fewer than twelve cells would remain for the name. Local shells
@@ -339,8 +343,9 @@ sessions block removal, even when archived; the Archived sessions page offers
 "Acknowledge stopped" for such rows. A removal refused for uncertain sessions or a
 dirty worktree reopens as a forced removal: confirming it acknowledges the stopped
 processes and discards uncommitted changes, while live sessions and active task
-runs still block. Projects must have their workspaces
-removed first; unregistering a project keeps archived context. `Space w n`
+runs still block. The repository-root workspace cannot be removed. Remove every
+other workspace first, stop or acknowledge remaining sessions, then unregister
+the project; repository files stay on disk. Archived context is kept. `Space w n`
 creates a terminal, `Space p n` creates a workspace, and `Space v t` opens tasks.
 Terminal actions include Enter to focus, `p` to pause or `r` to resume, `c` for
 Copy, and `h` for History. Pause/Resume follow the session's current state.
@@ -398,15 +403,17 @@ does not activate the terminal behind it.
 
 All existing-project and workspace fields use the same searchable picker,
 including removal forms and the scheduled-task editor. Type to filter, use
-Up/Down to choose, and Tab or Enter to accept. Workspace choices show
-`project / workspace`; removal excludes the protected `root` workspace.
-New names remain text fields, and project registration retains its path pickers.
+Up/Down to choose, and Tab or Enter to accept. Workspace choices show the
+project and current branch, with the worktree path when those names collide.
+Removal excludes the protected repository-root workspace. Session names and
+project names remain text fields, and project registration retains its path pickers.
 
-Closing live work and deleting records show their target and require confirmation.
-Closing an exited row archives it immediately. Server
-safeguards still apply: a workspace must have no terminal records and a clean
-worktree before removal. Errors stay in the palette with the form values
-retained.
+Closing live work and deleting records show their current branch target and require confirmation.
+Closing an exited row archives it immediately. A workspace with live sessions or
+active task runs cannot be removed. A refusal for ownership-uncertain stopped
+sessions or a dirty worktree reopens as a forced confirmation that discards
+uncommitted changes and acknowledges those stopped processes. Errors stay in the
+palette with the form values retained.
 
 ### Create terminal (`n`)
 
@@ -418,13 +425,14 @@ reporting support.
 
 Workspace defaults to the selected workspace. Name is optional: leave it blank
 for Automatic, or enter a pinned name. After creation, typing goes to the new
-session immediately. Detected `pi` and `omp` entries retain their managed launch
+session immediately. `n` and other new launches are unavailable when the selected
+root workspace shows a warning. Detected `pi` and `omp` entries retain their managed launch
 wrappers; an `agents` override replaces the command entirely.
 
 ### Create workspace (`w`)
 
-Name the workspace and choose what to start: **Agent**, **Terminal**, or
-**Nothing yet**. Agent and Terminal have the same options as terminal creation.
+Choose a branch and what to start: **Agent**, **Terminal**, or
+**Nothing yet**. There is no separate workspace name. Agent and Terminal have the same options as terminal creation.
 Only the selected program starts; an Agent launch does not also open a shell.
 Nothing yet creates an empty workspace.
 
@@ -434,10 +442,10 @@ Nothing yet leaves the preference unchanged. A project without a preference
 starts with Terminal selected. If a remembered agent is unavailable, choose a
 replacement explicitly before launching.
 
-Project defaults to the selected terminal's project. Name has initial focus;
-`Tab` and `Shift-Tab` reach the other fields. On Branch mode, `Space` or
-Left/Right switches between `new` and `existing`. New branches start as
-`feature/<name>` and follow Name until you edit Branch. Existing mode lists local
+Project defaults to the selected terminal's project. Branch has initial focus
+and starts as `feature/`; typing appends to that prefix. `Enter` on Branch
+submits. `Tab` and `Shift-Tab` reach the other fields. On Branch mode, `Space` or
+Left/Right switches between `new` and `existing`. Existing mode lists local
 branches and hides Base.
 
 Base defaults to the repository's `origin/HEAD` target, then `main`, `master`, or
@@ -528,14 +536,17 @@ checkouts sort first and are marked `git`. `Tab` accepts the highlight and
 appends `/`; `Enter` keeps the typed text and moves on. An empty field lists
 `picker_roots` from `dashboard.toml`. Name becomes the repository basename once a
 path is chosen. Workspace root defaults to `<config dir>/workspaces/<name>` until
-you edit it, and is created on registration if missing.
+you edit it, and is created on registration if missing. Registration creates the
+protected repository-root workspace on the detected default branch and starts one
+shell there. It does not switch Git.
 
 ## Empty states
 
 With no project registered, the dashboard shows `Welcome to OVRCR`, the `a`, `:`,
 and `?` shortcuts, and the resolved config and socket paths. Clicking an empty
 workspace shows how to start a terminal there and prefills that workspace in the
-terminal form.
+terminal form. A root-workspace warning disables `n` and other new launches
+there; existing sessions stay usable. OVRCR does not switch the checkout.
 
 ## Dashboard settings
 

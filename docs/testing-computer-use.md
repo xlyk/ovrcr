@@ -8,7 +8,7 @@ Use this macOS smoke check after changes to the dashboard, terminal input, or CL
 rtk proxy just gui
 ```
 
-Keep the command session open to collect its exit status and cleanup errors. The helper builds `target/OVRCR GUI.app` and creates a disposable server with two projects, four workspaces, and ten real shell sessions.
+Keep the command session open to collect its exit status and cleanup errors. The helper builds `target/OVRCR GUI.app` and creates a disposable server with two project roots and four feature workspaces: two initial root shells, four feature shells, and six fixture agents (twelve sessions). Each root is on `main` with a root marker. Feature workspaces are labeled by branches such as `gui-consigint-auth-handoff`.
 
 With the Codex computer-use tool, initialize in a separate call using the actual checkout path:
 
@@ -26,7 +26,7 @@ Use fresh accessibility indices or coordinates from the current screenshot. Side
 
 ## 2. Prove real input and rendering
 
-Select `consigint / auth-handoff / local`, then press Return to enter terminal mode. Paste this command through the GUI and press Return:
+Select `consigint / gui-consigint-auth-handoff / local`, then press Return to enter terminal mode. Paste this command through the GUI and press Return:
 
 ```sh
 rtk proxy printf 'CUA_%s\n' INPUT_OK
@@ -94,8 +94,8 @@ list above the footer, with the surrounding dashboard still visible. Press
 then `?`, then Enter to open the Terminal group. Confirm Pause is listed for a
 running session and Resume is absent. Disabled actions should show a reason.
 Press Backspace, then `w`, then `x`; confirm the workspace picker highlights
-the selected `project / workspace` and excludes `root`. Type to filter to a
-different workspace, then press Enter; confirmation must name the chosen target.
+the selected `consigint / gui-consigint-auth-handoff` and omits the
+repository-root workspace. Type to filter to a different workspace, then press Enter; confirmation must name the chosen target.
 Escape cancels. Repeat with `Space p x` for projects, then `Space t x` for direct
 terminal-close confirmation, cancelling both. Open tasks with `Ctrl-t`, press
 `n`, and Tab to Project; check the same filtering, Up/Down, and Tab/Enter controls.
@@ -103,7 +103,7 @@ Escape cancels the editor, then Escape returns to the dashboard. Click project a
 confirm `Space` shows only their applicable groups. Resize the window and scroll to
 the last entry; confirm it remains visible and clickable. Press Escape.
 Press Space then `w` then `n`; confirm the key popup closes and the terminal form opens.
-On Start, choose Terminal. Confirm Workspace shows the selected `project / workspace`, Name is optional and blank, and Command is optional. Submit with both blank. Confirm terminal mode on the new session, then paste this command and press Return:
+On Start, choose Terminal. Confirm Workspace shows the selected `consigint / gui-consigint-auth-handoff`, Name is optional and blank, and Command is optional. Submit with both blank. Confirm terminal mode on the new session, then paste this command and press Return:
 
 ```sh
 rtk proxy printf 'CUA_%s\n' N_SHELL_OK
@@ -111,11 +111,12 @@ rtk proxy printf 'CUA_%s\n' N_SHELL_OK
 
 Confirm a separate output line containing `CUA_N_SHELL_OK`; the echoed command alone is insufficient.
 
-Return to browse with `Ctrl-g`, press `w`, and type `cua-workspace`. Confirm
-Project matches the selected session, Branch reads `feature/cua-workspace`,
-and Base shows the repository's default branch once suggestions finish loading.
-Choose Start: Terminal and submit. Confirm a single new terminal is selected
-in terminal mode with the workspace fallback name. Paste and execute:
+Return to browse with `Ctrl-g`, press `w`. Confirm there is no Name field.
+Branch starts as `feature/` and is focused; typing appends. Type
+`cua-workspace` so Branch reads `feature/cua-workspace`. Base shows the
+repository's default branch once suggestions finish loading. Choose Start:
+Terminal. Enter on Branch submits. Confirm a single new terminal is selected
+in terminal mode under `feature/cua-workspace`. Paste and execute:
 
 ```sh
 rtk proxy printf 'CUA_%s\n' W_SHELL_OK
@@ -123,7 +124,7 @@ rtk proxy printf 'CUA_%s\n' W_SHELL_OK
 
 Confirm a separate `CUA_W_SHELL_OK` output line. Record this shell's PID and
 process group with the other fixture processes before cleanup. Return to
-`consigint / auth-handoff / local` for the checks below.
+`consigint / gui-consigint-auth-handoff / local` for the checks below.
 
 Return to browse with `Ctrl-g`. Press `a`. Tab through a configured `picker_roots` directory to the demo repository (a `git` marker sorts it first). Confirm Name is the repository basename and Workspace root is `<config dir>/workspaces/<name>`. Escape without submitting if this run should not register a project.
 
@@ -131,7 +132,7 @@ Return to browse with `Ctrl-g`. Press `a`. Tab through a configured `picker_root
 
 In the disposable fixture, also verify:
 
-1. Create a workspace with Nothing yet; confirm it is selected and has no sessions.
+1. Create a workspace with Nothing yet from Branch only (no Name field); confirm it is selected and has no sessions.
 2. Create a workspace with Terminal and a custom command that prints a unique
    marker and waits for input. Confirm exactly one session and its actual output.
 3. In that session emit `printf '\033]2;CUA title 界\007'`; confirm its sidebar and
@@ -152,6 +153,19 @@ In the disposable fixture, also verify:
    Check the same row/title, absence of old output, and a separate fresh-shell
    execution marker. An older capture without this acknowledgement is not
    evidence for the current recovery policy.
+9. Select the `feature/cua-workspace` session created above, then run
+   `rtk proxy git checkout -b cua-switched`. Confirm the workspace row becomes
+   `cua-switched` without replacing that session. Paste a unique printf in the
+   same shell and confirm its output. The old branch label must not remain as
+   that workspace's name.
+10. Select consigint's root workspace (`main` with the root marker). From there,
+    `w` then `x` must be unavailable (`repository-root workspace cannot be
+    removed`). In its `local` shell, run `rtk proxy git checkout -b cua-root-drift`.
+    Confirm the root warning, that `n` is unavailable (`root workspace is not on
+    the default branch`), and that the existing shell still accepts a unique
+    printf. Repeat the removal check while drifted. Restore with
+    `rtk proxy git checkout main`, confirm `n` is available again, and leave
+    the root on `main`.
 
 For a deliberate server-loss check, record the fixture paths and owned processes
 first. Verify restored rows without launching processes, then explicitly confirm
@@ -213,7 +227,7 @@ OSC52 when the GUI helper cannot deliver it.
 
 ### Application forwarding
 
-Stay on `consigint / auth-handoff / local` in terminal mode. Move the pointer over the terminal pane, not the sidebar or footer, and scroll the wheel up. History should open at the tail (`HISTORY` in the footer). Wheel down at the newest row returns to the live prompt.
+Stay on `consigint / gui-consigint-auth-handoff / local` in terminal mode. Move the pointer over the terminal pane, not the sidebar or footer, and scroll the wheel up. History should open at the tail (`HISTORY` in the footer). Wheel down at the newest row returns to the live prompt.
 
 In the same or another live pane, run `vim -n -u NONE`, then `:set mouse=a`. Click in the buffer: the Vim cursor moves to that cell. Wheel should scroll Vim; History must stay closed. `:set mouse=` then wheel up while Vim is still running must not open History (alternate screen). Quit Vim before repeating the plain-shell History check.
 
@@ -235,9 +249,9 @@ In that same shell, replace the binary path below with this checkout's absolute 
 ```sh
 c=/absolute/checkout/target/debug/ovrcr
 rtk proxy "$c" project get consigint --json
-rtk proxy "$c" workspace get --project consigint --name auth-handoff --json
+rtk proxy "$c" workspace get --project consigint --branch gui-consigint-auth-handoff --json
 rtk proxy "$c" terminal list --json
-t=$(rtk proxy "$c" terminal create --project consigint --workspace auth-handoff --name cua-check -- /bin/sh)
+t=$(rtk proxy "$c" terminal create --project consigint --workspace gui-consigint-auth-handoff --name cua-check -- /bin/sh)
 rtk proxy "$c" terminal list --json
 rtk proxy "$c" terminal send "$t" --text "printf 'CUA_%s\n' BACKGROUND_OK"
 rtk proxy "$c" terminal read "$t" --json

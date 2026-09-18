@@ -58,7 +58,7 @@ pub(super) fn run_workspace(command: WorkspaceCommand, json_output: bool) -> App
             mutate_started(
                 Request::CreateWorkspace {
                     project: args.project,
-                    name: args.name,
+                    id: ovrcr::protocol::new_workspace_id().map_err(RuntimeError::internal)?,
                     branch,
                 },
                 json_output,
@@ -81,8 +81,16 @@ pub(super) fn run_workspace(command: WorkspaceCommand, json_output: bool) -> App
                 })
                 .collect::<Vec<_>>();
             workspaces.sort_by(|(left_project, left), (right_project, right)| {
-                (left.name.as_str(), left_project.as_str())
-                    .cmp(&(right.name.as_str(), right_project.as_str()))
+                (
+                    left.branch.as_str(),
+                    left.path.as_path(),
+                    left_project.as_str(),
+                )
+                    .cmp(&(
+                        right.branch.as_str(),
+                        right.path.as_path(),
+                        right_project.as_str(),
+                    ))
             });
             let values = workspaces
                 .into_iter()
@@ -90,27 +98,27 @@ pub(super) fn run_workspace(command: WorkspaceCommand, json_output: bool) -> App
                 .collect::<Vec<_>>();
             print_values(values, json_output, print_workspace_row)
         }
-        WorkspaceCommand::Get { project, name } => {
+        WorkspaceCommand::Get { target } => {
             let (registry, sessions) = inspect()?;
-            let workspace = find_workspace(&registry, &project, &name)?;
+            let workspace = select_workspace(&registry, &target)?;
             print_value(
-                workspace_value(&project, workspace, &sessions),
+                workspace_value(&target.project, workspace, &sessions),
                 json_output,
                 print_workspace,
             )
         }
-        WorkspaceCommand::Remove {
-            project,
-            name,
-            force,
-        } => mutate_without_start(
-            Request::RemoveWorkspace {
-                project,
-                name,
-                force,
-            },
-            json_output,
-        ),
+        WorkspaceCommand::Remove { target, force } => {
+            let (registry, _) = inspect()?;
+            let workspace = select_workspace(&registry, &target)?;
+            mutate_without_start(
+                Request::RemoveWorkspace {
+                    project: target.project,
+                    name: workspace.id.clone(),
+                    force,
+                },
+                json_output,
+            )
+        }
     }
 }
 
@@ -142,29 +150,38 @@ pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppRe
         TerminalCommand::List {
             project,
             workspace,
+            path,
             archived,
         } => {
             let (registry, mut sessions) = inspect()?;
-            if let Some(project) = project.as_deref() {
+            let workspace_id = if let Some(project) = project.as_deref() {
                 find_project(&registry, project)?;
-                if let Some(workspace) = workspace.as_deref() {
-                    find_workspace(&registry, project, workspace)?;
+                if workspace.is_some() || path.is_some() {
+                    Some(
+                        resolve_workspace(&registry, project, workspace.as_deref(), path)?
+                            .id
+                            .clone(),
+                    )
+                } else {
+                    None
                 }
-            }
+            } else {
+                None
+            };
             sessions.retain(|session| {
                 session.archived == archived
                     && project
                         .as_deref()
                         .is_none_or(|name| session.project == name)
-                    && workspace
+                    && workspace_id
                         .as_deref()
-                        .is_none_or(|name| session.workspace == name)
+                        .is_none_or(|id| session.workspace == id)
             });
             sessions.sort_by_key(|session| session.id.0);
             let now_unix_ms = now_unix_ms();
             let values = sessions
                 .iter()
-                .map(|session| terminal_value(session, now_unix_ms))
+                .map(|session| terminal_value(session, now_unix_ms, Some(&registry)))
                 .collect::<Vec<_>>();
             print_values(values, json_output, print_terminal_row)
         }
@@ -274,15 +291,22 @@ pub(super) fn create_terminal(args: NewArgs, json_output: bool) -> AppResult<()>
         args.argv
     };
     let kind = session_kind_from_argv(&argv);
+    let (registry, _) = inspect()?;
+    let workspace = resolve_workspace(
+        &registry,
+        &args.project,
+        args.workspace.as_deref(),
+        args.path,
+    )?;
     let response = request_started(Request::CreateSession(CreateSessionRequest {
         project: args.project,
-        workspace: args.workspace,
+        workspace: workspace.id.clone(),
         name: args.name,
         label: args.label,
         argv,
         kind,
     }))?;
-    print_created_terminal(response, json_output)
+    print_created_terminal(response, json_output, Some(&registry))
 }
 
 fn session_kind_from_argv(argv: &[std::ffi::OsString]) -> SessionKind {
@@ -324,7 +348,13 @@ fn managed_wrapper_kind(argv: &[std::ffi::OsString]) -> Option<SessionKind> {
 }
 
 fn reopen_terminal(id: u64, acknowledge_stopped: bool, json_output: bool) -> AppResult<()> {
-    let session = inventory_session(id)?;
+    let (registry, sessions) = inspect()?;
+    let session = sessions
+        .into_iter()
+        .find(|session| session.id == SessionId(id))
+        .ok_or_else(|| {
+            RuntimeError::new(ErrorCode::NotFound, format!("session not found: {id}"))
+        })?;
     print_created_terminal(
         request_started(Request::ReopenSession {
             session: SessionId(id),
@@ -332,6 +362,7 @@ fn reopen_terminal(id: u64, acknowledge_stopped: bool, json_output: bool) -> App
             acknowledge_stopped,
         })?,
         json_output,
+        Some(&registry),
     )
 }
 
@@ -354,11 +385,15 @@ fn inventory_session(id: u64) -> AppResult<SessionSummary> {
         .ok_or_else(|| RuntimeError::new(ErrorCode::NotFound, format!("session not found: {id}")))
 }
 
-fn print_created_terminal(response: Response, json_output: bool) -> AppResult<()> {
+fn print_created_terminal(
+    response: Response,
+    json_output: bool,
+    registry: Option<&Registry>,
+) -> AppResult<()> {
     match response {
         Response::CreatedSession(summary) => {
             if json_output {
-                print_json(&terminal_value(&summary, now_unix_ms()))
+                print_json(&terminal_value(&summary, now_unix_ms(), registry))
             } else {
                 println!("{}", summary.id.0);
                 Ok(())
@@ -376,21 +411,89 @@ fn find_project<'a>(registry: &'a Registry, name: &str) -> AppResult<&'a Project
         .ok_or_else(|| RuntimeError::new(ErrorCode::NotFound, format!("project not found: {name}")))
 }
 
-fn find_workspace<'a>(
+fn select_workspace<'a>(
+    registry: &'a Registry,
+    target: &WorkspaceSelect,
+) -> AppResult<&'a WorkspaceRecord> {
+    resolve_workspace(
+        registry,
+        &target.project,
+        target.branch.as_deref(),
+        target.path.clone(),
+    )
+}
+
+fn resolve_workspace<'a>(
     registry: &'a Registry,
     project: &str,
-    name: &str,
+    branch: Option<&str>,
+    path: Option<std::path::PathBuf>,
 ) -> AppResult<&'a WorkspaceRecord> {
-    find_project(registry, project)?
+    let project_record = find_project(registry, project)?;
+    if let Some(path) = path {
+        let path = resolve_cli_path(path).map_err(RuntimeError::internal)?;
+        return project_record
+            .workspaces
+            .iter()
+            .find(|workspace| paths_match(&workspace.path, &path))
+            .ok_or_else(|| {
+                RuntimeError::new(
+                    ErrorCode::NotFound,
+                    format!("workspace not found: {project} {}", path.display()),
+                )
+            });
+    }
+    let branch = branch.expect("clap requires --branch or --path");
+    if !is_branch_target(branch) {
+        return Err(RuntimeError::new(
+            ErrorCode::InvalidRequest,
+            format!("target workspace {project}/{branch} by --path"),
+        ));
+    }
+    let matches = project_record
         .workspaces
         .iter()
-        .find(|workspace| workspace.name == name)
-        .ok_or_else(|| {
-            RuntimeError::new(
-                ErrorCode::NotFound,
-                format!("workspace not found: {project}/{name}"),
-            )
+        .filter(|workspace| {
+            ovrcr::git::checkout_name(&workspace.path)
+                .ok()
+                .is_some_and(|current| current == branch && is_branch_target(&current))
         })
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [workspace] => Ok(*workspace),
+        [] => Err(RuntimeError::new(
+            ErrorCode::NotFound,
+            format!("workspace not found: {project}/{branch}"),
+        )),
+        candidates => {
+            let paths = candidates
+                .iter()
+                .map(|workspace| workspace.path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(RuntimeError::new(
+                ErrorCode::InvalidRequest,
+                format!("ambiguous workspace {project}/{branch}; candidates: {paths}"),
+            ))
+        }
+    }
+}
+
+fn is_branch_target(label: &str) -> bool {
+    let label = label.trim();
+    !label.is_empty()
+        && label != ovrcr::git::UNAVAILABLE_CHECKOUT
+        && !label.starts_with("detached @ ")
+}
+
+fn paths_match(left: &std::path::Path, right: &std::path::Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }
 
 pub(super) fn inspect_session_context(id: u64) -> AppResult<()> {

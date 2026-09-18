@@ -30,12 +30,13 @@ the current directory. A new terminal can omit its name for automatic titles.
 `new`, `terminal create`, `terminal reopen`, `terminal acknowledge-stopped`,
 `project add`, `workspace create`, and the dashboard start a server on demand.
 
-Read commands never start one. They never migrate the registry. With no server
-running, project and workspace queries read `config.toml.sqlite3` after migration.
-They read the preserved `config.toml` if the database is absent or still empty and
-uninitialized after an interrupted import. A foreign, unreadable, or incompatible
-database is an error, not a TOML fallback. Terminal lists include retained rows.
-Reading or controlling a missing terminal returns an error.
+Read commands never start one. They never write, migrate the registry, or launch
+a shell. With no server running, project and workspace queries read the existing
+`config.toml.sqlite3` without changing it. They read the preserved `config.toml`
+if the database is absent or still empty and uninitialized after an interrupted
+import. A foreign, unreadable, or incompatible database is an error, not a TOML
+fallback. Terminal lists include retained rows. Reading or controlling a missing
+terminal returns an error.
 
 Removal and kill commands (`project remove`, `workspace remove`,
 `terminal kill`, `terminal close`, `terminal remove`, `kill`, `session remove`)
@@ -55,15 +56,25 @@ response; `kill`, `close`, and `shutdown` after 60 seconds.
 ovrcr project list
 ovrcr project get consigint
 ovrcr workspace list --project consigint
-ovrcr workspace get --project consigint --name cleanup
-ovrcr terminal list --project consigint --workspace cleanup
+ovrcr workspace get --project consigint --branch feature/cleanup
+ovrcr terminal list --project consigint --workspace feature/cleanup
 ```
 
 `project list` shows projects only; `ovrcr list` prints the complete hierarchy as
-`project`, `  workspace`, and `    session <id> <display-name> <phase>` lines. Terminal
+`project`, `  workspace`, and `    session <id> <display-name> <phase>` lines.
+Workspace lines use the current branch name. Terminal
 lists include running sessions and retained exited records. A `--workspace` filter
-requires `--project`. Terminal JSON includes `cwd`, the original working directory;
+requires `--project` and matches that current branch. Terminal JSON includes `cwd`, the original working directory;
 the text table includes it as the last column, including for archived records.
+
+`workspace get` and `workspace remove` take `--project` with `--branch` (the
+current checkout branch; slashes such as `feature/cleanup` are valid) or `--path`
+(the worktree). `new`, `terminal create`, and `terminal list` use `--workspace`
+for that same current branch, or `--path`. A detached checkout is shown as
+`detached @` followed by a short hash and is not a branch target: use `--path`.
+Two workspaces on the same branch is an error that lists candidate paths; pass
+`--path` to choose one. An old branch name does not match after the checkout
+moves.
 
 ## Workspace removal
 
@@ -83,8 +94,10 @@ not claim Git was rolled back. Inspect the reported path and Git worktree list
 before restoring the worktree or repairing registration. Reopening refuses a
 missing directory and never substitutes another repository.
 
-`project remove` still requires removing its workspaces first through this same
-lifecycle. It never cascades into retained session records. Unarchiving a row
+The repository-root workspace cannot be removed. `project remove` still requires
+removing every other workspace first. It then drops the root registration after
+live and ownership-uncertain sessions are stopped or acknowledged. Repository
+files stay on disk. It never cascades into retained session records. Unarchiving a row
 whose workspace or project was removed keeps it visible under its original
 context without registering a workspace or launching a process. Provider history
 files are never deleted by record management.
@@ -93,25 +106,30 @@ files are never deleted by record management.
 
 ```sh
 ovrcr project add example /path/to/repo --workspace-root /path/to/workspaces
-ovrcr workspace create --project example --name cli-demo \
+ovrcr workspace create --project example \
   --new-branch feature/cli-demo --base main
-terminal_id=$(ovrcr terminal create --project example --workspace cli-demo \
+terminal_id=$(ovrcr terminal create --project example --workspace feature/cli-demo \
   --name shell -- /bin/sh)
 ovrcr terminal send "$terminal_id" --text "printf 'hello from CLI\\n'"
 ovrcr terminal read "$terminal_id"
 ovrcr terminal read "$terminal_id" --max-lines 5
 ovrcr terminal close "$terminal_id"
 # Workspace creation also started a terminal named local. Find and close it:
-ovrcr terminal list --project example --workspace cli-demo
+ovrcr terminal list --project example --workspace feature/cli-demo
 ovrcr terminal close LOCAL_TERMINAL_ID
 # Removal keeps stopped sessions in the archive with their original paths:
-ovrcr workspace remove --project example --name cli-demo
+ovrcr workspace remove --project example --branch feature/cli-demo
+# Stop the root-workspace shell started by project add, then unregister:
+ovrcr terminal list --project example --workspace main
+ovrcr terminal close ROOT_TERMINAL_ID
 ovrcr project remove example
 ```
 
 Arguments after `--` are passed directly to the executable. With no executable,
-`terminal create` and `new` launch `$SHELL`. Sessions start at the workspace root.
-`project add` creates the workspace root if it is missing.
+`terminal create` and `new` launch `$SHELL`. Sessions start at the workspace checkout.
+`project add` creates the `--workspace-root` directory if it is missing, registers
+the protected repository-root workspace on the detected default branch, and starts
+one shell there. It does not switch Git.
 `--label TEXT` sets launch metadata such as the executable or agent label.
 Omit `--name` for a stable workspace-based fallback name and an automatic display
 title that follows the running app. Supply `--name TEXT` to start with a pinned
@@ -245,13 +263,14 @@ ownership check. This is not a process-identity sandbox.
 ## Removal guards
 
 ```sh
-ovrcr workspace remove --project consigint --name cleanup
+ovrcr workspace remove --project consigint --branch feature/cleanup
 ovrcr project remove consigint
 ```
 
 Workspace removal requires every session stopped and removed, a clean Git status
 in the worktree, a canonical path matching the registry, and agreement between
-Git's worktree list and the registry. Removal uses ordinary
+Git's worktree list and the registry. Target the current branch or the worktree
+path; the repository-root workspace is rejected. Removal uses ordinary
 `git worktree remove` and preserves the branch. OVRCR never removes a repository
 or an unregistered worktree. If the worktree directory was deleted outside OVRCR,
 removal instead runs `git worktree prune`, but only after Git itself lists the
@@ -275,7 +294,7 @@ explicit and is never selected automatically in CI or an agent environment.
 
 ```sh
 ovrcr project list --json
-ovrcr workspace get --project consigint --name cleanup --json
+ovrcr workspace get --project consigint --branch feature/cleanup --json
 ovrcr terminal list --project consigint --json
 ovrcr terminal read 7 --json
 ```
@@ -318,8 +337,9 @@ stdout. Argument errors keep normal help diagnostics and exit 2, including with
 
 ## Worked example in a disposable repository
 
-This transcript uses an isolated temporary repository, config, and socket. The
-trap stops the disposable server and removes the fixture.
+This example uses an isolated temporary repository, config, and socket. The
+trap stops the disposable server and removes the fixture. Session IDs in the
+illustrated output use the variables captured above; actual output contains numbers.
 
 ```sh
 $ d=$(mktemp -d)
@@ -333,15 +353,18 @@ $ printf 'fixture\n' > "$d/README"
 $ git -C "$d" add README && git -C "$d" commit -m initial
 $ mkdir -p "$d/workspaces"
 $ ovrcr project add fixture "$d" --workspace-root "$d/workspaces"
-$ ovrcr workspace create --project fixture --name demo \
+$ root_id=$(ovrcr list | awk '$1 == "session" { print $2; exit }')
+$ ovrcr workspace create --project fixture \
     --new-branch feature/demo --base main
-$ agent_id=$(ovrcr new --project fixture --workspace demo --name agent -- sh)
-$ local_id=$(ovrcr list | awk '$1 == "session" && $3 == "local" { print $2; exit }')
+$ agent_id=$(ovrcr new --project fixture --workspace feature/demo --name agent -- sh)
+$ local_id=$(ovrcr list | awk -v root="$root_id" -v agent="$agent_id" '$1 == "session" && $2 != root && $2 != agent { print $2; exit }')
 $ ovrcr list
 project fixture
-  workspace demo
+  workspace feature/demo
     session $local_id local running
     session $agent_id agent running
+  workspace main
+    session $root_id local running
 $ ovrcr
 # select agent, press Enter, then Ctrl-g and q
 $ ovrcr
@@ -350,7 +373,9 @@ $ ovrcr kill "$agent_id"
 $ ovrcr session remove "$agent_id"
 $ ovrcr kill "$local_id"
 $ ovrcr session remove "$local_id"
-$ ovrcr workspace remove --project fixture --name demo
+$ ovrcr workspace remove --project fixture --branch feature/demo
+$ ovrcr kill "$root_id"
+$ ovrcr session remove "$root_id"
 $ ovrcr project remove fixture
 $ ovrcr shutdown
 $ test ! -e "$OVRCR_SOCKET"

@@ -45,7 +45,6 @@ impl ActiveDashboard {
         Some(identity)
     }
 
-    #[cfg(test)]
     pub(super) fn is_claimed(&self) -> bool {
         self.slot.lock().unwrap().is_some()
     }

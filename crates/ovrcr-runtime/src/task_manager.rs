@@ -145,9 +145,9 @@ impl TaskManager {
         merge_runs(&self.directory, &mut store)?;
         Ok(store.runs.iter().any(|run| {
             run.status.occupies_slot()
-                && matches!(&run.spec.target, TaskTarget::Git { project: name, .. } if name == project)
-                // Admission is durable before preparation writes run.json or records its path.
-                && workspace == format!("task-{}-run-{}", run.task_id.0, run.id.0)
+                && matches!(&run.spec.target, TaskTarget::Git { project: git_project, .. } if git_project == project)
+                && (run.workspace.as_deref() == Some(workspace)
+                    || workspace == format!("task-{}-run-{}", run.task_id.0, run.id.0))
         }))
     }
     pub(crate) fn release_workspace_ownership(
@@ -160,7 +160,7 @@ impl TaskManager {
             for run in &mut store.runs {
                 if run.status.is_terminal()
                     && matches!(&run.spec.target, TaskTarget::Git { project: name, .. } if name == project)
-                    && run.workspace.as_deref() == Some(workspace.name.as_str())
+                    && run.workspace.as_deref() == Some(workspace.id.as_str())
                     && run.directory.as_ref() == Some(&workspace.path)
                 {
                     run.workspace = None;
@@ -971,8 +971,26 @@ mod tests {
                 String::from_utf8_lossy(&out.stderr)
             );
         }
+        let repo = repo.canonicalize().unwrap();
+        let workspaces = workspaces.canonicalize().unwrap();
+        // This fixture exercises task admission, not interactive root-shell setup.
+        // Seed the legitimate state after a root shell has been closed and deleted.
         server
-            .add_project("fixture".into(), repo, workspaces.clone())
+            .registry
+            .lock()
+            .unwrap()
+            .add_project(crate::config::ProjectRecord {
+                name: "fixture".into(),
+                repo: repo.clone(),
+                workspace_root: workspaces.clone(),
+                workspaces: vec![crate::config::WorkspaceRecord {
+                    id: "root".into(),
+                    path: repo.clone(),
+                    branch: "main".into(),
+                    git_identity: Some(crate::git::capture_worktree_identity(&repo).unwrap()),
+                    setup_pending: false,
+                }],
+            })
             .unwrap();
         server
             .create_task_workspace(

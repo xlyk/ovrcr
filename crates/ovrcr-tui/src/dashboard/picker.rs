@@ -11,6 +11,16 @@ pub struct PickItem {
     pub value: String,
 }
 
+pub(crate) fn workspace_pick_value(project: &str, id: &str) -> String {
+    format!("{project}/{id}")
+}
+
+pub(crate) fn split_workspace_pick(value: &str) -> (String, String) {
+    value
+        .split_once('/')
+        .map(|(project, id)| (project.to_string(), id.to_string()))
+        .unwrap_or_else(|| (value.to_string(), String::new()))
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PickList {
     pub items: Vec<PickItem>,
@@ -45,7 +55,7 @@ impl PickList {
     pub fn workspaces(
         hierarchy: &HierarchySnapshot,
         project: &str,
-        workspace: &str,
+        workspace_id: &str,
         include_root: bool,
     ) -> Self {
         let mut list = Self::new(
@@ -53,29 +63,46 @@ impl PickList {
                 .projects
                 .iter()
                 .flat_map(|project| {
-                    project
-                        .workspaces
-                        .iter()
-                        .filter(move |workspace| include_root || workspace.name != "root")
-                        .map(|workspace| {
-                            let label = format!("{} / {}", project.name, workspace.name);
-                            PickItem {
-                                value: label.clone(),
-                                label,
-                            }
+                    project.workspaces.iter().filter_map(move |workspace| {
+                        if !include_root && workspace.root {
+                            return None;
+                        }
+                        let mut label = format!("{} / {}", project.name, workspace.name);
+                        if project
+                            .workspaces
+                            .iter()
+                            .filter(|candidate| candidate.name == workspace.name)
+                            .count()
+                            > 1
+                        {
+                            label = format!("{label} ({})", workspace.path.display());
+                        }
+                        Some(PickItem {
+                            value: workspace_pick_value(&project.name, &workspace.id),
+                            label,
                         })
+                    })
                 })
                 .collect(),
         );
-        if let Some(item) = list
-            .items
-            .iter()
-            .find(|item| item.value.starts_with(&format!("{project} / ")))
-        {
-            let value = item.value.clone();
-            list.select_value(&value);
+        if workspace_id.is_empty() {
+            if let Some(id) = hierarchy
+                .projects
+                .iter()
+                .find(|candidate| candidate.name == project)
+                .and_then(|candidate| {
+                    candidate
+                        .workspaces
+                        .iter()
+                        .find(|workspace| include_root || !workspace.root)
+                })
+                .map(|workspace| workspace.id.clone())
+            {
+                list.select_value(&workspace_pick_value(project, &id));
+            }
+        } else {
+            list.select_value(&workspace_pick_value(project, workspace_id));
         }
-        list.select_value(&format!("{project} / {workspace}"));
         list
     }
 
@@ -89,7 +116,10 @@ impl PickList {
             );
         }
         let count = limit.min(filtered.len());
-        let start = self.selected.saturating_sub(count.saturating_sub(1));
+        let start = self
+            .selected
+            .min(filtered.len() - 1)
+            .saturating_sub(count.saturating_sub(1));
         let lines = filtered
             .iter()
             .enumerate()

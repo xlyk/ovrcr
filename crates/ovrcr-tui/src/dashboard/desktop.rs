@@ -536,6 +536,9 @@ mod tests {
                 workspaces: vec![WorkspaceSummary {
                     project: "project".into(),
                     name: "workspace".into(),
+                    id: "workspace".into(),
+                    root: false,
+                    warning: None,
                     path: "/private/path-must-not-leak".into(),
                     sessions: vec![SessionSummary {
                         archived: false,

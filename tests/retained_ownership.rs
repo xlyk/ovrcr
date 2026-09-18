@@ -68,13 +68,15 @@ fn wait_phase(live: &Live, id: u64, phase: &str) -> Value {
 }
 
 fn create_terminal(live: &Live, name: &str, argv: &[&str]) -> Value {
+    let path = live.workspace_root.join(live::WORKSPACE);
+    let path = path.to_str().unwrap();
     let mut args = vec![
         "terminal",
         "create",
         "--project",
         live::PROJECT,
-        "--workspace",
-        live::WORKSPACE,
+        "--path",
+        path,
         "--name",
         name,
         "--",

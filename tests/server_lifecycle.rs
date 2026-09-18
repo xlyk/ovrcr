@@ -34,9 +34,15 @@ static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// holding the lock poisons it; later tests still run rather than failing
 /// on the poison, so a CI log shows the one real failure.
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    ENV_LOCK
+    let guard = ENV_LOCK
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // In-process fixtures share this lock for environment mutation. Give
+    // their initial root shell the same explicit default as binary fixtures.
+    if std::env::var_os("SHELL").is_none() {
+        unsafe { std::env::set_var("SHELL", "/bin/sh") };
+    }
+    guard
 }
 
 fn context_report(
@@ -2058,13 +2064,14 @@ fn workspace_shell_failure_retains_worktree_and_registry() {
         repo: fixture.repo.clone(),
         workspace_root: fixture.workspace_root.clone(),
     });
+    fixture.clear_root_shell();
     let old_shell = std::env::var_os("SHELL");
     unsafe {
         std::env::set_var("SHELL", "/ovrcr/no-such-shell");
     }
     let response = fixture.request(Request::CreateWorkspace {
         project: "fixture".into(),
-        name: "failed".into(),
+        id: "failed".into(),
         branch: BranchRequest::New {
             branch: "feature/failed".into(),
             base: "main".into(),
@@ -2079,7 +2086,7 @@ fn workspace_shell_failure_retains_worktree_and_registry() {
     );
     let listed = fixture.request(Request::List);
     assert!(
-        matches!(listed, Response::Hierarchy(ref snapshot) if snapshot.projects[0].workspaces.iter().any(|workspace| workspace.name == "failed" && workspace.sessions.is_empty()))
+        matches!(&listed, Response::Hierarchy(snapshot) if snapshot.projects[0].workspaces.iter().any(|workspace| workspace.name == "feature/failed" && workspace.sessions.is_empty()))
     );
     assert_eq!(
         fixture.request(Request::RemoveWorkspace {
@@ -2800,10 +2807,11 @@ fn history_workspace(fixture: &ControlFixture, branch: &str) {
         }),
         Response::Ok
     );
+    fixture.clear_root_shell();
     assert_eq!(
         fixture.request(Request::CreateWorkspace {
             project: "fixture".into(),
-            name: "work".into(),
+            id: "work".into(),
             branch: BranchRequest::New {
                 branch: branch.into(),
                 base: "main".into(),
@@ -6487,6 +6495,7 @@ fn cli_resolves_relative_project_paths_against_invocation_cwd_with_existing_serv
         .unwrap();
     assert_eq!(project.repo, fixture.repo);
     assert_eq!(project.workspace_root, fixture.workspace_root);
+    fixture.clear_root_shell();
     assert_eq!(
         fixture.request(Request::Shutdown { kill: false }),
         Response::Ok
@@ -6542,8 +6551,6 @@ fn cli_exit_preserves_session_and_shutdown_kill_cleans_up() {
             "create",
             "--project",
             "demo",
-            "--name",
-            "one",
             "--new-branch",
             "feature/one",
             "--base",
@@ -6559,7 +6566,7 @@ fn cli_exit_preserves_session_and_shutdown_kill_cleans_up() {
             "--project",
             "demo",
             "--workspace",
-            "one",
+            "feature/one",
             "--name",
             "agent",
             "--",
@@ -8215,6 +8222,7 @@ fn agent_admission_short_resume_on_2_1_268_preserves_argv_and_lifecycle() {
 
 fn assert_agent_admission_resume(resume_flag: &str, version: &str) {
     use std::os::unix::fs::PermissionsExt;
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     fixture.create_hook_child("setup", "resume-admission-setup");
     let native = fixture.root.path().join("claude");

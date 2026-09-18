@@ -833,6 +833,9 @@ mod unread_review_tests {
                 workspaces: vec![WorkspaceSummary {
                     project: "project".into(),
                     name: "work".into(),
+                    id: "work".into(),
+                    root: false,
+                    warning: None,
                     path: "/fixture".into(),
                     sessions: vec![summary.clone()],
                 }],

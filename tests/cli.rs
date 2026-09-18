@@ -18,7 +18,8 @@ fn isolated_command(root: &tempfile::TempDir) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ovrcr"));
     command
         .env("OVRCR_CONFIG", root.path().join("config.toml"))
-        .env("OVRCR_SOCKET", root.path().join("server.sock"));
+        .env("OVRCR_SOCKET", root.path().join("server.sock"))
+        .env("SHELL", "/bin/sh");
     command
 }
 
@@ -105,14 +106,6 @@ fn mutations_do_not_start_a_server() {
         &["terminal", "remove", "99"],
         &["terminal", "unarchive", "99"],
         &["project", "remove", "missing"],
-        &[
-            "workspace",
-            "remove",
-            "--project",
-            "missing",
-            "--name",
-            "gone",
-        ],
     ];
     for args in cases {
         let mut command = isolated_command(&root);
@@ -129,6 +122,24 @@ fn mutations_do_not_start_a_server() {
             "{args:?} must not start a server"
         );
     }
+    let workspace_remove = isolated_command(&root)
+        .args([
+            "workspace",
+            "remove",
+            "--project",
+            "missing",
+            "--branch",
+            "gone",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(workspace_remove.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&workspace_remove.stderr);
+    assert!(
+        stderr.contains("NotFound") || stderr.contains("project not found"),
+        "{stderr}"
+    );
+    assert!(!root.path().join("server.sock").exists());
 }
 
 #[test]
@@ -275,8 +286,6 @@ fn assert_activity_reaches_managed_session(
         "create",
         "--project",
         "fixture",
-        "--name",
-        "hooks",
         "--new-branch",
         "feature/hooks",
         "--base",
@@ -292,7 +301,7 @@ fn assert_activity_reaches_managed_session(
         "--project",
         "fixture",
         "--workspace",
-        "hooks",
+        "feature/hooks",
         "--name",
         "agent-hook",
         "--",
@@ -530,8 +539,6 @@ fn context_helper_reports_from_managed_pty() {
         "create",
         "--project",
         "fixture",
-        "--name",
-        "hooks",
         "--new-branch",
         "feature/hooks",
         "--base",
@@ -564,7 +571,7 @@ done
         "--project",
         "fixture",
         "--workspace",
-        "hooks",
+        "feature/hooks",
         "--name",
         "context-helper",
         "--",
@@ -734,8 +741,6 @@ fn context_helper_invalid_input_has_no_effect() {
         "create",
         "--project",
         "fixture",
-        "--name",
-        "hooks",
         "--new-branch",
         "feature/hooks",
         "--base",
@@ -759,7 +764,7 @@ done
         "--project",
         "fixture",
         "--workspace",
-        "hooks",
+        "feature/hooks",
         "--name",
         "context-invalid",
         "--",
@@ -893,8 +898,6 @@ fn context_inspect_reports_unknown_and_sample() {
             "create",
             "--project",
             "fixture",
-            "--name",
-            "hooks",
             "--new-branch",
             "feature/hooks",
             "--base",
@@ -923,7 +926,7 @@ while IFS= read -r line; do :; done
         "--project",
         "fixture",
         "--workspace",
-        "hooks",
+        "feature/hooks",
         "--name",
         "context-inspector",
         "--",
@@ -994,14 +997,31 @@ while IFS= read -r line; do :; done
         unknown
     );
 
-    let list = run(&["list"]);
-    assert!(list.status.success());
-    assert_eq!(
-        String::from_utf8(list.stdout).unwrap(),
-        format!(
-            "project fixture\n  workspace hooks\n    session {} local running\n    session {id} context-inspector running\n",
-            numeric_id - 1
-        )
+    let listed = run(&[
+        "--json",
+        "terminal",
+        "list",
+        "--project",
+        "fixture",
+        "--workspace",
+        "feature/hooks",
+    ]);
+    assert!(listed.status.success());
+    let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let rows = listed.as_array().expect("terminal list json array");
+    assert!(
+        rows.iter().any(|row| {
+            row["id"] == numeric_id
+                && row["name"] == "context-inspector"
+                && row["phase"] == "running"
+        }),
+        "feature workspace missing inspector session: {listed}"
+    );
+    assert!(
+        rows.iter().any(|row| {
+            row["name"] == "local" && row["phase"] == "running" && row["id"] != numeric_id
+        }),
+        "feature workspace missing local shell: {listed}"
     );
 
     std::fs::write(&first_gate, b"go").unwrap();
@@ -1430,7 +1450,7 @@ branch = "feature/one"
             "get",
             "--project",
             "alpha",
-            "--name",
+            "--branch",
             "missing",
             "--json",
         ],
@@ -1520,8 +1540,6 @@ fn new_and_existing_branch_flags_are_exclusive() {
             "create",
             "--project",
             "fixture",
-            "--name",
-            "work",
             "--new-branch",
             "feature/new",
             "--base",
@@ -1562,6 +1580,7 @@ fn session_command_keeps_arguments_after_separator() {
         for &(key, value) in &envs {
             command.env(key, value);
         }
+        command.env("SHELL", "/bin/sh");
         let output = command.output().unwrap();
         assert!(
             output.status.success(),
@@ -1584,8 +1603,6 @@ fn session_command_keeps_arguments_after_separator() {
         "create",
         "--project",
         "fixture",
-        "--name",
-        "work",
         "--new-branch",
         "feature/test",
         "--base",
@@ -1597,7 +1614,7 @@ fn session_command_keeps_arguments_after_separator() {
         "--project",
         "fixture",
         "--workspace",
-        "work",
+        "feature/test",
         "--name",
         "args",
         "--",
@@ -2155,7 +2172,7 @@ fn automatic_titles_pin_reset_and_reopen_through_cli() {
         "--project",
         "fixture",
         "--workspace",
-        "work",
+        "feature/cli-titles",
         "--json",
         "--",
         "/bin/sh",
@@ -2182,7 +2199,6 @@ fn automatic_titles_pin_reset_and_reopen_through_cli() {
         }
     };
     let exited = wait_exited(id);
-    assert_eq!(exited["name"], "work");
     assert_eq!(exited["display_name"], "Build complete");
     let id_text = id.to_string();
     assert!(

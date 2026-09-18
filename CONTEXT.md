@@ -48,6 +48,14 @@ _Avoid_: custom command as a separate session type
 A project's most recently successfully launched Agent and preset, or Terminal choice. It excludes one-off command text and is unchanged by creating an empty workspace.
 _Avoid_: running agent, silently substituted fallback
 
+**Workspace**:
+A project's registered Git checkout. Its user-facing name is the current branch of that checkout; changing the branch does not replace the workspace.
+_Avoid_: workspace title, an arbitrary name besides the current branch, treating a branch change as a different workspace
+
+**Root workspace**:
+The workspace that is the repository checkout itself, required to stay on the repository's default branch. It cannot be removed, and OVRCR never changes Git to restore that branch.
+_Avoid_: main, root as a stored name, a removable default worktree
+
 **Dashboard**:
 The one active TUI for live sessions: the hierarchy, the panes, and browse / terminal / history / copy.
 _Avoid_: TUI (the crate), GUI helper, task UI as a separate product

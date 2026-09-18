@@ -173,6 +173,7 @@ fn run_server_inner(
         sessions: Mutex::new(HashMap::new()),
         dashboard: ActiveDashboard::default(),
         retained: parking_lot::Mutex::new(retained),
+        observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
@@ -196,6 +197,35 @@ fn run_server_inner(
     let dispatcher = thread::Builder::new()
         .name("ovrcr-dispatcher".into())
         .spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver))?;
+    state.ensure_protected_roots();
+    let refresh_state = Arc::clone(&state);
+    let refresh = thread::Builder::new()
+        .name("ovrcr-workspace-refresh".into())
+        .spawn(move || {
+            while !refresh_state.shutdown.load(Ordering::Acquire) {
+                thread::park_timeout(Duration::from_millis(200));
+                if refresh_state.shutdown.load(Ordering::Acquire) {
+                    break;
+                }
+                if refresh_state.dashboard.is_claimed() {
+                    refresh_state.observe_checkouts();
+                    match refresh_state
+                        .dispatch
+                        .try_send(DispatchMessage::RefreshHierarchy)
+                    {
+                        Ok(()) => {}
+                        Err(std::sync::mpsc::TrySendError::Full(_)) => {}
+                        Err(std::sync::mpsc::TrySendError::Disconnected(_)) => break,
+                    }
+                }
+                for _ in 0..9 {
+                    if refresh_state.shutdown.load(Ordering::Acquire) {
+                        return;
+                    }
+                    thread::park_timeout(Duration::from_millis(200));
+                }
+            }
+        })?;
     let mut signals = signal_hook::iterator::Signals::new([libc::SIGTERM, libc::SIGINT])?;
     let signal_handle = signals.handle();
     let signal_state = Arc::downgrade(&state);
@@ -245,6 +275,8 @@ fn run_server_inner(
             Err(error) => return Err(error).context("accept server client"),
         }
     }
+    // Wake the observer before joining it; shutdown must not wait for its next poll.
+    refresh.thread().unpark();
     signal_handle.close();
     let _ = signal_thread.join();
     let task_shutdown = task_manager.stop();
@@ -255,6 +287,7 @@ fn run_server_inner(
     dispatcher
         .join()
         .map_err(|_| anyhow::anyhow!("server dispatcher panicked"))?;
+    let _ = refresh.join();
     state.events.lock().unwrap().take();
     drop(state);
     drop(dispatch);

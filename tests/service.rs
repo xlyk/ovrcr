@@ -371,6 +371,9 @@ fn service_install_refuses_when_sessions_exist() {
                         name: "demo".into(),
                         workspaces: vec![WorkspaceSummary {
                             project: "demo".into(),
+                            id: "main".into(),
+                            root: false,
+                            warning: None,
                             name: "main".into(),
                             path: "/tmp/demo-main".into(),
                             sessions: vec![SessionSummary {

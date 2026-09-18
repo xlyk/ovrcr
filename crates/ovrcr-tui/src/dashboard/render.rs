@@ -1,5 +1,7 @@
 use super::copy::{CopyPoint, CopySelection};
-use super::state::{find_session, find_workspace, history_page_covers};
+use super::state::{
+    find_session, find_workspace, history_page_covers, workspace_disambiguator, workspace_heading,
+};
 use super::status::SessionStatus;
 use super::{Dashboard, HistoryView, InputMode, PaneRects, PaneState, TreeRow, history_view_size};
 use crate::session::{SessionPhase, TerminalSize};
@@ -758,11 +760,18 @@ impl Dashboard {
                 .unwrap_or_else(|| ("not supplied".into(), "not supplied".into()));
             lines.push(Line::from(format!("Config: {config}")));
             lines.push(Line::from(format!("Socket: {socket}")));
-        } else if let Some(super::TreeRow::Workspace { project, name }) = &self.selected_container {
-            let empty = find_workspace(self, project, name).is_some_and(|w| w.sessions.is_empty());
-            if empty && let Some(hint) = hints.iter().find(|h| h.key == "n") {
+        } else if let Some(super::TreeRow::Workspace { project, id }) = &self.selected_container
+            && let Some(workspace) = find_workspace(self, project, id)
+        {
+            if let Some(warning) = &workspace.warning {
+                lines.push(Line::from(workspace_heading(self, workspace)));
+                lines.push(Line::from(warning.clone()));
+            } else if workspace.sessions.is_empty()
+                && let Some(hint) = hints.iter().find(|h| h.key == "n")
+            {
                 lines.push(Line::from(format!(
-                    "{project} / {name}: press {} to start a terminal here",
+                    "{}: press {} to start a terminal here",
+                    workspace_heading(self, workspace),
                     hint.key
                 )));
                 lines.push(Line::from(hint.description.clone()));
@@ -1022,28 +1031,41 @@ fn tree_line_text(
                 right,
             )
         }
-        TreeRow::Workspace { project, name } => {
+        TreeRow::Workspace { project, id } => {
+            let workspace = find_workspace(dashboard, project, id);
             let collapsed = dashboard.collapsed_workspaces.iter().any(
                 |(collapsed_project, collapsed_workspace)| {
-                    collapsed_project == project && collapsed_workspace == name
+                    collapsed_project == project && collapsed_workspace == id
                 },
             );
-            let right = if collapsed {
-                let count = find_workspace(dashboard, project, name)
-                    .map_or(0, |workspace| workspace.sessions.len());
-                vec![Span::styled(format!("▸ {count} "), muted)]
-            } else {
-                Vec::new()
+            let mut right = Vec::new();
+            if let Some(workspace) = workspace {
+                if workspace.warning.is_some() {
+                    right.push(Span::styled("! ", Style::default().fg(PEACH)));
+                }
+                if workspace.root {
+                    right.push(Span::styled("root ", muted));
+                }
+            }
+            if collapsed {
+                let count = workspace.map_or(0, |workspace| workspace.sessions.len());
+                right.push(Span::styled(format!("▸ {count} "), muted));
+            }
+            let available = width.saturating_sub(WORKSPACE_INDENT.len() + 1);
+            let label = match workspace {
+                Some(workspace) => fit_workspace_sidebar_label(
+                    &workspace.name,
+                    workspace_disambiguator(dashboard, workspace).as_deref(),
+                    available,
+                ),
+                None => clip_text(&format!(" {id}"), available),
             };
             (
                 vec![
                     Span::raw(WORKSPACE_INDENT),
                     Span::styled("󰘬", muted),
                     Span::styled(
-                        clip_text(
-                            &format!(" {name}"),
-                            width.saturating_sub(WORKSPACE_INDENT.len() + 1),
-                        ),
+                        label,
                         Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
                     ),
                 ],
@@ -1292,6 +1314,26 @@ pub(super) fn clip_text(text: &str, width: usize) -> String {
     }
     clipped.push('…');
     clipped
+}
+
+fn fit_workspace_sidebar_label(name: &str, disambiguator: Option<&str>, width: usize) -> String {
+    let text = match disambiguator {
+        Some(suffix) => format!(" {name} ({suffix})"),
+        None => format!(" {name}"),
+    };
+    if Line::raw(&text).width() <= width {
+        return text;
+    }
+    let Some(suffix) = disambiguator else {
+        return clip_text(&text, width);
+    };
+    let tail = format!(" ({suffix})");
+    let tail_width = Line::raw(&tail).width();
+    if tail_width + 1 >= width {
+        return clip_text(&text, width);
+    }
+    let name_width = width.saturating_sub(tail_width + 1);
+    format!(" {}{tail}", clip_text(name, name_width))
 }
 
 pub fn actual_drawn_inner_rect(area: Rect) -> Rect {

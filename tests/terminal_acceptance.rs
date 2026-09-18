@@ -73,8 +73,6 @@ impl AcceptanceFixture {
             "create",
             "--project",
             "fixture",
-            "--name",
-            "work",
             "--new-branch",
             "feature/acceptance",
             "--base",
@@ -86,7 +84,7 @@ impl AcceptanceFixture {
             "--project",
             "fixture",
             "--workspace",
-            "work",
+            "feature/acceptance",
             "--name",
             "waiting",
             "--",
@@ -101,7 +99,7 @@ impl AcceptanceFixture {
             "--project",
             "fixture",
             "--workspace",
-            "work",
+            "feature/acceptance",
             "--name",
             "mouse",
             "--",
@@ -121,7 +119,7 @@ impl AcceptanceFixture {
             "--project",
             "fixture",
             "--workspace",
-            "work",
+            "feature/acceptance",
             "--name",
             "mouse-protocol",
             "--",
@@ -648,7 +646,7 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
             project
                 .workspaces
                 .iter()
-                .find(|workspace| workspace.name == "wizard")
+                .find(|workspace| workspace.name == "task/wizard")
         })
         .context("new workspace missing")?;
     assert_eq!(
@@ -917,7 +915,7 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
         "--project",
         "fixture",
         "--workspace",
-        "work",
+        "feature/acceptance",
         "--name",
         "history",
         "--",
@@ -1100,7 +1098,7 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
         "--project",
         "fixture",
         "--workspace",
-        "work",
+        "feature/acceptance",
         "--name",
         "history-copy",
         "--",

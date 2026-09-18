@@ -171,18 +171,14 @@ pub(super) enum WorkspaceCommand {
         project: Option<String>,
     },
     Get {
-        #[arg(long)]
-        project: String,
-        #[arg(long)]
-        name: String,
+        #[command(flatten)]
+        target: WorkspaceSelect,
     },
-    /// Confirm removal of a clean worktree and archive stopped sessions. Live or uncertain processes block removal.
+    /// Remove a worktree and archive stopped sessions. --force discards changes and acknowledges uncertain stopped rows; live sessions still block.
     #[command(visible_alias = "delete")]
     Remove {
-        #[arg(long)]
-        project: String,
-        #[arg(long)]
-        name: String,
+        #[command(flatten)]
+        target: WorkspaceSelect,
         /// Acknowledge uncertain stopped sessions and discard uncommitted changes. Live sessions still block.
         #[arg(long)]
         force: bool,
@@ -224,8 +220,12 @@ pub(super) enum TerminalCommand {
         archived: bool,
         #[arg(long)]
         project: Option<String>,
-        #[arg(long, requires = "project")]
+        /// Current Git branch of the workspace. Full names such as feature/auth are valid.
+        #[arg(long, requires = "project", conflicts_with = "path")]
         workspace: Option<String>,
+        /// Worktree path when the branch is ambiguous or detached.
+        #[arg(long, requires = "project", conflicts_with = "workspace")]
+        path: Option<PathBuf>,
     },
     Read {
         id: u64,
@@ -260,22 +260,40 @@ pub(super) enum TerminalCommand {
 pub(super) struct WorkspaceCreateArgs {
     #[arg(long)]
     pub(super) project: String,
-    #[arg(long)]
-    pub(super) name: String,
+    /// Create a new local branch in a worktree. Full Git names such as feature/auth are valid.
     #[arg(long, conflicts_with = "branch", requires = "base")]
     pub(super) new_branch: Option<String>,
     #[arg(long, requires = "new_branch")]
     pub(super) base: Option<String>,
+    /// Use an existing local branch. Full Git names such as feature/auth are valid.
     #[arg(long, conflicts_with_all = ["new_branch", "base"])]
     pub(super) branch: Option<String>,
 }
 
 #[derive(Args)]
+#[command(group(ArgGroup::new("workspace_target").required(true).args(["branch", "path"])))]
+pub(super) struct WorkspaceSelect {
+    #[arg(long)]
+    pub(super) project: String,
+    /// Current checkout branch (full Git name; slashes are valid).
+    #[arg(long)]
+    pub(super) branch: Option<String>,
+    /// Worktree path when the branch is ambiguous or detached.
+    #[arg(long)]
+    pub(super) path: Option<PathBuf>,
+}
+
+#[derive(Args)]
+#[command(group(ArgGroup::new("workspace_target").required(true).args(["workspace", "path"])))]
 pub(super) struct NewArgs {
     #[arg(long)]
     pub(super) project: String,
+    /// Current Git branch of the workspace. Full names such as feature/auth are valid.
     #[arg(long)]
-    pub(super) workspace: String,
+    pub(super) workspace: Option<String>,
+    /// Worktree path when the branch is ambiguous or detached.
+    #[arg(long)]
+    pub(super) path: Option<PathBuf>,
     /// Pin a name; omit to follow application titles automatically.
     #[arg(long, default_value = "")]
     pub(super) name: String,
@@ -395,6 +413,65 @@ mod launch_cli_tests {
                 "/bin/sh",
             ])
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn workspace_create_rejects_name_and_accepts_slash_branches() {
+        assert!(
+            Cli::try_parse_from([
+                "ovrcr",
+                "workspace",
+                "create",
+                "--project",
+                "p",
+                "--name",
+                "work",
+                "--branch",
+                "feature/auth",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "ovrcr",
+                "workspace",
+                "create",
+                "--project",
+                "p",
+                "--new-branch",
+                "feature/auth",
+                "--base",
+                "main",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "ovrcr",
+                "new",
+                "--project",
+                "p",
+                "--workspace",
+                "feature/auth",
+                "--",
+                "/bin/sh",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "ovrcr",
+                "workspace",
+                "get",
+                "--project",
+                "p",
+                "--branch",
+                "feature/auth",
+                "--path",
+                "/tmp/work",
+            ])
+            .is_err()
         );
     }
 

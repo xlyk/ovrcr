@@ -18,9 +18,28 @@ pub struct ProjectRecord {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceRecord {
-    pub name: String,
+    /// Stable internal identity. Legacy names are imported only as identities.
+    #[serde(alias = "name")]
+    pub id: String,
     pub path: PathBuf,
     pub branch: String,
+    #[serde(default)]
+    pub git_identity: Option<String>,
+    #[serde(default)]
+    pub setup_pending: bool,
+}
+
+/// Allocate a workspace identity independently of its branch and location.
+pub fn new_workspace_id() -> Result<String> {
+    use std::fmt::Write;
+    use std::io::Read;
+    let mut bytes = [0u8; 16];
+    std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    let mut id = String::with_capacity(32);
+    for byte in bytes {
+        write!(&mut id, "{byte:02x}")?;
+    }
+    Ok(id)
 }
 
 impl Registry {
@@ -42,7 +61,7 @@ impl Registry {
         self.project(project)?
             .workspaces
             .iter()
-            .find(|record| record.name == workspace)
+            .find(|record| record.id == workspace)
             .with_context(|| format!("workspace not found: {project}/{workspace}"))
     }
 
@@ -78,9 +97,9 @@ impl Registry {
         if project_record
             .workspaces
             .iter()
-            .any(|record| record.name == workspace.name)
+            .any(|record| record.id == workspace.id)
         {
-            bail!("duplicate workspace: {project}/{}", workspace.name);
+            bail!("duplicate workspace: {project}/{}", workspace.id);
         }
         project_record.workspaces.push(workspace);
         Ok(())
@@ -91,7 +110,7 @@ impl Registry {
         let index = project_record
             .workspaces
             .iter()
-            .position(|record| record.name == workspace)
+            .position(|record| record.id == workspace)
             .with_context(|| format!("workspace not found: {project}/{workspace}"))?;
         Ok(project_record.workspaces.remove(index))
     }
@@ -116,21 +135,19 @@ fn validate_project(project: &ProjectRecord) -> Result<()> {
         validate_workspace(workspace)?;
         if project.workspaces[..index]
             .iter()
-            .any(|previous| previous.name == workspace.name)
+            .any(|previous| previous.id == workspace.id)
         {
-            bail!("duplicate workspace: {}/{}", project.name, workspace.name);
+            bail!("duplicate workspace: {}/{}", project.name, workspace.id);
         }
     }
     Ok(())
 }
 
 fn validate_workspace(workspace: &WorkspaceRecord) -> Result<()> {
-    validate_name(&workspace.name, "workspace")
+    validate_name(&workspace.id, "workspace")
 }
 
-/// Validate a project or workspace name: non-empty, ASCII alphanumerics plus
-/// `.`, `_`, and `-`, and never containing `..`, so it is safe as a single
-/// path component under the workspace root.
+/// Validate a project name or internal workspace identity.
 pub fn validate_name(name: &str, kind: &str) -> Result<()> {
     if name.is_empty()
         || name.contains("..")
@@ -193,9 +210,11 @@ mod tests {
             .add_workspace(
                 "consigint",
                 WorkspaceRecord {
-                    name: "cleanup".into(),
+                    id: "cleanup".into(),
                     path: PathBuf::from("/worktrees/consigint/cleanup"),
                     branch: "feature/cleanup".into(),
+                    git_identity: None,
+                    setup_pending: false,
                 },
             )
             .unwrap();

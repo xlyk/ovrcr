@@ -1,4 +1,6 @@
-use crate::config::{ProjectRecord, Registry, initialize_registry, save_registry_atomic};
+use crate::config::{
+    ProjectRecord, Registry, WorkspaceRecord, initialize_registry, save_registry_atomic,
+};
 use crate::git::{self, BranchSpec};
 use crate::retained::{RetainedSession, SessionMetadata, SessionStore};
 use crate::session::{
@@ -167,6 +169,15 @@ struct SessionControlTarget {
     already_exited: bool,
 }
 
+#[derive(Clone, Debug)]
+struct CheckoutObservation {
+    path: PathBuf,
+    git_identity: Option<String>,
+    name: String,
+    root: bool,
+    warning: Option<String>,
+}
+
 pub struct ServerState {
     pub tasks: Option<Arc<TaskManager>>,
     socket: PathBuf,
@@ -175,6 +186,7 @@ pub struct ServerState {
     pub sessions: Mutex<HashMap<SessionId, Arc<Session>>>,
     pub(super) dashboard: ActiveDashboard,
     pub(crate) retained: parking_lot::Mutex<SessionStore>,
+    observations: parking_lot::Mutex<HashMap<(String, String), CheckoutObservation>>,
     pub mutation_lock: Mutex<()>,
     pub dispatch: ReportingSender<DispatchMessage>,
     pub shutdown: AtomicBool,
@@ -195,6 +207,7 @@ pub struct ServerState {
 
 impl ServerState {
     pub fn hierarchy(&self) -> HierarchySnapshot {
+        self.observe_checkouts();
         snapshot_from_state(self)
     }
 
@@ -284,8 +297,8 @@ impl ServerState {
     }
 
     pub fn inventory(&self) -> (Registry, Vec<SessionSummary>) {
-        let _mutation = self.mutation_lock.lock().unwrap();
-        let registry = self.registry.lock().unwrap().clone();
+        let mut registry = self.registry.lock().unwrap().clone();
+        git::observe_registry(&mut registry);
         let sessions = self.session_summaries();
         (registry, sessions)
     }
@@ -531,6 +544,22 @@ impl ServerState {
                 "session command cannot be empty",
             ));
         }
+        let workspace_record = self
+            .registry
+            .lock()
+            .unwrap()
+            .workspace(&request.project, &request.workspace)
+            .map_err(|error| lifecycle_error(ErrorCode::NotFound, error.to_string()))?
+            .clone();
+        let cwd = workspace_record.path.clone();
+        if !cwd.is_dir() {
+            return Err(lifecycle_error(
+                ErrorCode::NotFound,
+                "working directory is unavailable",
+            ));
+        }
+        let display =
+            git::checkout_name(&cwd).unwrap_or_else(|_| git::UNAVAILABLE_CHECKOUT.to_owned());
         let automatic = request.name.is_empty();
         {
             let retained = self.retained.lock();
@@ -543,10 +572,10 @@ impl ServerState {
                 .map(|record| record.metadata.name.as_str())
                 .collect();
             if automatic {
-                request.name = request.workspace.clone();
+                request.name = display.clone();
                 let mut suffix = 2u64;
                 while used.contains(request.name.as_str()) {
-                    request.name = format!("{}-{suffix}", request.workspace);
+                    request.name = format!("{display}-{suffix}");
                     suffix += 1;
                 }
             } else if used.contains(request.name.as_str()) {
@@ -565,20 +594,6 @@ impl ServerState {
                 })?,
             )
         };
-        let cwd = self
-            .registry
-            .lock()
-            .unwrap()
-            .workspace(&request.project, &request.workspace)
-            .map_err(|error| lifecycle_error(ErrorCode::NotFound, error.to_string()))?
-            .path
-            .clone();
-        if !cwd.is_dir() {
-            return Err(lifecycle_error(
-                ErrorCode::NotFound,
-                "working directory is unavailable",
-            ));
-        }
         self.check_live_capacity()?;
         let label = request.label.unwrap_or_else(|| {
             request
@@ -644,6 +659,14 @@ impl ServerState {
         ready: Option<Arc<dyn Fn() + Send + Sync>>,
     ) -> Result<SessionSummary> {
         self.check_live_capacity()?;
+        let cwd = self
+            .retained
+            .lock()
+            .get(id)
+            .map(|record| record.metadata.cwd.clone());
+        if let Some(cwd) = cwd {
+            self.refuse_root_launch(&cwd)?;
+        }
         let socket = validate_bound_socket(&self.socket)?;
         let capability = generate_hook_capability()?;
         let events = self
@@ -1055,6 +1078,7 @@ impl ServerState {
             sessions: Mutex::new(HashMap::new()),
             dashboard: ActiveDashboard::default(),
             retained: parking_lot::Mutex::new(retained),
+            observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
             dispatch,
             shutdown: AtomicBool::new(false),
@@ -1218,28 +1242,59 @@ impl ServerState {
         // The repository is validated before the workspace root is created, so a repository that
         // is missing or not its own worktree root leaves no empty directory behind.
         let repo = git::validate_repo(&repo)?;
+        let existing = {
+            let registry = self.registry.lock().unwrap();
+            registry
+                .projects
+                .iter()
+                .find(|project| project.name == name)
+                .cloned()
+        };
+        if let Some(existing) = existing {
+            if existing.repo != repo {
+                return Err(lifecycle_error(
+                    ErrorCode::AlreadyExists,
+                    format!("duplicate project: {name}"),
+                ));
+            }
+            let has_root = existing
+                .workspaces
+                .iter()
+                .any(|workspace| is_root_workspace(&existing, workspace));
+            if !has_root {
+                return self.ensure_one_root_locked(&name);
+            }
+            let pending = existing.workspaces.iter().any(|workspace| {
+                is_root_workspace(&existing, workspace) && workspace.setup_pending
+            });
+            if !pending {
+                return Err(lifecycle_error(
+                    ErrorCode::AlreadyExists,
+                    format!("duplicate project: {name}"),
+                ));
+            }
+            return self.complete_root_setup_locked(&name);
+        }
+        self.require_root_default(&repo)?;
         if !workspace_root.exists() {
             fs::create_dir_all(&workspace_root)
                 .with_context(|| format!("create workspace root {}", workspace_root.display()))?;
         }
         let workspace_root = git::validate_workspace_root(&workspace_root)?;
+        let root = self.root_record_for(&repo)?;
         let mut registry = self.registry.lock().unwrap();
         let mut next = registry.clone();
-        if next.projects.iter().any(|project| project.name == name) {
-            return Err(lifecycle_error(
-                ErrorCode::AlreadyExists,
-                format!("duplicate project: {name}"),
-            ));
-        }
         next.add_project(ProjectRecord {
-            name,
+            name: name.clone(),
             repo,
             workspace_root,
             workspaces: Vec::new(),
         })?;
+        next.add_workspace(&name, root)?;
         save_registry_atomic(&next, &self.registry_path)?;
         *registry = next;
-        Ok(())
+        drop(registry);
+        self.complete_root_setup_locked(&name)
     }
 
     pub(crate) fn task_mutation_guard(&self) -> std::sync::MutexGuard<'_, ()> {
@@ -1258,24 +1313,80 @@ impl ServerState {
                 "project is referenced by a scheduled task",
             ));
         }
-        let mut registry = self.registry.lock().unwrap();
-        let mut next = registry.clone();
-        let project = next
+        let project = self
+            .registry
+            .lock()
+            .unwrap()
             .projects
             .iter()
             .find(|project| project.name == name)
+            .cloned()
             .ok_or_else(|| {
                 lifecycle_error(ErrorCode::NotFound, format!("project not found: {name}"))
             })?;
-        if !project.workspaces.is_empty() {
+        if project
+            .workspaces
+            .iter()
+            .any(|workspace| !is_root_workspace(&project, workspace))
+        {
             return Err(lifecycle_error(
                 ErrorCode::WorkspacesRemain,
                 format!("cannot remove project {name}: workspaces remain"),
             ));
         }
+        let occupied = self.session_summaries().iter().any(|session| {
+            session.project == name
+                && (session.phase.is_live()
+                    || session
+                        .recovery
+                        .as_ref()
+                        .is_some_and(|recovery| recovery.requires_ack))
+        });
+        if occupied {
+            return Err(lifecycle_error(
+                ErrorCode::SessionsRemain,
+                format!(
+                    "live or ownership-uncertain sessions remain for project {name}; stop live sessions or acknowledge stopped processes before removal"
+                ),
+            ));
+        }
+        for workspace in &project.workspaces {
+            if let Some(tasks) = &self.tasks
+                && tasks.occupies_workspace(name, &workspace.id)?
+            {
+                return Err(lifecycle_error(
+                    ErrorCode::SessionsRemain,
+                    format!("task run remains for workspace {name}/{}", workspace.id),
+                ));
+            }
+        }
+        let mut registry = self.registry.lock().unwrap();
+        let mut next = registry.clone();
+        let root_ids: Vec<String> = project
+            .workspaces
+            .iter()
+            .map(|workspace| workspace.id.clone())
+            .collect();
+        for id in &root_ids {
+            next.remove_workspace(name, id)?;
+        }
         next.remove_project(name)?;
-        save_registry_atomic(&next, &self.registry_path)?;
+        let archived_all = if let Some(root_id) = root_ids.first() {
+            self.retained
+                .lock()
+                .archive_workspace(&next, name, root_id, || Ok(()))?
+        } else {
+            save_registry_atomic(&next, &self.registry_path)?;
+            Vec::new()
+        };
         *registry = next;
+        drop(registry);
+        for id in archived_all {
+            if let Some(session) = self.sessions.lock().unwrap().remove(&id) {
+                session.revoke_hook_capability();
+            }
+            self.dashboard.forget_session(id);
+        }
         Ok(())
     }
 
@@ -1339,7 +1450,7 @@ impl ServerState {
         if project_record
             .workspaces
             .iter()
-            .any(|workspace| workspace.name == name)
+            .any(|workspace| workspace.id == name)
         {
             return Err(lifecycle_error(
                 ErrorCode::AlreadyExists,
@@ -1480,6 +1591,34 @@ impl ServerState {
         cleanup: Option<(&crate::tasks::Run, &Path)>,
         force: bool,
     ) -> Result<()> {
+        let (project_record, workspace, repository_roots) = {
+            let registry = self.registry.lock().unwrap();
+            (
+                registry
+                    .project(project)
+                    .map_err(|error| lifecycle_error(ErrorCode::NotFound, error.to_string()))?
+                    .clone(),
+                registry
+                    .workspace(project, name)
+                    .map_err(|error| lifecycle_error(ErrorCode::NotFound, error.to_string()))?
+                    .clone(),
+                registry
+                    .projects
+                    .iter()
+                    .map(|project| project.repo.clone())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        // Another project may register this checkout as its protected root.
+        if repository_roots
+            .iter()
+            .any(|root| same_path(root, &workspace.path))
+        {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "cannot remove the repository-root workspace",
+            ));
+        }
         if let Some(tasks) = &self.tasks
             && tasks.occupies_workspace(project, name)?
         {
@@ -1510,19 +1649,6 @@ impl ServerState {
                 ),
             ));
         }
-        let (project_record, workspace) = {
-            let registry = self.registry.lock().unwrap();
-            (
-                registry
-                    .project(project)
-                    .map_err(|error| lifecycle_error(ErrorCode::NotFound, error.to_string()))?
-                    .clone(),
-                registry
-                    .workspace(project, name)
-                    .map_err(|error| lifecycle_error(ErrorCode::NotFound, error.to_string()))?
-                    .clone(),
-            )
-        };
         // Git also deletes ignored files. A clean worktree is not permission to
         // delete a provider's recorded history, even for an archived session.
         let contains_history = self.retained.lock().records().any(|record| {
@@ -1567,9 +1693,8 @@ impl ServerState {
             ));
         }
         if let Some((run, _)) = cleanup
-            && (name != format!("task-{}-run-{}", run.task_id.0, run.id.0)
-                || run.directory.as_ref() != Some(&workspace.path)
-                || workspace.branch != format!("ovrcr/task-{}/run-{}", run.task_id.0, run.id.0))
+            && (run.workspace.as_deref() != Some(workspace.id.as_str())
+                || run.directory.as_ref() != Some(&workspace.path))
         {
             bail!("registered worktree does not match this run's ownership");
         }
@@ -1629,6 +1754,309 @@ impl ServerState {
         }
         Ok(())
     }
+
+    pub(crate) fn observe_checkouts(&self) {
+        if self.stopping.load(Ordering::Acquire) || self.shutdown.load(Ordering::Acquire) {
+            return;
+        }
+        let captured = self.registry.lock().unwrap().clone();
+        let mut computed = HashMap::new();
+        for project in &captured.projects {
+            for workspace in &project.workspaces {
+                let root = is_root_workspace(project, workspace);
+                let name = git::checkout_name(&workspace.path)
+                    .unwrap_or_else(|_| git::UNAVAILABLE_CHECKOUT.to_owned());
+                computed.insert(
+                    (project.name.clone(), workspace.id.clone()),
+                    CheckoutObservation {
+                        path: workspace.path.clone(),
+                        git_identity: workspace.git_identity.clone(),
+                        name,
+                        root,
+                        warning: root.then(|| git::root_warning(project)).flatten(),
+                    },
+                );
+            }
+        }
+        if self.stopping.load(Ordering::Acquire) || self.shutdown.load(Ordering::Acquire) {
+            return;
+        }
+        let current = self.registry.lock().unwrap().clone();
+        let mut cache = self.observations.lock();
+        cache.retain(|(project, id), obs| {
+            current.projects.iter().any(|candidate| {
+                candidate.name == *project
+                    && candidate.workspaces.iter().any(|workspace| {
+                        workspace.id == *id
+                            && workspace.path == obs.path
+                            && workspace.git_identity == obs.git_identity
+                    })
+            })
+        });
+        for (key, obs) in computed {
+            let Some(project) = current
+                .projects
+                .iter()
+                .find(|project| project.name == key.0)
+            else {
+                continue;
+            };
+            let Some(workspace) = project
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == key.1)
+            else {
+                continue;
+            };
+            if workspace.path != obs.path || workspace.git_identity != obs.git_identity {
+                continue;
+            }
+            cache.insert(key, obs);
+        }
+    }
+
+    fn refuse_root_launch(&self, cwd: &Path) -> Result<()> {
+        let projects = self.registry.lock().unwrap().projects.clone();
+        for project in &projects {
+            if !same_path(cwd, &project.repo) {
+                continue;
+            }
+            if let Some(warning) = git::root_warning(project) {
+                return Err(lifecycle_error(ErrorCode::Conflict, warning));
+            }
+        }
+        Ok(())
+    }
+
+    fn require_root_default(&self, repo: &Path) -> Result<()> {
+        let expected = git::default_branch(repo)
+            .map_err(|error| lifecycle_error(ErrorCode::Conflict, error.to_string()))?;
+        let actual = git::checkout_name(repo).map_err(|error| {
+            lifecycle_error(
+                ErrorCode::Conflict,
+                format!("could not verify repository checkout: {error}"),
+            )
+        })?;
+        if actual != expected {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                format!(
+                    "repository root must be on {expected} (currently {actual}); check out {expected} manually and retry"
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    fn root_record_for(&self, repo: &Path) -> Result<WorkspaceRecord> {
+        let branch =
+            git::checkout_name(repo).unwrap_or_else(|_| git::UNAVAILABLE_CHECKOUT.to_owned());
+        let git_identity = git::capture_worktree_identity(repo)
+            .map_err(|error| lifecycle_error(ErrorCode::Conflict, error.to_string()))?;
+        let id = ovrcr_protocol::new_workspace_id()
+            .map_err(|error| lifecycle_error(ErrorCode::Internal, error.to_string()))?;
+        Ok(WorkspaceRecord {
+            id,
+            path: repo.to_path_buf(),
+            branch,
+            git_identity: Some(git_identity),
+            setup_pending: true,
+        })
+    }
+
+    fn set_setup_pending(&self, project: &str, workspace_id: &str, pending: bool) -> Result<()> {
+        let mut registry = self.registry.lock().unwrap();
+        let mut next = registry.clone();
+        let workspace = next
+            .project_mut(project)
+            .map_err(|error| lifecycle_error(ErrorCode::NotFound, error.to_string()))?
+            .workspaces
+            .iter_mut()
+            .find(|workspace| workspace.id == workspace_id)
+            .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "workspace not found"))?;
+        workspace.setup_pending = pending;
+        save_registry_atomic(&next, &self.registry_path)?;
+        *registry = next;
+        Ok(())
+    }
+
+    fn has_admitted_root_shell(&self, project: &str, workspace_id: &str) -> bool {
+        self.session_summaries().iter().any(|session| {
+            session.project == project
+                && session.workspace == workspace_id
+                && !session.archived
+                && matches!(session.kind, SessionKind::Terminal)
+                && session.phase.is_live()
+        })
+    }
+
+    fn unresolved_root_shell(&self, project: &str, workspace_id: &str) -> Option<SessionSummary> {
+        self.session_summaries().into_iter().find(|session| {
+            session.project == project
+                && session.workspace == workspace_id
+                && !session.archived
+                && matches!(session.kind, SessionKind::Terminal)
+                && !session.phase.is_live()
+        })
+    }
+
+    fn launch_root_shell(&self, project: &str, workspace_id: &str) -> Result<SessionSummary> {
+        let shell = std::env::var_os("SHELL")
+            .filter(|shell| !shell.is_empty())
+            .ok_or_else(|| lifecycle_error(ErrorCode::PartialFailure, "SHELL is unset"))?;
+        self.create_session_locked(
+            ovrcr_protocol::CreateSessionRequest {
+                project: project.to_owned(),
+                workspace: workspace_id.to_owned(),
+                name: "local".into(),
+                label: None,
+                argv: vec![shell],
+                kind: SessionKind::Terminal,
+            },
+            None,
+        )
+    }
+
+    fn complete_root_setup_locked(&self, project: &str) -> Result<()> {
+        let project_record = self
+            .registry
+            .lock()
+            .unwrap()
+            .project(project)
+            .map_err(|error| lifecycle_error(ErrorCode::NotFound, error.to_string()))?
+            .clone();
+        if let Some(warning) = git::root_warning(&project_record) {
+            return Err(lifecycle_error(ErrorCode::Conflict, warning));
+        }
+        let Some(root) = project_record
+            .workspaces
+            .iter()
+            .find(|workspace| is_root_workspace(&project_record, workspace))
+        else {
+            return Err(lifecycle_error(
+                ErrorCode::Internal,
+                "protected root workspace is missing",
+            ));
+        };
+        if !root.setup_pending {
+            return Ok(());
+        }
+        let root_id = root.id.clone();
+        if self.has_admitted_root_shell(project, &root_id) {
+            self.set_setup_pending(project, &root_id, false)?;
+            return Ok(());
+        }
+        if let Some(existing) = self.unresolved_root_shell(project, &root_id) {
+            let requires_ack = existing
+                .recovery
+                .as_ref()
+                .is_some_and(|recovery| recovery.requires_ack);
+            let detail = existing
+                .recovery
+                .as_ref()
+                .and_then(|recovery| recovery.failure.clone())
+                .unwrap_or_else(|| {
+                    "confirm that the previous agent and background processes stopped; use --ack-stopped"
+                        .to_owned()
+                });
+            return Err(lifecycle_error_with_hierarchy(
+                if requires_ack {
+                    ErrorCode::OwnershipUncertain
+                } else {
+                    ErrorCode::PartialFailure
+                },
+                format!(
+                    "protected root workspace registered at {} but initial shell failed: {detail}",
+                    project_record.repo.display()
+                ),
+                true,
+            ));
+        }
+        match self.launch_root_shell(project, &root_id) {
+            Ok(_) => {
+                self.set_setup_pending(project, &root_id, false)?;
+                Ok(())
+            }
+            Err(error) => {
+                if error
+                    .downcast_ref::<LifecycleFailure>()
+                    .is_some_and(|failure| failure.code == ErrorCode::OwnershipUncertain)
+                {
+                    return Err(error);
+                }
+                Err(lifecycle_error_with_hierarchy(
+                    ErrorCode::PartialFailure,
+                    format!(
+                        "protected root workspace registered at {} but initial shell failed: {}",
+                        project_record.repo.display(),
+                        error_chain_string(&error)
+                    ),
+                    true,
+                ))
+            }
+        }
+    }
+
+    pub(crate) fn ensure_protected_roots(&self) {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        if self.stopping.load(Ordering::Acquire) {
+            return;
+        }
+        let names: Vec<String> = self
+            .registry
+            .lock()
+            .unwrap()
+            .projects
+            .iter()
+            .map(|project| project.name.clone())
+            .collect();
+        for name in names {
+            if let Err(error) = self.ensure_one_root_locked(&name) {
+                eprintln!("ovrcr server: root workspace for {name}: {error:#}");
+            }
+        }
+    }
+
+    fn ensure_one_root_locked(&self, name: &str) -> Result<()> {
+        let project = self
+            .registry
+            .lock()
+            .unwrap()
+            .project(name)
+            .map_err(|error| lifecycle_error(ErrorCode::NotFound, error.to_string()))?
+            .clone();
+        let has_root = project
+            .workspaces
+            .iter()
+            .any(|workspace| is_root_workspace(&project, workspace));
+        if !has_root {
+            self.require_root_default(&project.repo)?;
+            let root = self.root_record_for(&project.repo)?;
+            let mut registry = self.registry.lock().unwrap();
+            let mut next = registry.clone();
+            next.add_workspace(name, root)?;
+            save_registry_atomic(&next, &self.registry_path)?;
+            *registry = next;
+        }
+        let project = self
+            .registry
+            .lock()
+            .unwrap()
+            .project(name)
+            .map_err(|error| lifecycle_error(ErrorCode::NotFound, error.to_string()))?
+            .clone();
+        let Some(root) = project
+            .workspaces
+            .iter()
+            .find(|workspace| is_root_workspace(&project, workspace))
+        else {
+            return Ok(());
+        };
+        if root.setup_pending {
+            self.complete_root_setup_locked(name)?;
+        }
+        Ok(())
+    }
 }
 fn snapshot(state: &Arc<ServerState>) -> HierarchySnapshot {
     snapshot_from_state(state)
@@ -1636,24 +2064,42 @@ fn snapshot(state: &Arc<ServerState>) -> HierarchySnapshot {
 
 fn snapshot_from_state(state: &ServerState) -> HierarchySnapshot {
     let registry = state.registry.lock().unwrap().clone();
+    let observations = state.observations.lock().clone();
     let mut sessions = state.session_summaries();
     sessions.retain(|session| !session.archived);
     let mut projects = registry
         .projects
-        .into_iter()
+        .iter()
         .map(|project| {
             let workspaces = project
                 .workspaces
-                .into_iter()
-                .map(|workspace| WorkspaceSummary {
-                    project: project.name.clone(),
-                    name: workspace.name,
-                    path: workspace.path,
-                    sessions: Vec::new(),
+                .iter()
+                .map(|workspace| {
+                    let observed = observations
+                        .get(&(project.name.clone(), workspace.id.clone()))
+                        .filter(|obs| {
+                            obs.path == workspace.path && obs.git_identity == workspace.git_identity
+                        });
+                    let root = observed
+                        .map(|obs| obs.root)
+                        .unwrap_or_else(|| workspace.path == project.repo);
+                    WorkspaceSummary {
+                        project: project.name.clone(),
+                        id: workspace.id.clone(),
+                        name: observed
+                            .map(|obs| obs.name.clone())
+                            .unwrap_or_else(|| git::UNAVAILABLE_CHECKOUT.to_owned()),
+                        path: workspace.path.clone(),
+                        root,
+                        warning: observed
+                            .filter(|_| root)
+                            .and_then(|obs| obs.warning.clone()),
+                        sessions: Vec::new(),
+                    }
                 })
                 .collect::<Vec<_>>();
             ProjectSummary {
-                name: project.name,
+                name: project.name.clone(),
                 workspaces,
             }
         })
@@ -1675,14 +2121,17 @@ fn snapshot_from_state(state: &ServerState) -> HierarchySnapshot {
         if let Some(workspace) = project
             .workspaces
             .iter_mut()
-            .find(|w| w.name == session.workspace)
+            .find(|workspace| workspace.id == session.workspace)
         {
             workspace.sessions.push(session);
         } else {
             project.workspaces.push(WorkspaceSummary {
                 project: session.project.clone(),
-                name: session.workspace.clone(),
+                id: session.workspace.clone(),
+                name: git::UNAVAILABLE_CHECKOUT.to_owned(),
                 path: session.cwd.clone(),
+                root: false,
+                warning: None,
                 sessions: vec![session],
             });
         }
@@ -1697,6 +2146,20 @@ fn snapshot_from_state(state: &ServerState) -> HierarchySnapshot {
     }
     projects.sort_by(|left, right| left.name.cmp(&right.name));
     HierarchySnapshot { projects }
+}
+
+fn is_root_workspace(project: &ProjectRecord, workspace: &WorkspaceRecord) -> bool {
+    same_path(&workspace.path, &project.repo)
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (fs::canonicalize(left), fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }
 
 #[cfg(test)]

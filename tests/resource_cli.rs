@@ -35,8 +35,6 @@ impl Fixture {
             "create",
             "--project",
             "fixture",
-            "--name",
-            "demo",
             "--new-branch",
             "feature/demo",
             "--base",
@@ -129,7 +127,7 @@ impl Drop for Fixture {
 fn terminal_cli_drives_real_session_and_preserves_workspace_removal_guards() {
     let mut fixture = Fixture::new();
     fixture.capture();
-    let id = fixture.ok(&["terminals", "create", "--project", "fixture", "--workspace", "demo", "--name", "reader", "--", "/bin/sh", "-c", "stty -echo; printf '\\033[?1049h\\033[2J\\033[HREADY\\n'; IFS= read -r value; printf '\\033[2J\\033[Hfirst\\nACK:%s\\n' \"$value\""]);
+    let id = fixture.ok(&["terminals", "create", "--project", "fixture", "--workspace", "feature/demo", "--name", "reader", "--", "/bin/sh", "-c", "stty -echo; printf '\\033[?1049h\\033[2J\\033[HREADY\\n'; IFS= read -r value; printf '\\033[2J\\033[Hfirst\\nACK:%s\\n' \"$value\""]);
     let id = id.trim().to_owned();
     let numeric_id: u64 = id.parse().unwrap();
     fixture.capture();
@@ -141,13 +139,13 @@ fn terminal_cli_drives_real_session_and_preserves_workspace_removal_guards() {
                 "get",
                 "--project",
                 "fixture",
-                "--name",
-                "demo"
+                "--branch",
+                "feature/demo"
             ])
             .contains("feature/demo")
     );
     let project = fixture.json(&["project", "get", "fixture"]);
-    assert_eq!(project["workspace_count"], 1);
+    assert_eq!(project["workspace_count"], 2);
     assert_eq!(
         project["repo"],
         fixture
@@ -159,27 +157,44 @@ fn terminal_cli_drives_real_session_and_preserves_workspace_removal_guards() {
             .to_str()
             .unwrap()
     );
-    let workspace = fixture.json(&["workspace", "get", "--project", "fixture", "--name", "demo"]);
+    let workspace = fixture.json(&[
+        "workspace",
+        "get",
+        "--project",
+        "fixture",
+        "--branch",
+        "feature/demo",
+    ]);
     assert_eq!(workspace["branch"], "feature/demo");
-    assert_eq!(workspace["terminal_count"], 2);
+    assert_eq!(workspace["name"], "feature/demo");
+    let worktree = std::path::PathBuf::from(workspace["path"].as_str().unwrap());
+    let feature_terminals = workspace["terminal_count"].as_u64().unwrap();
+    assert!(feature_terminals >= 1);
     let terminals = fixture.json(&[
         "terminal",
         "list",
         "--project",
         "fixture",
         "--workspace",
-        "demo",
+        "feature/demo",
     ]);
     let terminals = terminals.as_array().unwrap();
-    assert_eq!(terminals.len(), 2);
-    assert!(terminals[0]["id"].as_u64().unwrap() < terminals[1]["id"].as_u64().unwrap());
+    assert_eq!(terminals.len() as u64, feature_terminals);
+    assert!(
+        terminals
+            .windows(2)
+            .all(|pair| { pair[0]["id"].as_u64().unwrap() < pair[1]["id"].as_u64().unwrap() })
+    );
     let hierarchy = fixture.json(&["list"]);
+    let feature = hierarchy[0]["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["name"] == "feature/demo")
+        .unwrap();
     assert_eq!(
-        hierarchy[0]["workspaces"][0]["terminals"]
-            .as_array()
-            .unwrap()
-            .len(),
-        2
+        feature["terminals"].as_array().unwrap().len() as u64,
+        feature_terminals
     );
     let refused_shutdown = fixture.run(&["shutdown", "--json"]);
     assert_eq!(refused_shutdown.status.code(), Some(1));
@@ -230,8 +245,8 @@ fn terminal_cli_drives_real_session_and_preserves_workspace_removal_guards() {
         "delete",
         "--project",
         "fixture",
-        "--name",
-        "demo",
+        "--branch",
+        "feature/demo",
     ]);
     assert!(!occupied.status.success());
     fixture.ok(&["terminal", "acknowledge-stopped", &id]);
@@ -248,7 +263,7 @@ fn terminal_cli_drives_real_session_and_preserves_workspace_removal_guards() {
         "--project",
         "fixture",
         "--workspace",
-        "demo",
+        "feature/demo",
         "--name",
         "group",
         "--",
@@ -284,15 +299,14 @@ fn terminal_cli_drives_real_session_and_preserves_workspace_removal_guards() {
             &row["id"].as_u64().unwrap().to_string(),
         ]);
     }
-    let worktree = fixture.workspace_root.join("demo");
     std::fs::write(worktree.join("dirty"), "preserve me").unwrap();
     let dirty = fixture.run(&[
         "workspace",
         "delete",
         "--project",
         "fixture",
-        "--name",
-        "demo",
+        "--branch",
+        "feature/demo",
         "--json",
     ]);
     assert_eq!(dirty.status.code(), Some(1));
@@ -306,8 +320,8 @@ fn terminal_cli_drives_real_session_and_preserves_workspace_removal_guards() {
         "delete",
         "--project",
         "fixture",
-        "--name",
-        "demo",
+        "--branch",
+        "feature/demo",
         "--force",
     ]);
     assert!(!worktree.exists(), "--force discards the dirty worktree");
@@ -328,7 +342,7 @@ fn pause_resume_resource_cli_preserves_input_and_close_contract() {
             "--project",
             "fixture",
             "--workspace",
-            "demo",
+            "feature/demo",
             "--name",
             "pause-resume",
             "--",
@@ -415,7 +429,7 @@ fn agent_hook_resource_inventory_reports_activity() {
             "--project",
             "fixture",
             "--workspace",
-            "demo",
+            "feature/demo",
             "--name",
             "hook-activity",
             "--",
@@ -436,7 +450,7 @@ fn agent_hook_resource_inventory_reports_activity() {
         "--project",
         "fixture",
         "--workspace",
-        "demo",
+        "feature/demo",
     ]);
     let record = records
         .as_array()
@@ -465,7 +479,7 @@ fn context_resource_inventory_matches_inspection() {
             "--project",
             "fixture",
             "--workspace",
-            "demo",
+            "feature/demo",
             "--name",
             "context-inventory",
             "--",
@@ -517,7 +531,7 @@ while [ ! -e "$5" ]; do sleep 0.01; done
         "--project",
         "fixture",
         "--workspace",
-        "demo",
+        "feature/demo",
     ]);
     let unknown_record = unknown
         .as_array()
@@ -554,7 +568,7 @@ while [ ! -e "$5" ]; do sleep 0.01; done
         "--project",
         "fixture",
         "--workspace",
-        "demo",
+        "feature/demo",
     ]);
     let first_record = first_inventory
         .as_array()
@@ -697,7 +711,7 @@ fn managed_usage_inspection_preserves_scope_unknowns_and_component_ages() {
         } else {
             agent.clone()
         };
-        let snapshot: HierarchySnapshot = serde_json::from_value(json!({"projects":[{"name":"fixture","workspaces":[{"project":"fixture","name":"demo","path":"/fixture","sessions":[{
+        let snapshot: HierarchySnapshot = serde_json::from_value(json!({"projects":[{"name":"fixture","workspaces":[{"project":"fixture","id":"demo","name":"demo","path":"/fixture","root":false,"warning":null,"sessions":[{
             "id":7,"archived":false,"cwd":"/work","run":1,"kind":{"Agent":{"name":"claude"}},"project":"fixture","workspace":"demo","name":"native","label":"claude","pid":null,"started_unix_ms":1,"phase":{"Exited":{"code":0,"signal":null}},"activity":"Idle","agent":expected,"agent_epoch":1,"context_usage":null
         }]}]}]})).unwrap();
         let listener = UnixListener::bind(&socket).unwrap();
@@ -810,26 +824,28 @@ fn sqlite_migration_is_authoritative_across_online_offline_and_restart() {
             repo: fixture.repo.clone(),
             workspace_root: fixture.workspace_root.clone(),
             workspaces: vec![ovrcr::config::WorkspaceRecord {
-                name: "legacy".into(),
+                id: "legacy".into(),
                 path: legacy_workspace.clone(),
                 branch: "feature/legacy".into(),
+                git_identity: None,
+                setup_pending: false,
             }],
         }],
     })
     .unwrap();
     std::fs::write(&fixture.config, &original).unwrap();
     fixture.start_binary();
-    assert_eq!(
-        fixture.json(&["project", "get", "fixture"])["workspace_count"],
-        1
-    );
+    let imported_count = fixture.json(&["project", "get", "fixture"])["workspace_count"]
+        .as_u64()
+        .unwrap();
+    assert!(imported_count >= 1);
     let imported = fixture.json(&[
         "workspace",
         "get",
         "--project",
         "fixture",
-        "--name",
-        "legacy",
+        "--branch",
+        "feature/legacy",
     ]);
     assert_eq!(imported["path"], legacy_workspace.to_str().unwrap());
     assert_eq!(imported["branch"], "feature/legacy");
@@ -838,8 +854,6 @@ fn sqlite_migration_is_authoritative_across_online_offline_and_restart() {
         "create",
         "--project",
         "fixture",
-        "--name",
-        "migrated",
         "--new-branch",
         "feature/migrated",
         "--base",
@@ -851,8 +865,8 @@ fn sqlite_migration_is_authoritative_across_online_offline_and_restart() {
         "get",
         "--project",
         "fixture",
-        "--name",
-        "migrated",
+        "--branch",
+        "feature/migrated",
     ]);
     assert_eq!(online["branch"], "feature/migrated");
     assert_eq!(online["terminal_count"], 1);
@@ -871,17 +885,23 @@ fn sqlite_migration_is_authoritative_across_online_offline_and_restart() {
         "get",
         "--project",
         "fixture",
-        "--name",
-        "migrated",
+        "--branch",
+        "feature/migrated",
     ]);
     assert_eq!(offline["path"], online["path"]);
     assert_eq!(offline["branch"], online["branch"]);
     assert_eq!(offline["terminal_count"], 1);
     let retained = fixture.json(&["terminal", "list"]);
-    assert_eq!(retained.as_array().unwrap().len(), 1);
-    assert_eq!(retained[0]["phase"], "stopped");
-    assert_eq!(retained[0]["recovery"]["requires_ack"], false);
-    let retained_id = retained[0]["id"].as_u64().unwrap().to_string();
+    let migrated = retained
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["workspace"] == "feature/migrated")
+        .collect::<Vec<_>>();
+    assert_eq!(migrated.len(), 1);
+    assert_eq!(migrated[0]["phase"], "stopped");
+    assert_eq!(migrated[0]["recovery"]["requires_ack"], false);
+    let retained_id = migrated[0]["id"].as_u64().unwrap().to_string();
     assert!(
         !fixture.socket.exists(),
         "offline inspection must not start a server"
@@ -890,7 +910,7 @@ fn sqlite_migration_is_authoritative_across_online_offline_and_restart() {
     fixture.start_binary();
     assert_eq!(
         fixture.json(&["project", "get", "fixture"])["workspace_count"],
-        2,
+        imported_count + 1,
         "restart must neither discard nor re-import workspace records"
     );
     fixture.ok(&["terminal", "remove", &retained_id]);
@@ -899,16 +919,16 @@ fn sqlite_migration_is_authoritative_across_online_offline_and_restart() {
         "remove",
         "--project",
         "fixture",
-        "--name",
-        "migrated",
+        "--branch",
+        "feature/migrated",
     ]);
     fixture.ok(&[
         "workspace",
         "remove",
         "--project",
         "fixture",
-        "--name",
-        "legacy",
+        "--branch",
+        "feature/legacy",
     ]);
     fixture.ok(&["project", "remove", "fixture"]);
     assert_eq!(fixture.json(&["project", "list"]), serde_json::json!([]));

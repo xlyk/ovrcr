@@ -243,10 +243,11 @@ impl Live {
             }),
             Response::Ok
         );
+        self.clear_root_shell();
         assert_eq!(
             self.request(Request::CreateWorkspace {
                 project: PROJECT.into(),
-                name: WORKSPACE.into(),
+                id: WORKSPACE.into(),
                 branch: BranchRequest::New {
                     branch: branch.into(),
                     base: "main".into(),
@@ -255,6 +256,39 @@ impl Live {
             Response::Ok
         );
         *ready = Some(branch.to_owned());
+    }
+
+    /// Feature-workspace fixtures do not need the separately tested initial root shell.
+    pub fn clear_root_shell(&self) {
+        let Response::Hierarchy(hierarchy) = self.request(Request::List) else {
+            panic!("expected hierarchy");
+        };
+        for session in hierarchy
+            .projects
+            .into_iter()
+            .flat_map(|project| project.workspaces)
+            .filter(|workspace| workspace.path == self.repo)
+            .flat_map(|workspace| workspace.sessions)
+        {
+            assert_eq!(
+                self.request(Request::CloseTerminal {
+                    session: session.id,
+                    expected_run: session.run,
+                }),
+                Response::Ok
+            );
+            let Response::Inventory { sessions, .. } = self.request(Request::Inspect) else {
+                panic!("expected inventory");
+            };
+            let archived = sessions.iter().find(|row| row.id == session.id).unwrap();
+            assert_eq!(
+                self.request(Request::DeleteArchivedSession {
+                    session: archived.id,
+                    expected_run: archived.run,
+                }),
+                Response::Ok
+            );
+        }
     }
 
     /// Record a process group this fixture must reap.

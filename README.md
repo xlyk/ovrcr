@@ -92,24 +92,27 @@ ovrcr 0.1.0 (protocol 3)
 
 ## Quickstart
 
-Register a repository and tell OVRCR where to put its worktrees. OVRCR manages
-only registered repositories and workspaces it created, and creates the workspace
-root on registration if it is missing:
+Register a repository and tell OVRCR where to put its worktrees. Registration
+creates a protected workspace at the repository checkout, on the detected default
+branch, and starts one shell there. OVRCR manages only registered repositories
+and workspaces it created, and creates the worktree directory on registration if
+it is missing:
 
 ```sh
 ovrcr project add consigint ~/Code/consigint \
   --workspace-root ~/Code/workspaces/consigint
 ```
 
-Create a workspace. The first form cuts a new branch and requires `--base`; the
-second reuses an existing branch and rejects `--base`. Either way OVRCR creates
-the worktree and starts the workspace's `local` shell session:
+Create a feature workspace. The first form cuts a new branch and requires `--base`;
+the second reuses an existing branch and rejects `--base`. Either way OVRCR creates
+the worktree and starts that workspace's `local` shell. The workspace's label is
+its current branch; there is no separate name:
 
 ```sh
-ovrcr workspace create --project consigint --name cleanup \
+ovrcr workspace create --project consigint \
   --new-branch feature/cleanup --base main
 
-ovrcr workspace create --project consigint --name cleanup \
+ovrcr workspace create --project consigint \
   --branch feature/cleanup
 ```
 
@@ -119,7 +122,7 @@ normal configuration, then use a compact `directory ›` prompt with a red arrow
 after a failed command. Explicit commands and other shells are unchanged:
 
 ```sh
-ovrcr new --project consigint --workspace cleanup --name "review cleanup" -- codex
+ovrcr new --project consigint --workspace feature/cleanup --name "review cleanup" -- codex
 ```
 
 Open the dashboard:
@@ -230,9 +233,9 @@ current directory. New terminal names are optional and can follow app titles.
 ovrcr list                                        # whole hierarchy
 ovrcr project list                                # projects only
 ovrcr workspace list --project consigint
-ovrcr terminal list --project consigint --workspace cleanup
+ovrcr terminal list --project consigint --workspace feature/cleanup
 
-id=$(ovrcr terminal create --project consigint --workspace cleanup \
+id=$(ovrcr terminal create --project consigint --workspace feature/cleanup \
   -- /bin/sh)
 ovrcr terminal rename "$id" "Review cleanup"   # pin a title
 ovrcr terminal rename "$id" --automatic        # follow app titles
@@ -289,7 +292,7 @@ usage, and estimated cost through a supervised invocation:
 
 ```sh
 ovrcr agent setup claude --print --settings ~/.claude/settings.json
-ovrcr new --project demo --workspace hooks --name agent -- ovrcr agent run --provider claude -- claude
+ovrcr new --project demo --workspace feature/hooks --name agent -- ovrcr agent run --provider claude -- claude
 ovrcr session usage SESSION_ID
 ```
 

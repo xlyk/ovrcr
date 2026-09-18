@@ -22,6 +22,7 @@ use ovrcr_terminal::vt100;
 use ratatui::layout::Rect;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1057,11 +1058,11 @@ impl Dashboard {
             for workspace in workspaces {
                 rows.push(TreeRow::Workspace {
                     project: project.name.clone(),
-                    name: workspace.name.clone(),
+                    id: workspace.id.clone(),
                 });
                 if self
                     .collapsed_workspaces
-                    .contains(&(project.name.clone(), workspace.name.clone()))
+                    .contains(&(project.name.clone(), workspace.id.clone()))
                 {
                     continue;
                 }
@@ -1108,12 +1109,21 @@ impl Dashboard {
     pub(super) fn creation_context(&self) -> (String, String) {
         match &self.selected_container {
             Some(TreeRow::Project { name }) => (name.clone(), String::new()),
-            Some(TreeRow::Workspace { project, name }) => (project.clone(), name.clone()),
+            Some(TreeRow::Workspace { project, id }) => (project.clone(), id.clone()),
             _ => self
                 .focused_session()
                 .and_then(|id| find_session(self, id))
                 .map(|s| (s.project.clone(), s.workspace.clone()))
                 .unwrap_or_default(),
+        }
+    }
+
+    pub(super) fn current_workspace(&self) -> Option<&ovrcr_protocol::WorkspaceSummary> {
+        let (project, id) = self.creation_context();
+        if id.is_empty() {
+            None
+        } else {
+            find_workspace(self, &project, &id)
         }
     }
 
@@ -1164,7 +1174,7 @@ impl Dashboard {
         let session = find_session(self, id)?;
         let workspace = TreeRow::Workspace {
             project: session.project.clone(),
-            name: session.workspace.clone(),
+            id: session.workspace.clone(),
         };
         if let Some(index) = rows.iter().position(|row| *row == workspace) {
             return Some(index);
@@ -1199,8 +1209,8 @@ impl Dashboard {
                 }
                 true
             }
-            TreeRow::Workspace { project, name } => {
-                let key = (project.clone(), name.clone());
+            TreeRow::Workspace { project, id } => {
+                let key = (project.clone(), id.clone());
                 if !self.collapsed_workspaces.remove(&key) {
                     self.collapsed_workspaces.insert(key);
                 }
@@ -2093,8 +2103,8 @@ impl Dashboard {
                         self.clamp_tree_offset(usize::from(sidebar.height));
                         Some(DashboardAction::Redraw)
                     }
-                    TreeRow::Workspace { project, name } if column == 2 => {
-                        self.toggle_row_collapse(&TreeRow::Workspace { project, name });
+                    TreeRow::Workspace { project, id } if column == 2 => {
+                        self.toggle_row_collapse(&TreeRow::Workspace { project, id });
                         self.clamp_tree_offset(usize::from(sidebar.height));
                         Some(DashboardAction::Redraw)
                     }
@@ -3159,13 +3169,15 @@ impl Dashboard {
         }
         self.observe_desktop_responses(&hierarchy);
         self.hierarchy = hierarchy;
+        self.sync_palette_workspace_identity();
+
         self.selected_container = self.selected_container.take().filter(|row| match row {
             TreeRow::Project { name } => self
                 .hierarchy
                 .projects
                 .iter()
                 .any(|project| &project.name == name),
-            TreeRow::Workspace { project, name } => find_workspace(self, project, name).is_some(),
+            TreeRow::Workspace { project, id } => find_workspace(self, project, id).is_some(),
             TreeRow::Session { .. } => false,
         });
         self.cancel_copy_if_session_missing();
@@ -3435,7 +3447,7 @@ impl Dashboard {
 pub(super) fn find_workspace<'a>(
     dashboard: &'a Dashboard,
     project: &str,
-    name: &str,
+    id: &str,
 ) -> Option<&'a ovrcr_protocol::WorkspaceSummary> {
     dashboard
         .hierarchy
@@ -3446,8 +3458,114 @@ pub(super) fn find_workspace<'a>(
             candidate
                 .workspaces
                 .iter()
-                .find(|workspace| workspace.name == name)
+                .find(|workspace| workspace.id == id)
         })
+}
+
+fn workspace_name_duplicated(
+    dashboard: &Dashboard,
+    workspace: &ovrcr_protocol::WorkspaceSummary,
+) -> bool {
+    dashboard
+        .hierarchy
+        .projects
+        .iter()
+        .find(|project| project.name == workspace.project)
+        .is_some_and(|project| {
+            project
+                .workspaces
+                .iter()
+                .filter(|candidate| candidate.name == workspace.name)
+                .count()
+                > 1
+        })
+}
+
+pub(super) fn workspace_label(
+    dashboard: &Dashboard,
+    workspace: &ovrcr_protocol::WorkspaceSummary,
+) -> String {
+    match workspace_disambiguator(dashboard, workspace) {
+        Some(suffix) => format!("{} ({})", workspace.name, suffix),
+        None => workspace.name.clone(),
+    }
+}
+
+pub(super) fn workspace_disambiguator(
+    dashboard: &Dashboard,
+    workspace: &ovrcr_protocol::WorkspaceSummary,
+) -> Option<String> {
+    if !workspace_name_duplicated(dashboard, workspace) {
+        return None;
+    }
+    let others: Vec<&Path> = dashboard
+        .hierarchy
+        .projects
+        .iter()
+        .find(|project| project.name == workspace.project)
+        .map(|project| {
+            project
+                .workspaces
+                .iter()
+                .filter(|candidate| {
+                    candidate.name == workspace.name && candidate.id != workspace.id
+                })
+                .map(|candidate| candidate.path.as_path())
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(distinguishing_path_suffix(&workspace.path, &others))
+}
+
+fn distinguishing_path_suffix(path: &Path, others: &[&Path]) -> String {
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned());
+    if let Some(file_name) = file_name.as_ref()
+        && !file_name.is_empty()
+        && others.iter().all(|other| {
+            other
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .as_deref()
+                != Some(file_name.as_str())
+        })
+    {
+        return file_name.clone();
+    }
+    let comps: Vec<_> = path.iter().collect();
+    for n in 1..=comps.len() {
+        let suffix = PathBuf::from_iter(&comps[comps.len() - n..]);
+        let unique = others.iter().all(|other| {
+            let other_comps: Vec<_> = other.iter().collect();
+            other_comps.len() < n
+                || other_comps[other_comps.len() - n..] != comps[comps.len() - n..]
+        });
+        if unique {
+            return suffix.display().to_string();
+        }
+    }
+    path.display().to_string()
+}
+
+pub(super) fn workspace_heading(
+    dashboard: &Dashboard,
+    workspace: &ovrcr_protocol::WorkspaceSummary,
+) -> String {
+    format!(
+        "{} / {}",
+        workspace.project,
+        workspace_label(dashboard, workspace)
+    )
+}
+
+pub(super) fn session_workspace_heading(
+    dashboard: &Dashboard,
+    session: &crate::session::SessionSummary,
+) -> String {
+    find_workspace(dashboard, &session.project, &session.workspace)
+        .map(|workspace| workspace_heading(dashboard, workspace))
+        .unwrap_or_else(|| "unavailable".into())
 }
 
 pub(super) fn find_session(
@@ -3477,6 +3595,9 @@ mod tests {
                 workspaces: vec![WorkspaceSummary {
                     project: "demo".into(),
                     name: "root".into(),
+                    id: "root".into(),
+                    root: false,
+                    warning: None,
                     path: "/tmp/unused".into(),
                     sessions: vec![SessionSummary {
                         archived: false,
