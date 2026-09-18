@@ -88,6 +88,11 @@ impl ViewHandshake {
         self.user_change = true;
     }
 
+    /// A fresh error postdates any selection waiting to be sent.
+    pub(super) fn note_error(&mut self) {
+        self.user_change = false;
+    }
+
     pub(super) fn acknowledged(&self) -> Option<&RequestedView> {
         self.acknowledged.as_ref()
     }

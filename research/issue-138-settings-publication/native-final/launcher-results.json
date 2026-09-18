@@ -1,0 +1,12 @@
+{
+  "sandbox_attempt": {
+    "session_id": 45760,
+    "exit_code": 134,
+    "log": "launcher.log"
+  },
+  "native_attempt": {
+    "session_id": 73054,
+    "exit_code": 0,
+    "log": "launcher-native.log"
+  }
+}

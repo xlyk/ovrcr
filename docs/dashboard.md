@@ -561,8 +561,28 @@ name alone does not prove what program it launches or whether reporting is suppo
 Successful launches update a per-project `launch_choices` table in this file.
 For example, `[launch_choices.consigint]` with `kind = "Terminal"` remembers a
 terminal; `kind = "Agent"` and `preset = "claude"` remember an agent preset.
-These entries contain no one-off command text. Saving a preference preserves
-other settings values but may reformat the TOML file.
+These entries contain no one-off command text. Failed launches and Nothing yet
+leave the remembered choice unchanged.
+
+Alert toggles and remembered launch choices use the same settings writer. Each
+save reads the latest document and preserves comments, unrelated formatting,
+unknown keys and tables, other preferences, and other projects' choices. Existing
+symlinks are followed without replacing the link, and target permissions are
+retained. A missing ordinary file and its parent directories are created; new
+settings files are private (mode `0600`). Dangling links, read-only targets,
+malformed TOML, and incorrectly typed known settings are rejected without
+changing the document.
+
+Saves write and synchronize a temporary file beside the resolved target, then
+replace the target atomically. A failed save leaves the original document intact
+and removes its temporary file. External edits completed before a save begins are
+preserved; simultaneous writers are not locked.
+
+An alert save failure leaves active preferences and alert channels unchanged and
+shows a save-failure notice. If a session starts but remembering fails, the session
+remains selected and usable. Its launch choice stays remembered in the current
+Dashboard, and the footer shows “Session started; could not remember launch
+choice”. The Dashboard does not retry creation or reopen the launch form.
 
 ## Desktop notifications
 

@@ -1,0 +1,20 @@
+{
+  "process_groups": {
+    "61643": "ProcessLookupError",
+    "62048": "ProcessLookupError",
+    "62126": "ProcessLookupError",
+    "62267": "ProcessLookupError",
+    "62360": "ProcessLookupError",
+    "62368": "ProcessLookupError",
+    "62385": "ProcessLookupError",
+    "62395": "ProcessLookupError",
+    "62408": "ProcessLookupError",
+    "62424": "ProcessLookupError",
+    "62437": "ProcessLookupError",
+    "62440": "ProcessLookupError",
+    "81119": "ProcessLookupError",
+    "94788": "ProcessLookupError"
+  },
+  "root_absent": true,
+  "socket_absent": true
+}

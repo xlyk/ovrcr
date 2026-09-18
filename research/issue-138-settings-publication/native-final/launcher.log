@@ -1,0 +1,6 @@
+launcher_pid=58523
+rtk proxy sh scripts/gui.sh
+   Compiling ovrcr v0.1.0 (/Users/xlyk/.superset/worktrees/ce516841-6a34-4a08-8d1f-cefa87725355/chartreuse-acai)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.69s
+[rtk] ./ovrcr-gui: process terminated by signal 6
+error: recipe `gui` failed on line 58 with exit code 134

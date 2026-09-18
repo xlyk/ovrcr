@@ -1,0 +1,160 @@
+TAP version 13
+# Subtest: session switches capture OMP's exact native file and ephemeral identity
+ok 1 - session switches capture OMP's exact native file and ephemeral identity
+  ---
+  duration_ms: 218.901375
+  type: 'test'
+  ...
+# Subtest: inert outside a managed invocation and outside the terminal UI
+ok 2 - inert outside a managed invocation and outside the terminal UI
+  ---
+  duration_ms: 3.901417
+  type: 'test'
+  ...
+# Subtest: registers OMP's lifecycle and switch events
+ok 3 - registers OMP's lifecycle and switch events
+  ---
+  duration_ms: 1.11475
+  type: 'test'
+  ...
+# Subtest: a switch names the conversation it left by id, never by its file path
+ok 4 - a switch names the conversation it left by id, never by its file path
+  ---
+  duration_ms: 193.657875
+  type: 'test'
+  ...
+# Subtest: a same-file reload is a switch that names the conversation it is already on
+ok 5 - a same-file reload is a switch that names the conversation it is already on
+  ---
+  duration_ms: 193.928792
+  type: 'test'
+  ...
+# Subtest: tree navigation invalidates the response cycle and carries only idleness
+ok 6 - tree navigation invalidates the response cycle and carries only idleness
+  ---
+  duration_ms: 204.996583
+  type: 'test'
+  ...
+# Subtest: the reattach command re-announces this producer once and says so
+ok 7 - the reattach command re-announces this producer once and says so
+  ---
+  duration_ms: 202.580583
+  type: 'test'
+  ...
+# Subtest: a print-mode reattach delivers nothing, spawns no helper, and says it is unavailable
+ok 8 - a print-mode reattach delivers nothing, spawns no helper, and says it is unavailable
+  ---
+  duration_ms: 2.112917
+  type: 'test'
+  ...
+# Subtest: an approval opens and closes one namespaced request and carries no reason
+ok 9 - an approval opens and closes one namespaced request and carries no reason
+  ---
+  duration_ms: 198.533625
+  type: 'test'
+  ...
+# Subtest: a denial closes the approval exactly as an allow does
+ok 10 - a denial closes the approval exactly as an allow does
+  ---
+  duration_ms: 192.509708
+  type: 'test'
+  ...
+# Subtest: an approval from another session id or with none emits nothing
+ok 11 - an approval from another session id or with none emits nothing
+  ---
+  duration_ms: 1.628958
+  type: 'test'
+  ...
+# Subtest: two approvals overlap: each frame carries its own tool call id
+ok 12 - two approvals overlap: each frame carries its own tool call id
+  ---
+  duration_ms: 215.4785
+  type: 'test'
+  ...
+# Subtest: the ask tool's lifetime is one question request keyed by its tool call id
+ok 13 - the ask tool's lifetime is one question request keyed by its tool call id
+  ---
+  duration_ms: 196.921667
+  type: 'test'
+  ...
+# Subtest: a tool that is not ask emits nothing
+ok 14 - a tool that is not ask emits nothing
+  ---
+  duration_ms: 1.549875
+  type: 'test'
+  ...
+# Subtest: an approval opened during a question keeps both requests and their order
+ok 15 - an approval opened during a question keeps both requests and their order
+  ---
+  duration_ms: 205.441917
+  type: 'test'
+  ...
+# Subtest: an end that failed, timed out or aborted still closes the question
+ok 16 - an end that failed, timed out or aborted still closes the question
+  ---
+  duration_ms: 198.901791
+  type: 'test'
+  ...
+# Subtest: an approval requested and resolved in one tick is delivered open before close
+ok 17 - an approval requested and resolved in one tick is delivered open before close
+  ---
+  duration_ms: 194.386667
+  type: 'test'
+  ...
+# Subtest: an ask execution that starts and ends in one tick is delivered open before close
+ok 18 - an ask execution that starts and ends in one tick is delivered open before close
+  ---
+  duration_ms: 200.248916
+  type: 'test'
+  ...
+# Subtest: a print-mode child emits no approval or question frames
+ok 19 - a print-mode child emits no approval or question frames
+  ---
+  duration_ms: 1.712958
+  type: 'test'
+  ...
+# Subtest: an end that will continue keeps the cycle open; the final end settles it as observed work
+ok 20 - an end that will continue keeps the cycle open; the final end settles it as observed work
+  ---
+  duration_ms: 236.030459
+  type: 'test'
+  ...
+# Subtest: error and aborted ends settle as error and aborted; no assistant message is none
+ok 21 - error and aborted ends settle as error and aborted; no assistant message is none
+  ---
+  duration_ms: 251.651708
+  type: 'test'
+  ...
+# Subtest: a tool error followed by a successful assistant response is a successful cycle
+ok 22 - a tool error followed by a successful assistant response is a successful cycle
+  ---
+  duration_ms: 205.514083
+  type: 'test'
+  ...
+# Subtest: an in-place session switch re-announces the conversation and closes any open cycle
+ok 23 - an in-place session switch re-announces the conversation and closes any open cycle
+  ---
+  duration_ms: 210.821542
+  type: 'test'
+  ...
+# Subtest: shutdown reports once with reason quit and disables
+ok 24 - shutdown reports once with reason quit and disables
+  ---
+  duration_ms: 194.033084
+  type: 'test'
+  ...
+# Subtest: a next start racing an un-awaited end opens a new cycle; the settled end keeps run 1
+ok 25 - a next start racing an un-awaited end opens a new cycle; the settled end keeps run 1
+  ---
+  duration_ms: 205.610666
+  type: 'test'
+  ...
+1..25
+# tests 25
+# suites 0
+# pass 25
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3983.285708

@@ -706,6 +706,9 @@ impl Dashboard {
     pub(super) fn set_error(&mut self, message: impl Into<String>) {
         self.error = Some(message.into());
         self.error_owned_by_view = false;
+        // Requests and coalesced selections predating this error cannot dismiss it.
+        self.error_owning_requests.clear();
+        self.handshake.note_error();
     }
 
     pub fn view_revision(&self) -> u64 {

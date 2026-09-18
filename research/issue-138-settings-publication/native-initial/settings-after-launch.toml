@@ -1,0 +1,3 @@
+# CUA_138 retained comment
+desktop_notifications = true # CUA_138 inline comment
+ready_sound = false

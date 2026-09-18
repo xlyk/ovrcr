@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ────────────────────────────│pid: 48636  elapsed: 0m  agent unknown  xlyk@spacelift:/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-7ohY
+  󰘬 auth-handoff                       │xlyk@spacelift:/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-7ohYCE/workspaces/consigint/auth-handoff
+     $ lo
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable)  CONSIGINT ────────────────────────────│pid: 48636  elapsed: 0m  agent unknown  xlyk@spacelift:/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-7ohY
+		5 text (settable)   󰘬 auth-handoff                       │xlyk@spacelift:/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-7ohYCE/workspaces/consigint/auth-handoff
+		6 text (settable)      $ local                           │auth-handoff ›
+		7 text (settable)      - review auth handoff        grok │
+		8 text (settable) ▌    - xlyk@spacelift:/private/v…  zsh │
+		9 text (settable)   󰘬 worktree-lifecycle                 │
+		10 text (settable)      $ local                           │
+		11 text (settable)      - implement lifecycle cl…  claude │
+		12 text (settable)      - review websocket shutdo…  codex │
+		13 text (settable)      - plan snapshot restore        pi │
+		14 text (settable)                                        │
+		15 text (settable)  SPACELIFT-AGENT ──────────────────────│
+		16 text (settable)   󰘬 pipeline-progress-v2               │
+		17 text (settable)      $ local                           │
+		18 text (settable)      - build pipeline progress  claude │
+		19 text (settable)   󰘬 scope-quality                      │
+		20 text (settable)      $ local                           │
+		21 text (settable)      - review scope quality      codex │
+		22 text (settable)                                        │
+		23 text (settable)                                        │
+		24 text (settable)                                        │
+		25 text (settable)                                        │
+		26 text (settable)                                        │
+		27 text (settable)                                        │
+		28 text (settable)                                        │
+		29 text (settable)                                        │
+		30 text (settable)                                        │
+		31 text (settable)                                        │
+		32 text (settable)                                        │
+		33 text (settable)                                        │
+		34 text (settable)                                        │
+		35 text (settable)                                        │
+		36 text (settable)                                        │
+		37 text (settable)                                        │
+		38 text (settable)                                        │
+		39 text (settable)                                        │
+		40 text (settable)                                        │
+		41 text (settable)                                        │
+		42 text (settable)                                        │
+		43 text (settable)                                        │
+		44 text (settable)                                        │
+		45 text (settable)                                        │
+		46 text (settable)                                        │
+		47 text (settable)                                        │
+		48 text (settable)                                        │
+		49 text (settable)                                        │
+		50 text (settable)                                        │
+		51 text (settable)                                        │
+		52 text (settable)                                        │
+		53 text (settable)                                        │
+		54 text (settable)                                        │
+		55 text (settable)                                        │
+		56 text (settable)                                        │
+		57 text (settable)                                        │
+		58 text (settable)                                        │
+		59 text (settable)                                        │
+		60 text (settable)                                        │
+		61 text (settable)                                        │
+		62 text (settable)                                        │
+		63 text (settable) Terminal mode  Ctrl-g browse
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ────────────────────────────│pid: 48636  elapsed: 0m  agent unknown  xlyk@spacelift:/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-7ohY
+  󰘬 auth-handoff                       │xlyk@spacelift:/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-7ohYCE/workspaces/consigint/auth-handoff
+     $ lo

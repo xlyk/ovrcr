@@ -1,0 +1,125 @@
+{
+  "roots": [
+    "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-7ohYCE"
+  ],
+  "processes": [
+    {
+      "pid": 21044,
+      "ppid": 11359,
+      "pgid": 21044,
+      "command": "rtk proxy just gui"
+    },
+    {
+      "pid": 21046,
+      "ppid": 21044,
+      "pgid": 21044,
+      "command": "/opt/homebrew/bin/just gui"
+    },
+    {
+      "pid": 21059,
+      "ppid": 21046,
+      "pgid": 21044,
+      "command": "rtk proxy sh scripts/gui.sh"
+    },
+    {
+      "pid": 21060,
+      "ppid": 21059,
+      "pgid": 21044,
+      "command": "rtk proxy ./ovrcr-gui"
+    },
+    {
+      "pid": 22065,
+      "ppid": 21060,
+      "pgid": 21044,
+      "command": "/Users/xlyk/.superset/worktrees/ce516841-6a34-4a08-8d1f-cefa87725355/chartreuse-acai/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+    },
+    {
+      "pid": 22668,
+      "ppid": 22065,
+      "pgid": 21044,
+      "command": "/Users/xlyk/.superset/worktrees/ce516841-6a34-4a08-8d1f-cefa87725355/chartreuse-acai/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+    },
+    {
+      "pid": 22843,
+      "ppid": 22668,
+      "pgid": 22843,
+      "command": "/bin/zsh"
+    },
+    {
+      "pid": 22912,
+      "ppid": 22668,
+      "pgid": 22912,
+      "command": "/bin/zsh"
+    },
+    {
+      "pid": 22985,
+      "ppid": 22668,
+      "pgid": 22985,
+      "command": "/bin/zsh"
+    },
+    {
+      "pid": 23074,
+      "ppid": 22668,
+      "pgid": 23074,
+      "command": "/bin/zsh"
+    },
+    {
+      "pid": 23082,
+      "ppid": 22668,
+      "pgid": 23082,
+      "command": "/bin/sh -i"
+    },
+    {
+      "pid": 23096,
+      "ppid": 22668,
+      "pgid": 23096,
+      "command": "/bin/sh -i"
+    },
+    {
+      "pid": 23106,
+      "ppid": 22668,
+      "pgid": 23106,
+      "command": "/bin/sh -i"
+    },
+    {
+      "pid": 23120,
+      "ppid": 22668,
+      "pgid": 23120,
+      "command": "/bin/sh -i"
+    },
+    {
+      "pid": 23129,
+      "ppid": 22668,
+      "pgid": 23129,
+      "command": "/bin/sh -i"
+    },
+    {
+      "pid": 23144,
+      "ppid": 22668,
+      "pgid": 23144,
+      "command": "/bin/sh -i"
+    },
+    {
+      "pid": 23153,
+      "ppid": 22065,
+      "pgid": 23153,
+      "command": "/Users/xlyk/.superset/worktrees/ce516841-6a34-4a08-8d1f-cefa87725355/chartreuse-acai/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+    },
+    {
+      "pid": 38943,
+      "ppid": 22065,
+      "pgid": 38943,
+      "command": "/Users/xlyk/.superset/worktrees/ce516841-6a34-4a08-8d1f-cefa87725355/chartreuse-acai/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+    },
+    {
+      "pid": 48636,
+      "ppid": 22668,
+      "pgid": 48636,
+      "command": "/bin/zsh"
+    }
+  ],
+  "config": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-7ohYCE/config.toml",
+  "socket": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-7ohYCE/server.sock",
+  "settings": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-7ohYCE/dashboard.toml",
+  "settings_target": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-7ohYCE/settings-target.toml"
+}

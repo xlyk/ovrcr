@@ -1,0 +1,3 @@
+rtk proxy sh scripts/gui.sh
+    Blocking waiting for file lock on build directory
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.53s

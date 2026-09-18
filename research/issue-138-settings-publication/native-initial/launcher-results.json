@@ -1,0 +1,16 @@
+{
+  "sandbox_attempt": {
+    "command": "rtk proxy just gui",
+    "session_id": 80527,
+    "exit_code": 134,
+    "log": "launcher.log",
+    "detail": "GUI terminated by signal 6"
+  },
+  "native_attempt": {
+    "command": "rtk proxy just gui",
+    "session_id": 58142,
+    "exit_code": 0,
+    "log": "launcher-native.log",
+    "detail": "Native close followed by successful launcher cleanup"
+  }
+}
