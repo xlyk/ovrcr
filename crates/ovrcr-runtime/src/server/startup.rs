@@ -203,7 +203,7 @@ fn run_server_inner(
         .name("ovrcr-workspace-refresh".into())
         .spawn(move || {
             while !refresh_state.shutdown.load(Ordering::Acquire) {
-                thread::sleep(Duration::from_millis(200));
+                thread::park_timeout(Duration::from_millis(200));
                 if refresh_state.shutdown.load(Ordering::Acquire) {
                     break;
                 }
@@ -222,7 +222,7 @@ fn run_server_inner(
                     if refresh_state.shutdown.load(Ordering::Acquire) {
                         return;
                     }
-                    thread::sleep(Duration::from_millis(200));
+                    thread::park_timeout(Duration::from_millis(200));
                 }
             }
         })?;
@@ -275,6 +275,8 @@ fn run_server_inner(
             Err(error) => return Err(error).context("accept server client"),
         }
     }
+    // Wake the observer before joining it; shutdown must not wait for its next poll.
+    refresh.thread().unpark();
     signal_handle.close();
     let _ = signal_thread.join();
     let task_shutdown = task_manager.stop();
