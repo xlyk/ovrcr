@@ -1,15 +1,15 @@
 # Agent version compatibility
 
-Stable patch releases in the approved major/minor line are compatible from the minimum below. Compatibility permits the existing adapter contract; it does not certify an untested release or change provider capabilities.
+Every stable release at or above the minimum below is compatible, including later minor and major lines. Compatibility permits the existing adapter contract; it does not certify an untested release or change provider capabilities.
 
 | Provider | Compatible range | Recorded native reporting versions |
 | --- | --- | --- |
-| Claude | >=2.1.267, <2.2.0 | 2.1.267, 2.1.268 |
-| Codex | >=0.153.0, <0.154.0 | 0.153.0 |
-| Pi | >=0.85.1, <0.86.0 | 0.85.1 |
-| Oh My Pi | >=18.2.2, <18.3.0 | 18.1.19 |
+| Claude | >=2.1.267 | 2.1.267, 2.1.268 |
+| Codex | >=0.153.0 | 0.153.0 |
+| Pi | >=0.85.1 | 0.85.1 |
+| Oh My Pi | >=18.2.2 | 18.1.19 |
 
-New minor/major versions require review. Prereleases, build-suffixed versions, malformed versions and versions below the floor are outside the compatible range. Historical tested versions can fall outside the current range: OMP 18.1.19 reporting evidence does not certify 18.2.2 recovery.
+Prereleases, build-suffixed versions, malformed versions and versions below the floor are outside the compatible range. Historical tested versions can fall outside the current range: OMP 18.1.19 reporting evidence does not certify 18.2.2 recovery.
 
 `agent doctor PROVIDER --json` separates `compatible_versions` and `tested_versions`, and reports `version_compatible` and `version_tested` for the observed executable. These replace the ambiguous `supported_versions` field. No successful probe proves hook trust, delivery, conversation attachment or native continuity.
 

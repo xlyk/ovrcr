@@ -42,6 +42,7 @@ pub fn run_dashboard(
     task_request: TaskRequestFn,
     settings_path: PathBuf,
     configuration_paths: (PathBuf, PathBuf),
+    startup_warning: Option<String>,
 ) -> Result<()> {
     let size = terminal_size()?;
     let pane_size = pane_size(size);
@@ -65,6 +66,9 @@ pub fn run_dashboard(
     )?;
     let geometry_ack = read_server(&mut stream)?;
     dashboard.handle_server_message(geometry_ack);
+    if let Some(warning) = startup_warning {
+        dashboard.set_error(warning);
+    }
     let first_session = dashboard
         .visible_rows()
         .into_iter()

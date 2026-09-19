@@ -1,6 +1,6 @@
 # Set up Claude Code reporting
 
-Use stable Claude Code **>=2.1.267, <2.2.0** and an interactive foreground
+Use stable Claude Code **>=2.1.267** and an interactive foreground
 invocation. OVRCR supports a fresh invocation or an initial resume using the
 separate-token form `--resume UUID`, where `UUID` is the known canonical lowercase
 RFC 4122 UUIDv4. 2.1.268 and later compatible patches also support the separate-token form `-r UUID`.
@@ -31,6 +31,10 @@ prove Claude's effective configuration. Setup preserves an external status-line
 renderer using `--render-command`. It migrates an exact legacy
 `ovrcr report claude-context --stdin-json` command. A wrapper containing that
 legacy reporter is left untouched with manual migration instructions on stderr.
+
+When `claude` is on `PATH` and the settings file under `CLAUDE_CONFIG_DIR` (default
+`~/.claude`) lacks these synchronous hooks, the dashboard shows a one-line warning
+in its error banner at startup naming the file and the setup command to run.
 
 Check the supplied file and executable:
 

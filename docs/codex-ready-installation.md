@@ -1,6 +1,6 @@
 # How to install Codex readiness reporting
 
-Use the existing hooks-only adapter from PR #56 with stable Codex CLI **>=0.153.0, <0.154.0**. This procedure installs the [last observed root turn contract](codex-reporting-setup.md#what-the-indicator-means). It requires no additional reporter, transcript collector, metrics or notification configuration.
+Use the existing hooks-only adapter from PR #56 with stable Codex CLI **>=0.153.0**. This procedure installs the [last observed root turn contract](codex-reporting-setup.md#what-the-indicator-means). It requires no additional reporter, transcript collector, metrics or notification configuration.
 
 The retained acceptance at `56b84f9` used a disposable macOS fixture. A built artifact, printed configuration and passing doctor are preparation evidence. Mark a host installation ready only after its installed binary, server, effective configuration and native hook delivery pass the check below. Keep preparation, installation and native acceptance results separate.
 

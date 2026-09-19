@@ -203,7 +203,7 @@ fn canonical_uuid_v4(value: &str) -> bool {
 pub enum ClaudeVersion {
     V2_1_267,
     V2_1_268,
-    LaterPatch(u32),
+    Later([u32; 3]),
 }
 
 impl ClaudeVersion {
@@ -211,7 +211,7 @@ impl ClaudeVersion {
         match self {
             Self::V2_1_267 => "2.1.267".into(),
             Self::V2_1_268 => "2.1.268".into(),
-            Self::LaterPatch(patch) => format!("2.1.{patch}"),
+            Self::Later([major, minor, patch]) => format!("{major}.{minor}.{patch}"),
         }
     }
 }
@@ -247,16 +247,16 @@ fn classify_version(bytes: &[u8]) -> ClaudeVersionProbe {
     else {
         return ClaudeVersionProbe::Unavailable;
     };
-    let Some([_, _, patch]) = super::versions::parse(version) else {
+    let Some(parsed) = super::versions::parse(version) else {
         return ClaudeVersionProbe::Unavailable;
     };
     if !super::versions::CLAUDE.accepts(version) {
         return ClaudeVersionProbe::Unsupported(version.into());
     }
-    ClaudeVersionProbe::Supported(match patch {
-        267 => ClaudeVersion::V2_1_267,
-        268 => ClaudeVersion::V2_1_268,
-        _ => ClaudeVersion::LaterPatch(patch),
+    ClaudeVersionProbe::Supported(match parsed {
+        [2, 1, 267] => ClaudeVersion::V2_1_267,
+        [2, 1, 268] => ClaudeVersion::V2_1_268,
+        later => ClaudeVersion::Later(later),
     })
 }
 
@@ -1230,7 +1230,7 @@ mod tests {
         for version in [
             ClaudeVersion::V2_1_267,
             ClaudeVersion::V2_1_268,
-            ClaudeVersion::LaterPatch(274),
+            ClaudeVersion::Later([2, 1, 274]),
         ] {
             assert_eq!(
                 eligible_launch(&resume, version),
