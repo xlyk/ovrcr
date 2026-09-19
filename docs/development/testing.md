@@ -40,6 +40,14 @@ manual dispatch: GitHub **Actions → CI → Run workflow**, then select the bra
 Manual dispatch also runs the macOS checks. Linux jobs and their assertions remain
 intact; a skipped job is not evidence of passing Linux acceptance.
 
+The `checks` and `linux` test steps run under `cargo nextest` with the `ci`
+profile from `.config/nextest.toml`: a failing test is retried twice and
+reported as `FLAKY` instead of failing the job, and a test that hangs is
+terminated after five minutes. A test that fails every attempt still fails the
+job. `FLAKY` lines in the job log are the list of tests to harden; retries hide
+the red, not the defect. Locally, `cargo nextest run --profile ci` reproduces
+the CI behavior once nextest is installed.
+
 ## Commands and isolated acceptance
 
 For Rust changes, choose the owning package and add a focused test filter as appropriate:
