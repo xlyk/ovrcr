@@ -462,11 +462,20 @@ fn refuses_registry_and_git_path_disagreement() {
         workspaces: vec![workspace.clone()],
         ..fixture.project.clone()
     };
+    std::fs::create_dir(&workspace.path).unwrap();
 
     let error = remove_worktree(&project, &workspace, false)
         .unwrap_err()
         .to_string();
     assert!(error.contains("registry/Git path disagreement"));
+    assert!(actual.path.exists());
+    assert!(fixture.worktree_paths().contains(&actual.path));
+
+    // With no directory at the registered path and no Git registration for
+    // it, dropping the record is the only remaining action; the unrelated
+    // worktree Git does list must stay untouched.
+    std::fs::remove_dir(&workspace.path).unwrap();
+    remove_worktree(&project, &workspace, false).unwrap();
     assert!(actual.path.exists());
     assert!(fixture.worktree_paths().contains(&actual.path));
 }
@@ -531,23 +540,35 @@ fn removes_workspace_whose_directory_is_gone() {
         "pruning must preserve the branch"
     );
 
-    // A missing directory whose path Git does not list is refused: the
-    // registry alone never authorizes a prune.
-    let unknown = WorkspaceRecord {
-        id: "never-created".into(),
-        path: fixture.project.workspace_root.join("never-created"),
-        branch: "feature/vanished".into(),
-        git_identity: None,
-        setup_pending: false,
-    };
+    // A directory deleted and pruned outside OVRCR leaves Git with nothing to
+    // remove; the stale registry record must still be removable.
+    let pruned = create_worktree(
+        &fixture.project,
+        "pruned-outside",
+        BranchSpec::New {
+            branch: "feature/pruned-outside".into(),
+            base: "main".into(),
+        },
+    )
+    .unwrap();
     let project = ProjectRecord {
-        workspaces: vec![unknown.clone()],
+        workspaces: vec![pruned.clone()],
         ..fixture.project.clone()
     };
-    let error = remove_worktree(&project, &unknown, false)
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("registry/Git path disagreement"), "{error}");
+    std::fs::remove_dir_all(&pruned.path).unwrap();
+    live::git(&fixture.project.repo, &["worktree", "prune"]);
+    assert!(!fixture.worktree_paths().contains(&pruned.path));
+
+    remove_worktree(&project, &pruned, false).unwrap();
+
+    assert!(
+        live::git(
+            &fixture.project.repo,
+            &["show-ref", "--verify", "refs/heads/feature/pruned-outside"]
+        )
+        .contains("feature/pruned-outside"),
+        "removing a forgotten worktree must preserve the branch"
+    );
 }
 
 #[test]

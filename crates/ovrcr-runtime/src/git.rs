@@ -489,16 +489,27 @@ pub fn remove_worktree(
 /// Remove the registration of a worktree whose directory was deleted
 /// outside OVRCR.
 ///
-/// Allowed only when Git still lists that path as prunable and the surviving
-/// admin directory still holds the captured generation marker. Mutation is
-/// `git worktree remove` of that path so unrelated prunable admins stay.
+/// When Git has already forgotten the path too (pruned outside OVRCR) there
+/// is nothing left to touch and only the registry record goes. Otherwise the
+/// prune is allowed only when Git still lists that path as prunable and the
+/// surviving admin directory still holds the captured generation marker.
+/// Mutation is `git worktree remove` of that path so unrelated prunable
+/// admins stay.
 fn prune_missing_worktree(
     repo: &Path,
     workspace: &WorkspaceRecord,
     expected_path: &Path,
 ) -> Result<()> {
     let entries = worktree_entries(repo)?;
-    let listed = listed_path(&entries, expected_path)?.clone();
+    let Ok(listed) = listed_path(&entries, expected_path).cloned() else {
+        if find_worktree_admin(repo, expected_path)?.is_some() {
+            bail!(
+                "Git does not list {} but an admin directory still points at it; refuse prune",
+                expected_path.display()
+            );
+        }
+        return Ok(());
+    };
     if !prunable_worktrees(repo)?.iter().any(|path| {
         path == expected_path
             || path == &listed
