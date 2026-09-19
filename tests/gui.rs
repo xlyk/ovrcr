@@ -323,6 +323,7 @@ fn demo_session_groups(root: &Path) -> Result<Vec<i32>> {
             .map(|(project, workspace, name, _, _)| (*project, *workspace, *name))
             .collect::<Vec<_>>(),
         vec![
+            ("consigint", "main", "local"),
             ("consigint", "gui-consigint-auth-handoff", "local"),
             (
                 "consigint",
@@ -345,7 +346,7 @@ fn demo_session_groups(root: &Path) -> Result<Vec<i32>> {
                 "gui-consigint-worktree-lifecycle",
                 "plan snapshot restore"
             ),
-            ("consigint", "main", "local"),
+            ("spacelift-agent", "main", "local"),
             (
                 "spacelift-agent",
                 "gui-spacelift-agent-pipeline-progress-v2",
@@ -366,7 +367,6 @@ fn demo_session_groups(root: &Path) -> Result<Vec<i32>> {
                 "gui-spacelift-agent-scope-quality",
                 "review scope quality"
             ),
-            ("spacelift-agent", "main", "local"),
         ]
     );
     assert_eq!(

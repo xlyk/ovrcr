@@ -786,7 +786,8 @@ fn split_terminal_acceptance_preserves_input_and_geometry() -> Result<()> {
             pixel_height: 0,
         },
     )?;
-    dashboard.send(b"j")?;
+    dashboard.wait_until(|screen| screen.contains("waiting"), wait_deadline())?;
+    dashboard.click_visible_text("waiting")?;
     dashboard.wait_for(b"WAITING_READY", wait_deadline())?;
     dashboard.send(b"v")?;
     dashboard.wait_for(b"MOUSE_READY", wait_deadline())?;
@@ -887,7 +888,7 @@ fn split_terminal_acceptance_preserves_input_and_geometry() -> Result<()> {
         },
         wait_deadline(),
     )?;
-    reattached.send(b"j")?;
+    reattached.click_visible_text("waiting")?;
     reattached.wait_for(b"WAITING_READY", wait_deadline())?;
     assert_eq!(session_pid(&fixture, "waiting")?, waiting_pid);
     assert_eq!(session_pid(&fixture, "mouse")?, mouse_pid);
@@ -1415,7 +1416,7 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
     )?;
     reattached.wait_for(b"mouse", wait_deadline())?;
     reattached.wait_for(b"agent runtime", wait_deadline())?;
-    reattached.send(b"j")?;
+    reattached.click_visible_text("waiting")?;
     reattached.wait_for(b"WAITING_READY", wait_deadline())?;
     reattached.detach()?;
     fixture.shutdown()?;
@@ -1597,7 +1598,7 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
         |screen| screen.contains("BROWSE  ? Help") && !screen.contains("Terminal mode"),
         wait_deadline(),
     )?;
-    reattached.send(b"j")?;
+    reattached.click_visible_text("waiting")?;
     reattached.wait_for(b"INPUT_ACK", wait_deadline())?;
     let reattached_screen = reattached.rendered();
     assert!(reattached_screen.contains("BROWSE  ? Help"));
@@ -1675,7 +1676,7 @@ fn pause_resume_dashboard_round_trip() -> Result<()> {
         },
     )?;
     reattached.wait_for(b"agent runtime", wait_deadline())?;
-    reattached.send(b"j")?;
+    reattached.click_visible_text("waiting")?;
     reattached.wait_for(b"paused", wait_deadline())?;
     reattached.send(b"r")?;
     reattached.wait_for_screen(|screen| !screen.contains("paused"), wait_deadline())?;

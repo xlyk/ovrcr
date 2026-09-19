@@ -2179,7 +2179,9 @@ fn snapshot_from_state(state: &ServerState) -> HierarchySnapshot {
         }
     }
     for project in &mut projects {
-        project.workspaces.sort_by(|a, b| a.name.cmp(&b.name));
+        project
+            .workspaces
+            .sort_by(|a, b| (!a.root, &a.name).cmp(&(!b.root, &b.name)));
         for workspace in &mut project.workspaces {
             workspace
                 .sessions
