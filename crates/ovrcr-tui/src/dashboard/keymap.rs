@@ -7,7 +7,7 @@ use super::state::{find_session, workspace_heading};
 use super::{Dashboard, DashboardAction, InputMode, TreeRow};
 use crate::task_tui::TasksView;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ovrcr_protocol::SessionPhase;
+use ovrcr_protocol::{SessionKind, SessionPhase};
 
 /// What a key does. Dispatch, the key popup and the palette run these directly,
 /// without synthesising a key event to reach one another. `Capture` is the one
@@ -26,6 +26,9 @@ pub(super) enum Action {
     Focus,
     Pause,
     Resume,
+    /// Enter on a session that is no longer live: resume the conversation or
+    /// reopen a fresh shell in the same row, through the palette's confirmation.
+    Reopen,
     MarkReviewed,
     CopyScreen,
     History,
@@ -283,6 +286,7 @@ impl Dashboard {
             }
             Action::Pause => self.pause_request(true),
             Action::Resume => self.pause_request(false),
+            Action::Reopen => self.open_reopen_terminal(),
             Action::MarkReviewed => self.mark_reviewed_request(),
             Action::CopyScreen => self.begin_copy(),
             Action::History => self.begin_history_request(false),
@@ -690,37 +694,68 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         .group('v', "k/Up"),
     ];
     view.extend(help());
-    let (enter_name, enter_description, enter_disabled) =
-        if let Some(container) = dashboard.selected_container.as_ref() {
-            let collapsed = match container {
-                TreeRow::Project { name } => dashboard.collapsed_projects.contains(name),
-                TreeRow::Workspace { project, id } => dashboard
-                    .collapsed_workspaces
-                    .contains(&(project.clone(), id.clone())),
-                TreeRow::Session { .. } => false,
-            };
-            if collapsed {
-                (
-                    "Expand",
-                    "Expand the selected project or workspace".into(),
-                    None,
-                )
-            } else {
-                (
-                    "Collapse",
-                    "Collapse the selected project or workspace".into(),
-                    None,
-                )
-            }
+    let (enter_name, enter_description, enter_disabled, enter_action) = if let Some(container) =
+        dashboard.selected_container.as_ref()
+    {
+        let collapsed = match container {
+            TreeRow::Project { name } => dashboard.collapsed_projects.contains(name),
+            TreeRow::Workspace { project, id } => dashboard
+                .collapsed_workspaces
+                .contains(&(project.clone(), id.clone())),
+            TreeRow::Session { .. } => false,
+        };
+        if collapsed {
+            (
+                "Expand",
+                "Expand the selected project or workspace".into(),
+                None,
+                Action::Focus,
+            )
         } else {
             (
-                "Focus",
-                format!("Send terminal input to {target}"),
-                missing
-                    .or_else(|| (!running).then_some("session is not running"))
-                    .or_else(|| (!dashboard.input_is_allowed()).then_some(WAITING)),
+                "Collapse",
+                "Collapse the selected project or workspace".into(),
+                None,
+                Action::Focus,
             )
+        }
+    } else if let Some(session) = selected.filter(|s| !s.phase.is_live()) {
+        // The row outlived its process. Enter is the one key everyone tries, so
+        // it leads straight to the recovery the palette already offers.
+        let recovery = session.recovery.as_ref();
+        let (name, description) = match &session.kind {
+            SessionKind::Agent { .. } if recovery.is_some_and(|r| r.unavailable.is_some()) => (
+                "Resume unavailable",
+                format!("Explain why {target} cannot resume its conversation"),
+            ),
+            SessionKind::Agent { .. } if recovery.is_some_and(|r| r.failure.is_some()) => (
+                "Retry resume conversation",
+                format!(
+                    "Resume the exact conversation of {target} in the same row, with confirmation"
+                ),
+            ),
+            SessionKind::Agent { .. } => (
+                "Resume conversation",
+                format!(
+                    "Resume the exact conversation of {target} in the same row, with confirmation"
+                ),
+            ),
+            SessionKind::Terminal => (
+                "Reopen shell",
+                format!("Reopen {target} in a fresh shell in the same row, with confirmation"),
+            ),
         };
+        (name, description, None, Action::Reopen)
+    } else {
+        (
+            "Focus",
+            format!("Send terminal input to {target}"),
+            missing
+                .or_else(|| (!running).then_some("session is not running"))
+                .or_else(|| (!dashboard.input_is_allowed()).then_some(WAITING)),
+            Action::Focus,
+        )
+    };
     vec![
         KeyGroup { title: "Create".into(), keys: vec![
             key_binding("n", "Create terminal", format!("Choose an agent or shell to start in {workspace_target}; opens a form"), Char('n'), Action::CreateTerminal).unless(launch_blocked.or(no_workspace)).group('w', "n"),
@@ -728,7 +763,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             key_binding("a", "Register project", "Register a repository and its root workspace; opens a form; keeps the repository".into(), Char('a'), Action::RegisterProject).group('p', "a"),
         ] },
         KeyGroup { title: "Session".into(), keys: vec![
-            key_binding("Enter", enter_name, enter_description, Enter, Action::Focus).unless(enter_disabled).group('t', "Enter"),
+            key_binding("Enter", enter_name, enter_description, Enter, enter_action).unless(enter_disabled).group('t', "Enter"),
             key_binding("p", "Pause", format!("Pause the processes of {target}; no confirmation"), Char('p'), Action::Pause).unless(missing.or_else(|| (!running).then_some("not running"))).group('t', "p"),
             key_binding("r", "Resume", format!("Resume the processes of {target}; no confirmation"), Char('r'), Action::Resume).unless(missing.or_else(|| (!paused).then_some("not paused"))).group('t', "r"),
             key_binding("R", "Mark reviewed", format!("Mark the displayed unread agent response from {target} reviewed; activity and reporting health stay unchanged"), Char('R'), Action::MarkReviewed).unless(missing.or_else(|| selected.and_then(|s| s.unread.as_ref()).is_none().then_some("no unread response"))).once().group('t', "R"),

@@ -287,9 +287,9 @@ impl ServerState {
             // Exit is not interruption or proof that descendants stopped. Persist
             // the explicit-action diagnostic without changing the ownership evidence.
             let message = if summary.agent.is_none() {
-                "Agent exited before conversation attachment was confirmed; check native reporting and history, then Retry"
+                "Agent exited before conversation attachment was confirmed; check native reporting and history, then Retry with Enter"
             } else {
-                "Agent exited; resume the conversation explicitly"
+                "Agent exited; press Enter to resume the conversation"
             };
             retained.record_failure(session.id(), session.run(), message.into())?;
         }

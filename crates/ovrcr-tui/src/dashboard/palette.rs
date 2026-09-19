@@ -626,6 +626,39 @@ impl Dashboard {
         action
     }
 
+    /// Enter on a session that is no longer live. Opens the same confirmation the
+    /// palette's Resume / Reopen entry does, or the unavailable notice.
+    pub(super) fn open_reopen_terminal(&mut self) -> DashboardAction {
+        let Some(session) = self
+            .action_session()
+            .and_then(|id| find_session(self, id))
+            .filter(|session| !session.phase.is_live())
+        else {
+            return DashboardAction::None;
+        };
+        let unavailable = matches!(session.kind, SessionKind::Agent { .. })
+            && session
+                .recovery
+                .as_ref()
+                .is_none_or(|recovery| recovery.unavailable.is_some());
+        let command = if unavailable {
+            Command::AgentResumeUnavailable(session.id)
+        } else {
+            Command::ReopenTerminal(session.id)
+        };
+        self.cancel_mouse_gesture();
+        if let Some(begin) = self.history_begin_request.as_mut() {
+            begin.cancelled = true;
+        }
+        self.whichkey = None;
+        self.palette = Some(Palette {
+            page: self.command_page(command),
+            ..Palette::new()
+        });
+        self.mode = InputMode::Browse;
+        DashboardAction::Redraw
+    }
+
     pub(super) fn dismiss_close_confirm_for(&mut self, session: SessionId) {
         let matches_close = matches!(
             self.palette.as_ref().map(|palette| &palette.page),
@@ -4175,6 +4208,58 @@ mod launch_tests {
         assert!(request.is_none());
         assert!(target.contains(reason), "{target}");
         assert_eq!(submit(&mut d), DashboardAction::Redraw);
+    }
+
+    #[test]
+    fn enter_on_an_exited_agent_opens_the_resume_confirmation() {
+        let mut d = dashboard();
+        let mut row = summary(1);
+        row.kind = SessionKind::Agent { name: "pi".into() };
+        row.phase = SessionPhase::Exited {
+            code: None,
+            signal: None,
+        };
+        row.recovery = Some(SessionRecovery {
+            conversation: Some("retained".into()),
+            attached: false,
+            requires_ack: false,
+            unavailable: None,
+            failure: Some("Agent exited; press Enter to resume the conversation".into()),
+        });
+        d.hierarchy.projects[0].workspaces[0].sessions = vec![row];
+        d.select_session(SessionId(1));
+        let enter = d
+            .key_binding_for(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .expect("Enter is bound");
+        assert_eq!(enter.name, "Retry resume conversation");
+        assert_eq!(enter.reason, None);
+        assert_eq!(d.run(Action::Reopen), DashboardAction::Redraw);
+        assert_eq!(
+            request(&mut d).request,
+            Request::ReopenSession {
+                session: SessionId(1),
+                expected_run: crate::protocol::SessionRunId(1),
+                acknowledge_stopped: false,
+            }
+        );
+
+        // Without a certified conversation Enter explains instead of launching.
+        d.hierarchy.projects[0].workspaces[0].sessions[0].recovery = Some(SessionRecovery {
+            conversation: None,
+            attached: false,
+            requires_ack: false,
+            unavailable: Some("no certified conversation".into()),
+            failure: None,
+        });
+        d.palette = None;
+        assert_eq!(d.run(Action::Reopen), DashboardAction::Redraw);
+        match d.palette.as_ref().map(|palette| &palette.page) {
+            Some(Page::Confirm {
+                request: None,
+                target,
+            }) => assert!(target.contains("no certified conversation"), "{target}"),
+            _ => panic!("expected an unavailable notice"),
+        }
     }
 
     #[test]
