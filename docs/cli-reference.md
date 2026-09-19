@@ -280,8 +280,9 @@ Git's worktree list and the registry. Target the current branch or the worktree
 path; the repository-root workspace is rejected. Removal uses ordinary
 `git worktree remove` and preserves the branch. OVRCR never removes a repository
 or an unregistered worktree. If the worktree directory was deleted outside OVRCR,
-removal instead runs `git worktree prune`, but only after Git itself lists the
-registered path and branch as prunable, and then drops the registry record.
+removal instead prunes Git's registration, but only after Git itself lists the
+registered path as prunable, and then drops the registry record. If Git has
+already forgotten the path as well, removal only drops the registry record.
 
 ## Shutdown
 
