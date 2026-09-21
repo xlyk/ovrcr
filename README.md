@@ -504,7 +504,9 @@ dashboard, a workload tested at 50 live sessions, and live PTYs plus in-memory
 history. Detaching reconnects to a surviving PTY. A server crash loses those
 PTYs and that history; reattaching is not crash recovery. Identity, title, kind,
 and workspace stay in the store so you can reopen a fresh shell in the same row.
-Claude, Codex, Pi and Oh My Pi recovery use same-row resume through managed launch.
+Claude, Codex, Pi and Oh My Pi recovery opens a shell in the same row and executes
+the resume command. A saved conversation uses exact managed resume; without one,
+the agent opens its native resume picker. The shell remains open after the agent exits.
 Displaying an eligible interrupted Agent after a verified reboot requests recovery
 automatically; uncertain ownership and failed attempts require explicit action.
 Other providers show resume unavailable. Native automatic-recovery acceptance is

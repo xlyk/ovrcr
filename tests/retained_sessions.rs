@@ -209,6 +209,9 @@ fn codex_reopen_uses_exact_identity_without_prompt_across_two_restarts() {
     live.start_binary_env(&environment);
     json(&live, &["terminal", "reopen", &id_arg]);
     track_groups(&live);
+    wait_output(&live, &id_arg, "NATIVE_CODEX_RESUME_FAILED");
+    // The native failure leaves a shell; closing it retains the native exit code.
+    json(&live, &["terminal", "send", &id_arg, "--text", "exit $?"]);
     wait_phase(&live, id, "exited");
     let rows = json(&live, &["terminal", "list"]);
     let row = rows
@@ -1422,6 +1425,18 @@ fn attached_agent_natural_exit_stays_explicit_after_a_verified_reboot() {
         &live,
         &["terminal", "send", &id.to_string(), "--text", "exit"],
     );
+    wait_output(&live, &id.to_string(), "test result: ok");
+    json(
+        &live,
+        &[
+            "terminal",
+            "send",
+            &id.to_string(),
+            "--text",
+            "printf 'RESTORE_%s\\n' SHELL; exit",
+        ],
+    );
+    wait_output(&live, &id.to_string(), "RESTORE_SHELL");
     wait_phase(&live, id, "exited");
     json(&live, &["shutdown", "--kill"]);
     live.join();
@@ -2168,5 +2183,128 @@ fn real_process_discovery_failure_does_not_archive_the_record() {
             .iter()
             .any(|r| r["id"] == id),
         "failed close lost the actionable row"
+    );
+}
+
+#[test]
+fn restore_without_reporting_executes_native_picker_in_shell() {
+    assert_native_picker_in_shell("/bin/sh");
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn restore_native_picker_in_zsh_after_loading_user_configuration() {
+    assert_native_picker_in_shell("/bin/zsh");
+}
+
+fn assert_native_picker_in_shell(shell: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let live = Live::idle().bounded();
+    let bin = live.root.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let native = bin.join("claude");
+    std::fs::write(&native, "#!/bin/sh\nif [ \"$1\" = --resume ]; then printf 'NATIVE_%s\\n' PICKER; else printf 'INITIAL_%s\\n' EXIT; fi\n").unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let home = live.root.path().join("shell-home");
+    std::fs::create_dir(&home).unwrap();
+    std::fs::write(home.join(".zshrc"), "export RESTORE_SHELL_CONFIG=loaded\n").unwrap();
+    live.start_binary_env(&[
+        ("PATH", std::ffi::OsStr::new(&path)),
+        ("SHELL", std::ffi::OsStr::new(shell)),
+        ("HOME", home.as_os_str()),
+        ("ZDOTDIR", home.as_os_str()),
+    ]);
+    live.ready("feature/native-picker");
+    let created = create_terminal(&live, "picker", &[native.to_str().unwrap()]);
+    let id = created["id"].as_u64().unwrap().to_string();
+    wait_output(&live, &id, "INITIAL_EXIT");
+    wait_phase(&live, created["id"].as_u64().unwrap(), "exited");
+    let restored = json(&live, &["terminal", "reopen", &id, "--ack-stopped"]);
+    assert_eq!(restored["id"], created["id"]);
+    wait_output(&live, &id, "NATIVE_PICKER");
+    // The agent exits, leaving the interactive terminal usable.
+    json(
+        &live,
+        &[
+            "terminal",
+            "send",
+            &id,
+            "--text",
+            "printf 'SHELL_%s\\n' REMAINS",
+        ],
+    );
+    wait_output(&live, &id, "SHELL_REMAINS");
+    if shell.ends_with("zsh") {
+        json(
+            &live,
+            &[
+                "terminal",
+                "send",
+                &id,
+                "--text",
+                "printf 'CONFIG_%s\\n' \"$RESTORE_SHELL_CONFIG\"",
+            ],
+        );
+        wait_output(&live, &id, "CONFIG_loaded");
+    }
+    track_groups(&live);
+}
+
+#[test]
+fn exact_resume_preserves_long_arguments_before_shell_startup() {
+    use std::os::unix::fs::PermissionsExt;
+    let (live, id, _) = prepare_interrupted_claude();
+    let database = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+    let sql_id = i64::try_from(id).unwrap();
+    let encoded: String = database
+        .query_row(
+            "SELECT reference FROM agent_conversations WHERE session = ?1",
+            [sql_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let mut reference: ovrcr::protocol::ConversationReference =
+        serde_json::from_str(&encoded).unwrap();
+    let long = "x".repeat(1800);
+    let ovrcr::protocol::ConversationReference::Claude(claude) = &mut reference else {
+        panic!("Claude reference")
+    };
+    claude.options = vec!["--model".into(), long.clone()];
+    database
+        .execute(
+            "UPDATE agent_conversations SET reference = ?1 WHERE session = ?2",
+            rusqlite::params![serde_json::to_string(&reference).unwrap(), sql_id],
+        )
+        .unwrap();
+    drop(database);
+    let gate = live.root.path().join("shell-gate");
+    let c_gate = std::ffi::CString::new(gate.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(c_gate.as_ptr(), 0o600) }, 0);
+    let shell = live.root.path().join("delayed-shell");
+    std::fs::write(
+        &shell,
+        format!(
+            "#!/bin/sh\ncat '{}' >/dev/null\nexec /bin/sh\n",
+            gate.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let config = live.root.path().join("claude-config");
+    live.start_binary_env(&[
+        ("SHELL", shell.as_os_str()),
+        ("CLAUDE_CONFIG_DIR", config.as_os_str()),
+    ]);
+    json(&live, &["terminal", "reopen", &id.to_string()]);
+    // Receipt and terminal reads remain available while the shell blocks startup.
+    wait_output(&live, &id.to_string(), "eval \"$OVRCR_RESTORE_COMMAND\"");
+    std::fs::write(&gate, b"ready\n").unwrap();
+    track_groups(&live);
+    wait_output(&live, &id.to_string(), "RETAINED_CLAUDE_READY");
+    let argv = std::fs::read_to_string(live.root.path().join("argv")).unwrap();
+    assert!(
+        argv.ends_with(&format!("--model\n{long}\n")),
+        "long resume argument changed"
     );
 }

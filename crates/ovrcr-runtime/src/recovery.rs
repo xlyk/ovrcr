@@ -41,9 +41,7 @@ pub fn unavailable(
         ),
         Some(reference) if reference.provider() == provider => None,
         Some(_) => Some("Retained conversation provider does not match this session".into()),
-        None => Some(format!(
-            "No certified {name} conversation and recoverable configuration; use managed launch and configured reporting"
-        )),
+        None => None,
     }
 }
 
@@ -76,9 +74,98 @@ pub fn resume_argv(name: &str, reference: &ConversationReference) -> Result<Vec<
     }
 }
 
+/// Without a retained identity, let the native agent offer its own history picker.
+pub fn picker_argv(name: &str) -> Result<Vec<OsString>> {
+    let provider = AgentProvider::from_name(name)
+        .filter(|provider| supported(*provider))
+        .ok_or_else(|| anyhow::anyhow!("Native resume is not available for {name}"))?;
+    Ok(vec![
+        provider.name().into(),
+        match provider {
+            AgentProvider::Codex => "resume",
+            _ => "--resume",
+        }
+        .into(),
+    ])
+}
+
+/// Submit one literal command line to the interactive terminal, then press Enter.
+pub fn terminal_command(argv: &[OsString]) -> Result<String> {
+    let words = argv
+        .iter()
+        .map(|arg| {
+            let arg = arg
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("resume command is not UTF-8"))?;
+            if arg.chars().any(char::is_control) {
+                bail!("resume command contains terminal control characters");
+            }
+            Ok(format!(
+                "'{}'",
+                arg.replace('\'', "'\\''").replace('!', "'\\!'")
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(format!("{}\n", words.join(" ")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn picker_commands_are_explicit_and_terminal_arguments_are_literal() {
+        for (provider, command) in [
+            ("claude", "'claude' '--resume'\n"),
+            ("codex", "'codex' 'resume'\n"),
+            ("pi", "'pi' '--resume'\n"),
+            ("omp", "'omp' '--resume'\n"),
+        ] {
+            assert_eq!(
+                terminal_command(&picker_argv(provider).unwrap()).unwrap(),
+                command
+            );
+        }
+        assert!(picker_argv("unrecognized; exit").is_err());
+        let command = terminal_command(&[
+            "/usr/bin/printf".into(),
+            "%s".into(),
+            "a'b!foo $(false); hi".into(),
+        ])
+        .unwrap();
+        for shell in ["/bin/sh", "/bin/zsh", "/bin/tcsh"] {
+            if !std::path::Path::new(shell).exists() {
+                continue;
+            }
+            let output = std::process::Command::new(shell)
+                .args(["-f", "-c", &command])
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{shell}: {:?}", output.stderr);
+            assert_eq!(output.stdout, b"a'b!foo $(false); hi", "{shell}");
+        }
+        let literal = "a'b!foo 界 $(false); ".repeat(100);
+        let command = terminal_command(&[
+            "/usr/bin/printf".into(),
+            "%s".into(),
+            literal.clone().into(),
+        ])
+        .unwrap();
+        for shell in ["/bin/sh", "/bin/zsh", "/bin/tcsh"] {
+            if !std::path::Path::new(shell).exists() {
+                continue;
+            }
+            let output = std::process::Command::new(shell)
+                .env("OVRCR_RESTORE_COMMAND", command.trim_end_matches('\n'))
+                .args(["-f", "-c", "eval \"$OVRCR_RESTORE_COMMAND\""])
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{shell}: {:?}", output.stderr);
+            assert_eq!(output.stdout, literal.as_bytes(), "{shell}");
+        }
+        assert!(terminal_command(&["bad\ncommand".into()]).is_err());
+        assert!(terminal_command(&["bad\x1bcommand".into()]).is_err());
+    }
+
     #[test]
     fn only_installed_adapter_is_eligible_and_provider_mismatch_fails_closed() {
         use ovrcr_protocol::ClaudeConversation;
@@ -90,11 +177,7 @@ mod tests {
             options: vec![],
         });
         assert!(unavailable("claude", Some(&reference), false).is_none());
-        assert!(
-            unavailable("claude", None, false)
-                .unwrap()
-                .contains("No certified")
-        );
+        assert!(unavailable("claude", None, false).is_none());
         assert!(
             unavailable("claude", Some(&reference), true)
                 .unwrap()

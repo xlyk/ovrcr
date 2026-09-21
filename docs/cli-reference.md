@@ -156,8 +156,10 @@ process output. `--ack-stopped` is required when the inventory says previous
 agent or background processes may still be running; Retry is not that
 confirmation. `acknowledge-stopped` records that confirmation without launching
 a session, but starts the server on demand when it is not running. Certified Agent
-rows use their installed provider adapter to resume the exact retained conversation
-without a new prompt (Claude, Codex, Pi and Oh My Pi). Reopen starts the server if it is not running. With `--json`,
+rows enter their managed resume command into that shell to resume the exact retained
+conversation without a new prompt (Claude, Codex, Pi and Oh My Pi). Without a saved
+conversation, these providers open their native resume picker instead. The shell
+remains usable when the agent exits. Reopen starts the server if it is not running. With `--json`,
 reopen returns the terminal object and rename returns `{"ok":true}`.
 
 CLI inventory remains passive. The Dashboard's first visible display can recover

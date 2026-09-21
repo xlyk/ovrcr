@@ -2689,6 +2689,7 @@ fn spawn_live_test_session_with_hook(
     let session = Session::spawn_registered(
         id,
         SessionSpec {
+            restore_command: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
             project: "p".into(),
@@ -2723,6 +2724,7 @@ fn spawn_exiting_test_session(
     let session = Session::spawn_registered(
         id,
         SessionSpec {
+            restore_command: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
             project: "p".into(),
@@ -4106,6 +4108,7 @@ fn control_and_refresh_failures_preserve_both_causes() {
         let session = Session::spawn_registered(
             id,
             SessionSpec {
+                restore_command: None,
                 run: ovrcr_protocol::SessionRunId(1),
                 kind: ovrcr_protocol::SessionKind::Terminal,
                 project: "p".into(),
@@ -4448,6 +4451,7 @@ fn shutdown_termination_failure_is_partial_and_server_remains_available() {
     let session = Session::spawn_registered(
         SessionId(7),
         crate::session::SessionSpec {
+            restore_command: None,
             kind: ovrcr_protocol::SessionKind::Terminal,
             run: ovrcr_protocol::SessionRunId(1),
             project: "p".into(),
@@ -4524,6 +4528,7 @@ fn kill_session_termination_failure_revokes_and_retains_session() {
     let session = Session::spawn_with_test_hooks(
         SessionId(71),
         SessionSpec {
+            restore_command: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
             project: "p".into(),
@@ -4621,7 +4626,7 @@ fn kill_failure_cleanup_retains_original_group_after_leader_exit() {
     let (events, receiver) = event_channel(None);
     let session = Session::spawn_with_test_hooks(
             SessionId(72),
-            SessionSpec { run: ovrcr_protocol::SessionRunId(1), kind: ovrcr_protocol::SessionKind::Terminal, project: "p".into(),
+            SessionSpec { restore_command: None, run: ovrcr_protocol::SessionRunId(1), kind: ovrcr_protocol::SessionKind::Terminal, project: "p".into(),
             workspace: "w".into(),
             name: "exited-leader".into(),
             label: "sh".into(),
@@ -4713,6 +4718,7 @@ fn shutdown_without_kill_rejects_paused_session() {
     let session = Session::spawn_registered(
         SessionId(8),
         crate::session::SessionSpec {
+            restore_command: None,
             kind: ovrcr_protocol::SessionKind::Terminal,
             run: ovrcr_protocol::SessionRunId(1),
             project: "p".into(),
@@ -4760,6 +4766,7 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
     let session = Session::spawn_registered(
         id,
         crate::session::SessionSpec {
+            restore_command: None,
             kind: ovrcr_protocol::SessionKind::Terminal,
             run: ovrcr_protocol::SessionRunId(1),
             project: "p".into(),
@@ -4941,6 +4948,50 @@ fn close_after_ack_archives_already_exited_in_memory_row() {
 }
 
 #[test]
+fn restore_input_failure_is_persisted_and_stale_run_cannot_replace_it() {
+    let id = SessionId(22);
+    let (_cwd, session, receiver) = spawn_live_test_session(id);
+    let events = apply_test_session_events(Arc::clone(&session), receiver);
+    let (state, dispatch_receiver) = test_state_with_dispatch(None, None);
+    let config = _cwd.path().join("restore-test.toml");
+    crate::config::initialize_registry(&config).unwrap();
+    *state.retained.lock() = SessionStore::open(&config).unwrap();
+    register_test_session(&state, id, Arc::clone(&session));
+    for (run, message) in [
+        (session.run(), "resume write failed"),
+        (
+            ovrcr_protocol::SessionRunId(session.run().0 + 1),
+            "stale failure",
+        ),
+    ] {
+        state
+            .dispatch
+            .send(DispatchMessage::Session(SessionEvent::RestoreInputFailed {
+                id,
+                run,
+                message: message.into(),
+            }))
+            .unwrap();
+    }
+    state.dispatch.send(DispatchMessage::Stop).unwrap();
+    run_dispatcher(Arc::clone(&state), dispatch_receiver);
+    assert_eq!(
+        state.retained.lock().get(id).unwrap().failure.as_deref(),
+        Some("resume write failed")
+    );
+    let connection = crate::config::open_writable_registry(&config).unwrap();
+    let saved: String = connection
+        .query_row(
+            "SELECT failure FROM retained_sessions WHERE id = ?1",
+            [i64::try_from(id.0).unwrap()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(saved, "resume write failed");
+    cleanup_test_session(&session, events).unwrap();
+}
+
+#[test]
 fn stale_close_does_not_revoke_or_stop_current_run() {
     let id = SessionId(22);
     let (_cwd, session, receiver) = spawn_live_test_session(id);
@@ -5093,6 +5144,7 @@ fn close_of_captured_live_target_that_exits_before_terminate_does_not_certify() 
     let session = Session::spawn_with_test_hooks(
         id,
         SessionSpec {
+            restore_command: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
             project: "p".into(),
@@ -5412,6 +5464,7 @@ fn session_output_flows_while_another_session_spawns() {
     let live = Session::spawn_registered(
         live_id,
         SessionSpec {
+            restore_command: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
             project: "project".into(),
