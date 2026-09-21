@@ -434,9 +434,16 @@ inferring the rules from this summary.
 
 ```sh
 just verify    # fmt-check, check, lint, test
-just run       # cargo run -p ovrcr --
+just run       # build, install ~/.local/bin/ovrcr, then launch
 just restart   # stop a leftover local server, then start the dashboard
 ```
+
+`just run` refreshes `~/.local/bin/ovrcr` with the debug build before launching
+it, forwarding any arguments (for example, `just run --version`). Keep
+`~/.local/bin` on your `PATH`. It builds into `CARGO_TARGET_DIR` when set,
+otherwise the checkout's `target` directory. A failed build or install stops
+the launch; replacement is atomic so running processes keep their existing
+binary. Existing servers keep running their previous version until restarted.
 
 Or with Cargo directly — always name the package, since the workspace has five:
 

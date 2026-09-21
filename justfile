@@ -3,8 +3,17 @@ set positional-arguments
 default:
     @rtk proxy just --list
 
+# Build, refresh the PATH-installed CLI, then launch it.
 run *args:
-    rtk proxy cargo run -p ovrcr -- "$@"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rtk proxy cargo build -p ovrcr --bin ovrcr --target-dir "${CARGO_TARGET_DIR:-target}"
+    mkdir -p "$HOME/.local/bin"
+    pending="$(mktemp "$HOME/.local/bin/.ovrcr.XXXXXX")"
+    trap 'rm -f "$pending"' EXIT
+    install -m 755 "${CARGO_TARGET_DIR:-target}/debug/ovrcr" "$pending"
+    mv -f "$pending" "$HOME/.local/bin/ovrcr"
+    "$HOME/.local/bin/ovrcr" "$@"
 
 run-release *args:
     rtk proxy cargo run -p ovrcr --release -- "$@"
