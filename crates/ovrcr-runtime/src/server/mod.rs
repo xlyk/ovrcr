@@ -100,6 +100,7 @@ pub(crate) use reporting_queue::{ReportingReceiver, ReportingSender};
 fn event_weight(event: &SessionEvent) -> usize {
     match event {
         SessionEvent::Output { bytes, .. } => bytes.len(),
+        SessionEvent::RestoreInputFailed { message, .. } => message.len(),
         SessionEvent::Exited { phase, .. } => {
             bincode::serde::encode_to_vec(phase, bincode::config::standard())
                 .map_or(0, |bytes| bytes.len())
@@ -1011,11 +1012,32 @@ impl ServerState {
                 .get(&id)
                 .cloned()
                 .context("published terminal disappeared")?;
-            if let Err(error) = session.write(command.as_bytes()) {
+            let events = self
+                .events
+                .lock()
+                .unwrap()
+                .as_ref()
+                .context("server event channel closed")?
+                .clone();
+            let run = summary.run;
+            // A shell can still be loading its rc files. Never hold the server's
+            // mutation boundary while the PTY applies input backpressure.
+            if let Err(error) = std::thread::Builder::new()
+                .name("restore-input".into())
+                .spawn(move || {
+                    if let Err(error) = session.write(command.as_bytes()) {
+                        let _ = events.send(SessionEvent::RestoreInputFailed {
+                            id,
+                            run,
+                            message: format!("Resume command could not be sent: {error}"),
+                        });
+                    }
+                })
+            {
                 self.retained
                     .lock()
-                    .record_failure(id, summary.run, error.to_string())?;
-                return Err(error);
+                    .record_failure(id, run, error.to_string())?;
+                return Err(error.into());
             }
         }
         Ok(summary)

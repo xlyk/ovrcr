@@ -396,16 +396,29 @@ fn publish_session_changed(state: &ServerState, id: SessionId) {
 
 fn dispatch_session_event(state: &Arc<ServerState>, event: SessionEvent) {
     let (id, run) = match &event {
-        SessionEvent::Output { id, run, .. } | SessionEvent::Exited { id, run, .. } => (*id, *run),
+        SessionEvent::Output { id, run, .. }
+        | SessionEvent::Exited { id, run, .. }
+        | SessionEvent::RestoreInputFailed { id, run, .. } => (*id, *run),
     };
     let session = state.sessions.lock().unwrap().get(&id).cloned();
     let Some(session) = session else { return };
     if session.run() != run {
         return;
     }
+    if let SessionEvent::RestoreInputFailed { message, .. } = &event {
+        if let Err(error) = state
+            .retained
+            .lock()
+            .record_failure(id, run, message.clone())
+        {
+            eprintln!("retain restore input failure: {error:#}");
+        }
+        publish_session_changed(state, id);
+        return;
+    }
     let output = match &event {
         SessionEvent::Output { bytes, .. } => Some(bytes.clone()),
-        SessionEvent::Exited { .. } => None,
+        SessionEvent::Exited { .. } | SessionEvent::RestoreInputFailed { .. } => None,
     };
     let before_revision = session.title_revision();
     session.apply_event(event);

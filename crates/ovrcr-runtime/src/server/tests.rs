@@ -4941,6 +4941,50 @@ fn close_after_ack_archives_already_exited_in_memory_row() {
 }
 
 #[test]
+fn restore_input_failure_is_persisted_and_stale_run_cannot_replace_it() {
+    let id = SessionId(22);
+    let (_cwd, session, receiver) = spawn_live_test_session(id);
+    let events = apply_test_session_events(Arc::clone(&session), receiver);
+    let (state, dispatch_receiver) = test_state_with_dispatch(None, None);
+    let config = _cwd.path().join("restore-test.toml");
+    crate::config::initialize_registry(&config).unwrap();
+    *state.retained.lock() = SessionStore::open(&config).unwrap();
+    register_test_session(&state, id, Arc::clone(&session));
+    for (run, message) in [
+        (session.run(), "resume write failed"),
+        (
+            ovrcr_protocol::SessionRunId(session.run().0 + 1),
+            "stale failure",
+        ),
+    ] {
+        state
+            .dispatch
+            .send(DispatchMessage::Session(SessionEvent::RestoreInputFailed {
+                id,
+                run,
+                message: message.into(),
+            }))
+            .unwrap();
+    }
+    state.dispatch.send(DispatchMessage::Stop).unwrap();
+    run_dispatcher(Arc::clone(&state), dispatch_receiver);
+    assert_eq!(
+        state.retained.lock().get(id).unwrap().failure.as_deref(),
+        Some("resume write failed")
+    );
+    let connection = crate::config::open_writable_registry(&config).unwrap();
+    let saved: String = connection
+        .query_row(
+            "SELECT failure FROM retained_sessions WHERE id = ?1",
+            [i64::try_from(id.0).unwrap()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(saved, "resume write failed");
+    cleanup_test_session(&session, events).unwrap();
+}
+
+#[test]
 fn stale_close_does_not_revoke_or_stop_current_run() {
     let id = SessionId(22);
     let (_cwd, session, receiver) = spawn_live_test_session(id);

@@ -204,7 +204,7 @@ pub(super) enum TerminalCommand {
         #[arg(long)]
         automatic: bool,
     },
-    /// Reopen a fresh shell or resume a certified Claude conversation without a new prompt. Confirm uncertain previous processes stopped with --ack-stopped.
+    /// Reopen a terminal and execute the agent resume command, or open its native resume picker when no conversation is saved. Confirm uncertain previous processes stopped with --ack-stopped.
     Reopen {
         id: u64,
         #[arg(long)]

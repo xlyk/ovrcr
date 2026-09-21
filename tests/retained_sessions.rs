@@ -2250,3 +2250,61 @@ fn assert_native_picker_in_shell(shell: &str) {
     }
     track_groups(&live);
 }
+
+#[test]
+fn exact_resume_preserves_long_arguments_before_shell_startup() {
+    use std::os::unix::fs::PermissionsExt;
+    let (live, id, _) = prepare_interrupted_claude();
+    let database = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+    let sql_id = i64::try_from(id).unwrap();
+    let encoded: String = database
+        .query_row(
+            "SELECT reference FROM agent_conversations WHERE session = ?1",
+            [sql_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let mut reference: ovrcr::protocol::ConversationReference =
+        serde_json::from_str(&encoded).unwrap();
+    let long = "x".repeat(1800);
+    let ovrcr::protocol::ConversationReference::Claude(claude) = &mut reference else {
+        panic!("Claude reference")
+    };
+    claude.options = vec!["--model".into(), long.clone()];
+    database
+        .execute(
+            "UPDATE agent_conversations SET reference = ?1 WHERE session = ?2",
+            rusqlite::params![serde_json::to_string(&reference).unwrap(), sql_id],
+        )
+        .unwrap();
+    drop(database);
+    let gate = live.root.path().join("shell-gate");
+    let c_gate = std::ffi::CString::new(gate.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(c_gate.as_ptr(), 0o600) }, 0);
+    let shell = live.root.path().join("delayed-shell");
+    std::fs::write(
+        &shell,
+        format!(
+            "#!/bin/sh\ncat '{}' >/dev/null\nexec /bin/sh\n",
+            gate.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let config = live.root.path().join("claude-config");
+    live.start_binary_env(&[
+        ("SHELL", shell.as_os_str()),
+        ("CLAUDE_CONFIG_DIR", config.as_os_str()),
+    ]);
+    json(&live, &["terminal", "reopen", &id.to_string()]);
+    // Receipt and terminal reads remain available while the shell blocks startup.
+    wait_output(&live, &id.to_string(), "'agent'");
+    std::fs::write(&gate, b"ready\n").unwrap();
+    track_groups(&live);
+    wait_output(&live, &id.to_string(), "RETAINED_CLAUDE_READY");
+    let argv = std::fs::read_to_string(live.root.path().join("argv")).unwrap();
+    assert!(
+        argv.ends_with(&format!("--model\n{long}\n")),
+        "long resume argument changed"
+    );
+}

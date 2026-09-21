@@ -211,6 +211,11 @@ impl ReportOrder {
 
 #[derive(Clone, Debug)]
 pub enum SessionEvent {
+    RestoreInputFailed {
+        id: SessionId,
+        run: SessionRunId,
+        message: String,
+    },
     Output {
         id: SessionId,
         run: SessionRunId,
