@@ -964,37 +964,33 @@ impl ServerState {
                 .record_failure(id, expected_run, message.clone())?;
             return Err(lifecycle_error(ErrorCode::NotFound, message));
         }
-        let argv = if let Some(reference) = record
-            .conversation
-            .as_ref()
-            .filter(|_| matches!(record.metadata.kind, SessionKind::Agent { .. }))
-        {
-            match crate::recovery::resume_argv(
-                match &record.metadata.kind {
-                    SessionKind::Agent { name } => name,
-                    _ => unreachable!(),
-                },
-                reference,
-            ) {
-                Ok(argv) => argv,
-                Err(error) => {
-                    let message = error.to_string();
-                    self.retained
-                        .lock()
-                        .record_failure(id, expected_run, message.clone())?;
-                    return Err(lifecycle_error(ErrorCode::InvalidRequest, message));
+        let shell = std::env::var_os("SHELL")
+            .filter(|shell| !shell.is_empty())
+            .ok_or_else(|| {
+                lifecycle_error(
+                    ErrorCode::InvalidRequest,
+                    "SHELL is unset; configure a shell before reopening",
+                )
+            })?;
+        let command = match &record.metadata.kind {
+            SessionKind::Agent { name } => {
+                let command = match record.conversation.as_ref() {
+                    Some(reference) => crate::recovery::resume_argv(name, reference),
+                    None => crate::recovery::picker_argv(name),
+                }
+                .and_then(|argv| crate::recovery::terminal_command(&argv));
+                match command {
+                    Ok(command) => Some(command),
+                    Err(error) => {
+                        let message = error.to_string();
+                        self.retained
+                            .lock()
+                            .record_failure(id, expected_run, message.clone())?;
+                        return Err(lifecycle_error(ErrorCode::InvalidRequest, message));
+                    }
                 }
             }
-        } else {
-            let shell = std::env::var_os("SHELL")
-                .filter(|shell| !shell.is_empty())
-                .ok_or_else(|| {
-                    lifecycle_error(
-                        ErrorCode::InvalidRequest,
-                        "SHELL is unset; configure a fresh shell before reopening",
-                    )
-                })?;
-            vec![shell]
+            SessionKind::Terminal => None,
         };
         let old = self.sessions.lock().unwrap().get(&id).cloned();
         if let Some(old) = old {
@@ -1006,7 +1002,23 @@ impl ServerState {
 
             self.persist_session_exit(&old)?;
         }
-        self.spawn_record_locked(id, expected_run, argv, None)
+        let summary = self.spawn_record_locked(id, expected_run, vec![shell], None)?;
+        if let Some(command) = command {
+            let session = self
+                .sessions
+                .lock()
+                .unwrap()
+                .get(&id)
+                .cloned()
+                .context("published terminal disappeared")?;
+            if let Err(error) = session.write(command.as_bytes()) {
+                self.retained
+                    .lock()
+                    .record_failure(id, summary.run, error.to_string())?;
+                return Err(error);
+            }
+        }
+        Ok(summary)
     }
 
     pub fn kill_session(&self, id: SessionId, grace: Duration) -> Result<()> {

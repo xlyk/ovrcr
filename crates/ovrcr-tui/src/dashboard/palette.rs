@@ -850,7 +850,13 @@ impl Dashboard {
                     .as_ref()
                     .is_some_and(|recovery| recovery.requires_ack);
                 let target = if matches!(session.kind, SessionKind::Agent { .. }) {
-                    if acknowledge_stopped {
+                    if session.recovery.as_ref().is_none_or(|recovery| recovery.conversation.is_none()) {
+                        if acknowledge_stopped {
+                            "Confirm the previous agent and background processes have stopped, then open the agent's native resume picker?"
+                        } else {
+                            "Open the agent's native resume picker?"
+                        }
+                    } else if acknowledge_stopped {
                         "Confirm the previous agent and background processes have stopped, then resume this exact conversation without a new prompt?"
                     } else {
                         "Resume this exact conversation without a new prompt?"
@@ -4211,6 +4217,40 @@ mod launch_tests {
     }
 
     #[test]
+    fn missing_conversation_confirmation_offers_native_picker() {
+        for requires_ack in [false, true] {
+            let mut d = dashboard();
+            let mut row = summary(1);
+            row.kind = SessionKind::Agent {
+                name: "claude".into(),
+            };
+            row.phase = SessionPhase::Stopped;
+            row.recovery = Some(SessionRecovery {
+                conversation: None,
+                attached: false,
+                requires_ack,
+                unavailable: None,
+                failure: None,
+            });
+            d.hierarchy.projects[0].workspaces[0].sessions = vec![row];
+            let Page::Confirm { request, target } =
+                d.command_page(Command::ReopenTerminal(SessionId(1)))
+            else {
+                panic!("expected confirmation");
+            };
+            assert!(target.contains("resume picker"), "{target}");
+            assert_eq!(
+                request,
+                Some(Request::ReopenSession {
+                    session: SessionId(1),
+                    expected_run: crate::protocol::SessionRunId(1),
+                    acknowledge_stopped: requires_ack,
+                })
+            );
+        }
+    }
+
+    #[test]
     fn enter_on_an_exited_agent_opens_the_resume_confirmation() {
         let mut d = dashboard();
         let mut row = summary(1);
@@ -4243,7 +4283,7 @@ mod launch_tests {
             }
         );
 
-        // Without a certified conversation Enter explains instead of launching.
+        // An explicit unavailable reason still explains instead of launching.
         d.hierarchy.projects[0].workspaces[0].sessions[0].recovery = Some(SessionRecovery {
             conversation: None,
             attached: false,
