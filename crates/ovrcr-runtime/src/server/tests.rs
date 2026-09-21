@@ -2689,6 +2689,7 @@ fn spawn_live_test_session_with_hook(
     let session = Session::spawn_registered(
         id,
         SessionSpec {
+            restore_command: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
             project: "p".into(),
@@ -2723,6 +2724,7 @@ fn spawn_exiting_test_session(
     let session = Session::spawn_registered(
         id,
         SessionSpec {
+            restore_command: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
             project: "p".into(),
@@ -4106,6 +4108,7 @@ fn control_and_refresh_failures_preserve_both_causes() {
         let session = Session::spawn_registered(
             id,
             SessionSpec {
+                restore_command: None,
                 run: ovrcr_protocol::SessionRunId(1),
                 kind: ovrcr_protocol::SessionKind::Terminal,
                 project: "p".into(),
@@ -4448,6 +4451,7 @@ fn shutdown_termination_failure_is_partial_and_server_remains_available() {
     let session = Session::spawn_registered(
         SessionId(7),
         crate::session::SessionSpec {
+            restore_command: None,
             kind: ovrcr_protocol::SessionKind::Terminal,
             run: ovrcr_protocol::SessionRunId(1),
             project: "p".into(),
@@ -4524,6 +4528,7 @@ fn kill_session_termination_failure_revokes_and_retains_session() {
     let session = Session::spawn_with_test_hooks(
         SessionId(71),
         SessionSpec {
+            restore_command: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
             project: "p".into(),
@@ -4621,7 +4626,7 @@ fn kill_failure_cleanup_retains_original_group_after_leader_exit() {
     let (events, receiver) = event_channel(None);
     let session = Session::spawn_with_test_hooks(
             SessionId(72),
-            SessionSpec { run: ovrcr_protocol::SessionRunId(1), kind: ovrcr_protocol::SessionKind::Terminal, project: "p".into(),
+            SessionSpec { restore_command: None, run: ovrcr_protocol::SessionRunId(1), kind: ovrcr_protocol::SessionKind::Terminal, project: "p".into(),
             workspace: "w".into(),
             name: "exited-leader".into(),
             label: "sh".into(),
@@ -4713,6 +4718,7 @@ fn shutdown_without_kill_rejects_paused_session() {
     let session = Session::spawn_registered(
         SessionId(8),
         crate::session::SessionSpec {
+            restore_command: None,
             kind: ovrcr_protocol::SessionKind::Terminal,
             run: ovrcr_protocol::SessionRunId(1),
             project: "p".into(),
@@ -4760,6 +4766,7 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
     let session = Session::spawn_registered(
         id,
         crate::session::SessionSpec {
+            restore_command: None,
             kind: ovrcr_protocol::SessionKind::Terminal,
             run: ovrcr_protocol::SessionRunId(1),
             project: "p".into(),
@@ -5137,6 +5144,7 @@ fn close_of_captured_live_target_that_exits_before_terminate_does_not_certify() 
     let session = Session::spawn_with_test_hooks(
         id,
         SessionSpec {
+            restore_command: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
             project: "p".into(),
@@ -5456,6 +5464,7 @@ fn session_output_flows_while_another_session_spawns() {
     let live = Session::spawn_registered(
         live_id,
         SessionSpec {
+            restore_command: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
             project: "project".into(),

@@ -2298,7 +2298,7 @@ fn exact_resume_preserves_long_arguments_before_shell_startup() {
     ]);
     json(&live, &["terminal", "reopen", &id.to_string()]);
     // Receipt and terminal reads remain available while the shell blocks startup.
-    wait_output(&live, &id.to_string(), "'agent'");
+    wait_output(&live, &id.to_string(), "eval \"$OVRCR_RESTORE_COMMAND\"");
     std::fs::write(&gate, b"ready\n").unwrap();
     track_groups(&live);
     wait_output(&live, &id.to_string(), "RETAINED_CLAUDE_READY");

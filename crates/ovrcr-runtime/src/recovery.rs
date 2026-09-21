@@ -100,34 +100,13 @@ pub fn terminal_command(argv: &[OsString]) -> Result<String> {
             if arg.chars().any(char::is_control) {
                 bail!("resume command contains terminal control characters");
             }
-            // Keep physical input lines below the canonical PTY limit while the
-            // shell is still loading startup files. Continuations stay outside
-            // quotes, so they do not become part of the argument.
-            let chars: Vec<_> = arg.chars().collect();
-            let chunks = chars
-                .chunks(64)
-                .map(|chunk| {
-                    chunk
-                        .iter()
-                        .collect::<String>()
-                        .replace('\'', "'\\''")
-                        .replace('!', "'\\!'")
-                })
-                .collect::<Vec<_>>();
-            Ok(format!("'{}'", chunks.join("'\\\n'")))
+            Ok(format!(
+                "'{}'",
+                arg.replace('\'', "'\\''").replace('!', "'\\!'")
+            ))
         })
         .collect::<Result<Vec<_>>>()?;
-    let mut command = String::new();
-    for word in words {
-        if !command.is_empty() {
-            let line = command.rsplit('\n').next().unwrap().len();
-            let first = word.split('\n').next().unwrap().len();
-            command.push_str(if line + first + 1 > 512 { " \\\n" } else { " " });
-        }
-        command.push_str(&word);
-    }
-    command.push('\n');
-    Ok(command)
+    Ok(format!("{}\n", words.join(" ")))
 }
 
 #[cfg(test)]
@@ -163,6 +142,25 @@ mod tests {
                 .unwrap();
             assert!(output.status.success(), "{shell}: {:?}", output.stderr);
             assert_eq!(output.stdout, b"a'b!foo $(false); hi", "{shell}");
+        }
+        let literal = "a'b!foo 界 $(false); ".repeat(100);
+        let command = terminal_command(&[
+            "/usr/bin/printf".into(),
+            "%s".into(),
+            literal.clone().into(),
+        ])
+        .unwrap();
+        for shell in ["/bin/sh", "/bin/zsh", "/bin/tcsh"] {
+            if !std::path::Path::new(shell).exists() {
+                continue;
+            }
+            let output = std::process::Command::new(shell)
+                .env("OVRCR_RESTORE_COMMAND", command.trim_end_matches('\n'))
+                .args(["-f", "-c", "eval \"$OVRCR_RESTORE_COMMAND\""])
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{shell}: {:?}", output.stderr);
+            assert_eq!(output.stdout, literal.as_bytes(), "{shell}");
         }
         assert!(terminal_command(&["bad\ncommand".into()]).is_err());
         assert!(terminal_command(&["bad\x1bcommand".into()]).is_err());

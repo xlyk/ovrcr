@@ -614,7 +614,7 @@ impl ServerState {
             pinned_title,
             application_title: None,
         })?;
-        let result = self.spawn_record_locked(record.id, record.run, request.argv, ready);
+        let result = self.spawn_record_locked(record.id, record.run, request.argv, ready, None);
         if let Err(error) = &result {
             let removed = {
                 let mut retained = self.retained.lock();
@@ -658,6 +658,7 @@ impl ServerState {
         expected_run: SessionRunId,
         argv: Vec<std::ffi::OsString>,
         ready: Option<Arc<dyn Fn() + Send + Sync>>,
+        restore_command: Option<String>,
     ) -> Result<SessionSummary> {
         self.check_live_capacity()?;
         let cwd = self
@@ -684,6 +685,7 @@ impl ServerState {
         self.dashboard.forget_session(id);
         let metadata = &record.metadata;
         let spec = SessionSpec {
+            restore_command,
             run: record.run,
             kind: metadata.kind.clone(),
             project: metadata.project.clone(),
@@ -1003,8 +1005,22 @@ impl ServerState {
 
             self.persist_session_exit(&old)?;
         }
-        let summary = self.spawn_record_locked(id, expected_run, vec![shell], None)?;
-        if let Some(command) = command {
+        // Canonical PTY buffers can drop a long burst even when split over lines.
+        // Stage only long commands in the new shell's transient environment and
+        // submit a short eval; the native argv never travels through that buffer.
+        let staged = command
+            .as_ref()
+            .filter(|command| command.len() > 512)
+            .map(|command| command.trim_end_matches('\n').to_owned());
+        let input = command.map(|command| {
+            if staged.is_some() {
+                "eval \"$OVRCR_RESTORE_COMMAND\"\n".to_owned()
+            } else {
+                command
+            }
+        });
+        let summary = self.spawn_record_locked(id, expected_run, vec![shell], None, staged)?;
+        if let Some(command) = input {
             let session = self
                 .sessions
                 .lock()

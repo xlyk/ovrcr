@@ -144,6 +144,8 @@ mod tests;
 
 #[derive(Clone, Debug)]
 pub struct SessionSpec {
+    /// Transient shell input for a long resume command; never retained on disk.
+    pub restore_command: Option<String>,
     pub project: String,
     pub workspace: String,
     pub name: String,
@@ -454,6 +456,10 @@ impl Session {
         #[cfg(test)]
         let initial_cwd = spec.cwd.clone();
         command.cwd(&spec.cwd);
+        command.env_remove("OVRCR_RESTORE_COMMAND");
+        if let Some(restore_command) = &spec.restore_command {
+            command.env("OVRCR_RESTORE_COMMAND", restore_command);
+        }
         let shell_startup =
             shell_prompt::configure(&mut command, &spec.argv).context(NoProcessStarted)?;
         command.env_remove("OVRCR_AGENT_SOCKET");
