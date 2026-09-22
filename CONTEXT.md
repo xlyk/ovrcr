@@ -64,6 +64,14 @@ _Avoid_: TUI (the crate), GUI helper, task UI as a separate product
 The dashboard's one entry for a key in an input mode: its label, its action, and the reason it is unavailable. Dispatch, the footer, the key popup and the palette read that one entry, so a hint cannot disagree with what the key does.
 _Avoid_: the reporting binding, a hint list per consumer
 
+**Keystroke**:
+A key delivered to the program inside a named session, as that program would receive it from a keyboard.
+_Avoid_: Paste, Input request, Key binding
+
+**Paste**:
+Text delivered into a session as a paste, which may be followed by Enter.
+_Avoid_: Keystroke
+
 **Ready**:
 The accepted root observation of a completed response cycle from a supported readiness provider (Codex, Pi, Oh My Pi), identified by binding, cycle identity (the `turn` field), and activity revision.
 _Avoid_: Confirmed activity as a success claim, Claude observations, a desktop alert

@@ -933,3 +933,209 @@ fn sqlite_migration_is_authoritative_across_online_offline_and_restart() {
     fixture.ok(&["project", "remove", "fixture"]);
     assert_eq!(fixture.json(&["project", "list"]), serde_json::json!([]));
 }
+
+/// Prints each byte the program receives as `<hh>`. Bracketed paste is on
+/// throughout; reading `x` switches cursor keys to application mode.
+const BYTE_ECHO: &str = r#"printf '\033[?2004h'; stty raw -echo; printf 'READY'; while :; do b=$(dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf '<%s>' "$b"; [ "$b" = 78 ] && printf '\033[?1hAPP'; done"#;
+
+fn received(fixture: &Fixture, id: &str, expected: &str) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let text = fixture.ok(&["terminal", "read", id]).replace('\n', "");
+        let bytes = text
+            .split_once("READY")
+            .map_or("", |(_, rest)| rest.trim_end());
+        if bytes == expected {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline && expected.starts_with(bytes),
+            "received {bytes:?}, expected {expected:?}"
+        );
+        std::thread::yield_now();
+    }
+}
+
+fn create_byte_echo(fixture: &mut Fixture, name: &str) -> String {
+    let id = fixture
+        .ok(&[
+            "terminal",
+            "create",
+            "--project",
+            "fixture",
+            "--workspace",
+            "feature/demo",
+            "--name",
+            name,
+            "--",
+            "/bin/sh",
+            "-c",
+            BYTE_ECHO,
+        ])
+        .trim()
+        .to_owned();
+    fixture.capture();
+    fixture.wait_text(&id, "READY");
+    id
+}
+
+fn refusal_code(output: &Output) -> serde_json::Value {
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(output.stdout.is_empty());
+    serde_json::from_slice::<serde_json::Value>(&output.stderr).unwrap()["error"]["code"].clone()
+}
+
+#[test]
+fn keystroke_writes_keyboard_bytes_and_respects_focus_run_and_phase() {
+    use ovrcr::protocol::{
+        ClientMessage, ErrorCode, ServerMessage, SessionRunId, TerminalSize, connect_server,
+        read_frame, write_frame,
+    };
+
+    let mut fixture = Fixture::new();
+    let id = create_byte_echo(&mut fixture, "keys");
+    let numeric_id: u64 = id.parse().unwrap();
+    let mut expected = String::new();
+    let mut key = |fixture: &Fixture, name: &str, bytes: &str| {
+        assert_eq!(
+            fixture.json(&["terminal", "keystroke", &id, name]),
+            serde_json::json!({"ok": true}),
+            "{name}"
+        );
+        expected.push_str(bytes);
+        received(fixture, &id, &expected);
+        expected.clone()
+    };
+
+    // Bracketed paste is on, yet a Keystroke is the bare key, and a
+    // following Paste is still bracketed.
+    key(&fixture, ":j:", "<6a>");
+    key(&fixture, ":enter:", "<0d>");
+    fixture.ok(&["terminal", "send", &id, "--text", "j", "--no-submit"]);
+    key(
+        &fixture,
+        ":J:",
+        "<1b><5b><32><30><30><7e><6a><1b><5b><32><30><31><7e><4a>",
+    );
+    key(&fixture, ":down:", "<1b><5b><42>");
+    key(&fixture, ":x:", "<78>APP");
+    key(&fixture, ":down:", "<1b><4f><42>");
+    let mut transcript = key(&fixture, ":ctrl-g:", "<07>");
+
+    for name in [":hello:", ":Enter:", ":shift-j:", ":shift-ctrl-c:"] {
+        let out = fixture.run(&["terminal", "keystroke", &id, name]);
+        assert_eq!(out.status.code(), Some(2), "{name}: {out:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("invalid keystroke"),
+            "{name}"
+        );
+    }
+    let run = fixture
+        .sessions()
+        .into_iter()
+        .find(|session| session.id == SessionId(numeric_id))
+        .unwrap()
+        .run;
+    let stale = fixture.request(Request::Keystroke {
+        session: SessionId(numeric_id),
+        expected_run: SessionRunId(run.0 + 1),
+        key: ":j:".into(),
+    });
+    assert!(
+        matches!(
+            stale,
+            Response::Error {
+                code: ErrorCode::Conflict,
+                ..
+            }
+        ),
+        "{stale:?}"
+    );
+    let invalid = fixture.request(Request::Keystroke {
+        session: SessionId(numeric_id),
+        expected_run: run,
+        key: ":hello:".into(),
+    });
+    assert!(
+        matches!(
+            invalid,
+            Response::Error {
+                code: ErrorCode::InvalidRequest,
+                ..
+            }
+        ),
+        "{invalid:?}"
+    );
+
+    // Focus is read at write time: refused while the Dashboard shows this
+    // session, allowed once it shows another.
+    let other = create_byte_echo(&mut fixture, "other");
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut select = |request_id: u64, session: u64| {
+        write_frame(
+            &mut dashboard,
+            &ClientMessage {
+                request_id,
+                request: if request_id == 1 {
+                    Request::DashboardHello
+                } else {
+                    Request::Select {
+                        session: SessionId(session),
+                        size: TerminalSize {
+                            rows: 40,
+                            cols: 120,
+                        },
+                    }
+                },
+            },
+        )
+        .unwrap();
+        loop {
+            if let ServerMessage::Response {
+                request_id: answered,
+                response,
+            } = read_frame::<ServerMessage>(&mut dashboard).unwrap()
+                && answered == request_id
+                && !matches!(response, Response::Screen { .. })
+            {
+                assert!(!matches!(response, Response::Error { .. }), "{response:?}");
+                return;
+            }
+        }
+    };
+    select(1, 0);
+    select(2, numeric_id);
+    let focused = fixture.run(&["--json", "terminal", "keystroke", &id, ":j:"]);
+    assert_eq!(refusal_code(&focused), "Conflict");
+    assert!(String::from_utf8_lossy(&focused.stderr).contains("Dashboard is focused"));
+    received(&fixture, &id, &transcript);
+    select(3, other.parse().unwrap());
+    transcript = key(&fixture, ":z:", "<7a>");
+    drop(dashboard);
+
+    assert_eq!(
+        fixture.json(&["pause", &id]),
+        serde_json::json!({"ok": true})
+    );
+    let paused = fixture.run(&["--json", "terminal", "keystroke", &id, ":j:"]);
+    assert_eq!(refusal_code(&paused), "Conflict");
+    assert_eq!(
+        fixture.json(&["resume", &id]),
+        serde_json::json!({"ok": true})
+    );
+    received(&fixture, &id, &transcript);
+
+    fixture.ok(&["terminal", "kill", &id]);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !fixture.sessions().iter().any(|session| {
+        session.id == SessionId(numeric_id) && !matches!(session.phase, SessionPhase::Running)
+    }) {
+        assert!(Instant::now() < deadline, "terminal did not exit");
+        std::thread::yield_now();
+    }
+    let exited = fixture.run(&["--json", "terminal", "keystroke", &id, ":j:"]);
+    assert_eq!(refusal_code(&exited), "Conflict");
+}

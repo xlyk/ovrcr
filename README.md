@@ -240,6 +240,7 @@ id=$(ovrcr terminal create --project consigint --workspace feature/cleanup \
 ovrcr terminal rename "$id" "Review cleanup"   # pin a title
 ovrcr terminal rename "$id" --automatic        # follow app titles
 ovrcr terminal send "$id" --text "cargo test"
+ovrcr terminal keystroke "$id" :enter:         # one key, never pasted
 ovrcr terminal read "$id" --max-lines 20
 ovrcr terminal close "$id"
 ```

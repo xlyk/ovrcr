@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
 use ovrcr_protocol::context::{ContextUsageSnapshot, validate_context};
 use ovrcr_protocol::{AgentReport, AgentUpdate, HISTORY_ROWS, HistorySnapshotId};
+use ovrcr_terminal::key::{Key, Modifiers, encode_key};
 use ovrcr_terminal::{encode_paste, history::FrozenHistory, vt100};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::ffi::OsString;
@@ -921,6 +922,18 @@ impl Session {
         }
         writer.flush().context("flush PTY")?;
         Ok(())
+    }
+
+    /// Write one key as the keyboard sends it, following the program's
+    /// cursor-key mode. Never bracketed: a Keystroke is not a Paste.
+    pub fn send_key(&self, key: Key, modifiers: Modifiers) -> Result<()> {
+        let application_cursor = {
+            let terminal = self.terminal.lock().unwrap();
+            terminal.parser.screen().application_cursor()
+        };
+        let bytes = encode_key(key, modifiers, application_cursor)
+            .context("key has no terminal encoding")?;
+        self.write(&bytes)
     }
 
     pub fn wait_for_output(&self, timeout: Duration) {

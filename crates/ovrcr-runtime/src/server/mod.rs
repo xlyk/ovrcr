@@ -337,6 +337,29 @@ impl ServerState {
             .map_err(|error| lifecycle_error(input_error_code(&error), error_chain_string(&error)))
     }
 
+    /// Write one named key to `expected_run`. Focus is read here, at write
+    /// time: the Dashboard owns the keyboard of the session it is focused on.
+    pub fn keystroke(&self, id: SessionId, expected_run: SessionRunId, key: &str) -> Result<()> {
+        let (key, modifiers) = ovrcr_terminal::key::parse_keystroke(key)
+            .map_err(|message| lifecycle_error(ErrorCode::InvalidRequest, message))?;
+        let session = self.session_for_control(id)?;
+        if session.run() != expected_run {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "session changed; refresh inventory",
+            ));
+        }
+        if self.dashboard.view().and_then(|view| view.focused) == Some(id) {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "the Dashboard is focused on this session; focus another session or detach first",
+            ));
+        }
+        session
+            .send_key(key, modifiers)
+            .map_err(|error| lifecycle_error(input_error_code(&error), error_chain_string(&error)))
+    }
+
     pub fn close_terminal(
         &self,
         id: SessionId,

@@ -65,7 +65,7 @@ pub(super) enum Command {
         #[command(subcommand)]
         command: WorkspaceCommand,
     },
-    /// Create, read, send to, and close terminals.
+    /// Create, read, send text or keys to, and close terminals.
     #[command(visible_alias = "terminals")]
     Terminal {
         #[command(subcommand)]
@@ -239,6 +239,15 @@ pub(super) enum TerminalCommand {
         #[arg(long)]
         no_submit: bool,
     },
+    /// Deliver one named key to the program, as a keyboard would. Refused while the Dashboard is focused on the session.
+    #[command(
+        after_help = "KEY is one character or a lowercase key name between colons, after optional ctrl-, alt-, shift- prefixes in that order: :j: :enter: :escape: :tab: :backspace: :space: :colon: :up: :down: :left: :right: :home: :end: :pageup: :pagedown: :insert: :delete: :f1:-:f12: :ctrl-c: :alt-down: :ctrl-shift-enter:. Shift applies only to named keys. Use `terminal send` to paste text."
+    )]
+    Keystroke {
+        id: u64,
+        #[arg(value_parser = parse_keystroke, allow_hyphen_values = true)]
+        key: String,
+    },
     /// Stop currently owned work and archive the session record.
     Close {
         id: u64,
@@ -323,6 +332,10 @@ pub(super) fn resolve_cli_path(path: PathBuf) -> anyhow::Result<PathBuf> {
     } else {
         Ok(std::env::current_dir()?.join(path))
     }
+}
+
+fn parse_keystroke(value: &str) -> std::result::Result<String, String> {
+    ovrcr_terminal::key::parse_keystroke(value).map(|_| value.to_owned())
 }
 
 pub(super) fn parse_positive_usize(value: &str) -> std::result::Result<usize, String> {

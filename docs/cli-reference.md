@@ -10,7 +10,7 @@ contract scripts can rely on. Every command accepts `--help`.
 | --- | --- |
 | `project` (`projects`) | Register and inspect Git projects |
 | `workspace` (`workspaces`) | Create and remove worktree workspaces |
-| `terminal` (`terminals`) | Create, read, send to, and close terminals |
+| `terminal` (`terminals`) | Create, read, send text or keys to, and close terminals |
 | `task` (`tasks`), `run` (`runs`) | Scheduled Pi tasks; see [scheduled tasks](scheduled-tasks.md) |
 | `service` | Install, start, stop, or remove the background service |
 | `agent` | Supervise Claude Code, print setup, and inspect integration health |
@@ -118,6 +118,7 @@ ovrcr workspace create --project example \
 terminal_id=$(ovrcr terminal create --project example --workspace feature/cli-demo \
   --name shell -- /bin/sh)
 ovrcr terminal send "$terminal_id" --text "printf 'hello from CLI\\n'"
+ovrcr terminal keystroke "$terminal_id" :ctrl-c:
 ovrcr terminal read "$terminal_id"
 ovrcr terminal read "$terminal_id" --max-lines 5
 ovrcr terminal close "$terminal_id"
@@ -181,6 +182,27 @@ without bracketed-paste support may process them as input. A successful send mea
 the input was written: it does not establish program readiness or completion. A
 read immediately after a send can therefore show the earlier screen; read again to
 observe subsequent output.
+
+`terminal keystroke ID KEY` writes one named key to the session's current run
+as the Dashboard would encode it, including the program's cursor-key mode. It is
+never bracketed, even when the program has paste mode on; use `terminal send` to
+paste text. `KEY` is one character or a lowercase key name between colons, after
+optional `ctrl-`, `alt-`, `shift-` prefixes in that order: `:j:` and `:J:` differ,
+and the names are `enter`, `escape`, `tab`, `backspace`, `space`, `colon`, `up`,
+`down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `insert`, `delete`,
+and `f1` through `f12`. `:ctrl-c:`, `:alt-down:` and `:ctrl-shift-enter:` are
+valid. `shift-` applies only to named keys, so `:shift-j:` is an argument error,
+as are `:hello:`, `:Enter:` and `:shift-ctrl-c:`; nothing is written. `:ctrl-g:`
+reaches the program: the Dashboard's Ctrl-G intercept applies only to keys typed
+into the Dashboard. For example, `:j:` then `:enter:` moves a menu that opens with
+No highlighted to Yes and confirms it.
+
+A Keystroke is refused with `Conflict` while the Dashboard is focused on that
+session, since the person at the Dashboard owns its keyboard. It is allowed when
+no Dashboard is attached or the Dashboard shows a different session; focus is
+checked when the key is written. Paused and exited sessions refuse it, and a
+request for a replaced run writes nothing. Success, `{"ok":true}` with `--json`,
+means the bytes were written, not that the program handled the key.
 
 `terminal read` returns plain text from the current active screen, including an
 exited terminal's retained final screen. `--max-lines N` selects the last N text
