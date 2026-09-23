@@ -1952,7 +1952,7 @@ impl Dashboard {
             Event::Mouse(mouse) => self.mouse_action(mouse, self.outer_area),
             Event::FocusLost => {
                 self.cancel_mouse_gesture();
-                self.mouse.hovered_session = None;
+                self.mouse.hovered = None;
                 self.mouse_focused = false;
                 DashboardAction::Redraw
             }
@@ -2065,6 +2065,37 @@ impl Dashboard {
         )
     }
 
+    pub(super) fn row_shows_close_mark(&self, row: &TreeRow) -> bool {
+        match (&self.mouse.hovered, row) {
+            (Some(super::HoveredRow::Session(id)), TreeRow::Session { id: row_id }) => id == row_id,
+            (
+                Some(super::HoveredRow::Workspace { project, id }),
+                TreeRow::Workspace {
+                    project: row_project,
+                    id: row_id,
+                },
+            ) => project == row_project && id == row_id,
+            _ => false,
+        }
+    }
+
+    fn hovered_row_at(&self, sidebar: Rect, row: u16) -> Option<super::HoveredRow> {
+        let row_index = self.tree_offset + usize::from(row.saturating_sub(sidebar.y));
+        let rows = self.visible_rows();
+        match tree_line_at(&rows, row_index)? {
+            TreeRow::Session { id } => Some(super::HoveredRow::Session(*id)),
+            TreeRow::Workspace { project, id } => Some(super::HoveredRow::Workspace {
+                project: project.clone(),
+                id: id.clone(),
+            }),
+            TreeRow::Project { .. } => None,
+        }
+    }
+
+    fn close_mark_hit(&self, column: u16, width: u16) -> bool {
+        width >= 3 && column >= width - 3
+    }
+
     fn sidebar_mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> Option<DashboardAction> {
         if !matches!(self.mode, InputMode::Browse | InputMode::Terminal) {
             return None;
@@ -2073,18 +2104,10 @@ impl Dashboard {
         if mouse.kind == MouseEventKind::Moved {
             let inside = point_in_rect(mouse, sidebar);
             let next = inside
-                .then(|| {
-                    let row_index =
-                        self.tree_offset + usize::from(mouse.row.saturating_sub(sidebar.y));
-                    let rows = self.visible_rows();
-                    match tree_line_at(&rows, row_index)? {
-                        TreeRow::Session { id } => Some(*id),
-                        TreeRow::Project { .. } | TreeRow::Workspace { .. } => None,
-                    }
-                })
+                .then(|| self.hovered_row_at(sidebar, mouse.row))
                 .flatten();
-            let changed = self.mouse.hovered_session != next;
-            self.mouse.hovered_session = next;
+            let changed = self.mouse.hovered != next;
+            self.mouse.hovered = next;
             // Motion outside the sidebar still belongs to the pane.
             if !inside {
                 return None;
@@ -2122,11 +2145,9 @@ impl Dashboard {
                 let column = mouse.column.saturating_sub(sidebar.x);
                 match row {
                     TreeRow::Session { id } => {
-                        let marked = sidebar.width >= 3
-                            && column >= sidebar.width - 3
-                            && (self.action_session() == Some(id)
-                                || self.mouse.hovered_session == Some(id));
-                        if marked {
+                        if self.close_mark_hit(column, sidebar.width)
+                            && self.mouse.hovered == Some(super::HoveredRow::Session(id))
+                        {
                             return Some(self.open_close_terminal_for(id));
                         }
                         self.select_session(id);
@@ -2136,6 +2157,16 @@ impl Dashboard {
                         self.toggle_row_collapse(&TreeRow::Project { name });
                         self.clamp_tree_offset(usize::from(sidebar.height));
                         Some(DashboardAction::Redraw)
+                    }
+                    TreeRow::Workspace { project, id }
+                        if self.close_mark_hit(column, sidebar.width)
+                            && self.mouse.hovered
+                                == Some(super::HoveredRow::Workspace {
+                                    project: project.clone(),
+                                    id: id.clone(),
+                                }) =>
+                    {
+                        Some(self.open_remove_workspace(project, id))
                     }
                     TreeRow::Workspace { project, id } if column == 2 => {
                         self.toggle_row_collapse(&TreeRow::Workspace { project, id });

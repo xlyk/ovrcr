@@ -1008,15 +1008,12 @@ fn tree_line_text(
         .fg(TEXT)
         .bg(if selected { SURFACE0 } else { BASE });
     let muted = Style::default().fg(MUTED);
-    // Reserve the close mark before the title and agent label clip.
     // History and Copy already use the title-bar Close for leaving the capture.
-    let hovered =
-        matches!(row, TreeRow::Session { id } if dashboard.mouse.hovered_session == Some(*id));
-    let close_mark = matches!(row, TreeRow::Session { .. })
-        && (selected || hovered)
+    // The mark replaces the agent label; it does not reflow the title.
+    let close_mark = dashboard.row_shows_close_mark(row)
         && width >= 3
         && !matches!(dashboard.mode, InputMode::History | InputMode::Copy);
-    let width = if close_mark { width - 3 } else { width };
+    let mark = Span::styled("[x]", Style::default().fg(MAUVE));
     let (left, fill, right) = match row {
         TreeRow::Project { name } => {
             let full_title = format!(" {} ", name.to_uppercase());
@@ -1063,7 +1060,11 @@ fn tree_line_text(
                 let count = workspace.map_or(0, |workspace| workspace.sessions.len());
                 right.push(Span::styled(format!("▸ {count} "), muted));
             }
-            let available = width.saturating_sub(WORKSPACE_INDENT.len() + 1);
+            if close_mark {
+                right = vec![mark.clone()];
+            }
+            let available =
+                width.saturating_sub(WORKSPACE_INDENT.len() + 1 + usize::from(close_mark) * 3);
             let label = match workspace {
                 Some(workspace) => fit_workspace_sidebar_label(
                     &workspace.name,
@@ -1117,7 +1118,11 @@ fn tree_line_text(
                         ),
                     ],
                     Span::raw(" "),
-                    Vec::new(),
+                    if close_mark {
+                        vec![mark.clone()]
+                    } else {
+                        Vec::new()
+                    },
                 )
             } else {
                 let (exited, glyph, glyph_color) = (status.exited, status.glyph, status.color);
@@ -1140,9 +1145,11 @@ fn tree_line_text(
                 let name_width = if show_agent {
                     name_width_with_agent
                 } else {
-                    width.saturating_sub(name_column)
+                    width.saturating_sub(name_column + usize::from(close_mark) * 3)
                 };
-                let right = if show_agent {
+                let right = if close_mark {
+                    vec![mark.clone()]
+                } else if show_agent {
                     let color = label_color(&session.label);
                     vec![
                         Span::styled(
@@ -1171,12 +1178,7 @@ fn tree_line_text(
             }
         }
     };
-    let mut line = compose_row(left, fill, right, width, selected);
-    if close_mark {
-        line.spans
-            .push(Span::styled("[x]", Style::default().fg(MAUVE)));
-    }
-    (line, style)
+    (compose_row(left, fill, right, width, selected), style)
 }
 
 /// Compose one `width`-cell sidebar row: `left`, the `fill` glyph across the gap,

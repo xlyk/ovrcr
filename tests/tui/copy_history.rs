@@ -1513,7 +1513,7 @@ fn pause_resume_dense_status_has_priority() {
         .unwrap();
     let buffer = terminal.backend().buffer();
     let row = |y| (0..39).map(|x| buffer[(x, y)].symbol()).collect::<String>();
-    assert_eq!(row(3).trim_end(), "▌    P local                        [x]");
+    assert_eq!(row(3).trim_end(), "▌    P local");
     let rendered = draw_text(&dashboard, 120, 40);
     assert!(rendered.contains("pid: 555  elapsed: 0m  agent busy  paused"));
     assert!(rendered.lines().last().unwrap().contains(" r "));

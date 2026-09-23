@@ -265,7 +265,7 @@ for provider reporting behavior.
 
 In Browse and Terminal modes:
 
-- Clicking a session row selects it. `[x]` at the end of a session row archives that session, the same as `X`. The mark shows on the highlighted session and on the session under the pointer. The click does not switch the pane. A live or paused session asks first. An exited session archives immediately.
+- Clicking a session row selects it. `[x]` shows only while the pointer is over a session or workspace row. On a session it replaces the agent label and archives that session, the same as `X`, without switching the pane. A live or paused session asks first. An exited session archives immediately. On a workspace it opens Remove workspace for that row and does not clear the pane. A root workspace refuses, as the key does.
 - Clicking a project or workspace name selects it. Clicking the first cell of a
   project header, or the branch glyph of a workspace, folds or unfolds it. The
   blank line before a project does nothing.
