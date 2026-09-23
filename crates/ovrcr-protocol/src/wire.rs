@@ -315,6 +315,13 @@ pub enum Request {
         session: SessionId,
         expected_run: SessionRunId,
     },
+    /// One named key, such as `:enter:`, written to the current run as the
+    /// keyboard would send it. Refused while the Dashboard is focused on it.
+    Keystroke {
+        session: SessionId,
+        expected_run: SessionRunId,
+        key: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -719,6 +726,14 @@ mod wire_snapshot {
                 },
             ),
             (
+                "Keystroke",
+                Request::Keystroke {
+                    session: SessionId(1),
+                    expected_run: SessionRunId(4),
+                    key: ":j:".into(),
+                },
+            ),
+            (
                 "AcknowledgeSessionStopped",
                 Request::AcknowledgeSessionStopped {
                     session: SessionId(1),
@@ -1021,6 +1036,7 @@ mod wire_snapshot {
         ("Request::UnarchiveSession", "230104"),
         ("Request::DeleteArchivedSession", "220104"),
         ("Request::RecoverSession", "250104"),
+        ("Request::Keystroke", "260104033a6a3a"),
         ("Request::AcknowledgeSessionStopped", "240104"),
         (
             "Request::MarkReviewed",

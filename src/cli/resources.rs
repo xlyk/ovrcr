@@ -222,6 +222,17 @@ pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppRe
             },
             json_output,
         ),
+        TerminalCommand::Keystroke { id, key } => {
+            let session = online_session(id)?;
+            mutate_without_start(
+                Request::Keystroke {
+                    session: session.id,
+                    expected_run: session.run,
+                    key,
+                },
+                json_output,
+            )
+        }
         TerminalCommand::Unarchive { id } => {
             let session = online_session(id)?;
             mutate_without_start(
