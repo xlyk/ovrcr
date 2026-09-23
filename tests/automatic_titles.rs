@@ -3,8 +3,9 @@ mod live;
 
 use live::{Live, PROJECT, WORKSPACE};
 use ovrcr::protocol::{
-    BranchRequest, CreateSessionRequest, ErrorCode, Request, Response, ServerEvent, ServerMessage,
-    SessionId, SessionLaunch, SessionPhase, SessionSummary, client, connect_server, read_frame,
+    BranchRequest, ClientMessage, CreateSessionRequest, DashboardView, ErrorCode, Request,
+    Response, ServerEvent, ServerMessage, SessionId, SessionLaunch, SessionPhase, SessionSummary,
+    client, connect_server, read_frame, write_frame,
 };
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
@@ -95,16 +96,31 @@ fn emit(live: &Live, session: SessionId, title: &str) {
 }
 
 fn dashboard(live: &Live) -> UnixStream {
-    let mut stream = connect_server(&live.socket).unwrap();
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
-    stream
-        .set_write_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
-    let response = client::request(&mut stream, 1, Request::DashboardHello).unwrap();
-    assert!(matches!(response, Response::Hierarchy(_)), "{response:?}");
-    stream
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let mut stream = connect_server(&live.socket).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        match client::request(&mut stream, 1, Request::DashboardHello).unwrap() {
+            Response::Hierarchy(_) => return stream,
+            Response::Error {
+                code: ErrorCode::Conflict,
+                message,
+            } if message == "another dashboard is already connected" => {
+                // Closing a client releases server ownership asynchronously.
+                assert!(
+                    Instant::now() < deadline,
+                    "dashboard ownership was not released"
+                );
+                std::thread::yield_now();
+            }
+            other => panic!("dashboard attach failed: {other:?}"),
+        }
+    }
 }
 
 fn changed(stream: &mut UnixStream, id: SessionId, expected: &str) {
@@ -125,8 +141,45 @@ fn changed(stream: &mut UnixStream, id: SessionId, expected: &str) {
     }
 }
 
+// SetView is acknowledged by the same dispatcher that publishes output-driven
+// events. After emit() observes parsed output, this fences its publication too.
+fn no_title_changes(stream: &mut UnixStream, id: SessionId, revision: u64) {
+    write_frame(
+        stream,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::SetView {
+                view: DashboardView {
+                    revision,
+                    panes: vec![],
+                    focused: None,
+                },
+            },
+        },
+    )
+    .unwrap();
+    loop {
+        match read_frame::<ServerMessage>(stream).unwrap() {
+            ServerMessage::Response {
+                request_id: 2,
+                response,
+            } => {
+                assert_eq!(response, Response::Ok);
+                return;
+            }
+            ServerMessage::Event(ServerEvent::SessionChanged(summary)) if summary.id == id => {
+                panic!("application title must not publish a session change: {summary:?}");
+            }
+            ServerMessage::Event(ServerEvent::Output { .. }) => {
+                panic!("hidden session must not deliver screen output");
+            }
+            _ => {}
+        }
+    }
+}
+
 #[test]
-fn automatic_workspace_launch_titles_pin_reset_and_reopen_keep_identity_and_reset_output() {
+fn stable_workspace_launch_titles_rename_reset_and_reopen_keep_identity_and_reset_output() {
     let live = fixture();
     let original = created(&live, workspace(Some(title_program())));
     assert_eq!(
@@ -137,7 +190,8 @@ fn automatic_workspace_launch_titles_pin_reset_and_reopen_keep_identity_and_rese
     wait_for(&live, original.id, "TITLE-READY");
     let mut dashboard = dashboard(&live); // no pane selected: output remains hidden
     emit(&live, original.id, "first title 🦀");
-    changed(&mut dashboard, original.id, "first title 🦀");
+    assert_eq!(sessions(&live)[0].display_name(), "title-work");
+    no_title_changes(&mut dashboard, original.id, 1);
     assert_eq!(
         live.request(Request::SetSessionTitle {
             session: original.id,
@@ -148,6 +202,7 @@ fn automatic_workspace_launch_titles_pin_reset_and_reopen_keep_identity_and_rese
     changed(&mut dashboard, original.id, "pinned");
     emit(&live, original.id, "latest application");
     assert_eq!(sessions(&live)[0].display_name(), "pinned");
+    no_title_changes(&mut dashboard, original.id, 2);
     assert_eq!(
         live.request(Request::SetSessionTitle {
             session: original.id,
@@ -155,7 +210,7 @@ fn automatic_workspace_launch_titles_pin_reset_and_reopen_keep_identity_and_rese
         }),
         Response::Ok
     );
-    changed(&mut dashboard, original.id, "latest application");
+    changed(&mut dashboard, original.id, "title-work");
     assert_eq!(sessions(&live)[0].name, original.name);
     let reused = created(
         &live,
@@ -204,7 +259,7 @@ fn automatic_workspace_launch_titles_pin_reset_and_reopen_keep_identity_and_rese
     assert_eq!(reopened.id, original.id);
     assert_eq!(reopened.run.0, original.run.0 + 1);
     assert_eq!(reopened.name, original.name);
-    assert_eq!(reopened.display_name(), "latest application");
+    assert_eq!(reopened.display_name(), "title-work");
     assert!(!terminal(&live, reopened.id).contains("TITLE-READY"));
     assert_eq!(
         live.request(Request::SendTerminal {
@@ -215,12 +270,12 @@ fn automatic_workspace_launch_titles_pin_reset_and_reopen_keep_identity_and_rese
         Response::Ok
     );
     wait_for(&live, reopened.id, "SHELL_TITLE_SET");
-    changed(&mut dashboard, reopened.id, "fresh title");
+    assert_eq!(sessions(&live)[0].display_name(), "title-work");
     assert_eq!(sessions(&live).len(), 1);
 }
 
 #[test]
-fn automatic_empty_workspace_and_unique_names_preserve_explicit_titles() {
+fn empty_workspace_and_generated_names_preserve_explicit_titles() {
     let live = fixture();
     assert_eq!(live.request(workspace(None)), Response::Ok);
     assert!(sessions(&live).is_empty());
@@ -318,7 +373,213 @@ fn automatic_empty_workspace_and_unique_names_preserve_explicit_titles() {
 }
 
 #[test]
-fn automatic_workspace_launch_failure_retains_worktree_and_retry_uses_existing_workspace() {
+fn agent_and_terminal_titles_stay_user_controlled_across_dashboard_reconnect() {
+    let live = fixture();
+    assert_eq!(live.request(workspace(None)), Response::Ok);
+    for kind in [
+        ovrcr_protocol::SessionKind::Terminal,
+        ovrcr_protocol::SessionKind::Agent {
+            name: "fixture-agent".into(),
+        },
+    ] {
+        for explicit in [false, true] {
+            let launch = title_program();
+            let name = if explicit {
+                format!("named-{}", sessions(&live).len())
+            } else {
+                String::new()
+            };
+            let session = created(
+                &live,
+                Request::CreateSession(CreateSessionRequest {
+                    kind: kind.clone(),
+                    project: PROJECT.into(),
+                    workspace: WORKSPACE.into(),
+                    name,
+                    label: launch.label,
+                    argv: launch.argv,
+                }),
+            );
+            wait_for(&live, session.id, "TITLE-READY");
+            let mut stream = dashboard(&live);
+            for (revision, title) in [(1, "Thinking…"), (2, "Done;界")] {
+                emit(&live, session.id, title);
+                let current = sessions(&live)
+                    .into_iter()
+                    .find(|s| s.id == session.id)
+                    .unwrap();
+                assert_eq!(current.display_name(), session.name);
+                assert_eq!(current.run, session.run);
+                no_title_changes(&mut stream, session.id, revision);
+            }
+            let id = session.id.0.to_string();
+            for args in [
+                vec!["terminal", "rename", &id, "User rename"],
+                vec!["terminal", "rename", &id, "--reset"],
+            ] {
+                let expected = if args[3] == "--reset" {
+                    &session.name
+                } else {
+                    "User rename"
+                };
+                let result = std::process::Command::new(&live.executable)
+                    .args(args)
+                    .env("OVRCR_CONFIG", &live.config)
+                    .env("OVRCR_SOCKET", &live.socket)
+                    .output()
+                    .unwrap();
+                assert!(result.status.success(), "{result:?}");
+                changed(&mut stream, session.id, expected);
+                drop(stream);
+                stream = dashboard(&live);
+                emit(&live, session.id, &format!("After reconnect: {expected}"));
+                let current = sessions(&live)
+                    .into_iter()
+                    .find(|s| s.id == session.id)
+                    .unwrap();
+                assert_eq!(current.display_name(), expected);
+                assert_eq!(
+                    (current.id, current.run, current.pid),
+                    (session.id, session.run, session.pid)
+                );
+                no_title_changes(&mut stream, session.id, 1);
+            }
+        }
+    }
+}
+
+#[test]
+fn saved_titles_survive_restart_and_reopen_without_legacy_application_titles() {
+    let live = fixture();
+    assert_eq!(live.request(workspace(None)), Response::Ok);
+    let mut originals = Vec::new();
+    for name in ["", "", "explicit"] {
+        let launch = title_program();
+        let session = created(
+            &live,
+            Request::CreateSession(CreateSessionRequest {
+                kind: launch.kind,
+                project: PROJECT.into(),
+                workspace: WORKSPACE.into(),
+                name: name.into(),
+                label: launch.label,
+                argv: launch.argv,
+            }),
+        );
+        wait_for(&live, session.id, "TITLE-READY");
+        originals.push(session);
+    }
+    assert_eq!(
+        live.request(Request::SetSessionTitle {
+            session: originals[2].id,
+            title: Some("User title".into()),
+        }),
+        Response::Ok
+    );
+    assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
+    live.join();
+    // Seed old-version storage, then assert only through public server/CLI reads.
+    let db = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+    for session in [&originals[0], &originals[2]] {
+        db.execute(
+            "UPDATE retained_sessions SET application_title = 'Legacy app' WHERE id = ?1",
+            [i64::try_from(session.id.0).unwrap()],
+        )
+        .unwrap();
+    }
+    drop(db);
+    let expected = ["title-work", "title-work-2", "User title"];
+    let offline = std::process::Command::new(&live.executable)
+        .args(["--json", "terminal", "list"])
+        .env("OVRCR_CONFIG", &live.config)
+        .env("OVRCR_SOCKET", &live.socket)
+        .output()
+        .unwrap();
+    assert!(offline.status.success(), "{offline:?}");
+    let rows: serde_json::Value = serde_json::from_slice(&offline.stdout).unwrap();
+    for (original, expected) in originals.iter().zip(expected) {
+        let row = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == original.id.0)
+            .unwrap();
+        assert_eq!(row["display_name"], expected);
+    }
+    live.start_binary();
+    for (original, expected) in originals.iter().zip(expected) {
+        let retained = sessions(&live)
+            .into_iter()
+            .find(|s| s.id == original.id)
+            .unwrap();
+        assert_eq!(retained.display_name(), expected);
+        assert_eq!(retained.run, original.run);
+        let reopened = created(
+            &live,
+            Request::ReopenSession {
+                session: original.id,
+                expected_run: original.run,
+                acknowledge_stopped: false,
+            },
+        );
+        assert_eq!(reopened.display_name(), expected);
+        assert_eq!(reopened.id, original.id);
+        assert_eq!(reopened.name, original.name);
+        assert_eq!(reopened.run.0, original.run.0 + 1);
+        assert_eq!(
+            live.request(Request::SendTerminal {
+                session: reopened.id,
+                text: "printf '\\033]0;new application\\007'; printf 'REOPEN_%s\\n' TITLE_OK"
+                    .into(),
+                submit: true,
+            }),
+            Response::Ok
+        );
+        wait_for(&live, reopened.id, "REOPEN_TITLE_OK");
+        assert_eq!(
+            sessions(&live)
+                .into_iter()
+                .find(|s| s.id == reopened.id)
+                .unwrap()
+                .display_name(),
+            expected
+        );
+    }
+    // A user reset is durable too, for both generated and explicit names.
+    for original in [&originals[0], &originals[2]] {
+        for title in [Some("Temporary rename".into()), None] {
+            assert_eq!(
+                live.request(Request::SetSessionTitle {
+                    session: original.id,
+                    title
+                }),
+                Response::Ok
+            );
+        }
+    }
+    assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
+    live.join();
+    live.start_binary();
+    for original in &originals {
+        let retained = sessions(&live)
+            .into_iter()
+            .find(|s| s.id == original.id)
+            .unwrap();
+        assert_eq!(retained.display_name(), original.name);
+        let reopened = created(
+            &live,
+            Request::ReopenSession {
+                session: retained.id,
+                expected_run: retained.run,
+                acknowledge_stopped: false,
+            },
+        );
+        assert_eq!(reopened.display_name(), original.name);
+    }
+}
+
+#[test]
+fn workspace_launch_failure_retains_worktree_and_retry_uses_existing_workspace() {
     let live = fixture();
     let response = live.request(workspace(Some(SessionLaunch {
         kind: ovrcr_protocol::SessionKind::Terminal,

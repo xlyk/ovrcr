@@ -2148,7 +2148,7 @@ fn codex_setup_and_doctor_help_expose_provider_dispatch() {
 }
 
 #[test]
-fn automatic_titles_pin_reset_and_reopen_through_cli() {
+fn stable_titles_rename_reset_and_reopen_through_cli() {
     let fixture = live::Live::binary();
     fixture.ready("feature/cli-titles");
     let run = |args: &[&str]| {
@@ -2199,7 +2199,7 @@ fn automatic_titles_pin_reset_and_reopen_through_cli() {
         }
     };
     let exited = wait_exited(id);
-    assert_eq!(exited["display_name"], "Build complete");
+    assert_eq!(exited["display_name"], "feature/cli-titles");
     let id_text = id.to_string();
     assert!(
         run(&["terminal", "read", &id_text, "--json"])["text"]
@@ -2211,8 +2211,8 @@ fn automatic_titles_pin_reset_and_reopen_through_cli() {
     let pinned = wait_exited(id);
     assert_eq!(pinned["name"], exited["name"]);
     assert_eq!(pinned["display_name"], "Pinned review");
-    run(&["terminal", "rename", &id_text, "--automatic", "--json"]);
-    assert_eq!(wait_exited(id)["display_name"], "Build complete");
+    run(&["terminal", "rename", &id_text, "--reset", "--json"]);
+    assert_eq!(wait_exited(id)["display_name"], "feature/cli-titles");
     let reopened = run(&["terminal", "reopen", &id_text, "--ack-stopped", "--json"]);
     assert_eq!(reopened["id"], id);
     assert_eq!(
@@ -2220,7 +2220,7 @@ fn automatic_titles_pin_reset_and_reopen_through_cli() {
         exited["run"].as_u64().unwrap() + 1
     );
     assert_eq!(reopened["name"], exited["name"]);
-    assert_eq!(reopened["display_name"], "Build complete");
+    assert_eq!(reopened["display_name"], "feature/cli-titles");
     assert!(
         !run(&["terminal", "read", &id_text, "--json"])["text"]
             .as_str()

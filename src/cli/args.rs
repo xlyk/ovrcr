@@ -195,14 +195,15 @@ pub(super) enum TerminalCommand {
         expected: ovrcr::protocol::ReadyObservation,
     },
     Create(NewArgs),
-    /// Pin a display title or restore application-controlled titles.
-    #[command(group(ArgGroup::new("title_mode").required(true).args(["title", "automatic"])))]
+    /// Set a display title or restore the original session name.
+    #[command(group(ArgGroup::new("title_mode").required(true).args(["title", "reset"])))]
     Rename {
         id: u64,
-        #[arg(conflicts_with = "automatic")]
+        #[arg(conflicts_with = "reset")]
         title: Option<String>,
-        #[arg(long)]
-        automatic: bool,
+        /// Restore the original session name.
+        #[arg(long, alias = "automatic")]
+        reset: bool,
     },
     /// Reopen a terminal and execute the agent resume command, or open its native resume picker when no conversation is saved. Confirm uncertain previous processes stopped with --ack-stopped.
     Reopen {
@@ -303,7 +304,7 @@ pub(super) struct NewArgs {
     /// Worktree path when the branch is ambiguous or detached.
     #[arg(long)]
     pub(super) path: Option<PathBuf>,
-    /// Pin a name; omit to follow application titles automatically.
+    /// Set a stable name; omit to generate one from the workspace.
     #[arg(long, default_value = "")]
     pub(super) name: String,
     #[arg(long)]
@@ -492,6 +493,7 @@ mod launch_cli_tests {
     fn title_and_reopen_commands_parse_without_ambiguous_reset() {
         for args in [
             vec!["ovrcr", "terminal", "rename", "7", "Review login"],
+            vec!["ovrcr", "terminal", "rename", "7", "--reset"],
             vec!["ovrcr", "terminal", "rename", "7", "--automatic"],
             vec!["ovrcr", "terminal", "reopen", "7"],
             vec!["ovrcr", "terminal", "reopen", "7", "--ack-stopped"],
@@ -500,6 +502,9 @@ mod launch_cli_tests {
             assert!(Cli::try_parse_from(&args).is_ok(), "{args:?}");
         }
         assert!(Cli::try_parse_from(["ovrcr", "terminal", "rename", "7"]).is_err());
+        assert!(
+            Cli::try_parse_from(["ovrcr", "terminal", "rename", "7", "Pinned", "--reset"]).is_err()
+        );
         assert!(
             Cli::try_parse_from(["ovrcr", "terminal", "rename", "7", "Pinned", "--automatic",])
                 .is_err()

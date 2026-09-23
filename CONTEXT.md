@@ -21,16 +21,16 @@ The provider identity and unique conversation identifier needed to reopen an age
 _Avoid_: transcript, terminal output, most recent conversation
 
 **Session title**:
-The name shown for a terminal session. It can follow the running application's title or remain pinned to a name chosen by the user; changing it does not change which session it identifies.
+The name shown for a terminal session. It stays at the user's chosen title or the original session name; applications cannot change it. Changing the title does not change which session it identifies.
 _Avoid_: session identity, agent label, workspace name as interchangeable terms
 
-**Automatic title**:
-A session title that follows titles supplied by the running application, using a fallback when no application title is available.
-_Avoid_: generated task summary, inferred activity
+**Original session name**:
+The name chosen at creation, supplied by the user or generated from the workspace. Clearing a manual title restores this name, even if the workspace's branch has since changed.
+_Avoid_: current branch name, application title
 
-**Pinned title**:
-A session title chosen by the user that stays unchanged until the user edits it or returns to Automatic.
-_Avoid_: pinned session, which could imply a placement or lifecycle change
+**Manual title**:
+A session title chosen by the user that stays unchanged until the user edits it or clears it to restore the original session name. It survives reconnect, server restart, and reopen.
+_Avoid_: Automatic mode, pinned session (which could imply a placement or lifecycle change)
 
 **Launch choice**:
 The user's choice to start an Agent or a Terminal in a workspace. Creating a workspace can also leave it empty with Nothing yet.
@@ -41,7 +41,7 @@ A detected or configured agent selected for launch. This launch choice alone doe
 _Avoid_: any arbitrary command as an agent
 
 **Terminal**:
-The launch choice for opening a shell, optionally with a custom command. Like an Agent launch, it creates a terminal session with automatic or pinned titles.
+The launch choice for opening a shell, optionally with a custom command. Like an Agent launch, it creates a terminal session with a stable session title.
 _Avoid_: custom command as a separate session type
 
 **Remembered launch choice**:

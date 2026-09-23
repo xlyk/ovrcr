@@ -424,7 +424,7 @@ command happens to invoke an agent. A launch choice does not guarantee agent
 reporting support.
 
 Workspace defaults to the selected workspace. Name is optional: leave it blank
-for Automatic, or enter a pinned name. After creation, typing goes to the new
+for a stable workspace-based name, or enter your own name. After creation, typing goes to the new
 session immediately. `n` and other new launches are unavailable when the selected
 root workspace shows a warning. Detected `pi` and `omp` entries retain their managed launch
 wrappers; an `agents` override replaces the command entirely.
@@ -512,20 +512,24 @@ reference but cannot be resumed. Unsupported launch configuration leaves resume
 unavailable without disabling the provider's existing reporting.
 See [provider recovery support](agent-reporting-support.md#retained-pi-and-oh-my-pi-conversations).
 
-### Automatic and pinned titles
+### Stable session titles
 
-Automatic titles follow the running application's terminal-title updates (OSC 0
-and OSC 2), including titles such as “Thinking…”. Before an application supplies
-a title, the session uses its workspace-based fallback name. Apps that do not
-supply titles keep that fallback. Duplicate displayed titles include a short
-session identifier so they can be distinguished.
+Every session keeps its user-supplied name or its original workspace-based
+name. Application title updates (OSC 0 and OSC 2), including “Thinking…”, are
+ignored for both Agent and Terminal launches—even when an agent starts inside
+a shell. Activity indicators and terminal output continue to update normally.
+Duplicate displayed titles include a short session identifier so they can be
+distinguished.
 
-Use **Rename terminal** in the command palette to pin a title. Clear it to return
-to Automatic. Title changes never change the session ID or retarget an action.
-Activity indicators remain separate, and desktop notifications continue to use
-stable identity rather than application titles. Titles survive dashboard detach.
-A stopped or interrupted row keeps its title; reopen replaces the process, not
-the row.
+Use **Rename terminal** in the command palette to choose a new display title.
+Clear it to restore the original session name, not the workspace's current branch
+name. Rename never changes the session ID or retargets an action. Desktop
+notifications continue to use stable identity.
+
+Manual titles survive dashboard detach, server restart, and reopen. Reopen
+replaces the process, not the row or its naming choice. Existing user-set titles
+are preserved after upgrading; previously saved application titles are ignored,
+so sessions without a manual title show their original names.
 
 ### Register project (`a`)
 

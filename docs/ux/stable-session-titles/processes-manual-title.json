@@ -1,0 +1,118 @@
+{
+  "captured_at": "2026-09-23T10:49:52.480740-07:00",
+  "fixture_root": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-U2VQP6",
+  "config": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-U2VQP6/config.toml",
+  "socket": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-U2VQP6/server.sock",
+  "root_exists": true,
+  "socket_exists": true,
+  "processes": [
+    {
+      "pid": 63381,
+      "ppid": 59981,
+      "pgid": 59966,
+      "command": "/Users/xlyk/Code/ovrcr-workspaces/328516bf02bf0fd013df29db37f91774/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+    },
+    {
+      "pid": 63486,
+      "ppid": 63381,
+      "pgid": 59966,
+      "command": "/Users/xlyk/Code/ovrcr-workspaces/328516bf02bf0fd013df29db37f91774/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+    },
+    {
+      "pid": 63711,
+      "ppid": 63486,
+      "pgid": 63711,
+      "command": "/bin/zsh"
+    },
+    {
+      "pid": 64083,
+      "ppid": 63486,
+      "pgid": 64083,
+      "command": "/bin/zsh"
+    },
+    {
+      "pid": 64347,
+      "ppid": 63486,
+      "pgid": 64347,
+      "command": "/bin/zsh"
+    },
+    {
+      "pid": 64646,
+      "ppid": 63486,
+      "pgid": 64646,
+      "command": "/bin/zsh"
+    },
+    {
+      "pid": 65162,
+      "ppid": 63486,
+      "pgid": 65162,
+      "command": "/bin/zsh"
+    },
+    {
+      "pid": 65494,
+      "ppid": 63486,
+      "pgid": 65494,
+      "command": "/bin/zsh"
+    },
+    {
+      "pid": 65837,
+      "ppid": 63486,
+      "pgid": 65837,
+      "command": "/bin/sh -i"
+    },
+    {
+      "pid": 66138,
+      "ppid": 63486,
+      "pgid": 66138,
+      "command": "/bin/sh -i"
+    },
+    {
+      "pid": 66428,
+      "ppid": 63486,
+      "pgid": 66428,
+      "command": "/bin/sh -i"
+    },
+    {
+      "pid": 66842,
+      "ppid": 63486,
+      "pgid": 66842,
+      "command": "/bin/sh -i"
+    },
+    {
+      "pid": 67219,
+      "ppid": 63486,
+      "pgid": 67219,
+      "command": "/bin/sh -i"
+    },
+    {
+      "pid": 67512,
+      "ppid": 63486,
+      "pgid": 67512,
+      "command": "/bin/sh -i"
+    },
+    {
+      "pid": 67682,
+      "ppid": 63381,
+      "pgid": 67682,
+      "command": "/Users/xlyk/Code/ovrcr-workspaces/328516bf02bf0fd013df29db37f91774/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+    },
+    {
+      "pid": 627,
+      "ppid": 63486,
+      "pgid": 627,
+      "command": "/bin/zsh"
+    },
+    {
+      "pid": 79209,
+      "ppid": 627,
+      "pgid": 79209,
+      "command": "rtk proxy sh -c printf \"\\033]2;APP_MANUAL_REJECTED\\007\\nCUA_%s\\n\" MANUAL_OK; read reply"
+    },
+    {
+      "pid": 79212,
+      "ppid": 79209,
+      "pgid": 79209,
+      "command": "/bin/sh -c printf \"\\033]2;APP_MANUAL_REJECTED\\007\\nCUA_%s\\n\" MANUAL_OK; read reply"
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+**Resolved.** [tests/retained_sessions.rs:751](/Users/xlyk/Code/ovrcr-workspaces/328516bf02bf0fd013df29db37f91774/tests/retained_sessions.rs:751) now verifies that legacy `--automatic` resets to `title: null`, restores the original stored name, and preserves the session ID. Surrounding lifecycle assertions remain intact.
+
+**No remaining blockers within this re-review.** The GUI report records bounded native acceptance and cleanup. The retained-suite pass is coordinator-reported; no tests were rerun.

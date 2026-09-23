@@ -128,7 +128,7 @@ pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppRe
         TerminalCommand::Rename {
             id,
             title,
-            automatic: _,
+            reset: _,
         } => mutate_without_start(
             Request::SetSessionTitle {
                 session: SessionId(id),

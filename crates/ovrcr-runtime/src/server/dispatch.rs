@@ -372,12 +372,6 @@ fn dispatch_agent_report(
     let _ = completion.send(response);
 }
 
-fn persist_session_titles(state: &ServerState, session: &Session) {
-    if let Err(error) = state.persist_session_titles(session) {
-        eprintln!("persist session {} titles: {error:#}", session.id().0);
-    }
-}
-
 fn persist_session_exit(state: &ServerState, session: &Session) {
     if let Err(error) = state.persist_session_exit(session) {
         eprintln!("persist session {} exit: {error:#}", session.id().0);
@@ -420,13 +414,8 @@ fn dispatch_session_event(state: &Arc<ServerState>, event: SessionEvent) {
         SessionEvent::Output { bytes, .. } => Some(bytes.clone()),
         SessionEvent::Exited { .. } | SessionEvent::RestoreInputFailed { .. } => None,
     };
-    let before_revision = session.title_revision();
     session.apply_event(event);
     if let Some(bytes) = output {
-        if session.title_revision() != before_revision {
-            persist_session_titles(state, &session);
-            publish_session_changed(state, id);
-        }
         let revision = state.dashboard.view().and_then(|view| {
             view.panes
                 .iter()

@@ -167,11 +167,7 @@ impl RetainedSession {
             agent_epoch: 0,
             unread: None,
             context_usage: None,
-            title: self
-                .metadata
-                .pinned_title
-                .clone()
-                .or_else(|| self.metadata.application_title.clone()),
+            title: self.metadata.pinned_title.clone(),
         }
     }
 }

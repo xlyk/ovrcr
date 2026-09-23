@@ -2205,7 +2205,7 @@ fn picker_validation_keeps_recovery_hints_and_cancels_without_removal() {
 }
 
 #[test]
-fn application_title_events_update_sidebar_pane_and_palette_without_identity_change() {
+fn manual_title_events_update_sidebar_pane_and_palette_without_identity_change() {
     let mut dashboard = dashboard_fixture();
     let hierarchy = fixture_hierarchy();
     let mut sessions = hierarchy
@@ -2259,6 +2259,9 @@ fn application_title_events_update_sidebar_pane_and_palette_without_identity_cha
     palette_search(&mut dashboard, "Rename terminal");
     dashboard.key(KeyCode::Enter);
     dashboard.ctrl('u');
+    let rename_text = palette_text(&dashboard);
+    assert!(rename_text.contains("original name"), "{rename_text}");
+    assert!(!rename_text.contains("Automatic"), "{rename_text}");
     dashboard.event_action(Event::Paste("Pinned by user".into()));
     let ovrcr::tui::DashboardAction::Request(pin) = dashboard.key(KeyCode::Enter) else {
         panic!()

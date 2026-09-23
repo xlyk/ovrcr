@@ -1035,7 +1035,7 @@ impl Dashboard {
             .filter(|id| find_session(self, *id).is_some())
         {
             entries.push(Entry {
-                label: "Rename terminal (blank = Automatic)".into(),
+                label: "Rename terminal (blank = original name)".into(),
                 command: Command::RenameTerminal(id),
             });
             if let Some(session) = find_session(self, id).filter(|session| !session.phase.is_live())
@@ -2654,7 +2654,7 @@ impl Dashboard {
             Page::Form { command, .. } => match command {
                 Command::CreateTerminal => "Create terminal",
                 Command::CreateWorkspace => "Create workspace",
-                Command::RenameTerminal(_) => "Rename terminal · blank = Automatic",
+                Command::RenameTerminal(_) => "Rename terminal · blank = original name",
                 Command::RecoverLaunch => "Workspace retained · recover launch",
                 Command::RegisterProject => "Register project",
                 Command::RemoveWorkspace => "Remove workspace",
@@ -2763,9 +2763,9 @@ impl Dashboard {
                 Page::Form {
                     command: Command::RenameTerminal(_),
                     ..
-                } => "Name blank = Automatic · Enter save · Ctrl-u clear · Esc cancel",
+                } => "Blank = original name · Enter save · Ctrl-u clear · Esc cancel",
                 Page::Form { .. } => {
-                    "Name blank = Automatic · Command blank = shell · Tab next · Enter submit · Ctrl-u clear"
+                    "Name blank = generated · Command blank = shell · Tab next · Enter submit · Ctrl-u clear"
                 }
                 Page::Confirm { .. } => "Enter confirm · Esc cancel",
             }
