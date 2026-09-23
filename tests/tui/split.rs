@@ -186,7 +186,7 @@ fn sidebar_border_drag_resizes_the_sidebar_and_the_pane() {
     let review = (0..49)
         .map(|x| terminal.backend().buffer()[(x, 4)].symbol())
         .collect::<String>();
-    assert_eq!(review, format!("▌    - review{}claude ", " ".repeat(29)));
+    assert_eq!(review, format!("▌    - review{}claude [x]", " ".repeat(26)));
 
     assert_eq!(
         dashboard.mouse_action(
