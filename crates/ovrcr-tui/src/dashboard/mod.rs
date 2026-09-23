@@ -213,8 +213,14 @@ pub(super) struct MouseForwarding {
     pub(super) last_motion: Option<MouseEvent>,
     pub(super) split_dragging: bool,
     pub(super) sidebar_dragging: bool,
-    /// Session row under the pointer. Drawing reads it; motion that stays on the same row does not redraw.
-    pub(super) hovered_session: Option<SessionId>,
+    /// Row under the pointer. Drawing reads it; motion that stays on the same row does not redraw.
+    pub(super) hovered: Option<HoveredRow>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(super) enum HoveredRow {
+    Session(SessionId),
+    Workspace { project: String, id: String },
 }
 
 pub struct Dashboard {

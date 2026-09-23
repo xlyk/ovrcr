@@ -782,6 +782,21 @@ impl Dashboard {
         field.kind = FieldKind::Pick(list);
     }
 
+    pub(super) fn open_remove_workspace(&mut self, project: String, id: String) -> DashboardAction {
+        let Some(workspace) = find_workspace(self, &project, &id) else {
+            return DashboardAction::None;
+        };
+        if workspace.root {
+            self.set_error(super::keymap::ROOT_PROTECTED);
+            return DashboardAction::Redraw;
+        }
+        let previous = self.selected_container.clone();
+        self.selected_container = Some(super::TreeRow::Workspace { project, id });
+        let action = self.open_remove_context(true);
+        self.selected_container = previous;
+        action
+    }
+
     pub(super) fn open_remove_context(&mut self, workspace: bool) -> DashboardAction {
         let (project, name) = self.creation_context();
         if project.is_empty() || (workspace && name.is_empty()) {
