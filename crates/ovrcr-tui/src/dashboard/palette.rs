@@ -591,13 +591,28 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
+    pub(super) fn close_confirm_session(&self) -> Option<SessionId> {
+        match self.palette.as_ref().map(|palette| &palette.page) {
+            Some(Page::Confirm {
+                request: Some(Request::CloseTerminal { session, .. }),
+                ..
+            }) => Some(*session),
+            _ => None,
+        }
+    }
+
     pub(super) fn open_close_terminal(&mut self) -> DashboardAction {
-        let Some(id) = self
-            .action_session()
-            .filter(|id| find_session(self, *id).is_some())
-        else {
+        let Some(id) = self.action_session() else {
             return DashboardAction::None;
         };
+        self.open_close_terminal_for(id)
+    }
+
+    /// Archive `id` without making it the focused pane's session.
+    pub(super) fn open_close_terminal_for(&mut self, id: SessionId) -> DashboardAction {
+        if find_session(self, id).is_none() {
+            return DashboardAction::None;
+        }
         self.cancel_mouse_gesture();
         if let Some(begin) = self.history_begin_request.as_mut() {
             begin.cancelled = true;

@@ -996,7 +996,10 @@ fn tree_line_text(
     now_unix_ms: u64,
 ) -> (Line<'static>, Style) {
     let selected = match row {
-        TreeRow::Session { id } => dashboard.action_session() == Some(*id),
+        TreeRow::Session { id } => dashboard
+            .close_confirm_session()
+            .map(|closing| closing == *id)
+            .unwrap_or_else(|| dashboard.action_session() == Some(*id)),
         TreeRow::Project { .. } | TreeRow::Workspace { .. } => {
             dashboard.selected_container.as_ref() == Some(row)
         }
@@ -1005,6 +1008,15 @@ fn tree_line_text(
         .fg(TEXT)
         .bg(if selected { SURFACE0 } else { BASE });
     let muted = Style::default().fg(MUTED);
+    // Reserve the close mark before the title and agent label clip.
+    // History and Copy already use the title-bar Close for leaving the capture.
+    let hovered =
+        matches!(row, TreeRow::Session { id } if dashboard.mouse.hovered_session == Some(*id));
+    let close_mark = matches!(row, TreeRow::Session { .. })
+        && (selected || hovered)
+        && width >= 3
+        && !matches!(dashboard.mode, InputMode::History | InputMode::Copy);
+    let width = if close_mark { width - 3 } else { width };
     let (left, fill, right) = match row {
         TreeRow::Project { name } => {
             let full_title = format!(" {} ", name.to_uppercase());
@@ -1159,7 +1171,12 @@ fn tree_line_text(
             }
         }
     };
-    (compose_row(left, fill, right, width, selected), style)
+    let mut line = compose_row(left, fill, right, width, selected);
+    if close_mark {
+        line.spans
+            .push(Span::styled("[x]", Style::default().fg(MAUVE)));
+    }
+    (line, style)
 }
 
 /// Compose one `width`-cell sidebar row: `left`, the `fill` glyph across the gap,

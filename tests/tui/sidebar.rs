@@ -99,7 +99,7 @@ fn sidebar_glyphs_and_columns_match_the_reference_tree() {
     assert_eq!(buffer[(4, 2)].fg, Color::Rgb(205, 214, 244));
     assert!(buffer[(4, 2)].modifier.contains(Modifier::BOLD));
     // Selected local shell: mauve bar, surface background, subtext glyph and name.
-    assert_eq!(row(3).trim_end(), "▌    $ local");
+    assert_eq!(row(3).trim_end(), "▌    $ local                        [x]");
     assert_eq!(buffer[(0, 3)].fg, Color::Rgb(203, 166, 247));
     for x in 0..39 {
         assert_eq!(buffer[(x, 3)].bg, Color::Rgb(49, 50, 68), "column {x}");
@@ -479,7 +479,7 @@ fn selected_session_uses_a_soft_bar_on_one_line() {
         rendered,
         [
             "     $ local",
-            &format!("▌    - review{}claude", " ".repeat(19)),
+            &format!("▌    - review{}claude [x]", " ".repeat(16)),
             "  󰘬 lifecycle"
         ]
     );
@@ -675,7 +675,7 @@ fn long_sidebar_names_clip_to_one_screen_line() {
     let review = (0..39)
         .map(|column| buffer[(column, 4)].symbol())
         .collect::<String>();
-    assert_eq!(review, "▌    - review-a-very-long-ses…  claude ");
+    assert_eq!(review, "▌    - review-a-very-long-…  claude [x]");
 
     // Too narrow for a twelve-cell name beside the agent: the agent goes first.
     let mut terminal = Terminal::new(TestBackend::new(50, 24)).unwrap();
@@ -686,7 +686,7 @@ fn long_sidebar_names_clip_to_one_screen_line() {
     let review = (0..24)
         .map(|column| buffer[(column, 4)].symbol())
         .collect::<String>();
-    assert_eq!(review, "▌    - review-a-very-lo…");
+    assert_eq!(review, "▌    - review-a-very…[x]");
     assert_eq!(buffer[(24, 4)].symbol(), "│");
 }
 
@@ -1131,7 +1131,7 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
         .collect::<Vec<_>>();
     assert_eq!(
         rendered[36],
-        format!("▌    - session-50{}sh ", " ".repeat(19))
+        format!("▌    - session-50{}sh [x]", " ".repeat(16))
     );
     assert_eq!(rendered[37].trim_end(), "");
     for (index, row) in (36..=37).enumerate() {
@@ -1625,4 +1625,561 @@ fn container_click_in_terminal_mode_returns_to_browse() {
     );
     let footer = rendered_footer(&dashboard, 120);
     assert!(footer.contains("BROWSE"), "{footer}");
+}
+
+#[test]
+fn highlighted_session_row_shows_close_mark() {
+    let dashboard = dashboard_fixture();
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let sidebar: Vec<String> = (0..40).map(|y| sidebar_row(&terminal, y)).collect();
+    let review = sidebar
+        .iter()
+        .find(|row| row.contains("review"))
+        .expect("review row");
+    assert!(
+        review.trim_end().ends_with("[x]"),
+        "highlighted session must show the close mark, got {review:?}"
+    );
+    let mark_x = review.trim_end().len() - 3;
+    assert_eq!(
+        terminal.backend().buffer()[(mark_x as u16, 4)].fg,
+        Color::Rgb(203, 166, 247),
+        "close mark uses the title-bar action colour"
+    );
+    let local = sidebar
+        .iter()
+        .find(|row| row.contains("$ local"))
+        .expect("unselected local row");
+    assert!(
+        !local.contains("[x]"),
+        "unselected session must not show the close mark, got {local:?}"
+    );
+    let project = sidebar
+        .iter()
+        .find(|row| row.contains("CONSIGINT"))
+        .expect("project row");
+    assert!(
+        !project.contains("[x]"),
+        "project row must not show the close mark, got {project:?}"
+    );
+}
+
+#[test]
+fn clicking_the_close_mark_confirms_archive_of_the_highlighted_session() {
+    let mut dashboard = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 40);
+    let action = dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 36,
+            row: 4,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    assert_eq!(action, DashboardAction::Redraw);
+    let text = palette_text(&dashboard);
+    assert!(
+        text.contains("Confirm action") && text.contains("review (#1)"),
+        "close mark must open the existing confirm, got {text}"
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    assert_eq!(dashboard.pane_rects(area).len(), 1);
+    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+        panic!("confirming the close mark must archive");
+    };
+    assert_eq!(
+        message.request,
+        Request::CloseTerminal {
+            session: SessionId(1),
+            expected_run: ovrcr::protocol::SessionRunId(1),
+        }
+    );
+}
+
+#[test]
+fn dismissing_the_close_mark_confirm_archives_nothing() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 36,
+            row: 4,
+            modifiers: KeyModifiers::NONE,
+        },
+        Rect::new(0, 0, 120, 40),
+    );
+    assert_eq!(dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
+    assert!(!palette_text(&dashboard).contains("Confirm action"));
+    assert!(sidebar_contains_close_mark(&dashboard));
+}
+
+#[test]
+fn close_mark_from_terminal_mode_returns_to_browse() {
+    let mut dashboard = dashboard_fixture();
+    enter_terminal(&mut dashboard);
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 36,
+            row: 4,
+            modifiers: KeyModifiers::NONE,
+        },
+        Rect::new(0, 0, 120, 40),
+    );
+    let text = palette_text(&dashboard);
+    assert!(text.contains("review (#1)"), "{text}");
+    assert!(
+        rendered_footer(&dashboard, 120).contains("BROWSE"),
+        "{text}"
+    );
+}
+
+#[test]
+fn pointer_over_another_session_shows_its_close_mark() {
+    let mut dashboard = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 40);
+    let moved = |column, row| MouseEvent {
+        kind: MouseEventKind::Moved,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    };
+    dashboard.mouse_action(moved(10, 7), area);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert!(
+        sidebar_row(&terminal, 7).contains("[x]"),
+        "hovered session must show the close mark, got {:?}",
+        sidebar_row(&terminal, 7)
+    );
+    assert!(
+        sidebar_row(&terminal, 4).contains("[x]"),
+        "highlighted session keeps its close mark"
+    );
+    dashboard.mouse_action(moved(80, 7), area);
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert!(!sidebar_row(&terminal, 7).contains("[x]"));
+    assert!(sidebar_row(&terminal, 4).contains("[x]"));
+}
+
+#[test]
+fn clicking_a_hovered_close_mark_archives_that_row_without_switching_the_pane() {
+    let mut dashboard = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 40);
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 10,
+            row: 3,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    let action = dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 36,
+            row: 3,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    assert_eq!(action, DashboardAction::Redraw);
+    let text = palette_text(&dashboard);
+    assert!(
+        text.contains("(#5)"),
+        "hovered close mark must name that session, got {text}"
+    );
+    assert_eq!(
+        dashboard.focused_session(),
+        Some(SessionId(1)),
+        "archive must not switch the pane"
+    );
+    assert_eq!(dashboard.pane_rects(area).len(), 1);
+}
+
+#[test]
+fn close_confirm_highlights_only_the_clicked_row_until_dismissed() {
+    let mut dashboard = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 40);
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 10,
+            row: 3,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 36,
+            row: 3,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert!(
+        sidebar_row(&terminal, 3).starts_with('▌'),
+        "confirm must highlight the clicked row, got {:?}",
+        sidebar_row(&terminal, 3)
+    );
+    assert!(
+        !sidebar_row(&terminal, 4).starts_with('▌'),
+        "focused pane session must not stay highlighted during confirm, got {:?}",
+        sidebar_row(&terminal, 4)
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    assert_eq!(dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert!(!sidebar_row(&terminal, 3).starts_with('▌'));
+    assert!(sidebar_row(&terminal, 4).starts_with('▌'));
+    dashboard.key(KeyCode::Char('X'));
+    let text = palette_text(&dashboard);
+    assert!(text.contains("review (#1)"), "{text}");
+    assert!(!text.contains("(#5)"), "{text}");
+}
+
+#[test]
+fn hovered_close_mark_does_not_focus_the_pane_already_showing_that_session() {
+    let mut dashboard = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 40);
+    let split = dashboard.key(KeyCode::Char('v'));
+    pump_view(&mut dashboard, split);
+    dashboard.key(KeyCode::Tab);
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    assert_eq!(dashboard.pane_rects(area).len(), 2);
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 10,
+            row: 6,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 36,
+            row: 6,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    let text = palette_text(&dashboard);
+    assert!(text.contains("(#4)"), "{text}");
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    assert_eq!(dashboard.pane_rects(area).len(), 2);
+}
+
+#[test]
+fn pointer_on_a_workspace_row_clears_the_hover_mark() {
+    let mut dashboard = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 40);
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 10,
+            row: 7,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 10,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert!(!sidebar_row(&terminal, 7).contains("[x]"));
+    assert!(sidebar_row(&terminal, 4).contains("[x]"));
+}
+
+#[test]
+fn palette_keeps_the_mouse_from_a_second_close_mark() {
+    let mut dashboard = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 40);
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 36,
+            row: 4,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 10,
+            row: 7,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 36,
+            row: 7,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    let text = palette_text(&dashboard);
+    assert!(text.contains("review (#1)"), "{text}");
+    assert!(!text.contains("(#2)"), "{text}");
+}
+
+#[test]
+fn losing_mouse_capture_clears_a_hover_mark() {
+    let mut dashboard = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 40);
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 10,
+            row: 7,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    dashboard.event_action(Event::FocusLost);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert!(!sidebar_row(&terminal, 7).contains("[x]"));
+    assert!(sidebar_row(&terminal, 4).contains("[x]"));
+}
+
+fn sidebar_contains_close_mark(dashboard: &Dashboard) -> bool {
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, dashboard, 0))
+        .unwrap();
+    (0..40).any(|y| sidebar_row(&terminal, y).contains("[x]"))
+}
+
+#[test]
+fn history_and_copy_hide_the_session_close_mark() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.key(KeyCode::Char('['));
+    assert!(
+        !sidebar_contains_close_mark(&dashboard),
+        "Copy must not show the session close mark"
+    );
+
+    let mut dashboard = dashboard_fixture();
+    let DashboardAction::Request(begin) = dashboard.key(KeyCode::PageUp) else {
+        panic!("history must request a capture");
+    };
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: begin.request_id,
+        response: Response::HistoryOpened(ovrcr::protocol::HistoryOpened {
+            session: SessionId(1),
+            snapshot: ovrcr::protocol::HistorySnapshotId(7),
+            revision: 1,
+            size: TerminalSize { rows: 10, cols: 20 },
+            history_rows: 0,
+            total_rows: 10,
+        }),
+    });
+    assert!(
+        !sidebar_contains_close_mark(&dashboard),
+        "History must not show the session close mark"
+    );
+}
+
+#[test]
+fn clicking_the_close_mark_confirms_a_paused_session() {
+    let mut dashboard = dashboard_fixture();
+    let mut hierarchy = fixture_hierarchy();
+    review_session_mut(&mut hierarchy).phase = SessionPhase::Paused;
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(1));
+    assert_eq!(
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 36,
+                row: 4,
+                modifiers: KeyModifiers::NONE,
+            },
+            Rect::new(0, 0, 120, 40),
+        ),
+        DashboardAction::Redraw
+    );
+    let text = palette_text(&dashboard);
+    assert!(
+        text.contains("Confirm action") && text.contains("review (#1)"),
+        "{text}"
+    );
+}
+
+#[test]
+fn clicking_the_close_mark_archives_an_exited_session_immediately() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_focus(SessionId(2));
+    let DashboardAction::Request(message) = dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 36,
+            row: 7,
+            modifiers: KeyModifiers::NONE,
+        },
+        Rect::new(0, 0, 120, 40),
+    ) else {
+        panic!("exited close mark must archive immediately");
+    };
+    assert_eq!(
+        message.request,
+        Request::CloseTerminal {
+            session: SessionId(2),
+            expected_run: ovrcr::protocol::SessionRunId(1),
+        }
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(2)));
+}
+
+#[test]
+fn clicking_beside_the_close_mark_still_opens_the_session() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_focus(SessionId(5));
+    let action = dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 10,
+            row: 4,
+            modifiers: KeyModifiers::NONE,
+        },
+        Rect::new(0, 0, 120, 40),
+    );
+    assert!(
+        matches!(
+            action,
+            DashboardAction::Request(ClientMessage {
+                request: Request::SetView { .. },
+                ..
+            })
+        ),
+        "title click must open the session, got {action:?}"
+    );
+    assert!(
+        !palette_text(&dashboard).contains("Confirm action"),
+        "title click must not archive"
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+}
+
+#[test]
+fn close_mark_stays_visible_but_inert_without_mouse_capture() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.event_action(Event::FocusLost);
+    assert!(sidebar_contains_close_mark(&dashboard));
+    assert_eq!(
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 36,
+                row: 4,
+                modifiers: KeyModifiers::NONE,
+            },
+            Rect::new(0, 0, 120, 40),
+        ),
+        DashboardAction::None
+    );
+    assert!(!palette_text(&dashboard).contains("Confirm action"));
+}
+
+#[test]
+fn close_mark_is_omitted_when_the_row_is_narrower_than_three_cells() {
+    let dashboard = dashboard_fixture();
+    let mut terminal = Terminal::new(TestBackend::new(6, 12)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let text: String = (0..12)
+        .map(|y| {
+            (0..6)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect();
+    assert!(!text.contains("[x]"), "{text}");
+}
+
+#[test]
+fn selected_project_row_hides_the_session_close_mark() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 6,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        },
+        Rect::new(0, 0, 120, 40),
+    );
+    assert!(
+        !sidebar_contains_close_mark(&dashboard),
+        "a selected project or workspace leaves no highlighted session mark"
+    );
+}
+
+#[test]
+fn a_selected_workspace_still_shows_the_close_mark_on_the_hovered_session() {
+    let mut dashboard = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 40);
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 6,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 10,
+            row: 3,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert!(
+        sidebar_row(&terminal, 3).contains("[x]"),
+        "{:?}",
+        sidebar_row(&terminal, 3)
+    );
+    assert!(!sidebar_row(&terminal, 4).contains("[x]"));
 }

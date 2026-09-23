@@ -306,6 +306,31 @@ fn enable_mouse(dashboard: &mut Dashboard, modes: &[u8]) {
     dashboard.key(KeyCode::Enter);
 }
 
+#[test]
+fn leaving_the_sidebar_still_forwards_pane_motion() {
+    let mut dashboard = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 40);
+    dashboard.mouse_action(
+        mouse_event(MouseEventKind::Moved, 10, 7, KeyModifiers::NONE),
+        area,
+    );
+    enable_mouse(&mut dashboard, b"\x1b[?1003h\x1b[?1006h");
+    let inner = terminal_rect(&dashboard, area);
+    let action = dashboard.mouse_action(click_in(inner, MouseEventKind::Moved, 2, 3), area);
+    assert!(
+        matches!(action, ovrcr::tui::DashboardAction::PtyBytes(_)),
+        "pane motion must not be swallowed by sidebar hover, got {action:?}"
+    );
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let row = (0..39)
+        .map(|x| terminal.backend().buffer()[(x, 7)].symbol())
+        .collect::<String>();
+    assert!(!row.contains("[x]"), "{row}");
+}
+
 fn split_ready(area: Rect) -> Dashboard {
     let mut dashboard = dashboard_fixture();
     dashboard.install_area(area);

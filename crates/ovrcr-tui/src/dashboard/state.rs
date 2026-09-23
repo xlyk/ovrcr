@@ -1952,6 +1952,7 @@ impl Dashboard {
             Event::Mouse(mouse) => self.mouse_action(mouse, self.outer_area),
             Event::FocusLost => {
                 self.cancel_mouse_gesture();
+                self.mouse.hovered_session = None;
                 self.mouse_focused = false;
                 DashboardAction::Redraw
             }
@@ -2069,6 +2070,31 @@ impl Dashboard {
             return None;
         }
         let sidebar = sidebar_area(area, self.sidebar_width);
+        if mouse.kind == MouseEventKind::Moved {
+            let inside = point_in_rect(mouse, sidebar);
+            let next = inside
+                .then(|| {
+                    let row_index =
+                        self.tree_offset + usize::from(mouse.row.saturating_sub(sidebar.y));
+                    let rows = self.visible_rows();
+                    match tree_line_at(&rows, row_index)? {
+                        TreeRow::Session { id } => Some(*id),
+                        TreeRow::Project { .. } | TreeRow::Workspace { .. } => None,
+                    }
+                })
+                .flatten();
+            let changed = self.mouse.hovered_session != next;
+            self.mouse.hovered_session = next;
+            // Motion outside the sidebar still belongs to the pane.
+            if !inside {
+                return None;
+            }
+            return Some(if changed {
+                DashboardAction::Redraw
+            } else {
+                DashboardAction::None
+            });
+        }
         if !point_in_rect(mouse, sidebar) {
             return None;
         }
@@ -2096,6 +2122,13 @@ impl Dashboard {
                 let column = mouse.column.saturating_sub(sidebar.x);
                 match row {
                     TreeRow::Session { id } => {
+                        let marked = sidebar.width >= 3
+                            && column >= sidebar.width - 3
+                            && (self.action_session() == Some(id)
+                                || self.mouse.hovered_session == Some(id));
+                        if marked {
+                            return Some(self.open_close_terminal_for(id));
+                        }
                         self.select_session(id);
                         Some(self.request_selected())
                     }
