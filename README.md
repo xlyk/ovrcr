@@ -227,7 +227,7 @@ scripts can acknowledge an exact observation with `terminal mark-reviewed`.
 ## The CLI
 
 The dashboard is optional. Every session is reachable from a script, and resource targets are always explicit—no command infers a target from the
-current directory. New terminal names are optional and can follow app titles.
+current directory. New terminal names are optional and stay stable; app title updates are ignored.
 
 ```sh
 ovrcr list                                        # whole hierarchy
@@ -237,8 +237,8 @@ ovrcr terminal list --project consigint --workspace feature/cleanup
 
 id=$(ovrcr terminal create --project consigint --workspace feature/cleanup \
   -- /bin/sh)
-ovrcr terminal rename "$id" "Review cleanup"   # pin a title
-ovrcr terminal rename "$id" --automatic        # follow app titles
+ovrcr terminal rename "$id" "Review cleanup"   # set a display title
+ovrcr terminal rename "$id" --reset            # restore the original name
 ovrcr terminal send "$id" --text "cargo test"
 ovrcr terminal read "$id" --max-lines 20
 ovrcr terminal close "$id"

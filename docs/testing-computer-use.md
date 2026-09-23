@@ -135,12 +135,13 @@ In the disposable fixture, also verify:
 1. Create a workspace with Nothing yet from Branch only (no Name field); confirm it is selected and has no sessions.
 2. Create a workspace with Terminal and a custom command that prints a unique
    marker and waits for input. Confirm exactly one session and its actual output.
-3. In that session emit `printf '\033]2;CUA title 界\007'`; confirm its sidebar and
-   pane title change. Use a command that waits for input after the escape so the
-   shell prompt cannot immediately overwrite the title.
-4. Pin a title using Rename terminal; emit another app title and confirm the pin
-   holds. Return to Automatic and confirm the latest app title appears.
-5. Give two sessions the same app title and confirm their visible identifiers
+3. In that session emit `printf '\033]2;CUA title 界\007'` followed by a unique
+   output marker; confirm the output appears but sidebar and pane titles keep
+   the original session name. Repeat with OSC 0 and a different title.
+4. Set a title using Rename terminal; emit another app title and confirm the
+   manual title holds. Clear Rename and confirm the original name returns and
+   stays unchanged after further application title updates.
+5. Give two sessions the same manual title and confirm their visible identifiers
    distinguish them. Confirm both still receive input in the intended pane.
 6. Exercise an owned failing launch after workspace creation. Confirm the
    workspace remains and recovery starts a program there without recreating it.

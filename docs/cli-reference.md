@@ -23,7 +23,7 @@ alias their guarded `remove` commands. The legacy top-level `new`, `list`,
 `kill`, `pause`, `resume`, and `session remove` commands remain available.
 
 Resource targets and terminal IDs are explicit. No command infers a target from
-the current directory. A new terminal can omit its name for automatic titles.
+the current directory. A new terminal can omit its name for a stable generated name.
 
 ## Which commands start a server
 
@@ -138,20 +138,22 @@ Arguments after `--` are passed directly to the executable. With no executable,
 the protected repository-root workspace on the detected default branch, and starts
 one shell there. It does not switch Git.
 `--label TEXT` sets launch metadata such as the executable or agent label.
-Omit `--name` for a stable workspace-based fallback name and an automatic display
-title that follows the running app. Supply `--name TEXT` to start with a pinned
-title instead.
+Omit `--name` for a stable workspace-based name, or supply `--name TEXT` to
+choose one. Application title updates are ignored for all sessions.
 
 ```sh
-ovrcr terminal rename ID "Review login"  # pin a display title
-ovrcr terminal rename ID --automatic    # follow app titles again
+ovrcr terminal rename ID "Review login"  # set a display title
+ovrcr terminal rename ID --reset        # restore the original session name
 ovrcr terminal reopen ID                # reopen a retained row in a fresh shell
 ovrcr terminal reopen ID --ack-stopped  # confirm previous processes stopped, then reopen
 ovrcr terminal acknowledge-stopped ID   # resolve ownership without launching
 ```
 
-Rename changes the display title, not the stable session name or ID. Reopen
-starts a fresh shell in the same session row. It does not keep the previous
+Rename changes the display title, not the stable session name or ID. `--reset`
+restores that original name; the legacy `--automatic` spelling remains an alias
+for reset and no longer follows application titles. Manual titles and resets
+survive server restarts. Reopen starts a fresh shell in the same session row
+without changing its title. It does not keep the previous
 process output. `--ack-stopped` is required when the inventory says previous
 agent or background processes may still be running; Retry is not that
 confirmation. `acknowledge-stopped` records that confirmation without launching

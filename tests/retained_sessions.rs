@@ -747,11 +747,12 @@ fn retained_rows_preserve_identity_and_title_without_restoring_output_or_live_st
     live.start_binary();
     let restored = json(&live, &["terminal", "list"]);
     assert_eq!(restored, offline);
+    // The legacy spelling is an alias for reset, not application-following mode.
     json(&live, &["terminal", "rename", &id_arg, "--automatic"]);
-    assert_eq!(
-        json(&live, &["terminal", "list"])[0]["title"],
-        "Application title"
-    );
+    let reset = json(&live, &["terminal", "list"]);
+    assert!(reset[0]["title"].is_null());
+    assert_eq!(reset[0]["display_name"], name);
+    assert_eq!(reset[0]["id"], id);
     assert!(
         live.session_groups().is_empty(),
         "inventory restoration launched work"

@@ -1,0 +1,13 @@
+{
+  "command": "rtk proxy just gui",
+  "checkout": "/Users/xlyk/Code/ovrcr-workspaces/328516bf02bf0fd013df29db37f91774",
+  "branch": "feature/ignore-title-updates",
+  "base_revision": "68c771e97536e5e2a04a58e0552adefe8fef5e69",
+  "dirty_checkout": true,
+  "build_result": "Finished dev profile [unoptimized + debuginfo] in 11.99s",
+  "launcher_session": 54252,
+  "binaries": {
+    "target/OVRCR GUI.app/Contents/MacOS/ovrcr": "0bdcc2d832685dd451e23dff37dce42af7b16da73d4ed8165058f02ee20ebc8b",
+    "target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui": "714da5b1a6cebd42b0ec99fc3918461add37455905c17b48144f71ef7fd20d72"
+  }
+}

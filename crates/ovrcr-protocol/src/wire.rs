@@ -167,8 +167,8 @@ pub enum BranchRequest {
 pub struct CreateSessionRequest {
     pub project: String,
     pub workspace: String,
-    /// Empty requests a unique workspace-based identity and automatic display title.
-    /// An explicit name pins the display title until SetSessionTitle resets it.
+    /// Empty requests a unique workspace-based session name.
+    /// The display title stays at this name unless the user renames it.
     pub name: String,
     pub label: Option<String>,
     pub argv: Vec<OsString>,

@@ -1,0 +1,7 @@
+Both blockers are resolved. No remaining blockers in the correction diff.
+
+- [no_title_changes:146](/Users/xlyk/Code/ovrcr-workspaces/328516bf02bf0fd013df29db37f91774/tests/automatic_titles.rs:146): Empty `SetView` runs through the same dispatcher as output events. Its matching `Response::Ok` follows earlier title-event publication, and queued `SessionChanged` events are preserved. Revisions increase within each connection and restart after ownership release clears the view.
+
+- [dashboard:98](/Users/xlyk/Code/ovrcr-workspaces/328516bf02bf0fd013df29db37f91774/tests/automatic_titles.rs:98): Reconnection retries only the exact ownership conflict, checks a deadline, and fails immediately on other errors. This handles asynchronous release without masking unrelated failures.
+
+The five-test pass is coordinator-reported; I did not run tests or edit files.

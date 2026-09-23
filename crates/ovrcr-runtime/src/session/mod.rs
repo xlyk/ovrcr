@@ -246,8 +246,8 @@ struct JoinHandles {
     waiter: Option<JoinHandle<()>>,
 }
 
-/// Keep application and manual titles with the parser. No callback acquires
-/// session-state or server locks.
+/// Keep manual titles with the parser. Legacy application titles are retained
+/// for storage compatibility only; they never affect the display title.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SessionTitles {
     pub(crate) revision: u64,
@@ -265,34 +265,8 @@ pub(crate) fn sanitize_title(title: &str) -> Option<String> {
     (!title.is_empty()).then(|| title.to_owned())
 }
 
-impl vt100::Callbacks for SessionTitles {
-    fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
-        let next = sanitize_title(&String::from_utf8_lossy(title));
-        if self.application != next {
-            self.application = next;
-            self.revision = self.revision.saturating_add(1);
-        }
-    }
-
-    fn unhandled_osc(&mut self, screen: &mut vt100::Screen, params: &[&[u8]]) {
-        // vt100 routes title text containing semicolons here because vte
-        // splits OSC parameters. Reassemble a bounded prefix of that text.
-        if matches!(params.first(), Some(&b"0" | &b"2")) && params.len() > 2 {
-            let title: Vec<u8> = params[1..]
-                .iter()
-                .enumerate()
-                .flat_map(|(index, part)| {
-                    (index > 0)
-                        .then_some(b';')
-                        .into_iter()
-                        .chain(part.iter().copied())
-                })
-                .take(MAX_TITLE_CHARS * 4)
-                .collect();
-            self.set_window_title(screen, &title);
-        }
-    }
-}
+// Default callbacks consume OSC titles without adopting application names.
+impl vt100::Callbacks for SessionTitles {}
 
 struct TerminalState {
     parser: vt100::Parser<SessionTitles>,
@@ -632,10 +606,6 @@ impl Session {
         )
     }
 
-    pub(crate) fn title_revision(&self) -> u64 {
-        self.terminal.lock().unwrap().parser.callbacks().revision
-    }
-
     pub(crate) fn title_snapshot(&self) -> SessionTitles {
         self.terminal.lock().unwrap().parser.callbacks().clone()
     }
@@ -663,7 +633,7 @@ impl Session {
     pub(crate) fn effective_title(&self) -> Option<String> {
         let terminal = self.terminal.lock().unwrap();
         let titles = terminal.parser.callbacks();
-        titles.pinned.clone().or_else(|| titles.application.clone())
+        titles.pinned.clone()
     }
 
     pub fn summary(&self) -> SessionSummary {

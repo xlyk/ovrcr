@@ -1,0 +1,20 @@
+## feature/ignore-title-updates
+ M CONTEXT.md
+ M README.md
+ M crates/ovrcr-protocol/src/wire.rs
+ M crates/ovrcr-runtime/src/retained.rs
+ M crates/ovrcr-runtime/src/server/dispatch.rs
+ M crates/ovrcr-runtime/src/session/mod.rs
+ M crates/ovrcr-runtime/src/session/tests.rs
+ M crates/ovrcr-tui/src/dashboard/palette.rs
+ M docs/adr/0001-session-titles-do-not-change-identity.md
+ M docs/cli-reference.md
+ M docs/dashboard.md
+ M docs/testing-computer-use.md
+ M src/cli/args.rs
+ M src/cli/resources.rs
+ M tests/automatic_titles.rs
+ M tests/cli.rs
+ M tests/tui/palette.rs
+?? docs/ux/stable-session-titles/
+HEAD 68c771e97536e5e2a04a58e0552adefe8fef5e69

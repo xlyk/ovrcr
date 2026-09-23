@@ -1,0 +1,97 @@
+{
+  "captured_at": "2026-09-23T10:47:20.928963-07:00",
+  "gui_pid": 63381,
+  "launcher_session": 54252,
+  "processes": [
+    {
+      "pid": 63381,
+      "ppid": 59981,
+      "pgid": 59966,
+      "command": "/Users/xlyk/Code/ovrcr-workspaces/328516bf02bf0fd013df29db37f91774/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+    },
+    {
+      "pid": 63486,
+      "ppid": 63381,
+      "pgid": 59966,
+      "command": "/Users/xlyk/Code/ovrcr-workspaces/328516bf02bf0fd013df29db37f91774/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+    },
+    {
+      "pid": 63711,
+      "ppid": 63486,
+      "pgid": 63711,
+      "command": "/bin/zsh"
+    },
+    {
+      "pid": 64083,
+      "ppid": 63486,
+      "pgid": 64083,
+      "command": "/bin/zsh"
+    },
+    {
+      "pid": 64347,
+      "ppid": 63486,
+      "pgid": 64347,
+      "command": "/bin/zsh"
+    },
+    {
+      "pid": 64646,
+      "ppid": 63486,
+      "pgid": 64646,
+      "command": "/bin/zsh"
+    },
+    {
+      "pid": 65162,
+      "ppid": 63486,
+      "pgid": 65162,
+      "command": "/bin/zsh"
+    },
+    {
+      "pid": 65494,
+      "ppid": 63486,
+      "pgid": 65494,
+      "command": "/bin/zsh"
+    },
+    {
+      "pid": 65837,
+      "ppid": 63486,
+      "pgid": 65837,
+      "command": "/bin/sh -i"
+    },
+    {
+      "pid": 66138,
+      "ppid": 63486,
+      "pgid": 66138,
+      "command": "/bin/sh -i"
+    },
+    {
+      "pid": 66428,
+      "ppid": 63486,
+      "pgid": 66428,
+      "command": "/bin/sh -i"
+    },
+    {
+      "pid": 66842,
+      "ppid": 63486,
+      "pgid": 66842,
+      "command": "/bin/sh -i"
+    },
+    {
+      "pid": 67219,
+      "ppid": 63486,
+      "pgid": 67219,
+      "command": "/bin/sh -i"
+    },
+    {
+      "pid": 67512,
+      "ppid": 63486,
+      "pgid": 67512,
+      "command": "/bin/sh -i"
+    },
+    {
+      "pid": 67682,
+      "ppid": 63381,
+      "pgid": 67682,
+      "command": "/Users/xlyk/Code/ovrcr-workspaces/328516bf02bf0fd013df29db37f91774/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+    }
+  ]
+}

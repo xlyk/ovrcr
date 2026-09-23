@@ -1420,56 +1420,50 @@ fn compact_zsh_prompt_preserves_config_and_reports_failure() {
 }
 
 #[test]
-fn automatic_title_callbacks_handle_fragments_unicode_controls_and_bounds() {
-    let mut parser = vt100::Parser::new_with_callbacks(3, 30, 0, SessionTitles::default());
-    parser.process(b"\x1b]2;frag");
-    assert_eq!(parser.callbacks().application, None);
-    assert_eq!(parser.callbacks().revision, 0);
-    parser.process("mented 🦀\x07".as_bytes());
-    assert_eq!(
-        parser.callbacks().application.as_deref(),
-        Some("fragmented 🦀")
-    );
-    assert_eq!(parser.callbacks().revision, 1);
-    parser.process("\x1b]0;next title\x1b\\".as_bytes());
-    assert_eq!(
-        parser.callbacks().application.as_deref(),
-        Some("next title")
-    );
-    assert_eq!(parser.callbacks().revision, 2);
-    parser.process(b"\x1b]1;icon only\x07");
-    assert_eq!(
-        parser.callbacks().application.as_deref(),
-        Some("next title")
-    );
-    assert_eq!(parser.callbacks().revision, 2);
-    parser.process("\x1b]0;next title\x07".as_bytes());
-    assert_eq!(parser.callbacks().revision, 2);
-    parser.process(format!("\x1b]2;{}\x07", "🦀".repeat(300)).as_bytes());
-    assert_eq!(
-        parser
-            .callbacks()
-            .application
-            .as_ref()
-            .unwrap()
-            .chars()
-            .count(),
-        MAX_TITLE_CHARS
-    );
-    assert_eq!(parser.callbacks().revision, 3);
+fn application_titles_are_consumed_without_changing_titles_or_output() {
+    for pinned in [None, Some("User title".to_owned())] {
+        let mut parser = vt100::Parser::new_with_callbacks(
+            3,
+            30,
+            0,
+            SessionTitles {
+                pinned: pinned.clone(),
+                ..SessionTitles::default()
+            },
+        );
+        for part in [
+            b"\x1b]2;frag".as_slice(),
+            "mented 🦀\x07".as_bytes(),
+            b"\x1b]0;next title\x1b\\",
+            b"\x1b]1;icon only\x07",
+            b"\x1b]0;next title\x07",
+            format!("\x1b]2;{}\x07", "🦀".repeat(300)).as_bytes(),
+            b"\x1b]2;   \x07",
+            b"\x1b]2;semi;colon\x07",
+            b"\x1b]0;semi;colon\x1b\\",
+            b"\x1b]2;bad\xfftitle\x07",
+        ] {
+            parser.process(part);
+            assert_eq!(parser.callbacks().application, None);
+            assert_eq!(parser.callbacks().pinned, pinned);
+            assert_eq!(parser.callbacks().revision, 0);
+            assert_eq!(parser.screen().contents(), "");
+        }
+        parser.process("visible 界 output".as_bytes());
+        assert_eq!(parser.screen().contents(), "visible 界 output");
+    }
+}
+
+#[test]
+fn manual_titles_are_sanitized_and_bounded() {
     assert_eq!(
         sanitize_title("  hi\n\t\u{202e}there  ").as_deref(),
         Some("hithere")
     );
-    parser.process(b"\x1b]2;   \x07");
-    assert_eq!(parser.callbacks().application, None);
-    assert_eq!(parser.callbacks().revision, 4);
-    parser.process(b"\x1b]2;semi;colon\x07");
+    assert_eq!(sanitize_title(" \n\t\u{202e}"), None);
+    assert_eq!(sanitize_title("  界;🦀  ").as_deref(), Some("界;🦀"));
     assert_eq!(
-        parser.callbacks().application.as_deref(),
-        Some("semi;colon")
+        sanitize_title(&"🦀".repeat(300)).unwrap(),
+        "🦀".repeat(MAX_TITLE_CHARS)
     );
-    parser.process(b"\x1b]2;bad\xfftitle\x07");
-    assert_eq!(parser.callbacks().application.as_deref(), Some("bad�title"));
-    assert_eq!(parser.callbacks().revision, 6);
 }
