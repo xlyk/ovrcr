@@ -60,6 +60,14 @@ _Avoid_: main, root as a stored name, a removable default worktree
 The one active TUI for live sessions: the hierarchy, the panes, and browse / terminal / history / copy.
 _Avoid_: TUI (the crate), GUI helper, task UI as a separate product
 
+**Server**:
+The one process that owns the socket, the sessions, and the live terminals.
+_Avoid_: backend API server, a second server owned by the Bridge
+
+**Bridge**:
+The one macOS app that holds the bundle identity and performs system calls the terminal cannot make under its own name. It is not a Dashboard, not a Reporter, and not an owner of sessions or panes. It may ask iTerm to select an existing session. It does not create iTerm sessions.
+_Avoid_: helper app, companion app, GUI helper, Notifier as a separate product, an owner of iTerm tabs, a second Server
+
 **Key binding**:
 The dashboard's one entry for a key in an input mode: its label, its action, and the reason it is unavailable. Dispatch, the footer, the key popup and the palette read that one entry, so a hint cannot disagree with what the key does.
 _Avoid_: the reporting binding, a hint list per consumer
