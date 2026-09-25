@@ -1,0 +1,29 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+pid: 14718  elapsed: 19m  agent unknown  local (#4)                                                                                                                   
+local (#4)                                                                                                                                                            
+941000fbd8
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable) pid: 14718  elapsed: 19m  agent unknown  local (#4)                                                                                                                   
+		5 text (settable) local (#4)                                                                                                                                                            
+		6 text (settable) 941000fbd80d368b15344862be9d768d › stty size                                                                                                                          
+		7 text (settable) 57 126                                                                                                                                                                
+		8 text (settable) 941000fbd80d368b15344862be9d768d › stty size                                                                                                                          
+		9 text (settable) 57 104                                                                                                                                                                
+		10 text (settable) 941000fbd80d368b15344862be9d768d › stty size                                                                                                                          
+		11 text (settable) 57 166                                                                                                                                                                
+		12 text (settable) 941000fbd80d368b15344862be9d768d ›                                                                                                                                    
+		13 text (settable) Terminal mode  Ctrl-g browse                                                                                                                                          
+	14 close button
+	15 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	16 minimize button
+	17 text OVRCR GUI
+18 menu bar
+	19 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+pid: 14718  elapsed: 19m  agent unknown  local (#4)                                                                                                                   
+local (#4)                                                                                                                                                            
+941000fbd8

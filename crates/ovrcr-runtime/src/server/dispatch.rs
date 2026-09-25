@@ -378,7 +378,7 @@ fn persist_session_exit(state: &ServerState, session: &Session) {
     }
 }
 
-fn publish_session_changed(state: &ServerState, id: SessionId) {
+pub(super) fn publish_session_changed(state: &ServerState, id: SessionId) {
     if let Some(summary) = state.session_summary(id) {
         state
             .dashboard

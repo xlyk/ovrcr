@@ -153,6 +153,7 @@ intercepts only `Ctrl-g`. The keys below are Browse mode:
 | Key | Action |
 | --- | --- |
 | `j` `k` Down Up | Select the next or previous visible sidebar row |
+| `b` | Hide or show the sidebar; the panes take its width |
 | `Enter` | Collapse or expand a selected project or workspace; type into a selected session; on an exited session, resume the conversation or reopen a shell in the same row |
 | `v` | Open a second pane with the next different session |
 | `Tab` `Shift-Tab` | Focus the other pane |
@@ -521,7 +522,9 @@ the resume command. A saved conversation uses exact managed resume; without one,
 the agent opens its native resume picker. The shell remains open after the agent exits.
 Displaying an eligible interrupted Agent after a verified reboot requests recovery
 automatically; uncertain ownership and failed attempts require explicit action.
-Other providers show resume unavailable. Native automatic-recovery acceptance is
+A managed Grok launch (`ovrcr agent run grok -- grok`, the detected `grok` entry) retains
+its session UUID and the `updates.jsonl` Grok keeps for it as a title source only;
+Grok resume stays unavailable. Other providers show resume unavailable. Native automatic-recovery acceptance is
 tracked in #127; Codex, Pi and Oh My Pi provider acceptance remains separate in
 #128, #129 and #130. See the [capability and acceptance record](docs/agent-reporting-support.md#retained-claude-conversations).
 Tests simulate boot-identity changes while reading
