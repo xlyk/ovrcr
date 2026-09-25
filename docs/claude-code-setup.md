@@ -20,7 +20,12 @@ ovrcr agent setup claude --print --settings ~/.claude/settings.json > /tmp/ovrcr
 ```
 
 If you have no existing file, omit `--settings`. Review the printed JSON and merge
-it into the intended Claude settings file. The command never writes that file.
+it into the intended Claude settings file. Setup itself never writes that file.
+`just run` does one narrower write after it installs `~/.local/bin/ovrcr`: it
+replaces the `ovrcr` path inside existing managed reporter commands, including
+the status line, so those hooks call the binary it just installed. It does not
+add hooks or change permissions. A command that already names that binary is
+left unchanged.
 Keep your permissions, trust policy, unrelated hooks, and renderer settings.
 Avoid loading the same merged configuration twice through different settings
 sources, which can duplicate existing hooks.

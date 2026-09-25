@@ -73,6 +73,15 @@ fn run(cli: Cli) -> AppResult<()> {
         Command::AgentCollector => {
             ovrcr::report::collector::run_helper().map_err(RuntimeError::internal)
         }
+        Command::RetargetHooks { settings } => {
+            let executable = agent_setup::binary().map_err(RuntimeError::internal)?;
+            let files = if settings.is_empty() {
+                agent_setup::default_hook_files()
+            } else {
+                settings
+            };
+            agent_setup::retarget_hooks(&executable, &files)
+        }
         Command::Agent { command } => agent::run(command),
         Command::Task(args) => {
             ovrcr::task_cli::run_task(args.command, json_output).map_err(RuntimeError::internal)
