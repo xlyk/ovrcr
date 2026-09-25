@@ -511,7 +511,8 @@ impl SessionStore {
              VALUES (?1, ?2, ?3, 1, 1)
              ON CONFLICT(session, conversation) DO UPDATE SET
              topic = CASE WHEN accepted_count = 0 AND dismissed = 0 THEN excluded.topic ELSE topic END,
-             accepted_count = CASE WHEN accepted_count = 0 AND dismissed = 0 THEN accepted_count + 1 ELSE accepted_count END",
+             accepted_count = CASE WHEN accepted_count = 0 AND dismissed = 0 THEN accepted_count + 1 ELSE accepted_count END,
+             attempt_count = attempt_count + 1",
             params![sql_integer(id.0)?, conversation, topic],
         )?;
         if changed != 1 {
@@ -524,6 +525,7 @@ impl SessionStore {
             .subjects
             .entry(conversation.to_owned())
             .or_default();
+        subject.attempt_count = subject.attempt_count.saturating_add(1);
         if subject.accepted_count == 0 && !subject.dismissed {
             subject.topic = Some(topic);
             subject.accepted_count = 1;

@@ -266,8 +266,10 @@ impl TitleWorker {
                         if let Ok(event) = serde_json::from_slice::<Value>(&line)
                             && event["type"] == "message_end"
                             && event["message"]["role"] == "assistant"
+                            && let Some(cleaned) =
+                                message_text(&event["message"]).and_then(clean_title)
                         {
-                            title = message_text(&event["message"]).and_then(clean_title);
+                            title = Some(cleaned);
                         }
                     }
                     if pending.len() > 1024 * 1024 {
@@ -373,8 +375,7 @@ fn excerpt(candidate: &Candidate) -> Result<Option<String>> {
         AgentProvider::Codex => {
             if !first_line_matches(&candidate.history, |value| {
                 value["type"] == "session_meta"
-                    && (value["payload"]["id"].as_str() == Some(candidate.conversation.as_str())
-                        || json_id(value) == Some(candidate.conversation.as_str()))
+                    && value["payload"]["id"].as_str() == Some(candidate.conversation.as_str())
             })? {
                 return Ok(None);
             }
@@ -419,9 +420,20 @@ fn excerpt(candidate: &Candidate) -> Result<Option<String>> {
         }
         let line = format!("{role}: {text}\n");
         out.push_str(&line);
-        out.truncate(EXCERPT_LIMIT);
+        truncate_to_char_boundary(&mut out, EXCERPT_LIMIT);
     }
     Ok((!out.trim().is_empty()).then_some(out))
+}
+
+fn truncate_to_char_boundary(value: &mut String, limit: usize) {
+    if value.len() <= limit {
+        return;
+    }
+    let mut end = limit;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value.truncate(end);
 }
 
 fn first_line_matches(path: &Path, matches: impl FnOnce(&Value) -> bool) -> Result<bool> {
@@ -494,14 +506,8 @@ fn message_text(message: &Value) -> Option<String> {
 }
 
 fn clean_title(value: String) -> Option<String> {
-    if value
-        .chars()
-        .any(|c| c == '\n' || c == '\r' || c.is_control())
-    {
-        return None;
-    }
-    let value = value.trim();
-    (!value.is_empty() && value.chars().count() <= 60).then(|| value.to_owned())
+    let value = crate::session::sanitize_title(&value)?;
+    (value.chars().count() <= 60).then_some(value)
 }
 
 #[cfg(test)]
@@ -516,6 +522,13 @@ mod tests {
             history,
             conversation: conversation.into(),
         }
+    }
+
+    #[test]
+    fn cleaner_reuses_session_title_rules_then_applies_sixty_char_limit() {
+        assert_eq!(clean_title("  Topic \n".into()).as_deref(), Some("Topic"));
+        assert_eq!(clean_title("bad\u{202e}".into()).as_deref(), Some("bad"));
+        assert!(clean_title("x".repeat(61)).is_none());
     }
 
     #[test]
@@ -538,6 +551,26 @@ mod tests {
     }
 
     #[test]
+    fn excerpt_limit_truncates_at_utf8_boundary() {
+        let root = tempfile::tempdir().unwrap();
+        let history = root.path().join("pi.jsonl");
+        let prefix = "assistant: ";
+        let text = format!("{}é", "a".repeat(EXCERPT_LIMIT - prefix.len() - 1));
+        fs::write(
+            &history,
+            format!(
+                "{{\"type\":\"session\",\"id\":\"c\"}}\n{{\"role\":\"assistant\",\"content\":\"{text}\"}}\n"
+            ),
+        )
+        .unwrap();
+        let text = excerpt(&candidate(AgentProvider::Pi, history, "c"))
+            .unwrap()
+            .unwrap();
+        assert!(text.is_char_boundary(text.len()));
+        assert!(text.len() <= EXCERPT_LIMIT);
+    }
+
+    #[test]
     fn provider_identity_checks_are_distinct() {
         let root = tempfile::tempdir().unwrap();
         let codex = root.path().join("codex.jsonl");
@@ -552,9 +585,20 @@ mod tests {
                 .is_some()
         );
         assert!(
-            excerpt(&candidate(AgentProvider::Codex, codex, "bad"))
+            excerpt(&candidate(AgentProvider::Codex, codex.clone(), "bad"))
                 .unwrap()
                 .is_none()
+        );
+        fs::write(
+            &codex,
+            "{\"type\":\"session_meta\",\"id\":\"ok\",\"payload\":{\"id\":\"other\"}}\n{\"role\":\"assistant\",\"content\":\"reply\"}\n",
+        )
+        .unwrap();
+        assert!(
+            excerpt(&candidate(AgentProvider::Codex, codex, "ok"))
+                .unwrap()
+                .is_none(),
+            "Codex must require payload.id, not a top-level id"
         );
 
         let claude = root.path().join("claude.jsonl");

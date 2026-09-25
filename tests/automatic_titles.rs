@@ -45,25 +45,22 @@ fn title_program() -> SessionLaunch {
     label: Some("owned title fixture".into()), }
 }
 
-fn title_fixture() -> (Live, std::path::PathBuf, std::path::PathBuf) {
+fn start_title_fixture(
+    pi_script: String,
+    settings: Option<&str>,
+) -> (Live, std::path::PathBuf, std::path::PathBuf) {
     let live = Live::idle().bounded();
     let fake_pi = live.root.path().join("fake-pi");
     let calls = live.root.path().join("title-calls");
     std::fs::write(
         &fake_pi,
-        format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\nprintf '%s\\n' \"$PWD\" >> {}.cwd\nwhile IFS= read -r line; do printf '%s\\n' '{{\"type\":\"message_end\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"Fixture Topic\"}}],\"stopReason\":\"stop\"}}}}'; exit 0; done\n",
-            calls.display(),
-            calls.display()
-        ),
+        pi_script.replace("__CALLS__", &calls.to_string_lossy()),
     )
     .unwrap();
     std::fs::set_permissions(&fake_pi, std::fs::Permissions::from_mode(0o700)).unwrap();
-    std::fs::write(
-        live.root.path().join("dashboard.toml"),
-        "title_model = 'pi/test'\n",
-    )
-    .unwrap();
+    if let Some(settings) = settings {
+        std::fs::write(live.root.path().join("dashboard.toml"), settings).unwrap();
+    }
     live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", fake_pi.as_os_str())]);
     assert_eq!(
         live.request(Request::AddProject {
@@ -76,6 +73,13 @@ fn title_fixture() -> (Live, std::path::PathBuf, std::path::PathBuf) {
     live.clear_root_shell();
     assert_eq!(live.request(workspace(None)), Response::Ok);
     (live, fake_pi, calls)
+}
+
+fn title_fixture() -> (Live, std::path::PathBuf, std::path::PathBuf) {
+    start_title_fixture(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> __CALLS__\nprintf '%s\\n' \"$PWD\" >> __CALLS__.cwd\nwhile IFS= read -r line; do printf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Fixture Topic\"}],\"stopReason\":\"stop\"}}'; printf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_result\",\"text\":\"ignored\"}],\"stopReason\":\"stop\"}}'; exit 0; done\n".to_owned(),
+        Some("title_model = 'pi/test'\n"),
+    )
 }
 
 fn agent_program(token: &std::path::Path) -> Vec<std::ffi::OsString> {
@@ -172,6 +176,30 @@ fn retain_reference(
     );
 }
 
+fn retain_pi_history(
+    live: &Live,
+    fake_pi: &std::path::Path,
+    session: &SessionSummary,
+    token: &std::path::Path,
+    conversation: &str,
+    history: std::path::PathBuf,
+) {
+    retain_reference(
+        live,
+        session,
+        parse_secret(token),
+        AgentProvider::Pi,
+        conversation,
+        ConversationReference::Pi(ExtensionConversation {
+            conversation: conversation.into(),
+            executable: fake_pi.into(),
+            history: Some(history),
+            config_dir: live.root.path().into(),
+            options: vec![],
+        }),
+    );
+}
+
 fn wait_display(live: &Live, id: SessionId, expected: &str) {
     let deadline = Instant::now() + Duration::from_secs(12);
     loop {
@@ -185,6 +213,14 @@ fn wait_display(live: &Live, id: SessionId, expected: &str) {
             return;
         }
         assert!(Instant::now() < deadline, "display stayed {name:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn wait_file(path: &std::path::Path) {
+    let deadline = Instant::now() + Duration::from_secs(12);
+    while !path.exists() {
+        assert!(Instant::now() < deadline, "missing file {}", path.display());
         std::thread::sleep(Duration::from_millis(50));
     }
 }
@@ -505,6 +541,420 @@ fn title_model_missing_mismatches_terminal_and_grok_do_not_spawn_pi() {
         !calls.exists(),
         "title call spawned without a model or Grok history"
     );
+}
+
+#[test]
+fn title_failures_mismatches_and_missing_binary_do_not_change_rows_or_retry() {
+    let script = "#!/bin/sh\nprintf call >> __CALLS__\nexit 2\n".to_owned();
+    let (live, fake_pi, calls) = start_title_fixture(script, Some("title_model = 'pi/test'\n"));
+    let _dashboard = dashboard(&live);
+
+    let valid_token = live.root.path().join("valid.token");
+    let valid = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent { name: "pi".into() },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "failed-title".into(),
+            label: Some("pi".into()),
+            argv: agent_program(&valid_token),
+        }),
+    );
+    wait_for(&live, valid.id, "AGENT_READY");
+    let valid_history = live.root.path().join("valid.jsonl");
+    std::fs::write(
+        &valid_history,
+        "{\"type\":\"session\",\"id\":\"00000000-0000-4000-8000-000000000101\"}\n{\"role\":\"assistant\",\"content\":\"reply\"}\n",
+    )
+    .unwrap();
+    retain_pi_history(
+        &live,
+        &fake_pi,
+        &valid,
+        &valid_token,
+        "00000000-0000-4000-8000-000000000101",
+        valid_history,
+    );
+    wait_file(&calls);
+    assert_eq!(
+        sessions(&live)
+            .into_iter()
+            .find(|row| row.id == valid.id)
+            .unwrap()
+            .display_name(),
+        "failed-title"
+    );
+    let db = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+    let attempts: i64 = db
+        .query_row(
+            "SELECT attempt_count FROM conversation_subjects WHERE session = ?1",
+            [i64::try_from(valid.id.0).unwrap()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(attempts, 1);
+    drop(db);
+
+    let mismatch_token = live.root.path().join("mismatch.token");
+    let mismatch = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent { name: "pi".into() },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "mismatch-title".into(),
+            label: Some("pi".into()),
+            argv: agent_program(&mismatch_token),
+        }),
+    );
+    wait_for(&live, mismatch.id, "AGENT_READY");
+    let mismatch_history = live.root.path().join("mismatch.jsonl");
+    std::fs::write(
+        &mismatch_history,
+        "{\"type\":\"session\",\"id\":\"wrong\"}\n{\"role\":\"assistant\",\"content\":\"reply\"}\n",
+    )
+    .unwrap();
+    retain_pi_history(
+        &live,
+        &fake_pi,
+        &mismatch,
+        &mismatch_token,
+        "00000000-0000-4000-8000-000000000102",
+        mismatch_history,
+    );
+    std::thread::sleep(Duration::from_secs(3));
+    assert_eq!(std::fs::read_to_string(&calls).unwrap(), "call");
+    let db = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+    let mismatch_rows: i64 = db
+        .query_row(
+            "SELECT count(*) FROM conversation_subjects WHERE session = ?1",
+            [i64::try_from(mismatch.id.0).unwrap()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        mismatch_rows, 0,
+        "header mismatch must not spend an attempt"
+    );
+    drop(db);
+
+    let missing = Live::idle().bounded();
+    std::fs::write(
+        missing.root.path().join("dashboard.toml"),
+        "title_model = 'pi/test'\n",
+    )
+    .unwrap();
+    let late_pi = missing.root.path().join("late-pi");
+    missing.start_binary_env(&[("OVRCR_PI_EXECUTABLE", late_pi.as_os_str())]);
+    assert_eq!(
+        missing.request(Request::AddProject {
+            name: PROJECT.into(),
+            repo: missing.repo.clone(),
+            workspace_root: missing.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    missing.clear_root_shell();
+    assert_eq!(missing.request(workspace(None)), Response::Ok);
+    let _dashboard = dashboard(&missing);
+    let token = missing.root.path().join("missing.token");
+    let session = created(
+        &missing,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent { name: "pi".into() },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "missing-pi".into(),
+            label: Some("pi".into()),
+            argv: agent_program(&token),
+        }),
+    );
+    wait_for(&missing, session.id, "AGENT_READY");
+    let history = missing.root.path().join("missing.jsonl");
+    std::fs::write(
+        &history,
+        "{\"type\":\"session\",\"id\":\"00000000-0000-4000-8000-000000000103\"}\n{\"role\":\"assistant\",\"content\":\"reply\"}\n",
+    )
+    .unwrap();
+    retain_pi_history(
+        &missing,
+        &late_pi,
+        &session,
+        &token,
+        "00000000-0000-4000-8000-000000000103",
+        history.clone(),
+    );
+    std::thread::sleep(Duration::from_secs(3));
+    let late_calls = missing.root.path().join("late-calls");
+    std::fs::write(
+        &late_pi,
+        format!(
+            "#!/bin/sh\nprintf late >> {}\nexit 0\n",
+            late_calls.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&late_pi, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(
+        &history,
+        "{\"type\":\"session\",\"id\":\"00000000-0000-4000-8000-000000000103\"}\n{\"role\":\"assistant\",\"content\":\"changed\"}\n",
+    )
+    .unwrap();
+    std::thread::sleep(Duration::from_secs(3));
+    assert!(
+        !late_calls.exists(),
+        "missing Pi must not retry in this server process"
+    );
+    assert_eq!(
+        sessions(&missing)
+            .into_iter()
+            .find(|row| row.id == session.id)
+            .unwrap()
+            .display_name(),
+        "missing-pi",
+        "missing Pi must not retry in this server process"
+    );
+}
+
+#[test]
+fn title_subject_storage_archive_and_exclusions_cover_live_paths() {
+    let script = "#!/bin/sh\nprintf call >> __CALLS__\nwhile IFS= read -r line; do printf '%s\\n' \"$line\" > __CALLS__.stdin; printf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Fixture Topic\"}],\"stopReason\":\"stop\"}}'; sleep 1; exit 0; done\n".to_owned();
+    let (live, fake_pi, calls) = start_title_fixture(script, Some("title_model = 'pi/test'\n"));
+    let _dashboard = dashboard(&live);
+    let token = live.root.path().join("subject.token");
+    let session = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent { name: "pi".into() },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "subject-original".into(),
+            label: Some("pi".into()),
+            argv: agent_program(&token),
+        }),
+    );
+    wait_for(&live, session.id, "AGENT_READY");
+    let history = live.root.path().join("large.jsonl");
+    let head_secret = "HEAD_SECRET_SHOULD_NOT_BE_READ";
+    std::fs::write(
+        &history,
+        format!(
+            "{{\"type\":\"session\",\"id\":\"00000000-0000-4000-8000-000000000201\"}}\n{}\n{{\"role\":\"user\",\"content\":\"tail prompt\"}}\n{{\"role\":\"assistant\",\"content\":\"tail reply\"}}\n",
+            format!("{head_secret}\n").repeat(300 * 1024 / head_secret.len())
+        ),
+    )
+    .unwrap();
+    retain_pi_history(
+        &live,
+        &fake_pi,
+        &session,
+        &token,
+        "00000000-0000-4000-8000-000000000201",
+        history,
+    );
+    wait_file(&calls);
+    wait_display(&live, session.id, "Fixture Topic");
+    let prompt = std::fs::read_to_string(calls.with_extension("stdin")).unwrap();
+    assert!(prompt.contains("tail reply"));
+    assert!(!prompt.contains(head_secret));
+    let database = std::fs::read(ovrcr::config::database_path(&live.config)).unwrap();
+    let database = String::from_utf8_lossy(&database);
+    assert!(!database.contains("tail reply"));
+    assert!(!database.contains("Name this conversation"));
+    assert!(!database.contains(head_secret));
+
+    assert_eq!(
+        live.request(Request::CloseTerminal {
+            session: session.id,
+            expected_run: session.run,
+        }),
+        Response::Ok
+    );
+    let archived = std::process::Command::new(&live.executable)
+        .args(["--json", "terminal", "list", "--archived"])
+        .env("OVRCR_CONFIG", &live.config)
+        .env("OVRCR_SOCKET", &live.socket)
+        .output()
+        .unwrap();
+    assert!(archived.status.success(), "{archived:?}");
+    let rows: serde_json::Value = serde_json::from_slice(&archived.stdout).unwrap();
+    let row = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == session.id.0)
+        .unwrap();
+    assert_eq!(row["display_name"], "Fixture Topic");
+
+    let hermes_token = live.root.path().join("hermes.token");
+    let hermes = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent {
+                name: "hermes".into(),
+            },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "hermes-original".into(),
+            label: Some("hermes".into()),
+            argv: agent_program(&hermes_token),
+        }),
+    );
+    wait_for(&live, hermes.id, "AGENT_READY");
+    let nested = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Terminal,
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "nested-agent-terminal".into(),
+            label: Some("terminal".into()),
+            argv: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "printf NESTED_READY; while IFS= read -r line; do :; done".into(),
+            ],
+        }),
+    );
+    wait_for(&live, nested.id, "NESTED_READY");
+    let before = std::fs::read_to_string(&calls).unwrap();
+    std::thread::sleep(Duration::from_secs(3));
+    assert_eq!(std::fs::read_to_string(&calls).unwrap(), before);
+}
+
+#[test]
+fn title_startup_and_shutdown_cleanup_titles_directory_and_process_group() {
+    let live = Live::idle().bounded();
+    let titles = live.socket.parent().unwrap().join("titles");
+    std::fs::create_dir_all(&titles).unwrap();
+    std::fs::write(titles.join("leftover"), "stale").unwrap();
+    std::fs::write(
+        live.root.path().join("dashboard.toml"),
+        "title_model = 'pi/test'\n",
+    )
+    .unwrap();
+    let fake_pi = live.root.path().join("fake-pi");
+    let calls = live.root.path().join("title-calls");
+    std::fs::write(
+        &fake_pi,
+        format!(
+            "#!/bin/sh\nprintf '%s' \"$$\" > {}.pid\nprintf started > {}\nwhile :; do sleep 1; done\n",
+            calls.display(),
+            calls.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&fake_pi, std::fs::Permissions::from_mode(0o700)).unwrap();
+    live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", fake_pi.as_os_str())]);
+    assert!(
+        !titles.exists(),
+        "stale titles directory must be removed on startup"
+    );
+    assert_eq!(
+        live.request(Request::AddProject {
+            name: PROJECT.into(),
+            repo: live.repo.clone(),
+            workspace_root: live.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    live.clear_root_shell();
+    assert_eq!(live.request(workspace(None)), Response::Ok);
+    let _dashboard = dashboard(&live);
+    let token = live.root.path().join("blocking.token");
+    let session = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent { name: "pi".into() },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "blocking-title".into(),
+            label: Some("pi".into()),
+            argv: agent_program(&token),
+        }),
+    );
+    wait_for(&live, session.id, "AGENT_READY");
+    let history = live.root.path().join("blocking.jsonl");
+    std::fs::write(
+        &history,
+        "{\"type\":\"session\",\"id\":\"00000000-0000-4000-8000-000000000301\"}\n{\"role\":\"assistant\",\"content\":\"reply\"}\n",
+    )
+    .unwrap();
+    retain_pi_history(
+        &live,
+        &fake_pi,
+        &session,
+        &token,
+        "00000000-0000-4000-8000-000000000301",
+        history,
+    );
+    wait_file(&calls);
+    let pgid: libc::pid_t = std::fs::read_to_string(calls.with_extension("pid"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(live::group_exists(pgid));
+    assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
+    live.join();
+    assert!(live::wait_group_absent(pgid, Duration::from_secs(2)));
+}
+
+#[test]
+fn late_title_result_after_archive_is_not_saved_or_shown() {
+    let script = "#!/bin/sh\nprintf started > __CALLS__\nsleep 2\nprintf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Late Topic\"}],\"stopReason\":\"stop\"}}'\n".to_owned();
+    let (live, fake_pi, calls) = start_title_fixture(script, Some("title_model = 'pi/test'\n"));
+    let _dashboard = dashboard(&live);
+    let token = live.root.path().join("late.token");
+    let session = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent { name: "pi".into() },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "late-original".into(),
+            label: Some("pi".into()),
+            argv: agent_program(&token),
+        }),
+    );
+    wait_for(&live, session.id, "AGENT_READY");
+    let history = live.root.path().join("late.jsonl");
+    std::fs::write(
+        &history,
+        "{\"type\":\"session\",\"id\":\"00000000-0000-4000-8000-000000000401\"}\n{\"role\":\"assistant\",\"content\":\"reply\"}\n",
+    )
+    .unwrap();
+    retain_pi_history(
+        &live,
+        &fake_pi,
+        &session,
+        &token,
+        "00000000-0000-4000-8000-000000000401",
+        history,
+    );
+    wait_file(&calls);
+    assert_eq!(
+        live.request(Request::CloseTerminal {
+            session: session.id,
+            expected_run: session.run,
+        }),
+        Response::Ok
+    );
+    std::thread::sleep(Duration::from_secs(3));
+    let archived = std::process::Command::new(&live.executable)
+        .args(["--json", "terminal", "list", "--archived"])
+        .env("OVRCR_CONFIG", &live.config)
+        .env("OVRCR_SOCKET", &live.socket)
+        .output()
+        .unwrap();
+    let rows: serde_json::Value = serde_json::from_slice(&archived.stdout).unwrap();
+    let row = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == session.id.0)
+        .unwrap();
+    assert_eq!(row["display_name"], "late-original");
 }
 
 #[test]
