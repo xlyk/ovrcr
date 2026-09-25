@@ -1,0 +1,48 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+pid: 14718  elapsed: 19m  agent unknown  local (#4)                                                                                                                   
+local (#4)                                                                                                                                                            
+941000fbd8
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable) pid: 14718  elapsed: 19m  agent unknown  local (#4)                                                                                                                   
+		5 text (settable) local (#4)                                                                                                                                                            
+		6 text (settable) 941000fbd80d368b15344862be9d768d › stty size                                                                                                                          
+		7 text (settable) 57 126                                                                                                                                                                
+		8 text (settable) 941000fbd80d368b15344862be9d768d › stty size                                                                                                                          
+		9 text (settable) 57 104                                                                                                                                                                
+		10 text (settable) 941000fbd80d368b15344862be9d768d › stty size                                                                                                                          
+		11 text (settable) 57 166                                                                                                                                                                
+		12 text (settable) 941000fbd80d368b15344862be9d768d ›                                                                                                                                    
+		13 text (settable)                                           ┌ Command palette ───────────────────────────────────────────────────────────────┐                                          
+		14 text (settable)                                           │Search: ▏                                                                       │                                          
+		15 text (settable)                                           │› Archived sessions                                                             │                                          
+		16 text (settable)                                           │                                                                                │                                          
+		17 text (settable)                                           │  Create terminal (n)                                                           │                                          
+		18 text (settable)                                           │  n — Choose an agent or shell to start in consigint / gui-consigint-auth-handof│                                          
+		19 text (settable)                                           │  Create workspace (w)                                                          │                                          
+		20 text (settable)                                           │  w — Create a worktree and branch under consigint and choose its first Agent or│                                          
+		21 text (settable)                                           │  Register project (a)                                                          │                                          
+		22 text (settable)                                           │  a — Register a repository and its root workspace; opens a form; keeps the repo│                                          
+		23 text (settable)                                           │  Rename terminal (blank = original name)                                       │                                          
+		24 text (settable)                                           │                                                                                │                                          
+		25 text (settable)                                           │                                                                                │                                          
+		26 text (settable)                                           │↑/↓ select · Enter continue · Esc cancel                                        │                                          
+		27 text (settable)                                           │                                                                                │                                          
+		28 text (settable)                                           │                                                                                │                                          
+		29 text (settable)                                           │                                                                                │                                          
+		30 text (settable)                                           │[Open] [Cancel]                                                                 │                                          
+		31 text (settable)                                           └────────────────────────────────────────────────────────────────────────────────┘                                          
+		32 text (settable) BROWSE  ? Help  Enter Focus  n Create terminal  : Search  v Split  q Detach  t Tasks  a Register project  w Create workspace  p Pause  Space Leader                   
+	33 close button
+	34 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	35 minimize button
+	36 text OVRCR GUI
+37 menu bar
+	38 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+pid: 14718  elapsed: 19m  agent unknown  local (#4)                                                                                                                   
+local (#4)                                                                                                                                                            
+941000fbd8

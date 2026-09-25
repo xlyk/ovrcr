@@ -1,0 +1,50 @@
+# Sidebar toggle native acceptance
+
+Date: 2026-09-25 (America/Los_Angeles). Checkout: `/Users/xlyk/Code/ovrcr-workspaces/edc4028082285c7e0ebefbc61ebf6f7b`. Verified revision: `edf81c7f598df688ae8dddc1426805d692b30cf5`, branch `feature/toggle-sidebar`. Codex CLI: `0.155.1`; model: `gpt-6-astra`, reasoning effort `xhigh` (current session metadata).
+
+App: the already-running `target/OVRCR GUI.app`, bundle `dev.ovrcr.gui`. All window input and observation used `mcp__cua_repl`. No source edits, builds, launches, relaunches, or interactions with other windows were performed. Initial Git status contained only this untracked evidence directory, including the pre-existing `owned-processes.json`.
+
+**Overall: acceptance failed at the small-window responsiveness check.** Normal-size toggling, preserved dragged width, PTY resizing, hidden selection, pane click routing, and both popup/palette labels were observed working. The requested 220×140 size was not reached: native drags stopped at 480×352. After resizing, input stopped producing visible changes, and enlarging the window stretched stale content rather than reflowing it. This records the observed failure, not a diagnosed cause.
+
+Every capture basename below has both `.jpg` and `.ax.txt` files (the tool exported JPEG bytes; the `sips` PNG copies were dropped as duplicates before commit). Full accessibility text was saved, even where the tool display used a shorter excerpt. An initial export approval review timed out; its retry succeeded. A failed optional `sharp` import had no UI effect; export used native `sips` instead. Capture names describe intended checks, not necessarily successful outcomes.
+
+| Requested step | Observed result | Capture basenames |
+| --- | --- | --- |
+| 1 | PASS. Upper-case CONSIGINT and SPACELIFT-AGENT headers, sidebar rows, pane, and Browse footer visible. Window screenshot 907×768 px; original vertical-rule x≈215 px. | `01-initial` |
+| 2 | PASS. Two `j` presses moved through the workspace row to `consigint / gui-consigint-auth-handoff / local (#4)`, PID 14718. Return showed `Terminal mode`; `stty size` produced a separate `57 126` output line. Ctrl-g returned to Browse. COLS_SHOWN=126. | `02a-selection-j`, `02b-local-selected`, `02c-terminal`, `02d-stty-shown`, `02-selected` |
+| 3 | PASS. Drag from (215,390) to (335,390) widened the sidebar and narrowed the pane. BORDER_DRAGGED≈334 px. An additional terminal measurement after the drag produced `57 104`; COLS_DRAGGED=104. | `03-dragged`, `03a-terminal-dragged`, `03b-stty-dragged`, `03c-browse-dragged` |
+| 4 | PASS for layout and PTY expansion. `b` removed all sidebar rows and the vertical rule; metadata and terminal content started at the left edge. `stty size` produced `57 166`; COLS_HIDDEN=166 > 126 and equals the dashboard's 166-column row width. Footer did not display the sidebar action at this width; allowed by the procedure, with the popup label checked in step 6. | `04-hidden`, `04a-terminal-hidden`, `04b-stty-hidden`, `04c-browse-hidden` |
+| 5 | PASS. Hidden `j` selected `review auth handoff`, PID 17147; `k` returned to `local (#4)`, PID 14718. | `05-hidden-jk`, `05a-hidden-k-local` |
+| 6 | PASS. Space then v displayed `b  Show sidebar`. Escape closed it; `:` then `sidebar` displayed `Show sidebar` in the command palette. Escape closed the palette. | `06a-leader-hidden`, `06-popup-show`, `06b-popup-dismissed`, `07a-palette-open`, `07-palette-show`, `07b-palette-dismissed` |
+| 7 | PASS. Click (60,402), inside the former sidebar area, retained `local (#4)` and changed the footer to `Terminal mode  Ctrl-g browse`. Ctrl-g returned to Browse. | `08-click-hidden`, `08a-click-return-browse` |
+| 8 | PASS for restoring the dragged width and action labels; FAIL for the literal COLS_RESTORED=COLS_SHOWN assertion. `b` restored rows and rule at x≈334 px, identical to step 3. `stty size` produced `57 104`, so COLS_RESTORED=104=COLS_DRAGGED, but not the pre-drag COLS_SHOWN=126. Space v displayed `b  Hide sidebar`. An additional palette check displayed `Hide sidebar`. | `09-shown-again`, `09a-terminal-restored`, `09b-stty-restored`, `09c-browse-restored`, `10a-leader-shown`, `10-popup-hide`, `10b-popup-dismissed`, `10c-palette-open-shown`, `10d-palette-hide`, `10e-ready-to-resize` |
+| 9 | FAIL responsiveness; BLOCKED at requested 220×140 size. Drag (904,764)→(217,136) produced 480×352. A second native corner drag did not reduce it. `b`, another `b`, title focus, pane click, Ctrl-g, and further `b` attempts left the sidebar shown and the same Browse content visible. Native drag back enlarged the window to 907×768, but the 72-column small-window content stretched without reflow and another `b` did not change it. Fresh AX remained available; successful redraw/input response was not observed. | `11-tiny-shown`, `11a-tiny-limit-retry`, `12-tiny-hidden` (sidebar actually still shown), `12a-tiny-shown-again`, `12b-tiny-title-focus`, `12c-tiny-hidden-retry`, `12d-tiny-pane-focus`, `12e-tiny-browse`, `12f-tiny-toggle-after-focus`, `13-restored` (geometry restored, content stale), `13a-restored-toggle-check` |
+| 10 | PASS. This report and paired PNG/accessibility evidence were written in the specified evidence directory. | `README.md`; capture pairs above |
+| 11 | PASS. First native-close attempt was rejected by the tool because the window state had changed. After a fresh observation, clicking the current native close control succeeded. OVRCR was absent from the running-app inventory; launcher log ended `GUI_EXIT=0`, and the current fixture directory and socket were absent. No force-kill or relaunch was used. | `14-before-close`, `15a-close-retry-state`, `15-native-close-inventory.json`, `15b-native-close-inventory.json`, `16-cleanup.json` |
+
+Measurements use screenshot-local pixels, with x=0 at the window's left edge. Original border x≈215; dragged border x≈334; restored-before-tiny border x≈334. Initial and restored outer image dimensions: 907×768. Smallest observed dimensions: 480×352. Rows remained 57 in all four observed `stty size` outputs. COLS_SHOWN=126; COLS_DRAGGED=104; COLS_HIDDEN=166; COLS_RESTORED=104.
+
+The step 8 equality requirement conflicts with step 3's successful width change: keeping the larger sidebar necessarily restores fewer terminal columns than the original measurement. The measured restore matches the immediately-before-hide geometry exactly. The original numeric assertion is reported as failed rather than silently redefining COLS_SHOWN.
+
+The footer's `Hide sidebar` / `Show sidebar` wording was not observed because the action was absent at the tested window widths. Both state-dependent labels were directly observed in the popup and palette. No 220×140 result or successful small-window hide/show is claimed.
+
+Before closing, `14-before-close` showed small content occupying the upper-left of the enlarged window, with the screenshot and AX text temporarily disagreeing on elapsed time. The tool then rejected the close action with: `The user changed ... Re-query the latest state ... before sending more actions.` A fresh `15a-close-retry-state` showed reflowed content. This later recovery and reported state change limit attribution of the earlier unresponsive sequence; no root cause or permanent application hang is claimed. Step 9 remains failed to demonstrate the required tiny hide/show and input response.
+
+Evidence validation: all 47 screenshots have PNG signatures and matching full `.ax.txt` files. The original JPEG exports are retained. Native-close inventory was empty after the successful click. Read-only filesystem/log inspection confirmed removal of `/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-gm9UAM` and `server.sock`, plus `GUI_EXIT=0`. Independent process absence was not verified: the sandbox denied `ps` with `Operation not permitted`. The launcher's existing build log predates this acceptance run; this run did not execute cargo or just.
+
+## Second run: tiny-window re-check without the AX tool (Claude Code, osascript)
+
+The step 9 failure above was not reproduced. The Codex computer-use tool's input stopped reaching the window after its AX-driven resize, and its own `15a-close-retry-state` capture shows the app reflowed normally once the tool re-queried it. To check the dashboard rather than the tool, `just gui` was relaunched from the same checkout (`edf81c7`, fixture root `ovrcr-gui-0OIFpK`, helper PID 91985) and driven with `osascript` System Events (`set size of window 1`, `keystroke "b"`) plus `screencapture -R`. The helper's minimum window is 480×352 px; a request for 300×220 stops there, matching Codex's floor.
+
+| Capture | Window (px) | Observed |
+| --- | --- | --- |
+| `20-normal` | 1100×932 | Sidebar shown at default width. |
+| `21-tiny-shown` → `23-tiny-shown-again` | 480×352 | First run: the first `keystroke "b"` was consumed by window activation, so `22` still shows the sidebar; the next `b` hid it (`23`), and after restoring the window (`24-restored`) the pane filled 1100×932 with no stale content. `25`/`26` show two further toggles at full size. |
+| `28-tiny-start` | 480×352 | Focused run, sidebar hidden from the previous toggle. |
+| `29-tiny-after-b1` | 480×352 | `b` showed the sidebar rows and rule at the minimum size. |
+| `30-tiny-after-b2` | 480×352 | `b` hid them again. |
+| `31-restored` | 1100×932 | Window restored while hidden: the pane reflowed to the full width immediately. |
+
+The helper stayed alive throughout (`owned-processes-2.json`, `run2-focused-steps.json`); `gui2.log` and the fixture `server.log` contain no panic. The window was closed with its native close button; `run2-cleanup-verify.json` records launcher `GUI_EXIT=0`, all owned PIDs and process groups absent (`os.kill(-pgid, 0)` → `ProcessLookupError`), and the fixture root and socket removed. `17-cleanup-verify.json` records the same for the first run's fixture (`ovrcr-gui-gm9UAM`).
+
+Not verified natively: a window smaller than 480×352, which the helper does not allow; the 3×2 frame case is covered by `hidden_sidebar_ignores_sidebar_clicks_and_survives_a_tiny_window` in `crates/ovrcr-tui/src/dashboard/tests.rs`.
