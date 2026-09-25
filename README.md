@@ -153,6 +153,7 @@ intercepts only `Ctrl-g`. The keys below are Browse mode:
 | Key | Action |
 | --- | --- |
 | `j` `k` Down Up | Select the next or previous visible sidebar row |
+| `b` | Hide or show the sidebar; the panes take its width |
 | `Enter` | Collapse or expand a selected project or workspace; type into a selected session; on an exited session, resume the conversation or reopen a shell in the same row |
 | `v` | Open a second pane with the next different session |
 | `Tab` `Shift-Tab` | Focus the other pane |

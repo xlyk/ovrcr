@@ -3410,3 +3410,96 @@ fn root_workspace_sorts_first_regardless_of_name() {
         .collect::<Vec<_>>();
     assert_eq!(ids, ["main", "aaa", "feature/x"]);
 }
+
+#[test]
+fn b_hides_the_sidebar_rows_and_widens_the_pane_until_b_shows_them_again() {
+    use ratatui::backend::TestBackend;
+    let area = Rect::new(0, 0, 120, 24);
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 120,
+    });
+    dashboard.hierarchy = session_hierarchy(&[1, 2]);
+    dashboard.install_area(area);
+    dashboard.select_session(SessionId(1));
+    dashboard.install_screen(SessionId(1), &[]);
+    let project_row = |dashboard: &Dashboard| {
+        let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        terminal
+            .draw(|frame| super::draw_dashboard_at(frame, dashboard, 0))
+            .unwrap();
+        (0..24).any(|y| {
+            let line: String = (0..120)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect();
+            line.contains("CONSIGINT")
+        })
+    };
+    let pane_width = |dashboard: &Dashboard| dashboard.pane_rects(area)[0].terminal.width;
+
+    assert!(project_row(&dashboard), "the sidebar starts visible");
+    assert_eq!(pane_width(&dashboard), 80);
+    assert_eq!(binding_named(&dashboard, "b").name, "Hide sidebar");
+
+    dashboard.key(KeyCode::Char('b'));
+    assert!(!project_row(&dashboard), "b hides the sidebar rows");
+    assert_eq!(pane_width(&dashboard), 120, "the pane takes the full width");
+    assert_eq!(binding_named(&dashboard, "b").name, "Show sidebar");
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    dashboard.key(KeyCode::Char('j'));
+    assert_eq!(
+        dashboard.focused_session(),
+        Some(SessionId(2)),
+        "j still moves the selection while hidden"
+    );
+    dashboard.key(KeyCode::Char('k'));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+
+    dashboard.key(KeyCode::Char('b'));
+    assert!(project_row(&dashboard), "a second b shows the rows again");
+    assert_eq!(
+        pane_width(&dashboard),
+        80,
+        "the sidebar returns at its width"
+    );
+}
+
+#[test]
+fn hidden_sidebar_ignores_sidebar_clicks_and_survives_a_tiny_window() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::backend::TestBackend;
+    let area = Rect::new(0, 0, 120, 24);
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 120,
+    });
+    dashboard.hierarchy = session_hierarchy(&[1, 2]);
+    dashboard.install_area(area);
+    dashboard.select_session(SessionId(1));
+    dashboard.install_screen(SessionId(1), &[]);
+    dashboard.key(KeyCode::Char('b'));
+    // Row 3 of the sidebar used to be session #2; the click now lands in the pane.
+    let click = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 5,
+        row: 3,
+        modifiers: KeyModifiers::NONE,
+    };
+    dashboard.mouse_action(click, area);
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    assert_eq!(
+        dashboard.mode,
+        InputMode::Terminal,
+        "the click reaches the pane, not a hidden sidebar row"
+    );
+    assert!(!dashboard.mouse.sidebar_dragging, "no border to drag");
+    dashboard.ctrl('g');
+    for hidden in [true, false] {
+        assert_eq!(dashboard.sidebar_hidden, hidden);
+        let mut terminal = Terminal::new(TestBackend::new(3, 2)).unwrap();
+        terminal
+            .draw(|frame| super::draw_dashboard_at(frame, &dashboard, 0))
+            .unwrap();
+        dashboard.key(KeyCode::Char('b'));
+    }
+}

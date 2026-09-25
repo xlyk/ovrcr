@@ -253,6 +253,9 @@ pub struct Dashboard {
     split_preference: Option<SplitPreference>,
     /// Sidebar width chosen by dragging its border; `None` means the default.
     sidebar_width: Option<u16>,
+    /// `b` hides the sidebar for this attachment; `sidebar_width` survives so
+    /// showing it again restores the dragged width.
+    sidebar_hidden: bool,
     mouse_focused: bool,
     /// Pane index whose history a wheel tick asked for while that pane was still loading.
     deferred_history_at_tail: Option<usize>,
