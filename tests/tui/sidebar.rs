@@ -929,7 +929,7 @@ fn sidebar_shows_the_agent_and_current_model_on_one_row() {
     );
     assert_eq!(
         narrow_row(5),
-        "▌      claude:opus-4.5-with… ",
+        "▌    └ claude:opus-4.5-with… ",
         "the agent and model take the next line, clipped like any other text"
     );
 }
@@ -956,7 +956,7 @@ fn narrow_session_row_keeps_its_model_on_a_second_line() {
     // model is not dropped: the label moves under the name. The shell above stays one line.
     assert_eq!(row(&terminal, 3), "     $ local                 ");
     assert_eq!(row(&terminal, 4), "▌    - review                ");
-    assert_eq!(row(&terminal, 5), "▌      pi:grok-4.7           ");
+    assert_eq!(row(&terminal, 5), "▌    └ pi:grok-4.7           ");
     assert_eq!(row(&terminal, 6).trim_end(), "  󰘬 lifecycle");
     let buffer = terminal.backend().buffer();
     assert_eq!(
@@ -1006,7 +1006,7 @@ fn narrow_session_row_keeps_its_model_on_a_second_line() {
         "▌    - review             [x]",
         "hovering the label line marks the session's first line"
     );
-    assert_eq!(row(&terminal, 5), "▌      pi:grok-4.7           ");
+    assert_eq!(row(&terminal, 5), "▌    └ pi:grok-4.7           ");
     // The mark itself is only on the first line; its column on the label line selects.
     dashboard.install_focus(SessionId(5));
     dashboard.mouse_action(click(27, 5), area);
@@ -1076,7 +1076,7 @@ fn sidebar_shows_each_agent_with_or_without_its_model() {
                 let label = format!("{agent}:shared-model");
                 let inline = row.trim_end().ends_with(&label);
                 assert!(
-                    inline || under.trim_end() == format!("       {label}"),
+                    inline || under.trim_end() == format!("     └ {label}"),
                     "{agent} should keep its whole model: {row:?} / {under:?}"
                 );
                 assert_eq!(
@@ -1131,7 +1131,7 @@ fn long_sidebar_names_clip_to_one_screen_line() {
             .collect::<String>()
     };
     assert_eq!(row(4), "▌    - review-a-very-lo…");
-    assert_eq!(row(5), "▌      claude           ");
+    assert_eq!(row(5), "▌    └ claude           ");
     assert_eq!(buffer[(24, 4)].symbol(), "│");
     assert_eq!(buffer[(24, 5)].symbol(), "│");
 }

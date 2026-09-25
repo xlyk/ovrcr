@@ -1118,7 +1118,8 @@ fn tree_line_text(
             };
             let status = SessionStatus::of(session, now_unix_ms);
             if row_line == 1 {
-                // The agent and model under a name they could not share a line with.
+                // The agent and model under a name they could not share a line with,
+                // hung from the status glyph by a corner connector.
                 let (agent, model) = sidebar_agent_label(session).unwrap_or_default();
                 let color = label_color(&session.label);
                 let agent_style = Style::default().fg(if status.exited {
@@ -1140,7 +1141,8 @@ fn tree_line_text(
                 return (
                     compose_row(
                         vec![
-                            Span::raw(" ".repeat(SESSION_NAME_COLUMN)),
+                            Span::raw(SESSION_INDENT),
+                            Span::styled("└ ", muted),
                             Span::styled(head.to_string(), agent_style),
                             Span::styled(tail.to_string(), muted),
                         ],

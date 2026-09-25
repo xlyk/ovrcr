@@ -235,7 +235,8 @@ as in `pi:grok-4.7`. A model that repeats the agent name drops that repeat, and 
 missing model leaves the agent name alone. A long name clips with `…` before that
 label. The label shares the name's line only when the whole `agent:model` fits
 beside at least twelve cells of name; otherwise the name takes the line and the
-label moves to one extra line under it, indented to the name column and clipped
+label moves to one extra line under it, hung from the status glyph by a `└`
+connector at the name column and clipped
 with `…` if even that line is too narrow. The model is never dropped. The extra
 line belongs to the same session: `j`, `k` and the mouse treat both lines as one
 row, the selection bar and background cover both, and the hover `[x]` sits on
