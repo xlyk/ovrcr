@@ -4,7 +4,9 @@ use super::copy::{
 };
 use super::event_loop::DASHBOARD_IDLE_REDRAW_INTERVAL;
 use super::input::{encode_key, encode_mouse, is_browse_key};
-use super::render::{METADATA_HEIGHT, sidebar_area, tree_line_at, tree_line_count, tree_row_start};
+use super::render::{
+    METADATA_HEIGHT, sidebar_area, tree_line_at, tree_line_count, tree_row_heights, tree_row_start,
+};
 use super::settings::DashboardSettings;
 use super::status::SPINNER_INTERVAL;
 use super::view_handshake::{Acknowledged, Desire, RequestedView};
@@ -1184,19 +1186,26 @@ impl Dashboard {
             .position(|row| matches!(row, TreeRow::Project { name } if name == &session.project))
     }
 
+    /// Lines each visible row takes in the sidebar drawn for `self.outer_area`.
+    fn tree_heights(&self, rows: &[TreeRow]) -> Vec<usize> {
+        let width = sidebar_area(self.outer_area, self.sidebar_width).width;
+        tree_row_heights(self, rows, usize::from(width))
+    }
+
     fn ensure_selection_visible(&mut self, rows: &[TreeRow]) {
         let Some(index) = self.visible_selection_index(rows) else {
             return;
         };
+        let heights = self.tree_heights(rows);
         let height = self.tree_viewport_height();
-        let selected_start = tree_row_start(rows, index);
-        let selected_end = selected_start.saturating_add(1);
+        let selected_start = tree_row_start(rows, &heights, index);
+        let selected_end = selected_start.saturating_add(heights[index]);
         if selected_start < self.tree_offset {
             self.tree_offset = selected_start;
         } else if selected_end > self.tree_offset.saturating_add(height) {
             self.tree_offset = selected_end.saturating_sub(height);
         }
-        let max_offset = tree_line_count(rows).saturating_sub(height);
+        let max_offset = tree_line_count(rows, &heights).saturating_sub(height);
         self.tree_offset = self.tree_offset.min(max_offset);
     }
 
@@ -2082,7 +2091,8 @@ impl Dashboard {
     fn hovered_row_at(&self, sidebar: Rect, row: u16) -> Option<super::HoveredRow> {
         let row_index = self.tree_offset + usize::from(row.saturating_sub(sidebar.y));
         let rows = self.visible_rows();
-        match tree_line_at(&rows, row_index)? {
+        let heights = tree_row_heights(self, &rows, usize::from(sidebar.width));
+        match tree_line_at(&rows, &heights, row_index)?.0 {
             TreeRow::Session { id } => Some(super::HoveredRow::Session(*id)),
             TreeRow::Workspace { project, id } => Some(super::HoveredRow::Workspace {
                 project: project.clone(),
@@ -2124,7 +2134,9 @@ impl Dashboard {
         match mouse.kind {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                 let rows = self.visible_rows();
-                let max_offset = tree_line_count(&rows).saturating_sub(usize::from(sidebar.height));
+                let heights = tree_row_heights(self, &rows, usize::from(sidebar.width));
+                let max_offset =
+                    tree_line_count(&rows, &heights).saturating_sub(usize::from(sidebar.height));
                 let next = if mouse.kind == MouseEventKind::ScrollUp {
                     self.tree_offset.saturating_sub(1)
                 } else {
@@ -2140,12 +2152,15 @@ impl Dashboard {
             MouseEventKind::Down(MouseButton::Left) => {
                 let row_index = self.tree_offset + usize::from(mouse.row.saturating_sub(sidebar.y));
                 let rows = self.visible_rows();
-                let row = tree_line_at(&rows, row_index)?;
+                let heights = tree_row_heights(self, &rows, usize::from(sidebar.width));
+                let (row, row_line) = tree_line_at(&rows, &heights, row_index)?;
                 let row = row.clone();
                 let column = mouse.column.saturating_sub(sidebar.x);
                 match row {
                     TreeRow::Session { id } => {
-                        if self.close_mark_hit(column, sidebar.width)
+                        // The mark is drawn on the first line only; the label line selects.
+                        if row_line == 0
+                            && self.close_mark_hit(column, sidebar.width)
                             && self.mouse.hovered == Some(super::HoveredRow::Session(id))
                         {
                             return Some(self.open_close_terminal_for(id));
@@ -2184,7 +2199,9 @@ impl Dashboard {
     }
 
     pub(super) fn clamp_tree_offset(&mut self, viewport_height: usize) {
-        let max_offset = tree_line_count(&self.visible_rows()).saturating_sub(viewport_height);
+        let rows = self.visible_rows();
+        let heights = self.tree_heights(&rows);
+        let max_offset = tree_line_count(&rows, &heights).saturating_sub(viewport_height);
         self.tree_offset = self.tree_offset.min(max_offset);
     }
 

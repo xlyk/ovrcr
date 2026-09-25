@@ -51,27 +51,39 @@ fn sidebar_maps_each_line_to_its_visible_tree_row() {
         TreeRow::Project { name: "two".into() },
     ];
     // One line per row; a blank gap line precedes every project after the first.
+    let heights = [1; 7];
     let expected = [
-        Some(0),
-        Some(1),
-        Some(2),
-        Some(3),
-        Some(4),
-        Some(5),
+        Some((0, 0)),
+        Some((1, 0)),
+        Some((2, 0)),
+        Some((3, 0)),
+        Some((4, 0)),
+        Some((5, 0)),
         None,
-        Some(6),
+        Some((6, 0)),
     ];
-    assert_eq!(tree_line_count(&rows), 8);
+    assert_eq!(tree_line_count(&rows, &heights), 8);
     for (line, row) in expected.into_iter().enumerate() {
         assert_eq!(
-            tree_line_at(&rows, line),
-            row.map(|row| &rows[row]),
+            tree_line_at(&rows, &heights, line),
+            row.map(|(row, line)| (&rows[row], line)),
             "line {line}"
         );
     }
-    assert_eq!(tree_line_at(&rows, 8), None);
-    assert_eq!(tree_line_count(&[]), 0);
-    assert_eq!(tree_line_at(&[], 0), None);
+    assert_eq!(tree_line_at(&rows, &heights, 8), None);
+    assert_eq!(tree_line_count(&[], &[]), 0);
+    assert_eq!(tree_line_at(&[], &[], 0), None);
+
+    // A two-line session owns both of its lines; everything after it shifts by one.
+    let heights = [1, 1, 2, 1, 1, 1, 1];
+    assert_eq!(tree_line_count(&rows, &heights), 9);
+    assert_eq!(tree_line_at(&rows, &heights, 2), Some((&rows[2], 0)));
+    assert_eq!(tree_line_at(&rows, &heights, 3), Some((&rows[2], 1)));
+    assert_eq!(tree_line_at(&rows, &heights, 4), Some((&rows[3], 0)));
+    assert_eq!(tree_line_at(&rows, &heights, 7), None);
+    assert_eq!(tree_line_at(&rows, &heights, 8), Some((&rows[6], 0)));
+    assert_eq!(super::render::tree_row_start(&rows, &heights, 3), 4);
+    assert_eq!(super::render::tree_row_start(&rows, &heights, 6), 8);
 }
 
 #[test]
@@ -1712,12 +1724,21 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
             "background Codex glyph at width {width}"
         );
         assert_eq!(cell.fg, ratatui::style::Color::Rgb(108, 112, 134));
-        let next_row: String = (0..39)
-            .map(|x| terminal.backend().buffer()[(x, 4)].symbol())
-            .collect();
+        let row = |y| -> String {
+            (0..39)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect()
+        };
+        // A label too long to share the name's line is kept on the line under it.
         assert!(
-            next_row.contains(&original.name),
-            "the next session follows the background row: {next_row}"
+            row(4).contains("long Codex label"),
+            "the background label follows its name: {}",
+            row(4)
+        );
+        assert!(
+            row(5).contains(&original.name),
+            "the next session follows the background row: {}",
+            row(5)
         );
     }
     dashboard.hierarchy.projects[0].workspaces[0].sessions.pop();

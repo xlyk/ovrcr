@@ -465,19 +465,18 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         layout.sidebar,
     );
     let rows = dashboard.visible_rows();
+    let width = usize::from(layout.sidebar_content.width);
+    let heights = tree_row_heights(dashboard, &rows, width);
     let viewport_height = usize::from(layout.sidebar_content.height);
-    let start = dashboard.tree_offset.min(tree_line_count(&rows));
+    let start = dashboard.tree_offset.min(tree_line_count(&rows, &heights));
     for screen_line in 0..viewport_height {
-        let Some(row) = tree_line_at(&rows, start.saturating_add(screen_line)) else {
+        let Some((row, row_line)) =
+            tree_line_at(&rows, &heights, start.saturating_add(screen_line))
+        else {
             continue;
         };
         let y = layout.sidebar_content.y.saturating_add(screen_line as u16);
-        let (line, style) = tree_line_text(
-            dashboard,
-            row,
-            usize::from(layout.sidebar_content.width),
-            now_unix_ms,
-        );
+        let (line, style) = tree_line_text(dashboard, row, row_line, width, now_unix_ms);
         let line_area = Rect::new(layout.sidebar_content.x, y, layout.sidebar_content.width, 1);
         frame.render_widget(Paragraph::new(line).style(style), line_area);
     }
@@ -952,32 +951,55 @@ pub(super) fn tree_row_gap(rows: &[TreeRow], index: usize) -> usize {
     usize::from(index > 0 && matches!(rows[index], TreeRow::Project { .. }))
 }
 
-/// Sidebar line occupied by `rows[index]`; every row is one line tall.
-pub(super) fn tree_row_start(rows: &[TreeRow], index: usize) -> usize {
-    index
+/// Lines each row takes: one, or two for a session whose agent label does not fit
+/// beside its name in a `width`-cell sidebar.
+pub(super) fn tree_row_heights(
+    dashboard: &Dashboard,
+    rows: &[TreeRow],
+    width: usize,
+) -> Vec<usize> {
+    rows.iter()
+        .map(|row| match row {
+            TreeRow::Session { id } => find_session(dashboard, *id).map_or(1, |session| {
+                1 + usize::from(agent_label_needs_own_line(session, width))
+            }),
+            TreeRow::Project { .. } | TreeRow::Workspace { .. } => 1,
+        })
+        .collect()
+}
+
+/// First sidebar line occupied by `rows[index]`, whose `heights[index]` lines follow.
+pub(super) fn tree_row_start(rows: &[TreeRow], heights: &[usize], index: usize) -> usize {
+    heights[..index].iter().sum::<usize>()
         + (0..=index)
             .map(|earlier| tree_row_gap(rows, earlier))
             .sum::<usize>()
 }
 
-pub(super) fn tree_line_count(rows: &[TreeRow]) -> usize {
-    rows.len()
+pub(super) fn tree_line_count(rows: &[TreeRow], heights: &[usize]) -> usize {
+    heights.iter().sum::<usize>()
         + (0..rows.len())
             .map(|index| tree_row_gap(rows, index))
             .sum::<usize>()
 }
 
-pub(super) fn tree_line_at(rows: &[TreeRow], line: usize) -> Option<&TreeRow> {
+/// The row drawn on sidebar `line` and which of that row's lines it is, or `None` for
+/// a gap line or a line past the tree.
+pub(super) fn tree_line_at<'a>(
+    rows: &'a [TreeRow],
+    heights: &[usize],
+    line: usize,
+) -> Option<(&'a TreeRow, usize)> {
     let mut start: usize = 0;
     for (index, row) in rows.iter().enumerate() {
         start += tree_row_gap(rows, index);
         if line < start {
             return None;
         }
-        if line == start {
-            return Some(row);
+        if line < start + heights[index] {
+            return Some((row, line - start));
         }
-        start += 1;
+        start += heights[index];
     }
     None
 }
@@ -992,6 +1014,7 @@ const SESSION_NAME_MIN_WIDTH: usize = 12;
 fn tree_line_text(
     dashboard: &Dashboard,
     row: &TreeRow,
+    row_line: usize,
     width: usize,
     now_unix_ms: u64,
 ) -> (Line<'static>, Style) {
@@ -1094,6 +1117,41 @@ fn tree_line_text(
                 );
             };
             let status = SessionStatus::of(session, now_unix_ms);
+            if row_line == 1 {
+                // The agent and model under a name they could not share a line with.
+                let (agent, model) = sidebar_agent_label(session).unwrap_or_default();
+                let color = label_color(&session.label);
+                let agent_style = Style::default().fg(if status.exited {
+                    faded(color, 65)
+                } else {
+                    color
+                });
+                let label = clip_text(
+                    &format!("{agent}{model}"),
+                    width.saturating_sub(SESSION_NAME_COLUMN + 1),
+                );
+                // A label clipped inside the agent name is all agent colour.
+                let split = if label.starts_with(agent.as_str()) {
+                    agent.len()
+                } else {
+                    label.len()
+                };
+                let (head, tail) = label.split_at(split);
+                return (
+                    compose_row(
+                        vec![
+                            Span::raw(" ".repeat(SESSION_NAME_COLUMN)),
+                            Span::styled(head.to_string(), agent_style),
+                            Span::styled(tail.to_string(), muted),
+                        ],
+                        Span::raw(" "),
+                        Vec::new(),
+                        width,
+                        selected,
+                    ),
+                    style,
+                );
+            }
             if session.name == "local" && session.display_name() == "local" {
                 // A shell is quiet unless a hook reports real activity inside it.
                 let (glyph, glyph_color) = match (status.glyph, status.color) {
@@ -1123,10 +1181,10 @@ fn tree_line_text(
                 if exited {
                     name_style = name_style.add_modifier(Modifier::DIM);
                 }
-                let fitted = if close_mark {
+                let fitted = if close_mark || agent_label_needs_own_line(session, width) {
                     None
                 } else {
-                    sidebar_agent_label(session, width)
+                    sidebar_agent_label(session)
                 };
                 let name_width = match &fitted {
                     Some((agent, model)) => {
@@ -1269,20 +1327,27 @@ fn provider_metrics(session: &SessionSummary, now: u64, width: usize) -> Option<
     }
 }
 
-/// Four model characters, plus the ellipsis when the model is clipped.
-const MODEL_KEEP: usize = 4;
+/// Whether a session's agent label takes its own sidebar line: it has one, and the
+/// whole `agent:model` cannot sit beside a twelve-cell name in `width` cells.
+fn agent_label_needs_own_line(session: &SessionSummary, width: usize) -> bool {
+    sidebar_agent_label(session).is_some_and(|(agent, model)| {
+        Line::raw(agent).width() + Line::raw(model).width()
+            > width.saturating_sub(SESSION_NAME_COLUMN + SESSION_NAME_MIN_WIDTH + 3)
+    })
+}
 
-fn sidebar_agent_label(session: &SessionSummary, width: usize) -> Option<(String, String)> {
+/// The agent name and its `:model` suffix (empty when no model is known), or `None`
+/// for a quiet local shell or a session without an agent label.
+fn sidebar_agent_label(session: &SessionSummary) -> Option<(String, String)> {
+    if session.name == "local" && session.display_name() == "local" {
+        return None;
+    }
     let agent = session
         .label
         .split_once('/')
         .map_or(session.label.as_str(), |(agent, _)| agent)
         .trim();
     if agent.is_empty() {
-        return None;
-    }
-    let max_label = width.saturating_sub(SESSION_NAME_COLUMN + SESSION_NAME_MIN_WIDTH + 3);
-    if Line::raw(agent).width() > max_label {
         return None;
     }
     let reported = session
@@ -1301,19 +1366,12 @@ fn sidebar_agent_label(session: &SessionSummary, width: usize) -> Option<(String
         return Some((agent.to_string(), String::new()));
     };
     let model = model_without_agent(agent, model);
-    if model.is_empty() || Line::raw(format!("{agent}:{model}")).width() <= max_label {
-        let suffix = if model.is_empty() {
-            String::new()
-        } else {
-            format!(":{model}")
-        };
-        return Some((agent.to_string(), suffix));
-    }
-    let budget = max_label.saturating_sub(Line::raw(format!("{agent}:")).width());
-    if budget < MODEL_KEEP + 1 {
-        return Some((agent.to_string(), String::new()));
-    }
-    Some((agent.to_string(), format!(":{}", clip_text(&model, budget))))
+    let suffix = if model.is_empty() {
+        String::new()
+    } else {
+        format!(":{model}")
+    };
+    Some((agent.to_string(), suffix))
 }
 
 fn model_without_agent(agent: &str, model: &str) -> String {
