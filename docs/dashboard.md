@@ -238,8 +238,8 @@ own colours stay visible. A folded project shows `▸ N ws` and a folded workspa
 
 `b` hides the sidebar and the panes take the full width; `b` again shows it at
 the width it had before. The choice lasts for the attachment and is not saved.
-While the sidebar is hidden, `j` and `k` still move the selection and the
-footer, `Space v`, `?` and the palette offer **Show sidebar**.
+While the sidebar is hidden, `j` and `k` still move the selection, and
+`Space v`, `?` and the palette offer **Show sidebar**.
 
 | Glyph | Meaning |
 | --- | --- |
