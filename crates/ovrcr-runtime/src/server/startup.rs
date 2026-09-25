@@ -140,6 +140,11 @@ fn run_server_inner(
             }
         }
     }
+    let titles_dir = bound_socket
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("titles");
+    let _ = fs::remove_dir_all(&titles_dir);
     let listener = UnixListener::bind(&paths.socket)
         .with_context(|| format!("bind server socket {}", paths.socket.display()))?;
     fs::set_permissions(&paths.socket, fs::Permissions::from_mode(0o700))
@@ -163,6 +168,7 @@ fn run_server_inner(
             return Err(error);
         }
     };
+    let title_model = title::load_title_model(&registry_path);
     let (events, event_receiver) = event_channel(event_monitor.as_ref());
     let (dispatch, dispatch_receiver) = dispatch_channel(dispatch_monitor.as_ref());
     let state = Arc::new(ServerState {
@@ -226,6 +232,10 @@ fn run_server_inner(
                 }
             }
         })?;
+    let title_state = Arc::clone(&state);
+    let title_thread = thread::Builder::new()
+        .name("ovrcr-title-worker".into())
+        .spawn(move || title::TitleWorker::new(title_model, titles_dir).run(title_state))?;
     let mut signals = signal_hook::iterator::Signals::new([libc::SIGTERM, libc::SIGINT])?;
     let signal_handle = signals.handle();
     let signal_state = Arc::downgrade(&state);
@@ -275,8 +285,9 @@ fn run_server_inner(
             Err(error) => return Err(error).context("accept server client"),
         }
     }
-    // Wake the observer before joining it; shutdown must not wait for its next poll.
+    // Wake parked workers before joining them; shutdown must not wait for the next poll.
     refresh.thread().unpark();
+    title_thread.thread().unpark();
     signal_handle.close();
     let _ = signal_thread.join();
     let task_shutdown = task_manager.stop();
@@ -288,6 +299,7 @@ fn run_server_inner(
         .join()
         .map_err(|_| anyhow::anyhow!("server dispatcher panicked"))?;
     let _ = refresh.join();
+    let _ = title_thread.join();
     state.events.lock().unwrap().take();
     drop(state);
     drop(dispatch);

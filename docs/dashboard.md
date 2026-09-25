@@ -529,7 +529,9 @@ See [provider recovery support](agent-reporting-support.md#retained-pi-and-oh-my
 
 ### Stable session titles
 
-Every session keeps its user-supplied name or its original workspace-based
+Terminal sessions keep their user-supplied name or original workspace-based
+name. Agent sessions show a manual title first; otherwise a saved conversation
+subject for the recorded conversation may be shown before the original session
 name. Application title updates (OSC 0 and OSC 2), including “Thinking…”, are
 ignored for both Agent and Terminal launches—even when an agent starts inside
 a shell. Activity indicators and terminal output continue to update normally.
@@ -543,8 +545,9 @@ notifications continue to use stable identity.
 
 Manual titles survive dashboard detach, server restart, and reopen. Reopen
 replaces the process, not the row or its naming choice. Existing user-set titles
-are preserved after upgrading; previously saved application titles are ignored,
-so sessions without a manual title show their original names.
+are preserved after upgrading; previously saved application titles are ignored.
+A silent Codex history switch does not change the displayed subject; the row
+follows only the conversation reference OVRCR has recorded.
 
 ### Register project (`a`)
 
@@ -579,6 +582,7 @@ and a parse error shows in the footer and also uses defaults.
 ```toml
 desktop_notifications = false        # opt in to background Ready and input-needed alerts
 ready_sound = false                  # opt in to a sound for the same two alert kinds
+title_model = "pi/gpt-5-mini"        # optional model for agent conversation subjects
 branch_prefix = "feature/"            # prefix for new workspace branches
 picker_roots = ["~/Code", "~/src", "~"]
 
