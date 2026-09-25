@@ -1,0 +1,81 @@
+{
+ "pid": 91985,
+ "steps": [
+  [
+   "20-normal",
+   [
+    478,
+    110,
+    1100,
+    932
+   ]
+  ],
+  [
+   "21-tiny-shown",
+   [
+    478,
+    110,
+    480,
+    352
+   ]
+  ],
+  [
+   "22-tiny-hidden",
+   [
+    478,
+    110,
+    480,
+    352
+   ]
+  ],
+  [
+   "23-tiny-shown-again",
+   [
+    478,
+    110,
+    480,
+    352
+   ]
+  ],
+  [
+   "24-restored",
+   [
+    478,
+    110,
+    1100,
+    932
+   ]
+  ],
+  [
+   "25-restored-hidden",
+   [
+    478,
+    110,
+    1100,
+    932
+   ]
+  ],
+  [
+   "26-restored-shown",
+   [
+    478,
+    110,
+    1100,
+    932
+   ]
+  ]
+ ],
+ "original_window": [
+  478,
+  110,
+  1100,
+  932
+ ],
+ "helper_alive_after": true,
+ "owned_processes": [
+  "91985 90607 90908 Fri Sep 25 15:11:48 2026     /Users/xlyk/Code/ovrcr-workspaces/edc4028082285c7e0ebefbc61ebf6f7b/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui",
+  "92877 90607 91985 Fri Sep 25 15:11:50 2026     /Users/xlyk/Code/ovrcr-workspaces/edc4028082285c7e0ebefbc61ebf6f7b/target/OVRCR GUI.app/Contents/MacOS/ovrcr server",
+  " 5709  5709 91985 Fri Sep 25 15:12:14 2026     /Users/xlyk/Code/ovrcr-workspaces/edc4028082285c7e0ebefbc61ebf6f7b/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+ ],
+ "root": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-0OIFpK"
+}

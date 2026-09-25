@@ -1,0 +1,15 @@
+{
+ "launcher_exit": "GUI_EXIT=0",
+ "checked_at": "2026-09-25T15:14:20-0700",
+ "pids": {
+  "91985": "gone",
+  "92877": "gone",
+  "5709": "gone"
+ },
+ "pgids": {
+  "90607": "gone",
+  "5709": "gone"
+ },
+ "root_exists": false,
+ "socket_exists": false
+}

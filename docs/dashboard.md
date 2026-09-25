@@ -27,6 +27,7 @@ or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts
 | Key | Action |
 | --- | --- |
 | `j` / `k` / Down / Up | Select the next or previous visible sidebar row |
+| `b` | Hide or show the sidebar; the panes take its width, and `j` / `k` still move the selection |
 | `Enter` | Collapse or expand the selected project or workspace; send terminal input when a session is selected |
 | `v` | Open a second pane showing the next different visible session |
 | `Tab` / `Shift-Tab` | Focus the other pane |
@@ -47,7 +48,7 @@ or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts
 | `S` | Toggle the ready sound for this dashboard |
 | `q` | Detach; the server and every session keep running |
 
-`N`, `S`, `R` and `[` act on a key press; a key repeat or release does nothing.
+`N`, `S`, `R`, `b` and `[` act on a key press; a key repeat or release does nothing.
 `Alt` and `Super` do not change which action a key runs: `Alt-x` closes the pane
 that `x` closes. `Ctrl` reaches Browse only as `Ctrl-t`, whatever else is held
 with it; every other `Ctrl`-modified key is ignored. `Esc` and `Ctrl-g` cancel a
@@ -241,6 +242,11 @@ selected row shows a mauve bar in its first column and a lighter background; its
 own colours stay visible. A folded project shows `▸ N ws` and a folded workspace
 `▸ N` at the right edge.
 
+`b` hides the sidebar and the panes take the full width; `b` again shows it at
+the width it had before. The choice lasts for the attachment and is not saved.
+While the sidebar is hidden, `j` and `k` still move the selection, and
+`Space v`, `?` and the palette offer **Show sidebar**.
+
 | Glyph | Meaning |
 | --- | --- |
 | `-` | No hook report accepted yet |
@@ -283,7 +289,9 @@ In Browse and Terminal modes:
   the temporary single-pane layout used in narrow windows.
 - Dragging the sidebar's right border changes the sidebar width, between 20
   columns and half the window; the panes take the remaining width and are
-  resized. The chosen width lasts for the attachment and is not saved.
+  resized. The chosen width lasts for the attachment and is not saved. A
+  hidden sidebar has no border to drag, and clicks in its former area reach
+  the pane.
 - Wheel-up over a pane opens History at the captured tail. Further wheel ticks
   move one row; wheel-down at the newest row returns to the live pane.
 
@@ -352,7 +360,8 @@ processes and discards uncommitted changes, while live sessions and active task
 runs still block. The repository-root workspace cannot be removed. Remove every
 other workspace first, stop or acknowledge remaining sessions, then unregister
 the project; repository files stay on disk. Archived context is kept. `Space w n`
-creates a terminal, `Space p n` creates a workspace, and `Space v t` opens tasks.
+creates a terminal, `Space p n` creates a workspace, `Space v t` opens tasks,
+and `Space v b` hides or shows the sidebar.
 Terminal actions include Enter to focus, `p` to pause or `r` to resume, `c` for
 Copy, and `h` for History. Pause/Resume follow the session's current state.
 The Terminal group is hidden while a project or workspace is selected; bare

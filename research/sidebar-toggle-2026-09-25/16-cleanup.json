@@ -1,0 +1,8 @@
+{
+  "checked_at": "2026-09-25T15:09:59.362361-07:00",
+  "fixture_root": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-gm9UAM",
+  "fixture_exists": false,
+  "socket_exists": false,
+  "process_check": "Unavailable: sandbox denied ps with Operation not permitted",
+  "launcher_log_tail": "ompiling image v0.25.10\n   Compiling skrifa v0.44.0\n   Compiling harfrust v0.12.0\n   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/edc4028082285c7e0ebefbc61ebf6f7b/crates/ovrcr-protocol)\n   Compiling accesskit_macos v0.26.3\n   Compiling arboard v3.6.1\n   Compiling accesskit_winit v0.32.2\n   Compiling epaint v0.36.1\n   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/edc4028082285c7e0ebefbc61ebf6f7b/crates/ovrcr-terminal)\n   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/edc4028082285c7e0ebefbc61ebf6f7b/crates/ovrcr-runtime)\n   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/edc4028082285c7e0ebefbc61ebf6f7b/crates/ovrcr-tui)\n   Compiling egui v0.36.1\n   Compiling egui_glow v0.36.1\n   Compiling egui-winit v0.36.1\n   Compiling eframe v0.36.1\n   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/edc4028082285c7e0ebefbc61ebf6f7b)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 14s\nGUI_EXIT=0\n"
+}

@@ -1,0 +1,66 @@
+{
+ "roots": [
+  {
+   "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-uinpxt",
+   "mtime": 1790192325.798096,
+   "entries": [
+    ".server.lock",
+    "config.tasks",
+    "config.toml.sqlite3",
+    "repositories",
+    "server.log",
+    "workspaces"
+   ]
+  },
+  {
+   "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-gm9UAM",
+   "mtime": 1790372630.0136027,
+   "entries": [
+    ".server.lock",
+    "config.tasks",
+    "config.toml.sqlite3",
+    "repositories",
+    "server.log",
+    "server.sock",
+    "workspaces"
+   ]
+  }
+ ],
+ "gui_processes": [
+  " 3920  3920     1 Fri Sep 25 10:35:47 2026     /Users/xlyk/Code/ovrcr-workspaces/d300d52c9feade54b4698a99802948c1/target/debug/ovrcr server",
+  " 4006  4006     1 Fri Sep 25 10:35:47 2026     /Users/xlyk/Code/ovrcr-workspaces/d300d52c9feade54b4698a99802948c1/target/debug/ovrcr server",
+  " 4026  4026     1 Fri Sep 25 10:35:47 2026     /Users/xlyk/Code/ovrcr-workspaces/d300d52c9feade54b4698a99802948c1/target/debug/ovrcr server",
+  " 4145  4145     1 Fri Sep 25 10:35:47 2026     /Users/xlyk/Code/ovrcr-workspaces/d300d52c9feade54b4698a99802948c1/target/debug/ovrcr server",
+  " 4646  4646     1 Fri Sep 25 10:35:47 2026     /Users/xlyk/Code/ovrcr-workspaces/d300d52c9feade54b4698a99802948c1/target/debug/ovrcr server",
+  " 5888  5888     1 Fri Sep 25 10:35:48 2026     /Users/xlyk/Code/ovrcr-workspaces/d300d52c9feade54b4698a99802948c1/target/debug/ovrcr server",
+  " 9289  9286     1 Mon Sep 14 12:04:17 2026     /Users/xlyk/Code/ovrcr/target/debug/deps/resource_cli-e18341e11d4eeb59 --exact remove_project_reports_workspaces_remain --nocapture",
+  " 9747  9747  5045 Fri Sep 25 14:43:33 2026     rtk gh pr checks 188 --repo xlyk/ovrcr --watch",
+  " 9751  9747  9747 Fri Sep 25 14:43:33 2026     /opt/homebrew/bin/gh pr checks 188 --repo xlyk/ovrcr --watch",
+  "11913 89452 89501 Fri Sep 25 14:43:39 2026     /Users/xlyk/Code/ovrcr-workspaces/edc4028082285c7e0ebefbc61ebf6f7b/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui",
+  "12354 89452 11913 Fri Sep 25 14:43:41 2026     /Users/xlyk/Code/ovrcr-workspaces/edc4028082285c7e0ebefbc61ebf6f7b/target/OVRCR GUI.app/Contents/MacOS/ovrcr server",
+  "22942 22941 22941 Fri Sep 25 14:44:04 2026     (ovrcr)",
+  "22956 22955 22955 Fri Sep 25 14:44:04 2026     (ovrcr)",
+  "23028 23019 23019 Fri Sep 25 14:44:04 2026     (ovrcr)",
+  "23039 23036 23036 Fri Sep 25 14:44:04 2026     (ovrcr)",
+  "23127 23127 76604 Fri Sep 25 14:44:04 2026     /bin/sh -c : ovrcr-managed-claude-v1; '/Users/xlyk/Code/ovrcr/target/debug/ovrcr' report claude-statusline --stdin-json --render-command 'ccstatusline'",
+  "23144 23127 23127 Fri Sep 25 14:44:04 2026     /Users/xlyk/Code/ovrcr/target/debug/ovrcr report claude-statusline --stdin-json --render-command ccstatusline",
+  "45159 45159 45155 Fri Sep 25 08:48:16 2026     /Users/xlyk/.local/bin/ovrcr server",
+  "89452 89452 76602 Fri Sep 25 14:42:25 2026     /bin/zsh -c source /Users/xlyk/.claude/shell-snapshots/snapshot-zsh-1790371503891-hve5dc.sh 2>/dev/null || true && setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'rtk proxy just gui > /private/tmp/claude-501/-Users-xlyk-Code-ovrcr-workspaces-edc4028082285c7e0ebefbc61ebf6f7b/717276fe-d067-405b-b9cb-a4d6e170461c/scratchpad/gui.log 2>&1; echo \"GUI_EXIT=$?\" >> /private/tmp/claude-501/-Users-xlyk-Code-ovrcr-workspaces-edc4028082285c7e0ebefbc61ebf6f7b/717276fe-d067-405b-b9cb-a4d6e170461c/scratchpad/gui.log' < /dev/null && pwd -P >| /tmp/claude-a4b3-cwd",
+  "89501 89452 89488 Fri Sep 25 14:42:25 2026     rtk proxy ./ovrcr-gui",
+  "98930 98930     1 Thu Sep 24 12:03:40 2026     /Users/xlyk/.local/bin/claude daemon run --json-path /Users/xlyk/.claude/daemon.json --log-file /Users/xlyk/.claude/daemon.log --origin transient --spawned-by {\"label\":\"claude\",\"cwd\":\"/Users/xlyk/Code/ovrcr-workspaces/dev\",\"pid\":17383}",
+  "45155 45143 45144 Fri Sep 25 08:48:16 2026     /Users/xlyk/.local/bin/ovrcr",
+  "69729 69729 45159 Fri Sep 25 13:39:36 2026     /Users/xlyk/.local/bin/ovrcr agent run pi -- /Users/xlyk/.local/bin/pi",
+  "37453 37453 45159 Fri Sep 25 10:25:28 2026     /Users/xlyk/.local/bin/ovrcr agent run pi -- /Users/xlyk/.local/bin/pi",
+  "22729 22729 45159 Fri Sep 25 12:38:02 2026     /Users/xlyk/.local/bin/ovrcr agent run pi -- /Users/xlyk/.local/bin/pi",
+  " 4900  4900 45159 Fri Sep 25 13:21:01 2026     /Users/xlyk/.local/bin/ovrcr agent run pi -- /Users/xlyk/.local/bin/pi",
+  "76156 76156 45159 Fri Sep 25 14:24:05 2026     /Users/xlyk/.local/bin/ovrcr agent run claude -- /Users/xlyk/.local/bin/claude --permission-mode dontAsk",
+  "76897 76897 76156 Fri Sep 25 14:24:06 2026     /Users/xlyk/.local/bin/ovrcr __agent-collector",
+  "76201 76201 45159 Fri Sep 25 14:24:05 2026     /Users/xlyk/.local/bin/ovrcr agent run claude -- /Users/xlyk/.local/bin/claude --permission-mode dontAsk",
+  "76905 76905 76201 Fri Sep 25 14:24:06 2026     /Users/xlyk/.local/bin/ovrcr __agent-collector",
+  "69527 69527 45159 Fri Sep 25 14:15:58 2026     /Users/xlyk/.local/bin/ovrcr agent run claude -- /Users/xlyk/.local/bin/claude --permission-mode dontAsk",
+  "69903 69903 69527 Fri Sep 25 14:16:00 2026     /Users/xlyk/.local/bin/ovrcr __agent-collector",
+  "15963 15963 45159 Fri Sep 25 14:17:58 2026     /Users/xlyk/.local/bin/ovrcr agent run pi -- /Users/xlyk/.local/bin/pi",
+  "17943 17943 11913 Fri Sep 25 14:43:50 2026     /Users/xlyk/Code/ovrcr-workspaces/edc4028082285c7e0ebefbc61ebf6f7b/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+ ],
+ "recorded_at": "2026-09-25T14:44:05-0700"
+}
