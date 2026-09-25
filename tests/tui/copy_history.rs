@@ -1516,43 +1516,21 @@ fn pause_resume_dense_status_has_priority() {
     assert_eq!(row(3).trim_end(), "▌    P local");
     let rendered = draw_text(&dashboard, 120, 40);
     assert!(rendered.contains("pid: 555  elapsed: 0m  agent busy  paused"));
-    assert!(rendered.lines().last().unwrap().contains(" r "));
-    assert!(
-        !rendered
-            .lines()
-            .last()
-            .unwrap()
-            .split_whitespace()
-            .any(|key| key == "p")
-    );
     assert!(
         rendered
             .lines()
             .last()
             .unwrap()
-            .split_whitespace()
-            .any(|key| key == "q")
+            .starts_with("BROWSE  Space Menu  : Search  ? Help")
     );
-    assert!(
-        rendered
-            .lines()
-            .last()
-            .unwrap()
-            .split_whitespace()
-            .any(|key| key == "t")
-    );
-
-    let mut narrow = Terminal::new(TestBackend::new(40, 20)).unwrap();
-    narrow
-        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
-        .unwrap();
-    let footer = (0..40)
-        .map(|x| narrow.backend().buffer()[(x, 19)].symbol())
-        .collect::<String>();
-    assert!(
-        footer.split_whitespace().any(|key| key == "r"),
-        "narrow footer was {footer:?}"
-    );
+    // The paused state shows in the terminal menu: Resume is offered, Pause is not.
+    dashboard.key(KeyCode::Char(' '));
+    dashboard.key(KeyCode::Char('t'));
+    let menu = draw_text(&dashboard, 120, 40);
+    assert!(menu.contains("r  Resume"), "{menu}");
+    assert!(!menu.contains("p  Pause"), "{menu}");
+    let narrow = draw_text(&dashboard, 40, 20);
+    assert!(narrow.contains("Resume"), "narrow menu was {narrow:?}");
 }
 
 #[test]

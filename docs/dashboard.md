@@ -6,10 +6,12 @@ the full contract.
 
 ## Modes
 
-The dashboard has four input modes. The footer names the current one and shows
-a prioritized set of enabled shortcuts with action names. Hints that do not fit
-remain available through `?` or `Space`. History shows `Esc Cancel copy` while
-a copy is pending and `Esc Back` otherwise.
+The dashboard has four input modes. The footer names the current one. In
+Browse it shows only the three keys that open everything else, `Space Menu`,
+`: Search` and `? Help`; every other action is listed in the menu and the
+palette. Copy and History show their own prioritized shortcuts, and hints that
+do not fit remain available through `?` or `Space`. History shows `Esc Cancel
+copy` while a copy is pending and `Esc Back` otherwise.
 
 | Mode | Entered by | Leaves with |
 | --- | --- | --- |

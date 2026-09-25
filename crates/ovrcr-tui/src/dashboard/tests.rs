@@ -3420,3 +3420,31 @@ fn root_workspace_sorts_first_regardless_of_name() {
         .collect::<Vec<_>>();
     assert_eq!(ids, ["main", "aaa", "feature/x"]);
 }
+
+#[test]
+fn browse_footer_lists_only_the_menu_search_and_help_keys() {
+    use crate::protocol::SessionPhase;
+    let mut dashboard = keymap_dashboard(SessionPhase::Running);
+    assert_eq!(
+        super::hints::footer(&dashboard, 120),
+        "BROWSE  Space Menu  : Search  ? Help"
+    );
+    // Hints drop from the right when the footer is narrow.
+    assert_eq!(super::hints::footer(&dashboard, 20), "BROWSE  Space Menu");
+    // The per-action state the footer used to show still lives in the table.
+    dashboard.hierarchy.projects[0].workspaces[0]
+        .sessions
+        .push(keymap_session(13, SessionPhase::Running));
+    assert!(binding_named(&dashboard, "v").enabled());
+    assert!(dashboard.split_pane());
+    assert_eq!(binding_named(&dashboard, "v").reason, Some("already split"));
+    assert_eq!(
+        super::hints::footer(&dashboard, 120),
+        "BROWSE  Space Menu  : Search  ? Help"
+    );
+    dashboard.mode = InputMode::Terminal;
+    assert_eq!(
+        super::hints::footer(&dashboard, 120),
+        "Terminal mode  Ctrl-g browse"
+    );
+}
