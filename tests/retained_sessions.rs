@@ -380,7 +380,12 @@ fn grok_managed_launch_retains_its_history_file_for_titles_without_resume() {
                 .contains("not available"),
             "{row}"
         );
-        assert_eq!(row["title"], "grok-retained");
+        assert_eq!(row["name"], "grok-retained");
+        assert_eq!(row["display_name"], "grok-retained");
+        assert!(
+            row["title"].is_null(),
+            "an Agent creation name is not a pin: {row}"
+        );
         let bytes = std::fs::read(&database).unwrap();
         for private in [
             "PRIVATE_GROK_PROMPT_184",
