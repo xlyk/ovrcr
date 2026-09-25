@@ -426,7 +426,7 @@ reporting support.
 Workspace defaults to the selected workspace. Name is optional: leave it blank
 for a stable workspace-based name, or enter your own name. After creation, typing goes to the new
 session immediately. `n` and other new launches are unavailable when the selected
-root workspace shows a warning. Detected `pi` and `omp` entries retain their managed launch
+root workspace shows a warning. Detected `pi`, `omp` and `grok` entries retain their managed launch
 wrappers; an `agents` override replaces the command entirely.
 
 ### Create workspace (`w`)

@@ -2,6 +2,15 @@ use super::{AppResult, RuntimeError, args::AgentCommand};
 use ovrcr::protocol::AgentProvider;
 use std::os::unix::process::ExitStatusExt;
 
+/// A managed Grok launch needs no hooks or configuration: nothing is reported and the
+/// retained history is a title source, so there is nothing to set up or diagnose.
+fn grok_needs_no_setup() -> RuntimeError {
+    RuntimeError::new(
+        ovrcr::protocol::ErrorCode::InvalidRequest,
+        "grok has no setup or doctor: `ovrcr agent run grok -- grok` retains the session history without hooks; resume is unavailable",
+    )
+}
+
 fn provider(name: &str) -> AgentProvider {
     AgentProvider::from_name(name).expect("clap value_parser accepts known provider names")
 }
@@ -14,6 +23,7 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
             settings,
         } => {
             return match provider.as_str() {
+                "grok" => Err(grok_needs_no_setup()),
                 "codex" => super::codex_setup::setup(settings.as_deref()),
                 "pi" | "omp" => super::managed::setup(
                     super::managed::managed(&provider).expect("managed provider"),
@@ -29,6 +39,7 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
         } => {
             let executable = executable.unwrap_or_else(|| provider.clone().into());
             return match provider.as_str() {
+                "grok" => Err(grok_needs_no_setup()),
                 "codex" => super::codex_setup::doctor(settings.as_deref(), session, &executable),
                 "pi" | "omp" => super::managed::doctor(
                     super::managed::managed(&provider).expect("managed provider"),
@@ -73,6 +84,7 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
             "codex" => ovrcr::report::codex::receiver(lease, native_argv),
             "pi" => ovrcr::report::pi::receiver(lease, native_argv),
             "omp" => ovrcr::report::omp::receiver(lease, native_argv),
+            "grok" => ovrcr::report::grok::receiver(lease, native_argv),
             _ => ovrcr::report::admission::receiver(lease, native_argv),
         })
     })
