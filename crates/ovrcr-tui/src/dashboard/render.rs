@@ -467,6 +467,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     let rows = dashboard.visible_rows();
     let width = usize::from(layout.sidebar_content.width);
     let heights = tree_row_heights(dashboard, &rows, width);
+    let stacked = heights.contains(&2);
     let viewport_height = usize::from(layout.sidebar_content.height);
     let start = dashboard.tree_offset.min(tree_line_count(&rows, &heights));
     for screen_line in 0..viewport_height {
@@ -476,7 +477,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
             continue;
         };
         let y = layout.sidebar_content.y.saturating_add(screen_line as u16);
-        let (line, style) = tree_line_text(dashboard, row, row_line, width, now_unix_ms);
+        let (line, style) = tree_line_text(dashboard, row, row_line, stacked, width, now_unix_ms);
         let line_area = Rect::new(layout.sidebar_content.x, y, layout.sidebar_content.width, 1);
         frame.render_widget(Paragraph::new(line).style(style), line_area);
     }
@@ -951,19 +952,28 @@ pub(super) fn tree_row_gap(rows: &[TreeRow], index: usize) -> usize {
     usize::from(index > 0 && matches!(rows[index], TreeRow::Project { .. }))
 }
 
-/// Lines each row takes: one, or two for a session whose agent label does not fit
-/// beside its name in a `width`-cell sidebar.
+/// Lines each row takes. Stacking is all or nothing: when any visible agent label
+/// does not fit beside its name in a `width`-cell sidebar, every session with an
+/// agent label takes two lines, so the column reads the same way top to bottom.
+/// Local shells and sessions without a label always take one.
 pub(super) fn tree_row_heights(
     dashboard: &Dashboard,
     rows: &[TreeRow],
     width: usize,
 ) -> Vec<usize> {
+    let session = |row: &TreeRow| match row {
+        TreeRow::Session { id } => find_session(dashboard, *id),
+        TreeRow::Project { .. } | TreeRow::Workspace { .. } => None,
+    };
+    let stacked = rows
+        .iter()
+        .filter_map(session)
+        .any(|session| agent_label_needs_own_line(session, width));
     rows.iter()
-        .map(|row| match row {
-            TreeRow::Session { id } => find_session(dashboard, *id).map_or(1, |session| {
-                1 + usize::from(agent_label_needs_own_line(session, width))
-            }),
-            TreeRow::Project { .. } | TreeRow::Workspace { .. } => 1,
+        .map(|row| {
+            let labelled =
+                session(row).is_some_and(|session| sidebar_agent_label(session).is_some());
+            1 + usize::from(stacked && labelled)
         })
         .collect()
 }
@@ -1015,6 +1025,7 @@ fn tree_line_text(
     dashboard: &Dashboard,
     row: &TreeRow,
     row_line: usize,
+    stacked: bool,
     width: usize,
     now_unix_ms: u64,
 ) -> (Line<'static>, Style) {
@@ -1183,7 +1194,8 @@ fn tree_line_text(
                 if exited {
                     name_style = name_style.add_modifier(Modifier::DIM);
                 }
-                let fitted = if close_mark || agent_label_needs_own_line(session, width) {
+                // With the column stacked, every label is on its own line, even one that fits.
+                let fitted = if close_mark || stacked {
                     None
                 } else {
                     sidebar_agent_label(session)

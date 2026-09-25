@@ -958,6 +958,10 @@ fn narrow_session_row_keeps_its_model_on_a_second_line() {
     assert_eq!(row(&terminal, 4), "▌    - review                ");
     assert_eq!(row(&terminal, 5), "▌    └ pi:grok-4.7           ");
     assert_eq!(row(&terminal, 6).trim_end(), "  󰘬 lifecycle");
+    // Stacking is all or nothing: `claude` alone would fit, but it stacks with the column.
+    assert_eq!(row(&terminal, 7), "     $ local                 ");
+    assert_eq!(row(&terminal, 8), "     · implement             ");
+    assert_eq!(row(&terminal, 9), "     └ claude                ");
     let buffer = terminal.backend().buffer();
     assert_eq!(
         buffer[(7, 5)].fg,
@@ -1017,6 +1021,48 @@ fn narrow_session_row_keeps_its_model_on_a_second_line() {
         DashboardAction::Redraw
     ));
     assert!(palette_text(&dashboard).contains("Confirm action"));
+}
+
+#[test]
+fn sidebar_stacks_every_agent_label_or_none() {
+    // At 29 cells `claude` fits beside a twelve-cell name and `pi:grok-4.7` does not.
+    let draw = |review_label: &str| {
+        let mut dashboard = dashboard_fixture();
+        let mut hierarchy = fixture_hierarchy();
+        review_session_mut(&mut hierarchy).label = review_label.into();
+        implement_session_mut(&mut hierarchy).label = "claude".into();
+        dashboard.install_hierarchy(hierarchy);
+        dashboard.install_focus(SessionId(5));
+        let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
+        terminal
+            .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+            .unwrap();
+        (0..12)
+            .map(|y| {
+                (0..29)
+                    .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect::<Vec<_>>()
+    };
+    let inline = draw("claude");
+    assert_eq!(inline[4], "     - review         claude");
+    assert_eq!(inline[5], "  󰘬 lifecycle");
+    assert_eq!(inline[7], "     · implement      claude");
+    assert_eq!(inline[8], "");
+    let stacked = draw("pi / grok-4.7");
+    assert_eq!(stacked[4], "     - review");
+    assert_eq!(stacked[5], "     └ pi:grok-4.7");
+    assert_eq!(stacked[6], "  󰘬 lifecycle");
+    assert_eq!(stacked[7], "     $ local", "shells never stack");
+    assert_eq!(stacked[8], "     · implement");
+    assert_eq!(
+        stacked[9], "     └ claude",
+        "a label that fits still stacks"
+    );
+    assert_eq!(stacked[10], "");
 }
 
 #[test]

@@ -233,11 +233,13 @@ glyph and the session name, with the agent name from its label right-aligned in 
 provider colour. When a model is known, it follows a colon in the quiet gray,
 as in `pi:grok-4.7`. A model that repeats the agent name drops that repeat, and a
 missing model leaves the agent name alone. A long name clips with `…` before that
-label. The label shares the name's line only when the whole `agent:model` fits
-beside at least twelve cells of name; otherwise the name takes the line and the
-label moves to one extra line under it, hung from the status glyph by a `└`
-connector at the name column and clipped
-with `…` if even that line is too narrow. The model is never dropped. The extra
+label. The label shares the name's line only while every visible `agent:model`
+fits beside at least twelve cells of its name. As soon as one does not, the
+sidebar stacks as a whole: every session with an agent label keeps its name on
+one line and moves the label to one extra line under it, hung from the status
+glyph by a `└` connector at the name column and clipped with `…` if even that
+line is too narrow, while local shells stay on one line. The model is never
+dropped, and no two rows use different layouts at the same width. The extra
 line belongs to the same session: `j`, `k` and the mouse treat both lines as one
 row, the selection bar and background cover both, and the hover `[x]` sits on
 the first line. Local shells show `$ local` on one line with no agent label
