@@ -53,6 +53,13 @@ pub(super) enum Command {
     },
     #[command(name = "__agent-collector", hide = true)]
     AgentCollector,
+    /// Point existing managed reporter commands at this binary. `just run` calls this
+    /// after installing ~/.local/bin/ovrcr. It does not add hooks or change trust.
+    #[command(name = "__retarget-hooks", hide = true)]
+    RetargetHooks {
+        #[arg(long = "settings")]
+        settings: Vec<PathBuf>,
+    },
     /// Register and inspect Git projects.
     #[command(visible_alias = "projects")]
     Project {

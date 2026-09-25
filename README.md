@@ -440,11 +440,15 @@ just restart   # stop a leftover local server, then start the dashboard
 ```
 
 `just run` refreshes `~/.local/bin/ovrcr` with the debug build before launching
-it, forwarding any arguments (for example, `just run --version`). Keep
-`~/.local/bin` on your `PATH`. It builds into `CARGO_TARGET_DIR` when set,
-otherwise the checkout's `target` directory. A failed build or install stops
-the launch; replacement is atomic so running processes keep their existing
-binary. Existing servers keep running their previous version until restarted.
+it, forwarding any arguments (for example, `just run --version`). It then
+rewrites existing Claude, Codex, and Grok reporter commands that already call
+`ovrcr` so they name that installed binary. A command that already names it is
+left unchanged, which keeps a Codex trust hash valid. It does not add hooks or
+change trust. Keep `~/.local/bin` on your `PATH`. It builds into
+`CARGO_TARGET_DIR` when set, otherwise the checkout's `target` directory. A
+failed build, install, or hook retarget stops the launch; replacement is atomic
+so running processes keep their existing binary. Existing servers keep running
+their previous version until restarted.
 
 Or with Cargo directly — always name the package, since the workspace has five:
 

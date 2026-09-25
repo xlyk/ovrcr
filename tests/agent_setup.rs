@@ -721,3 +721,56 @@ fn doctor_distinguishes_compatible_patches_from_tested_releases() {
     }
     assert!(!root.path().join("socket").exists());
 }
+
+#[test]
+fn retarget_hooks_rewrites_managed_reporter_paths_and_stops() {
+    let root = tempfile::tempdir().unwrap();
+    let settings = root.path().join("settings.json");
+    let original = "{\n  \"keep\": \"echo '/old/ovrcr'\",\n  \"hooks\": {\"Stop\":[{\"hooks\":[{\"command\":\": ovrcr-managed-claude-v1; '/tmp/old/ovrcr' report claude --stdin-json\"}]}]},\n  \"statusLine\": {\"command\": \": ovrcr-managed-claude-v1; '/tmp/old/ovrcr' report claude-statusline --stdin-json --render-command 'ccstatusline'\"}\n}\n";
+    std::fs::write(&settings, original).unwrap();
+    std::fs::set_permissions(&settings, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let toml = root.path().join("config.toml");
+    std::fs::write(
+        &toml,
+        "# keep\ncommand = \"exec '/tmp/old/ovrcr' report codex --stdin\"\nother = \"exec '/tmp/notify.sh'\"\n",
+    )
+    .unwrap();
+    let output = command(&root)
+        .args(["__retarget-hooks", "--settings"])
+        .arg(&settings)
+        .arg("--settings")
+        .arg(&toml)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let exe = env!("CARGO_BIN_EXE_ovrcr");
+    let rewritten = std::fs::read_to_string(&settings).unwrap();
+    assert!(rewritten.contains(&format!("'{exe}' report claude --stdin-json")));
+    assert!(rewritten.contains(&format!(
+        "'{exe}' report claude-statusline --stdin-json --render-command 'ccstatusline'"
+    )));
+    assert!(rewritten.contains("echo '/old/ovrcr'"));
+    assert_eq!(
+        std::fs::metadata(&settings).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let toml_text = std::fs::read_to_string(&toml).unwrap();
+    assert!(toml_text.starts_with("# keep\n"));
+    assert!(toml_text.contains(&format!("exec '{exe}' report codex --stdin")));
+    assert!(toml_text.contains("exec '/tmp/notify.sh'"));
+    let again = command(&root)
+        .args(["__retarget-hooks", "--settings"])
+        .arg(&settings)
+        .arg("--settings")
+        .arg(&toml)
+        .output()
+        .unwrap();
+    assert!(again.status.success());
+    assert_eq!(std::fs::read_to_string(&settings).unwrap(), rewritten);
+    assert_eq!(std::fs::read_to_string(&toml).unwrap(), toml_text);
+    assert!(String::from_utf8_lossy(&again.stderr).contains("already name"));
+}

@@ -43,6 +43,214 @@ pub(super) fn binary() -> anyhow::Result<String> {
         .map_err(|_| anyhow::anyhow!("OVRCR executable path is not UTF-8"))
 }
 
+const REPORTERS: &[&str] = &[
+    " report claude-statusline",
+    " report claude-context",
+    " report claude",
+    " report codex",
+];
+
+/// Replace the `ovrcr` token in existing managed reporter commands with
+/// `executable`. A command that already names that file is left byte-for-byte,
+/// so a Codex trust hash does not change when `just run` only refreshes the
+/// installed binary. Unrelated commands are untouched.
+pub(super) fn retarget_reporter_text(text: &str, executable: &str) -> String {
+    let quoted = quote(executable);
+    let mut out = String::with_capacity(text.len());
+    let mut cursor = 0;
+    while let Some(at) = next_reporter(&text[cursor..]) {
+        let abs = cursor + at;
+        match preceding_word(&text[..abs]) {
+            Some((start, end, token))
+                if start >= cursor
+                    && Path::new(&token)
+                        .file_name()
+                        .is_some_and(|name| name == "ovrcr")
+                    && !same_binary(&token, executable) =>
+            {
+                out.push_str(&text[cursor..start]);
+                out.push_str(&quoted);
+                cursor = end;
+            }
+            _ => {
+                out.push_str(&text[cursor..abs + 1]);
+                cursor = abs + 1;
+            }
+        }
+    }
+    out.push_str(&text[cursor..]);
+    out
+}
+
+fn next_reporter(text: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut best = None;
+    for kind in REPORTERS {
+        let mut from = 0;
+        while let Some(offset) = text[from..].find(kind) {
+            let at = from + offset;
+            let after = at + kind.len();
+            let boundary = bytes
+                .get(after)
+                .is_none_or(|byte| !byte.is_ascii_alphanumeric() && *byte != b'-');
+            if boundary {
+                best = Some(best.map_or(at, |found: usize| found.min(at)));
+                break;
+            }
+            from = at + 1;
+        }
+    }
+    best
+}
+
+fn preceding_word(prefix: &str) -> Option<(usize, usize, String)> {
+    let bytes = prefix.as_bytes();
+    let mut end = bytes.len();
+    while end > 0 && bytes[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    if end == 0 {
+        return None;
+    }
+    let mut start = end;
+    while start > 0 && !bytes[start - 1].is_ascii_whitespace() {
+        start -= 1;
+    }
+    let (word_end, token) = read_word(prefix, start)?;
+    (word_end == end).then_some((start, end, token))
+}
+
+fn read_word(text: &str, start: usize) -> Option<(usize, String)> {
+    let bytes = text.as_bytes();
+    let mut index = start;
+    let mut token = String::new();
+    while index < bytes.len() && !bytes[index].is_ascii_whitespace() {
+        match bytes[index] {
+            b'\'' | b'"' => {
+                let quote = bytes[index];
+                let close = text[index + 1..].find(quote as char)?;
+                token.push_str(&text[index + 1..index + 1 + close]);
+                index += close + 2;
+            }
+            byte => {
+                token.push(byte as char);
+                index += 1;
+            }
+        }
+    }
+    Some((index, token))
+}
+
+fn same_binary(token: &str, executable: &str) -> bool {
+    token == executable
+        || matches!(
+            (std::fs::canonicalize(token), std::fs::canonicalize(executable)),
+            (Ok(left), Ok(right)) if left == right
+        )
+}
+
+/// Rewrite managed reporter commands in `path` to `executable`. Returns whether
+/// the file changed. Missing files are unchanged. Oversized or non-UTF-8 files
+/// are left untouched and reported.
+pub(super) fn retarget_file(path: &Path, executable: &str) -> anyhow::Result<bool> {
+    if !path.is_file() {
+        return Ok(false);
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(1_048_577)
+        .read_to_end(&mut bytes)?;
+    anyhow::ensure!(bytes.len() <= 1_048_576, "settings file exceeds 1 MiB");
+    let text = String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("settings are not UTF-8"))?;
+    let next = retarget_reporter_text(&text, executable);
+    if next == text {
+        return Ok(false);
+    }
+    let mode = std::fs::metadata(path)?.permissions();
+    let tmp = path.with_file_name(format!(
+        ".{}.ovrcr-retarget",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("settings")
+    ));
+    std::fs::write(&tmp, next.as_bytes())?;
+    std::fs::set_permissions(&tmp, mode)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(true)
+}
+
+pub(super) fn default_hook_files() -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    if let Some(home) = std::env::var_os("HOME")
+        && let Ok(entries) = std::fs::read_dir(home)
+    {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name != ".claude"
+                && !name.starts_with(".claude-")
+                && name != ".codex"
+                && name != ".grok"
+            {
+                continue;
+            }
+            for file in [
+                "settings.json",
+                "settings.local.json",
+                "config.toml",
+                "hooks.json",
+            ] {
+                let path = entry.path().join(file);
+                if path.is_file() {
+                    files.push(path);
+                }
+            }
+        }
+    }
+    for (var, names) in [
+        ("CLAUDE_CONFIG_DIR", &["settings.json"][..]),
+        ("CODEX_HOME", &["config.toml", "hooks.json"][..]),
+        ("GROK_HOME", &["config.toml", "settings.json"][..]),
+    ] {
+        if let Some(dir) = std::env::var_os(var) {
+            for name in names {
+                let path = std::path::PathBuf::from(&dir).join(name);
+                if path.is_file() {
+                    files.push(path);
+                }
+            }
+        }
+    }
+    files.sort();
+    files.dedup();
+    files
+}
+
+pub(super) fn retarget_hooks(executable: &str, files: &[std::path::PathBuf]) -> AppResult<()> {
+    let mut changed = Vec::new();
+    for path in files {
+        match retarget_file(path, executable) {
+            Ok(true) => changed.push(path.display().to_string()),
+            Ok(false) => {}
+            Err(error) => {
+                return Err(RuntimeError::internal(anyhow::anyhow!(
+                    "{}: {:#}",
+                    path.display(),
+                    error
+                )));
+            }
+        }
+    }
+    if changed.is_empty() {
+        eprintln!("retarget hooks: managed reporter commands already name {executable}");
+    } else {
+        for path in &changed {
+            eprintln!("retarget hooks: updated {path}");
+        }
+    }
+    Ok(())
+}
+
 fn exact(command: &str, executable: &str, report: &str) -> bool {
     [
         "ovrcr".to_string(),
@@ -391,5 +599,21 @@ mod tests {
                 "Stop:synchronous_reporter_missing"
             ]
         );
+    }
+
+    #[test]
+    fn retarget_replaces_only_a_different_ovrcr_reporter_token() {
+        let installed = "/Users/xlyk/.local/bin/ovrcr";
+        let source = "\
+# keep\ncommand = \"exec '/tmp/old/ovrcr' report codex --stdin\"\nother = \"exec '/tmp/notify.sh'\"\nstatus = \": ovrcr-managed-claude-v1; '/tmp/old/ovrcr' report claude-statusline --stdin-json --render-command 'ccstatusline'\"\nsame = \"exec '/Users/xlyk/.local/bin/ovrcr' report codex --stdin\"\nplain = \"echo keep /tmp/old/ovrcr\"\n";
+        let next = retarget_reporter_text(source, installed);
+        assert!(next.contains("# keep"));
+        assert!(next.contains("exec '/tmp/notify.sh'"));
+        assert!(next.contains("echo keep /tmp/old/ovrcr"));
+        assert!(next.contains(": ovrcr-managed-claude-v1; '/Users/xlyk/.local/bin/ovrcr' report claude-statusline --stdin-json --render-command 'ccstatusline'"));
+        assert!(next.contains("exec '/Users/xlyk/.local/bin/ovrcr' report codex --stdin"));
+        assert!(next.contains("echo keep /tmp/old/ovrcr"));
+        assert!(!next.contains("exec '/tmp/old/ovrcr'"));
+        assert_eq!(retarget_reporter_text(&next, installed), next);
     }
 }
