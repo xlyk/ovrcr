@@ -145,14 +145,22 @@ impl TitleWorker {
                 CallResult::Title(topic) => {
                     let changed = {
                         let mut retained = state.retained.lock();
-                        retained
-                            .save_conversation_subject(
-                                record.id,
-                                record.run,
-                                &candidate.conversation,
-                                topic,
-                            )
-                            .unwrap_or(false)
+                        match retained.save_conversation_subject(
+                            record.id,
+                            record.run,
+                            &candidate.conversation,
+                            topic,
+                        ) {
+                            Ok(changed) => changed,
+                            // The topic is a bound parameter, not part of this error.
+                            Err(error) => {
+                                eprintln!(
+                                    "conversation subject save failed for session {}: {error}",
+                                    record.id.0
+                                );
+                                false
+                            }
+                        }
                     };
                     if changed {
                         super::dispatch::publish_session_changed(state, record.id);
