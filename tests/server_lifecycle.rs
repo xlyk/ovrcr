@@ -13143,7 +13143,9 @@ fn desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_vi
     for command in ["UserPromptSubmit:root:b", "Stop:root:b"] {
         desktop_codex_callback(&fixture, queued.id, &mut queued_index, command);
     }
-    dashboard.wait_screen(|screen| screen.contains("✓ ● codex-queued"));
+    dashboard.wait_screen(|screen| {
+        screen.contains("codex-queued") && screen.contains('✓') && !screen.contains('●')
+    });
     assert!(
         group_exists(blocked_pid),
         "first host no longer blocks the queue"

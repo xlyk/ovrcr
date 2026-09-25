@@ -1689,6 +1689,15 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
     dashboard.hierarchy.projects[0].workspaces[0].sessions[0].label =
         "long Codex label that cannot fit".into();
     dashboard.select_session(SessionId(2));
+    {
+        let session = &mut dashboard.hierarchy.projects[0].workspaces[0].sessions[0];
+        let binding = session.agent.as_ref().unwrap().binding.clone();
+        session.unread = Some(ReadyObservation {
+            binding,
+            turn: Some("turn".into()),
+            activity_revision: 1,
+        });
+    }
     for width in [80, 100, 120] {
         let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
         terminal
@@ -1712,6 +1721,7 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
         );
     }
     dashboard.hierarchy.projects[0].workspaces[0].sessions.pop();
+    dashboard.hierarchy.projects[0].workspaces[0].sessions[0].unread = None;
     dashboard.select_session(SessionId(1));
     for width in [80, 100, 120] {
         for exited in [false, true] {
