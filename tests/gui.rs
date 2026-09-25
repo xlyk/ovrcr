@@ -52,7 +52,7 @@ fn palette_creates_switches_and_closes_a_real_terminal() -> Result<()> {
     let root = demo.root().to_owned();
     let mut pgids = demo_session_groups(&root)?;
     let mut terminal = demo.dashboard(40, 120, Default::default())?;
-    wait_screen(&terminal, "implement lifecycle")?;
+    wait_screen(&terminal, "claude:sonnet-4")?;
     let initial = terminal.screen().contents();
     let sidebar = initial
         .lines()
@@ -62,10 +62,16 @@ fn palette_creates_switches_and_closes_a_real_terminal() -> Result<()> {
     for agent in ["claude", "codex", "pi", "grok"] {
         assert!(sidebar.contains(agent), "missing agent {agent}: {sidebar}");
     }
-    for model in ["sonnet-4", "gpt-5.4", "grok-4.6", "opus-4"] {
+    for label in [
+        "claude:sonnet-4",
+        "codex:gpt-5.4",
+        "pi:grok-4.6",
+        "grok:4.6",
+        "claude:opus-4",
+    ] {
         assert!(
-            !sidebar.contains(model),
-            "model shown instead of agent: {sidebar}"
+            sidebar.contains(label),
+            "missing agent and model {label}: {sidebar}"
         );
     }
     terminal.send(b":create terminal\r")?;
@@ -142,16 +148,16 @@ fn real_dashboard_accepts_input_reattaches_and_cleans_up_demo() -> Result<()> {
     let root = demo.root().to_owned();
     let pgids = demo_session_groups(&root)?;
     let mut terminal = demo.dashboard(40, 120, Default::default())?;
-    wait_screen(&terminal, "implement lifecycle")?;
-    select_sidebar_session(&mut terminal, "implement lifecycle")?;
+    wait_screen(&terminal, "claude:sonnet-4")?;
+    select_sidebar_session(&mut terminal, "claude:sonnet-4")?;
     enter_selected_session(&mut terminal, "fixture: lifecycle cleanup")?;
     terminal.send(b"printf 'GUI_%s\\n' CHECKPOINT\r")?;
     wait_screen(&terminal, "GUI_CHECKPOINT")?;
     terminal.send(b"\x07q")?;
     terminal.stop()?;
     let mut terminal = demo.dashboard(40, 120, Default::default())?;
-    wait_screen(&terminal, "implement lifecycle")?;
-    select_sidebar_session(&mut terminal, "implement lifecycle")?;
+    wait_screen(&terminal, "claude:sonnet-4")?;
+    select_sidebar_session(&mut terminal, "claude:sonnet-4")?;
     enter_selected_session(&mut terminal, "GUI_CHECKPOINT")?;
     terminal.stop()?;
     demo.shutdown()?;
@@ -178,9 +184,9 @@ fn demo_shells_inherit_paths_and_cli_reaches_fixture() -> Result<()> {
     eprintln!("fixture={} session_pgids={pgids:?}", root.display());
     let mut terminal = demo.dashboard(40, 160, Default::default())?;
     let result = (|| -> Result<()> {
-        wait_screen(&terminal, "implement lifecycle")?;
+        wait_screen(&terminal, "claude:sonnet-4")?;
         for (index, name, ready) in [
-            (0, "implement lifecycle", "fixture: lifecycle cleanup"),
+            (0, "claude:sonnet-4", "fixture: lifecycle cleanup"),
             (1, "local", "Terminal mode"),
         ] {
             select_sidebar_session(&mut terminal, name)?;
@@ -523,7 +529,7 @@ fn real_dashboard_saves_alert_preferences_and_reloads_config() -> Result<()> {
         Terminal::start(command, 40, 160, Default::default())
     };
     let mut terminal = launch()?;
-    wait_screen(&terminal, "implement lifecycle")?;
+    wait_screen(&terminal, "claude:sonnet-4")?;
     terminal.send(b"N")?;
     wait_screen(&terminal, "Desktop notifications: on")?;
     terminal.send(b"S")?;
@@ -538,7 +544,7 @@ fn real_dashboard_saves_alert_preferences_and_reloads_config() -> Result<()> {
     terminal.stop()?;
 
     let mut terminal = launch()?;
-    wait_screen(&terminal, "implement lifecycle")?;
+    wait_screen(&terminal, "claude:sonnet-4")?;
     terminal.send(b":desktop notifications")?;
     wait_screen(&terminal, "Disable desktop notifications")?;
     terminal.send(b"\r")?;
@@ -555,7 +561,7 @@ fn real_dashboard_saves_alert_preferences_and_reloads_config() -> Result<()> {
         "desktop_notifications = false\nready_sound = true\n",
     )?;
     let mut terminal = launch()?;
-    wait_screen(&terminal, "implement lifecycle")?;
+    wait_screen(&terminal, "claude:sonnet-4")?;
     terminal.send(b"N")?;
     wait_screen(&terminal, "Desktop notifications: on")?;
     terminal.send(b"S")?;

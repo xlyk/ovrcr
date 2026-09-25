@@ -183,6 +183,16 @@ fn unavailable_reporter_mutes_the_status_glyph() {
     let mut dashboard = dashboard_fixture();
     let mut review = review_session(&fixture_hierarchy()).clone();
     review.activity = AgentActivity::ResponseReady;
+    review.unread = Some(ovrcr::protocol::ReadyObservation {
+        binding: ovrcr::protocol::AgentBinding {
+            provider: ovrcr::protocol::AgentProvider::Claude,
+            invocation: "invocation".into(),
+            conversation: "conversation".into(),
+            generation: 1,
+        },
+        turn: Some("turn".into()),
+        activity_revision: 1,
+    });
     review.agent = Some(AgentSnapshot {
         binding: AgentBinding {
             provider: AgentProvider::Claude,
@@ -354,8 +364,8 @@ fn agent_hook_sidebar_states_are_literal() {
         (
             AgentActivity::ResponseReady,
             SessionPhase::Running,
-            "✓",
-            Color::Rgb(148, 226, 213),
+            " ",
+            muted,
         ),
         (
             AgentActivity::Busy,
@@ -399,6 +409,149 @@ fn agent_hook_sidebar_states_are_literal() {
         .unwrap();
     assert_eq!(terminal.backend().buffer()[(5, 11)].symbol(), "!");
     assert_eq!(terminal.backend().buffer()[(5, 3)].symbol(), "$");
+}
+
+#[test]
+fn reviewed_ready_hides_the_checkmark_and_the_sidebar_draws_no_unread_circle() {
+    use ovrcr::protocol::{
+        ActivitySample, AgentBinding, AgentProvider, AgentSnapshot, HealthSample, ReadyObservation,
+        ReporterHealth, SampleQuality,
+    };
+    let binding = AgentBinding {
+        provider: AgentProvider::Pi,
+        invocation: "invocation".into(),
+        conversation: "conversation".into(),
+        generation: 1,
+    };
+    let snapshot = |turn: &str| AgentSnapshot {
+        binding: binding.clone(),
+        activity: Some(ActivitySample {
+            state: AgentActivity::ResponseReady,
+            quality: SampleQuality::Confirmed,
+            turn: Some(turn.into()),
+        }),
+        metrics: None,
+        health: HealthSample {
+            state: ReporterHealth::Connected,
+            reason: None,
+        },
+        activity_revision: 2,
+        metrics_revision: 0,
+        health_revision: 0,
+        input_requests: Vec::new(),
+        input_revision: 0,
+    };
+    let observation = |turn: &str| ReadyObservation {
+        binding: binding.clone(),
+        turn: Some(turn.into()),
+        activity_revision: 2,
+    };
+    let publish = |dashboard: &mut Dashboard, session: SessionSummary| {
+        dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(
+            Box::new(session),
+        )));
+    };
+    let mut dashboard = dashboard_fixture();
+    let mut review = review_session(&fixture_hierarchy()).clone();
+    review.activity = AgentActivity::ResponseReady;
+    review.agent = Some(snapshot("one"));
+    review.unread = Some(observation("one"));
+    publish(&mut dashboard, review.clone());
+
+    let mut shell = fixture_hierarchy().projects[0].workspaces[0].sessions[0].clone();
+    shell.unread = Some(observation("shell"));
+    publish(&mut dashboard, shell);
+
+    let mut other = fixture_hierarchy().projects[1].workspaces[1].sessions[1].clone();
+    other.name = "other".into();
+    other.label = "codex".into();
+    other.activity = AgentActivity::ResponseReady;
+    other.agent = Some(snapshot("two"));
+    other.unread = Some(observation("two"));
+    publish(&mut dashboard, other);
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let draw = |dashboard: &Dashboard, terminal: &mut Terminal<TestBackend>| {
+        terminal
+            .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, dashboard, 0))
+            .unwrap();
+    };
+    let sidebar = |terminal: &Terminal<TestBackend>| {
+        (0..20)
+            .map(|row| sidebar_row(terminal, row))
+            .collect::<Vec<_>>()
+    };
+    let glyph = |lines: &[String], name: &str| {
+        lines
+            .iter()
+            .find(|row| row.contains(name))
+            .unwrap_or_else(|| panic!("missing {name}: {lines:?}"))
+            .chars()
+            .nth(5)
+            .unwrap()
+    };
+    let header = |terminal: &Terminal<TestBackend>| {
+        (40..120)
+            .map(|column| terminal.backend().buffer()[(column, 1)].symbol())
+            .collect::<String>()
+    };
+
+    draw(&dashboard, &mut terminal);
+    let lines = sidebar(&terminal);
+    assert!(
+        lines.iter().all(|row| !row.contains('\u{25cf}')),
+        "unread circle is still drawn: {lines:?}"
+    );
+    assert_eq!(glyph(&lines, "review"), '\u{2713}');
+    assert_eq!(glyph(&lines, "other"), '\u{2713}');
+    let header_text = header(&terminal);
+    assert!(
+        header_text.contains("Unread"),
+        "header should say Unread: {header_text}"
+    );
+
+    dashboard.install_focus(SessionId(1));
+    draw(&dashboard, &mut terminal);
+    assert_eq!(glyph(&sidebar(&terminal), "review"), '\u{2713}');
+    assert!(header(&terminal).contains("Unread"));
+
+    let mut split_dashboard = dashboard_fixture();
+    publish(&mut split_dashboard, review.clone());
+    assert!(split_dashboard.split_pane());
+    draw(&split_dashboard, &mut terminal);
+    let split: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(
+        split.contains("Unread"),
+        "split header should say Unread: {split}"
+    );
+    assert!(
+        sidebar(&terminal)
+            .iter()
+            .all(|row| !row.contains('\u{25cf}')),
+        "split drawing still has an unread circle"
+    );
+
+    review.unread = None;
+    publish(&mut dashboard, review);
+    draw(&dashboard, &mut terminal);
+    let lines = sidebar(&terminal);
+    assert_ne!(glyph(&lines, "review"), '\u{2713}');
+    assert_eq!(glyph(&lines, "other"), '\u{2713}');
+    let reviewed = header(&terminal);
+    assert!(
+        !reviewed.contains("Unread"),
+        "review should clear the Unread header: {reviewed}"
+    );
+    assert!(
+        reviewed.contains("response ready"),
+        "reviewed activity stays ready: {reviewed}"
+    );
 }
 
 #[test]
@@ -632,19 +785,158 @@ fn sidebar_uses_agent_label_prefixes_and_emphasizes_tree_names() {
     assert!(buffer[(4, 2)].modifier.contains(Modifier::BOLD));
     assert!(buffer[(4, 5)].modifier.contains(Modifier::BOLD));
     let row = |y| (0..39).map(|x| buffer[(x, y)].symbol()).collect::<String>();
-    assert_eq!(row(4), format!("     - review{}claude ", " ".repeat(19)));
-    assert_eq!(buffer[(32, 4)].fg, Color::Rgb(250, 179, 135));
-    assert_eq!(
-        row(7),
-        format!("     · implement{}unknown ", " ".repeat(15))
-    );
-    assert_eq!(buffer[(33, 7)].fg, Color::Rgb(144, 150, 175));
+    assert_eq!(row(4), "     - review          claude:sonnet-4 ");
+    assert_eq!(buffer[(23, 4)].fg, Color::Rgb(250, 179, 135));
+    assert_eq!(row(7), "     · implement         unknown:model ");
+    assert_eq!(buffer[(25, 7)].fg, Color::Rgb(144, 150, 175));
 }
 
 #[test]
-fn sidebar_shows_each_agent_instead_of_its_model() {
+fn sidebar_shows_the_agent_and_current_model_on_one_row() {
+    use ovrcr::protocol::{
+        ActivitySample, AgentBinding, AgentProvider, AgentSnapshot, ContextSample, HealthSample,
+        Measurement, MetricsSample, MetricsSnapshot, ReporterHealth, SampleQuality, UsageCoverage,
+        UsageScope, UsageTotals,
+    };
+    let mut dashboard = dashboard_fixture();
+    let mut hierarchy = fixture_hierarchy();
+    review_session_mut(&mut hierarchy).label = "pi / grok-4.7".into();
+    review_session_mut(&mut hierarchy).phase = SessionPhase::Exited {
+        code: Some(0),
+        signal: None,
+    };
+    implement_session_mut(&mut hierarchy).label = "grok / grok-4.6".into();
+    implement_session_mut(&mut hierarchy).phase = SessionPhase::Running;
+    implement_session_mut(&mut hierarchy).agent = Some(AgentSnapshot {
+        binding: AgentBinding {
+            provider: AgentProvider::Grok,
+            invocation: "invocation".into(),
+            conversation: "conversation".into(),
+            generation: 1,
+        },
+        activity: Some(ActivitySample {
+            state: AgentActivity::Idle,
+            quality: SampleQuality::Observed,
+            turn: None,
+        }),
+        metrics: Some(MetricsSnapshot {
+            sample: MetricsSample {
+                model: Some("grok-4.7".into()),
+                context: Measurement {
+                    value: ContextSample {
+                        used_tokens: None,
+                        capacity_tokens: None,
+                        quality: SampleQuality::Observed,
+                    },
+                    source: "fixture".into(),
+                },
+                usage: Measurement {
+                    value: UsageTotals {
+                        scope: UsageScope::Conversation,
+                        coverage: UsageCoverage::Partial,
+                        input_tokens: None,
+                        output_tokens: None,
+                        cache_read_tokens: None,
+                        cache_write_tokens: None,
+                        reasoning_output_tokens: None,
+                    },
+                    source: "fixture".into(),
+                },
+                cost: Measurement {
+                    value: None,
+                    source: "fixture".into(),
+                },
+            },
+            received_unix_ms: 0,
+            context_received_unix_ms: 0,
+            usage_received_unix_ms: 0,
+            cost_received_unix_ms: 0,
+        }),
+        health: HealthSample {
+            state: ReporterHealth::Connected,
+            reason: None,
+        },
+        activity_revision: 1,
+        metrics_revision: 1,
+        health_revision: 1,
+        input_requests: Vec::new(),
+        input_revision: 0,
+    });
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(5));
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let row = |name: &str| {
+        (0..20)
+            .map(|y| sidebar_row(&terminal, y))
+            .find(|row| row.contains(name))
+            .unwrap_or_else(|| panic!("missing {name}"))
+    };
+    let review = row("review");
+    let implement = row("implement");
+    assert!(
+        review.trim_end().ends_with("pi:grok-4.7"),
+        "stored suffix should show: {review:?}"
+    );
+    assert!(
+        implement.trim_end().ends_with("grok:4.7"),
+        "live model should beat the stored suffix and drop the repeat: {implement:?}"
+    );
+    let buffer = terminal.backend().buffer();
+    let review_y = (0..20)
+        .find(|y| sidebar_row(&terminal, *y).contains("review"))
+        .unwrap();
+    let label_x = u16::try_from(review.find("pi:grok-4.7").unwrap()).unwrap();
+    assert_eq!(
+        buffer[(label_x, review_y)].fg,
+        Color::Rgb(142, 118, 177),
+        "an exited agent name fades"
+    );
+    assert_eq!(
+        buffer[(label_x + 3, review_y)].fg,
+        Color::Rgb(108, 112, 134),
+        "model stays quiet"
+    );
+    let implement_y = (0..20)
+        .find(|y| sidebar_row(&terminal, *y).contains("implement"))
+        .unwrap();
+    let implement_x = u16::try_from(implement.find("grok:4.7").unwrap()).unwrap();
+    assert_eq!(
+        buffer[(implement_x, implement_y)].fg,
+        Color::Rgb(137, 180, 250)
+    );
+
+    let mut narrow = Terminal::new(TestBackend::new(60, 24)).unwrap();
+    let mut hierarchy = fixture_hierarchy();
+    review_session_mut(&mut hierarchy).name = "review-a-very-long-session-name".into();
+    review_session_mut(&mut hierarchy).label = "claude / opus-4.5-with-a-long-suffix".into();
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(1));
+    narrow
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let narrow_row = (0..29)
+        .map(|column| narrow.backend().buffer()[(column, 4)].symbol())
+        .collect::<String>();
+    assert!(
+        narrow_row.contains("claude") && !narrow_row.contains(':'),
+        "a narrow row drops the model before the agent: {narrow_row:?}"
+    );
+    assert!(
+        narrow_row.contains("review"),
+        "the title keeps its minimum: {narrow_row:?}"
+    );
+}
+
+#[test]
+fn sidebar_shows_each_agent_with_or_without_its_model() {
     for agent in ["claude", "codex", "grok", "pi", "omp", "cursor"] {
-        for label in [agent.to_string(), format!(" {agent} / shared-model ")] {
+        for (label, with_model) in [
+            (agent.to_string(), false),
+            (format!(" {agent} / shared-model "), true),
+        ] {
             let mut dashboard = dashboard_fixture();
             let mut hierarchy = fixture_hierarchy();
             review_session_mut(&mut hierarchy).label = label;
@@ -657,10 +949,17 @@ fn sidebar_shows_each_agent_instead_of_its_model() {
             let row = (0..39)
                 .map(|x| terminal.backend().buffer()[(x, 4)].symbol())
                 .collect::<String>();
-            assert_eq!(
-                row,
-                format!("     - review{}{agent} ", " ".repeat(25 - agent.len()))
-            );
+            if with_model {
+                assert!(
+                    row.contains(&format!("{agent}:")),
+                    "{agent} should keep its model: {row:?}"
+                );
+            } else {
+                assert!(
+                    row.trim_end().ends_with(agent) && !row.contains(':'),
+                    "{agent} without a model stays bare: {row:?}"
+                );
+            }
         }
     }
 }

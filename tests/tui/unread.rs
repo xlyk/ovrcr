@@ -133,9 +133,10 @@ fn unread_and_unavailable_remain_visible_in_narrow_single_and_split_panes() {
                 text.contains("Unread Unavailable"),
                 "{width} split={split}: {text}"
             );
+            assert!(text.contains('⠋'), "busy glyph remains: {text}");
             assert!(
-                text.contains("⠋ ●"),
-                "separate activity and unread glyphs: {text}"
+                !text.contains('\u{25cf}'),
+                "sidebar does not draw the unread circle: {text}"
             );
             assert!(!text.contains("private-"));
         }
