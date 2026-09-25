@@ -55,6 +55,7 @@ pub fn validate(reference: &ConversationReference) -> Result<()> {
         ConversationReference::Omp(reference) => {
             crate::extension_recovery::validate(AgentProvider::Omp, reference)
         }
+        ConversationReference::Grok(reference) => crate::grok_recovery::validate(reference),
     }
 }
 
@@ -71,6 +72,8 @@ pub fn resume_argv(name: &str, reference: &ConversationReference) -> Result<Vec<
         ConversationReference::Omp(reference) => {
             crate::extension_recovery::resume_argv(AgentProvider::Omp, reference)
         }
+        // `unavailable` refused it above; a Grok reference names a title source, not a resume.
+        ConversationReference::Grok(_) => bail!("Native resume is not available for grok"),
     }
 }
 
@@ -182,6 +185,24 @@ mod tests {
             unavailable("claude", Some(&reference), true)
                 .unwrap()
                 .contains("unsupported")
+        );
+        let grok = ConversationReference::Grok(ovrcr_protocol::GrokConversation {
+            conversation: "5ebc5f9b-54b5-4928-9955-dc81c23743dd".into(),
+            history: "/grok/sessions/%2Fwork/5ebc5f9b-54b5-4928-9955-dc81c23743dd/updates.jsonl"
+                .into(),
+        });
+        assert!(validate(&grok).is_ok());
+        assert!(
+            unavailable("grok", Some(&grok), false)
+                .unwrap()
+                .contains("not available"),
+            "a retained Grok history must not advertise resume"
+        );
+        assert!(
+            resume_argv("grok", &grok)
+                .unwrap_err()
+                .to_string()
+                .contains("not available")
         );
         for provider in [AgentProvider::Grok, AgentProvider::Hermes] {
             assert!(!supported(provider));

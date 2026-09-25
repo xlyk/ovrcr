@@ -30,7 +30,10 @@ fn fixed_glyph(session: &SessionSummary) -> Option<(char, Color)> {
         (_, AgentActivity::Idle) => (' ', MUTED),
         (_, AgentActivity::WaitingInput) => ('?', YELLOW),
         (_, AgentActivity::Error) => ('!', RED),
-        (_, AgentActivity::ResponseReady) => ('✓', TEAL),
+        // A reviewed Ready response keeps its reported activity. The checkmark is the
+        // unreviewed mark, so it leaves when Unread does.
+        (_, AgentActivity::ResponseReady) if session.unread.is_some() => ('✓', TEAL),
+        (_, AgentActivity::ResponseReady) => (' ', MUTED),
         (SessionPhase::Running, AgentActivity::Busy) => return None,
     })
 }
@@ -454,8 +457,8 @@ mod tests {
             (
                 running.clone(),
                 Some(agent(ResponseReady, Confirmed, Connected, vec![])),
-                '✓',
-                TEAL,
+                ' ',
+                MUTED,
                 " response ready · confirmed",
                 "42",
                 true,
@@ -475,7 +478,7 @@ mod tests {
             (
                 running.clone(),
                 Some(agent(ResponseReady, Observed, Unavailable, vec![])),
-                '✓',
+                ' ',
                 MUTED,
                 " unavailable response ready · observed",
                 "42",
@@ -581,6 +584,7 @@ mod tests {
             SessionStatus::of(&ready, 0).unread.as_deref(),
             Some("Unread response ready · observed")
         );
+        assert_eq!(SessionStatus::of(&ready, 0).glyph, '✓');
         ready.agent.as_mut().unwrap().health.state = ReporterHealth::Unavailable;
         assert_eq!(
             SessionStatus::of(&ready, 0).unread.as_deref(),

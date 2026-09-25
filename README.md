@@ -440,11 +440,15 @@ just restart   # stop a leftover local server, then start the dashboard
 ```
 
 `just run` refreshes `~/.local/bin/ovrcr` with the debug build before launching
-it, forwarding any arguments (for example, `just run --version`). Keep
-`~/.local/bin` on your `PATH`. It builds into `CARGO_TARGET_DIR` when set,
-otherwise the checkout's `target` directory. A failed build or install stops
-the launch; replacement is atomic so running processes keep their existing
-binary. Existing servers keep running their previous version until restarted.
+it, forwarding any arguments (for example, `just run --version`). It then
+rewrites existing Claude, Codex, and Grok reporter commands that already call
+`ovrcr` so they name that installed binary. A command that already names it is
+left unchanged, which keeps a Codex trust hash valid. It does not add hooks or
+change trust. Keep `~/.local/bin` on your `PATH`. It builds into
+`CARGO_TARGET_DIR` when set, otherwise the checkout's `target` directory. A
+failed build, install, or hook retarget stops the launch; replacement is atomic
+so running processes keep their existing binary. Existing servers keep running
+their previous version until restarted.
 
 Or with Cargo directly — always name the package, since the workspace has five:
 
@@ -517,7 +521,9 @@ the resume command. A saved conversation uses exact managed resume; without one,
 the agent opens its native resume picker. The shell remains open after the agent exits.
 Displaying an eligible interrupted Agent after a verified reboot requests recovery
 automatically; uncertain ownership and failed attempts require explicit action.
-Other providers show resume unavailable. Native automatic-recovery acceptance is
+A managed Grok launch (`ovrcr agent run grok -- grok`, the detected `grok` entry) retains
+its session UUID and the `updates.jsonl` Grok keeps for it as a title source only;
+Grok resume stays unavailable. Other providers show resume unavailable. Native automatic-recovery acceptance is
 tracked in #127; Codex, Pi and Oh My Pi provider acceptance remains separate in
 #128, #129 and #130. See the [capability and acceptance record](docs/agent-reporting-support.md#retained-claude-conversations).
 Tests simulate boot-identity changes while reading

@@ -1101,19 +1101,12 @@ fn tree_line_text(
                     reported => reported,
                 };
                 let subtext = Style::default().fg(SUBTEXT);
-                let unread = if status.unread.is_some() { " ●" } else { "" };
                 (
                     vec![
                         Span::raw(SESSION_INDENT),
                         Span::styled(glyph.to_string(), Style::default().fg(glyph_color)),
-                        Span::styled(unread, Style::default().fg(TEAL)),
                         Span::styled(
-                            clip_text(
-                                " local",
-                                width.saturating_sub(
-                                    SESSION_INDENT.len() + 1 + Line::raw(unread).width(),
-                                ),
-                            ),
+                            clip_text(" local", width.saturating_sub(SESSION_INDENT.len() + 1)),
                             subtext,
                         ),
                     ],
@@ -1130,34 +1123,31 @@ fn tree_line_text(
                 if exited {
                     name_style = name_style.add_modifier(Modifier::DIM);
                 }
-                let agent = session
-                    .label
-                    .split_once('/')
-                    .map_or(session.label.as_str(), |(agent, _)| agent)
-                    .trim();
-                let agent_cells = Line::raw(agent).width();
-                let unread = if status.unread.is_some() { "● " } else { "" };
-                let name_column = SESSION_NAME_COLUMN + Line::raw(unread).width();
-                // Name width when the agent is shown: two cells of gap and one trailing cell.
-                let name_width_with_agent = width.saturating_sub(name_column + agent_cells + 3);
-                let show_agent =
-                    !agent.is_empty() && name_width_with_agent >= SESSION_NAME_MIN_WIDTH;
-                let name_width = if show_agent {
-                    name_width_with_agent
+                let fitted = if close_mark {
+                    None
                 } else {
-                    width.saturating_sub(name_column + usize::from(close_mark) * 3)
+                    sidebar_agent_label(session, width)
+                };
+                let name_width = match &fitted {
+                    Some((agent, model)) => {
+                        let cells = Line::raw(agent).width() + Line::raw(model).width();
+                        width.saturating_sub(SESSION_NAME_COLUMN + cells + 3)
+                    }
+                    None => width.saturating_sub(SESSION_NAME_COLUMN + usize::from(close_mark) * 3),
                 };
                 let right = if close_mark {
                     vec![mark.clone()]
-                } else if show_agent {
+                } else if let Some((agent, model)) = fitted {
                     let color = label_color(&session.label);
-                    vec![
-                        Span::styled(
-                            agent.to_string(),
-                            Style::default().fg(if exited { faded(color, 65) } else { color }),
-                        ),
-                        Span::raw(" "),
-                    ]
+                    let mut spans = vec![Span::styled(
+                        agent,
+                        Style::default().fg(if exited { faded(color, 65) } else { color }),
+                    )];
+                    if !model.is_empty() {
+                        spans.push(Span::styled(model, Style::default().fg(MUTED)));
+                    }
+                    spans.push(Span::raw(" "));
+                    spans
                 } else {
                     Vec::new()
                 };
@@ -1166,7 +1156,6 @@ fn tree_line_text(
                         Span::raw(SESSION_INDENT),
                         Span::styled(glyph.to_string(), Style::default().fg(glyph_color)),
                         Span::raw(" "),
-                        Span::styled(unread, Style::default().fg(TEAL)),
                         Span::styled(
                             clipped_session_title(dashboard, session, name_width),
                             name_style,
@@ -1278,6 +1267,65 @@ fn provider_metrics(session: &SessionSummary, now: u64, width: usize) -> Option<
                 .replacen("  cost ", " cost ", 1),
         )
     }
+}
+
+/// Four model characters, plus the ellipsis when the model is clipped.
+const MODEL_KEEP: usize = 4;
+
+fn sidebar_agent_label(session: &SessionSummary, width: usize) -> Option<(String, String)> {
+    let agent = session
+        .label
+        .split_once('/')
+        .map_or(session.label.as_str(), |(agent, _)| agent)
+        .trim();
+    if agent.is_empty() {
+        return None;
+    }
+    let max_label = width.saturating_sub(SESSION_NAME_COLUMN + SESSION_NAME_MIN_WIDTH + 3);
+    if Line::raw(agent).width() > max_label {
+        return None;
+    }
+    let reported = session
+        .agent
+        .as_ref()
+        .and_then(|agent| agent.metrics.as_ref())
+        .and_then(|metrics| metrics.sample.model.as_deref())
+        .map(str::trim)
+        .filter(|model| !model.is_empty());
+    let stored = session
+        .label
+        .split_once('/')
+        .map(|(_, model)| model.trim())
+        .filter(|model| !model.is_empty());
+    let Some(model) = reported.or(stored) else {
+        return Some((agent.to_string(), String::new()));
+    };
+    let model = model_without_agent(agent, model);
+    if model.is_empty() || Line::raw(format!("{agent}:{model}")).width() <= max_label {
+        let suffix = if model.is_empty() {
+            String::new()
+        } else {
+            format!(":{model}")
+        };
+        return Some((agent.to_string(), suffix));
+    }
+    let budget = max_label.saturating_sub(Line::raw(format!("{agent}:")).width());
+    if budget < MODEL_KEEP + 1 {
+        return Some((agent.to_string(), String::new()));
+    }
+    Some((agent.to_string(), format!(":{}", clip_text(&model, budget))))
+}
+
+fn model_without_agent(agent: &str, model: &str) -> String {
+    let chars: Vec<char> = model.chars().collect();
+    let agent_len = agent.chars().count();
+    if chars.len() > agent_len {
+        let head: String = chars[..agent_len].iter().collect();
+        if head.eq_ignore_ascii_case(agent) && matches!(chars[agent_len], '-' | '/' | ':' | ' ') {
+            return chars[agent_len + 1..].iter().collect();
+        }
+    }
+    model.to_string()
 }
 
 fn label_color(label: &str) -> Color {

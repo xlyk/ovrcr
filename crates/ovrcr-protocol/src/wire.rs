@@ -966,6 +966,15 @@ mod wire_snapshot {
             )),
         ));
         all.push((
+            "ConversationReference::Grok".into(),
+            encode(&crate::ConversationReference::Grok(
+                crate::GrokConversation {
+                    conversation: "native".into(),
+                    history: "/history.jsonl".into(),
+                },
+            )),
+        ));
+        all.push((
             "WorkspaceRecord".into(),
             encode(&crate::WorkspaceRecord {
                 id: "stable".into(),
@@ -1160,6 +1169,10 @@ mod wire_snapshot {
         (
             "ConversationReference::Codex",
             "03066e61746976650d2f62696e2f70726f7669646572010e2f686973746f72792e6a736f6e6c072f636f6e66696700",
+        ),
+        (
+            "ConversationReference::Grok",
+            "04066e61746976650e2f686973746f72792e6a736f6e6c",
         ),
         (
             "WorkspaceRecord",

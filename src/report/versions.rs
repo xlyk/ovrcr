@@ -21,6 +21,11 @@ pub const OMP: Policy = Policy {
     minimum: [18, 2, 2],
     tested: &["18.1.19"],
 };
+/// `--session-id` for a new conversation, and the documented session store layout.
+pub const GROK: Policy = Policy {
+    minimum: [1, 0, 40],
+    tested: &["1.0.40"],
+};
 
 /// Only canonical stable x.y.z releases, not prereleases, build metadata or leading zeros.
 pub fn parse(version: &str) -> Option<[u32; 3]> {
@@ -62,6 +67,7 @@ mod tests {
             (CODEX, "0.153.9", "0.152.9"),
             (PI, "0.85.9", "0.85.0"),
             (OMP, "18.2.9", "18.2.1"),
+            (GROK, "1.1.0", "1.0.39"),
         ] {
             assert!(policy.accepts(good));
             assert!(!policy.accepts(bad));

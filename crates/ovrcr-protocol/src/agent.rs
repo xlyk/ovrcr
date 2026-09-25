@@ -332,6 +332,8 @@ pub enum ConversationReference {
     Pi(ExtensionConversation),
     Omp(ExtensionConversation),
     Codex(CodexConversation),
+    /// Appended as tag 4. Retained for the title path only; Grok resume stays unavailable.
+    Grok(GrokConversation),
 }
 
 impl ConversationReference {
@@ -341,6 +343,7 @@ impl ConversationReference {
             Self::Pi(_) => AgentProvider::Pi,
             Self::Omp(_) => AgentProvider::Omp,
             Self::Codex(_) => AgentProvider::Codex,
+            Self::Grok(_) => AgentProvider::Grok,
         }
     }
 
@@ -349,6 +352,7 @@ impl ConversationReference {
             Self::Claude(reference) => &reference.conversation,
             Self::Pi(reference) | Self::Omp(reference) => &reference.conversation,
             Self::Codex(reference) => &reference.conversation,
+            Self::Grok(reference) => &reference.conversation,
         }
     }
 
@@ -386,6 +390,14 @@ pub struct ExtensionConversation {
     pub history: Option<std::path::PathBuf>,
     pub config_dir: std::path::PathBuf,
     pub options: Vec<String>,
+}
+
+/// The session UUID a managed Grok launch was given and the `updates.jsonl` Grok's
+/// documented session store keeps for it. No executable or options: nothing reopens it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GrokConversation {
+    pub conversation: String,
+    pub history: std::path::PathBuf,
 }
 
 pub fn validate_agent_id(value: &str) -> Result<()> {

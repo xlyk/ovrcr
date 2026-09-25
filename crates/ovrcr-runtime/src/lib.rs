@@ -4,6 +4,7 @@ pub mod codex_recovery;
 pub mod config;
 pub mod extension_recovery;
 pub mod git;
+pub mod grok_recovery;
 pub mod recovery;
 pub mod retained;
 pub mod server;

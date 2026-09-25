@@ -55,10 +55,12 @@ history request that has not opened yet.
 
 ## Unread responses
 
-A managed Codex, Pi or Oh My Pi terminal keeps one unread indicator for its latest unreviewed
-root Ready response. The indicator is separate from its activity glyph: a new
-Busy report does not clear an earlier unread response. Selecting a terminal,
-viewing its output or receiving a notification does not acknowledge it.
+A managed Codex, Pi or Oh My Pi terminal keeps one Unread fact for its latest unreviewed
+root Ready response. The sidebar does not draw a circle for it. While it is present, the
+sidebar shows the Ready checkmark and the pane header says Unread. Mark reviewed clears
+both of those marks. The Agent's reported activity stays Ready, so the header may still
+say the session is ready. A new Busy report does not clear an earlier Unread response.
+Selecting a terminal, viewing its output or receiving a notification does not acknowledge it.
 
 Press `R` in Browse mode, or choose **Mark reviewed** in the terminal action
 menu or command palette. The action names the unread observation displayed by
@@ -228,8 +230,12 @@ checkout is not on the default branch. Duplicate visible names include the
 worktree path. A branch change updates the label in place; selection and panes
 stay on that workspace. Each session takes one line: a status
 glyph, the session name, and the agent name from its label right-aligned in the
-provider colour. A long name clips with `…` before the agent name, and the agent name is
-dropped when fewer than twelve cells would remain for the name. Local shells
+provider colour. When a model is known, it follows a colon in the quiet gray,
+as in `pi:grok-4.7`. A model that repeats the agent name drops that repeat. A
+missing model, or one that cannot keep four characters, leaves the agent name
+alone. A long name clips with `…` before that label. A narrow row drops the
+model before the agent name, and drops the agent name when fewer than twelve
+cells would remain for the name. Local shells
 show `$ local` with no agent label unless a hook reports activity inside them. The
 selected row shows a mauve bar in its first column and a lighter background; its
 own colours stay visible. A folded project shows `▸ N ws` and a folded workspace
@@ -242,7 +248,7 @@ own colours stay visible. A folded project shows `▸ N ws` and a folded workspa
 | braille spinner (green) | Busy |
 | `?` (yellow) | Waiting for input, including an open [input request](#input-requests) |
 | `!` (red) | Reported error |
-| `✓` (teal) | Response ready |
+| `✓` (teal) | Response ready, not yet marked reviewed |
 | `P` | Paused |
 | `·` | Exited (the row is dimmed) |
 
@@ -426,7 +432,7 @@ reporting support.
 Workspace defaults to the selected workspace. Name is optional: leave it blank
 for a stable workspace-based name, or enter your own name. After creation, typing goes to the new
 session immediately. `n` and other new launches are unavailable when the selected
-root workspace shows a warning. Detected `pi` and `omp` entries retain their managed launch
+root workspace shows a warning. Detected `pi`, `omp` and `grok` entries retain their managed launch
 wrappers; an `agents` override replaces the command entirely.
 
 ### Create workspace (`w`)

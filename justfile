@@ -13,6 +13,7 @@ run *args:
     trap 'rm -f "$pending"' EXIT
     install -m 755 "${CARGO_TARGET_DIR:-target}/debug/ovrcr" "$pending"
     mv -f "$pending" "$HOME/.local/bin/ovrcr"
+    "$HOME/.local/bin/ovrcr" __retarget-hooks
     "$HOME/.local/bin/ovrcr" "$@"
 
 run-release *args:

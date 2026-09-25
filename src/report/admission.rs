@@ -354,7 +354,7 @@ fn probe_command(mut command: Command) -> Option<Vec<u8>> {
     let _ = child.wait();
     None
 }
-fn fresh_uuid() -> std::io::Result<String> {
+pub(crate) fn fresh_uuid() -> std::io::Result<String> {
     let identifier = ovrcr_runtime::agent_runner::private_identifier()?;
     let mut bytes = identifier.as_bytes()[..32].to_vec();
     bytes[12] = b'4';
