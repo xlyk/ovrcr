@@ -236,9 +236,9 @@ missing model leaves the agent name alone. A long name clips with `…` before t
 label. The label shares the name's line only while every visible `agent:model`
 fits beside at least twelve cells of its name. As soon as one does not, the
 sidebar stacks as a whole: every session with an agent label keeps its name on
-one line and moves the label to one extra line under it, hung from the status
-glyph by a `└` connector at the name column and clipped with `…` if even that
-line is too narrow, while local shells stay on one line. The model is never
+one line and moves the label to one extra line under it, hung by a `└`
+connector two cells in from the status glyph, under the start of the name, and
+clipped with `…` if even that line is too narrow, while local shells stay on one line. The model is never
 dropped, and no two rows use different layouts at the same width. The extra
 line belongs to the same session: `j`, `k` and the mouse treat both lines as one
 row, the selection bar and background cover both, and the hover `[x]` sits on

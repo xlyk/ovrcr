@@ -1020,6 +1020,10 @@ const SESSION_INDENT: &str = "     ";
 const SESSION_NAME_COLUMN: usize = SESSION_INDENT.len() + 2;
 /// Minimum cells kept for a session name before its agent label is dropped.
 const SESSION_NAME_MIN_WIDTH: usize = 12;
+/// Indent of a stacked label line: the connector sits under the start of the name.
+const LABEL_LINE_INDENT: &str = "       ";
+/// Indent, connector and separating space before a stacked label.
+const LABEL_LINE_COLUMN: usize = LABEL_LINE_INDENT.len() + 2;
 
 fn tree_line_text(
     dashboard: &Dashboard,
@@ -1130,7 +1134,7 @@ fn tree_line_text(
             let status = SessionStatus::of(session, now_unix_ms);
             if row_line == 1 {
                 // The agent and model under a name they could not share a line with,
-                // hung from the status glyph by a corner connector.
+                // hung from the name by a corner connector two cells in from the glyph.
                 let (agent, model) = sidebar_agent_label(session).unwrap_or_default();
                 let color = label_color(&session.label);
                 let agent_style = Style::default().fg(if status.exited {
@@ -1140,7 +1144,7 @@ fn tree_line_text(
                 });
                 let label = clip_text(
                     &format!("{agent}{model}"),
-                    width.saturating_sub(SESSION_NAME_COLUMN + 1),
+                    width.saturating_sub(LABEL_LINE_COLUMN + 1),
                 );
                 // A label clipped inside the agent name is all agent colour.
                 let split = if label.starts_with(agent.as_str()) {
@@ -1152,7 +1156,7 @@ fn tree_line_text(
                 return (
                     compose_row(
                         vec![
-                            Span::raw(SESSION_INDENT),
+                            Span::raw(LABEL_LINE_INDENT),
                             Span::styled("└ ", muted),
                             Span::styled(head.to_string(), agent_style),
                             Span::styled(tail.to_string(), muted),

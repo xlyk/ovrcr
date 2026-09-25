@@ -929,7 +929,7 @@ fn sidebar_shows_the_agent_and_current_model_on_one_row() {
     );
     assert_eq!(
         narrow_row(5),
-        "▌    └ claude:opus-4.5-with… ",
+        "▌      └ claude:opus-4.5-wi… ",
         "the agent and model take the next line, clipped like any other text"
     );
 }
@@ -956,20 +956,20 @@ fn narrow_session_row_keeps_its_model_on_a_second_line() {
     // model is not dropped: the label moves under the name. The shell above stays one line.
     assert_eq!(row(&terminal, 3), "     $ local                 ");
     assert_eq!(row(&terminal, 4), "▌    - review                ");
-    assert_eq!(row(&terminal, 5), "▌    └ pi:grok-4.7           ");
+    assert_eq!(row(&terminal, 5), "▌      └ pi:grok-4.7         ");
     assert_eq!(row(&terminal, 6).trim_end(), "  󰘬 lifecycle");
     // Stacking is all or nothing: `claude` alone would fit, but it stacks with the column.
     assert_eq!(row(&terminal, 7), "     $ local                 ");
     assert_eq!(row(&terminal, 8), "     · implement             ");
-    assert_eq!(row(&terminal, 9), "     └ claude                ");
+    assert_eq!(row(&terminal, 9), "       └ claude              ");
     let buffer = terminal.backend().buffer();
     assert_eq!(
-        buffer[(7, 5)].fg,
+        buffer[(9, 5)].fg,
         Color::Rgb(203, 166, 247),
         "provider colour"
     );
     assert_eq!(
-        buffer[(9, 5)].fg,
+        buffer[(11, 5)].fg,
         Color::Rgb(108, 112, 134),
         "model stays quiet"
     );
@@ -1010,7 +1010,7 @@ fn narrow_session_row_keeps_its_model_on_a_second_line() {
         "▌    - review             [x]",
         "hovering the label line marks the session's first line"
     );
-    assert_eq!(row(&terminal, 5), "▌    └ pi:grok-4.7           ");
+    assert_eq!(row(&terminal, 5), "▌      └ pi:grok-4.7         ");
     // The mark itself is only on the first line; its column on the label line selects.
     dashboard.install_focus(SessionId(5));
     dashboard.mouse_action(click(27, 5), area);
@@ -1054,12 +1054,12 @@ fn sidebar_stacks_every_agent_label_or_none() {
     assert_eq!(inline[8], "");
     let stacked = draw("pi / grok-4.7");
     assert_eq!(stacked[4], "     - review");
-    assert_eq!(stacked[5], "     └ pi:grok-4.7");
+    assert_eq!(stacked[5], "       └ pi:grok-4.7");
     assert_eq!(stacked[6], "  󰘬 lifecycle");
     assert_eq!(stacked[7], "     $ local", "shells never stack");
     assert_eq!(stacked[8], "     · implement");
     assert_eq!(
-        stacked[9], "     └ claude",
+        stacked[9], "       └ claude",
         "a label that fits still stacks"
     );
     assert_eq!(stacked[10], "");
@@ -1122,7 +1122,7 @@ fn sidebar_shows_each_agent_with_or_without_its_model() {
                 let label = format!("{agent}:shared-model");
                 let inline = row.trim_end().ends_with(&label);
                 assert!(
-                    inline || under.trim_end() == format!("     └ {label}"),
+                    inline || under.trim_end() == format!("       └ {label}"),
                     "{agent} should keep its whole model: {row:?} / {under:?}"
                 );
                 assert_eq!(
@@ -1177,7 +1177,7 @@ fn long_sidebar_names_clip_to_one_screen_line() {
             .collect::<String>()
     };
     assert_eq!(row(4), "▌    - review-a-very-lo…");
-    assert_eq!(row(5), "▌    └ claude           ");
+    assert_eq!(row(5), "▌      └ claude         ");
     assert_eq!(buffer[(24, 4)].symbol(), "│");
     assert_eq!(buffer[(24, 5)].symbol(), "│");
 }
