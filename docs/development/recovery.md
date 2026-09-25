@@ -39,7 +39,9 @@ Native automatic-recovery acceptance belongs to #127, separate from development.
 Compatible stable Codex CLI 0.153.x managed fresh launches retain authenticated root startup
 or prompt hook identity and the exact `transcript_path`, checked against the
 bounded `session_meta` header. No history discovery or latest-session fallback is
-used. Resume invokes `codex resume UUID` through the existing managed launcher.
+used. Resume stays header-only; the conversation-subject title path may read an
+ephemeral bounded tail but must not persist transcript content. Resume invokes
+`codex resume UUID` through the existing managed launcher.
 The known reference remains durably associated with the new run before callbacks.
 Initial resume reporting remains unavailable; `attached` remains false. Dashboard
 status and CLI `reporting_unavailable` expose this limitation. A native exit before

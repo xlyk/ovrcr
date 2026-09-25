@@ -51,6 +51,21 @@ pub(crate) fn create_conversation_schema(connection: &Connection) -> Result<()> 
     Ok(())
 }
 
+pub(crate) fn create_conversation_subject_schema(connection: &Connection) -> Result<()> {
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS conversation_subjects (
+            session INTEGER NOT NULL REFERENCES retained_sessions(id) ON DELETE CASCADE,
+            conversation TEXT NOT NULL,
+            topic TEXT,
+            dismissed INTEGER NOT NULL DEFAULT 0 CHECK(dismissed IN (0, 1)),
+            accepted_count INTEGER NOT NULL DEFAULT 0 CHECK(accepted_count >= 0),
+            attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+            PRIMARY KEY(session, conversation)
+        );",
+    )?;
+    Ok(())
+}
+
 /// Called inside the registry migration transaction. Retain the exact old
 /// reference and invalidation marker; never infer a replacement identity.
 pub(crate) fn migrate_claude_conversations(connection: &Connection) -> Result<()> {
@@ -104,6 +119,14 @@ pub(crate) enum Disposition {
     Returned = 2,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ConversationSubject {
+    pub topic: Option<String>,
+    pub dismissed: bool,
+    pub accepted_count: u64,
+    pub attempt_count: u64,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct RetainedSession {
     pub id: SessionId,
@@ -116,6 +139,7 @@ pub(crate) struct RetainedSession {
     pub failure: Option<String>,
     pub conversation: Option<ovrcr_protocol::ConversationReference>,
     pub identity_invalid: bool,
+    pub subjects: HashMap<String, ConversationSubject>,
 }
 
 impl RetainedSession {
@@ -143,6 +167,20 @@ impl RetainedSession {
         }
     }
 
+    pub fn effective_title(&self) -> Option<String> {
+        if self.metadata.pinned_title.is_some() {
+            return self.metadata.pinned_title.clone();
+        }
+        if matches!(self.metadata.kind, SessionKind::Terminal) {
+            return None;
+        }
+        let conversation = self.conversation.as_ref()?.identity();
+        self.subjects
+            .get(conversation)
+            .filter(|subject| !subject.dismissed)
+            .and_then(|subject| subject.topic.clone())
+    }
+
     pub fn summary(&self, current_boot: Option<&str>) -> SessionSummary {
         SessionSummary {
             id: self.id,
@@ -167,7 +205,7 @@ impl RetainedSession {
             agent_epoch: 0,
             unread: None,
             context_usage: None,
-            title: self.metadata.pinned_title.clone(),
+            title: self.effective_title(),
         }
     }
 }
@@ -197,6 +235,7 @@ impl SessionStore {
         let connection = Connection::open_in_memory().unwrap();
         create_schema(&connection).unwrap();
         create_conversation_schema(&connection).unwrap();
+        create_conversation_subject_schema(&connection).unwrap();
         Self::from_connection(connection).unwrap()
     }
 
@@ -224,6 +263,7 @@ impl SessionStore {
             conversation: None,
             identity_invalid: false,
             disposition: Disposition::Active,
+            subjects: HashMap::new(),
         };
         let metadata = &record.metadata;
         self.connection.execute(
@@ -332,6 +372,7 @@ impl SessionStore {
             conversation: None,
             identity_invalid: false,
             disposition: Disposition::Active,
+            subjects: HashMap::new(),
         };
         self.records.insert(id, record.clone());
         Ok(record)
@@ -415,6 +456,80 @@ impl SessionStore {
         }
         self.records.get_mut(&id).unwrap().failure = Some(message);
         Ok(true)
+    }
+
+    pub fn record_subject_attempt(
+        &mut self,
+        id: SessionId,
+        run: SessionRunId,
+        conversation: &str,
+    ) -> Result<bool> {
+        let Some(record) = self.records.get(&id) else {
+            return Ok(false);
+        };
+        if record.run != run || record.disposition == Disposition::Archived {
+            return Ok(false);
+        }
+        self.connection.execute(
+            "INSERT INTO conversation_subjects
+             (session, conversation, attempt_count)
+             VALUES (?1, ?2, 1)
+             ON CONFLICT(session, conversation) DO UPDATE SET
+             attempt_count = attempt_count + 1",
+            params![sql_integer(id.0)?, conversation],
+        )?;
+        let subject = self
+            .records
+            .get_mut(&id)
+            .unwrap()
+            .subjects
+            .entry(conversation.to_owned())
+            .or_default();
+        subject.attempt_count = subject.attempt_count.saturating_add(1);
+        Ok(true)
+    }
+
+    pub fn save_conversation_subject(
+        &mut self,
+        id: SessionId,
+        run: SessionRunId,
+        conversation: &str,
+        topic: String,
+    ) -> Result<bool> {
+        let Some(record) = self.records.get(&id) else {
+            return Ok(false);
+        };
+        if record.run != run
+            || record.disposition == Disposition::Archived
+            || record.metadata.pinned_title.is_some()
+        {
+            return Ok(false);
+        }
+        let changed = self.connection.execute(
+            "INSERT INTO conversation_subjects
+             (session, conversation, topic, accepted_count, attempt_count)
+             VALUES (?1, ?2, ?3, 1, 1)
+             ON CONFLICT(session, conversation) DO UPDATE SET
+             topic = CASE WHEN accepted_count = 0 AND dismissed = 0 THEN excluded.topic ELSE topic END,
+             accepted_count = CASE WHEN accepted_count = 0 AND dismissed = 0 THEN accepted_count + 1 ELSE accepted_count END",
+            params![sql_integer(id.0)?, conversation, topic],
+        )?;
+        if changed != 1 {
+            return Ok(false);
+        }
+        let subject = self
+            .records
+            .get_mut(&id)
+            .unwrap()
+            .subjects
+            .entry(conversation.to_owned())
+            .or_default();
+        if subject.accepted_count == 0 && !subject.dismissed {
+            subject.topic = Some(topic);
+            subject.accepted_count = 1;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     pub fn update_titles(
@@ -643,6 +758,7 @@ fn read_records(
                 2 => Disposition::Returned,
                 value => return Err(rusqlite::Error::IntegralValueOutOfRange(14, value)),
             },
+            subjects: HashMap::new(),
         })
     })?;
     let mut records = HashMap::new();
@@ -690,6 +806,30 @@ fn read_records(
                     })
                     .transpose()?;
                 record.identity_invalid = invalid;
+            }
+        }
+    }
+    if has_table(connection, "conversation_subjects")? {
+        let mut query = connection.prepare(
+            "SELECT session, conversation, topic, dismissed, accepted_count, attempt_count
+             FROM conversation_subjects",
+        )?;
+        let rows = query.query_map([], |row| {
+            Ok((
+                read_integer(row, 0)?,
+                row.get::<_, String>(1)?,
+                ConversationSubject {
+                    topic: row.get(2)?,
+                    dismissed: row.get(3)?,
+                    accepted_count: read_integer(row, 4)?,
+                    attempt_count: read_integer(row, 5)?,
+                },
+            ))
+        })?;
+        for row in rows {
+            let (id, conversation, subject) = row?;
+            if let Some(record) = records.get_mut(&SessionId(id)) {
+                record.subjects.insert(conversation, subject);
             }
         }
     }

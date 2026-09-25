@@ -3,10 +3,13 @@ mod live;
 
 use live::{Live, PROJECT, WORKSPACE};
 use ovrcr::protocol::{
-    BranchRequest, ClientMessage, CreateSessionRequest, DashboardView, ErrorCode, Request,
-    Response, ServerEvent, ServerMessage, SessionId, SessionLaunch, SessionPhase, SessionSummary,
-    client, connect_server, read_frame, write_frame,
+    AgentBinding, AgentCommand, AgentOperationResult, AgentProvider, AgentSecret, BranchRequest,
+    ClientMessage, ConversationReference, CreateSessionRequest, DashboardView, ErrorCode,
+    ExtensionConversation, Request, ReserveAgent, Response, ServerEvent, ServerMessage, SessionId,
+    SessionLaunch, SessionPhase, SessionSummary, SupervisorAuth, SupervisorRequest, client,
+    connect_server, read_frame, write_frame,
 };
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
@@ -40,6 +43,150 @@ fn title_program() -> SessionLaunch {
     SessionLaunch { kind: ovrcr_protocol::SessionKind::Terminal, argv: vec!["/bin/sh".into(), "-c".into(),
         "stty -echo; printf 'TITLE-READY\\n'; while IFS= read -r title; do [ \"$title\" = EXIT ] && exit 0; printf '\\033]2;%s\\007applied:%s\\n' \"$title\" \"$title\"; done".into()],
     label: Some("owned title fixture".into()), }
+}
+
+fn title_fixture() -> (Live, std::path::PathBuf, std::path::PathBuf) {
+    let live = Live::idle().bounded();
+    let fake_pi = live.root.path().join("fake-pi");
+    let calls = live.root.path().join("title-calls");
+    std::fs::write(
+        &fake_pi,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\nprintf '%s\\n' \"$PWD\" >> {}.cwd\nwhile IFS= read -r line; do printf '%s\\n' '{{\"type\":\"message_end\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"Fixture Topic\"}}],\"stopReason\":\"stop\"}}}}'; exit 0; done\n",
+            calls.display(),
+            calls.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&fake_pi, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(
+        live.root.path().join("dashboard.toml"),
+        "title_model = 'pi/test'\n",
+    )
+    .unwrap();
+    live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", fake_pi.as_os_str())]);
+    assert_eq!(
+        live.request(Request::AddProject {
+            name: PROJECT.into(),
+            repo: live.repo.clone(),
+            workspace_root: live.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    live.clear_root_shell();
+    assert_eq!(live.request(workspace(None)), Response::Ok);
+    (live, fake_pi, calls)
+}
+
+fn agent_program(token: &std::path::Path) -> Vec<std::ffi::OsString> {
+    vec![
+        "/bin/sh".into(),
+        "-c".into(),
+        "stty -echo; printf '%s\\n' \"$OVRCR_HOOK_TOKEN\" > \"$1\"; printf AGENT_READY; while IFS= read -r line; do :; done".into(),
+        "agent-title-fixture".into(),
+        token.as_os_str().into(),
+    ]
+}
+
+fn parse_secret(path: &std::path::Path) -> AgentSecret {
+    let text = std::fs::read_to_string(path).unwrap();
+    let text = text.trim();
+    let mut bytes = [0_u8; 32];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).unwrap();
+    }
+    AgentSecret(bytes)
+}
+
+fn retain_reference(
+    live: &Live,
+    session: &SessionSummary,
+    capability: AgentSecret,
+    provider: AgentProvider,
+    conversation: &str,
+    reference: ConversationReference,
+) {
+    let mut stream = connect_server(&live.socket).unwrap();
+    let Response::AgentOperation(AgentOperationResult::Reserved(reservation)) = client::request(
+        &mut stream,
+        10,
+        Request::ReserveAgent(ReserveAgent {
+            session: session.id,
+            capability,
+            operation: format!("reserve-{conversation}"),
+            expected_epoch: 0,
+            invocation: format!("invocation-{conversation}"),
+            provider,
+        }),
+    )
+    .unwrap() else {
+        panic!("reserve failed")
+    };
+    let auth = SupervisorAuth {
+        session: session.id,
+        lease: reservation.lease,
+    };
+    let Response::AgentOperation(AgentOperationResult::Bound(binding)) = client::request(
+        &mut stream,
+        11,
+        Request::Supervisor(SupervisorRequest {
+            auth: auth.clone(),
+            operation: format!("bind-{conversation}"),
+            command: AgentCommand::Bind {
+                expected_binding: None,
+                conversation: conversation.into(),
+            },
+        }),
+    )
+    .unwrap() else {
+        panic!("bind failed")
+    };
+    assert_eq!(
+        binding,
+        AgentBinding {
+            provider,
+            invocation: format!("invocation-{conversation}"),
+            conversation: conversation.into(),
+            generation: 1,
+        }
+    );
+    let retained = client::request(
+        &mut stream,
+        12,
+        Request::Supervisor(SupervisorRequest {
+            auth,
+            operation: format!("retain-{conversation}"),
+            command: AgentCommand::RetainConversation {
+                binding,
+                reference: Box::new(reference),
+            },
+        }),
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            retained,
+            Response::AgentOperation(AgentOperationResult::ConversationRetained)
+        ),
+        "retain failed for {conversation}: {retained:?}"
+    );
+}
+
+fn wait_display(live: &Live, id: SessionId, expected: &str) {
+    let deadline = Instant::now() + Duration::from_secs(12);
+    loop {
+        let name = sessions(live)
+            .into_iter()
+            .find(|session| session.id == id)
+            .unwrap()
+            .display_name()
+            .to_owned();
+        if name == expected {
+            return;
+        }
+        assert!(Instant::now() < deadline, "display stayed {name:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn created(live: &Live, request: Request) -> SessionSummary {
@@ -176,6 +323,188 @@ fn no_title_changes(stream: &mut UnixStream, id: SessionId, revision: u64) {
             _ => {}
         }
     }
+}
+
+#[test]
+fn conversation_subjects_use_retained_provider_histories_and_survive_restart() {
+    let (live, fake_pi, calls) = title_fixture();
+    let _dashboard = dashboard(&live);
+    let providers = [
+        (AgentProvider::Pi, "pi"),
+        (AgentProvider::Omp, "omp"),
+        (AgentProvider::Codex, "codex"),
+        (AgentProvider::Claude, "claude"),
+    ];
+    let mut made = Vec::new();
+    for (provider, name) in providers {
+        let token = live.root.path().join(format!("{name}.token"));
+        let session = created(
+            &live,
+            Request::CreateSession(CreateSessionRequest {
+                kind: ovrcr_protocol::SessionKind::Agent { name: name.into() },
+                project: PROJECT.into(),
+                workspace: WORKSPACE.into(),
+                name: format!("named-{name}"),
+                label: Some(name.into()),
+                argv: agent_program(&token),
+            }),
+        );
+        wait_for(&live, session.id, "AGENT_READY");
+        assert_eq!(
+            sessions(&live)
+                .into_iter()
+                .find(|row| row.id == session.id)
+                .unwrap()
+                .display_name(),
+            format!("named-{name}")
+        );
+        let conversation = match provider {
+            AgentProvider::Pi => "00000000-0000-4000-8000-000000000001".to_owned(),
+            AgentProvider::Omp => "00000000-0000-4000-8000-000000000002".to_owned(),
+            AgentProvider::Codex => "00000000-0000-4000-8000-000000000003".to_owned(),
+            AgentProvider::Claude => "00000000-0000-4000-8000-000000000004".to_owned(),
+            _ => unreachable!(),
+        };
+        let history = live.root.path().join(format!("{name}.jsonl"));
+        let body = match provider {
+            AgentProvider::Pi | AgentProvider::Omp => format!(
+                "{{\"type\":\"session\",\"id\":\"{conversation}\"}}\n{{\"role\":\"user\",\"content\":\"please name it\"}}\n{{\"role\":\"assistant\",\"content\":\"the answer\"}}\n"
+            ),
+            AgentProvider::Codex => format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{conversation}\"}}}}\n{{\"role\":\"assistant\",\"content\":\"the answer\"}}\n"
+            ),
+            AgentProvider::Claude => format!(
+                "{{\"type\":\"mode\"}}\n{{\"sessionId\":\"{conversation}\",\"role\":\"user\",\"content\":\"please name it\"}}\n{{\"sessionId\":\"{conversation}\",\"role\":\"assistant\",\"content\":\"the answer\"}}\n"
+            ),
+            _ => unreachable!(),
+        };
+        std::fs::write(&history, body).unwrap();
+        let reference = match provider {
+            AgentProvider::Pi => ConversationReference::Pi(ExtensionConversation {
+                conversation: conversation.clone(),
+                executable: fake_pi.clone(),
+                history: Some(history),
+                config_dir: live.root.path().into(),
+                options: vec![],
+            }),
+            AgentProvider::Omp => ConversationReference::Omp(ExtensionConversation {
+                conversation: conversation.clone(),
+                executable: fake_pi.clone(),
+                history: Some(history),
+                config_dir: live.root.path().into(),
+                options: vec![],
+            }),
+            AgentProvider::Codex => {
+                ConversationReference::Codex(ovrcr::protocol::CodexConversation {
+                    conversation: conversation.clone(),
+                    executable: fake_pi.clone(),
+                    history: Some(history),
+                    config_dir: live.root.path().into(),
+                    options: vec![],
+                })
+            }
+            AgentProvider::Claude => {
+                ConversationReference::Claude(ovrcr::protocol::ClaudeConversation {
+                    conversation: conversation.clone(),
+                    executable: fake_pi.clone(),
+                    history,
+                    config_dir: live.root.path().into(),
+                    options: vec![],
+                })
+            }
+            _ => unreachable!(),
+        };
+        retain_reference(
+            &live,
+            &session,
+            parse_secret(&token),
+            provider,
+            &conversation,
+            reference,
+        );
+        wait_display(&live, session.id, "Fixture Topic");
+        made.push(session.id);
+    }
+    let call_count = std::fs::read_to_string(&calls).unwrap().lines().count();
+    assert_eq!(call_count, 4);
+
+    assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
+    live.join();
+    live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", fake_pi.as_os_str())]);
+    for id in made {
+        wait_display(&live, id, "Fixture Topic");
+    }
+}
+
+#[test]
+fn title_model_missing_mismatches_terminal_and_grok_do_not_spawn_pi() {
+    let live = Live::idle().bounded();
+    let fake_pi = live.root.path().join("fake-pi");
+    let calls = live.root.path().join("calls");
+    std::fs::write(
+        &fake_pi,
+        format!("#!/bin/sh\nprintf called >> {}\nexit 0\n", calls.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&fake_pi, std::fs::Permissions::from_mode(0o700)).unwrap();
+    live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", fake_pi.as_os_str())]);
+    assert_eq!(
+        live.request(Request::AddProject {
+            name: PROJECT.into(),
+            repo: live.repo.clone(),
+            workspace_root: live.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    live.clear_root_shell();
+    assert_eq!(live.request(workspace(None)), Response::Ok);
+    let _dashboard = dashboard(&live);
+    let terminal = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Terminal,
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "terminal-name".into(),
+            label: Some("terminal".into()),
+            argv: title_program().argv,
+        }),
+    );
+    let grok_token = live.root.path().join("grok.token");
+    let grok = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent {
+                name: "grok".into(),
+            },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "grok-name".into(),
+            label: Some("grok".into()),
+            argv: agent_program(&grok_token),
+        }),
+    );
+    std::thread::sleep(Duration::from_secs(3));
+    assert_eq!(
+        sessions(&live)
+            .into_iter()
+            .find(|row| row.id == terminal.id)
+            .unwrap()
+            .display_name(),
+        "terminal-name"
+    );
+    assert_eq!(
+        sessions(&live)
+            .into_iter()
+            .find(|row| row.id == grok.id)
+            .unwrap()
+            .display_name(),
+        "grok-name"
+    );
+    assert!(
+        !calls.exists(),
+        "title call spawned without a model or Grok history"
+    );
 }
 
 #[test]

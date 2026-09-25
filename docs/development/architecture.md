@@ -22,11 +22,14 @@ sole writable store. The database path is the full `config.toml` path with
 schema version 2 adds session metadata; version 3 adds archive disposition.
 Neither migration changes settings or task storage.
 Schema version 6 persists each workspace as a stable `id`, checkout `path`,
-`git_identity`, and `setup_pending` flag. SQLite owns identity, path, and
-root-setup metadata. The stored `branch` is captured metadata: the protected
-root's setup default (used when default-branch detection is only a HEAD
-fallback or fails), and a feature workspace's branch at creation or last
-explicit mutation—not a promise that later checkout changes are written back.
+`git_identity`, and `setup_pending` flag. Schema version 7 adds retained
+conversation subjects keyed by session and conversation id, with topic,
+dismissal, accepted-count and attempt-count fields; offline readers accept it
+read-only. SQLite owns identity, path, and root-setup metadata. The stored
+`branch` is captured metadata: the protected root's setup default (used when
+default-branch detection is only a HEAD fallback or fails), and a feature
+workspace's branch at creation or last explicit mutation—not a promise that
+later checkout changes are written back.
 Live checkout labels are derived observations; Git is the authority for the
 current branch. `observe_registry` overlays those labels on a returned clone
 for inventory and offline inspection and is not written back. Retained sessions
