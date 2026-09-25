@@ -1763,6 +1763,9 @@ impl ServerState {
                     Some(ovrcr_protocol::ConversationReference::Codex(reference)) => {
                         reference.history.as_ref()
                     }
+                    Some(ovrcr_protocol::ConversationReference::Grok(reference)) => {
+                        Some(&reference.history)
+                    }
                     None => None,
                 };
                 history.is_some_and(|path| {

@@ -3,9 +3,10 @@ use std::ffi::{OsStr, OsString};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-const KNOWN_AGENTS: [&str; 10] = [
+const KNOWN_AGENTS: [&str; 11] = [
     "claude",
     "codex",
+    "grok",
     "gemini",
     "aider",
     "opencode",
@@ -16,8 +17,9 @@ const KNOWN_AGENTS: [&str; 10] = [
     "cursor-agent",
 ];
 /// Detected agents OVRCR launches through `agent run <name> --` so the owned reporting
-/// extension loads beside the user's own. Codex and Claude keep their explicit routes.
-pub const MANAGED_AGENTS: [&str; 2] = ["pi", "omp"];
+/// extension loads beside the user's own, or, for Grok, so the launch retains the session
+/// history file for titles. Codex and Claude keep their explicit routes.
+pub const MANAGED_AGENTS: [&str; 3] = ["pi", "omp", "grok"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentSource {
@@ -229,7 +231,7 @@ mod tests {
     #[test]
     fn managed_agents_launch_through_the_agent_run_route() {
         let dir = tempfile::tempdir().unwrap();
-        for name in ["pi", "omp", "codex"] {
+        for name in ["pi", "omp", "grok", "codex"] {
             write_stub(dir.path(), name, 0o755);
         }
         let launcher = Path::new("/opt/ovrcr/bin/ovrcr");

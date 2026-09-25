@@ -246,6 +246,175 @@ fn codex_reopen_uses_exact_identity_without_prompt_across_two_restarts() {
 }
 
 #[test]
+fn grok_managed_launch_retains_its_history_file_for_titles_without_resume() {
+    use std::os::unix::fs::PermissionsExt;
+    let live = Live::idle().bounded();
+    let home = live.root.path().join("grok-home");
+    std::fs::create_dir(&home).unwrap();
+    let environment = [("GROK_HOME", home.as_os_str())];
+    live.start_binary_env(&environment);
+    live.ready("feature/grok-history");
+    let cwd = ovrcr::config::load_registry(&live.config)
+        .unwrap()
+        .workspace(live::PROJECT, live::WORKSPACE)
+        .unwrap()
+        .path
+        .clone();
+    let native = live.root.path().join("grok");
+    let quote = |p: &std::path::Path| format!("'{}'", p.to_str().unwrap().replace('\'', "'\"'\"'"));
+    std::fs::write(&native, format!(
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'grok 1.0.40 (fixture) [stable]\\n'; exit 0; fi\nprintf '%s\\n' \"$@\" > {}/argv\nprintf 'RETAINED_GROK_READY\\n'\nwhile read -r line; do [ \"$line\" = quit ] && exit 0; done\n",
+        quote(live.root.path())
+    )).unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let created = create_terminal(
+        &live,
+        "grok-retained",
+        &[
+            live.executable.to_str().unwrap(),
+            "agent",
+            "run",
+            "grok",
+            "--",
+            native.to_str().unwrap(),
+            "PRIVATE_GROK_PROMPT_184",
+        ],
+    );
+    let id = created["id"].as_u64().unwrap();
+    let id_arg = id.to_string();
+    wait_output(&live, &id_arg, "RETAINED_GROK_READY");
+    let argv = std::fs::read_to_string(live.root.path().join("argv")).unwrap();
+    let argv: Vec<&str> = argv.lines().collect();
+    assert_eq!(argv.len(), 3, "{argv:?}");
+    assert_eq!(argv[0], "--session-id");
+    assert_eq!(
+        argv[2], "PRIVATE_GROK_PROMPT_184",
+        "native prompt rewritten"
+    );
+    let conversation = argv[1].to_owned();
+    assert_eq!(conversation.len(), 36);
+    let find = |rows: &Value| {
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == id)
+            .cloned()
+            .unwrap()
+    };
+    let row = find(&json(&live, &["terminal", "list"]));
+    assert_eq!(row["recovery"]["conversation"], conversation, "{row}");
+    assert!(
+        row["recovery"]["unavailable"]
+            .as_str()
+            .unwrap()
+            .contains("not available"),
+        "a retained Grok history advertised resume: {row}"
+    );
+    assert_eq!(
+        row["activity"], "unknown",
+        "launch invented activity: {row}"
+    );
+    // The durable record names the one file Grok's documented store keeps for this
+    // conversation in this working directory; nothing else about the launch is stored.
+    let mut group = String::new();
+    for byte in cwd.to_str().unwrap().bytes() {
+        if byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte) {
+            group.push(byte as char);
+        } else {
+            group.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    let history = home
+        .join("sessions")
+        .join(group)
+        .join(&conversation)
+        .join("updates.jsonl");
+    let database = ovrcr::config::database_path(&live.config);
+    let stored: String = rusqlite::Connection::open_with_flags(
+        &database,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap()
+    .query_row(
+        "SELECT reference FROM agent_conversations WHERE session = ?1",
+        [id as i64],
+        |row| row.get(0),
+    )
+    .unwrap();
+    let stored: Value = serde_json::from_str(&stored).unwrap();
+    assert_eq!(stored["Grok"]["conversation"], conversation, "{stored}");
+    assert_eq!(
+        stored["Grok"]["history"],
+        history.to_str().unwrap(),
+        "{stored}"
+    );
+    assert_eq!(stored["Grok"].as_object().unwrap().len(), 2, "{stored}");
+    // The identity check a reader applies: the file must belong to this conversation.
+    let reference = ovrcr::protocol::GrokConversation {
+        conversation: conversation.clone(),
+        history: history.clone(),
+    };
+    assert!(
+        ovrcr::grok_recovery::validate_history(&reference).is_err(),
+        "no file yet"
+    );
+    std::fs::create_dir_all(history.parent().unwrap()).unwrap();
+    std::fs::write(&history, "{\"method\":\"session/update\",\"params\":{\"sessionId\":\"01a0c579-40ff-7981-a9cb-0fe920aef561\",\"update\":{\"sessionUpdate\":\"user_message_chunk\",\"content\":{\"type\":\"text\",\"text\":\"GROK_FIXTURE_TEXT_184\"}}}}\n").unwrap();
+    assert!(
+        ovrcr::grok_recovery::validate_history(&reference).is_err(),
+        "another conversation's file passed the identity check"
+    );
+    std::fs::write(&history, format!("{{\"method\":\"session/update\",\"params\":{{\"sessionId\":\"{conversation}\",\"update\":{{\"sessionUpdate\":\"user_message_chunk\",\"content\":{{\"type\":\"text\",\"text\":\"GROK_FIXTURE_TEXT_184\"}}}}}}}}\n")).unwrap();
+    ovrcr::grok_recovery::validate_history(&reference).unwrap();
+    // The reference and its unavailability survive the server, and the record never
+    // holds the prompt, the file's text, or the terminal's output.
+    for attempt in 1..=2 {
+        json(&live, &["shutdown", "--kill"]);
+        live.join();
+        let row = find(&json(&live, &["terminal", "list"]));
+        assert_eq!(row["recovery"]["conversation"], conversation, "{row}");
+        assert!(
+            row["recovery"]["unavailable"]
+                .as_str()
+                .unwrap()
+                .contains("not available"),
+            "{row}"
+        );
+        assert_eq!(row["title"], "grok-retained");
+        let bytes = std::fs::read(&database).unwrap();
+        for private in [
+            "PRIVATE_GROK_PROMPT_184",
+            "GROK_FIXTURE_TEXT_184",
+            "RETAINED_GROK_READY",
+            "--session-id",
+        ] {
+            assert!(
+                !bytes
+                    .windows(private.len())
+                    .any(|window| window == private.as_bytes()),
+                "attempt {attempt}: {private} reached the retained record"
+            );
+        }
+        live.start_binary_env(&environment);
+    }
+    let failed = cli(&live, &["terminal", "reopen", &id_arg]);
+    assert!(
+        !failed.status.success(),
+        "Grok resume launched: {}",
+        String::from_utf8_lossy(&failed.stdout)
+    );
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("not available"));
+    assert_eq!(
+        std::fs::read_to_string(&history)
+            .unwrap()
+            .matches("GROK_FIXTURE_TEXT_184")
+            .count(),
+        1,
+        "the retained file was rewritten"
+    );
+}
+
+#[test]
 #[ignore = "controlled native executable entered only by the retained-session fixture"]
 fn retained_codex_native_helper() {
     use std::io::BufRead;
