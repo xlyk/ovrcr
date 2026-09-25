@@ -366,6 +366,11 @@ impl Candidate {
                 conversation: reference.conversation.clone(),
                 history: reference.history.clone()?,
             }),
+            ConversationReference::Grok(reference) => Some(Self {
+                provider: AgentProvider::Grok,
+                conversation: reference.conversation.clone(),
+                history: reference.history.clone(),
+            }),
         }
     }
 }
@@ -389,7 +394,14 @@ fn excerpt(candidate: &Candidate) -> Result<Option<String>> {
             }
         }
         AgentProvider::Claude => {}
-        _ => return Ok(None),
+        AgentProvider::Grok => {
+            if !first_line_matches(&candidate.history, |value| {
+                value["params"]["sessionId"].as_str() == Some(candidate.conversation.as_str())
+            })? {
+                return Ok(None);
+            }
+        }
+        AgentProvider::Hermes => return Ok(None),
     }
     let tail = read_tail(&candidate.history)?;
     let mut messages = Vec::new();
