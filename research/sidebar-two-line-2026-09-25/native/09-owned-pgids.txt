@@ -1,0 +1,15 @@
+39390 87630 /Users/xlyk/Code/ovrcr-workspaces/0f4218e6ec3543471736db3cdf39d3af/target/OVRCR GUI.app/Contents/MacOS/ovrcr
+39876 87630 /Users/xlyk/Code/ovrcr-workspaces/0f4218e6ec3543471736db3cdf39d3af/target/OVRCR GUI.app/Contents/MacOS/ovrcr
+40356 40356 /bin/zsh
+40785 40785 /bin/zsh
+42119 42119 /bin/zsh
+42584 42584 /bin/zsh
+43100 43100 /bin/zsh
+43552 43552 /bin/zsh
+43986 43986 /bin/sh -i
+44645 44645 /bin/sh -i
+49925 49925 /bin/sh -i
+45243 45243 /bin/sh -i
+88435 88435 /bin/sh
+47796 47796 /bin/sh -i
+48859 48859 /bin/sh -i

@@ -1,0 +1,7 @@
+GUI pid=65863 path=/Users/xlyk/Code/ovrcr-workspaces/0f4218e6ec3543471736db3cdf39d3af/target/OVRCR GUI.app
+["kCGWindowIsOnscreen": 1, "kCGWindowOwnerPID": 65863, "kCGWindowMemoryUsage": 2368, "kCGWindowOwnerName": OVRCR GUI, "kCGWindowName": OVRCR GUI, "kCGWindowAlpha": 1, "kCGWindowNumber": 34527, "kCGWindowLayer": 0, "kCGWindowStoreType": 1, "kCGWindowSharingState": 1, "kCGWindowBounds": {
+    Height = 932;
+    Width = 700;
+    X = 114;
+    Y = 252;
+}]

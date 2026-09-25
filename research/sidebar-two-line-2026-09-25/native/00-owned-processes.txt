@@ -1,0 +1,8 @@
+39390 /Users/xlyk/Code/ovrcr-workspaces/0f4218e6ec3543471736db3cdf39d3af/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui
+39876 /Users/xlyk/Code/ovrcr-workspaces/0f4218e6ec3543471736db3cdf39d3af/target/OVRCR GUI.app/Contents/MacOS/ovrcr server
+49501 /Users/xlyk/Code/ovrcr-workspaces/0f4218e6ec3543471736db3cdf39d3af/target/OVRCR GUI.app/Contents/MacOS/ovrcr new --project spacelift-agent --workspace gui-spacelift-agent-scope-quality --name review scope quality --label codex / gpt-5.4 -- /bin/sh -c printf '\033[38;5;141m╭─ codex / gpt-5.4 ────────────────────────────────────────╮\033[0m\n'; \
+         printf '│ fixture: scope quality review\n'; \
+         printf '\033[38;5;141m╰──────────────────────────────────────────────────╯\033[0m\n\n'; \
+         printf '\033[38;5;114m✓ deterministic local transcript ready\033[0m\n'; \
+         exec /bin/sh -i
+13 cua-two-line 'claude / opus-4.5-long-context' 88435

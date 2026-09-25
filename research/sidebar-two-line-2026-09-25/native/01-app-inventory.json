@@ -1,0 +1,192 @@
+[
+  {
+    "displayName": "OVRCR GUI",
+    "id": "dev.ovrcr.gui",
+    "isRunning": true
+  },
+  {
+    "displayName": "Comet",
+    "id": "ai.perplexity.comet",
+    "isRunning": true,
+    "lastUsedDate": 811987200,
+    "useCount": 1007
+  },
+  {
+    "displayName": "iTerm2",
+    "id": "com.googlecode.iterm2",
+    "isRunning": true,
+    "lastUsedDate": 811987200,
+    "useCount": 445
+  },
+  {
+    "displayName": "Slack",
+    "id": "com.tinyspeck.slackmacgap",
+    "isRunning": true,
+    "lastUsedDate": 811987200,
+    "useCount": 63
+  },
+  {
+    "displayName": "Superset",
+    "id": "com.superset.desktop",
+    "isRunning": true,
+    "lastUsedDate": 811987200,
+    "useCount": 62
+  },
+  {
+    "displayName": "Obsidian",
+    "id": "md.obsidian",
+    "isRunning": true,
+    "lastUsedDate": 811987200,
+    "useCount": 28
+  },
+  {
+    "displayName": "Grok Bot",
+    "id": "com.anysphere.sand",
+    "isRunning": true,
+    "lastUsedDate": 811987200,
+    "useCount": 25
+  },
+  {
+    "displayName": "Signal",
+    "id": "org.whispersystems.signal-desktop",
+    "isRunning": true,
+    "lastUsedDate": 811987200,
+    "useCount": 12
+  },
+  {
+    "displayName": "Script Editor",
+    "id": "com.apple.ScriptEditor2",
+    "isRunning": true,
+    "lastUsedDate": 811987200,
+    "useCount": 9
+  },
+  {
+    "displayName": "Google Chrome",
+    "id": "com.google.Chrome",
+    "isRunning": true,
+    "lastUsedDate": 811987200,
+    "useCount": 5
+  },
+  {
+    "displayName": "Claude",
+    "id": "com.anthropic.claudefordesktop",
+    "isRunning": true,
+    "lastUsedDate": 811987200,
+    "useCount": 2
+  },
+  {
+    "displayName": "Zed",
+    "id": "dev.zed.Zed",
+    "isRunning": true,
+    "lastUsedDate": 811900800,
+    "useCount": 25
+  },
+  {
+    "displayName": "1Password",
+    "id": "com.1password.1password",
+    "isRunning": true,
+    "lastUsedDate": 811900800,
+    "useCount": 21
+  },
+  {
+    "displayName": "Linear",
+    "id": "com.linear",
+    "isRunning": true,
+    "lastUsedDate": 811209600,
+    "useCount": 2
+  },
+  {
+    "displayName": "Finder",
+    "id": "com.apple.finder",
+    "isRunning": true
+  },
+  {
+    "displayName": "Tailscale",
+    "id": "io.tailscale.ipn.macsys",
+    "isRunning": true
+  },
+  {
+    "displayName": "Shottr",
+    "id": "cc.ffitch.shottr",
+    "isRunning": false,
+    "lastUsedDate": 811987200,
+    "useCount": 36
+  },
+  {
+    "displayName": "Neovide",
+    "id": "com.neovide.neovide",
+    "isRunning": false,
+    "lastUsedDate": 811987200,
+    "useCount": 31
+  },
+  {
+    "displayName": "Numbers",
+    "id": "com.apple.iWork.Numbers",
+    "isRunning": false,
+    "lastUsedDate": 811987200,
+    "useCount": 9
+  },
+  {
+    "displayName": "System Settings",
+    "id": "com.apple.systempreferences",
+    "isRunning": false,
+    "lastUsedDate": 811987200,
+    "useCount": 6
+  },
+  {
+    "displayName": "TextEdit",
+    "id": "com.apple.TextEdit",
+    "isRunning": false,
+    "lastUsedDate": 811987200,
+    "useCount": 5
+  },
+  {
+    "displayName": "screenpipe",
+    "id": "screenpi.pe",
+    "isRunning": false,
+    "lastUsedDate": 811987200,
+    "useCount": 2
+  },
+  {
+    "displayName": "Discord",
+    "id": "com.hnc.Discord",
+    "isRunning": false,
+    "lastUsedDate": 811900800,
+    "useCount": 2
+  },
+  {
+    "displayName": "Archive Utility",
+    "id": "com.apple.archiveutility",
+    "isRunning": false,
+    "lastUsedDate": 811900800,
+    "useCount": 1
+  },
+  {
+    "displayName": "ChatGPT",
+    "id": "com.openai.codex",
+    "isRunning": false,
+    "lastUsedDate": 811814400,
+    "useCount": 250
+  },
+  {
+    "displayName": "UTM",
+    "id": "com.utmapp.UTM",
+    "isRunning": false,
+    "lastUsedDate": 811123200,
+    "useCount": 2
+  },
+  {
+    "displayName": "iMovie",
+    "id": "com.apple.iMovieApp",
+    "isRunning": false,
+    "lastUsedDate": 811036800,
+    "useCount": 2
+  },
+  {
+    "displayName": "Lossless Video Cutter",
+    "id": "com.losslessvideocutter.appstore",
+    "isRunning": false,
+    "lastUsedDate": 811036800,
+    "useCount": 1
+  }
+]
