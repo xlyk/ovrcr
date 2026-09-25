@@ -285,8 +285,9 @@ fn run_server_inner(
             Err(error) => return Err(error).context("accept server client"),
         }
     }
-    // Wake the observer before joining it; shutdown must not wait for its next poll.
+    // Wake parked workers before joining them; shutdown must not wait for the next poll.
     refresh.thread().unpark();
+    title_thread.thread().unpark();
     signal_handle.close();
     let _ = signal_thread.join();
     let task_shutdown = task_manager.stop();
