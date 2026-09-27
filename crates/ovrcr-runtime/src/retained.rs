@@ -127,6 +127,13 @@ pub(crate) struct ConversationSubject {
     pub attempt_count: u64,
 }
 
+impl ConversationSubject {
+    /// A conversation may accept at most two subjects, or three attempts, then stop.
+    pub(crate) fn title_window_open(&self) -> bool {
+        !self.dismissed && self.accepted_count < 2 && self.attempt_count < 3
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct RetainedSession {
     pub id: SessionId,
@@ -510,8 +517,22 @@ impl SessionStore {
              (session, conversation, topic, accepted_count, attempt_count)
              VALUES (?1, ?2, ?3, 1, 1)
              ON CONFLICT(session, conversation) DO UPDATE SET
-             topic = CASE WHEN accepted_count = 0 AND dismissed = 0 THEN excluded.topic ELSE topic END,
-             accepted_count = CASE WHEN accepted_count = 0 AND dismissed = 0 THEN accepted_count + 1 ELSE accepted_count END,
+             topic = CASE
+                 WHEN dismissed = 0
+                  AND accepted_count < 2
+                  AND attempt_count < 3
+                  AND (topic IS NULL OR topic != excluded.topic)
+                 THEN excluded.topic
+                 ELSE topic
+             END,
+             accepted_count = CASE
+                 WHEN dismissed = 0
+                  AND accepted_count < 2
+                  AND attempt_count < 3
+                  AND (topic IS NULL OR topic != excluded.topic)
+                 THEN accepted_count + 1
+                 ELSE accepted_count
+             END,
              attempt_count = attempt_count + 1",
             params![sql_integer(id.0)?, conversation, topic],
         )?;
@@ -525,10 +546,11 @@ impl SessionStore {
             .subjects
             .entry(conversation.to_owned())
             .or_default();
+        let may_accept = subject.title_window_open() && subject.topic.as_ref() != Some(&topic);
         subject.attempt_count = subject.attempt_count.saturating_add(1);
-        if subject.accepted_count == 0 && !subject.dismissed {
+        if may_accept {
             subject.topic = Some(topic);
-            subject.accepted_count = 1;
+            subject.accepted_count = subject.accepted_count.saturating_add(1);
             return Ok(true);
         }
         Ok(false)
@@ -1257,6 +1279,110 @@ mod tests {
         );
         assert_eq!(store.get(record.id).unwrap().id, record.id);
         assert_eq!(store.get(record.id).unwrap().run, run);
+    }
+
+    #[test]
+    fn one_subject_revision_is_allowed_then_further_replies_are_ignored() {
+        let mut store = SessionStore::in_memory();
+        let record = agent_record(&mut store, "original");
+        let run = store.begin_run(record.id, record.run).unwrap().run;
+        store
+            .retain_conversation(record.id, run, Some(&pi_reference("conv-a")))
+            .unwrap();
+        assert!(
+            store
+                .save_conversation_subject(record.id, run, "conv-a", "First".into())
+                .unwrap()
+        );
+        assert!(
+            store
+                .save_conversation_subject(record.id, run, "conv-a", "Revised".into())
+                .unwrap()
+        );
+        let subject = store.get(record.id).unwrap().subjects["conv-a"].clone();
+        assert_eq!(subject.topic.as_deref(), Some("Revised"));
+        assert_eq!(subject.accepted_count, 2);
+        assert_eq!(subject.attempt_count, 2);
+        assert!(!subject.title_window_open());
+        assert!(
+            !store
+                .save_conversation_subject(record.id, run, "conv-a", "Third".into())
+                .unwrap()
+        );
+        let subject = store.get(record.id).unwrap().subjects["conv-a"].clone();
+        assert_eq!(subject.topic.as_deref(), Some("Revised"));
+        assert_eq!(subject.accepted_count, 2);
+        assert_eq!(subject.attempt_count, 3);
+        assert_eq!(
+            store.get(record.id).unwrap().effective_title().as_deref(),
+            Some("Revised")
+        );
+        assert_eq!(store.get(record.id).unwrap().id, record.id);
+        assert_eq!(store.get(record.id).unwrap().run, run);
+    }
+
+    #[test]
+    fn identical_subject_reply_is_not_a_new_accept_but_spends_an_attempt() {
+        let mut store = SessionStore::in_memory();
+        let record = agent_record(&mut store, "original");
+        let run = store.begin_run(record.id, record.run).unwrap().run;
+        store
+            .retain_conversation(record.id, run, Some(&pi_reference("conv-a")))
+            .unwrap();
+        assert!(
+            store
+                .save_conversation_subject(record.id, run, "conv-a", "Same".into())
+                .unwrap()
+        );
+        assert!(
+            !store
+                .save_conversation_subject(record.id, run, "conv-a", "Same".into())
+                .unwrap()
+        );
+        let subject = store.get(record.id).unwrap().subjects["conv-a"].clone();
+        assert_eq!(subject.topic.as_deref(), Some("Same"));
+        assert_eq!(subject.accepted_count, 1);
+        assert_eq!(subject.attempt_count, 2);
+        assert!(subject.title_window_open());
+        assert!(
+            store
+                .save_conversation_subject(record.id, run, "conv-a", "Later".into())
+                .unwrap()
+        );
+        let subject = store.get(record.id).unwrap().subjects["conv-a"].clone();
+        assert_eq!(subject.topic.as_deref(), Some("Later"));
+        assert_eq!(subject.accepted_count, 2);
+        assert_eq!(subject.attempt_count, 3);
+        assert!(!subject.title_window_open());
+    }
+
+    #[test]
+    fn three_failed_attempts_close_the_title_window() {
+        let mut store = SessionStore::in_memory();
+        let record = agent_record(&mut store, "original");
+        let run = store.begin_run(record.id, record.run).unwrap().run;
+        for _ in 0..3 {
+            assert!(
+                store
+                    .record_subject_attempt(record.id, run, "conv-a")
+                    .unwrap()
+            );
+        }
+        let subject = store.get(record.id).unwrap().subjects["conv-a"].clone();
+        assert_eq!(subject.attempt_count, 3);
+        assert_eq!(subject.accepted_count, 0);
+        assert!(subject.topic.is_none());
+        assert!(!subject.title_window_open());
+        assert!(
+            !store
+                .save_conversation_subject(record.id, run, "conv-a", "Too Late".into())
+                .unwrap()
+        );
+        let subject = store.get(record.id).unwrap().subjects["conv-a"].clone();
+        assert!(subject.topic.is_none());
+        assert_eq!(subject.accepted_count, 0);
+        assert_eq!(subject.attempt_count, 4);
+        assert!(store.get(record.id).unwrap().effective_title().is_none());
     }
 
     #[test]

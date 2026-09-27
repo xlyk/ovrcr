@@ -1770,6 +1770,39 @@ fn saved_titles_survive_restart_and_reopen_without_legacy_application_titles() {
     }
 }
 
+fn subject_counts(live: &Live, id: SessionId, conversation: &str) -> (i64, i64) {
+    let db = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+    db.query_row(
+        "SELECT accepted_count, attempt_count FROM conversation_subjects WHERE session = ?1 AND conversation = ?2",
+        rusqlite::params![i64::try_from(id.0).unwrap(), conversation],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .unwrap()
+}
+
+fn bump_history(path: &std::path::Path, line: &str) {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+    writeln!(file, "{line}").unwrap();
+}
+
+fn wait_call_count(path: &std::path::Path, expected: usize) {
+    let deadline = Instant::now() + Duration::from_secs(12);
+    loop {
+        let count = std::fs::read_to_string(path)
+            .map(|text| text.lines().filter(|line| !line.is_empty()).count())
+            .unwrap_or(0);
+        if count >= expected {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "call count stayed {count}, wanted {expected}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 fn subject_flags(live: &Live, id: SessionId, conversation: &str) -> (Option<String>, bool) {
     let db = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
     db.query_row(
@@ -1778,6 +1811,235 @@ fn subject_flags(live: &Live, id: SessionId, conversation: &str) -> (Option<Stri
         |row| Ok((row.get(0)?, row.get::<_, i64>(1)? != 0)),
     )
     .unwrap()
+}
+
+#[test]
+fn one_later_subject_may_replace_once_then_window_closes() {
+    let script = "#!/bin/sh\nprintf '%s\\n' \"$*\" >> __CALLS__\ncount=$(wc -l < __CALLS__ | tr -d ' ')\ncase \"$count\" in\n  1) topic=\"Vague Error\" ;;\n  2) topic=\"Fix Login Redirect\" ;;\n  *) topic=\"Should Not Apply\" ;;\nesac\nwhile IFS= read -r line; do printf '%s\\n' \"{\\\"type\\\":\\\"message_end\\\",\\\"message\\\":{\\\"role\\\":\\\"assistant\\\",\\\"content\\\":[{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"$topic\\\"}],\\\"stopReason\\\":\\\"stop\\\"}}\"; exit 0; done\n".to_owned();
+    let (live, fake_pi, calls) = start_title_fixture(script, Some("title_model = 'pi/test'\n"));
+    let _dashboard = dashboard(&live);
+    let token = live.root.path().join("revise.token");
+    let session = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent { name: "pi".into() },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "revise-original".into(),
+            label: Some("pi".into()),
+            argv: agent_program(&token),
+        }),
+    );
+    let id_before = session.id;
+    let run_before = session.run;
+    wait_for(&live, session.id, "AGENT_READY");
+    let conversation = "00000000-0000-4000-8000-000000000701";
+    let history = live.root.path().join("revise.jsonl");
+    std::fs::write(
+        &history,
+        format!(
+            "{{\"type\":\"session\",\"id\":\"{conversation}\"}}\n{{\"role\":\"assistant\",\"content\":\"look at this error\"}}\n"
+        ),
+    )
+    .unwrap();
+    retain_pi_history(
+        &live,
+        &fake_pi,
+        &session,
+        &token,
+        conversation,
+        history.clone(),
+    );
+    wait_display(&live, session.id, "Vague Error");
+    assert_eq!(subject_counts(&live, session.id, conversation), (1, 1));
+
+    bump_history(
+        &history,
+        "{\"role\":\"assistant\",\"content\":\"the login redirect is broken\"}",
+    );
+    wait_display(&live, session.id, "Fix Login Redirect");
+    assert_eq!(subject_counts(&live, session.id, conversation), (2, 2));
+
+    let calls_after_revision = std::fs::read_to_string(&calls)
+        .unwrap()
+        .lines()
+        .filter(|line| !line.is_empty())
+        .count();
+    bump_history(
+        &history,
+        "{\"role\":\"assistant\",\"content\":\"later work should not rename\"}",
+    );
+    std::thread::sleep(Duration::from_secs(5));
+    let calls_later = std::fs::read_to_string(&calls)
+        .unwrap()
+        .lines()
+        .filter(|line| !line.is_empty())
+        .count();
+    assert_eq!(
+        calls_later, calls_after_revision,
+        "closed window must not call Pi again"
+    );
+    let row = sessions(&live)
+        .into_iter()
+        .find(|row| row.id == session.id)
+        .unwrap();
+    assert_eq!(row.display_name(), "Fix Login Redirect");
+    assert_eq!((row.id, row.run), (id_before, run_before));
+}
+
+#[test]
+fn identical_subject_reply_does_not_count_as_replacement() {
+    let script = "#!/bin/sh\nprintf '%s\\n' \"$*\" >> __CALLS__\ncount=$(wc -l < __CALLS__ | tr -d ' ')\ncase \"$count\" in\n  1|2) topic=\"Same Topic\" ;;\n  *) topic=\"Clearer Topic\" ;;\nesac\nwhile IFS= read -r line; do printf '%s\\n' \"{\\\"type\\\":\\\"message_end\\\",\\\"message\\\":{\\\"role\\\":\\\"assistant\\\",\\\"content\\\":[{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"$topic\\\"}],\\\"stopReason\\\":\\\"stop\\\"}}\"; exit 0; done\n".to_owned();
+    let (live, fake_pi, calls) = start_title_fixture(script, Some("title_model = 'pi/test'\n"));
+    let _dashboard = dashboard(&live);
+    let token = live.root.path().join("identical.token");
+    let session = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent { name: "pi".into() },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "identical-original".into(),
+            label: Some("pi".into()),
+            argv: agent_program(&token),
+        }),
+    );
+    let id_before = session.id;
+    let run_before = session.run;
+    wait_for(&live, session.id, "AGENT_READY");
+    let conversation = "00000000-0000-4000-8000-000000000702";
+    let history = live.root.path().join("identical.jsonl");
+    std::fs::write(
+        &history,
+        format!(
+            "{{\"type\":\"session\",\"id\":\"{conversation}\"}}\n{{\"role\":\"assistant\",\"content\":\"first\"}}\n"
+        ),
+    )
+    .unwrap();
+    retain_pi_history(
+        &live,
+        &fake_pi,
+        &session,
+        &token,
+        conversation,
+        history.clone(),
+    );
+    wait_display(&live, session.id, "Same Topic");
+    assert_eq!(subject_counts(&live, session.id, conversation), (1, 1));
+
+    bump_history(&history, "{\"role\":\"assistant\",\"content\":\"repeat\"}");
+    wait_call_count(&calls, 2);
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(
+        sessions(&live)
+            .into_iter()
+            .find(|row| row.id == session.id)
+            .unwrap()
+            .display_name(),
+        "Same Topic"
+    );
+    assert_eq!(subject_counts(&live, session.id, conversation), (1, 2));
+
+    bump_history(&history, "{\"role\":\"assistant\",\"content\":\"clearer\"}");
+    wait_display(&live, session.id, "Clearer Topic");
+    assert_eq!(subject_counts(&live, session.id, conversation), (2, 3));
+    let row = sessions(&live)
+        .into_iter()
+        .find(|row| row.id == session.id)
+        .unwrap();
+    assert_eq!((row.id, row.run), (id_before, run_before));
+}
+
+#[test]
+fn three_failed_title_attempts_close_window_and_survive_restart() {
+    let script = "#!/bin/sh\nprintf '%s\\n' call >> __CALLS__\nexit 2\n".to_owned();
+    let (live, fake_pi, calls) = start_title_fixture(script, Some("title_model = 'pi/test'\n"));
+    let _dashboard = dashboard(&live);
+    let token = live.root.path().join("fail-window.token");
+    let session = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent { name: "pi".into() },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "fail-window-original".into(),
+            label: Some("pi".into()),
+            argv: agent_program(&token),
+        }),
+    );
+    let id_before = session.id;
+    let run_before = session.run;
+    wait_for(&live, session.id, "AGENT_READY");
+    let conversation = "00000000-0000-4000-8000-000000000703";
+    let history = live.root.path().join("fail-window.jsonl");
+    std::fs::write(
+        &history,
+        format!(
+            "{{\"type\":\"session\",\"id\":\"{conversation}\"}}\n{{\"role\":\"assistant\",\"content\":\"reply\"}}\n"
+        ),
+    )
+    .unwrap();
+    retain_pi_history(
+        &live,
+        &fake_pi,
+        &session,
+        &token,
+        conversation,
+        history.clone(),
+    );
+    wait_call_count(&calls, 1);
+    bump_history(&history, "{\"role\":\"assistant\",\"content\":\"again-2\"}");
+    wait_call_count(&calls, 2);
+    bump_history(&history, "{\"role\":\"assistant\",\"content\":\"again-3\"}");
+    wait_call_count(&calls, 3);
+    assert_eq!(subject_counts(&live, session.id, conversation), (0, 3));
+    assert_eq!(
+        sessions(&live)
+            .into_iter()
+            .find(|row| row.id == session.id)
+            .unwrap()
+            .display_name(),
+        "fail-window-original"
+    );
+
+    let calls_at_close = std::fs::read_to_string(&calls)
+        .unwrap()
+        .lines()
+        .filter(|line| !line.is_empty())
+        .count();
+    bump_history(&history, "{\"role\":\"assistant\",\"content\":\"again-4\"}");
+    std::thread::sleep(Duration::from_secs(5));
+    let calls_after = std::fs::read_to_string(&calls)
+        .unwrap()
+        .lines()
+        .filter(|line| !line.is_empty())
+        .count();
+    assert_eq!(
+        calls_after, calls_at_close,
+        "closed window must not call Pi"
+    );
+
+    assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
+    live.join();
+    std::fs::write(&calls, "").unwrap();
+    live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", fake_pi.as_os_str())]);
+    let _dashboard = dashboard(&live);
+    bump_history(
+        &history,
+        "{\"role\":\"assistant\",\"content\":\"after-restart\"}",
+    );
+    std::thread::sleep(Duration::from_secs(5));
+    assert!(
+        !calls.exists() || std::fs::read_to_string(&calls).unwrap().trim().is_empty(),
+        "restart must not reopen a closed title window"
+    );
+    let row = sessions(&live)
+        .into_iter()
+        .find(|row| row.id == session.id)
+        .unwrap();
+    assert_eq!(row.display_name(), "fail-window-original");
+    assert_eq!((row.id, row.run), (id_before, run_before));
+    assert_eq!(subject_counts(&live, session.id, conversation), (0, 3));
 }
 
 #[test]

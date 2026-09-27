@@ -111,7 +111,7 @@ impl TitleWorker {
                 || record
                     .subjects
                     .get(&candidate.conversation)
-                    .is_some_and(|subject| subject.dismissed || subject.accepted_count > 0)
+                    .is_some_and(|subject| !subject.title_window_open())
             {
                 continue;
             }
