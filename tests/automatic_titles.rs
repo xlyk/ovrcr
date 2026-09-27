@@ -1770,6 +1770,190 @@ fn saved_titles_survive_restart_and_reopen_without_legacy_application_titles() {
     }
 }
 
+
+fn subject_flags(live: &Live, id: SessionId, conversation: &str) -> (Option<String>, bool) {
+    let db = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+    db.query_row(
+        "SELECT topic, dismissed FROM conversation_subjects WHERE session = ?1 AND conversation = ?2",
+        rusqlite::params![i64::try_from(id.0).unwrap(), conversation],
+        |row| Ok((row.get(0)?, row.get::<_, i64>(1)? != 0)),
+    )
+    .unwrap()
+}
+
+#[test]
+fn rename_keeps_manual_title_and_drops_late_subject() {
+    let script = "#!/bin/sh\nprintf started > __CALLS__\nsleep 2\nprintf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Late Rename Topic\"}],\"stopReason\":\"stop\"}}'\n".to_owned();
+    let (live, fake_pi, calls) = start_title_fixture(script, Some("title_model = 'pi/test'\n"));
+    let mut dash = dashboard(&live);
+    let token = live.root.path().join("rename-late.token");
+    let session = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent { name: "pi".into() },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "rename-original".into(),
+            label: Some("pi".into()),
+            argv: agent_program(&token),
+        }),
+    );
+    let id_before = session.id;
+    let run_before = session.run;
+    wait_for(&live, session.id, "AGENT_READY");
+    let conversation = "00000000-0000-4000-8000-000000000801";
+    let history = live.root.path().join("rename-late.jsonl");
+    std::fs::write(
+        &history,
+        format!(
+            "{{\"type\":\"session\",\"id\":\"{conversation}\"}}\n{{\"role\":\"assistant\",\"content\":\"reply\"}}\n"
+        ),
+    )
+    .unwrap();
+    retain_pi_history(&live, &fake_pi, &session, &token, conversation, history);
+    wait_file(&calls);
+    assert_eq!(
+        live.request(Request::SetSessionTitle {
+            session: session.id,
+            title: Some("Manual Rename".into()),
+        }),
+        Response::Ok
+    );
+    changed(&mut dash, session.id, "Manual Rename");
+    std::thread::sleep(Duration::from_secs(3));
+    let row = sessions(&live)
+        .into_iter()
+        .find(|row| row.id == session.id)
+        .unwrap();
+    assert_eq!(row.display_name(), "Manual Rename");
+    assert_eq!((row.id, row.run), (id_before, run_before));
+    assert_eq!(subject_rows(&live, session.id), 0);
+}
+
+#[test]
+fn clear_restores_original_dismisses_current_subject_and_keeps_other() {
+    let script = "#!/bin/sh\nprintf call >> __CALLS__\nwhile IFS= read -r line; do printf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Clear Subject\"}],\"stopReason\":\"stop\"}}'; exit 0; done\n".to_owned();
+    let (live, fake_pi, _calls) = start_title_fixture(script, Some("title_model = 'pi/test'\n"));
+    let mut dash = dashboard(&live);
+    let token = live.root.path().join("clear.token");
+    let session = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent { name: "pi".into() },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "clear-original".into(),
+            label: Some("pi".into()),
+            argv: agent_program(&token),
+        }),
+    );
+    let id_before = session.id;
+    let run_before = session.run;
+    wait_for(&live, session.id, "AGENT_READY");
+    let conversation_a = "00000000-0000-4000-8000-000000000901";
+    let conversation_b = "00000000-0000-4000-8000-000000000902";
+    let history = live.root.path().join("clear.jsonl");
+    std::fs::write(
+        &history,
+        format!(
+            "{{\"type\":\"session\",\"id\":\"{conversation_a}\"}}\n{{\"role\":\"assistant\",\"content\":\"reply\"}}\n"
+        ),
+    )
+    .unwrap();
+    retain_pi_history(
+        &live,
+        &fake_pi,
+        &session,
+        &token,
+        conversation_a,
+        history,
+    );
+    wait_display(&live, session.id, "Clear Subject");
+    let db = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+    db.execute(
+        "INSERT INTO conversation_subjects (session, conversation, topic, accepted_count, attempt_count, dismissed)
+         VALUES (?1, ?2, 'Other Subject', 1, 1, 0)",
+        rusqlite::params![i64::try_from(session.id.0).unwrap(), conversation_b],
+    )
+    .unwrap();
+    drop(db);
+    assert_eq!(
+        live.request(Request::SetSessionTitle {
+            session: session.id,
+            title: Some("Pinned Before Clear".into()),
+        }),
+        Response::Ok
+    );
+    changed(&mut dash, session.id, "Pinned Before Clear");
+    assert_eq!(
+        live.request(Request::SetSessionTitle {
+            session: session.id,
+            title: None,
+        }),
+        Response::Ok
+    );
+    changed(&mut dash, session.id, "clear-original");
+    let row = sessions(&live)
+        .into_iter()
+        .find(|row| row.id == session.id)
+        .unwrap();
+    assert_eq!(row.display_name(), "clear-original");
+    assert_eq!((row.id, row.run), (id_before, run_before));
+    let (topic_a, dismissed_a) = subject_flags(&live, session.id, conversation_a);
+    let (topic_b, dismissed_b) = subject_flags(&live, session.id, conversation_b);
+    assert_eq!(topic_a.as_deref(), Some("Clear Subject"));
+    assert!(dismissed_a, "Clear must dismiss the recorded conversation");
+    assert_eq!(topic_b.as_deref(), Some("Other Subject"));
+    assert!(!dismissed_b, "Clear must not dismiss a different conversation");
+}
+
+#[test]
+fn late_title_result_after_clear_is_dropped() {
+    let script = "#!/bin/sh\nprintf started > __CALLS__\nsleep 2\nprintf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Late Clear Topic\"}],\"stopReason\":\"stop\"}}'\n".to_owned();
+    let (live, fake_pi, calls) = start_title_fixture(script, Some("title_model = 'pi/test'\n"));
+    let _dash = dashboard(&live);
+    let token = live.root.path().join("clear-late.token");
+    let session = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent { name: "pi".into() },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "clear-late-original".into(),
+            label: Some("pi".into()),
+            argv: agent_program(&token),
+        }),
+    );
+    wait_for(&live, session.id, "AGENT_READY");
+    let conversation = "00000000-0000-4000-8000-000000000903";
+    let history = live.root.path().join("clear-late.jsonl");
+    std::fs::write(
+        &history,
+        format!(
+            "{{\"type\":\"session\",\"id\":\"{conversation}\"}}\n{{\"role\":\"assistant\",\"content\":\"reply\"}}\n"
+        ),
+    )
+    .unwrap();
+    retain_pi_history(&live, &fake_pi, &session, &token, conversation, history);
+    wait_file(&calls);
+    assert_eq!(
+        live.request(Request::SetSessionTitle {
+            session: session.id,
+            title: None,
+        }),
+        Response::Ok
+    );
+    std::thread::sleep(Duration::from_secs(3));
+    let row = sessions(&live)
+        .into_iter()
+        .find(|row| row.id == session.id)
+        .unwrap();
+    assert_eq!(row.display_name(), "clear-late-original");
+    let (topic, dismissed) = subject_flags(&live, session.id, conversation);
+    assert!(dismissed);
+    assert_ne!(topic.as_deref(), Some("Late Clear Topic"));
+}
+
 #[test]
 fn workspace_launch_failure_retains_worktree_and_retry_uses_existing_workspace() {
     let live = fixture();
