@@ -1219,11 +1219,7 @@ mod tests {
                 .update_titles(record.id, run, 1, Some("Manual".into()), None)
                 .unwrap()
         );
-        assert!(
-            store
-                .update_titles(record.id, run, 2, None, None)
-                .unwrap()
-        );
+        assert!(store.update_titles(record.id, run, 2, None, None).unwrap());
         assert!(
             store
                 .dismiss_conversation_subject(record.id, run, "conv-a")

@@ -1770,7 +1770,6 @@ fn saved_titles_survive_restart_and_reopen_without_legacy_application_titles() {
     }
 }
 
-
 fn subject_flags(live: &Live, id: SessionId, conversation: &str) -> (Option<String>, bool) {
     let db = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
     db.query_row(
@@ -1860,14 +1859,7 @@ fn clear_restores_original_dismisses_current_subject_and_keeps_other() {
         ),
     )
     .unwrap();
-    retain_pi_history(
-        &live,
-        &fake_pi,
-        &session,
-        &token,
-        conversation_a,
-        history,
-    );
+    retain_pi_history(&live, &fake_pi, &session, &token, conversation_a, history);
     wait_display(&live, session.id, "Clear Subject");
     let db = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
     db.execute(
@@ -1904,7 +1896,10 @@ fn clear_restores_original_dismisses_current_subject_and_keeps_other() {
     assert_eq!(topic_a.as_deref(), Some("Clear Subject"));
     assert!(dismissed_a, "Clear must dismiss the recorded conversation");
     assert_eq!(topic_b.as_deref(), Some("Other Subject"));
-    assert!(!dismissed_b, "Clear must not dismiss a different conversation");
+    assert!(
+        !dismissed_b,
+        "Clear must not dismiss a different conversation"
+    );
 }
 
 #[test]
