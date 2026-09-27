@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod connections;
 mod dashboard;
@@ -33,6 +33,7 @@ mod dispatch;
 mod outbound;
 mod reporting_queue;
 mod startup;
+mod title;
 
 use connections::{
     combine_control_and_refresh, error_chain_string, error_for_lifecycle, error_response,
@@ -219,6 +220,7 @@ impl ServerState {
     ) -> SessionSummary {
         if let Some(session) = session.filter(|session| session.run() == record.run) {
             let mut summary = session.summary();
+            summary.title = record.effective_title();
             if !summary.phase.is_live() || record.conversation.is_some() || record.identity_invalid
             {
                 let mut recovery = record.recovery(boot_id);
@@ -609,7 +611,7 @@ impl ServerState {
                 ));
             }
         }
-        let pinned_title = if automatic {
+        let pinned_title = if automatic || matches!(request.kind, SessionKind::Agent { .. }) {
             None
         } else {
             Some(
@@ -1762,6 +1764,9 @@ impl ServerState {
                     ) => reference.history.as_ref(),
                     Some(ovrcr_protocol::ConversationReference::Codex(reference)) => {
                         reference.history.as_ref()
+                    }
+                    Some(ovrcr_protocol::ConversationReference::Grok(reference)) => {
+                        Some(&reference.history)
                     }
                     None => None,
                 };

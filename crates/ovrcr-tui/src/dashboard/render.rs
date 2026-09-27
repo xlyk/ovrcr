@@ -436,7 +436,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         draw_tasks(frame, tasks);
         return;
     }
-    let layout = dashboard_layout(frame.area(), dashboard.sidebar_width);
+    let layout = dashboard_layout(frame.area(), dashboard.sidebar_preference());
     frame.render_widget(
         Block::default().style(Style::default().bg(BASE)),
         frame.area(),
@@ -457,18 +457,24 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         layout.title,
     );
 
-    frame.render_widget(
-        Block::default()
-            .borders(Borders::RIGHT)
-            .border_style(Style::default().fg(MUTED))
-            .style(Style::default().bg(BASE)),
-        layout.sidebar,
-    );
+    if !dashboard.sidebar_hidden {
+        frame.render_widget(
+            Block::default()
+                .borders(Borders::RIGHT)
+                .border_style(Style::default().fg(MUTED))
+                .style(Style::default().bg(BASE)),
+            layout.sidebar,
+        );
+    }
     let rows = dashboard.visible_rows();
     let width = usize::from(layout.sidebar_content.width);
     let heights = tree_row_heights(dashboard, &rows, width);
     let stacked = heights.contains(&2);
-    let viewport_height = usize::from(layout.sidebar_content.height);
+    let viewport_height = if dashboard.sidebar_hidden {
+        0
+    } else {
+        usize::from(layout.sidebar_content.height)
+    };
     let start = dashboard.tree_offset.min(tree_line_count(&rows, &heights));
     for screen_line in 0..viewport_height {
         let Some((row, row_line)) =

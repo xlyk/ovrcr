@@ -4,6 +4,7 @@ pub mod claude_metrics;
 pub mod codex;
 pub mod collector;
 pub mod extension;
+pub mod grok;
 pub mod omp;
 pub mod pi;
 pub mod reporter;

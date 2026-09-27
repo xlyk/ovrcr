@@ -61,7 +61,7 @@ fn dashboard_layout() {
             .any(|row| row.contains("pid: 111  elapsed: 0m"))
     );
     assert!(!rendered.iter().any(|row| row.contains("ctx ")));
-    assert!(rendered.iter().any(|row| row.contains("q Detach")));
+    assert!(rendered.iter().any(|row| row.contains("Space Menu")));
     assert!(rendered.iter().any(|row| row.contains("? Help")));
     assert_eq!(buffer[(1, 0)].bg, Color::Rgb(203, 166, 247));
     assert_eq!(buffer[(39, 10)].symbol(), "│");

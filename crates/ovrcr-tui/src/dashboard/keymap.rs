@@ -39,6 +39,7 @@ pub(super) enum Action {
     PreviousSession,
     ToggleNotifications,
     ToggleSound,
+    ToggleSidebar,
     Leader,
     Help,
     /// Open a key-popup group rather than run an action.
@@ -327,6 +328,7 @@ impl Dashboard {
             }
             Action::ToggleNotifications => self.toggle_desktop_notifications(),
             Action::ToggleSound => self.toggle_ready_sound(),
+            Action::ToggleSidebar => self.toggle_sidebar(),
             Action::Leader => self.open_whichkey(true),
             Action::Help => self.open_whichkey(false),
             Action::Capture(code) => self.capture_key(KeyEvent::new(code, KeyModifiers::NONE)),
@@ -356,7 +358,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         vec![
             key_binding(
                 "Space",
-                "Leader",
+                "Menu",
                 "Show keys; the next key runs an action".into(),
                 Char(' '),
                 Action::Leader,
@@ -692,6 +694,20 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             Action::PreviousSession,
         )
         .group('v', "k/Up"),
+        key_binding(
+            "b",
+            if dashboard.sidebar_hidden {
+                "Show sidebar"
+            } else {
+                "Hide sidebar"
+            },
+            "Hide or show the sidebar; the panes take its width; j and k still move the selection"
+                .into(),
+            Char('b'),
+            Action::ToggleSidebar,
+        )
+        .once()
+        .group('v', "b"),
     ];
     view.extend(help());
     let (enter_name, enter_description, enter_disabled, enter_action) = if let Some(container) =

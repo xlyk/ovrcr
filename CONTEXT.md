@@ -21,16 +21,20 @@ The provider identity and unique conversation identifier needed to reopen an age
 _Avoid_: transcript, terminal output, most recent conversation
 
 **Session title**:
-The name shown for a terminal session. It stays at the user's chosen title or the original session name; applications cannot change it. Changing the title does not change which session it identifies.
-_Avoid_: session identity, agent label, workspace name as interchangeable terms
+The name shown for a session. Applications cannot change it, and changing it does not change which session it identifies. A Terminal shows a manual title or the original session name. An Agent launch may show a conversation subject until the user renames the session.
+_Avoid_: session identity, agent label, workspace name, application title
 
 **Original session name**:
-The name chosen at creation, supplied by the user or generated from the workspace. Clearing a manual title restores this name, even if the workspace's branch has since changed.
-_Avoid_: current branch name, application title
+The name chosen at creation, supplied by the user or generated from the workspace. Clearing a manual title restores this name, even if the workspace's branch has since changed. On an Agent launch, a name typed at creation is this name and is not a manual title.
+_Avoid_: current branch name, application title, conversation subject
 
 **Manual title**:
-A session title chosen by the user that stays unchanged until the user edits it or clears it to restore the original session name. It survives reconnect, server restart, and reopen.
-_Avoid_: Automatic mode, pinned session (which could imply a placement or lifecycle change)
+A session title the user sets with Rename, or a name typed when creating a Terminal. It stays until the user edits it or clears it, and it survives reconnect, server restart, and reopen. Clearing it restores the original session name and dismisses the subject of the conversation attached at that moment.
+_Avoid_: Automatic mode, conversation subject, pinned session (which could imply a placement or lifecycle change)
+
+**Conversation subject**:
+A short topic for one agent conversation. It may be shown as the session title until the user renames the session or dismisses that subject. It is not the original session name.
+_Avoid_: automatic title, application title, manual title, session identity
 
 **Launch choice**:
 The user's choice to start an Agent or a Terminal in a workspace. Creating a workspace can also leave it empty with Nothing yet.
@@ -41,7 +45,7 @@ A detected or configured agent selected for launch. This launch choice alone doe
 _Avoid_: any arbitrary command as an agent
 
 **Terminal**:
-The launch choice for opening a shell, optionally with a custom command. Like an Agent launch, it creates a terminal session with a stable session title.
+The launch choice for opening a shell, optionally with a custom command. It creates a terminal session with a stable session title.
 _Avoid_: custom command as a separate session type
 
 **Remembered launch choice**:
@@ -59,6 +63,14 @@ _Avoid_: main, root as a stored name, a removable default worktree
 **Dashboard**:
 The one active TUI for live sessions: the hierarchy, the panes, and browse / terminal / history / copy.
 _Avoid_: TUI (the crate), GUI helper, task UI as a separate product
+
+**Server**:
+The one process that owns the socket, the sessions, and the live terminals.
+_Avoid_: backend API server, a second server owned by the Bridge
+
+**Bridge**:
+The one macOS app that holds the bundle identity and performs system calls the terminal cannot make under its own name. It is not a Dashboard, not a Reporter, and not an owner of sessions or panes. It may ask iTerm to select an existing session. It does not create iTerm sessions.
+_Avoid_: helper app, companion app, GUI helper, Notifier as a separate product, an owner of iTerm tabs, a second Server
 
 **Key binding**:
 The dashboard's one entry for a key in an input mode: its label, its action, and the reason it is unavailable. Dispatch, the footer, the key popup and the palette read that one entry, so a hint cannot disagree with what the key does.

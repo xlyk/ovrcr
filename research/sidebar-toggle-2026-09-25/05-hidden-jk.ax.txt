@@ -1,0 +1,27 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+pid: 17147  elapsed: 19m  agent unknown  review auth handoff                                                                                                          
+review auth handoff                                                                                                                                                   
+╭─ grok / 
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable) pid: 17147  elapsed: 19m  agent unknown  review auth handoff                                                                                                          
+		5 text (settable) review auth handoff                                                                                                                                                   
+		6 text (settable) ╭─ grok / grok-4.6 ────────────────────────────────────────╮                                                                                                          
+		7 text (settable) │ fixture: authentication handoff review                                                                                                                              
+		8 text (settable) ╰──────────────────────────────────────────────────╯                                                                                                                  
+		9 text (settable) ✓ deterministic local transcript ready                                                                                                                                
+		10 text (settable) sh-3.2$                                                                                                                                                               
+		11 text (settable) BROWSE  ? Help  Enter Focus  n Create terminal  : Search  v Split  q Detach  t Tasks  a Register project  w Create workspace  p Pause  Space Leader                   
+	12 close button
+	13 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	14 minimize button
+	15 text OVRCR GUI
+16 menu bar
+	17 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+pid: 17147  elapsed: 19m  agent unknown  review auth handoff                                                                                                          
+review auth handoff                                                                                                                                                   
+╭─ grok / 

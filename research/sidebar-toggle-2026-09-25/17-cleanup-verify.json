@@ -1,0 +1,23 @@
+{
+ "checked_at": "2026-09-25T15:11:44-0700",
+ "pids": {
+  "11913": "gone",
+  "12354": "gone",
+  "22942": "gone",
+  "22956": "gone",
+  "23028": "gone",
+  "23039": "gone",
+  "17943": "gone"
+ },
+ "pgids": {
+  "89452": "gone",
+  "22941": "gone",
+  "22955": "gone",
+  "23019": "gone",
+  "23036": "gone",
+  "17943": "gone"
+ },
+ "root_exists": false,
+ "socket_exists": false,
+ "launcher_exit": "GUI_EXIT=0"
+}

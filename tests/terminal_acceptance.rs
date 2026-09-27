@@ -1172,7 +1172,7 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
     dashboard.wait_for_screen(|screen| screen.contains("Terminal mode"), wait_deadline())?;
     dashboard.send(b"\x07")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("BROWSE  ? Help") && !screen.contains("Terminal mode"),
+        |screen| screen.contains("BROWSE  Space Menu") && !screen.contains("Terminal mode"),
         wait_deadline(),
     )?;
 
@@ -1269,7 +1269,7 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
     )?;
     dashboard.send(b"\x1b")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("BROWSE  ? Help") && !screen.contains("HISTORY SELECT"),
+        |screen| screen.contains("BROWSE  Space Menu") && !screen.contains("HISTORY SELECT"),
         wait_deadline(),
     )?;
     let detach_result = dashboard.detach();
@@ -1365,7 +1365,7 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
     )?;
     dashboard.send(b"\x07")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("BROWSE  ? Help"),
+        |screen| screen.contains("BROWSE  Space Menu"),
         remaining(readiness_deadline),
     )?;
     loop {
@@ -1558,7 +1558,7 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     dashboard.wait_for_output(b"\x1b]52;c;V0FJVElORw==\x1b\\", wait_deadline())?;
     dashboard.send(b"\x1b")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("BROWSE  ? Help") && !screen.contains("COPY  "),
+        |screen| screen.contains("BROWSE  Space Menu") && !screen.contains("COPY  "),
         wait_deadline(),
     )?;
     dashboard.send(b"\rINPUT_TOKEN\r")?;
@@ -1595,13 +1595,13 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     reattached.wait_for(b"mouse", wait_deadline())?;
     reattached.wait_for(b"agent runtime", wait_deadline())?;
     reattached.wait_for_screen(
-        |screen| screen.contains("BROWSE  ? Help") && !screen.contains("Terminal mode"),
+        |screen| screen.contains("BROWSE  Space Menu") && !screen.contains("Terminal mode"),
         wait_deadline(),
     )?;
     reattached.click_visible_text("waiting")?;
     reattached.wait_for(b"INPUT_ACK", wait_deadline())?;
     let reattached_screen = reattached.rendered();
-    assert!(reattached_screen.contains("BROWSE  ? Help"));
+    assert!(reattached_screen.contains("BROWSE  Space Menu"));
     assert!(!reattached_screen.contains("Terminal mode"));
     assert!(!reattached_screen.contains("COPY  "));
     let pane = ovrcr::tui::actual_drawn_inner_rect(ratatui::layout::Rect::new(0, 0, 100, 30));
@@ -1651,7 +1651,7 @@ fn pause_resume_dashboard_round_trip() -> Result<()> {
     dashboard.send(b"k")?;
     dashboard.wait_for(b"WAITING_READY", wait_deadline())?;
     dashboard.send(b"\r\x07")?;
-    dashboard.wait_for(b"BROWSE  ? Help", wait_deadline())?;
+    dashboard.wait_for(b"BROWSE  Space Menu", wait_deadline())?;
 
     dashboard.send(b"p")?;
     dashboard.wait_for(b"paused", wait_deadline())?;

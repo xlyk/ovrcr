@@ -580,6 +580,7 @@ impl Dashboard {
             mouse: super::MouseForwarding::default(),
             split_preference: None,
             sidebar_width: None,
+            sidebar_hidden: false,
             mouse_focused: true,
             deferred_history_at_tail: None,
             tree_offset: 0,
@@ -2064,13 +2065,31 @@ impl Dashboard {
         }
     }
 
+    /// The sidebar width every layout reads: zero while hidden, else the
+    /// dragged preference.
+    pub(super) fn sidebar_preference(&self) -> Option<u16> {
+        if self.sidebar_hidden {
+            Some(0)
+        } else {
+            self.sidebar_width
+        }
+    }
+
+    /// Hide or show the sidebar; the panes take or give back its width.
+    pub(super) fn toggle_sidebar(&mut self) -> DashboardAction {
+        self.sidebar_hidden = !self.sidebar_hidden;
+        self.mouse.hovered = None;
+        self.apply_pane_sizes(self.outer_area);
+        DashboardAction::Redraw
+    }
+
     pub fn pane_rects(&self, area: Rect) -> Vec<super::PaneRects> {
         super::pane_rects_with_preference(
             area,
             self.panes.len(),
             self.focused_pane,
             self.split_preference,
-            self.sidebar_width,
+            self.sidebar_preference(),
         )
     }
 
@@ -2107,7 +2126,7 @@ impl Dashboard {
     }
 
     fn sidebar_mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> Option<DashboardAction> {
-        if !matches!(self.mode, InputMode::Browse | InputMode::Terminal) {
+        if !matches!(self.mode, InputMode::Browse | InputMode::Terminal) || self.sidebar_hidden {
             return None;
         }
         let sidebar = sidebar_area(area, self.sidebar_width);
@@ -2242,14 +2261,15 @@ impl Dashboard {
             };
         }
 
-        let sidebar = sidebar_area(area, self.sidebar_width);
+        let sidebar = sidebar_area(area, self.sidebar_preference());
         let rects = self.pane_rects(area);
         if mouse.kind == MouseEventKind::Down(MouseButton::Left)
             && mouse.row >= sidebar.y
             && mouse.row < sidebar.bottom()
         {
-            // The sidebar's border column sits just past its content.
-            if mouse.column == sidebar.right() {
+            // The sidebar's border column sits just past its content; a hidden
+            // sidebar has no border.
+            if !self.sidebar_hidden && mouse.column == sidebar.right() {
                 self.queue_held_releases();
                 self.mouse.sidebar_dragging = true;
                 return Some(DashboardAction::Redraw);

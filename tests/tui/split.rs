@@ -684,13 +684,10 @@ fn split_layout_renders_independent_cells_and_cursor() {
     let browse_footer = (0..120)
         .map(|x| terminal.backend().buffer()[(x, 39)].symbol())
         .collect::<String>();
-    assert!(browse_footer.contains("BROWSE"));
     assert!(
-        !browse_footer.split_whitespace().any(|key| key == "v"),
-        "split is disabled when already split"
+        browse_footer.starts_with("BROWSE  Space Menu  : Search  ? Help"),
+        "{browse_footer}"
     );
-    assert!(browse_footer.contains("Tab Next pane  x Close pane"));
-    assert!(browse_footer.contains("? Help"));
     assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
 
     let mut output = Vec::new();
@@ -881,15 +878,10 @@ fn split_layout_renders_independent_cells_and_cursor() {
     let ordinary_footer = (0..80)
         .map(|x| terminal.backend().buffer()[(x, 23)].symbol())
         .collect::<String>();
-    assert!(ordinary_footer.contains("BROWSE"));
-    assert!(ordinary_footer.split_whitespace().any(|key| key == "v"));
     assert!(
-        !ordinary_footer
-            .split_whitespace()
-            .any(|key| matches!(key, "Tab" | "x")),
-        "pane switch and close need a split"
+        ordinary_footer.starts_with("BROWSE  Space Menu  : Search  ? Help"),
+        "{ordinary_footer}"
     );
-    assert!(ordinary_footer.contains("? Help"));
 
     assert_eq!(dashboard.ctrl('g'), DashboardAction::EnterBrowse);
     let backend = TestBackend::new(80, 24);

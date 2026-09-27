@@ -1,0 +1,46 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                  [Actions] [Menu]
+ CONSIGINT ────────────────────────│pid: 14718  elapsed: 20m  agent unkn
+  󰘬 main                      root │local (#4)                          
+     $ local                       │941000fbd80d368b15344862be9d768d › s
+  󰘬 gui-consigint-auth-handoff     │57 126                              
+▌    $ local                       │941000fbd80d368b15344862be9d768d › s
+     - review auth handoff    grok │57 104                             
+		3 text (settable) 󰚩 OVRCR  agent runtime                                  [Actions] [Menu]
+		4 text (settable)  CONSIGINT ────────────────────────│pid: 14718  elapsed: 20m  agent unkn
+		5 text (settable)   󰘬 main                      root │local (#4)                          
+		6 text (settable)      $ local                       │941000fbd80d368b15344862be9d768d › s
+		7 text (settable)   󰘬 gui-consigint-auth-handoff     │57 126                              
+		8 text (settable) ▌    $ local                       │941000fbd80d368b15344862be9d768d › s
+		9 text (settable)      - review auth handoff    grok │57 104                              
+		10 text (settable)   󰘬 gui-consigint-worktree-lifecyc…│941000fbd80d368b15344862be9d768d › s
+		11 text (settable)      $ local                       │57 166                              
+		12 text (settable)      - implement lifecycl…  claude │941000fbd80d368b15344862be9d768d › s
+		13 text (settable)      - review websocket sh…  codex │57 104                              
+		14 text (settable)      - plan snapshot restore    pi │941000fbd80d368b15344862be9d768d ›  
+		15 text (settable)                                    │                                    
+		16 text (settable)  SPACELIFT-AGENT ──────────────────│                                    
+		17 text (settable)   󰘬 main                      root │                                    
+		18 text (settable)      $ local                       │                                    
+		19 text (settable)   󰘬 gui-spacelift-agent-pipeline-p…│                                    
+		20 text (settable)      $ local                       │                                    
+		21 text (settable)      - build pipeline pro…  claude │                                    
+		22 text (settable)   󰘬 gui-spacelift-agent-scope-qual…│                                    
+		23 text (settable)      $ local                       │                                    
+		24 text (settable) BROWSE  ? Help  Enter Focus  n Create terminal  : Search  v Split       
+	25 close button
+	26 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	27 minimize button
+	28 text OVRCR GUI
+29 menu bar
+	30 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                  [Actions] [Menu]
+ CONSIGINT ────────────────────────│pid: 14718  elapsed: 20m  agent unkn
+  󰘬 main                      root │local (#4)                          
+     $ local                       │941000fbd80d368b15344862be9d768d › s
+  󰘬 gui-consigint-auth-handoff     │57 126                              
+▌    $ local                       │941000fbd80d368b15344862be9d768d › s
+     - review auth handoff    grok │57 104                             

@@ -8,6 +8,7 @@ Every stable release at or above the minimum below is compatible, including late
 | Codex | >=0.153.0 | 0.153.0 |
 | Pi | >=0.85.1 | 0.85.1 |
 | Oh My Pi | >=18.2.2 | 18.1.19 |
+| Grok | >=1.0.40 | none (history retention only) |
 
 Prereleases, build-suffixed versions, malformed versions and versions below the floor are outside the compatible range. Historical tested versions can fall outside the current range: OMP 18.1.19 reporting evidence does not certify 18.2.2 recovery.
 
@@ -17,4 +18,4 @@ Claude and Codex use the range in their existing launch admission checks. Failed
 
 Pi and OMP preserve their existing capability-based managed launches: no version probe or gate is added to startup. Doctor marks versions outside the range for review (`version_gate: diagnostic_only`); runtime extension and producer validation remain authoritative. A version outside the range is not advertised as compatible, even if reporting happens to work.
 
-Other providers have no version-gated adapter to relax. This policy adds no reporting or recovery support to them. Codex resumed reporting remains unavailable for the entire invocation; Pi Ready remains Confirmed and OMP Ready remains Observed.
+Grok uses the range in its managed launch admission: below it, or on a failed probe, the native command runs unchanged and no history is retained. Other providers have no version-gated adapter to relax. This policy adds no reporting or recovery support to them. Codex resumed reporting remains unavailable for the entire invocation; Pi Ready remains Confirmed and OMP Ready remains Observed.
