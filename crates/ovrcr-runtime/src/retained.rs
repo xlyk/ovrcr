@@ -474,7 +474,14 @@ impl SessionStore {
         let Some(record) = self.records.get(&id) else {
             return Ok(false);
         };
-        if record.run != run || record.disposition == Disposition::Archived {
+        if record.run != run
+            || record.disposition == Disposition::Archived
+            || record
+                .conversation
+                .as_ref()
+                .map(|reference| reference.identity())
+                != Some(conversation)
+        {
             return Ok(false);
         }
         self.connection.execute(
@@ -509,6 +516,11 @@ impl SessionStore {
         if record.run != run
             || record.disposition == Disposition::Archived
             || record.metadata.pinned_title.is_some()
+            || record
+                .conversation
+                .as_ref()
+                .map(|reference| reference.identity())
+                != Some(conversation)
         {
             return Ok(false);
         }
@@ -1231,11 +1243,17 @@ mod tests {
                 .save_conversation_subject(record.id, run, "conv-a", "Subject A".into())
                 .unwrap()
         );
+        store
+            .retain_conversation(record.id, run, Some(&pi_reference("conv-b")))
+            .unwrap();
         assert!(
             store
                 .save_conversation_subject(record.id, run, "conv-b", "Subject B".into())
                 .unwrap()
         );
+        store
+            .retain_conversation(record.id, run, Some(&pi_reference("conv-a")))
+            .unwrap();
         assert!(
             store
                 .update_titles(record.id, run, 1, Some("Manual".into()), None)
@@ -1361,6 +1379,9 @@ mod tests {
         let mut store = SessionStore::in_memory();
         let record = agent_record(&mut store, "original");
         let run = store.begin_run(record.id, record.run).unwrap().run;
+        store
+            .retain_conversation(record.id, run, Some(&pi_reference("conv-a")))
+            .unwrap();
         for _ in 0..3 {
             assert!(
                 store
@@ -1383,6 +1404,128 @@ mod tests {
         assert_eq!(subject.accepted_count, 0);
         assert_eq!(subject.attempt_count, 4);
         assert!(store.get(record.id).unwrap().effective_title().is_none());
+    }
+
+    #[test]
+    fn recorded_switch_shows_each_conversations_subject_and_keeps_identity() {
+        let mut store = SessionStore::in_memory();
+        let record = agent_record(&mut store, "original");
+        let run = store.begin_run(record.id, record.run).unwrap().run;
+        store
+            .retain_conversation(record.id, run, Some(&pi_reference("conv-a")))
+            .unwrap();
+        assert!(
+            store
+                .save_conversation_subject(record.id, run, "conv-a", "Subject A".into())
+                .unwrap()
+        );
+        assert_eq!(
+            store.get(record.id).unwrap().effective_title().as_deref(),
+            Some("Subject A")
+        );
+        store
+            .retain_conversation(record.id, run, Some(&pi_reference("conv-b")))
+            .unwrap();
+        assert!(
+            store
+                .save_conversation_subject(record.id, run, "conv-b", "Subject B".into())
+                .unwrap()
+        );
+        assert_eq!(
+            store.get(record.id).unwrap().effective_title().as_deref(),
+            Some("Subject B")
+        );
+        store
+            .retain_conversation(record.id, run, Some(&pi_reference("conv-a")))
+            .unwrap();
+        assert_eq!(
+            store.get(record.id).unwrap().effective_title().as_deref(),
+            Some("Subject A")
+        );
+        store
+            .retain_conversation(record.id, run, Some(&pi_reference("conv-b")))
+            .unwrap();
+        assert_eq!(
+            store.get(record.id).unwrap().effective_title().as_deref(),
+            Some("Subject B")
+        );
+        assert_eq!(store.get(record.id).unwrap().id, record.id);
+        assert_eq!(store.get(record.id).unwrap().run, run);
+    }
+
+    #[test]
+    fn save_and_attempt_for_conversation_no_longer_recorded_are_dropped() {
+        let mut store = SessionStore::in_memory();
+        let record = agent_record(&mut store, "original");
+        let run = store.begin_run(record.id, record.run).unwrap().run;
+        store
+            .retain_conversation(record.id, run, Some(&pi_reference("conv-a")))
+            .unwrap();
+        store
+            .retain_conversation(record.id, run, Some(&pi_reference("conv-b")))
+            .unwrap();
+        assert!(
+            !store
+                .save_conversation_subject(record.id, run, "conv-a", "Late A".into())
+                .unwrap()
+        );
+        assert!(
+            !store
+                .record_subject_attempt(record.id, run, "conv-a")
+                .unwrap()
+        );
+        assert!(
+            !store
+                .get(record.id)
+                .unwrap()
+                .subjects
+                .contains_key("conv-a")
+        );
+        assert_eq!(
+            store.get(record.id).unwrap().effective_title().as_deref(),
+            None
+        );
+        assert_eq!(store.get(record.id).unwrap().id, record.id);
+        assert_eq!(store.get(record.id).unwrap().run, run);
+    }
+
+    #[test]
+    fn codex_reference_unchanged_keeps_subject_when_only_history_path_would_differ() {
+        let mut store = SessionStore::in_memory();
+        let record = agent_record(&mut store, "original");
+        let run = store.begin_run(record.id, record.run).unwrap().run;
+        let codex =
+            ovrcr_protocol::ConversationReference::Codex(ovrcr_protocol::CodexConversation {
+                conversation: "conv-a".into(),
+                executable: "codex".into(),
+                history: Some("history-a.jsonl".into()),
+                config_dir: "/tmp".into(),
+                options: vec![],
+            });
+        store
+            .retain_conversation(record.id, run, Some(&codex))
+            .unwrap();
+        assert!(
+            store
+                .save_conversation_subject(record.id, run, "conv-a", "Codex Subject".into())
+                .unwrap()
+        );
+        assert_eq!(
+            store.get(record.id).unwrap().effective_title().as_deref(),
+            Some("Codex Subject")
+        );
+        // A silent Codex history change does not update the recorded reference.
+        assert_eq!(
+            store
+                .get(record.id)
+                .unwrap()
+                .conversation
+                .as_ref()
+                .map(|reference| reference.identity()),
+            Some("conv-a")
+        );
+        assert_eq!(store.get(record.id).unwrap().id, record.id);
+        assert_eq!(store.get(record.id).unwrap().run, run);
     }
 
     #[test]

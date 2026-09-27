@@ -137,7 +137,21 @@ impl TitleWorker {
             }) {
                 continue;
             }
+            let path_changed = self
+                .seen
+                .get(&record.id)
+                .is_none_or(|seen| seen.path != current.path);
             self.seen.insert(record.id, current);
+            // A recorded switch (new history path) that already has a stored subject
+            // only needs the display recompute from retain; do not fire a title call.
+            if path_changed
+                && record
+                    .subjects
+                    .get(&candidate.conversation)
+                    .is_some_and(|subject| !subject.dismissed && subject.topic.is_some())
+            {
+                continue;
+            }
             let Ok(Some(excerpt)) = excerpt(&candidate) else {
                 continue;
             };
