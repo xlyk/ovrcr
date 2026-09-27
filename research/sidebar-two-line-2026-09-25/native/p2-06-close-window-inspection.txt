@@ -1,0 +1,2 @@
+Running OVRCR GUI applications: 0
+OVRCR GUI windows: 0

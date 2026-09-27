@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ──────────────────│pid: 88435  elapsed: 5m  agent unknown  cua-two-line                                                                                    
+  󰘬 main                root │cua-two-line                                                                                                                            
+     $ lo
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable)  CONSIGINT ──────────────────│pid: 88435  elapsed: 5m  agent unknown  cua-two-line                                                                                    
+		5 text (settable)   󰘬 main                root │cua-two-line                                                                                                                            
+		6 text (settable)      $ local                 │sh-3.2$                                                                                                                                 
+		7 text (settable)   󰘬 gui-consigint-auth-hando…│                                                                                                                                        
+		8 text (settable)      $ local                 │                                                                                                                                        
+		9 text (settable)      - review auth handoff   │                                                                                                                                        
+		10 text (settable)        grok:4.6              │                                                                                                                                        
+		11 text (settable) ▌    - cua-two-line          │                                                                                                                                        
+		12 text (settable) ▌      claude:opus-4.5-long… │                                                                                                                                        
+		13 text (settable)   󰘬 gui-consigint-worktree-l…│                                                                                                                                        
+		14 text (settable)      $ local                 │                                                                                                                                        
+		15 text (settable)      - implement lifecycle c…│                                                                                                                                        
+		16 text (settable)        claude:sonnet-4       │                                                                                                                                        
+		17 text (settable)      - review websocket shut…│                                                                                                                                        
+		18 text (settable)        codex:gpt-5.4         │                                                                                                                                        
+		19 text (settable)      - plan snapshot restore │                                                                                                                                        
+		20 text (settable)        pi:grok-4.6           │                                                                                                                                        
+		21 text (settable)                              │                                                                                                                                        
+		22 text (settable)  SPACELIFT-AGENT ────────────│                                                                                                                                        
+		23 text (settable)   󰘬 main                root │                                                                                                                                        
+		24 text (settable)      $ local                 │                                                                                                                                        
+		25 text (settable)   󰘬 gui-spacelift-agent-pipe…│                                                                                                                                        
+		26 text (settable)      $ local                 │                                                                                                                                        
+		27 text (settable)      - build pipeline progre…│                                                                                                                                        
+		28 text (settable)        claude:opus-4         │                                                                                                                                        
+		29 text (settable)   󰘬 gui-spacelift-agent-scop…│                                                                                                                                        
+		30 text (settable)      $ local                 │                                                                                                                                        
+		31 text (settable)      - review scope quality  │                                                                                                                                        
+		32 text (settable)        codex:gpt-5.4         │                                                                                                                                        
+		33 text (settable)                              │                                                                                                                                        
+		34 text (settable)                              │                                                                                                                                        
+		35 text (settable)                              │                                                                                                                                        
+		36 text (settable)                              │                                                                                                                                        
+		37 text (settable)                              │                                                                                                                                        
+		38 text (settable)                              │                                                                                                                                        
+		39 text (settable)                              │                                                                                                                                        
+		40 text (settable)                              │                                                                                                                                        
+		41 text (settable)                              │                                                                                                                                        
+		42 text (settable)                              │                                                                                                                                        
+		43 text (settable)                              │                                                                                                                                        
+		44 text (settable)                              │                                                                                                                                        
+		45 text (settable)                              │                                                                                                                                        
+		46 text (settable)                              │                                                                                                                                        
+		47 text (settable)                              │                                                                                                                                        
+		48 text (settable)                              │                                                                                                                                        
+		49 text (settable)                              │                                                                                                                                        
+		50 text (settable)                              │                                                                                                                                        
+		51 text (settable)                              │                                                                                                                                        
+		52 text (settable)                              │                                                                                                                                        
+		53 text (settable)                              │                                                                                                                                        
+		54 text (settable)                              │                                                                                                                                        
+		55 text (settable)                              │                                                                                                                                        
+		56 text (settable)                              │                                                                                                                                        
+		57 text (settable)                              │                                                                                                                                        
+		58 text (settable)                              │                                                                                                                                        
+		59 text (settable)                              │                                                                                                                                        
+		60 text (settable)                              │                                                                                                                                        
+		61 text (settable)                              │                                                                                                                                        
+		62 text (settable)                              │                                                                                                                                        
+		63 text (settable) BROWSE  ? Help  Enter Focus  n Create terminal  : Search  v Split  q Detach  t Tasks  a Register project  w Create workspace  p Pause  Space Leader                   
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ──────────────────│pid: 88435  elapsed: 5m  agent unknown  cua-two-line                                                                                    
+  󰘬 main                root │cua-two-line                                                                                                                            
+     $ lo

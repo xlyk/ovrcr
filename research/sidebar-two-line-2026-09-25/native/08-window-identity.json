@@ -1,0 +1,22 @@
+[
+  {
+    "bundlePath" : "\/Users\/xlyk\/Code\/ovrcr-workspaces\/0f4218e6ec3543471736db3cdf39d3af\/target\/OVRCR GUI.app",
+    "executablePath" : "\/Users\/xlyk\/Code\/ovrcr-workspaces\/0f4218e6ec3543471736db3cdf39d3af\/target\/OVRCR GUI.app\/Contents\/MacOS\/ovrcr-gui",
+    "kCGWindowAlpha" : 1,
+    "kCGWindowBounds" : {
+      "Height" : 932,
+      "Width" : 1100,
+      "X" : 478,
+      "Y" : 110
+    },
+    "kCGWindowIsOnscreen" : true,
+    "kCGWindowLayer" : 0,
+    "kCGWindowMemoryUsage" : 2368,
+    "kCGWindowName" : "OVRCR GUI",
+    "kCGWindowNumber" : 34457,
+    "kCGWindowOwnerName" : "OVRCR GUI",
+    "kCGWindowOwnerPID" : 39390,
+    "kCGWindowSharingState" : 1,
+    "kCGWindowStoreType" : 1
+  }
+]

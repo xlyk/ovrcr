@@ -1,0 +1,16 @@
+launcher: [exited with code 0]
+fixture root exists: False
+80929 gone
+84744 gone
+85432 gone
+85718 gone
+86284 gone
+86969 gone
+87426 gone
+88221 gone
+88680 gone
+89096 gone
+90038 gone
+90656 gone
+90988 gone
+2725 gone

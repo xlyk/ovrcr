@@ -1,0 +1,16 @@
+65863 /Users/xlyk/Code/ovrcr-workspaces/0f4218e6ec3543471736db3cdf39d3af/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui
+67138 /Users/xlyk/Code/ovrcr-workspaces/0f4218e6ec3543471736db3cdf39d3af/target/OVRCR GUI.app/Contents/MacOS/ovrcr server
+         printf '│ fixture: pipeline progress fixture\n'; \
+         printf '\033[38;5;141m╰──────────────────────────────────────────────────╯\033[0m\n\n'; \
+         printf '\033[38;5;114m✓ deterministic local transcript ready\033[0m\n'; \
+         exec /bin/sh -i
+import glob,os,time
+known={"ovrcr-gui-uinpxt"}
+tmp=os.path.expandvars("$TMPDIR")
+for _ in range(110):
+    for d in glob.glob(tmp+"/ovrcr-gui-*"):
+        if os.path.basename(d) not in known and os.path.exists(d+"/server.sock"):
+            print(d); raise SystemExit
+    time.sleep(5)
+EOF
+import json;rows=json.load(open('"'"'$E/p2-00-sessions.json'"'"'));rows=rows if isinstance(rows,list) else rows.get('"'"'terminals'"'"',rows);print(len(rows),'"'"'sessions; two-line pid'"'"', [r['"'"'pid'"'"'] for r in rows if r['"'"'name'"'"']=='"'"'cua-two-line'"'"'])"; echo "$R" > $E/p2-00-root.txt' && pwd -P >| /tmp/claude-3d5b-cwd

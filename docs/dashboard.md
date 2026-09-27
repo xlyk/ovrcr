@@ -231,15 +231,22 @@ with a branch glyph and the current branch name in bold. The repository-root
 workspace also shows a `root` marker. A warning marker appears when that
 checkout is not on the default branch. Duplicate visible names include the
 worktree path. A branch change updates the label in place; selection and panes
-stay on that workspace. Each session takes one line: a status
-glyph, the session name, and the agent name from its label right-aligned in the
+stay on that workspace. A session row starts with a status
+glyph and the session name, with the agent name from its label right-aligned in the
 provider colour. When a model is known, it follows a colon in the quiet gray,
-as in `pi:grok-4.7`. A model that repeats the agent name drops that repeat. A
-missing model, or one that cannot keep four characters, leaves the agent name
-alone. A long name clips with `…` before that label. A narrow row drops the
-model before the agent name, and drops the agent name when fewer than twelve
-cells would remain for the name. Local shells
-show `$ local` with no agent label unless a hook reports activity inside them. The
+as in `pi:grok-4.7`. A model that repeats the agent name drops that repeat, and a
+missing model leaves the agent name alone. A long name clips with `…` before that
+label. The label shares the name's line only while every visible `agent:model`
+fits beside at least twelve cells of its name. As soon as one does not, the
+sidebar stacks as a whole: every session with an agent label keeps its name on
+one line and moves the label to one extra line under it, hung by a `└`
+connector two cells in from the status glyph, under the start of the name, and
+clipped with `…` if even that line is too narrow, while local shells stay on one line. The model is never
+dropped, and no two rows use different layouts at the same width. The extra
+line belongs to the same session: `j`, `k` and the mouse treat both lines as one
+row, the selection bar and background cover both, and the hover `[x]` sits on
+the first line. Local shells show `$ local` on one line with no agent label
+unless a hook reports activity inside them. The
 selected row shows a mauve bar in its first column and a lighter background; its
 own colours stay visible. A folded project shows `▸ N ws` and a folded workspace
 `▸ N` at the right edge.

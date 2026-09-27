@@ -917,16 +917,184 @@ fn sidebar_shows_the_agent_and_current_model_on_one_row() {
     narrow
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    let narrow_row = (0..29)
-        .map(|column| narrow.backend().buffer()[(column, 4)].symbol())
-        .collect::<String>();
-    assert!(
-        narrow_row.contains("claude") && !narrow_row.contains(':'),
-        "a narrow row drops the model before the agent: {narrow_row:?}"
+    let narrow_row = |y| {
+        (0..29)
+            .map(|column| narrow.backend().buffer()[(column, y)].symbol())
+            .collect::<String>()
+    };
+    assert_eq!(
+        narrow_row(4),
+        "▌    - review-a-very-long-se…",
+        "a label that cannot share the line leaves the whole line to the name"
+    );
+    assert_eq!(
+        narrow_row(5),
+        "▌      └ claude:opus-4.5-wi… ",
+        "the agent and model take the next line, clipped like any other text"
+    );
+}
+
+#[test]
+fn narrow_session_row_keeps_its_model_on_a_second_line() {
+    let mut dashboard = dashboard_fixture();
+    let mut hierarchy = fixture_hierarchy();
+    review_session_mut(&mut hierarchy).label = "pi / grok-4.7".into();
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(1));
+    let area = Rect::new(0, 0, 60, 24);
+    dashboard.install_area(area);
+    let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let row = |terminal: &Terminal<TestBackend>, y| {
+        (0..29)
+            .map(|column| terminal.backend().buffer()[(column, y)].symbol())
+            .collect::<String>()
+    };
+    // Twenty-nine cells cannot hold a twelve-cell name beside `pi:grok-4.7`, so the
+    // model is not dropped: the label moves under the name. The shell above stays one line.
+    assert_eq!(row(&terminal, 3), "     $ local                 ");
+    assert_eq!(row(&terminal, 4), "▌    - review                ");
+    assert_eq!(row(&terminal, 5), "▌      └ pi:grok-4.7         ");
+    assert_eq!(row(&terminal, 6).trim_end(), "  󰘬 lifecycle");
+    // Stacking is all or nothing: `claude` alone would fit, but it stacks with the column.
+    assert_eq!(row(&terminal, 7), "     $ local                 ");
+    assert_eq!(row(&terminal, 8), "     · implement             ");
+    assert_eq!(row(&terminal, 9), "       └ claude              ");
+    let buffer = terminal.backend().buffer();
+    assert_eq!(
+        buffer[(9, 5)].fg,
+        Color::Rgb(203, 166, 247),
+        "provider colour"
+    );
+    assert_eq!(
+        buffer[(11, 5)].fg,
+        Color::Rgb(108, 112, 134),
+        "model stays quiet"
+    );
+    for y in [4, 5] {
+        assert_eq!(buffer[(0, y)].fg, Color::Rgb(203, 166, 247));
+        for x in 0..29 {
+            assert_eq!(buffer[(x, y)].bg, Color::Rgb(49, 50, 68), "({x}, {y})");
+        }
+    }
+    assert_eq!(buffer[(0, 6)].bg, Color::Rgb(30, 30, 46));
+
+    // Keys treat both lines as one session: `j` lands on the next row, `k` returns.
+    assert_eq!(dashboard.key(KeyCode::Char('j')), DashboardAction::Redraw);
+    assert!(dashboard.focused_session().is_none());
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(selection_bar_row(&terminal), Some(6), "lifecycle workspace");
+    dashboard.key(KeyCode::Char('k'));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+
+    // The mouse treats the label line as the same session, not a new one.
+    dashboard.install_focus(SessionId(5));
+    let click = |column, row| MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    };
+    dashboard.mouse_action(click(9, 5), area);
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    hover(&mut dashboard, 27, 5, area);
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(
+        row(&terminal, 4),
+        "▌    - review             [x]",
+        "hovering the label line marks the session's first line"
+    );
+    assert_eq!(row(&terminal, 5), "▌      └ pi:grok-4.7         ");
+    // The mark itself is only on the first line; its column on the label line selects.
+    dashboard.install_focus(SessionId(5));
+    dashboard.mouse_action(click(27, 5), area);
+    assert!(!palette_text(&dashboard).contains("Confirm action"));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    assert!(matches!(
+        dashboard.mouse_action(click(27, 4), area),
+        DashboardAction::Redraw
+    ));
+    assert!(palette_text(&dashboard).contains("Confirm action"));
+}
+
+#[test]
+fn sidebar_stacks_every_agent_label_or_none() {
+    // At 29 cells `claude` fits beside a twelve-cell name and `pi:grok-4.7` does not.
+    let draw = |review_label: &str| {
+        let mut dashboard = dashboard_fixture();
+        let mut hierarchy = fixture_hierarchy();
+        review_session_mut(&mut hierarchy).label = review_label.into();
+        implement_session_mut(&mut hierarchy).label = "claude".into();
+        dashboard.install_hierarchy(hierarchy);
+        dashboard.install_focus(SessionId(5));
+        let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
+        terminal
+            .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+            .unwrap();
+        (0..12)
+            .map(|y| {
+                (0..29)
+                    .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect::<Vec<_>>()
+    };
+    let inline = draw("claude");
+    assert_eq!(inline[4], "     - review         claude");
+    assert_eq!(inline[5], "  󰘬 lifecycle");
+    assert_eq!(inline[7], "     · implement      claude");
+    assert_eq!(inline[8], "");
+    let stacked = draw("pi / grok-4.7");
+    assert_eq!(stacked[4], "     - review");
+    assert_eq!(stacked[5], "       └ pi:grok-4.7");
+    assert_eq!(stacked[6], "  󰘬 lifecycle");
+    assert_eq!(stacked[7], "     $ local", "shells never stack");
+    assert_eq!(stacked[8], "     · implement");
+    assert_eq!(
+        stacked[9], "       └ claude",
+        "a label that fits still stacks"
+    );
+    assert_eq!(stacked[10], "");
+}
+
+#[test]
+fn wide_session_row_keeps_the_agent_and_model_on_one_line() {
+    let mut dashboard = dashboard_fixture();
+    let mut hierarchy = fixture_hierarchy();
+    review_session_mut(&mut hierarchy).label = "pi / grok-4.7".into();
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(5));
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(
+        sidebar_row(&terminal, 4),
+        format!("     - review{}pi:grok-4.7 ", " ".repeat(14))
+    );
+    assert_eq!(sidebar_row(&terminal, 5).trim_end(), "  󰘬 lifecycle");
+    let area = Rect::new(0, 0, 120, 40);
+    let mut clicked = dashboard_fixture();
+    clicked.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 7,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
     );
     assert!(
-        narrow_row.contains("review"),
-        "the title keeps its minimum: {narrow_row:?}"
+        clicked.focused_session().is_none(),
+        "row 5 is the workspace"
     );
 }
 
@@ -946,19 +1114,28 @@ fn sidebar_shows_each_agent_with_or_without_its_model() {
             terminal
                 .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
                 .unwrap();
-            let row = (0..39)
-                .map(|x| terminal.backend().buffer()[(x, 4)].symbol())
-                .collect::<String>();
+            let row = sidebar_row(&terminal, 4);
+            let under = sidebar_row(&terminal, 5);
             if with_model {
+                // `agent:shared-model` fits beside a twelve-cell name only for short
+                // agent names; the others keep the whole model on the line under the name.
+                let label = format!("{agent}:shared-model");
+                let inline = row.trim_end().ends_with(&label);
                 assert!(
-                    row.contains(&format!("{agent}:")),
-                    "{agent} should keep its model: {row:?}"
+                    inline || under.trim_end() == format!("       └ {label}"),
+                    "{agent} should keep its whole model: {row:?} / {under:?}"
+                );
+                assert_eq!(
+                    under.contains("lifecycle"),
+                    inline,
+                    "the extra line exists only when the label did not fit: {under:?}"
                 );
             } else {
                 assert!(
                     row.trim_end().ends_with(agent) && !row.contains(':'),
                     "{agent} without a model stays bare: {row:?}"
                 );
+                assert!(under.contains("lifecycle"), "one line: {under:?}");
             }
         }
     }
@@ -988,17 +1165,21 @@ fn long_sidebar_names_clip_to_one_screen_line() {
         .collect::<String>();
     assert_eq!(review, "▌    - review-a-very-long-ses…  claude ");
 
-    // Too narrow for a twelve-cell name beside the agent: the agent goes first.
+    // Too narrow for a twelve-cell name beside the agent: the agent moves under the name.
     let mut terminal = Terminal::new(TestBackend::new(50, 24)).unwrap();
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     let buffer = terminal.backend().buffer();
-    let review = (0..24)
-        .map(|column| buffer[(column, 4)].symbol())
-        .collect::<String>();
-    assert_eq!(review, "▌    - review-a-very-lo…");
+    let row = |y| {
+        (0..24)
+            .map(|column| buffer[(column, y)].symbol())
+            .collect::<String>()
+    };
+    assert_eq!(row(4), "▌    - review-a-very-lo…");
+    assert_eq!(row(5), "▌      └ claude         ");
     assert_eq!(buffer[(24, 4)].symbol(), "│");
+    assert_eq!(buffer[(24, 5)].symbol(), "│");
 }
 
 #[test]

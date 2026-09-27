@@ -1,0 +1,3 @@
+{
+  "error": "Error: Command failed: /usr/bin/osascript -e tell application \"System Events\" -e set records to {} -e repeat with p in (every application process whose name contains \"ovrcr\") -e set end of records to {name of p, unix id of p, bundle identifier of p, POSIX path of (application file of p), name of every window of p, position of every window of p, size of every window of p} -e end repeat -e return records -e end tell\n37:44: execution error: An error of type -10827 has occurred. (-10827)\n"
+}
