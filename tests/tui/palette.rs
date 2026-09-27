@@ -1441,20 +1441,20 @@ fn created_session_enters_terminal_mode() {
 }
 
 #[test]
-fn n_is_listed_in_the_browse_footer() {
+fn browse_footer_lists_only_menu_search_and_help() {
     let dashboard = dashboard_fixture();
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard(frame, &dashboard))
         .unwrap();
-    let text: String = (0..40)
-        .map(|y| {
-            (0..120)
-                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
-                .collect::<String>()
-        })
+    let footer: String = (0..120)
+        .map(|x| terminal.backend().buffer()[(x, 39)].symbol())
         .collect();
-    assert!(text.contains("n Create terminal"), "{text}");
+    assert_eq!(
+        footer.trim_end(),
+        "BROWSE  Space Menu  : Search  ? Help",
+        "{footer}"
+    );
 }
 
 #[test]
@@ -1969,23 +1969,20 @@ fn nested_whichkey_empty_hierarchy_can_register_and_open_global_view() {
 }
 
 #[test]
-fn ux_browse_footer_names_actions_and_respects_availability() {
+fn ux_browse_footer_is_stable_across_widths_and_state() {
     let mut dashboard = dashboard_fixture();
-    let text = rendered_footer(&dashboard, 120);
-    for label in ["? Help", "Enter Focus", "n Create terminal", ": Search"] {
-        assert!(text.contains(label), "missing {label}: {text}");
-    }
+    let full = "BROWSE  Space Menu  : Search  ? Help";
+    assert_eq!(rendered_footer(&dashboard, 120).trim_end(), full);
     for width in [20, 40, 80, 120] {
         let text = rendered_footer(&dashboard, width);
-        assert!(text.starts_with("BROWSE  ? Help"), "{text}");
-        assert!(!text.ends_with("Enter"), "partial action: {text}");
+        assert!(text.starts_with("BROWSE  Space Menu"), "{text}");
+        assert!(full.starts_with(text.trim_end()), "partial hint: {text}");
     }
+    // Selection and an empty hierarchy change the menu, not the footer.
     dashboard.install_focus(SessionId(3));
-    assert!(!rendered_footer(&dashboard, 120).contains("Enter Focus"));
+    assert_eq!(rendered_footer(&dashboard, 120).trim_end(), full);
     dashboard.install_hierarchy(HierarchySnapshot { projects: vec![] });
-    let text = rendered_footer(&dashboard, 80);
-    assert!(text.contains("a Register project"), "{text}");
-    assert!(!text.contains("n Create terminal"), "{text}");
+    assert_eq!(rendered_footer(&dashboard, 120).trim_end(), full);
 }
 
 #[test]

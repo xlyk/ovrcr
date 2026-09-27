@@ -25,24 +25,10 @@ pub(super) fn footer(dashboard: &Dashboard, width: u16) -> String {
     let mut text: String = mode.chars().take(usize::from(width)).collect();
     let groups = keymap(dashboard);
     let hints: Vec<_> = groups.iter().flat_map(|g| &g.keys).collect();
+    // Browse shows only the keys that open everything else; the menu and the
+    // palette carry the per-action hints.
     let priority: &[&str] = if dashboard.mode == InputMode::Browse {
-        &[
-            "?",
-            "Enter",
-            "R",
-            "r",
-            "Tab/Shift-Tab",
-            "x",
-            "n",
-            ":",
-            "v",
-            "q",
-            "t/Ctrl-t",
-            "a",
-            "w",
-            "p",
-            "Space",
-        ]
+        &["Space", ":", "?"]
     } else {
         &[
             "?", "Esc", "v", "y", "h/Left", "j/Down", "k/Up", "l/Right", "PageUp", "PageDown",

@@ -358,7 +358,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         vec![
             key_binding(
                 "Space",
-                "Leader",
+                "Menu",
                 "Show keys; the next key runs an action".into(),
                 Char(' '),
                 Action::Leader,
