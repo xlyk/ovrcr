@@ -787,18 +787,32 @@ impl ServerState {
     pub fn set_session_title(&self, id: SessionId, title: Option<String>) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
+        let clearing = title.is_none();
         let session = self.sessions.lock().unwrap().get(&id).cloned();
         if let Some(session) = session {
             session
                 .set_title(title)
                 .map_err(|error| lifecycle_error(ErrorCode::InvalidRequest, error.to_string()))?;
-            self.persist_session_titles(&session).map_err(|error| {
-                lifecycle_error_with_hierarchy(
-                    ErrorCode::PartialFailure,
-                    format!("live title changed but could not be retained: {error}"),
-                    true,
+            let titles = session.title_snapshot();
+            let mut retained = self.retained.lock();
+            retained
+                .update_titles(
+                    session.id(),
+                    session.run(),
+                    titles.revision,
+                    titles.pinned,
+                    titles.application,
                 )
-            })?;
+                .map_err(|error| {
+                    lifecycle_error_with_hierarchy(
+                        ErrorCode::PartialFailure,
+                        format!("live title changed but could not be retained: {error}"),
+                        true,
+                    )
+                })?;
+            if clearing {
+                Self::dismiss_recorded_subject(&mut retained, id, session.run())?;
+            }
         } else {
             let mut retained = self.retained.lock();
             let record = retained
@@ -832,8 +846,27 @@ impl ServerState {
                 title,
                 record.metadata.application_title,
             )?;
+            if clearing {
+                Self::dismiss_recorded_subject(&mut retained, id, record.run)?;
+            }
         }
         self.refresh_session_locked(id)
+    }
+
+    fn dismiss_recorded_subject(
+        retained: &mut crate::retained::SessionStore,
+        id: SessionId,
+        run: SessionRunId,
+    ) -> Result<()> {
+        let Some(conversation) = retained
+            .get(id)
+            .and_then(|record| record.conversation.as_ref())
+            .map(|reference| reference.identity().to_owned())
+        else {
+            return Ok(());
+        };
+        retained.dismiss_conversation_subject(id, run, &conversation)?;
+        Ok(())
     }
 
     pub fn acknowledge_session_stopped(

@@ -534,6 +534,43 @@ impl SessionStore {
         Ok(false)
     }
 
+    pub fn dismiss_conversation_subject(
+        &mut self,
+        id: SessionId,
+        run: SessionRunId,
+        conversation: &str,
+    ) -> Result<bool> {
+        let Some(record) = self.records.get(&id) else {
+            return Ok(false);
+        };
+        if record.run != run || record.disposition == Disposition::Archived {
+            return Ok(false);
+        }
+        if record
+            .subjects
+            .get(conversation)
+            .is_some_and(|subject| subject.dismissed)
+        {
+            return Ok(false);
+        }
+        self.connection.execute(
+            "INSERT INTO conversation_subjects
+             (session, conversation, dismissed)
+             VALUES (?1, ?2, 1)
+             ON CONFLICT(session, conversation) DO UPDATE SET
+             dismissed = 1",
+            params![sql_integer(id.0)?, conversation],
+        )?;
+        self.records
+            .get_mut(&id)
+            .unwrap()
+            .subjects
+            .entry(conversation.to_owned())
+            .or_default()
+            .dismissed = true;
+        Ok(true)
+    }
+
     pub fn update_titles(
         &mut self,
         id: SessionId,
@@ -1084,5 +1121,163 @@ mod tests {
         assert_eq!(summary.phase, SessionPhase::Stopped);
         assert!(!summary.archived);
         assert_eq!(summary.title.as_deref(), Some("Saved title"));
+    }
+
+    fn agent_record(store: &mut SessionStore, name: &str) -> RetainedSession {
+        store
+            .create(SessionMetadata {
+                project: "p".into(),
+                workspace: "w".into(),
+                name: name.into(),
+                label: "pi".into(),
+                cwd: PathBuf::from("/tmp"),
+                kind: SessionKind::Agent { name: "pi".into() },
+                pinned_title: None,
+                application_title: None,
+            })
+            .unwrap()
+    }
+
+    fn pi_reference(conversation: &str) -> ovrcr_protocol::ConversationReference {
+        ovrcr_protocol::ConversationReference::Pi(ovrcr_protocol::ExtensionConversation {
+            conversation: conversation.into(),
+            executable: "pi".into(),
+            history: Some("history.jsonl".into()),
+            config_dir: "/tmp".into(),
+            options: vec![],
+        })
+    }
+
+    #[test]
+    fn rename_hides_subject_and_late_save_is_dropped_without_changing_identity() {
+        let mut store = SessionStore::in_memory();
+        let record = agent_record(&mut store, "original");
+        let run = store.begin_run(record.id, record.run).unwrap().run;
+        store
+            .retain_conversation(record.id, run, Some(&pi_reference("conv-a")))
+            .unwrap();
+        assert!(
+            store
+                .save_conversation_subject(record.id, run, "conv-a", "Subject A".into())
+                .unwrap()
+        );
+        assert_eq!(
+            store.get(record.id).unwrap().effective_title().as_deref(),
+            Some("Subject A")
+        );
+        assert!(
+            store
+                .update_titles(record.id, run, 1, Some("Manual".into()), None)
+                .unwrap()
+        );
+        assert_eq!(
+            store.get(record.id).unwrap().effective_title().as_deref(),
+            Some("Manual")
+        );
+        assert!(
+            !store
+                .save_conversation_subject(record.id, run, "conv-a", "Late".into())
+                .unwrap()
+        );
+        assert_eq!(
+            store.get(record.id).unwrap().effective_title().as_deref(),
+            Some("Manual")
+        );
+        assert_eq!(
+            store
+                .get(record.id)
+                .unwrap()
+                .subjects
+                .get("conv-a")
+                .and_then(|subject| subject.topic.as_deref()),
+            Some("Subject A")
+        );
+        assert_eq!(store.get(record.id).unwrap().id, record.id);
+        assert_eq!(store.get(record.id).unwrap().run, run);
+    }
+
+    #[test]
+    fn clear_restores_original_name_dismisses_current_subject_and_keeps_other() {
+        let mut store = SessionStore::in_memory();
+        let record = agent_record(&mut store, "original");
+        let run = store.begin_run(record.id, record.run).unwrap().run;
+        store
+            .retain_conversation(record.id, run, Some(&pi_reference("conv-a")))
+            .unwrap();
+        assert!(
+            store
+                .save_conversation_subject(record.id, run, "conv-a", "Subject A".into())
+                .unwrap()
+        );
+        assert!(
+            store
+                .save_conversation_subject(record.id, run, "conv-b", "Subject B".into())
+                .unwrap()
+        );
+        assert!(
+            store
+                .update_titles(record.id, run, 1, Some("Manual".into()), None)
+                .unwrap()
+        );
+        assert!(store.update_titles(record.id, run, 2, None, None).unwrap());
+        assert!(
+            store
+                .dismiss_conversation_subject(record.id, run, "conv-a")
+                .unwrap()
+        );
+        let retained = store.get(record.id).unwrap();
+        assert!(retained.effective_title().is_none());
+        assert!(retained.subjects["conv-a"].dismissed);
+        assert!(!retained.subjects["conv-b"].dismissed);
+        assert_eq!(
+            retained.subjects["conv-b"].topic.as_deref(),
+            Some("Subject B")
+        );
+        assert!(
+            !store
+                .save_conversation_subject(record.id, run, "conv-a", "Late After Clear".into())
+                .unwrap()
+        );
+        assert!(store.get(record.id).unwrap().effective_title().is_none());
+        assert_eq!(
+            store
+                .get(record.id)
+                .unwrap()
+                .subjects
+                .get("conv-a")
+                .and_then(|subject| subject.topic.as_deref()),
+            Some("Subject A")
+        );
+        store
+            .retain_conversation(record.id, run, Some(&pi_reference("conv-b")))
+            .unwrap();
+        assert_eq!(
+            store.get(record.id).unwrap().effective_title().as_deref(),
+            Some("Subject B")
+        );
+        assert_eq!(store.get(record.id).unwrap().id, record.id);
+        assert_eq!(store.get(record.id).unwrap().run, run);
+    }
+
+    #[test]
+    fn clear_without_existing_subject_still_drops_late_result() {
+        let mut store = SessionStore::in_memory();
+        let record = agent_record(&mut store, "original");
+        let run = store.begin_run(record.id, record.run).unwrap().run;
+        store
+            .retain_conversation(record.id, run, Some(&pi_reference("conv-a")))
+            .unwrap();
+        assert!(
+            store
+                .dismiss_conversation_subject(record.id, run, "conv-a")
+                .unwrap()
+        );
+        assert!(
+            !store
+                .save_conversation_subject(record.id, run, "conv-a", "Late".into())
+                .unwrap()
+        );
+        assert!(store.get(record.id).unwrap().subjects["conv-a"].dismissed);
+        assert!(store.get(record.id).unwrap().effective_title().is_none());
     }
 }
