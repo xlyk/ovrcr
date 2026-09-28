@@ -2643,9 +2643,7 @@ fn codex_mismatched_first_line_does_not_produce_subject_or_spend_attempt() {
     let history = live.root.path().join("codex-mismatch.jsonl");
     std::fs::write(
         &history,
-        format!(
-            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"wrong-id\",\"source\":\"cli\"}}}}\n{{\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"output_text\",\"text\":\"should not title\"}}]}}}}\n"
-        ),
+        "{\"type\":\"session_meta\",\"payload\":{\"id\":\"wrong-id\",\"source\":\"cli\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"should not title\"}]}}\n",
     )
     .unwrap();
     retain_codex_history(&live, &fake_pi, &session, &token, conversation, history);
