@@ -2614,11 +2614,11 @@ impl Dashboard {
             return DashboardAction::None;
         };
         let starting = mouse.kind == MouseEventKind::Down(MouseButton::Left);
-        if !starting
-            && !(matches!(
+        if !(starting
+            || (matches!(
                 mouse.kind,
                 MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
-            ) && dragging)
+            ) && dragging))
         {
             return DashboardAction::None;
         }

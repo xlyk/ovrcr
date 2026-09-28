@@ -33,9 +33,12 @@ marks Ready (`response ready · observed`), not confirmed settling or task succe
 Claude may continue after Stop; a later prompt or tool event under that turn returns
 Busy without clearing Unread. Duplicate Stop under the same Root-turn identity does
 not create another Unread or alert. Child events and Stops without a matching
-`prompt_id` cannot create root Ready. A matching `permission_prompt` notification
-means observed waiting for input; `PermissionRequest` alone does not establish that
-state.
+`prompt_id` cannot create root Ready. A matching root `permission_prompt` notification opens an Approval Input request
+(`approval:{prompt_id}`), so effective activity is WaitingInput and an input-needed
+alert can fire once per request identity; the next attributable root activity closes
+it. `PermissionRequest`, idle notifications, and bare tool events alone do not open a
+request. AskUserQuestion remains unavailable until a distinct question open/close
+surface is verified.
 
 Usage covers recognized records from the root transcript and remains **partial**,
 even after EOF, Stop, or process exit. It does not certify all auxiliary work or

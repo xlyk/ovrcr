@@ -456,11 +456,11 @@ impl TaskEditor {
                             .insert(&mut self.projects.query, &c.to_string());
                         self.projects.selected = 0;
                     }
-                    KeyCode::Tab | KeyCode::Enter => {
-                        if self.accept_project() || self.fields[1].trim() != "git" {
-                            self.field = 3;
-                            self.cursor = self.fields[3].len();
-                        }
+                    KeyCode::Tab | KeyCode::Enter
+                        if self.accept_project() || self.fields[1].trim() != "git" =>
+                    {
+                        self.field = 3;
+                        self.cursor = self.fields[3].len();
                     }
                     KeyCode::BackTab => {
                         self.field = 1;

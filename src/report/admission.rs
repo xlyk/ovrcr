@@ -79,6 +79,7 @@ pub fn receiver(
         announced: false,
         initial_accepted: false,
         prompt: None,
+        open_requests: Vec::new(),
         metrics: None,
         transcript_path: None,
         collector: None,
@@ -400,6 +401,9 @@ struct Hooks {
     announced: bool,
     initial_accepted: bool,
     prompt: Option<String>,
+    /// Open human-input requests for this binding, oldest first. Approvals use
+    /// `approval:{prompt_id}` from a verified root `Notification(permission_prompt)`.
+    open_requests: Vec<(String, ovrcr_protocol::InputKind)>,
     metrics: Option<ovrcr_protocol::MetricsSample>,
     transcript_path: Option<String>,
     collector: Option<super::collector::CollectorController>,
@@ -508,9 +512,32 @@ impl Hooks {
             // Supported synchronous UserPromptSubmit hooks establish observed turn identity.
             // Opaque prompt IDs and transport revisions are not certified source ordering.
             if matches!(event.kind, ClaudeEventKind::Prompt) {
+                // A new root turn retires any approval still open for a prior prompt_id.
+                if let Some(closed) = self.close_approvals_except(reporter, None, deadline) {
+                    self.stop_collector(deadline);
+                    return closed;
+                }
                 self.prompt = Some(prompt.clone());
             } else if self.prompt.as_ref() != Some(&prompt) {
                 return reporter::IGNORED.to_vec();
+            }
+            // Verified approval open: Notification(permission_prompt) with the current root
+            // prompt_id. PermissionRequest, bare tools and child events never open a request.
+            // Publish Input only — do not rewrite the underlying activity sample (Busy or
+            // Ready), matching Pi/OMP so WaitingInput is effective_activity from the set.
+            if matches!(event.kind, ClaudeEventKind::PermissionPrompt) {
+                let opened = self.open_approval(reporter, &prompt, deadline);
+                if opened != reporter::ACCEPTED && opened != reporter::IGNORED {
+                    self.stop_collector(deadline);
+                }
+                return opened;
+            }
+            if let Some(closed) = self.close_approvals_except(reporter, None, deadline) {
+                // Allow / deny / cancel / tool / Stop close every open approval: Claude has
+                // no distinct resolve id on the notification, so the closing boundary is the
+                // next attributable root activity after a genuine open.
+                self.stop_collector(deadline);
+                return closed;
             }
             let published = reporter.publish(
                 ovrcr_protocol::AgentObservation::Activity(ovrcr_protocol::ActivitySample {
@@ -722,7 +749,62 @@ impl Hooks {
     /// it certified is no longer what is on screen, and nothing replaces it here.
     fn freeze(&mut self, reporter: &mut Reporter, deadline: Instant) -> bool {
         self.stop_collector(deadline);
+        let _ = self.close_approvals_except(reporter, None, deadline);
         reporter.invalidate_conversation(deadline)
+    }
+
+    fn approval_id(prompt: &str) -> String {
+        format!("approval:{prompt}")
+    }
+
+    fn open_approval(
+        &mut self,
+        reporter: &mut Reporter,
+        prompt: &str,
+        deadline: Instant,
+    ) -> Vec<u8> {
+        let id = Self::approval_id(prompt);
+        if self.open_requests.iter().any(|(open, _)| open == &id)
+            || self.open_requests.len() >= ovrcr_protocol::MAX_INPUT_REQUESTS
+        {
+            return reporter::IGNORED.to_vec();
+        }
+        self.open_requests
+            .push((id, ovrcr_protocol::InputKind::Approval));
+        self.publish_requests(reporter, deadline)
+    }
+
+    /// Close every open approval, or all except `keep` when provided. Returns `Some` when
+    /// the Input publication itself failed (caller should stop).
+    fn close_approvals_except(
+        &mut self,
+        reporter: &mut Reporter,
+        keep: Option<&str>,
+        deadline: Instant,
+    ) -> Option<Vec<u8>> {
+        let before = self.open_requests.len();
+        if let Some(keep) = keep {
+            self.open_requests.retain(|(id, _)| id == keep);
+        } else {
+            self.open_requests.clear();
+        }
+        if self.open_requests.len() == before {
+            return None;
+        }
+        let published = self.publish_requests(reporter, deadline);
+        (published.as_slice() != reporter::ACCEPTED).then_some(published)
+    }
+
+    fn publish_requests(&mut self, reporter: &mut Reporter, deadline: Instant) -> Vec<u8> {
+        let requests = self
+            .open_requests
+            .iter()
+            .map(|(id, kind)| ovrcr_protocol::InputRequest {
+                id: id.clone(),
+                kind: *kind,
+            })
+            .collect();
+        reporter.publish(ovrcr_protocol::AgentObservation::Input(requests), deadline)
     }
 }
 
@@ -743,6 +825,7 @@ mod tests {
             announced: false,
             initial_accepted: false,
             prompt: None,
+            open_requests: Vec::new(),
             metrics: None,
             transcript_path: None,
             collector: None,
