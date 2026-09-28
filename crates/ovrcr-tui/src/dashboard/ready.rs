@@ -154,7 +154,7 @@ mod tests {
                 ResponseReady,
                 Some("t"),
                 true,
-                false,
+                true,
             ),
             (Running, Pi, Connected, ResponseReady, Some("t"), true, true),
             (

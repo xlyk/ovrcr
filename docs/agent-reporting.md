@@ -28,9 +28,14 @@ For the supported version, setup instructions, and current acceptance limits, se
 
 The supervised integration binds one initial Claude Code conversation to one
 invocation. Activity, current context, cumulative usage, cost, and reporting health
-are separate observations. `Stop` means observed idle, not confirmed completion.
-A matching `permission_prompt` notification means observed waiting for input;
-`PermissionRequest` alone does not establish that state.
+are separate observations. A matching root `Stop` with the current `prompt_id`
+marks Ready (`response ready · observed`), not confirmed settling or task success.
+Claude may continue after Stop; a later prompt or tool event under that turn returns
+Busy without clearing Unread. Duplicate Stop under the same Root-turn identity does
+not create another Unread or alert. Child events and Stops without a matching
+`prompt_id` cannot create root Ready. A matching `permission_prompt` notification
+means observed waiting for input; `PermissionRequest` alone does not establish that
+state.
 
 Usage covers recognized records from the root transcript and remains **partial**,
 even after EOF, Stop, or process exit. It does not certify all auxiliary work or
@@ -96,8 +101,8 @@ on the selected session's metadata line, with a `✓` glyph in the sidebar, and 
 report, including across reconnects. Reporter health and process exit remain
 separate; Ready does not acknowledge unread output or imply known usage or cost.
 
-Managed sessions of a supported readiness provider (Codex, Pi, Oh My Pi) retain one
-unread identity for its latest root Ready observation. [Mark-reviewed](dashboard.md#unread-responses)
+Managed sessions of a supported readiness provider (Codex, Pi, Oh My Pi, Claude)
+retain one unread identity for its latest root Ready observation. [Mark-reviewed](dashboard.md#unread-responses)
 is explicit and checks that identity before clearing it. Selecting or viewing a
 terminal, new Busy activity, and reporter loss do not clear unread state. The server
 retains it through dashboard reconnect but does not persist it across server death.
@@ -133,11 +138,12 @@ keeping unrelated settings and handlers. If `ovrcr` is not on the provider's
 }
 ```
 
-The adapter reads only the provider JSON on standard input. It maps
-`SessionStart` and `Stop` to `idle`, prompt and tool events to `busy`,
-`PermissionRequest` to `waiting-input`, `StopFailure` to `error`, and `SessionEnd`
-to `unknown`. Events containing `agent_id`, unknown events, and notifications are
-ignored. Malformed input, an unavailable server, and report timeouts are fail-open
+The adapter reads only the provider JSON on standard input. On this legacy
+unbound path it maps `SessionStart` and `Stop` to `idle`, prompt and tool events
+to `busy`, `PermissionRequest` to `waiting-input`, `StopFailure` to `error`, and
+`SessionEnd` to `unknown`. That idle mapping is not the managed Claude contract
+above, where a correlated root Stop is Ready · observed. Events containing
+`agent_id`, unknown events, and notifications are ignored. Malformed input, an unavailable server, and report timeouts are fail-open
 and produce no stdout; add `--verbose` for a bounded diagnostic on stderr.
 
 A successful adapter invocation means only that its local report attempt was

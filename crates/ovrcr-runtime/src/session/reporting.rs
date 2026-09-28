@@ -458,7 +458,7 @@ mod tests {
                 SampleQuality::Observed,
                 Some("one"),
                 ReporterHealth::Connected,
-                false,
+                true,
             ),
             (
                 AgentProvider::Codex,

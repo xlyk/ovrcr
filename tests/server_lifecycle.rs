@@ -8293,7 +8293,7 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         }) {
             assert_eq!(
                 current.activity.unwrap().state,
-                ovrcr::session::AgentActivity::Idle
+                ovrcr::session::AgentActivity::ResponseReady
             );
             break;
         }
@@ -8814,7 +8814,12 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
             2,
             Some("A"),
         ),
-        ("activity:Stop:A", Some(AgentActivity::Idle), 3, Some("A")),
+        (
+            "activity:Stop:A",
+            Some(AgentActivity::ResponseReady),
+            3,
+            Some("A"),
+        ),
         (
             "activity:PreToolUse:A",
             Some(AgentActivity::Busy),
@@ -12851,6 +12856,227 @@ fn omp_reattach_recovers_a_paused_reporter_during_an_input_wait() {
         Response::Ok
     );
     fixture.wait_terminal_contains(summary.id, "PI_NATIVE_EXIT=17");
+}
+
+fn claude_alert_session(
+    fixture: &ControlFixture,
+    socket: &Path,
+    name: &str,
+) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    // Basename must be `claude` or admission refuses the fresh launch grammar.
+    let bin_dir = fixture.root.path().join(format!("{name}-bin"));
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let native = bin_dir.join("claude");
+    std::fs::write(
+        &native,
+        r#"#!/bin/sh
+if [ "$1" = --version ]; then printf '2.1.267 (Claude Code)\n'; exit; fi
+OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admission_native_helper --nocapture
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let probe = fixture.root.path().join(format!("{name}-probe"));
+    let summary = fixture.create_session_summary(
+        name,
+        vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            r#"stty -echo; export OVRCR_HOOK_SOCKET="$5"; export OVRCR_TEST_PROBE="$3" OVRCR_TEST_EXECUTABLE="$4"; "$1" agent run --provider claude -- "$2"; printf CLAUDE_ALERT_FINISHED; IFS= read -r done"#.into(),
+            format!("{name}-fixture").into(),
+            env!("CARGO_BIN_EXE_ovrcr").into(),
+            native.into_os_string(),
+            probe.clone().into_os_string(),
+            std::env::current_exe().unwrap().into_os_string(),
+            socket.as_os_str().into(),
+        ],
+    );
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains(summary.id, "ADMISSION_READY");
+    (summary, probe)
+}
+
+fn claude_activity_callback(
+    fixture: &ControlFixture,
+    session: SessionId,
+    index: &mut usize,
+    command: &str,
+) {
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session,
+            text: command.into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(session, &format!("ADMISSION_CALLBACK={index}"));
+    *index += 1;
+}
+
+#[test]
+fn claude_ready_alerts_once_per_root_turn_with_unread_and_continuation() {
+    let _guard = env_lock();
+    use ovrcr::protocol::{AgentActivity, SampleQuality};
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "claude-setup");
+    let (summary, _probe) = claude_alert_session(&fixture, &fixture.socket, "claude-hooks");
+    let bin = env!("CARGO_BIN_EXE_ovrcr");
+    let config = fixture.root.path().join("config.toml");
+    let mut index = 0;
+
+    // Initial SessionStart alone is not Ready and does not alert.
+    claude_activity_callback(&fixture, summary.id, &mut index, "root");
+    let after_start = fixture.session_summary(summary.id);
+    assert!(after_start.agent.as_ref().unwrap().activity.is_none());
+    assert_eq!(after_start.unread, None);
+
+    let mut dashboard = DesktopAlertDashboard::start_for(
+        &fixture,
+        Some("desktop_notifications = true\n"),
+        "claude-hooks",
+    );
+    // Focus another managed session first; alerts still fire for visible Claude.
+    dashboard.select("setup", "HOOK_READY");
+
+    // Fresh root turn: Busy then Observed Ready, Unread, one host alert.
+    claude_activity_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "activity:UserPromptSubmit:A",
+    );
+    let busy = fixture.session_summary(summary.id);
+    assert_eq!(busy.activity, AgentActivity::Busy);
+    assert_eq!(busy.unread, None);
+    let busy_sample = busy.agent.as_ref().unwrap().activity.as_ref().unwrap();
+    assert_eq!(busy_sample.quality, SampleQuality::Observed);
+    assert_eq!(busy_sample.turn.as_deref(), Some("A"));
+
+    claude_activity_callback(&fixture, summary.id, &mut index, "activity:Stop:A");
+    dashboard.wait_named_calls(1, summary.id, "claude-hooks");
+    let first = fixture.session_summary(summary.id);
+    assert_eq!(first.activity, AgentActivity::ResponseReady);
+    let first_sample = first.agent.as_ref().unwrap().activity.as_ref().unwrap();
+    assert_eq!(first_sample.quality, SampleQuality::Observed);
+    assert_eq!(first_sample.turn.as_deref(), Some("A"));
+    let first_unread = first.unread.clone().expect("Observed Ready is unread");
+    let listed = cli_with_output(
+        bin,
+        &config,
+        &fixture.socket,
+        &["terminal", "list", "--json"],
+    );
+    assert!(listed.status.success());
+    let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let row = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == summary.id.0)
+        .unwrap();
+    assert_eq!(row["unread"], serde_json::to_value(&first_unread).unwrap());
+    assert_eq!(row["activity"], "response_ready");
+
+    // Duplicate Stop same prompt_id: still one Unread / one alert.
+    claude_activity_callback(&fixture, summary.id, &mut index, "activity:Stop:A");
+    assert_eq!(
+        fixture.session_summary(summary.id).unread,
+        Some(first_unread.clone())
+    );
+    dashboard.wait_named_calls(1, summary.id, "claude-hooks");
+
+    // Child / wrong / missing / malformed Stop cannot overwrite root Ready.
+    for command in [
+        "activity:Stop:A:child",
+        "activity:Stop:A:wrong",
+        "activity:Stop:A:malformed",
+        "activity:Stop:missing",
+    ] {
+        claude_activity_callback(&fixture, summary.id, &mut index, command);
+    }
+    let ignored = fixture.session_summary(summary.id);
+    assert_eq!(ignored.activity, AgentActivity::ResponseReady);
+    assert_eq!(ignored.unread, Some(first_unread.clone()));
+    dashboard.wait_named_calls(1, summary.id, "claude-hooks");
+
+    // Continuation under the same Root turn: Busy, Unread survives; Stop again → one alert.
+    claude_activity_callback(&fixture, summary.id, &mut index, "activity:PreToolUse:A");
+    let continued = fixture.session_summary(summary.id);
+    assert_eq!(continued.activity, AgentActivity::Busy);
+    assert_eq!(
+        continued.unread,
+        Some(first_unread.clone()),
+        "Unread survives later Busy"
+    );
+    claude_activity_callback(&fixture, summary.id, &mut index, "activity:Stop:A");
+    let same_turn = fixture.session_summary(summary.id);
+    assert_eq!(same_turn.activity, AgentActivity::ResponseReady);
+    assert_eq!(same_turn.unread, Some(first_unread.clone()));
+    dashboard.wait_named_calls(1, summary.id, "claude-hooks");
+
+    // Distinct later turn alerts normally.
+    claude_activity_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "activity:UserPromptSubmit:B",
+    );
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::Busy
+    );
+    assert_eq!(
+        fixture.session_summary(summary.id).unread,
+        Some(first_unread.clone()),
+        "Busy does not clear Unread"
+    );
+    // Stale Stop for the prior turn must not create Ready while turn B is current.
+    claude_activity_callback(&fixture, summary.id, &mut index, "activity:Stop:A");
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::Busy
+    );
+    claude_activity_callback(&fixture, summary.id, &mut index, "activity:Stop:B");
+    dashboard.wait_named_calls(2, summary.id, "claude-hooks");
+    let second = fixture.session_summary(summary.id);
+    assert_eq!(second.activity, AgentActivity::ResponseReady);
+    let second_unread = second.unread.clone().expect("second turn is unread");
+    assert_ne!(second_unread, first_unread);
+    assert_eq!(
+        second
+            .agent
+            .as_ref()
+            .unwrap()
+            .activity
+            .as_ref()
+            .unwrap()
+            .turn
+            .as_deref(),
+        Some("B")
+    );
+
+    // Explicit review clears only the presented identity; viewing does not.
+    dashboard.select("claude-hooks", "ADMISSION_CALLBACK=12");
+    dashboard.wait_screen(|screen| screen.contains("Unread"));
+    assert_eq!(fixture.session_summary(summary.id), second);
+    dashboard.send(b"\x07R");
+    dashboard.wait_screen(|screen| !screen.contains("Unread") && screen.contains("response ready"));
+    let mut reviewed = second.clone();
+    reviewed.unread = None;
+    assert_eq!(fixture.session_summary(summary.id), reviewed);
+
+    dashboard.detach();
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "CLAUDE_ALERT_FINISHED");
 }
 
 #[test]

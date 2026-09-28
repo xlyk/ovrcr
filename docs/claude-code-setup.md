@@ -42,9 +42,9 @@ When `claude` is on `PATH` and the settings file under `CLAUDE_CONFIG_DIR` (defa
 one-line warning in its error banner at startup naming the file and the setup
 command to run. The same banner reports a missing Codex reporter configuration
 when `codex` is on `PATH`. Configuration presence is not hook trust or delivery;
-`agent doctor` keeps those fields `unverified` until evidence arrives. Ready and
-Input-request capabilities are reported separately: this release delivers observed
-Claude activity only, and does not claim Claude Ready or Input-request support.
+`agent doctor` keeps those fields `unverified` until evidence arrives. Ready is
+available as observed root-turn response end (`completion_quality: observed`);
+Confirmed settling remains unverified. Input-request support remains unavailable.
 
 Check the supplied file and executable:
 
@@ -107,10 +107,11 @@ ovrcr session usage SESSION_ID
 ovrcr agent doctor claude --json --settings ~/.claude/settings.json --session SESSION_ID
 ```
 
-The dashboard shows observed activity, current context, partial token usage, and
-estimated cost when available. Unknown values remain unknown. A connected reporter
-does not imply complete accounting. Read the [reporting contract](agent-reporting.md)
-for scope and freshness semantics.
+The dashboard shows observed activity (Busy, Ready · observed, WaitingInput,
+Error), Unread for the latest correlated root Ready turn, current context, partial
+token usage, and estimated cost when available. Unknown values remain unknown. A
+connected reporter does not imply complete accounting or Confirmed settling. Read
+the [reporting contract](agent-reporting.md) for scope and freshness semantics.
 
 After `/clear` or another identity transition, start a fresh supervised invocation
 to restore tracking. Detaching the dashboard leaves the running invocation intact;

@@ -25,7 +25,7 @@ impl ClaudeEventKind {
         Some(match self {
             Self::Prompt | Self::Tool => AgentActivity::Busy,
             Self::PermissionPrompt => AgentActivity::WaitingInput,
-            Self::Stop => AgentActivity::Idle,
+            Self::Stop => AgentActivity::ResponseReady,
             Self::ApiFailure { .. } => AgentActivity::Error,
             _ => return None,
         })
@@ -186,5 +186,13 @@ mod tests {
         assert!(
             parse_claude_hook(br#"{"session_id":"root","hook_event_name":"StopFailure"}"#).is_err()
         );
+    }
+    #[test]
+    fn claude_stop_maps_to_observed_response_ready() {
+        let stop = br#"{"session_id":"root","prompt_id":"turn","hook_event_name":"Stop"}"#;
+        let event = parse_claude_hook(stop).unwrap().unwrap();
+        assert_eq!(event.kind, ClaudeEventKind::Stop);
+        assert_eq!(event.kind.activity(), Some(AgentActivity::ResponseReady));
+        assert_eq!(event.prompt.as_deref(), Some("turn"));
     }
 }
