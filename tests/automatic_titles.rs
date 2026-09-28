@@ -3184,3 +3184,182 @@ fn workspace_launch_failure_retains_worktree_and_retry_uses_existing_workspace()
         }
     ));
 }
+
+#[test]
+fn second_session_due_during_title_call_gets_subject_after_first_ends() {
+    // First call blocks on a gate; later calls answer immediately.
+    // Topics come from the excerpt so each result binds to the right session.
+    // start-N/end-N markers prove the second call does not start until the first ends.
+    let script = "#!/bin/sh
+count_file=__CALLS__.count
+if [ ! -f \"$count_file\" ]; then echo 0 > \"$count_file\"; fi
+count=$(($(cat \"$count_file\") + 1))
+echo \"$count\" > \"$count_file\"
+printf 'start-%s\\n' \"$count\" >> __CALLS__
+while IFS= read -r line; do
+  printf '%s\\n' \"$line\" > __CALLS__.stdin
+  if printf '%s\\n' \"$line\" | grep -q 'first session work'; then
+    topic='First Session Topic'
+  elif printf '%s\\n' \"$line\" | grep -q 'second session work'; then
+    topic='Second Session Topic'
+  else
+    topic='Unexpected Topic'
+  fi
+  if [ \"$count\" = 1 ]; then
+    while [ ! -e __CALLS__.gate ]; do sleep 0.05; done
+  fi
+  printf '%s\\n' \"{\\\"type\\\":\\\"message_end\\\",\\\"message\\\":{\\\"role\\\":\\\"assistant\\\",\\\"content\\\":[{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"$topic\\\"}],\\\"stopReason\\\":\\\"stop\\\"}}\"
+  printf 'end-%s\\n' \"$count\" >> __CALLS__
+  exit 0
+done
+".to_owned();
+    let (live, fake_pi, calls) = start_title_fixture(script, Some("title_model = 'pi/test'\n"));
+    let _dashboard = dashboard(&live);
+
+    let token_a = live.root.path().join("due-a.token");
+    let session_a = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent { name: "pi".into() },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "due-first-original".into(),
+            label: Some("pi".into()),
+            argv: agent_program(&token_a),
+        }),
+    );
+    let id_a = session_a.id;
+    let run_a = session_a.run;
+    wait_for(&live, session_a.id, "AGENT_READY");
+
+    let token_b = live.root.path().join("due-b.token");
+    let session_b = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent { name: "pi".into() },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "due-second-original".into(),
+            label: Some("pi".into()),
+            argv: agent_program(&token_b),
+        }),
+    );
+    let id_b = session_b.id;
+    let run_b = session_b.run;
+    wait_for(&live, session_b.id, "AGENT_READY");
+
+    let conversation_a = "00000000-0000-4000-8000-000000000801";
+    let conversation_b = "00000000-0000-4000-8000-000000000802";
+    let history_a = live.root.path().join("due-a.jsonl");
+    let history_b = live.root.path().join("due-b.jsonl");
+    std::fs::write(
+        &history_a,
+        format!(
+            "{{\"type\":\"session\",\"id\":\"{conversation_a}\"}}\n{{\"role\":\"assistant\",\"content\":\"first session work\"}}\n"
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        &history_b,
+        format!(
+            "{{\"type\":\"session\",\"id\":\"{conversation_b}\"}}\n{{\"role\":\"assistant\",\"content\":\"second session work\"}}\n"
+        ),
+    )
+    .unwrap();
+    let history_b_meta = std::fs::metadata(&history_b).unwrap();
+    let history_b_len = history_b_meta.len();
+    let history_b_mtime = history_b_meta.modified().unwrap();
+
+    // Retain both so the second is already due while the first title call runs.
+    retain_pi_history(
+        &live,
+        &fake_pi,
+        &session_a,
+        &token_a,
+        conversation_a,
+        history_a,
+    );
+    retain_pi_history(
+        &live,
+        &fake_pi,
+        &session_b,
+        &token_b,
+        conversation_b,
+        history_b.clone(),
+    );
+
+    wait_call_count(&calls, 1);
+    let calls_while_first_open = std::fs::read_to_string(&calls).unwrap();
+    assert!(
+        calls_while_first_open.contains("start-1"),
+        "first title call must have started: {calls_while_first_open}"
+    );
+    assert!(
+        !calls_while_first_open.contains("end-1"),
+        "first title call must still be open: {calls_while_first_open}"
+    );
+    assert!(
+        !calls_while_first_open.contains("start-2"),
+        "second call must not start while the first is open: {calls_while_first_open}"
+    );
+
+    // Let the worker observe the second due session while the first call is in flight.
+    std::thread::sleep(Duration::from_secs(3));
+    let calls_before_release = std::fs::read_to_string(&calls).unwrap();
+    assert!(
+        !calls_before_release.contains("start-2"),
+        "second call must wait until the first ends: {calls_before_release}"
+    );
+    assert!(
+        sessions(&live).iter().any(|row| {
+            (row.id == session_a.id && row.display_name() == "due-first-original")
+                || (row.id == session_b.id && row.display_name() == "due-second-original")
+        }),
+        "at least one session must still show its creation name while the first call is open"
+    );
+
+    std::fs::write(calls.with_extension("gate"), "go").unwrap();
+    wait_display(&live, session_a.id, "First Session Topic");
+    wait_display(&live, session_b.id, "Second Session Topic");
+
+    let after = std::fs::metadata(&history_b).unwrap();
+    assert_eq!(
+        (after.len(), after.modified().unwrap()),
+        (history_b_len, history_b_mtime),
+        "second subject must arrive without a further history-file change"
+    );
+
+    let call_log = std::fs::read_to_string(&calls).unwrap();
+    let start1 = call_log.find("start-1").expect("start-1");
+    let end1 = call_log.find("end-1").expect("end-1");
+    let start2 = call_log.find("start-2").expect("start-2");
+    let end2 = call_log.find("end-2").expect("end-2");
+    assert!(
+        start1 < end1 && end1 < start2 && start2 < end2,
+        "calls must be strictly serial: {call_log}"
+    );
+
+    assert_eq!(
+        subject_flags(&live, session_a.id, conversation_a),
+        (Some("First Session Topic".into()), false)
+    );
+    assert_eq!(
+        subject_flags(&live, session_b.id, conversation_b),
+        (Some("Second Session Topic".into()), false)
+    );
+    assert_eq!(subject_rows(&live, session_a.id), 1);
+    assert_eq!(subject_rows(&live, session_b.id), 1);
+
+    let row_a = sessions(&live)
+        .into_iter()
+        .find(|row| row.id == session_a.id)
+        .unwrap();
+    let row_b = sessions(&live)
+        .into_iter()
+        .find(|row| row.id == session_b.id)
+        .unwrap();
+    assert_eq!(row_a.display_name(), "First Session Topic");
+    assert_eq!(row_b.display_name(), "Second Session Topic");
+    assert_eq!((row_a.id, row_a.run), (id_a, run_a));
+    assert_eq!((row_b.id, row_b.run), (id_b, run_b));
+}
