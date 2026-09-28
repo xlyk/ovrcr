@@ -1,6 +1,7 @@
 use super::*;
 use ovrcr_protocol::{AgentProvider, ConversationReference};
 use serde_json::{Value, json};
+use std::collections::HashSet;
 use std::io::{Seek, SeekFrom, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
@@ -58,6 +59,10 @@ pub(super) struct TitleWorker {
     model: Option<TitleModel>,
     root: PathBuf,
     seen: HashMap<SessionId, SeenFile>,
+    /// Sessions that became due and still need a title call. Survives across
+    /// ticks so a session observed while another call runs is not forgotten
+    /// when its history file does not change again.
+    due: HashSet<SessionId>,
     missing_pi: bool,
     serial: u64,
 }
@@ -68,6 +73,7 @@ impl TitleWorker {
             model,
             root,
             seen: HashMap::new(),
+            due: HashSet::new(),
             missing_pi: false,
             serial: 0,
         }
@@ -100,11 +106,16 @@ impl TitleWorker {
             let retained = state.retained.lock();
             retained.records().cloned().collect()
         };
-        for record in records {
+
+        // Phase 1: remember every eligible session whose history file changed.
+        // Marking seen here must not drop a sibling that becomes due in the
+        // same poll or while a call is in flight — those stay in `due`.
+        for record in &records {
             if state.shutdown.load(Ordering::Acquire) {
                 return;
             }
-            let Some(candidate) = Candidate::from_record(&record) else {
+            let Some(candidate) = Candidate::from_record(record) else {
+                self.due.remove(&record.id);
                 continue;
             };
             if record.metadata.pinned_title.is_some()
@@ -113,12 +124,15 @@ impl TitleWorker {
                     .get(&candidate.conversation)
                     .is_some_and(|subject| !subject.title_window_open())
             {
+                self.due.remove(&record.id);
                 continue;
             }
             let Some(session) = state.sessions.lock().unwrap().get(&record.id).cloned() else {
+                self.due.remove(&record.id);
                 continue;
             };
             if session.run() != record.run || !session.is_live() {
+                self.due.remove(&record.id);
                 continue;
             }
             let Ok(metadata) = fs::metadata(&candidate.history) else {
@@ -150,11 +164,47 @@ impl TitleWorker {
                     .get(&candidate.conversation)
                     .is_some_and(|subject| !subject.dismissed && subject.topic.is_some())
             {
+                self.due.remove(&record.id);
+                continue;
+            }
+            self.due.insert(record.id);
+        }
+
+        // Phase 2: run at most one due call. Remaining dues wait for the next
+        // tick even if their files do not change again.
+        for record in records {
+            if state.shutdown.load(Ordering::Acquire) {
+                return;
+            }
+            if !self.due.contains(&record.id) {
+                continue;
+            }
+            let Some(candidate) = Candidate::from_record(&record) else {
+                self.due.remove(&record.id);
+                continue;
+            };
+            if record.metadata.pinned_title.is_some()
+                || record
+                    .subjects
+                    .get(&candidate.conversation)
+                    .is_some_and(|subject| !subject.title_window_open())
+            {
+                self.due.remove(&record.id);
+                continue;
+            }
+            let Some(session) = state.sessions.lock().unwrap().get(&record.id).cloned() else {
+                self.due.remove(&record.id);
+                continue;
+            };
+            if session.run() != record.run || !session.is_live() {
+                self.due.remove(&record.id);
                 continue;
             }
             let Ok(Some(excerpt)) = excerpt(&candidate) else {
+                self.due.remove(&record.id);
                 continue;
             };
+            self.due.remove(&record.id);
             match self.call(&model, &excerpt, state) {
                 CallResult::Title(topic) => {
                     let changed = {
