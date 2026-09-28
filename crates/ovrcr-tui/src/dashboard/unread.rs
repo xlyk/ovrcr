@@ -211,11 +211,11 @@ mod tests {
     fn observe_request_requires_a_live_supported_session_and_retain_prunes_both_lanes() {
         let open = [("approval:c1", InputKind::Approval)];
         let mut unread = Unread::default();
-        let mut claude = session(1, &open);
-        claude.agent.as_mut().unwrap().binding.provider = AgentProvider::Claude;
+        let mut unsupported = session(1, &open);
+        unsupported.agent.as_mut().unwrap().binding.provider = AgentProvider::Grok;
         assert!(
-            unread.observe_request(&claude).is_empty(),
-            "Claude's waits carry no Input request lane"
+            unread.observe_request(&unsupported).is_empty(),
+            "providers without readiness support have no Input request lane"
         );
         let mut exited = session(1, &open);
         exited.phase = SessionPhase::Exited {

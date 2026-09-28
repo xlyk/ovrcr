@@ -1254,7 +1254,7 @@ mod tests {
             let mut event = snapshot(6, "c", AgentActivity::ResponseReady);
             let s = session(&mut event);
             match invalid {
-                "provider" => s.agent.as_mut().unwrap().binding.provider = AgentProvider::Claude,
+                "provider" => s.agent.as_mut().unwrap().binding.provider = AgentProvider::Grok,
                 "missing-turn" => s.agent.as_mut().unwrap().activity.as_mut().unwrap().turn = None,
                 "estimated" => {
                     s.agent.as_mut().unwrap().activity.as_mut().unwrap().quality =

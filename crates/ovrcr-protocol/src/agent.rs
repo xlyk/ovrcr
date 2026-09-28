@@ -546,7 +546,7 @@ pub(crate) mod tests {
             },
             ReadyObservation {
                 binding: AgentBinding {
-                    provider: AgentProvider::Claude,
+                    provider: AgentProvider::Grok,
                     ..ready.binding.clone()
                 },
                 ..ready
