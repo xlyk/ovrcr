@@ -647,7 +647,7 @@ loads those saved settings. A missing file is created; a save error is shown
 without changing the active preference. Other configuration values and comments are retained. Manual file edits are
 loaded on the next attach. In terminal mode `N` remains ordinary terminal input; use Ctrl-g first.
 
-Two kinds of alert share these preferences, this host and this suppression.
+Two kinds of alert share these preferences and this host.
 **OVRCR · response ready** means a managed root response from a supported
 readiness provider is ready to review, not that its task succeeded; delivery keys
 on a new [unread](#unread-responses) identity (binding and turn), not on activity
@@ -662,15 +662,16 @@ included. The accepted Codex reporting setup is still
 required; see [Codex setup](codex-reporting-setup.md). Pi and Oh My Pi need no setup
 beyond the managed launch.
 
-The active dashboard delivers alerts only when the terminal is absent from every
-visible pane. A terminal assigned to a split hidden by a small window is eligible;
-Tasks shows no terminal panes. Visibility does not acknowledge or change Ready.
-Attachment and reconnect establish a baseline: old unread observations and input
-requests already open, including ones that arrived while disconnected, are not
-replayed. Enabling alerts or hiding a terminal does not replay a previously
-suppressed response or request. A later Busy or reporter loss cancels a pending or
-in-flight Ready alert; closing or replacing an input request cancels its own.
-Mark-reviewed does not.
+The active dashboard delivers otherwise eligible alerts whether or not the
+terminal is selected or occupies a visible pane, including focused, unfocused and
+split views. Selection and pane visibility do not suppress or cancel pending or
+in-flight alerts, and application focus is not tracked. Viewing a session or
+delivering an alert does not acknowledge Ready. Attachment and reconnect
+establish a baseline: old unread observations and input requests already open,
+including ones that arrived while disconnected, are not replayed. Enabling alerts
+does not replay a previously consumed response or request. A later Busy or
+reporter loss cancels a pending or in-flight Ready alert; closing or replacing an
+input request cancels its own. Mark-reviewed does not.
 No active dashboard means no delivery.
 
 Host submission runs outside the input loop with bounded queues and a two-second
@@ -699,9 +700,9 @@ command palette for **ready sound**, to toggle and save it using the same settin
 terminal input; use Ctrl-g first.
 
 A sound follows exactly the same selection as a desktop alert: a new unread
-identity for one accepted managed root response, or a new input request, outside
-every visible pane, with the same deduplication, visibility suppression and
-attach/reconnect baseline. The sound is the same for both kinds.
+identity for one accepted managed root response, or a new input request, with the
+same deduplication and attach/reconnect baseline, including for selected and
+visible sessions. The sound is the same for both kinds.
 Confirmed activity without unread does not play. When both channels are on, one
 response produces one alert and one sound. Nothing about the response or terminal
 is passed to the player.

@@ -10342,7 +10342,7 @@ fn codex_managed_native_death_never_synthesizes_ready_and_removes_socket() {
 }
 
 /// Runs the shipped dashboard and substitutes only the final OS notification
-/// executable. Provider callbacks, admission, broadcasts, visibility and input
+/// executable. Provider callbacks, admission, broadcasts, pane geometry and input
 /// all still cross their real process/PTY/socket boundaries.
 struct DesktopAlertDashboard {
     master: Option<Box<dyn portable_pty::MasterPty + Send>>,
@@ -10916,8 +10916,8 @@ fn pi_ready_alerts_once_creates_unread_and_explicit_review_clears_only_presented
         Some("desktop_notifications = true\n"),
         "pi-hooks",
     );
-    // The Pi session must stay hidden for the alert to fire: focus the other real managed
-    // session first, exactly as the managed-completion visibility test does.
+    // Focus the other real managed session first so the Pi row is not the only
+    // selected pane; alerts still fire for visible sessions after #164.
     dashboard.select("setup", "HOOK_READY");
     let bin = env!("CARGO_BIN_EXE_ovrcr");
     let config = fixture.root.path().join("config.toml");
@@ -10987,8 +10987,8 @@ fn pi_ready_alerts_once_creates_unread_and_explicit_review_clears_only_presented
     assert!(!stale.status.success());
     assert!(String::from_utf8_lossy(&stale.stderr).contains("Ready observation changed"));
     assert_eq!(fixture.session_summary(summary.id), second);
-    // The response is visible in the focused pane: no alert for it.
-    dashboard.wait_named_calls(1, summary.id, "pi-hooks");
+    // Visible focused pane still alerts for the new unread cycle.
+    dashboard.wait_named_calls(2, summary.id, "pi-hooks");
     dashboard.detach();
 }
 
@@ -11006,7 +11006,7 @@ fn pi_input_request_shows_waiting_alerts_once_and_restores_the_underlying_activi
         Some("desktop_notifications = true\n"),
         "pi-hooks",
     );
-    // The Pi session must stay hidden for either alert to fire.
+    // Focus another managed session first; alerts still fire if Pi were visible.
     dashboard.select("setup", "HOOK_READY");
     let bin = env!("CARGO_BIN_EXE_ovrcr");
     let config = fixture.root.path().join("config.toml");
@@ -12023,7 +12023,7 @@ fn omp_input_requests_wait_until_the_last_closes_and_alert_once_each() {
         Some("desktop_notifications = true\n"),
         "omp-hooks",
     );
-    // The Oh My Pi session must stay hidden for either alert to fire.
+    // Focus another managed session first; alerts still fire if OMP were visible.
     dashboard.select("setup", "HOOK_READY");
     let bin = env!("CARGO_BIN_EXE_ovrcr");
     let config = fixture.root.path().join("config.toml");
@@ -12676,7 +12676,7 @@ fn omp_reattach_recovers_a_paused_reporter_during_an_input_wait() {
         Some("desktop_notifications = true\n"),
         "omp-hooks",
     );
-    // The Oh My Pi session must stay hidden for an Input-needed alert to fire.
+    // Focus another managed session first; alerts still fire if OMP were visible.
     dashboard.select("setup", "HOOK_READY");
     let agent = |fixture: &ControlFixture| {
         fixture
@@ -12864,7 +12864,7 @@ fn omp_ready_alerts_once_and_creates_unread() {
         Some("desktop_notifications = true\n"),
         "omp-hooks",
     );
-    // The Oh My Pi session must stay hidden for the alert to fire.
+    // Focus another managed session first; alerts still fire if OMP were visible.
     dashboard.select("setup", "HOOK_READY");
     let bin = env!("CARGO_BIN_EXE_ovrcr");
     let config = fixture.root.path().join("config.toml");
@@ -12953,7 +12953,7 @@ fn omp_managed_launch_inserts_its_extension_and_removes_it() {
 }
 
 #[test]
-fn desktop_notifications_managed_completion_reaches_host_once_and_respects_visibility() {
+fn desktop_notifications_managed_completion_reaches_host_once_including_visible_sessions() {
     let _guard = env_lock();
     let fixture = ControlFixture::new_bounded();
     let (summary, _) = codex_session(&fixture, &fixture.socket);
@@ -12982,25 +12982,28 @@ fn desktop_notifications_managed_completion_reaches_host_once_and_respects_visib
     }
     dashboard.wait_calls(2, summary.id);
 
+    // Focused visible pane still delivers.
     dashboard.select("codex-hooks", "CODEX_CALLBACK=9");
     for command in ["UserPromptSubmit:root:d", "Stop:root:d"] {
         desktop_codex_callback(&fixture, summary.id, &mut index, command);
     }
-    dashboard.wait_screen(|screen| screen.contains("CODEX_CALLBACK=11"));
+    dashboard.wait_calls(3, summary.id);
+
     // Reassign the focused pane to the fixture's other real managed session.
     dashboard.select("setup", "HOOK_READY");
     for command in ["UserPromptSubmit:root:e", "Stop:root:e"] {
         desktop_codex_callback(&fixture, summary.id, &mut index, command);
     }
-    dashboard.wait_calls(3, summary.id);
+    dashboard.wait_calls(4, summary.id);
 
     dashboard.send(b"v");
     dashboard.wait_screen(|screen| screen.contains("CODEX_CALLBACK=13"));
     dashboard.send(b"\t");
+    // Visible unfocused split pane still delivers.
     for command in ["UserPromptSubmit:root:f", "Stop:root:f"] {
         desktop_codex_callback(&fixture, summary.id, &mut index, command);
     }
-    dashboard.wait_screen(|screen| screen.contains("CODEX_CALLBACK=15"));
+    dashboard.wait_calls(5, summary.id);
     dashboard.resize(55);
     dashboard.wait_screen(|screen| screen.contains("split hidden"));
     assert!(
@@ -13013,7 +13016,7 @@ fn desktop_notifications_managed_completion_reaches_host_once_and_respects_visib
     for command in ["UserPromptSubmit:root:g", "Stop:root:g"] {
         desktop_codex_callback(&fixture, summary.id, &mut index, command);
     }
-    dashboard.wait_calls(4, summary.id);
+    dashboard.wait_calls(6, summary.id);
 
     dashboard.resize(180);
     dashboard.wait_screen(|screen| screen.contains("CODEX_CALLBACK=17"));
@@ -13028,7 +13031,7 @@ fn desktop_notifications_managed_completion_reaches_host_once_and_respects_visib
     for command in ["UserPromptSubmit:root:i", "Stop:root:i"] {
         desktop_codex_callback(&fixture, summary.id, &mut index, command);
     }
-    dashboard.wait_calls(5, summary.id);
+    dashboard.wait_calls(7, summary.id);
     dashboard.detach();
 }
 
@@ -13164,7 +13167,7 @@ fn desktop_notifications_host_failure_and_blocking_never_block_input_or_detach()
 }
 
 #[test]
-fn desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_visible() {
+fn desktop_notifications_queued_completion_still_delivers_when_its_pane_becomes_visible() {
     let _guard = env_lock();
     let fixture = ControlFixture::new_bounded();
     let (first, _) = codex_session(&fixture, &fixture.socket);
@@ -13209,8 +13212,8 @@ fn desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_vi
         "first host no longer blocks the queue"
     );
     dashboard.select("codex-queued", "CODEX_CALLBACK=1");
-    // Seeing this response consumes its candidate permanently, even if the
-    // pane becomes hidden again before the busy host finishes.
+    // Becoming visible must not cancel the queued candidate, even if the pane
+    // is hidden again before the busy host finishes.
     dashboard.select("setup", "HOOK_READY");
     assert!(
         group_exists(blocked_pid),
@@ -13219,13 +13222,9 @@ fn desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_vi
     assert_eq!(unsafe { libc::kill(-blocked_pid, libc::SIGTERM) }, 0);
     assert!(live::wait_group_absent(blocked_pid, Duration::from_secs(2)));
 
-    // A later eligible completion on the other session is the FIFO delivery
-    // barrier. Any obsolete queued invocation has a different identity and
-    // fails the host payload assertion, even if it precedes this fresh one.
-    for command in ["UserPromptSubmit:root:c", "Stop:root:c"] {
-        desktop_codex_callback(&fixture, first.id, &mut first_index, command);
-    }
-    dashboard.wait_calls(1, first.id);
+    // The queued completion still reaches the host after visibility churn.
+    // The blocked first delivery never recorded an END, so this is call 1.
+    dashboard.wait_named_calls(1, queued.id, "codex-queued");
     dashboard.detach();
 }
 
@@ -13334,17 +13333,17 @@ fn ready_sound_is_independent_of_desktop_notifications_on_the_managed_path() {
     dashboard.send(b"S");
     dashboard.wait_screen(|screen| screen.contains("Ready sound: on"));
 
-    // A visible response stays silent; the next hidden one is the barrier.
+    // A visible response still alerts; the next hidden one continues the count.
     dashboard.select("codex-hooks", "CODEX_CALLBACK=13");
     for command in ["UserPromptSubmit:root:g", "Stop:root:g"] {
         desktop_codex_callback(&fixture, summary.id, &mut index, command);
     }
-    dashboard.wait_screen(|screen| screen.contains("CODEX_CALLBACK=15"));
+    dashboard.wait_sound_calls(4);
     dashboard.select("setup", "HOOK_READY");
     for command in ["UserPromptSubmit:root:h", "Stop:root:h"] {
         desktop_codex_callback(&fixture, summary.id, &mut index, command);
     }
-    dashboard.wait_sound_calls(4);
+    dashboard.wait_sound_calls(5);
     dashboard.wait_calls(2, summary.id);
 
     // A failing player is reported without its output and preserves Ready.
@@ -13384,7 +13383,7 @@ fn ready_sound_is_independent_of_desktop_notifications_on_the_managed_path() {
     for command in ["UserPromptSubmit:root:k", "Stop:root:k"] {
         desktop_codex_callback(&fixture, summary.id, &mut index, command);
     }
-    dashboard.wait_sound_calls(5);
+    dashboard.wait_sound_calls(6);
     dashboard.wait_calls(2, summary.id);
 
     // A hung player never blocks terminal input or detach; detach ends its
