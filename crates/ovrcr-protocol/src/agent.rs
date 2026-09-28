@@ -45,7 +45,7 @@ impl AgentProvider {
     pub const fn supports_readiness(self) -> bool {
         matches!(
             self,
-            AgentProvider::Codex | AgentProvider::Pi | AgentProvider::Omp
+            AgentProvider::Codex | AgentProvider::Pi | AgentProvider::Omp | AgentProvider::Claude
         )
     }
 }
@@ -695,12 +695,12 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn readiness_providers_are_codex_pi_and_omp_only() {
+    fn readiness_providers_are_codex_pi_omp_and_claude() {
         for (provider, expected) in [
             (AgentProvider::Codex, true),
             (AgentProvider::Pi, true),
             (AgentProvider::Omp, true),
-            (AgentProvider::Claude, false),
+            (AgentProvider::Claude, true),
             (AgentProvider::Grok, false),
             (AgentProvider::Hermes, false),
         ] {
@@ -720,7 +720,12 @@ pub(crate) mod tests {
             turn: Some("turn".into()),
             activity_revision: 2,
         };
-        for provider in [AgentProvider::Codex, AgentProvider::Pi, AgentProvider::Omp] {
+        for provider in [
+            AgentProvider::Codex,
+            AgentProvider::Pi,
+            AgentProvider::Omp,
+            AgentProvider::Claude,
+        ] {
             let ready = ReadyObservation {
                 binding: AgentBinding {
                     provider,
@@ -730,11 +735,7 @@ pub(crate) mod tests {
             };
             ready.validate().unwrap();
         }
-        for provider in [
-            AgentProvider::Claude,
-            AgentProvider::Grok,
-            AgentProvider::Hermes,
-        ] {
+        for provider in [AgentProvider::Grok, AgentProvider::Hermes] {
             let ready = ReadyObservation {
                 binding: AgentBinding {
                     provider,

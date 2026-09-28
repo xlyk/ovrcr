@@ -452,9 +452,10 @@ for a stable workspace-based name, or enter your own name. After creation, typin
 session immediately. `n` and other new launches are unavailable when the selected
 root workspace shows a warning. Detected `claude`, `codex`, `pi`, `omp` and `grok`
 entries launch through the managed `agent run` route so reporting can attach; an
-`agents` override replaces the command entirely. Claude delivers observed activity;
-Codex delivers Ready/Unread. Claude Ready and Claude/Codex Input-request support
-remain unavailable until their dependent tickets. Missing hook configuration shows
+`agents` override replaces the command entirely. Claude, Codex, Pi and Oh My Pi
+deliver Ready/Unread on their supported readiness paths (Claude Ready is Observed,
+never Confirmed settling). Claude/Codex Input-request support remains unavailable
+until their dependent tickets. Missing hook configuration shows
 a persistent Dashboard banner with the exact setup command; observed reporting loss
 keeps an `unavailable` status with its published reason.
 
