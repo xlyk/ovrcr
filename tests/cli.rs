@@ -2024,7 +2024,7 @@ fn agent_run_private_channel_failure_runs_native_without_inherited_reporting() {
     assert_eq!(output.stdout, b"NATIVE_FALLBACK");
     assert_eq!(
         output.stderr,
-        b"agent reporting unavailable; running native command\n"
+        b"agent reporting unavailable; running native command. Repair: `ovrcr agent doctor claude --json` (setup/doctor never rewrite settings or approve trust).\n"
     );
     assert!(!root.path().join("server.sock").exists());
 }

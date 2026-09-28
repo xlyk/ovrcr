@@ -10105,6 +10105,64 @@ fn pi_managed_launch_preserves_argv_exit_and_environment_and_plain_launch_is_unt
 }
 
 #[test]
+fn picker_shaped_claude_and_codex_launches_use_the_managed_reporting_route() {
+    // AC1/AC3: the Dashboard picker's argv shape (`ovrcr agent run <name> -- <exe>`) is the
+    // same reporting contract as managed CLI. Explicit custom overrides are covered in the
+    // agents unit test; plain launches stay untracked here.
+    let _guard = env_lock();
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "picker-managed");
+
+    for (name, version_line) in [
+        ("codex", "codex-cli 0.153.1\\n"),
+        ("claude", "2.1.268 (Claude Code)\\n"),
+    ] {
+        let native = fixture.root.path().join(name);
+        let script = format!(
+            "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '{version_line}'; exit; fi\nprintf '{name}_ARGS=%s\\n' \"$*\"\nprintf '{name}_CHANNEL=[%s]\\n' \"${{OVRCR_AGENT_SOCKET:+set}}\"\nexit 17\n",
+            version_line = version_line,
+            name = name,
+        );
+        std::fs::write(&native, script).unwrap();
+        std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let managed = fixture.create_session_summary(
+            &format!("{name}-picker"),
+            vec![
+                env!("CARGO_BIN_EXE_ovrcr").into(),
+                "agent".into(),
+                "run".into(),
+                name.into(),
+                "--".into(),
+                native.clone().into_os_string(),
+            ],
+        );
+        fixture.record_process_group(&managed);
+        fixture.wait_terminal_contains(managed.id, &format!("{name}_CHANNEL=[set]"));
+        let text = match fixture.request(Request::ReadTerminal {
+            session: managed.id,
+            max_lines: None,
+        }) {
+            Response::TerminalText { text, .. } => text,
+            other => panic!("expected terminal text, got {other:?}"),
+        };
+        assert!(
+            text.contains(&format!("{name}_CHANNEL=[set]")),
+            "{name} picker argv must open the managed channel: {text}"
+        );
+        fixture.wait_exited(managed.id);
+
+        let plain =
+            fixture.create_session_summary(&format!("{name}-plain"), vec![native.into_os_string()]);
+        fixture.record_process_group(&plain);
+        fixture.wait_terminal_contains(plain.id, &format!("{name}_CHANNEL=[]"));
+        assert!(fixture.session_summary(plain.id).agent.is_none());
+        fixture.wait_exited(plain.id);
+    }
+}
+
+#[test]
 fn codex_managed_lost_bind_receipt_recovers_before_busy() {
     // Lifecycle/correlation gate; concurrent executable startup can exhaust the fixed probe budget.
     let _guard = env_lock();

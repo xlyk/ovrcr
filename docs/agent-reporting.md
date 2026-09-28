@@ -17,6 +17,11 @@ states what that provider does.
 
 ## Managed Claude Code
 
+`ovrcr agent run claude -- claude` (or picking `claude` in the Dashboard) supervises
+the launch through the same managed reporting route as Codex, Pi and Oh My Pi.
+A plain `claude` launch stays untracked. Explicit custom argv overrides are left
+unchanged.
+
 For the supported version, setup instructions, and current acceptance limits, see
 [Claude Code setup](claude-code-setup.md) and the
 [support matrix](agent-reporting-support.md).

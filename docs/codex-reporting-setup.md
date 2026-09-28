@@ -4,13 +4,15 @@
 
 That acceptance used a disposable fixture. It does not establish that your installed OVRCR binary, running server, Codex configuration or native hook trust is ready. Follow [How to install Codex readiness reporting](codex-ready-installation.md) to prepare an exact-revision build, review the configuration change, protect existing sessions during a server transition, and verify the installed result.
 
-After installation and native hook review, launch a fresh interactive session inside an OVRCR terminal:
+After installation and native hook review, pick **codex** in the Dashboard agent
+picker or launch a fresh interactive session inside an OVRCR terminal. Both use
+the same managed reporting contract:
 
 ```sh
 ovrcr agent run codex -- codex
 ```
 
-A direct `codex` launch is untracked; the managed wrapper is required even when the hooks are configured and doctor reports a supported version. Running the wrapper in a terminal outside OVRCR also leaves reporting unavailable. The wrapper preserves ordinary native behavior when reporting cannot be admitted.
+A direct `codex` launch is untracked; the managed wrapper is required even when the hooks are configured and doctor reports a supported version. Running the wrapper in a terminal outside OVRCR also leaves reporting unavailable. The wrapper preserves ordinary native behavior when reporting cannot be admitted. Doctor reports Ready as available and Input-request support as unavailable until that dependent ticket; one working capability does not certify the other.
 
 The legacy `agent run --provider codex -- codex` form also works. Native argv remains unchanged. The executable basename must be `codex`. Supported optional arguments are `--no-alt-screen`, `--full-auto`, and separate-token `--model/-m`, `--profile/-p`, `--sandbox/-s`, `--ask-for-approval/-a`, `--cd/-C` with a nonempty value that does not start with `-`. At most one initial prompt is supported; use `--` before a prompt matching a native subcommand. Trust hooks before submitting the first tracked prompt: an initial prompt supplied while Codex displays hook review may run untracked.
 
