@@ -283,6 +283,30 @@ fn retain_codex_history(
     );
 }
 
+fn retain_claude_history(
+    live: &Live,
+    executable: &std::path::Path,
+    session: &SessionSummary,
+    token: &std::path::Path,
+    conversation: &str,
+    history: std::path::PathBuf,
+) {
+    retain_reference(
+        live,
+        session,
+        parse_secret(token),
+        AgentProvider::Claude,
+        conversation,
+        ConversationReference::Claude(ovrcr::protocol::ClaudeConversation {
+            conversation: conversation.into(),
+            executable: executable.into(),
+            history,
+            config_dir: live.root.path().into(),
+            options: vec![],
+        }),
+    );
+}
+
 struct PiTitleAgent {
     stream: UnixStream,
     auth: SupervisorAuth,
@@ -2860,6 +2884,244 @@ fn codex_history_change_without_recorded_switch_keeps_title() {
         call_count(&calls) <= calls_before + 1,
         "identity mismatch should not accept a new subject"
     );
+}
+
+#[test]
+fn claude_matching_mode_and_session_id_shows_subject_replacing_creation_name_until_rename() {
+    let script = "#!/bin/sh\nprintf '%s\\n' \"$*\" >> __CALLS__\nwhile IFS= read -r line; do printf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Claude Login Redirect\"}],\"stopReason\":\"stop\"}}'; exit 0; done\n".to_owned();
+    let (live, fake_pi, calls) = start_title_fixture(script, Some("title_model = 'pi/test'\n"));
+    let mut dash = dashboard(&live);
+    let token = live.root.path().join("claude-match.token");
+    let session = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent {
+                name: "claude".into(),
+            },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "claude-creation-name".into(),
+            label: Some("claude".into()),
+            argv: agent_program(&token),
+        }),
+    );
+    let id_before = session.id;
+    let run_before = session.run;
+    wait_for(&live, session.id, "AGENT_READY");
+    assert_eq!(
+        sessions(&live)
+            .into_iter()
+            .find(|row| row.id == session.id)
+            .unwrap()
+            .display_name(),
+        "claude-creation-name"
+    );
+    let conversation = "00000000-0000-4000-8000-000000000a11";
+    let history = live.root.path().join("claude-match.jsonl");
+    // Mode first line would fail the Pi session-header check; Claude must still title.
+    std::fs::write(
+        &history,
+        format!(
+            "{{\"type\":\"mode\"}}\n{{\"sessionId\":\"{conversation}\",\"role\":\"user\",\"content\":\"fix the login redirect\"}}\n{{\"sessionId\":\"{conversation}\",\"role\":\"assistant\",\"content\":\"the redirect loop is in auth middleware\"}}\n"
+        ),
+    )
+    .unwrap();
+    retain_claude_history(&live, &fake_pi, &session, &token, conversation, history);
+    wait_display(&live, session.id, "Claude Login Redirect");
+    assert_eq!(call_count(&calls), 1);
+    let row = sessions(&live)
+        .into_iter()
+        .find(|row| row.id == session.id)
+        .unwrap();
+    assert_eq!((row.id, row.run), (id_before, run_before));
+    assert_eq!(
+        subject_flags(&live, session.id, conversation).0.as_deref(),
+        Some("Claude Login Redirect")
+    );
+
+    assert_eq!(
+        live.request(Request::SetSessionTitle {
+            session: session.id,
+            title: Some("Manual Claude Name".into()),
+        }),
+        Response::Ok
+    );
+    changed(&mut dash, session.id, "Manual Claude Name");
+    bump_history(
+        &live.root.path().join("claude-match.jsonl"),
+        &format!(
+            "{{\"sessionId\":\"{conversation}\",\"role\":\"assistant\",\"content\":\"more work\"}}"
+        ),
+    );
+    std::thread::sleep(Duration::from_secs(3));
+    let row = sessions(&live)
+        .into_iter()
+        .find(|row| row.id == session.id)
+        .unwrap();
+    assert_eq!(row.display_name(), "Manual Claude Name");
+    assert_eq!((row.id, row.run), (id_before, run_before));
+    assert_eq!(
+        call_count(&calls),
+        1,
+        "Rename must stop further title calls"
+    );
+}
+
+#[test]
+fn claude_mismatched_session_id_does_not_produce_subject_or_spend_attempt() {
+    let script = "#!/bin/sh\nprintf call >> __CALLS__\nexit 0\n".to_owned();
+    let (live, fake_pi, calls) = start_title_fixture(script, Some("title_model = 'pi/test'\n"));
+    let _dashboard = dashboard(&live);
+    let token = live.root.path().join("claude-mismatch.token");
+    let session = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent {
+                name: "claude".into(),
+            },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "claude-mismatch-name".into(),
+            label: Some("claude".into()),
+            argv: agent_program(&token),
+        }),
+    );
+    let id_before = session.id;
+    let run_before = session.run;
+    wait_for(&live, session.id, "AGENT_READY");
+    let conversation = "00000000-0000-4000-8000-000000000a21";
+    let history = live.root.path().join("claude-mismatch.jsonl");
+    std::fs::write(
+        &history,
+        "{\"type\":\"mode\"}\n{\"sessionId\":\"wrong-id\",\"role\":\"user\",\"content\":\"please name it\"}\n{\"sessionId\":\"wrong-id\",\"role\":\"assistant\",\"content\":\"should not title\"}\n",
+    )
+    .unwrap();
+    retain_claude_history(&live, &fake_pi, &session, &token, conversation, history);
+    std::thread::sleep(Duration::from_secs(3));
+    let row = sessions(&live)
+        .into_iter()
+        .find(|row| row.id == session.id)
+        .unwrap();
+    assert_eq!(row.display_name(), "claude-mismatch-name");
+    assert_eq!((row.id, row.run), (id_before, run_before));
+    assert_eq!(subject_rows(&live, session.id), 0);
+    assert!(
+        !calls.exists() || call_count(&calls) == 0,
+        "Claude sessionId mismatch must not spawn Pi: {:?}",
+        std::fs::read_to_string(&calls).ok()
+    );
+}
+
+#[test]
+fn claude_missing_model_or_failed_title_call_leaves_current_name() {
+    let missing = {
+        let live = Live::idle().bounded();
+        let fake_pi = live.root.path().join("fake-pi");
+        let calls = live.root.path().join("calls");
+        std::fs::write(
+            &fake_pi,
+            format!("#!/bin/sh\nprintf called >> {}\nexit 0\n", calls.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake_pi, std::fs::Permissions::from_mode(0o700)).unwrap();
+        live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", fake_pi.as_os_str())]);
+        assert_eq!(
+            live.request(Request::AddProject {
+                name: PROJECT.into(),
+                repo: live.repo.clone(),
+                workspace_root: live.workspace_root.clone(),
+            }),
+            Response::Ok
+        );
+        live.clear_root_shell();
+        assert_eq!(live.request(workspace(None)), Response::Ok);
+        let _dashboard = dashboard(&live);
+        let token = live.root.path().join("claude-no-model.token");
+        let session = created(
+            &live,
+            Request::CreateSession(CreateSessionRequest {
+                kind: ovrcr_protocol::SessionKind::Agent {
+                    name: "claude".into(),
+                },
+                project: PROJECT.into(),
+                workspace: WORKSPACE.into(),
+                name: "claude-no-model".into(),
+                label: Some("claude".into()),
+                argv: agent_program(&token),
+            }),
+        );
+        wait_for(&live, session.id, "AGENT_READY");
+        let conversation = "00000000-0000-4000-8000-000000000a31";
+        let history = live.root.path().join("claude-no-model.jsonl");
+        std::fs::write(
+            &history,
+            format!(
+                "{{\"type\":\"mode\"}}\n{{\"sessionId\":\"{conversation}\",\"role\":\"assistant\",\"content\":\"reply\"}}\n"
+            ),
+        )
+        .unwrap();
+        retain_claude_history(&live, &fake_pi, &session, &token, conversation, history);
+        std::thread::sleep(Duration::from_secs(3));
+        assert_eq!(
+            sessions(&live)
+                .into_iter()
+                .find(|row| row.id == session.id)
+                .unwrap()
+                .display_name(),
+            "claude-no-model"
+        );
+        assert!(!calls.exists(), "missing title_model must not spawn Pi");
+        live
+    };
+    drop(missing);
+
+    let script = "#!/bin/sh\nprintf call >> __CALLS__\nexit 2\n".to_owned();
+    let (live, fake_pi, calls) = start_title_fixture(script, Some("title_model = 'pi/test'\n"));
+    let _dashboard = dashboard(&live);
+    let token = live.root.path().join("claude-fail.token");
+    let session = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent {
+                name: "claude".into(),
+            },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "claude-failed-call".into(),
+            label: Some("claude".into()),
+            argv: agent_program(&token),
+        }),
+    );
+    let id_before = session.id;
+    let run_before = session.run;
+    wait_for(&live, session.id, "AGENT_READY");
+    let conversation = "00000000-0000-4000-8000-000000000a32";
+    let history = live.root.path().join("claude-fail.jsonl");
+    std::fs::write(
+        &history,
+        format!(
+            "{{\"type\":\"mode\"}}\n{{\"sessionId\":\"{conversation}\",\"role\":\"assistant\",\"content\":\"reply\"}}\n"
+        ),
+    )
+    .unwrap();
+    retain_claude_history(&live, &fake_pi, &session, &token, conversation, history);
+    wait_file(&calls);
+    std::thread::sleep(Duration::from_secs(1));
+    let row = sessions(&live)
+        .into_iter()
+        .find(|row| row.id == session.id)
+        .unwrap();
+    assert_eq!(row.display_name(), "claude-failed-call");
+    assert_eq!((row.id, row.run), (id_before, run_before));
+    let attempts: i64 = rusqlite::Connection::open(ovrcr::config::database_path(&live.config))
+        .unwrap()
+        .query_row(
+            "SELECT attempt_count FROM conversation_subjects WHERE session = ?1",
+            [i64::try_from(session.id.0).unwrap()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(attempts, 1);
 }
 
 #[test]
