@@ -9,6 +9,7 @@ use ovrcr::protocol::{
     SessionLaunch, SessionPhase, SessionSummary, SupervisorAuth, SupervisorRequest, client,
     connect_server, read_frame, write_frame,
 };
+use rusqlite::OptionalExtension;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
@@ -256,6 +257,151 @@ fn retain_pi_history(
             options: vec![],
         }),
     );
+}
+
+struct PiTitleAgent {
+    stream: UnixStream,
+    auth: SupervisorAuth,
+    binding: AgentBinding,
+    next_op: u64,
+}
+
+fn open_pi_title_agent(
+    live: &Live,
+    fake_pi: &std::path::Path,
+    session: &SessionSummary,
+    token: &std::path::Path,
+    conversation: &str,
+    history: std::path::PathBuf,
+) -> PiTitleAgent {
+    let mut stream = connect_server(&live.socket).unwrap();
+    let Response::AgentOperation(AgentOperationResult::Reserved(reservation)) = client::request(
+        &mut stream,
+        10,
+        Request::ReserveAgent(ReserveAgent {
+            session: session.id,
+            capability: parse_secret(token),
+            operation: format!("reserve-{conversation}"),
+            expected_epoch: 0,
+            invocation: format!("invocation-{conversation}"),
+            provider: AgentProvider::Pi,
+        }),
+    )
+    .unwrap() else {
+        panic!("reserve failed")
+    };
+    let auth = SupervisorAuth {
+        session: session.id,
+        lease: reservation.lease,
+    };
+    let Response::AgentOperation(AgentOperationResult::Bound(binding)) = client::request(
+        &mut stream,
+        11,
+        Request::Supervisor(SupervisorRequest {
+            auth: auth.clone(),
+            operation: format!("bind-{conversation}"),
+            command: AgentCommand::Bind {
+                expected_binding: None,
+                conversation: conversation.into(),
+            },
+        }),
+    )
+    .unwrap() else {
+        panic!("bind failed")
+    };
+    let retained = client::request(
+        &mut stream,
+        12,
+        Request::Supervisor(SupervisorRequest {
+            auth: auth.clone(),
+            operation: format!("retain-{conversation}"),
+            command: AgentCommand::RetainConversation {
+                binding: binding.clone(),
+                reference: Box::new(ConversationReference::Pi(ExtensionConversation {
+                    conversation: conversation.into(),
+                    executable: fake_pi.into(),
+                    history: Some(history),
+                    config_dir: live.root.path().into(),
+                    options: vec![],
+                })),
+            },
+        }),
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            retained,
+            Response::AgentOperation(AgentOperationResult::ConversationRetained)
+        ),
+        "retain failed for {conversation}: {retained:?}"
+    );
+    PiTitleAgent {
+        stream,
+        auth,
+        binding,
+        next_op: 1,
+    }
+}
+
+fn switch_pi_title_agent(
+    agent: &mut PiTitleAgent,
+    fake_pi: &std::path::Path,
+    live: &Live,
+    conversation: &str,
+    history: std::path::PathBuf,
+) {
+    let bind_op = format!("bind-{}-{}", conversation, agent.next_op);
+    agent.next_op += 1;
+    let retain_op = format!("retain-{}-{}", conversation, agent.next_op);
+    agent.next_op += 1;
+    let Response::AgentOperation(AgentOperationResult::Bound(binding)) = client::request(
+        &mut agent.stream,
+        20,
+        Request::Supervisor(SupervisorRequest {
+            auth: agent.auth.clone(),
+            operation: bind_op,
+            command: AgentCommand::Bind {
+                expected_binding: Some(agent.binding.clone()),
+                conversation: conversation.into(),
+            },
+        }),
+    )
+    .unwrap() else {
+        panic!("switch bind failed for {conversation}")
+    };
+    let retained = client::request(
+        &mut agent.stream,
+        21,
+        Request::Supervisor(SupervisorRequest {
+            auth: agent.auth.clone(),
+            operation: retain_op,
+            command: AgentCommand::RetainConversation {
+                binding: binding.clone(),
+                reference: Box::new(ConversationReference::Pi(ExtensionConversation {
+                    conversation: conversation.into(),
+                    executable: fake_pi.into(),
+                    history: Some(history),
+                    config_dir: live.root.path().into(),
+                    options: vec![],
+                })),
+            },
+        }),
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            retained,
+            Response::AgentOperation(AgentOperationResult::ConversationRetained)
+        ),
+        "switch retain failed for {conversation}: {retained:?}"
+    );
+    agent.binding = binding;
+}
+
+fn call_count(path: &std::path::Path) -> usize {
+    std::fs::read_to_string(path)
+        .map(|text| text.lines().filter(|line| !line.is_empty()).count())
+        .unwrap_or(0)
 }
 
 fn wait_display(live: &Live, id: SessionId, expected: &str) {
@@ -2209,6 +2355,252 @@ fn late_title_result_after_clear_is_dropped() {
     let (topic, dismissed) = subject_flags(&live, session.id, conversation);
     assert!(dismissed);
     assert_ne!(topic.as_deref(), Some("Late Clear Topic"));
+}
+
+#[test]
+fn recorded_pi_switch_shows_stored_subjects_without_new_title_calls() {
+    let script = "#!/bin/sh\nprintf '%s\\n' \"$*\" >> __CALLS__\ncount=$(wc -l < __CALLS__ | tr -d ' ')\ncase \"$count\" in\n  1) topic=\"Subject Alpha\" ;;\n  2) topic=\"Subject Beta\" ;;\n  *) topic=\"Should Not Apply\" ;;\nesac\nwhile IFS= read -r line; do printf '%s\\n' \"{\\\"type\\\":\\\"message_end\\\",\\\"message\\\":{\\\"role\\\":\\\"assistant\\\",\\\"content\\\":[{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"$topic\\\"}],\\\"stopReason\\\":\\\"stop\\\"}}\"; exit 0; done\n".to_owned();
+    let (live, fake_pi, calls) = start_title_fixture(script, Some("title_model = 'pi/test'\n"));
+    let mut dash = dashboard(&live);
+    let token = live.root.path().join("switch.token");
+    let session = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent { name: "pi".into() },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "switch-original".into(),
+            label: Some("pi".into()),
+            argv: agent_program(&token),
+        }),
+    );
+    let id_before = session.id;
+    let run_before = session.run;
+    wait_for(&live, session.id, "AGENT_READY");
+    let conversation_a = "00000000-0000-4000-8000-000000000a01";
+    let conversation_b = "00000000-0000-4000-8000-000000000a02";
+    let history_a = live.root.path().join("switch-a.jsonl");
+    let history_b = live.root.path().join("switch-b.jsonl");
+    std::fs::write(
+        &history_a,
+        format!(
+            "{{\"type\":\"session\",\"id\":\"{conversation_a}\"}}\n{{\"role\":\"assistant\",\"content\":\"alpha work\"}}\n"
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        &history_b,
+        format!(
+            "{{\"type\":\"session\",\"id\":\"{conversation_b}\"}}\n{{\"role\":\"assistant\",\"content\":\"beta work\"}}\n"
+        ),
+    )
+    .unwrap();
+    let mut agent = open_pi_title_agent(
+        &live,
+        &fake_pi,
+        &session,
+        &token,
+        conversation_a,
+        history_a.clone(),
+    );
+    wait_display(&live, session.id, "Subject Alpha");
+    changed(&mut dash, session.id, "Subject Alpha");
+
+    switch_pi_title_agent(
+        &mut agent,
+        &fake_pi,
+        &live,
+        conversation_b,
+        history_b.clone(),
+    );
+    wait_display(&live, session.id, "Subject Beta");
+    changed(&mut dash, session.id, "Subject Beta");
+    wait_call_count(&calls, 2);
+    let calls_after_both = call_count(&calls);
+
+    switch_pi_title_agent(
+        &mut agent,
+        &fake_pi,
+        &live,
+        conversation_a,
+        history_a.clone(),
+    );
+    changed(&mut dash, session.id, "Subject Alpha");
+    std::thread::sleep(Duration::from_secs(5));
+    assert_eq!(
+        call_count(&calls),
+        calls_after_both,
+        "switch back must not fire a new title call"
+    );
+    let row = sessions(&live)
+        .into_iter()
+        .find(|row| row.id == session.id)
+        .unwrap();
+    assert_eq!(row.display_name(), "Subject Alpha");
+
+    switch_pi_title_agent(&mut agent, &fake_pi, &live, conversation_b, history_b);
+    changed(&mut dash, session.id, "Subject Beta");
+    std::thread::sleep(Duration::from_secs(5));
+    assert_eq!(
+        call_count(&calls),
+        calls_after_both,
+        "switch to a stored subject must not fire a new title call"
+    );
+    let row = sessions(&live)
+        .into_iter()
+        .find(|row| row.id == session.id)
+        .unwrap();
+    assert_eq!(row.display_name(), "Subject Beta");
+    assert_eq!((row.id, row.run), (id_before, run_before));
+}
+
+#[test]
+fn late_title_result_after_recorded_switch_is_dropped() {
+    let script = "#!/bin/sh\nprintf started > __CALLS__\nsleep 2\nprintf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Late Switch Topic\"}],\"stopReason\":\"stop\"}}'\n".to_owned();
+    let (live, fake_pi, calls) = start_title_fixture(script, Some("title_model = 'pi/test'\n"));
+    let mut dash = dashboard(&live);
+    let token = live.root.path().join("switch-late.token");
+    let session = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent { name: "pi".into() },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "switch-late-original".into(),
+            label: Some("pi".into()),
+            argv: agent_program(&token),
+        }),
+    );
+    let id_before = session.id;
+    let run_before = session.run;
+    wait_for(&live, session.id, "AGENT_READY");
+    let conversation_a = "00000000-0000-4000-8000-000000000b01";
+    let conversation_b = "00000000-0000-4000-8000-000000000b02";
+    let history_a = live.root.path().join("switch-late-a.jsonl");
+    let history_b = live.root.path().join("switch-late-b.jsonl");
+    std::fs::write(
+        &history_a,
+        format!(
+            "{{\"type\":\"session\",\"id\":\"{conversation_a}\"}}\n{{\"role\":\"assistant\",\"content\":\"reply\"}}\n"
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        &history_b,
+        format!("{{\"type\":\"session\",\"id\":\"{conversation_b}\"}}\n"),
+    )
+    .unwrap();
+    let mut agent =
+        open_pi_title_agent(&live, &fake_pi, &session, &token, conversation_a, history_a);
+    wait_file(&calls);
+    switch_pi_title_agent(&mut agent, &fake_pi, &live, conversation_b, history_b);
+    changed(&mut dash, session.id, "switch-late-original");
+    std::thread::sleep(Duration::from_secs(3));
+    let row = sessions(&live)
+        .into_iter()
+        .find(|row| row.id == session.id)
+        .unwrap();
+    assert_eq!(row.display_name(), "switch-late-original");
+    assert_eq!((row.id, row.run), (id_before, run_before));
+    let db = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+    let topic_a: Option<String> = db
+        .query_row(
+            "SELECT topic FROM conversation_subjects WHERE session = ?1 AND conversation = ?2",
+            rusqlite::params![i64::try_from(session.id.0).unwrap(), conversation_a],
+            |row| row.get(0),
+        )
+        .optional()
+        .unwrap()
+        .flatten();
+    assert_ne!(topic_a.as_deref(), Some("Late Switch Topic"));
+}
+
+#[test]
+fn codex_history_change_without_recorded_switch_keeps_title() {
+    let script = "#!/bin/sh\nprintf '%s\\n' \"$*\" >> __CALLS__\nwhile IFS= read -r line; do printf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Codex Kept Subject\"}],\"stopReason\":\"stop\"}}'; exit 0; done\n".to_owned();
+    let (live, fake_pi, calls) = start_title_fixture(script, Some("title_model = 'pi/test'\n"));
+    let _dashboard = dashboard(&live);
+    let token = live.root.path().join("codex-silent.token");
+    let session = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent {
+                name: "codex".into(),
+            },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "codex-silent-original".into(),
+            label: Some("codex".into()),
+            argv: agent_program(&token),
+        }),
+    );
+    let id_before = session.id;
+    let run_before = session.run;
+    wait_for(&live, session.id, "AGENT_READY");
+    let conversation = "00000000-0000-4000-8000-000000000c01";
+    let other = "00000000-0000-4000-8000-000000000c02";
+    let history = live.root.path().join("codex-silent.jsonl");
+    std::fs::write(
+        &history,
+        format!(
+            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{conversation}\"}}}}\n{{\"role\":\"assistant\",\"content\":\"first\"}}\n"
+        ),
+    )
+    .unwrap();
+    retain_reference(
+        &live,
+        &session,
+        parse_secret(&token),
+        AgentProvider::Codex,
+        conversation,
+        ConversationReference::Codex(ovrcr::protocol::CodexConversation {
+            conversation: conversation.into(),
+            executable: fake_pi.clone(),
+            history: Some(history.clone()),
+            config_dir: live.root.path().into(),
+            options: vec![],
+        }),
+    );
+    wait_display(&live, session.id, "Codex Kept Subject");
+    let calls_before = call_count(&calls);
+    std::fs::write(
+        &history,
+        format!(
+            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{other}\"}}}}\n{{\"role\":\"assistant\",\"content\":\"silent other\"}}\n"
+        ),
+    )
+    .unwrap();
+    bump_history(
+        &history,
+        "{\"role\":\"assistant\",\"content\":\"more silent work\"}",
+    );
+    std::thread::sleep(Duration::from_secs(5));
+    let row = sessions(&live)
+        .into_iter()
+        .find(|row| row.id == session.id)
+        .unwrap();
+    assert_eq!(row.display_name(), "Codex Kept Subject");
+    assert_eq!((row.id, row.run), (id_before, run_before));
+    assert_eq!(
+        subject_flags(&live, session.id, conversation).0.as_deref(),
+        Some("Codex Kept Subject")
+    );
+    let other_rows = rusqlite::Connection::open(ovrcr::config::database_path(&live.config))
+        .unwrap()
+        .query_row(
+            "SELECT count(*) FROM conversation_subjects WHERE session = ?1 AND conversation = ?2",
+            rusqlite::params![i64::try_from(session.id.0).unwrap(), other],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap();
+    assert_eq!(
+        other_rows, 0,
+        "silent Codex change must not record another subject"
+    );
+    assert!(
+        call_count(&calls) <= calls_before + 1,
+        "identity mismatch should not accept a new subject"
+    );
 }
 
 #[test]
