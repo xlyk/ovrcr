@@ -76,14 +76,15 @@ The last Ready observation survives dashboard reconnect while the server remains
 Missing or unknown callbacks cannot synthesize Ready. An API error without a matching ending hook can leave Busy; a subsequent prompt while the previous turn remains open disables reporting. No timeout, transcript, screen text or metrics infer completion. Restart a fresh managed invocation after correcting hook configuration if reporting becomes unavailable.
 
 Optional [desktop notifications](dashboard.md#desktop-notifications) can alert
-from an active dashboard when a new root Ready response belongs to a terminal
-outside all visible panes. They default off. Set `desktop_notifications = true`
-in `dashboard.toml`, or press uppercase `N` in dashboard browse mode for a
-session-only toggle. Alerts contain terminal/project/workspace identity only.
-Attaching, reconnecting or enabling alerts does not replay existing Ready
-observations. An alert retains the same Observed meaning as the indicator.
-An independent `ready_sound` setting, or uppercase `S` in browse mode, plays a
-[sound](dashboard.md#ready-sound) for the same responses under the same rules.
+from an active dashboard when a new root Ready response arrives, including for
+terminals that are selected or shown in visible panes. They default off. Set
+`desktop_notifications = true` in `dashboard.toml`, or press uppercase `N` in
+dashboard browse mode for a session-only toggle. Alerts contain
+terminal/project/workspace identity only. Attaching, reconnecting or enabling
+alerts does not replay existing Ready observations. An alert retains the same
+Observed meaning as the indicator. An independent `ready_sound` setting, or
+uppercase `S` in browse mode, plays a [sound](dashboard.md#ready-sound) for the
+same responses under the same rules.
 
 Unread state is separate from activity and alerts. Each accepted managed Codex
 root Ready observation replaces the terminal's previous unread observation.

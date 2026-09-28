@@ -1,6 +1,7 @@
 //! Dashboard-local opt-in delivery. Two lanes, one queue: a Ready keyed by response
 //! identity, and an Input request keyed by request identity. Both reuse the same
-//! preferences, host, visibility suppression and reconnect baseline.
+//! preferences, host and reconnect baseline. Selection and pane visibility
+//! do not suppress or cancel otherwise valid alerts.
 use super::ready::{delivery_live, input_live};
 use super::{Dashboard, DashboardAction};
 #[cfg(test)]
@@ -132,6 +133,7 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
+    #[cfg(test)]
     fn desktop_session_visible(&self, id: SessionId) -> bool {
         if self.tasks.is_some() {
             return false;
@@ -176,12 +178,11 @@ impl Dashboard {
             delivery.cancel();
         }
         let new_unread = self.unread.observe(session);
-        // Consume unread even when disabled or visible so later enable/hide cannot replay.
+        // Consume unread even when disabled so later enable cannot replay.
         if !initial
             && self.alert_channels() != 0
             && new_unread
             && delivery_live(session)
-            && !self.desktop_session_visible(session.id)
             && self.desktop.pending.len() < QUEUE_CAPACITY
         {
             self.desktop.pending.push_back(Notification {
@@ -195,7 +196,7 @@ impl Dashboard {
         // never reads or writes Unread. Several requests can be open at once, and each
         // newly seen one is its own alert.
         let new_requests = self.unread.observe_request(session);
-        if !initial && self.alert_channels() != 0 && !self.desktop_session_visible(session.id) {
+        if !initial && self.alert_channels() != 0 {
             let binding = session.agent.as_ref().map(|agent| agent.binding.clone());
             for request in new_requests {
                 if self.desktop.pending.len() >= QUEUE_CAPACITY {
@@ -216,14 +217,13 @@ impl Dashboard {
 
     fn desktop_notification_valid(&self, notification: &Notification) -> bool {
         self.alert_channels() != 0
-            && !self.desktop_session_visible(notification.session)
             && super::state::find_session(self, notification.session)
                 .is_some_and(|session| notification_matches_session(notification, session))
     }
 
     pub(super) fn emit_desktop_notifications(&mut self) -> bool {
-        // Cancellation is permanent even when the host is busy: a response seen
-        // in a pane must not reappear as a notification after that pane is hidden.
+        // Drop candidates that are no longer channel- or identity-valid, even while
+        // the host is busy; selection and pane visibility never revoke them.
         let mut pending = std::mem::take(&mut self.desktop.pending);
         pending.retain(|notification| self.desktop_notification_valid(notification));
         self.desktop.pending = pending;
@@ -237,7 +237,7 @@ impl Dashboard {
             }
         }
         // Keep queued responses in the dashboard until the single host operation finishes.
-        // They are validated against current identity and geometry at actual dispatch time.
+        // They are validated against current identity and channel prefs at dispatch time.
         while self.desktop.in_flight.is_none() {
             let Some(notification) = self.desktop.pending.pop_front() else {
                 break;
@@ -853,7 +853,7 @@ mod tests {
         assert_eq!(d.desktop.pending.len(), 1, "a genuinely new request alerts");
     }
     #[test]
-    fn desktop_input_request_in_a_visible_pane_never_alerts() {
+    fn desktop_input_request_in_a_visible_pane_alerts() {
         let mut d = dashboard();
         d.select_session(SessionId(1));
         deliver(
@@ -865,7 +865,11 @@ mod tests {
                 &[request("p1", InputKind::Select)],
             ),
         );
-        assert!(d.desktop.pending.is_empty(), "visible focused pane");
+        assert_eq!(
+            d.desktop.pending.len(),
+            1,
+            "visible focused pane still alerts when channels are on"
+        );
     }
     #[test]
     fn desktop_ready_and_input_request_are_two_lanes_that_do_not_suppress_each_other() {
@@ -1015,13 +1019,14 @@ mod tests {
         (d, receiver)
     }
     #[test]
-    fn desktop_queued_visible_then_hidden_candidate_stays_cancelled() {
+    fn desktop_queued_visible_then_hidden_candidate_still_delivers() {
         let (mut d, receiver) = queued_behind_active();
         d.select_session(SessionId(2));
         d.emit_desktop_notifications();
-        assert!(
-            d.desktop.pending.is_empty(),
-            "visible queued response must be consumed while host remains busy"
+        assert_eq!(
+            d.desktop.pending.len(),
+            1,
+            "becoming visible must not cancel a queued response"
         );
         d.select_session(SessionId(1));
         d.desktop
@@ -1031,10 +1036,10 @@ mod tests {
             .state
             .store(DELIVERY_FINISHED, Ordering::Release);
         d.emit_desktop_notifications();
-        assert!(
-            receiver.try_recv().is_err(),
-            "hiding again must not restore cancelled response"
-        );
+        let (_, delivery) = receiver
+            .try_recv()
+            .expect("must still deliver after visibility churn");
+        assert_eq!(delivery.notification.session, SessionId(2));
     }
     #[test]
     fn desktop_queued_health_loss_then_recovery_stays_cancelled() {
@@ -1294,7 +1299,7 @@ mod tests {
         );
     }
     #[test]
-    fn desktop_visibility_uses_drawn_geometry_including_hidden_split_and_empty_view() {
+    fn desktop_visibility_does_not_suppress_alerts_including_split_and_empty_view() {
         fn snapshot(revision: u64, turn: &str, state: AgentActivity) -> HierarchySnapshot {
             let mut hierarchy = super::tests::snapshot(revision, turn, state);
             let mut other = session(&mut hierarchy).clone();
@@ -1306,38 +1311,65 @@ mod tests {
         }
         let mut d = dashboard();
         d.select_session(SessionId(1));
+        assert!(
+            d.desktop_session_visible(SessionId(1)),
+            "focused pane is visible"
+        );
         deliver(&mut d, snapshot(2, "a", AgentActivity::ResponseReady));
-        assert!(d.desktop.pending.is_empty(), "visible focused pane");
+        assert_eq!(
+            d.desktop.pending.len(),
+            1,
+            "visible focused pane still alerts"
+        );
+        d.desktop.pending.clear();
         d.panes.push(crate::dashboard::PaneState::new(TerminalSize {
             rows: 24,
             cols: 80,
         }));
         d.panes[1].session = Some(SessionId(2));
         d.focused_pane = 1;
+        assert!(
+            d.desktop_session_visible(SessionId(1)),
+            "unfocused assigned pane stays visible"
+        );
         deliver(&mut d, snapshot(4, "b", AgentActivity::ResponseReady));
-        assert!(d.desktop.pending.is_empty(), "visible unfocused pane");
+        assert_eq!(
+            d.desktop.pending.len(),
+            1,
+            "visible unfocused pane still alerts"
+        );
+        d.desktop.pending.clear();
         d.outer_area = Rect::new(0, 0, 60, 24);
+        assert!(
+            !d.desktop_session_visible(SessionId(1)),
+            "narrow geometry hides the assigned split"
+        );
         deliver(&mut d, snapshot(6, "c", AgentActivity::ResponseReady));
         assert_eq!(
             d.desktop.pending.len(),
             1,
-            "assigned pane hidden by narrow geometry"
+            "hidden-by-geometry session still alerts"
         );
         d.desktop.pending.clear();
         d.outer_area = Rect::new(0, 0, 120, 24);
         deliver(&mut d, snapshot(8, "d", AgentActivity::ResponseReady));
-        assert!(d.desktop.pending.is_empty());
+        assert_eq!(
+            d.desktop.pending.len(),
+            1,
+            "becoming visible again still alerts a new unread"
+        );
+        d.desktop.pending.clear();
         d.outer_area = Rect::new(0, 0, 120, 2);
         deliver(&mut d, snapshot(8, "d", AgentActivity::ResponseReady));
         assert!(
             d.desktop.pending.is_empty(),
-            "becoming hidden never replays"
+            "same unread never replays after geometry shrink"
         );
         deliver(&mut d, snapshot(10, "e", AgentActivity::ResponseReady));
         assert_eq!(
             d.desktop.pending.len(),
             1,
-            "zero visible panes means background"
+            "empty / background view still alerts"
         );
     }
     #[test]
