@@ -657,6 +657,12 @@ mod tests {
                 .is_some()
         );
         assert!(
+            excerpt(&candidate(AgentProvider::Pi, claude.clone(), "ok"))
+                .unwrap()
+                .is_none(),
+            "Claude mode first line must not pass the Pi session-header check"
+        );
+        assert!(
             excerpt(&candidate(AgentProvider::Claude, claude, "bad"))
                 .unwrap()
                 .is_none()
