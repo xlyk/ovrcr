@@ -629,11 +629,21 @@ mod tests {
         )
         .unwrap();
         assert!(
-            excerpt(&candidate(AgentProvider::Codex, codex, "ok"))
+            excerpt(&candidate(AgentProvider::Codex, codex.clone(), "ok"))
                 .unwrap()
                 .is_none(),
             "Codex must require payload.id, not a top-level id"
         );
+        fs::write(
+            &codex,
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"ok\",\"source\":\"cli\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"prompt\"}]}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"codex reply\"}]}}\n",
+        )
+        .unwrap();
+        let text = excerpt(&candidate(AgentProvider::Codex, codex, "ok"))
+            .unwrap()
+            .expect("Codex response_item messages must yield an excerpt");
+        assert!(text.contains("codex reply"));
+        assert!(text.contains("prompt"));
 
         let claude = root.path().join("claude.jsonl");
         fs::write(

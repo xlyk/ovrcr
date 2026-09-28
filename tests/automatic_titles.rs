@@ -259,6 +259,30 @@ fn retain_pi_history(
     );
 }
 
+fn retain_codex_history(
+    live: &Live,
+    executable: &std::path::Path,
+    session: &SessionSummary,
+    token: &std::path::Path,
+    conversation: &str,
+    history: std::path::PathBuf,
+) {
+    retain_reference(
+        live,
+        session,
+        parse_secret(token),
+        AgentProvider::Codex,
+        conversation,
+        ConversationReference::Codex(ovrcr::protocol::CodexConversation {
+            conversation: conversation.into(),
+            executable: executable.into(),
+            history: Some(history),
+            config_dir: live.root.path().into(),
+            options: vec![],
+        }),
+    );
+}
+
 struct PiTitleAgent {
     stream: UnixStream,
     auth: SupervisorAuth,
@@ -2513,6 +2537,241 @@ fn late_title_result_after_recorded_switch_is_dropped() {
         .unwrap()
         .flatten();
     assert_ne!(topic_a.as_deref(), Some("Late Switch Topic"));
+}
+
+#[test]
+fn codex_matching_session_meta_shows_subject_replacing_creation_name_until_rename() {
+    let script = "#!/bin/sh\nprintf '%s\\n' \"$*\" >> __CALLS__\nwhile IFS= read -r line; do printf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Codex Login Redirect\"}],\"stopReason\":\"stop\"}}'; exit 0; done\n".to_owned();
+    let (live, fake_pi, calls) = start_title_fixture(script, Some("title_model = 'pi/test'\n"));
+    let mut dash = dashboard(&live);
+    let token = live.root.path().join("codex-match.token");
+    let session = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent {
+                name: "codex".into(),
+            },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "codex-creation-name".into(),
+            label: Some("codex".into()),
+            argv: agent_program(&token),
+        }),
+    );
+    let id_before = session.id;
+    let run_before = session.run;
+    wait_for(&live, session.id, "AGENT_READY");
+    assert_eq!(
+        sessions(&live)
+            .into_iter()
+            .find(|row| row.id == session.id)
+            .unwrap()
+            .display_name(),
+        "codex-creation-name"
+    );
+    let conversation = "00000000-0000-4000-8000-000000000c11";
+    let history = live.root.path().join("codex-match.jsonl");
+    std::fs::write(
+        &history,
+        format!(
+            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{conversation}\",\"source\":\"cli\"}}}}\n{{\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"user\",\"content\":[{{\"type\":\"input_text\",\"text\":\"fix the login redirect\"}}]}}}}\n{{\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"output_text\",\"text\":\"the redirect loop is in auth middleware\"}}]}}}}\n"
+        ),
+    )
+    .unwrap();
+    retain_codex_history(&live, &fake_pi, &session, &token, conversation, history);
+    wait_display(&live, session.id, "Codex Login Redirect");
+    assert_eq!(call_count(&calls), 1);
+    let row = sessions(&live)
+        .into_iter()
+        .find(|row| row.id == session.id)
+        .unwrap();
+    assert_eq!((row.id, row.run), (id_before, run_before));
+    assert_eq!(
+        subject_flags(&live, session.id, conversation).0.as_deref(),
+        Some("Codex Login Redirect")
+    );
+
+    assert_eq!(
+        live.request(Request::SetSessionTitle {
+            session: session.id,
+            title: Some("Manual Codex Name".into()),
+        }),
+        Response::Ok
+    );
+    changed(&mut dash, session.id, "Manual Codex Name");
+    bump_history(
+        &live.root.path().join("codex-match.jsonl"),
+        "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"more work\"}]}}",
+    );
+    std::thread::sleep(Duration::from_secs(3));
+    let row = sessions(&live)
+        .into_iter()
+        .find(|row| row.id == session.id)
+        .unwrap();
+    assert_eq!(row.display_name(), "Manual Codex Name");
+    assert_eq!((row.id, row.run), (id_before, run_before));
+    assert_eq!(
+        call_count(&calls),
+        1,
+        "Rename must stop further title calls"
+    );
+}
+
+#[test]
+fn codex_mismatched_first_line_does_not_produce_subject_or_spend_attempt() {
+    let script = "#!/bin/sh\nprintf call >> __CALLS__\nexit 0\n".to_owned();
+    let (live, fake_pi, calls) = start_title_fixture(script, Some("title_model = 'pi/test'\n"));
+    let _dashboard = dashboard(&live);
+    let token = live.root.path().join("codex-mismatch.token");
+    let session = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent {
+                name: "codex".into(),
+            },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "codex-mismatch-name".into(),
+            label: Some("codex".into()),
+            argv: agent_program(&token),
+        }),
+    );
+    let id_before = session.id;
+    let run_before = session.run;
+    wait_for(&live, session.id, "AGENT_READY");
+    let conversation = "00000000-0000-4000-8000-000000000c21";
+    let history = live.root.path().join("codex-mismatch.jsonl");
+    std::fs::write(
+        &history,
+        "{\"type\":\"session_meta\",\"payload\":{\"id\":\"wrong-id\",\"source\":\"cli\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"should not title\"}]}}\n",
+    )
+    .unwrap();
+    retain_codex_history(&live, &fake_pi, &session, &token, conversation, history);
+    std::thread::sleep(Duration::from_secs(3));
+    let row = sessions(&live)
+        .into_iter()
+        .find(|row| row.id == session.id)
+        .unwrap();
+    assert_eq!(row.display_name(), "codex-mismatch-name");
+    assert_eq!((row.id, row.run), (id_before, run_before));
+    assert_eq!(subject_rows(&live, session.id), 0);
+    assert!(
+        !calls.exists() || call_count(&calls) == 0,
+        "Codex header mismatch must not spawn Pi: {:?}",
+        std::fs::read_to_string(&calls).ok()
+    );
+}
+
+#[test]
+fn codex_missing_model_or_failed_title_call_leaves_current_name() {
+    let missing = {
+        let live = Live::idle().bounded();
+        let fake_pi = live.root.path().join("fake-pi");
+        let calls = live.root.path().join("calls");
+        std::fs::write(
+            &fake_pi,
+            format!("#!/bin/sh\nprintf called >> {}\nexit 0\n", calls.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake_pi, std::fs::Permissions::from_mode(0o700)).unwrap();
+        live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", fake_pi.as_os_str())]);
+        assert_eq!(
+            live.request(Request::AddProject {
+                name: PROJECT.into(),
+                repo: live.repo.clone(),
+                workspace_root: live.workspace_root.clone(),
+            }),
+            Response::Ok
+        );
+        live.clear_root_shell();
+        assert_eq!(live.request(workspace(None)), Response::Ok);
+        let _dashboard = dashboard(&live);
+        let token = live.root.path().join("codex-no-model.token");
+        let session = created(
+            &live,
+            Request::CreateSession(CreateSessionRequest {
+                kind: ovrcr_protocol::SessionKind::Agent {
+                    name: "codex".into(),
+                },
+                project: PROJECT.into(),
+                workspace: WORKSPACE.into(),
+                name: "codex-no-model".into(),
+                label: Some("codex".into()),
+                argv: agent_program(&token),
+            }),
+        );
+        wait_for(&live, session.id, "AGENT_READY");
+        let conversation = "00000000-0000-4000-8000-000000000c31";
+        let history = live.root.path().join("codex-no-model.jsonl");
+        std::fs::write(
+            &history,
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{conversation}\"}}}}\n{{\"role\":\"assistant\",\"content\":\"reply\"}}\n"
+            ),
+        )
+        .unwrap();
+        retain_codex_history(&live, &fake_pi, &session, &token, conversation, history);
+        std::thread::sleep(Duration::from_secs(3));
+        assert_eq!(
+            sessions(&live)
+                .into_iter()
+                .find(|row| row.id == session.id)
+                .unwrap()
+                .display_name(),
+            "codex-no-model"
+        );
+        assert!(!calls.exists(), "missing title_model must not spawn Pi");
+        live
+    };
+    drop(missing);
+
+    let script = "#!/bin/sh\nprintf call >> __CALLS__\nexit 2\n".to_owned();
+    let (live, fake_pi, calls) = start_title_fixture(script, Some("title_model = 'pi/test'\n"));
+    let _dashboard = dashboard(&live);
+    let token = live.root.path().join("codex-fail.token");
+    let session = created(
+        &live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent {
+                name: "codex".into(),
+            },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: "codex-failed-call".into(),
+            label: Some("codex".into()),
+            argv: agent_program(&token),
+        }),
+    );
+    let id_before = session.id;
+    let run_before = session.run;
+    wait_for(&live, session.id, "AGENT_READY");
+    let conversation = "00000000-0000-4000-8000-000000000c32";
+    let history = live.root.path().join("codex-fail.jsonl");
+    std::fs::write(
+        &history,
+        format!(
+            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{conversation}\"}}}}\n{{\"role\":\"assistant\",\"content\":\"reply\"}}\n"
+        ),
+    )
+    .unwrap();
+    retain_codex_history(&live, &fake_pi, &session, &token, conversation, history);
+    wait_file(&calls);
+    std::thread::sleep(Duration::from_secs(1));
+    let row = sessions(&live)
+        .into_iter()
+        .find(|row| row.id == session.id)
+        .unwrap();
+    assert_eq!(row.display_name(), "codex-failed-call");
+    assert_eq!((row.id, row.run), (id_before, run_before));
+    let attempts: i64 = rusqlite::Connection::open(ovrcr::config::database_path(&live.config))
+        .unwrap()
+        .query_row(
+            "SELECT attempt_count FROM conversation_subjects WHERE session = ?1",
+            [i64::try_from(session.id.0).unwrap()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(attempts, 1);
 }
 
 #[test]
