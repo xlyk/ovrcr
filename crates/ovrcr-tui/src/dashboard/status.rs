@@ -136,11 +136,15 @@ fn unread_clause(session: &SessionSummary) -> String {
     };
     // Unread names the reporting provider's own state, so a session without one says nothing
     // more; the rollup fallback below belongs to the live activity label alone.
-    let activity = session
-        .agent
-        .as_ref()
-        .map_or_else(String::new, |agent| provider_clause(session, agent))
-        .replace(" unavailable", "");
+    let activity = session.agent.as_ref().map_or_else(String::new, |agent| {
+        let clause = provider_clause(session, agent);
+        if unavailable(agent) {
+            let marker = format!(" {}", unavailable_clause(agent));
+            clause.replacen(&marker, "", 1)
+        } else {
+            clause
+        }
+    });
     format!("Unread{health}{activity}")
 }
 
@@ -215,14 +219,14 @@ fn provider_clause(session: &SessionSummary, agent: &AgentSnapshot) -> String {
     if let Some(activity) = super::ready::ready(session) {
         let quality = quality(activity.quality);
         let health = if unavailable(agent) {
-            " unavailable"
+            format!(" {}", unavailable_clause(agent))
         } else {
-            ""
+            String::new()
         };
         return format!("{health} response ready · {quality}");
     }
     if unavailable(agent) {
-        return " unavailable".into();
+        return format!(" {}", unavailable_clause(agent));
     }
     let Some(activity) = &agent.activity else {
         return " unknown".into();
@@ -236,6 +240,22 @@ fn provider_clause(session: &SessionSummary, agent: &AgentSnapshot) -> String {
         AgentActivity::ResponseReady => "response ready",
     };
     format!(" {state} {}", quality(activity.quality))
+}
+
+/// Observed reporting loss: keep the stable `unavailable` token so Unread and narrow
+/// headers stay consistent, and append the most specific reason the reporter published.
+/// Silence before evidence never reaches this path. Capability completeness (Ready vs
+/// Input-request) is reported by `ovrcr agent doctor`, not inferred from this clause.
+fn unavailable_clause(agent: &AgentSnapshot) -> String {
+    match agent
+        .health
+        .reason
+        .as_deref()
+        .filter(|reason| !reason.is_empty())
+    {
+        Some(reason) => format!("unavailable · {reason}"),
+        None => "unavailable".into(),
+    }
 }
 
 fn quality(quality: SampleQuality) -> &'static str {
@@ -649,6 +669,24 @@ mod tests {
             let session = session(SessionPhase::Running, None);
             assert_eq!(SessionStatus::of(&session, now).elapsed, expected, "{now}");
         }
+    }
+
+    #[test]
+    fn unavailable_status_names_the_published_reason_without_claiming_other_capabilities() {
+        let mut snapshot = agent(
+            AgentActivity::Busy,
+            SampleQuality::Observed,
+            ReporterHealth::Unavailable,
+            Vec::new(),
+        );
+        snapshot.health.reason = Some("supervisor_disconnected".into());
+        let clause = activity_clause(&session(SessionPhase::Running, Some(snapshot)));
+        assert!(
+            clause.contains("unavailable · supervisor_disconnected"),
+            "{clause}"
+        );
+        assert!(!clause.contains("Ready"), "{clause}");
+        assert!(!clause.contains("Input"), "{clause}");
     }
 
     #[test]

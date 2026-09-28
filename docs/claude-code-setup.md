@@ -38,8 +38,13 @@ renderer using `--render-command`. It migrates an exact legacy
 legacy reporter is left untouched with manual migration instructions on stderr.
 
 When `claude` is on `PATH` and the settings file under `CLAUDE_CONFIG_DIR` (default
-`~/.claude`) lacks these synchronous hooks, the dashboard shows a one-line warning
-in its error banner at startup naming the file and the setup command to run.
+`~/.claude`) lacks these synchronous hooks, the Dashboard shows a persistent
+one-line warning in its error banner at startup naming the file and the setup
+command to run. The same banner reports a missing Codex reporter configuration
+when `codex` is on `PATH`. Configuration presence is not hook trust or delivery;
+`agent doctor` keeps those fields `unverified` until evidence arrives. Ready and
+Input-request capabilities are reported separately: this release delivers observed
+Claude activity only, and does not claim Claude Ready or Input-request support.
 
 Check the supplied file and executable:
 
@@ -62,11 +67,15 @@ treating it as a version problem.
 
 ## Launch and inspect
 
-Launch the supervisor inside an OVRCR session:
+Pick **claude** in the Dashboard agent picker, or launch the supervisor inside an
+OVRCR session. Both use the same managed reporting contract:
 
 ```sh
-ovrcr new --project demo --workspace hooks --name agent -- ovrcr agent run --provider claude -- claude
+ovrcr new --project demo --workspace hooks --name agent -- ovrcr agent run claude -- claude
 ```
+
+The legacy `agent run --provider claude -- claude` form also works. A plain
+`claude` launch stays untracked even when hooks are configured.
 
 To resume a known conversation, preserve the native Claude arguments exactly:
 

@@ -77,7 +77,9 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
     let status = ovrcr::agent_runner::run_native(&argv, move |available, native_argv| {
         if !available {
             drop(lease.take());
-            eprintln!("agent reporting unavailable; running native command");
+            eprintln!(
+                "agent reporting unavailable; running native command. Repair: `ovrcr agent doctor {name} --json` (setup/doctor never rewrite settings or approve trust)."
+            );
             return None;
         }
         Some(match name.as_str() {

@@ -16,10 +16,10 @@ const KNOWN_AGENTS: [&str; 11] = [
     "amp",
     "cursor-agent",
 ];
-/// Detected agents OVRCR launches through `agent run <name> --` so the owned reporting
-/// extension loads beside the user's own, or, for Grok, so the launch retains the session
-/// history file for titles. Codex and Claude keep their explicit routes.
-pub const MANAGED_AGENTS: [&str; 3] = ["pi", "omp", "grok"];
+/// Detected agents OVRCR launches through `agent run <name> --` so managed reporting
+/// (or, for Grok, session-history retention for titles) attaches. Explicit custom
+/// overrides keep their argv unchanged; a raw shell command is never adopted silently.
+pub const MANAGED_AGENTS: [&str; 5] = ["claude", "codex", "pi", "omp", "grok"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentSource {
@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn managed_agents_launch_through_the_agent_run_route() {
         let dir = tempfile::tempdir().unwrap();
-        for name in ["pi", "omp", "grok", "codex"] {
+        for name in ["claude", "codex", "pi", "omp", "grok", "gemini"] {
             write_stub(dir.path(), name, 0o755);
         }
         let launcher = Path::new("/opt/ovrcr/bin/ovrcr");
@@ -258,21 +258,48 @@ mod tests {
                 "{name}"
             );
         }
+        // Unmanaged detected agents stay bare even when a launcher is present.
         assert_eq!(
-            argv("codex"),
-            vec![dir.path().join("codex").into_os_string()]
+            argv("gemini"),
+            vec![dir.path().join("gemini").into_os_string()]
         );
         let bare = detect_agents(dir.path().as_os_str(), None, None);
         assert_eq!(
-            bare.iter().find(|e| e.name == "pi").unwrap().argv,
-            vec![dir.path().join("pi").into_os_string()]
+            bare.iter().find(|e| e.name == "claude").unwrap().argv,
+            vec![dir.path().join("claude").into_os_string()]
         );
+        assert_eq!(
+            bare.iter().find(|e| e.name == "codex").unwrap().argv,
+            vec![dir.path().join("codex").into_os_string()]
+        );
+        // Explicit overrides keep argv unchanged for every managed agent.
         let overridden = apply_overrides(
             entries,
-            &[AgentOverride {
-                name: "pi".into(),
-                argv: vec!["/custom/pi".into()],
-            }],
+            &[
+                AgentOverride {
+                    name: "claude".into(),
+                    argv: vec!["/custom/claude".into(), "--verbose".into()],
+                },
+                AgentOverride {
+                    name: "codex".into(),
+                    argv: vec!["/custom/codex".into()],
+                },
+                AgentOverride {
+                    name: "pi".into(),
+                    argv: vec!["/custom/pi".into()],
+                },
+            ],
+        );
+        assert_eq!(
+            overridden.iter().find(|e| e.name == "claude").unwrap().argv,
+            vec![
+                OsString::from("/custom/claude"),
+                OsString::from("--verbose")
+            ]
+        );
+        assert_eq!(
+            overridden.iter().find(|e| e.name == "codex").unwrap().argv,
+            vec![OsString::from("/custom/codex")]
         );
         assert_eq!(
             overridden.iter().find(|e| e.name == "pi").unwrap().argv,

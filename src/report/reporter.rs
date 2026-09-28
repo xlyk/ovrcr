@@ -204,9 +204,14 @@ impl Reporter {
     }
 
     /// This launch will not be reported on. The native command still runs.
+    /// The warning is also the durable explanation on stderr; Dashboard status shows
+    /// observed loss separately once a binding existed, and doctor holds setup repair.
     pub fn unavailable(&mut self, display: &str, reason: &str) {
         self.disable();
-        eprintln!("{display} reporting unavailable ({reason}); running native command");
+        let doctor = self.provider.name();
+        eprintln!(
+            "{display} reporting unavailable ({reason}); running native command. Repair: `ovrcr agent doctor {doctor} --json` (setup/doctor never rewrite settings or approve trust)."
+        );
     }
 
     pub fn closed(&self) -> bool {

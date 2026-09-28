@@ -432,8 +432,21 @@ fn configuration_issues(value: &Value, executable: &str) -> Vec<String> {
     issues
 }
 
-/// Dashboard boot check: Claude on PATH whose settings carry no synchronous OVRCR reporter.
+/// Dashboard boot check: Claude or Codex on PATH whose settings lack the synchronous
+/// OVRCR reporters. Configuration presence is not delivery or trust; doctor keeps those
+/// unverified until evidence arrives. Warnings persist in the Dashboard banner.
 pub(super) fn boot_hook_warning() -> Option<String> {
+    let mut warnings = Vec::new();
+    if let Some(warning) = claude_boot_hook_warning() {
+        warnings.push(warning);
+    }
+    if let Some(warning) = super::codex_setup::boot_hook_warning() {
+        warnings.push(warning);
+    }
+    (!warnings.is_empty()).then(|| warnings.join(" · "))
+}
+
+fn claude_boot_hook_warning() -> Option<String> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path).find(|dir| dir.join("claude").is_file())?;
     let settings_path = std::env::var_os("CLAUDE_CONFIG_DIR")
@@ -507,7 +520,7 @@ pub(super) fn doctor(
                         "bound"
                     }
                     None => {
-                        remediation.push("Start Claude with ovrcr agent run --provider claude -- claude, or resume a known canonical UUIDv4 with claude --resume UUID. Claude Code 2.1.268 and later compatible patches also support claude -r UUID.".into());
+                        remediation.push("Start Claude through the Dashboard agent picker or `ovrcr agent run claude -- claude` (legacy `--provider claude` also works). Resume a known canonical UUIDv4 with `claude --resume UUID`; 2.1.268+ also accepts `claude -r UUID`. A plain `claude` launch stays untracked.".into());
                         "unbound"
                     }
                 },
@@ -537,9 +550,9 @@ pub(super) fn doctor(
     println!("{}", serde_json::to_string_pretty(&json!({
         "provider":"claude", "executable":executable.to_string_lossy(), "compatible_versions":ovrcr::report::versions::CLAUDE.range(), "tested_versions":ovrcr::report::versions::CLAUDE.tested, "version_compatible":supported.is_some(), "version_tested":ovrcr::report::versions::CLAUDE.tested(probe.observed().as_deref()), "version":probe.observed(),
         "probe_status":probe_status,
-        "configuration":{"status":configuration, "effective_configuration":"unverified", "issues":issues},
+        "configuration":{"status":configuration, "effective_configuration":"unverified", "hook_trust":"unverified", "delivery":"unverified", "issues":issues},
         "session_status":session_status, "binding":binding, "source_health":health,
-        "capabilities":{"initial_invocation":{"fresh":supported.is_some(),"resume":"explicit_canonical_lowercase_uuid_v4","resume_forms":resume_forms,"continue":false,"fork":false}, "activity":"observed", "settled_completion":"unverified", "usage":"recognized_root_transcript_records_partial", "complete_accounting":false, "context":"statusline_source_reported"},
+        "capabilities":{"initial_invocation":{"fresh":supported.is_some(),"resume":"explicit_canonical_lowercase_uuid_v4","resume_forms":resume_forms,"continue":false,"fork":false}, "activity":"observed", "ready":"unavailable", "input_requests":"unavailable", "settled_completion":"unverified", "usage":"recognized_root_transcript_records_partial", "complete_accounting":false, "context":"statusline_source_reported"},
         "remediation":remediation
     })).map_err(RuntimeError::internal)?);
     Ok(())
@@ -615,5 +628,68 @@ mod tests {
         assert!(next.contains("echo keep /tmp/old/ovrcr"));
         assert!(!next.contains("exec '/tmp/old/ovrcr'"));
         assert_eq!(retarget_reporter_text(&next, installed), next);
+    }
+    #[test]
+    fn boot_hook_warning_names_missing_claude_hooks_with_setup_command() {
+        let root = tempfile::tempdir().unwrap();
+        let bin = root.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let claude = bin.join("claude");
+        std::fs::write(&claude, []).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&claude).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&claude, permissions).unwrap();
+        }
+        let config = root.path().join("claude-config");
+        std::fs::create_dir(&config).unwrap();
+        std::fs::write(config.join("settings.json"), b"{}").unwrap();
+        let home = root.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+        // Isolate from the real Codex home so a local codex config cannot join the banner.
+        let codex_home = root.path().join("codex-home-empty");
+        std::fs::create_dir(&codex_home).unwrap();
+        let previous_path = std::env::var_os("PATH");
+        let previous_claude = std::env::var_os("CLAUDE_CONFIG_DIR");
+        let previous_codex = std::env::var_os("CODEX_HOME");
+        let previous_home = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("PATH", &bin);
+            std::env::set_var("CLAUDE_CONFIG_DIR", &config);
+            std::env::set_var("CODEX_HOME", &codex_home);
+            std::env::set_var("HOME", &home);
+        }
+        let warning = boot_hook_warning();
+        match previous_path {
+            Some(value) => unsafe { std::env::set_var("PATH", value) },
+            None => unsafe { std::env::remove_var("PATH") },
+        }
+        match previous_claude {
+            Some(value) => unsafe { std::env::set_var("CLAUDE_CONFIG_DIR", value) },
+            None => unsafe { std::env::remove_var("CLAUDE_CONFIG_DIR") },
+        }
+        match previous_codex {
+            Some(value) => unsafe { std::env::set_var("CODEX_HOME", value) },
+            None => unsafe { std::env::remove_var("CODEX_HOME") },
+        }
+        match previous_home {
+            Some(value) => unsafe { std::env::set_var("HOME", value) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+        let warning = warning.expect("missing Claude hooks should warn");
+        assert!(
+            warning.contains("Claude reporting hooks missing"),
+            "{warning}"
+        );
+        assert!(
+            warning.contains("ovrcr agent setup claude --print --settings"),
+            "{warning}"
+        );
+        assert!(
+            warning.contains(config.join("settings.json").display().to_string().as_str()),
+            "{warning}"
+        );
     }
 }

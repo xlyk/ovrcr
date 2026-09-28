@@ -62,9 +62,13 @@ pub fn receiver(
     } else if matches!(launch.as_ref(), Some((_, InitialSource::Resume))) {
         eprintln!("agent awaiting certified resume");
     } else if reserved {
-        eprintln!("agent admission unavailable; running native command");
+        eprintln!(
+            "agent admission unavailable; running native command. Repair: `ovrcr agent doctor claude --json` (setup/doctor never rewrite settings or approve trust)."
+        );
     } else {
-        eprintln!("agent reporting unavailable; running native command");
+        eprintln!(
+            "agent reporting unavailable; running native command. Repair: `ovrcr agent doctor claude --json` (setup/doctor never rewrite settings or approve trust)."
+        );
     }
     Reporter::new(AgentProvider::Claude, lease, None).handler(Hooks {
         recovery,
