@@ -24,7 +24,7 @@ impl ClaudeEventKind {
     pub fn activity(&self) -> Option<AgentActivity> {
         Some(match self {
             Self::Prompt | Self::Tool => AgentActivity::Busy,
-            Self::PermissionPrompt => AgentActivity::WaitingInput,
+            Self::PermissionPrompt => AgentActivity::Busy,
             Self::Stop => AgentActivity::ResponseReady,
             Self::ApiFailure { .. } => AgentActivity::Error,
             _ => return None,
@@ -154,7 +154,8 @@ mod tests {
             if event.kind == ClaudeEventKind::PermissionPrompt {
                 assert!(prompt.is_some());
                 assert_eq!(event.prompt, prompt);
-                assert_eq!(event.kind.activity(), Some(AgentActivity::WaitingInput));
+                // Underlying sample stays Busy; WaitingInput comes from the Input-request set.
+                assert_eq!(event.kind.activity(), Some(AgentActivity::Busy));
                 waiting += 1;
             }
         }

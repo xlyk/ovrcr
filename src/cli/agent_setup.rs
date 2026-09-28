@@ -552,7 +552,7 @@ pub(super) fn doctor(
         "probe_status":probe_status,
         "configuration":{"status":configuration, "effective_configuration":"unverified", "hook_trust":"unverified", "delivery":"unverified", "issues":issues},
         "session_status":session_status, "binding":binding, "source_health":health,
-        "capabilities":{"initial_invocation":{"fresh":supported.is_some(),"resume":"explicit_canonical_lowercase_uuid_v4","resume_forms":resume_forms,"continue":false,"fork":false}, "activity":"observed", "ready":"available", "completion_quality":"observed", "input_requests":"unavailable", "settled_completion":"unverified", "usage":"recognized_root_transcript_records_partial", "complete_accounting":false, "context":"statusline_source_reported"},
+        "capabilities":{"initial_invocation":{"fresh":supported.is_some(),"resume":"explicit_canonical_lowercase_uuid_v4","resume_forms":resume_forms,"continue":false,"fork":false}, "activity":"observed", "ready":"available", "completion_quality":"observed", "input_requests":"approvals_available","questions":"unavailable_no_distinct_surface", "settled_completion":"unverified", "usage":"recognized_root_transcript_records_partial", "complete_accounting":false, "context":"statusline_source_reported"},
         "remediation":remediation
     })).map_err(RuntimeError::internal)?);
     Ok(())

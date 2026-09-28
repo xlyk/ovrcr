@@ -44,7 +44,11 @@ command to run. The same banner reports a missing Codex reporter configuration
 when `codex` is on `PATH`. Configuration presence is not hook trust or delivery;
 `agent doctor` keeps those fields `unverified` until evidence arrives. Ready is
 available as observed root-turn response end (`completion_quality: observed`);
-Confirmed settling remains unverified. Input-request support remains unavailable.
+Confirmed settling remains unverified. Approval Input requests are available from a
+verified root `Notification(permission_prompt)` (identity `approval:{prompt_id}`);
+closing follows the next attributable root activity. AskUserQuestion / elicitation
+Input requests remain unavailable: native hooks do not yet provide a distinct
+question open/close identity separate from approvals (see support matrix).
 
 Check the supplied file and executable:
 

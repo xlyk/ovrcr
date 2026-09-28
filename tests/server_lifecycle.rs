@@ -5789,10 +5789,10 @@ fn split_view_parsers(
                 session,
                 revision,
                 bytes,
-            }) if view.panes.iter().any(|pane| pane.session == *session) => {
-                if *revision == view.revision {
-                    parsers.get_mut(session).unwrap().process(bytes);
-                }
+            }) if view.panes.iter().any(|pane| pane.session == *session)
+                && *revision == view.revision =>
+            {
+                parsers.get_mut(session).unwrap().process(bytes);
             }
             ServerMessage::Event(ServerEvent::ScreenDirty {
                 run: ovrcr::protocol::SessionRunId(1),
@@ -8809,72 +8809,74 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
             Some("A"),
         ),
         (
+            // permission_prompt opens Input only; underlying Busy sample and its
+            // activity_revision are unchanged (WaitingInput is effective_activity).
             "activity:Notification:A",
-            Some(AgentActivity::WaitingInput),
-            2,
+            Some(AgentActivity::Busy),
+            1,
             Some("A"),
         ),
         (
             "activity:Stop:A",
             Some(AgentActivity::ResponseReady),
-            3,
+            4,
             Some("A"),
         ),
         (
             "activity:PreToolUse:A",
             Some(AgentActivity::Busy),
-            4,
+            5,
             Some("A"),
         ),
         (
             "activity:UserPromptSubmit:B",
             Some(AgentActivity::Busy),
-            5,
+            6,
             Some("B"),
         ),
-        ("activity:Stop:A", Some(AgentActivity::Busy), 5, Some("B")),
+        ("activity:Stop:A", Some(AgentActivity::Busy), 6, Some("B")),
         (
             "activity:Notification:A",
             Some(AgentActivity::Busy),
-            5,
+            6,
             Some("B"),
         ),
         (
             "activity:StopFailure:A",
             Some(AgentActivity::Busy),
-            5,
+            6,
             Some("B"),
         ),
         (
             "activity:Stop:missing",
             Some(AgentActivity::Busy),
-            5,
+            6,
             Some("B"),
         ),
         (
             "activity:PostToolUse:A",
             Some(AgentActivity::Busy),
-            5,
+            6,
             Some("B"),
         ),
         (
             "activity:StopFailure:B",
             Some(AgentActivity::Error),
-            6,
+            7,
             Some("B"),
         ),
         (
             "activity:PostToolUseFailure:B",
             Some(AgentActivity::Busy),
-            7,
+            8,
             Some("B"),
         ),
-        ("clear", Some(AgentActivity::Busy), 7, Some("B")),
-        ("activity:Stop:B", Some(AgentActivity::Busy), 7, Some("B")),
+        ("clear", Some(AgentActivity::Busy), 8, Some("B")),
+        ("activity:Stop:B", Some(AgentActivity::Busy), 8, Some("B")),
         (
             "activity:UserPromptSubmit:C",
             Some(AgentActivity::Busy),
-            7,
+            8,
             Some("B"),
         ),
     ];
@@ -8936,6 +8938,43 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         if let Some(activity) = snapshot.activity {
             assert_eq!(activity.quality, SampleQuality::Observed);
             assert_eq!(activity.turn.as_deref(), turn);
+        }
+        if command == "activity:Notification:A" && turn == Some("A") {
+            assert_eq!(
+                snapshot.input_requests,
+                vec![ovrcr::protocol::InputRequest {
+                    id: "approval:A".into(),
+                    kind: ovrcr::protocol::InputKind::Approval,
+                }],
+                "{command}"
+            );
+            assert_eq!(
+                fixture.session_summary(summary.id).activity,
+                AgentActivity::WaitingInput,
+                "Input request makes effective activity WaitingInput"
+            );
+        } else if command == "activity:Notification:A" && turn == Some("B") {
+            assert!(
+                snapshot.input_requests.is_empty(),
+                "stale permission_prompt for a prior turn cannot open Input"
+            );
+        } else if command == "activity:Stop:A" && turn == Some("A") {
+            assert!(
+                snapshot.input_requests.is_empty(),
+                "Stop closes the approval opened by permission_prompt"
+            );
+        } else if matches!(
+            command,
+            "activity:PermissionRequest:A"
+                | "activity:Notification:A:generic"
+                | "activity:PreToolUse:A"
+                | "activity:UserPromptSubmit:A"
+                | "activity:UserPromptSubmit:B"
+        ) {
+            assert!(
+                snapshot.input_requests.is_empty(),
+                "auto-approval / idle / tool / prompt alone do not open Input: {command}"
+            );
         }
         assert_eq!(snapshot.binding.generation, 1);
     }
@@ -13066,6 +13105,264 @@ fn claude_ready_alerts_once_per_root_turn_with_unread_and_continuation() {
     let mut reviewed = second.clone();
     reviewed.unread = None;
     assert_eq!(fixture.session_summary(summary.id), reviewed);
+
+    dashboard.detach();
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "CLAUDE_ALERT_FINISHED");
+}
+
+#[test]
+fn claude_input_requests_wait_alert_once_each_and_restore_without_unread() {
+    let _guard = env_lock();
+    use ovrcr::protocol::{AgentActivity, InputKind, SampleQuality};
+    const READY: &str = "OVRCR · response ready";
+    const INPUT: &str = "OVRCR · input needed";
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "claude-setup");
+    let (summary, _probe) = claude_alert_session(&fixture, &fixture.socket, "claude-input");
+    let bin = env!("CARGO_BIN_EXE_ovrcr");
+    let config = fixture.root.path().join("config.toml");
+    let mut index = 0;
+
+    claude_activity_callback(&fixture, summary.id, &mut index, "root");
+    let mut dashboard = DesktopAlertDashboard::start_for(
+        &fixture,
+        Some("desktop_notifications = true\n"),
+        "claude-input",
+    );
+    dashboard.select("setup", "HOOK_READY");
+
+    // Fresh root turn Busy; PermissionRequest / idle / PreToolUse alone never open Input.
+    claude_activity_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "activity:UserPromptSubmit:A",
+    );
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::Busy
+    );
+    for command in [
+        "activity:PermissionRequest:A",
+        "activity:Notification:A:generic",
+        "activity:PreToolUse:A",
+    ] {
+        claude_activity_callback(&fixture, summary.id, &mut index, command);
+        let snap = fixture.session_summary(summary.id);
+        assert!(
+            snap.agent.as_ref().unwrap().input_requests.is_empty(),
+            "{command}"
+        );
+        assert_eq!(snap.activity, AgentActivity::Busy);
+    }
+
+    // Verified permission_prompt: WaitingInput, one Input request, one alert, no Unread.
+    claude_activity_callback(&fixture, summary.id, &mut index, "activity:Notification:A");
+    let waiting = fixture.session_summary(summary.id);
+    assert_eq!(waiting.activity, AgentActivity::WaitingInput);
+    let agent = waiting.agent.as_ref().expect("bound");
+    assert_eq!(
+        agent.input_requests,
+        vec![ovrcr::protocol::InputRequest {
+            id: "approval:A".into(),
+            kind: InputKind::Approval,
+        }]
+    );
+    assert_eq!(
+        agent.activity.as_ref().unwrap().state,
+        AgentActivity::Busy,
+        "a wait never overwrites the underlying sample"
+    );
+    assert_eq!(
+        agent.activity.as_ref().unwrap().quality,
+        SampleQuality::Observed
+    );
+    assert_eq!(
+        waiting.unread, None,
+        "Input requests do not manufacture Unread"
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(1, summary.id, "claude-input"),
+        [INPUT]
+    );
+    let listed = cli_with_output(
+        bin,
+        &config,
+        &fixture.socket,
+        &["terminal", "list", "--json"],
+    );
+    assert!(listed.status.success());
+    let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let row = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == summary.id.0)
+        .unwrap();
+    assert_eq!(row["activity"], "waiting_input");
+    assert_eq!(row["agent"]["input_requests"][0]["kind"], "Approval");
+    assert_eq!(row["agent"]["input_requests"][0]["id"], "approval:A");
+    assert_eq!(row["unread"], serde_json::Value::Null);
+
+    // Duplicate opening of the same approval id does not repeat the alert.
+    claude_activity_callback(&fixture, summary.id, &mut index, "activity:Notification:A");
+    assert_eq!(
+        fixture
+            .session_summary(summary.id)
+            .agent
+            .as_ref()
+            .unwrap()
+            .input_requests
+            .len(),
+        1
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(1, summary.id, "claude-input"),
+        [INPUT],
+        "duplicate permission_prompt is not a second request"
+    );
+
+    // Child / wrong-conversation / stale-turn notifications cannot open or clear.
+    for command in [
+        "activity:Notification:A:child",
+        "activity:Notification:A:wrong",
+        "activity:Notification:Z",
+    ] {
+        claude_activity_callback(&fixture, summary.id, &mut index, command);
+    }
+    let still = fixture.session_summary(summary.id);
+    assert_eq!(still.activity, AgentActivity::WaitingInput);
+    assert_eq!(still.agent.as_ref().unwrap().input_requests.len(), 1);
+    assert_eq!(
+        dashboard.wait_alert_titles(1, summary.id, "claude-input"),
+        [INPUT]
+    );
+
+    // Allow path: PostToolUse closes the correlated approval and restores Busy.
+    claude_activity_callback(&fixture, summary.id, &mut index, "activity:PostToolUse:A");
+    let allowed = fixture.session_summary(summary.id);
+    assert_eq!(allowed.activity, AgentActivity::Busy);
+    assert!(allowed.agent.as_ref().unwrap().input_requests.is_empty());
+    assert_eq!(allowed.unread, None);
+    assert_eq!(
+        dashboard.wait_alert_titles(1, summary.id, "claude-input"),
+        [INPUT],
+        "closing a request is not an alert"
+    );
+
+    // Distinct later turn: a new approval is independent and alerts once.
+    claude_activity_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "activity:UserPromptSubmit:B",
+    );
+    claude_activity_callback(&fixture, summary.id, &mut index, "activity:Notification:B");
+    let second = fixture.session_summary(summary.id);
+    assert_eq!(second.activity, AgentActivity::WaitingInput);
+    assert_eq!(
+        second.agent.as_ref().unwrap().input_requests[0].id,
+        "approval:B"
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(2, summary.id, "claude-input"),
+        [INPUT, INPUT]
+    );
+
+    // Deny/cancel path: Stop closes the open approval, then Ready/Unread is a separate lane.
+    claude_activity_callback(&fixture, summary.id, &mut index, "activity:Stop:B");
+    let ready = fixture.session_summary(summary.id);
+    assert_eq!(ready.activity, AgentActivity::ResponseReady);
+    assert!(ready.agent.as_ref().unwrap().input_requests.is_empty());
+    let unread = ready.unread.clone().expect("Observed Ready is unread");
+    assert_eq!(
+        dashboard.wait_alert_titles(3, summary.id, "claude-input"),
+        [INPUT, INPUT, READY]
+    );
+
+    // Request on top of Ready (same turn B): WaitingInput, Unread untouched.
+    claude_activity_callback(&fixture, summary.id, &mut index, "activity:Notification:B");
+    let over_ready = fixture.session_summary(summary.id);
+    assert_eq!(over_ready.activity, AgentActivity::WaitingInput);
+    assert_eq!(
+        over_ready
+            .agent
+            .as_ref()
+            .unwrap()
+            .activity
+            .as_ref()
+            .unwrap()
+            .state,
+        AgentActivity::ResponseReady,
+        "Ready is what the wait is covering"
+    );
+    assert_eq!(over_ready.unread, Some(unread.clone()));
+    assert_eq!(
+        dashboard.wait_alert_titles(4, summary.id, "claude-input"),
+        [INPUT, INPUT, READY, INPUT]
+    );
+    // Closing restores Ready underneath without acknowledging Unread.
+    claude_activity_callback(&fixture, summary.id, &mut index, "activity:PreToolUse:B");
+    let restored = fixture.session_summary(summary.id);
+    assert_eq!(restored.activity, AgentActivity::Busy);
+    assert!(restored.agent.as_ref().unwrap().input_requests.is_empty());
+    assert_eq!(restored.unread, Some(unread.clone()));
+
+    // Reattach baselines an open request instead of replaying it.
+    claude_activity_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "activity:UserPromptSubmit:C",
+    );
+    claude_activity_callback(&fixture, summary.id, &mut index, "activity:Notification:C");
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::WaitingInput
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(5, summary.id, "claude-input"),
+        [INPUT, INPUT, READY, INPUT, INPUT]
+    );
+    dashboard.detach();
+    drop(dashboard);
+    let mut dashboard = DesktopAlertDashboard::start_for(
+        &fixture,
+        Some("desktop_notifications = true\n"),
+        "claude-input",
+    );
+    dashboard.select("setup", "HOOK_READY");
+    assert_eq!(
+        dashboard.wait_alert_titles(5, summary.id, "claude-input"),
+        [INPUT, INPUT, READY, INPUT, INPUT],
+        "a request open at reattach is a baseline, not a new opening"
+    );
+    claude_activity_callback(&fixture, summary.id, &mut index, "activity:PostToolUse:C");
+    claude_activity_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "activity:UserPromptSubmit:D",
+    );
+    claude_activity_callback(&fixture, summary.id, &mut index, "activity:Notification:D");
+    assert_eq!(
+        dashboard.wait_alert_titles(6, summary.id, "claude-input"),
+        [INPUT, INPUT, READY, INPUT, INPUT, INPUT],
+        "a genuinely new request after reattach alerts once"
+    );
+    assert_eq!(
+        fixture.session_summary(summary.id).unread,
+        Some(unread),
+        "Input alerts never acknowledge Unread"
+    );
 
     dashboard.detach();
     assert_eq!(
