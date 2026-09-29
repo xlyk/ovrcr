@@ -532,9 +532,11 @@ Codex recovery resumes the exact UUID from its last authenticated root hook.
 Until matching `SessionStart(source=resume)` binds that conversation, status says
 `Agent launched; awaiting conversation attachment` — process creation is not
 attachment, and historical Ready is not restored. After attachment, a new root
-turn reports Observed Ready/Unread through the existing path. The saved reference
-survives another restart before any new prompt. Silent native history switches
-cannot update it without a supported hook. See
+turn reports Observed Ready/Unread through the existing path. Supported clear and
+in-process resume SessionStart replacements update the saved reference; a
+conflicting startup while bound shows `identity_transition_unavailable` and
+disables recovery for that row without restarting Codex. Silent native history
+switches cannot update the reference without a supported hook. See
 [Codex recovery limitations](codex-reporting-setup.md#retained-conversation-recovery).
 
 Pi and Oh My Pi retain the exact native session ID and file from their managed

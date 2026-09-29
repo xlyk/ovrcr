@@ -44,8 +44,11 @@ Managed Codex reports Approval Input requests from a verified root
 `PermissionRequest` (`approval:{turn_id}`) the same way: WaitingInput effective
 activity, one input-needed alert per request identity, and close on the next
 attributable root activity. `PreToolUse`/`PostToolUse` alone never open a request.
-Questions remain unavailable (no distinct question surface). See
-[Codex setup](codex-reporting-setup.md).
+Questions remain unavailable (no distinct question surface). Supported in-process
+`SessionStart(source=clear|resume)` replacements rebind Ready/Input to the new
+foreground conversation; `source=compact` invents no replacement; conflicting
+`source=startup` while bound is `identity_transition_unavailable` (fork/backtrack
+gap). See [Codex setup](codex-reporting-setup.md).
 
 Usage covers recognized records from the root transcript and remains **partial**,
 even after EOF, Stop, or process exit. It does not certify all auxiliary work or

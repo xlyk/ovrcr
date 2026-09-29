@@ -220,6 +220,67 @@ impl Hooks {
         );
     }
 
+    /// Follow clear/resume SessionStart replacements on a bound invocation, or freeze when
+    /// native evidence cannot name a trustworthy foreground identity.
+    ///
+    /// Codex SessionStart sources: `startup`, `resume`, `clear`, `compact`. Fork/backtrack
+    /// reuse `startup` with a new id and have no observable invalidation before that
+    /// callback — later startup alone does not prove continuous identity during the gap.
+    fn follow_bound_session_start(
+        &mut self,
+        reporter: &mut Reporter,
+        source: &str,
+        session: &str,
+        payload: &serde_json::Value,
+        current: &str,
+        deadline: Instant,
+    ) -> Vec<u8> {
+        match source {
+            "clear" | "resume" if session != current => {
+                self.replace_foreground(reporter, session, payload, deadline)
+            }
+            "clear" | "resume" | "compact" => reporter::IGNORED.to_vec(),
+            "startup" if session != current => self.freeze(reporter, deadline),
+            "startup" => reporter::IGNORED.to_vec(),
+            _ => self.freeze(reporter, deadline),
+        }
+    }
+
+    fn replace_foreground(
+        &mut self,
+        reporter: &mut Reporter,
+        session: &str,
+        payload: &serde_json::Value,
+        deadline: Instant,
+    ) -> Vec<u8> {
+        if let Some(failed) = self.close_approvals(reporter, deadline) {
+            return failed;
+        }
+        self.active = None;
+        self.turn = None;
+        let force = self.expected.as_deref() == Some(session);
+        self.expected = Some(session.to_owned());
+        if let Some(unavailable) = reporter.bind_or_disable(session, deadline, force) {
+            return unavailable;
+        }
+        self.retain(reporter, payload, session, deadline);
+        self.initial_accepted = true;
+        reporter::ACCEPTED.to_vec()
+    }
+
+    /// Unsupported or ambiguous transition: persistent identity_transition_unavailable.
+    /// Codex itself keeps running; reporting does not guess a replacement identity.
+    fn freeze(&mut self, reporter: &mut Reporter, deadline: Instant) -> Vec<u8> {
+        let _ = self.close_approvals(reporter, deadline);
+        self.active = None;
+        self.turn = None;
+        if reporter.invalidate_conversation(deadline) {
+            reporter::IGNORED.to_vec()
+        } else {
+            reporter::UNAVAILABLE.to_vec()
+        }
+    }
+
     fn approval_id(turn: &str) -> String {
         format!("approval:{turn}")
     }
@@ -317,15 +378,7 @@ impl reporter::Frames for Hooks {
                 return reporter::IGNORED.to_vec();
             };
             // Exact resume must certify Root identity before any reporting is admitted.
-            if self.initial_source == Some(InitialSource::Resume) {
-                if self.initial_accepted {
-                    // In-process switches stay conservative until conversation-switch tickets.
-                    if self.active.is_some() {
-                        reporter.invalidate_conversation(deadline);
-                    }
-                    reporter.disable();
-                    return reporter::UNAVAILABLE.to_vec();
-                }
+            if self.initial_source == Some(InitialSource::Resume) && !self.initial_accepted {
                 let Some(expected) = self.expected.as_deref() else {
                     return reporter::IGNORED.to_vec();
                 };
@@ -349,12 +402,15 @@ impl reporter::Frames for Hooks {
                 self.initial_accepted = true;
                 return reporter::ACCEPTED.to_vec();
             }
+            // Bound invocations follow supported clear/resume replacements; conflicting
+            // startup (fork/backtrack) is a named unobservable-gap blocker.
+            if let Some(current) = reporter.binding().map(|b| b.conversation.clone()) {
+                return self.follow_bound_session_start(
+                    reporter, source, session, payload, &current, deadline,
+                );
+            }
             if source != "startup" || self.recovery.is_none() {
                 return reporter::IGNORED.to_vec();
-            }
-            if self.active.is_some() {
-                reporter.invalidate_conversation(deadline);
-                return reporter::UNAVAILABLE.to_vec();
             }
             if let Some(unavailable) = reporter.bind_or_disable(session, deadline, false) {
                 return unavailable;
@@ -410,14 +466,6 @@ impl reporter::Frames for Hooks {
             // must establish the Root identity first. Historical Stop/Submit before that
             // stay ignored and never invent Ready.
             if self.initial_source == Some(InitialSource::Resume) && !self.initial_accepted {
-                return reporter::IGNORED.to_vec();
-            }
-            if self.initial_source == Some(InitialSource::Resume)
-                && self
-                    .expected
-                    .as_deref()
-                    .is_some_and(|expected| expected != session)
-            {
                 return reporter::IGNORED.to_vec();
             }
             // Deduplicate *before* any revisions, binding changes, or freshness updates.
@@ -531,8 +579,7 @@ mod tests {
     }
 
     #[test]
-    fn recovery_uses_only_certified_root_identity_and_missing_replacement_history_cannot_reopen_old_identity()
-     {
+    fn recovery_uses_only_certified_root_identity_and_conflicting_startup_freezes() {
         use crate::report::reporter::scripted::Observed;
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("exact.jsonl");
@@ -575,14 +622,24 @@ mod tests {
             drive(&mut hooks, &mut reporter, &frame(a, false)),
             reporter::ACCEPTED
         );
+        // Conflicting SessionStart(source=startup) while bound is the named fork/backtrack
+        // gap: freeze rather than inventing continuous identity from a later callback.
         assert_eq!(
             drive(&mut hooks, &mut reporter, &frame(b, false)),
-            reporter::ACCEPTED
+            reporter::IGNORED
         );
+        assert!(reporter.closed());
         let observed = supervisor.observed();
         assert!(
             Supervisor::activity(&observed).is_empty(),
             "startup must not invent Ready"
+        );
+        assert_eq!(
+            Supervisor::health(&observed),
+            vec![(
+                ovrcr_protocol::ReporterHealth::Unavailable,
+                "identity_transition_unavailable".to_owned()
+            )]
         );
         let retained: Vec<_> = observed
             .into_iter()
@@ -594,14 +651,9 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(retained.len(), 2);
+        assert_eq!(retained.len(), 1);
         assert_eq!(retained[0].conversation, a);
         assert_eq!(retained[0].history, Some(path));
-        assert_eq!(retained[1].conversation, b);
-        assert_eq!(
-            retained[1].history, None,
-            "mismatched file retained an old recoverable identity"
-        );
     }
 
     #[test]
@@ -700,6 +752,265 @@ mod tests {
                 ),
             ],
             "historical resume attach must not invent an extra Ready"
+        );
+    }
+
+    fn session_start(source: &str, session: &str) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "provider": "codex", "origin": "codex-hook", "payload": {
+                "hook_event_name": "SessionStart", "source": source, "session_id": session,
+                "transcript_path": "/exact/root.jsonl",
+            }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn supported_clear_and_resume_rebind_with_fresh_generations_and_drop_stale_requests() {
+        use ovrcr_protocol::InputKind;
+        let a = "01a08e5c-7480-7052-9964-9224aadebef0";
+        let b = "01a08e94-0deb-76c3-a2b5-540c4874a53f";
+        let (mut hooks, mut reporter, supervisor) = start();
+        hooks.recovery = Some(ovrcr_protocol::CodexConversation {
+            conversation: String::new(),
+            executable: "/bin/codex".into(),
+            history: None,
+            config_dir: "/config".into(),
+            options: vec![],
+        });
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &session_start("startup", a)),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("UserPromptSubmit", a, "t1")
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &tool_hook("PermissionRequest", a, "t1", None)
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            hooks.open_requests,
+            vec![("approval:t1".into(), InputKind::Approval)]
+        );
+
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &session_start("clear", b)),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            reporter
+                .binding()
+                .map(|binding| (binding.conversation.as_str(), binding.generation)),
+            Some((b, 2))
+        );
+        assert!(hooks.open_requests.is_empty());
+        assert!(hooks.active.is_none() && hooks.turn.is_none());
+
+        // Late A events cannot modify B or reopen the retired request.
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &hook("Stop", a, "t1")),
+            reporter::IGNORED
+        );
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &tool_hook("PermissionRequest", a, "t1", None)
+            ),
+            reporter::IGNORED
+        );
+        assert!(hooks.open_requests.is_empty());
+
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("UserPromptSubmit", b, "t2")
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &hook("Stop", b, "t2")),
+            reporter::ACCEPTED
+        );
+
+        // A <- B <- A via in-process resume: generation advances; late B cannot Ready on A.
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &session_start("resume", a)),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            reporter
+                .binding()
+                .map(|binding| (binding.conversation.as_str(), binding.generation)),
+            Some((a, 3))
+        );
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &hook("Stop", b, "t2")),
+            reporter::IGNORED
+        );
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("UserPromptSubmit", a, "t3")
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &hook("Stop", a, "t3")),
+            reporter::ACCEPTED
+        );
+        let published = states(supervisor);
+        assert!(
+            published.iter().any(|row| {
+                row == &(
+                    3,
+                    AgentActivity::ResponseReady,
+                    Some("t3".into()),
+                    SampleQuality::Observed,
+                )
+            }),
+            "generation-3 Ready missing: {published:?}"
+        );
+        assert!(
+            !published
+                .iter()
+                .any(|row| { row.0 == 3 && row.2.as_deref() == Some("t2") }),
+            "late B must not publish on generation 3: {published:?}"
+        );
+    }
+
+    #[test]
+    fn compact_is_not_a_replacement_and_conflicting_startup_freezes() {
+        let a = "01a08e5c-7480-7052-9964-9224aadebef0";
+        let b = "01a08e94-0deb-76c3-a2b5-540c4874a53f";
+        let (mut hooks, mut reporter, supervisor) = start();
+        hooks.recovery = Some(ovrcr_protocol::CodexConversation {
+            conversation: String::new(),
+            executable: "/bin/codex".into(),
+            history: None,
+            config_dir: "/config".into(),
+            options: vec![],
+        });
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &session_start("startup", a)),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("UserPromptSubmit", a, "t1")
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &hook("Stop", a, "t1")),
+            reporter::ACCEPTED
+        );
+        let before = reporter.binding().cloned().unwrap();
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &session_start("compact", a)),
+            reporter::IGNORED
+        );
+        assert_eq!(reporter.binding(), Some(&before));
+        assert!(!reporter.closed());
+        // Same-id resume announcement without a leave is not a replacement.
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &session_start("resume", a)),
+            reporter::IGNORED
+        );
+        assert_eq!(reporter.binding(), Some(&before));
+
+        // Conflicting startup (fork/backtrack evidence form) freezes reporting.
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &session_start("startup", b)),
+            reporter::IGNORED
+        );
+        assert!(reporter.closed());
+        assert_eq!(
+            Supervisor::health(&supervisor.observed()),
+            vec![(
+                ovrcr_protocol::ReporterHealth::Unavailable,
+                "identity_transition_unavailable".to_owned()
+            )]
+        );
+    }
+
+    #[test]
+    fn resumed_invocation_follows_clear_and_rejects_conflicting_startup() {
+        let id = "01a08e5c-7480-7052-9964-9224aadebef0";
+        let other = "01a08e94-0deb-76c3-a2b5-540c4874a53f";
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("exact.jsonl");
+        std::fs::write(
+            &path,
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"source\":\"cli\"}}}}\n"
+            ),
+        )
+        .unwrap();
+        let (mut hooks, mut reporter, supervisor) = resume_hooks(id);
+        hooks.recovery.as_mut().unwrap().config_dir = root.path().into();
+        let attach = serde_json::to_vec(&serde_json::json!({
+            "provider": "codex", "origin": "codex-hook", "payload": {
+                "hook_event_name": "SessionStart", "source": "resume", "session_id": id,
+                "transcript_path": path,
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &attach),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &session_start("clear", other)),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            reporter
+                .binding()
+                .map(|binding| (binding.conversation.as_str(), binding.generation)),
+            Some((other, 2))
+        );
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("UserPromptSubmit", other, "after-clear")
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("Stop", other, "after-clear")
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &session_start("startup", id)),
+            reporter::IGNORED
+        );
+        assert!(reporter.closed());
+        assert_eq!(
+            Supervisor::health(&supervisor.observed()),
+            vec![(
+                ovrcr_protocol::ReporterHealth::Unavailable,
+                "identity_transition_unavailable".to_owned()
+            )]
         );
     }
 
