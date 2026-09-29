@@ -153,6 +153,123 @@ pub fn resume_argv(reference: &CodexConversation) -> Result<Vec<OsString>> {
     Ok(argv)
 }
 
+/// Prepare this managed Codex launch so reporters can reach the private channel.
+///
+/// Codex CLI 0.158 runs hooks from a detached `app-server --managed-daemon` that
+/// captures environment at daemon start and can outlive a prior TUI. Canonicalize
+/// `CODEX_HOME` (Codex rejects helper PATH aliases when it resolves under `/tmp`)
+/// and stop any CODEX_HOME-owned managed daemon so the new TUI starts a fresh one
+/// under this process tree with the current `OVRCR_AGENT_*` channel.
+pub fn prepare_managed_launch() {
+    canonicalize_codex_home();
+    stop_stale_app_server_daemon();
+}
+
+fn canonicalize_codex_home() {
+    let Ok(dir) = config_dir() else {
+        return;
+    };
+    let Ok(real) = std::fs::canonicalize(&dir) else {
+        return;
+    };
+    if real.as_os_str() != dir.as_os_str() {
+        // Single-threaded managed launch startup; child inherits the real path.
+        unsafe { std::env::set_var("CODEX_HOME", &real) };
+    }
+}
+
+fn stop_stale_app_server_daemon() {
+    let Ok(dir) = config_dir() else {
+        return;
+    };
+    let daemon_dir = dir.join("app-server-daemon");
+    stop_codex_pid_file(&daemon_dir.join("daemon.pid"), true);
+    stop_codex_pid_file(&daemon_dir.join("daemon-updater.pid"), false);
+}
+
+fn stop_codex_pid_file(path: &Path, require_managed_daemon: bool) {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let Some(pid) = managed_daemon_pid(&raw) else {
+        return;
+    };
+    if require_managed_daemon && !process_looks_like_managed_daemon(pid) {
+        return;
+    }
+    if !require_managed_daemon && !process_looks_like_codex(pid) {
+        return;
+    }
+    unsafe {
+        libc::kill(pid, libc::SIGTERM);
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    while std::time::Instant::now() < deadline {
+        if !process_exists(pid) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    if process_exists(pid) {
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+        }
+    }
+}
+
+fn managed_daemon_pid(raw: &str) -> Option<libc::pid_t> {
+    let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+    let pid = value.get("pid")?.as_u64()?;
+    let pid = libc::pid_t::try_from(pid).ok()?;
+    (pid > 1).then_some(pid)
+}
+
+fn process_exists(pid: libc::pid_t) -> bool {
+    unsafe {
+        libc::kill(pid, 0) == 0
+            || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+}
+
+fn process_looks_like_managed_daemon(pid: libc::pid_t) -> bool {
+    let Some(cmdline) = process_cmdline(pid) else {
+        return false;
+    };
+    cmdline.iter().any(|arg| arg == "app-server")
+        && cmdline
+            .iter()
+            .any(|arg| arg == "--managed-daemon" || arg.contains("managed-daemon"))
+}
+
+fn process_looks_like_codex(pid: libc::pid_t) -> bool {
+    let Some(cmdline) = process_cmdline(pid) else {
+        return false;
+    };
+    cmdline.iter().any(|arg| {
+        Path::new(arg)
+            .file_name()
+            .is_some_and(|name| name == "codex" || name == "codex.exe")
+            || arg.contains("app-server")
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn process_cmdline(pid: libc::pid_t) -> Option<Vec<String>> {
+    let raw = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    let args: Vec<String> = raw
+        .split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty())
+        .map(|part| String::from_utf8_lossy(part).into_owned())
+        .collect();
+    (!args.is_empty()).then_some(args)
+}
+
+#[cfg(target_os = "macos")]
+fn process_cmdline(pid: libc::pid_t) -> Option<Vec<String>> {
+    // macOS has no /proc; trust the CODEX_HOME pid file and confirm the pid is live.
+    process_exists(pid).then(|| vec!["codex".into()])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,5 +374,16 @@ mod tests {
                     .contains("canonical UUID")
             );
         }
+    }
+
+    #[test]
+    fn managed_daemon_pid_reads_codex_daemon_pid_file() {
+        assert_eq!(
+            managed_daemon_pid(r#"{"pid":1792397,"processStartTime":"Mon Sep 28 18:42:17 2026"}"#),
+            Some(1792397)
+        );
+        assert_eq!(managed_daemon_pid(r#"{"pid":1}"#), None);
+        assert_eq!(managed_daemon_pid("not-json"), None);
+        assert_eq!(managed_daemon_pid("{}"), None);
     }
 }

@@ -9563,10 +9563,13 @@ fn codex_managed_hooks_ready_interrupt_duplicates_and_rebind() {
         ("UserPromptSubmit:other:c", Some(AgentActivity::Busy)),
         ("Stop:root:b", Some(AgentActivity::Busy)),
         ("Stop:other:c", Some(AgentActivity::ResponseReady)),
+        // Codex 0.158 runs hooks under a nested app-server daemon; grandchild
+        // reporters in the native tree must deliver (not be treated as foreign).
         (
             "UserPromptSubmit:other:d:grandchild",
-            Some(AgentActivity::ResponseReady),
+            Some(AgentActivity::Busy),
         ),
+        ("Stop:other:d", Some(AgentActivity::ResponseReady)),
         (
             "UserPromptSubmit:other:d:missing",
             Some(AgentActivity::ResponseReady),
@@ -9641,11 +9644,11 @@ fn codex_managed_hooks_ready_interrupt_duplicates_and_rebind() {
                     "duplicate refreshed sample"
                 );
             }
-            if (11..19).contains(&index) {
+            if (11..20).contains(&index) {
                 assert_eq!(current.binding.conversation, "other");
                 assert_eq!(current.binding.generation, 2);
             }
-            if index >= 19 {
+            if index >= 20 {
                 assert_eq!(current.binding.conversation, "root");
                 assert_eq!(current.binding.generation, 3);
             }
@@ -9709,10 +9712,15 @@ fn codex_session_named(
     std::fs::write(&native, "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'codex-cli 0.153.1\\n'; exit; fi\nexec \"$OVRCR_TEST_EXECUTABLE\" --ignored --exact codex_hook_native_helper --nocapture\n").unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
     let probe = fixture.root.path().join(format!("{name}-channel"));
+    // Isolate CODEX_HOME so prepare_managed_launch never stops a host Codex daemon.
+    let codex_home = fixture.root.path().join(format!("{name}-codex-home"));
+    std::fs::create_dir_all(&codex_home).unwrap();
     let summary = fixture.create_codex_session_summary(name, vec![
         "/bin/sh".into(), "-c".into(),
-        r#"stty -echo; printf '%s\n' "$OVRCR_HOOK_TOKEN" > "$4.capability"; export OVRCR_TEST_EXECUTABLE="$3" OVRCR_TEST_PROBE="$4" OVRCR_HOOK_SOCKET="$5"; "$1" agent run codex -- "$2"; printf 'CODEX_NATIVE_EXIT=%s\n' "$?"; IFS= read -r done"#.into(),
-        "codex-fixture".into(), env!("CARGO_BIN_EXE_ovrcr").into(), native.into_os_string(), std::env::current_exe().unwrap().into_os_string(), probe.clone().into_os_string(), socket.as_os_str().into(),
+        r#"stty -echo; printf '%s
+' "$OVRCR_HOOK_TOKEN" > "$4.capability"; export CODEX_HOME="$6" OVRCR_TEST_EXECUTABLE="$3" OVRCR_TEST_PROBE="$4" OVRCR_HOOK_SOCKET="$5"; "$1" agent run codex -- "$2"; printf 'CODEX_NATIVE_EXIT=%s
+' "$?"; IFS= read -r done"#.into(),
+        "codex-fixture".into(), env!("CARGO_BIN_EXE_ovrcr").into(), native.into_os_string(), std::env::current_exe().unwrap().into_os_string(), probe.clone().into_os_string(), socket.as_os_str().into(), codex_home.into_os_string(),
     ]);
     fixture.record_process_group(&summary);
     fixture.wait_terminal_contains_until(

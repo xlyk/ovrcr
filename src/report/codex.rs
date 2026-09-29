@@ -90,6 +90,11 @@ pub fn receiver(lease: Option<InvocationLease>, argv: &[OsString]) -> HookHandle
     .or_else(|| {
         (!supported_version(&argv[0])).then_some("version probe unsupported or unavailable")
     });
+    // Only for an admitted fresh Codex launch: real CODEX_HOME + fresh managed daemon
+    // so 0.158+ hooks inherit this invocation's private channel.
+    if unavailable.is_none() {
+        ovrcr_runtime::codex_recovery::prepare_managed_launch();
+    }
     let mut reporter = Reporter::new(AgentProvider::Codex, lease, None);
     if let Some(reason) = unavailable {
         reporter.unavailable("Codex", reason);
