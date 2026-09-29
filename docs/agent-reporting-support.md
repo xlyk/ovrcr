@@ -245,7 +245,7 @@ The normal server transition and current delivery gates are separate in that rec
 
 The [broader source contract](../research/codex-reporting-acceptance/source-contract.md) remains blocked: retained evidence cannot reliably invalidate continuous foreground identity when native backtracking changes lineage before its next prompt. That earlier Task 1 stop gate and prohibition on Tasks 2–3 concerned the broader metrics/continuous-identity plan; it does not block the separately approved hooks-only scope. No rollout collector or safe ongoing metrics route is claimed. Historical probes and failures remain retained.
 
-Initial resume/picker/fork and broad transitions remain disabled for reporting. Missing ending hooks or API errors cannot imply Ready and may leave Busy; a new prompt while an old turn remains open disables reporting. Approval Input requests are available from verified root `PermissionRequest` (`approval:{turn_id}`) with close on the next attributable root activity; questions remain a named blocker (`unavailable_no_distinct_surface` — no distinct question open/close surface). Context, usage and cost remain unavailable in this milestone. Linux TUI/synthetic app-path tests are the merge bar for Ready and approval Input alerts; native Codex CUA smoke is required before merge. No Linux native GUI acceptance or concurrent provider-launch throughput is claimed. Ordinary native Codex behavior is preserved. Existing Claude acceptance does not cover Codex.
+Picker/fork and broad transitions remain disabled for reporting; exact `codex resume UUID` admits Ready after certified resume identity. Missing ending hooks or API errors cannot imply Ready and may leave Busy; a new prompt while an old turn remains open disables reporting. Approval Input requests are available from verified root `PermissionRequest` (`approval:{turn_id}`) with close on the next attributable root activity; questions remain a named blocker (`unavailable_no_distinct_surface` — no distinct question open/close surface). Context, usage and cost remain unavailable in this milestone. Linux TUI/synthetic app-path tests are the merge bar for Ready and approval Input alerts; native Codex CUA smoke is required before merge. No Linux native GUI acceptance or concurrent provider-launch throughput is claimed. Ordinary native Codex behavior is preserved. Existing Claude acceptance does not cover Codex.
 
 The [macOS native acceptance](../research/codex-response-ready-acceptance/native-final/README.md) verified the actual setup output, background Ready, same-process reconnect, repeated turns, root/child separation, next-prompt backtrack rebinding and retained Ready with Unavailable health after exit at 50 columns. Metrics remained null; unchanged interruption behavior retains Task 2 evidence. The [final verification record](../research/codex-response-ready-acceptance/final/README.md) records all four hosted CI jobs passing in run `34570470022`: 663 macOS and 637 Linux tests, 14 intentional ignores per platform, plus separate passing capacity and memory gates. Linux coverage is automated. Local full-suite failures and the failed native input attempt remain retained; neither is presented as a pass. The accepted native retry and complete task-owned process/socket/temporary-data cleanup are recorded separately.
 
@@ -563,9 +563,10 @@ Durable acknowledgments follow successful SQLite writes. Temporary write failure
 Issue #118 installs the Codex adapter on the shared recovery path. Exact managed
 0.153.0 root startup/prompt hooks capture the UUID and matching native history
 header. Reopen executes `codex resume UUID` without a prompt and preserves the
-known reference before a new provider event. Initial resume reporting stays
-unavailable; the Dashboard and CLI expose that limitation and never restore old
-Ready/Unread. Native acceptance belongs to #128 and remains unverified here.
+known reference before a new provider event. Exact resume admits Observed Ready
+after matching `SessionStart(source=resume)` Root identity; process creation is
+not attachment, and old Ready/Unread are never restored. Native continuity
+acceptance belongs to #128 and remains unverified here.
 See [configuration, failure behavior and identity limits](codex-reporting-setup.md#retained-conversation-recovery).
 
 ## Retained Pi and Oh My Pi conversations

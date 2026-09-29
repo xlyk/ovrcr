@@ -162,12 +162,7 @@ fn activity_clause(session: &SessionSummary) -> String {
             && !recovery.attached
             && recovery.unavailable.is_none()
         {
-            parts.push(
-                session
-                    .resume_reporting_limitation()
-                    .unwrap_or("Agent launched; awaiting conversation attachment")
-                    .into(),
-            );
+            parts.push("Agent launched; awaiting conversation attachment".into());
         }
         if recovery.requires_ack {
             parts.push("confirm previous processes stopped".into());
@@ -275,7 +270,7 @@ mod tests {
     };
 
     #[test]
-    fn codex_resume_exposes_unavailable_reporting_not_ready_or_pending_attachment() {
+    fn codex_resume_awaits_attachment_before_ready_without_claiming_unavailable() {
         let mut row = session(SessionPhase::Running, None);
         row.kind = ovrcr_protocol::SessionKind::Agent {
             name: "codex".into(),
@@ -288,9 +283,12 @@ mod tests {
             failure: None,
         });
         let clause = activity_clause(&row);
-        assert!(clause.contains("reporting unavailable"), "{clause}");
-        assert!(!clause.contains("awaiting"), "{clause}");
-        assert!(!clause.contains("ready"), "{clause}");
+        assert!(
+            clause.contains("awaiting conversation attachment"),
+            "{clause}"
+        );
+        assert!(!clause.contains("reporting unavailable"), "{clause}");
+        assert!(!clause.contains("response ready"), "{clause}");
     }
 
     #[test]

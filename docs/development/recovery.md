@@ -43,9 +43,10 @@ used. Resume stays header-only; the conversation-subject title path may read an
 ephemeral bounded tail but must not persist transcript content. Resume invokes
 `codex resume UUID` through the existing managed launcher.
 The known reference remains durably associated with the new run before callbacks.
-Initial resume reporting remains unavailable; `attached` remains false. Dashboard
-status and CLI `reporting_unavailable` expose this limitation. A native exit before
-attachment uses the shared retained failure/Retry path.
+Exact resume reporting is admitted only after matching `SessionStart(source=resume)`
+Root identity; `attached` stays false until then and Dashboard status shows awaiting
+attachment. Historical responses are not replayed. A native exit before attachment
+uses the shared retained failure/Retry path.
 
 Recovery records the last authoritative hook identity, not continuous selected
 history: silent native backtracking is unobservable until another startup/prompt
