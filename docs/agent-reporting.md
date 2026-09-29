@@ -40,6 +40,13 @@ it. `PermissionRequest`, idle notifications, and bare tool events alone do not o
 request. AskUserQuestion remains unavailable until a distinct question open/close
 surface is verified.
 
+Managed Codex reports Approval Input requests from a verified root
+`PermissionRequest` (`approval:{turn_id}`) the same way: WaitingInput effective
+activity, one input-needed alert per request identity, and close on the next
+attributable root activity. `PreToolUse`/`PostToolUse` alone never open a request.
+Questions remain unavailable (no distinct question surface). See
+[Codex setup](codex-reporting-setup.md).
+
 Usage covers recognized records from the root transcript and remains **partial**,
 even after EOF, Stop, or process exit. It does not certify all auxiliary work or
 billing. Input tokens already include cache-read and cache-write subsets; do not
