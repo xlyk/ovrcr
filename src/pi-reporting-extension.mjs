@@ -15,7 +15,8 @@ import { createReporter, idOf, modelId, outcomeOf } from "./ovrcr-reporting-tran
 const OVRCR_BINARY = __OVRCR_BINARY__;
 
 function currentModel(ctx) {
-  return modelId(ctx.getModel?.());
+  // ExtensionContext exposes the live model as `ctx.model` (a getter over the session).
+  return modelId(ctx.model);
 }
 
 export default function (pi) {

@@ -320,7 +320,7 @@ reporting.
 ## Current model (Pi and Oh My Pi)
 
 A managed Pi or Oh My Pi session publishes the model the session itself reports —
-on `session_start` when `getModel()` already answers, and on every `model_select`
+on `session_start` when `ctx.model` is already set, and on every `model_select`
 after a mid-session switch. The Dashboard sidebar shows `pi:<model>` or
 `omp:<model>`. Until the first report the row stays the agent name alone. The
 model never comes from the launch flag or from terminal text. Claude's existing

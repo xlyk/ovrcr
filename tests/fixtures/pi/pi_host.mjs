@@ -48,7 +48,7 @@ export async function createHost(extensionPath, { mode = "tui", session = "sessi
       },
     },
     isIdle: () => state.idle,
-    getModel: () => state.model,
+    get model() { return state.model; },
     ui: { notify: (message, level) => state.notices.push([message, level]) },
   };
   return {
