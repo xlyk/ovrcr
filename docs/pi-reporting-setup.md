@@ -10,7 +10,8 @@ under `~/.pi` is read or written by OVRCR.
 
 | Pi event | OVRCR |
 | --- | --- |
-| `session_start` (startup, resume, fork, new, reload) | Idle; the conversation is bound to Pi's session id. Historical responses never become Ready. |
+| `session_start` (startup, resume, fork, new, reload) | Idle; the conversation is bound to Pi's session id. Historical responses never become Ready. When Pi's own API already has a model, that model is published for the sidebar (`pi:<model>`). |
+| `model_select` | The sidebar model is replaced with the one Pi reports. Until the first model report the row stays the agent name alone. Launch flags and terminal text are never read. |
 | `agent_start` | Busy. Retries, automatic compaction and queued follow-ups stay in the same response cycle. |
 | `agent_end` | The cycle's outcome is recorded from the last assistant message (a tool error alone is not a failed run). |
 | `agent_settled` | Ready `· confirmed` for a successful cycle, Error for an assistant error, Idle for an aborted or empty cycle. One Unread per Ready. |
@@ -49,8 +50,9 @@ arguments or results, titles or credentials.
   `unavailable_no_provider_surface` for Pi, which has no question surface beyond
   its dialogs, and `available_tool_lifetime` for Oh My Pi, whose question request
   spans the ask tool's execution rather than the dialog's visibility; `recovery`
-  is available for both (a source boundary or `/ovrcr-reattach`) and `metrics` is
-  absent by design.
+  is available for both (a source boundary or `/ovrcr-reattach`) and usage/cost
+  `metrics` remain absent by design (the current model still reaches the sidebar
+  through the shared Metrics observation).
 
 ## Removal
 

@@ -1,16 +1,20 @@
 //! One authenticated receiver for every provider whose managed launch loads an OVRCR
 //! reporting extension. The vocabulary is Pi's — `session_start`, `agent_start`,
-//! `agent_end`, `agent_settled`, `session_shutdown` — and each harness says only who it
-//! is and how good the Ready at its settled boundary is. Oh My Pi has no settled event of
-//! its own: its extension synthesizes one and this receiver publishes it as Observed,
-//! because a stop hook may still continue after a clean end. Everything that is not this
-//! vocabulary — the lease, the binding, the revisions, the fences, the pause — belongs to
-//! the [`Reporter`](super::reporter::Reporter) each call is handed.
+//! `agent_end`, `agent_settled`, `model_select`, `session_shutdown` — and each harness
+//! says only who it is and how good the Ready at its settled boundary is. Oh My Pi has no
+//! settled event of its own: its extension synthesizes one and this receiver publishes it
+//! as Observed, because a stop hook may still continue after a clean end. The current
+//! model arrives only from the session's own report (`session_start` or `model_select`),
+//! never from a launch flag or terminal text, and is published as a Metrics observation
+//! for the sidebar. Everything that is not this vocabulary — the lease, the binding, the
+//! revisions, the fences, the pause — belongs to the [`Reporter`](super::reporter::Reporter)
+//! each call is handed.
 use super::InvocationLease;
 use super::reporter::{self, Fence, Reporter};
 use ovrcr_protocol::{
-    ActivitySample, AgentActivity, AgentObservation, AgentProvider, InputKind, InputRequest,
-    MAX_INPUT_REQUESTS, SampleQuality, validate_agent_id,
+    ActivitySample, AgentActivity, AgentObservation, AgentProvider, ContextSample, InputKind,
+    InputRequest, MAX_INPUT_REQUESTS, Measurement, MetricsSample, SampleQuality, UsageCoverage,
+    UsageScope, UsageTotals, validate_agent_id,
 };
 use ovrcr_runtime::agent_runner::{HookHandler, private_identifier};
 use std::{
@@ -124,11 +128,12 @@ pub fn receiver(
         recovery,
         current: None,
         open_requests: Vec::new(),
+        model: None,
     })
 }
 
-/// One extension's frames. Only the response cycle they open and the Input requests they
-/// leave on screen are this receiver's to remember.
+/// One extension's frames. Only the response cycle they open, the Input requests they
+/// leave on screen, and the model they last published are this receiver's to remember.
 struct Events {
     harness: &'static Harness,
     recovery: Option<ovrcr_protocol::ExtensionConversation>,
@@ -139,6 +144,9 @@ struct Events {
     /// travels with the id because only the `prompt` namespace's kind comes from the
     /// payload; `approval` and `question` are fixed by their namespace.
     open_requests: Vec<(String, InputKind)>,
+    /// The model last accepted for this binding. Cleared when a bind starts a fresh
+    /// generation or reporting pauses, so a later identical report is published again.
+    model: Option<String>,
 }
 
 impl reporter::Frames for Events {
@@ -201,8 +209,9 @@ impl reporter::Frames for Events {
             }
             // A fresh generation's snapshot is blank at the server, so the local set goes
             // with it: a request the paused or reattached producer left open is no longer
-            // published.
+            // published, and any previously published model must be reported again.
             self.open_requests.clear();
+            self.model = None;
         } else if fence == Fence::Gap {
             return self.pause(reporter, "source_gap", deadline);
         } else if fence == Fence::LostClose {
@@ -230,6 +239,9 @@ impl reporter::Frames for Events {
                 if let Some(unavailable) = reporter.bind_or_disable(session, deadline, false) {
                     return unavailable;
                 }
+                // A fresh binding starts without a published model: inventing one from a
+                // previous generation or from the launch argv is not this receiver's job.
+                self.model = None;
                 // A reattach reports what the harness's own API says about the session: a
                 // session that is not idle is doing something this reporter did not see, and
                 // uncertain is Unknown until a fresh authoritative event. An ordinary
@@ -353,6 +365,20 @@ impl reporter::Frames for Events {
                 };
                 (state, SampleQuality::Observed, None)
             }
+            "model_select" => {
+                // Mid-session switch: replace the sidebar model on this same binding. No
+                // activity change. An unbound, empty, or identical report invents nothing.
+                let model = payload["model"]
+                    .as_str()
+                    .filter(|value| validate_agent_id(value).is_ok());
+                if reporter.binding().is_none() || model.is_none() {
+                    return reporter::IGNORED.to_vec();
+                }
+                return match self.publish_model(reporter, model, deadline) {
+                    None => reporter::ACCEPTED.to_vec(),
+                    Some(failed) => failed,
+                };
+            }
             "unavailable" => {
                 // The producer dropped frames of its own: what it reported is no longer
                 // complete, but the native session and this lease are both still alive.
@@ -387,6 +413,13 @@ impl reporter::Frames for Events {
                 return reporter::UNAVAILABLE.to_vec();
             }
         }
+        // The session's own model report on announce (startup, switch, reattach). Absent
+        // when the harness has not selected one yet: the sidebar stays the agent name.
+        if event == "session_start"
+            && let Some(failed) = self.publish_model(reporter, payload["model"].as_str(), deadline)
+        {
+            return failed;
+        }
         activity
     }
 }
@@ -403,10 +436,61 @@ impl Events {
     ) -> Vec<u8> {
         self.current = None;
         self.open_requests.clear();
+        self.model = None;
         if reporter.health(Some(reason), deadline) {
             reporter::ACCEPTED.to_vec()
         } else {
             reporter::UNAVAILABLE.to_vec()
+        }
+    }
+    /// Publish the session-reported model as a Metrics observation. `None` means nothing
+    /// changed (missing, invalid, or identical); `Some` is a failed publish the caller
+    /// must return. Never invents a model when the session has not reported one.
+    fn publish_model(
+        &mut self,
+        reporter: &mut Reporter,
+        model: Option<&str>,
+        deadline: Instant,
+    ) -> Option<Vec<u8>> {
+        let model = model.filter(|value| validate_agent_id(value).is_ok())?;
+        if self.model.as_deref() == Some(model) {
+            return None;
+        }
+        let source = self.harness.origin.to_owned();
+        let sample = MetricsSample {
+            model: Some(model.to_owned()),
+            context: Measurement {
+                value: ContextSample {
+                    used_tokens: None,
+                    capacity_tokens: None,
+                    quality: SampleQuality::Observed,
+                },
+                source: source.clone(),
+            },
+            usage: Measurement {
+                value: UsageTotals {
+                    scope: UsageScope::Conversation,
+                    coverage: UsageCoverage::Partial,
+                    input_tokens: None,
+                    output_tokens: None,
+                    cache_read_tokens: None,
+                    cache_write_tokens: None,
+                    reasoning_output_tokens: None,
+                },
+                source: source.clone(),
+            },
+            cost: Measurement {
+                value: None,
+                source,
+            },
+        };
+        let published =
+            reporter.publish(AgentObservation::Metrics(Box::new(sample)), deadline);
+        if published == reporter::ACCEPTED {
+            self.model = Some(model.to_owned());
+            None
+        } else {
+            Some(published)
         }
     }
     /// Insert-if-absent, then publish the whole set. A repeated open of a known id and the
@@ -537,6 +621,7 @@ mod tests {
                 recovery: None,
                 current: None,
                 open_requests: Vec::new(),
+                model: None,
             },
             reporter,
             supervisor,
@@ -1577,6 +1662,110 @@ mod tests {
                 harness.name
             );
         }
+    }
+
+    #[test]
+    fn session_start_and_model_select_publish_the_reported_model_for_both_harnesses() {
+        for harness in [&pi::HARNESS, &omp::HARNESS] {
+            let (mut events, mut reporter, supervisor) = start(harness);
+            let start = with(
+                &harness_event(harness, "a", 1, "session_start", None, "none"),
+                "model",
+                "grok-4.7".into(),
+            );
+            assert_eq!(
+                drive(&mut events, &mut reporter, &start),
+                reporter::ACCEPTED,
+                "{} session_start",
+                harness.name
+            );
+            let switched = with(
+                &harness_event(harness, "a", 2, "model_select", None, "none"),
+                "model",
+                "claude-sonnet-4".into(),
+            );
+            assert_eq!(
+                drive(&mut events, &mut reporter, &switched),
+                reporter::ACCEPTED,
+                "{} model_select",
+                harness.name
+            );
+            // An identical model on a fresh sequence is accepted but does not republish.
+            let same = with(
+                &harness_event(harness, "a", 3, "model_select", None, "none"),
+                "model",
+                "claude-sonnet-4".into(),
+            );
+            assert_eq!(
+                drive(&mut events, &mut reporter, &same),
+                reporter::ACCEPTED
+            );
+            assert_eq!(
+                Supervisor::models(&supervisor.observed()),
+                vec![Some("grok-4.7".into()), Some("claude-sonnet-4".into())],
+                "{} mid-session switch replaces the previous model; identical is not republished",
+                harness.name
+            );
+        }
+    }
+
+    #[test]
+    fn no_model_is_invented_when_the_session_has_not_reported_one() {
+        let (mut events, mut reporter, supervisor) = managed();
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &event("a", 1, "session_start", None, "none")
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &event("a", 2, "model_select", None, "none")
+            ),
+            reporter::IGNORED,
+            "model_select without a model invents nothing"
+        );
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &with(
+                    &event("a", 3, "model_select", None, "none"),
+                    "model",
+                    "".into()
+                )
+            ),
+            reporter::IGNORED,
+            "empty model invents nothing"
+        );
+        assert!(
+            Supervisor::models(&supervisor.observed()).is_empty(),
+            "session_start without a model leaves Metrics unpublished"
+        );
+    }
+
+    #[test]
+    fn model_select_before_a_binding_is_ignored() {
+        let (mut events, mut reporter, supervisor) = managed();
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &with(
+                    &event("a", 1, "model_select", None, "none"),
+                    "model",
+                    "grok-4.7".into()
+                )
+            ),
+            reporter::IGNORED,
+            "an unannounced producer never reaches the binding"
+        );
+        assert!(reporter.binding().is_none());
+        assert!(Supervisor::models(&supervisor.observed()).is_empty());
     }
 
     #[test]

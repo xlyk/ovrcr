@@ -6,11 +6,15 @@
 // that Ready as Observed because the stop hook may still continue — a later agent_start
 // then opens a new cycle. Session switches happen in place on this same instance, so a
 // switch re-announces the conversation with session_start.
-import { createReporter, idOf, outcomeOf } from "./ovrcr-reporting-transport.mjs";
+import { createReporter, idOf, modelId, outcomeOf } from "./ovrcr-reporting-transport.mjs";
 
 // Replaced with the JSON-encoded absolute path of the supervising ovrcr binary when the
 // receiver materializes this file for one invocation.
 const OVRCR_BINARY = __OVRCR_BINARY__;
+
+function currentModel(ctx) {
+  return modelId(ctx.getModel?.());
+}
 
 export default function (omp) {
   if (!process.env.OVRCR_AGENT_SOCKET || !process.env.OVRCR_AGENT_TOKEN) return;
@@ -31,7 +35,12 @@ export default function (omp) {
     producer.run = 0; // an announcement belongs to no cycle
     producer.open = false;
     producer.outcome = "none";
-    return report("session_start", ctx, { reason, previous });
+    const model = currentModel(ctx);
+    return report("session_start", ctx, {
+      reason,
+      previous,
+      ...(model ? { model } : {}),
+    });
   }
 
   omp.on("session_start", (_event, ctx) => announce(ctx, "startup", null));
@@ -57,6 +66,13 @@ export default function (omp) {
     const settled = report("agent_settled", ctx);
     producer.open = false;
     return Promise.all([end, settled]).then(([, sent]) => sent);
+  });
+  // The model the session is using right now: Oh My Pi fires this on /model, cycling, and
+  // any other set. Until the first report the sidebar stays the agent name alone; a later
+  // switch replaces the previous model. Launch flags and terminal text are never read.
+  omp.on("model_select", (event, ctx) => {
+    const model = modelId(event.model);
+    return model ? report("model_select", ctx, { model }) : Promise.resolve(false);
   });
   // Root-only: task and advisor sessions run in this same process and their approval
   // events carry their own session id (or ""), never the interactive root's.
@@ -109,7 +125,11 @@ export default function (omp) {
   omp.registerCommand("ovrcr-reattach", {
     description: "Reattach OVRCR reporting for this session",
     handler: async (_args, ctx) => {
-      const ok = await reattach(ctx, { idle: Boolean(ctx.isIdle?.()) });
+      const model = currentModel(ctx);
+      const ok = await reattach(ctx, {
+        idle: Boolean(ctx.isIdle?.()),
+        ...(model ? { model } : {}),
+      });
       ctx.ui?.notify?.(ok ? "OVRCR reporting reattached" : "OVRCR reporting is unavailable", ok ? "info" : "warning");
     },
   });

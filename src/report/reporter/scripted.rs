@@ -169,6 +169,22 @@ impl Supervisor {
             .collect()
     }
 
+    /// The model field of each published Metrics sample, in order.
+    pub(crate) fn models(observed: &[Observed]) -> Vec<Option<String>> {
+        observed
+            .iter()
+            .filter_map(|entry| match entry {
+                Observed::Report(report) => match &report.observation {
+                    ovrcr_protocol::AgentObservation::Metrics(sample) => {
+                        Some(sample.model.clone())
+                    }
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The reporter-health reasons that reached the supervisor, in order.
     pub(crate) fn health(observed: &[Observed]) -> Vec<(ovrcr_protocol::ReporterHealth, String)> {
         observed
