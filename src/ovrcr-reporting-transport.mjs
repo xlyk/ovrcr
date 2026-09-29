@@ -28,6 +28,16 @@ export function idOf(file) {
   return file?.match(/(?:^|[/_])([A-Za-z0-9][A-Za-z0-9.-]{0,63})\.jsonl$/)?.[1] ?? null;
 }
 
+/**
+ * The model identity alone, as the session reports it. Rejects empty, oversized, or
+ * control-bearing values so a bad model never reaches the helper as a made-up label.
+ */
+export function modelId(model) {
+  const id = typeof model?.id === "string" ? model.id.trim() : "";
+  if (!id || id.length > 256 || /[\u0000-\u001f\u007f]/.test(id)) return null;
+  return id;
+}
+
 export function createReporter({
   binary,
   helperArgs,

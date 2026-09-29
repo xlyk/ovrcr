@@ -78,18 +78,7 @@ test("registers OMP's lifecycle and switch events", async () => {
   const host = await createHost(materialize().extension);
   // An EXACT list, so a later ticket cannot add a fabricated plugin-refresh or
   // before-switch subscription unnoticed.
-  assert.deepEqual(host.registered(), [
-    "agent_end",
-    "agent_start",
-    "session_shutdown",
-    "session_start",
-    "session_switch",
-    "session_tree",
-    "tool_approval_requested",
-    "tool_approval_resolved",
-    "tool_execution_end",
-    "tool_execution_start",
-  ]);
+  assert.deepEqual(host.registered(), ["agent_end", "agent_start", "model_select", "session_shutdown", "session_start", "session_switch", "session_tree", "tool_approval_requested", "tool_approval_resolved", "tool_execution_end", "tool_execution_start"]);
   // A plugin-resource refresh emits no extension event in Oh My Pi and never re-instantiates
   // a factory; nothing here may pretend otherwise, and a cancellable pre-switch never binds.
   assert.equal(host.registered().includes("session_before_switch"), false);
@@ -478,3 +467,40 @@ test("a next start racing an un-awaited end opens a new cycle; the settled end k
     ["agent_start", 2],
   ]);
 });
+
+test("reports the current model from getModel and model_select", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-a", model: "grok-4.7" });
+  await host.emit({ type: "session_start" });
+  await host.emit({
+    type: "model_select",
+    model: { id: "gpt-5.3-codex-spark", provider: "openai-codex" },
+    previousModel: { id: "grok-4.7", provider: "xai" },
+    source: "cycle",
+  });
+  const sent = frames(record);
+  assert.deepEqual(sent.map((f) => [f.event, f.model ?? null]), [
+    ["session_start", "grok-4.7"],
+    ["model_select", "gpt-5.3-codex-spark"],
+  ]);
+});
+
+test("a session switch re-announces the model for the new conversation", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-a", model: "grok-4.7" });
+  await host.emit({ type: "session_start" });
+  host.state.session = "sess-b";
+  host.state.model = { id: "claude-sonnet-4", provider: "anthropic" };
+  await host.emit({
+    type: "session_switch",
+    reason: "resume",
+    previousSessionFile: "/private/x/2026-09-13T00-00-00-000Z_sess-a.jsonl",
+  });
+  assert.deepEqual(frames(record).map((f) => [f.event, f.session_id, f.model ?? null]), [
+    ["session_start", "sess-a", "grok-4.7"],
+    ["session_start", "sess-b", "claude-sonnet-4"],
+  ]);
+});
+

@@ -8,11 +8,16 @@
 // This extension owns that span: `run` advances on the first `agent_start` of a cycle and
 // holds until settled, so a continuation reports work without opening a new cycle.
 // Bounded delivery lives in the transport module materialized beside this file.
-import { createReporter, idOf, outcomeOf } from "./ovrcr-reporting-transport.mjs";
+import { createReporter, idOf, modelId, outcomeOf } from "./ovrcr-reporting-transport.mjs";
 
 // Replaced with the JSON-encoded absolute path of the supervising ovrcr binary when the
 // receiver materializes this file for one invocation.
 const OVRCR_BINARY = __OVRCR_BINARY__;
+
+function currentModel(ctx) {
+  // ExtensionContext exposes the live model as `ctx.model` (a getter over the session).
+  return modelId(ctx.model);
+}
 
 export default function (pi) {
   if (!process.env.OVRCR_AGENT_SOCKET || !process.env.OVRCR_AGENT_TOKEN) return;
@@ -25,7 +30,12 @@ export default function (pi) {
     producer.run = 0;
     producer.open = false;
     producer.outcome = "none";
-    return report("session_start", ctx, { reason: event.reason, previous: idOf(event.previousSessionFile) });
+    const model = currentModel(ctx);
+    return report("session_start", ctx, {
+      reason: event.reason,
+      previous: idOf(event.previousSessionFile),
+      ...(model ? { model } : {}),
+    });
   });
   pi.on("agent_start", (_event, ctx) => {
     // A second start inside an open cycle is a continuation: same run, outcome so far kept.
@@ -44,6 +54,13 @@ export default function (pi) {
     const sent = report("agent_settled", ctx);
     producer.open = false; // the cycle closes here, whatever continuations it contained
     return sent;
+  });
+  // The model the session is using right now: Pi fires this on /model, cycling, and any
+  // other set. Until the first report the sidebar stays the agent name alone; a later
+  // switch replaces the previous model. Launch flags and terminal text are never read.
+  pi.on("model_select", (event, ctx) => {
+    const model = modelId(event.model);
+    return model ? report("model_select", ctx, { model }) : Promise.resolve(false);
   });
   // Pi coalesces nested or overlapping prompts into one outer span and does not await these
   // handlers; one counter per instance is therefore a complete identity. The prompt title is
@@ -72,7 +89,11 @@ export default function (pi) {
   pi.registerCommand("ovrcr-reattach", {
     description: "Reattach OVRCR reporting for this session",
     handler: async (_args, ctx) => {
-      const ok = await reattach(ctx, { idle: Boolean(ctx.isIdle?.()) });
+      const model = currentModel(ctx);
+      const ok = await reattach(ctx, {
+        idle: Boolean(ctx.isIdle?.()),
+        ...(model ? { model } : {}),
+      });
       ctx.ui?.notify?.(ok ? "OVRCR reporting reattached" : "OVRCR reporting is unavailable", ok ? "info" : "warning");
     },
   });

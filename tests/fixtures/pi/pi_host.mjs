@@ -13,7 +13,7 @@ export function assistant(stopReason) {
   return { role: "assistant", stopReason, content: [] };
 }
 
-export async function createHost(extensionPath, { mode = "tui", session = "session-a", idle = true } = {}) {
+export async function createHost(extensionPath, { mode = "tui", session = "session-a", idle = true, model = undefined } = {}) {
   const handlers = new Map();
   const commands = new Map();
   const api = {
@@ -27,7 +27,13 @@ export async function createHost(extensionPath, { mode = "tui", session = "sessi
   };
   const module = await import(pathToFileURL(extensionPath).href);
   await module.default(api);
-  const state = { mode, session, idle, notices: [] };
+  const state = {
+    mode,
+    session,
+    idle,
+    notices: [],
+    model: model === undefined ? undefined : { id: model, provider: "test" },
+  };
   const ctx = {
     get mode() { return state.mode; },
     hasUI: true,
@@ -42,6 +48,7 @@ export async function createHost(extensionPath, { mode = "tui", session = "sessi
       },
     },
     isIdle: () => state.idle,
+    get model() { return state.model; },
     ui: { notify: (message, level) => state.notices.push([message, level]) },
   };
   return {
@@ -61,6 +68,7 @@ export async function createHost(extensionPath, { mode = "tui", session = "sessi
 //   | session_replace[:<id>[:<reason>]] | session_tree | session_compact
 //   | run_command:<name> | idle:<true|false>
 //   | agent_end:<ok|error|aborted|none>[:continue] | agent_settled
+//   | model:<id> | model_select:<id>
 //   | ui_prompt_start:<kind> | ui_prompt_end:<kind>
 //   | tool_approval_requested:<id> | tool_approval_resolved:<id>:<true|false>
 //   | foreign_approval:<id> | tool_execution_start:<toolName>:<id>
@@ -96,7 +104,18 @@ async function main() {
         if (a) host.state.session = a;
         await host.emit({ type: "session_start", reason: b ?? "startup" });
       } else if (command === "agent_start") await host.emit({ type: "agent_start" });
-      else if (command === "agent_end") {
+      else if (command === "model") {
+        host.state.model = a ? { id: a, provider: "test" } : undefined;
+      } else if (command === "model_select") {
+        const previous = host.state.model;
+        host.state.model = a ? { id: a, provider: "test" } : undefined;
+        await host.emit({
+          type: "model_select",
+          model: host.state.model,
+          previousModel: previous,
+          source: "set",
+        });
+      } else if (command === "agent_end") {
         const messages = a === "none" ? [] : [assistant(a === "ok" ? "stop" : a)];
         await host.emit({ type: "agent_end", messages, ...(b === "continue" ? { willContinue: true } : {}) });
       } else if (command === "ui_prompt_start" || command === "ui_prompt_end") {

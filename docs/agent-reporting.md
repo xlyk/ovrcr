@@ -317,6 +317,15 @@ speculative read execution. Its speculation gate refuses while any tool lifecycl
 handler is registered, so a managed launch trades that optimization for approval
 reporting.
 
+## Current model (Pi and Oh My Pi)
+
+A managed Pi or Oh My Pi session publishes the model the session itself reports —
+on `session_start` when `ctx.model` is already set, and on every `model_select`
+after a mid-session switch. The Dashboard sidebar shows `pi:<model>` or
+`omp:<model>`. Until the first report the row stays the agent name alone. The
+model never comes from the launch flag or from terminal text. Claude's existing
+model report is unchanged.
+
 ## Context usage
 
 A context report completely replaces the stored context sample. Every accepted

@@ -73,7 +73,7 @@ test("one response cycle: start, end, settled carry run, outcome and ordered seq
   managed();
   const { extension, record } = materialize();
   const host = await createHost(extension, { session: "sess-a" });
-  assert.deepEqual(host.registered(), ["agent_end", "agent_settled", "agent_start", "session_shutdown", "session_start", "session_tree", "ui_prompt_end", "ui_prompt_start"]);
+  assert.deepEqual(host.registered(), ["agent_end", "agent_settled", "agent_start", "model_select", "session_shutdown", "session_start", "session_tree", "ui_prompt_end", "ui_prompt_start"]);
   assert.deepEqual(host.commands(), ["ovrcr-reattach"]);
   await host.emit({ type: "session_start", reason: "startup" });
   await host.emit({ type: "agent_start" });
@@ -340,3 +340,35 @@ test("a replacement factory is a new instance that names the conversation it rep
   ]);
   assert.notEqual(sent[0].instance, sent[2].instance, "a replaced factory is a new producer");
 });
+
+test("reports the current model from getModel and model_select", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-a", model: "grok-4.7" });
+  await host.emit({ type: "session_start", reason: "startup" });
+  await host.emit({
+    type: "model_select",
+    model: { id: "claude-sonnet-4", provider: "anthropic" },
+    previousModel: { id: "grok-4.7", provider: "xai" },
+    source: "set",
+  });
+  const sent = frames(record);
+  assert.deepEqual(sent.map((f) => [f.event, f.model ?? null]), [
+    ["session_start", "grok-4.7"],
+    ["model_select", "claude-sonnet-4"],
+  ]);
+  assert.ok(!JSON.stringify(sent).includes("provider"));
+});
+
+test("omits model until the session reports one", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-a" });
+  await host.emit({ type: "session_start", reason: "startup" });
+  await host.emit({ type: "model_select", model: undefined, previousModel: undefined, source: "set" });
+  const sent = frames(record);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].event, "session_start");
+  assert.equal(sent[0].model, undefined);
+});
+
