@@ -10,7 +10,7 @@ Every stable release at or above the minimum below is compatible, including late
 | Oh My Pi | >=18.2.2 | 18.1.19 |
 | Grok | >=1.0.40 | none (history retention only) |
 
-Codex 0.158+ delivers hooks through a detached `app-server --managed-daemon`; managed OVRCR launches canonicalize `CODEX_HOME` and refresh that daemon so reporters inherit a live private channel. Delivery on 0.158 is not yet a recorded native acceptance row.
+Codex 0.158+ delivers hooks through a detached `app-server --managed-daemon`; managed OVRCR launches refresh that daemon so reporters inherit a live private channel. Prefer a real absolute `CODEX_HOME` (not a `/tmp` symlink). Delivery on 0.158 is not yet a recorded native acceptance row.
 
 Prereleases, build-suffixed versions, malformed versions and versions below the floor are outside the compatible range. Historical tested versions can fall outside the current range: OMP 18.1.19 reporting evidence does not certify 18.2.2 recovery.
 

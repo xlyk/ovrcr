@@ -156,33 +156,21 @@ pub fn resume_argv(reference: &CodexConversation) -> Result<Vec<OsString>> {
 /// Prepare this managed Codex launch so reporters can reach the private channel.
 ///
 /// Codex CLI 0.158 runs hooks from a detached `app-server --managed-daemon` that
-/// captures environment at daemon start and can outlive a prior TUI. Canonicalize
-/// `CODEX_HOME` (Codex rejects helper PATH aliases when it resolves under `/tmp`)
-/// and stop any CODEX_HOME-owned managed daemon so the new TUI starts a fresh one
-/// under this process tree with the current `OVRCR_AGENT_*` channel.
+/// captures environment at daemon start and can outlive a prior TUI. Stop any
+/// CODEX_HOME-owned managed daemon so the new TUI starts a fresh one under this
+/// process tree with the current `OVRCR_AGENT_*` channel. Does not rewrite
+/// `CODEX_HOME` (recovery compares the recorded directory exactly).
 pub fn prepare_managed_launch() {
-    canonicalize_codex_home();
     stop_stale_app_server_daemon();
-}
-
-fn canonicalize_codex_home() {
-    let Ok(dir) = config_dir() else {
-        return;
-    };
-    let Ok(real) = std::fs::canonicalize(&dir) else {
-        return;
-    };
-    if real.as_os_str() != dir.as_os_str() {
-        // Single-threaded managed launch startup; child inherits the real path.
-        unsafe { std::env::set_var("CODEX_HOME", &real) };
-    }
 }
 
 fn stop_stale_app_server_daemon() {
     let Ok(dir) = config_dir() else {
         return;
     };
-    let daemon_dir = dir.join("app-server-daemon");
+    // Resolve symlinks only for locating Codex's pid files; leave env unchanged.
+    let root = std::fs::canonicalize(&dir).unwrap_or(dir);
+    let daemon_dir = root.join("app-server-daemon");
     stop_codex_pid_file(&daemon_dir.join("daemon.pid"), true);
     stop_codex_pid_file(&daemon_dir.join("daemon-updater.pid"), false);
 }
