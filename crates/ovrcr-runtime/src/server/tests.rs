@@ -7620,3 +7620,83 @@ fn failed_root_shell_keeps_setup_pending_and_does_not_duplicate_launch() {
     assert!(state.sessions.lock().unwrap().is_empty());
     assert_eq!(state.retained.lock().records().count(), 1);
 }
+
+#[test]
+fn cli_created_agent_label_uses_kind_not_launcher_argv0() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = root.path().join("work");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let socket_dir = tempfile::tempdir().unwrap();
+    let socket = socket_dir.path().join("server.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let registry = Registry {
+        projects: vec![crate::config::ProjectRecord {
+            name: "project".into(),
+            repo: root.path().to_path_buf(),
+            workspace_root: root.path().to_path_buf(),
+            workspaces: vec![crate::config::WorkspaceRecord {
+                id: "workspace".into(),
+                path: cwd,
+                branch: "main".into(),
+                git_identity: None,
+                setup_pending: false,
+            }],
+        }],
+    };
+    let (state, _dispatch_receiver, _event_receiver) = test_state_with_socket(socket, registry);
+
+    // argv0 is a shell binary; kind is the harness. Label must follow kind.
+    let pi = state
+        .create_session(ovrcr_protocol::CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent { name: "pi".into() },
+            project: "project".into(),
+            workspace: "workspace".into(),
+            name: "feature-pi".into(),
+            label: None,
+            argv: vec!["sleep".into(), "30".into()],
+        })
+        .unwrap();
+    assert_eq!(
+        pi.label, "pi",
+        "CLI-created Pi must not inherit argv0 as harness"
+    );
+    assert_eq!(
+        pi.kind,
+        ovrcr_protocol::SessionKind::Agent { name: "pi".into() }
+    );
+    assert_eq!(pi.name, "feature-pi");
+
+    let claude = state
+        .create_session(ovrcr_protocol::CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent {
+                name: "claude".into(),
+            },
+            project: "project".into(),
+            workspace: "workspace".into(),
+            name: "feature-claude".into(),
+            label: None,
+            argv: vec!["sleep".into(), "30".into()],
+        })
+        .unwrap();
+    assert_eq!(claude.label, "claude");
+    assert_eq!(claude.name, "feature-claude");
+
+    let shell = state
+        .create_session(ovrcr_protocol::CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Terminal,
+            project: "project".into(),
+            workspace: "workspace".into(),
+            name: "build".into(),
+            label: None,
+            argv: vec!["sleep".into(), "30".into()],
+        })
+        .unwrap();
+    assert_eq!(shell.label, "sleep");
+    assert_eq!(shell.name, "build");
+
+    for summary in [pi, claude, shell] {
+        if let Some(session) = state.sessions.lock().unwrap().remove(&summary.id) {
+            let _ = session.terminate(Duration::from_millis(200));
+        }
+    }
+}
