@@ -509,8 +509,11 @@ Workspace removal remains a separate action.
 Claude recovery retains the exact UUID, provider history path, executable and
 non-secret configuration references. Missing history, executable, recorded
 working directory or matching configuration blocks recovery with a diagnostic;
-Retry never starts fresh. An observed unsupported clear/resume/fork transition
-permanently disables recovery for that row, retaining its old UUID as context.
+Retry never starts fresh. An observed unsupported or ambiguous Claude
+conversation transition (`identity_transition_unavailable`, including bare fork
+without a leave of the current conversation) permanently disables recovery for
+that row, retaining its old UUID as context. Supported clear / in-process resume /
+foreground-branch replacements update the retained reference instead.
 Absent callbacks or temporary reporting failures alone do not erase that UUID.
 Inventory restoration never launches a process. First display in a visible pane
 requests one native resume for an unarchived interrupted Agent with an available

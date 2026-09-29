@@ -67,10 +67,13 @@ minutes or its session exits; a fresh component carries no label.
 
 Inspect the complete observation with `ovrcr session usage SESSION_ID` or terminal
 inventory. Both retain the raw binding, activity, metrics, and source health.
-Reporting transport can be connected while usage or cost is unknown. A conversation
-switch such as `/clear` makes the old binding unavailable; it does not create a
-new binding automatically. Start a fresh supervised invocation to track another
-conversation.
+Reporting transport can be connected while usage or cost is unknown. Supported in-process conversation replacements (`/clear`, in-process resume, and
+foreground `/branch` when native leave + `SessionStart(source=fork)` evidence is
+present) rebind the same managed invocation to the new foreground identity and
+retire obsolete request/turn state without acknowledging Unread. Ambiguous forms
+such as a bare fork SessionStart make reporting unavailable with an actionable
+warning while Claude keeps running; start a fresh supervised invocation to obtain
+a new lease after that warning.
 
 ## Legacy unbound reporting
 

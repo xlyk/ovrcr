@@ -7,9 +7,16 @@ RFC 4122 UUIDv4. 2.1.268 and later compatible patches also support the separate-
 The short form remains unavailable on 2.1.267. Equals syntax, picker/name/search
 values, and positional prompts on resume are excluded. Fresh invocations retain
 their existing safe options and single positional prompt. Continue, print mode,
-background/fork mode, and in-process conversation switching are not supported
-reporting paths. See the
-[support matrix](agent-reporting-support.md) for evidence and remaining gaps.
+and background/fork launch flags remain unsupported reporting paths.
+
+In-process conversation replacements are followed only when native hooks name a
+trustworthy foreground identity: `/clear` (`SessionEnd(reason=clear)` then
+`SessionStart(source=clear)`), in-process resume (`SessionStart(source=resume)` after
+an observed leave), and foreground `/branch` (`SessionEnd` of the current conversation
+then `SessionStart(source=fork)`). Same-conversation `/compact` does not invent a
+replacement. A bare `SessionStart(source=fork)` without that leave is treated as the
+unobservable background-fork gap and makes reporting unavailable while Claude keeps
+running. See the [support matrix](agent-reporting-support.md).
 
 ## Compose the settings
 
@@ -117,9 +124,13 @@ token usage, and estimated cost when available. Unknown values remain unknown. A
 connected reporter does not imply complete accounting or Confirmed settling. Read
 the [reporting contract](agent-reporting.md) for scope and freshness semantics.
 
-After `/clear` or another identity transition, start a fresh supervised invocation
-to restore tracking. Detaching the dashboard leaves the running invocation intact;
-server death does not preserve live sessions or reporting state.
+Supported in-process clear / resume / foreground-branch replacements rebind
+reporting to the new foreground conversation under a fresh Reporting generation.
+An unsupported or ambiguous transition shows `identity_transition_unavailable`
+with `ovrcr agent doctor claude --json` recovery guidance and leaves Claude running;
+start a fresh supervised invocation only when you need a new lease after that
+warning. Detaching the dashboard leaves the running invocation intact; server death
+does not preserve live sessions or reporting state.
 
 ## Remove the integration
 

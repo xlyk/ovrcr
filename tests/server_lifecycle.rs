@@ -7756,11 +7756,45 @@ fn agent_admission_native_helper() {
                 payload["hook_event_name"] = "SessionEnd".into();
                 payload["reason"] = "clear".into();
             }
+            "fork-leave" => {
+                payload["hook_event_name"] = "SessionEnd".into();
+                payload["reason"] = "resume".into();
+            }
             "branch" => {
                 payload["source"] = "fork".into();
                 payload["session_id"] = "uncertified-other-root".into();
             }
             "resume-transition" => payload["source"] = "resume".into(),
+            value if value.starts_with("clear-replace:") => {
+                let id = value.split_once(':').unwrap().1;
+                payload["source"] = "clear".into();
+                payload["session_id"] = id.into();
+                if let Some(path) = std::env::var_os("OVRCR_TEST_TRANSCRIPT") {
+                    let replaced =
+                        std::path::PathBuf::from(path).with_file_name(format!("{id}.jsonl"));
+                    std::fs::write(&replaced, "").ok();
+                    payload["transcript_path"] = replaced.to_string_lossy().as_ref().into();
+                }
+            }
+            value if value.starts_with("fork-replace:") => {
+                let id = value.split_once(':').unwrap().1;
+                payload["source"] = "fork".into();
+                payload["session_id"] = id.into();
+            }
+            value if value.starts_with("resume-to:") => {
+                let id = value.split_once(':').unwrap().1;
+                payload["source"] = "resume".into();
+                payload["session_id"] = id.into();
+                if let Some(path) = std::env::var_os("OVRCR_TEST_TRANSCRIPT") {
+                    payload["transcript_path"] = path.to_string_lossy().as_ref().into();
+                }
+            }
+            value if value.starts_with("prompt-exit:") => {
+                let id = value.split_once(':').unwrap().1;
+                payload["hook_event_name"] = "SessionEnd".into();
+                payload["reason"] = "prompt_input_exit".into();
+                payload["session_id"] = id.into();
+            }
             "compact" => {
                 payload["hook_event_name"] = "SessionStart".into();
                 payload["source"] = "compact".into();
@@ -7790,6 +7824,12 @@ fn agent_admission_native_helper() {
                 }
                 if parts.get(3) == Some(&"oversized") {
                     payload["prompt_id"] = "p".repeat(257).into();
+                }
+                if parts
+                    .get(3)
+                    .is_some_and(|part| part.contains('-') && part.len() >= 8)
+                {
+                    payload["session_id"] = parts[3].into();
                 }
                 if parts[1] == "StopFailure" {
                     payload["error"] = "rate_limit".into();
@@ -8094,20 +8134,22 @@ impl Drop for AdmissionProxy {
     }
 }
 #[test]
-fn agent_admission_lost_bind_then_clear_resolves_without_another_startup() {
-    assert_initial_admission("clear", Some(AdmissionFault::LostBind));
+fn agent_admission_lost_bind_then_unsupported_fork_resolves_without_another_startup() {
+    assert_initial_admission("branch", Some(AdmissionFault::LostBind));
 }
 #[test]
 fn agent_admission_failed_unavailable_publication_disconnects_watch() {
-    assert_initial_admission("clear", Some(AdmissionFault::RejectHealth));
+    assert_initial_admission("branch", Some(AdmissionFault::RejectHealth));
 }
 #[test]
 fn agent_admission_failed_bind_status_disconnects_watch() {
-    assert_initial_admission("clear", Some(AdmissionFault::RejectStatus));
+    assert_initial_admission("branch", Some(AdmissionFault::RejectStatus));
 }
 
 #[test]
-fn agent_admission_private_claude_route_binds_once_and_clear_retains_lease() {
+fn agent_admission_private_claude_route_binds_once_and_clear_leave_retains_lease() {
+    // SessionEnd(clear) retires turn state but keeps the lease until a replacement
+    // SessionStart(source=clear) or an unsupported transition.
     assert_initial_admission("clear", None);
 }
 #[test]
@@ -8320,10 +8362,9 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         ovrcr::protocol::ReporterHealth::Connected
     );
 
-    for (index, command) in ["resume-transition", "clear", "branch", "resume-root"]
-        .into_iter()
-        .enumerate()
-    {
+    // Duplicate same-id resume is ignored; SessionEnd(clear) retires without freezing;
+    // a bare fork SessionStart remains the unobservable background-fork gap and freezes.
+    for (index, command) in ["resume-transition", "clear"].into_iter().enumerate() {
         assert_eq!(
             fixture.request(Request::SendTerminal {
                 session: summary.id,
@@ -8337,9 +8378,43 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         assert_eq!(current.binding, bound.binding);
         assert_eq!(
             current.health.state,
-            ovrcr::protocol::ReporterHealth::Unavailable
+            ovrcr::protocol::ReporterHealth::Connected,
+            "{command}"
         );
     }
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "branch".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "ADMISSION_CALLBACK=10");
+    let frozen = fixture.session_summary(summary.id).agent.unwrap();
+    assert_eq!(frozen.binding, bound.binding);
+    assert_eq!(
+        frozen.health.state,
+        ovrcr::protocol::ReporterHealth::Unavailable
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "resume-root".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "ADMISSION_CALLBACK=11");
+    assert_eq!(
+        fixture
+            .session_summary(summary.id)
+            .agent
+            .unwrap()
+            .health
+            .state,
+        ovrcr::protocol::ReporterHealth::Unavailable
+    );
 
     assert_eq!(
         fixture.request(Request::SendTerminal {
@@ -8472,7 +8547,7 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
             Response::Ok
         );
         fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={}", index + 9));
-        if command == closing_command {
+        if command == closing_command && closing_command == "branch" {
             let deadline = Instant::now() + Duration::from_secs(2);
             while fixture
                 .session_summary(summary.id)
@@ -8497,10 +8572,12 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         assert_eq!(current.binding, bound.binding);
         assert_eq!(current.activity_revision, 9);
         if command == closing_command {
-            assert_eq!(
-                current.health.state,
+            let expected_health = if closing_command == "clear" {
+                ovrcr::protocol::ReporterHealth::Connected
+            } else {
                 ovrcr::protocol::ReporterHealth::Unavailable
-            );
+            };
+            assert_eq!(current.health.state, expected_health, "{command}");
         }
     }
     if matches!(
@@ -8871,7 +8948,7 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
             8,
             Some("B"),
         ),
-        ("clear", Some(AgentActivity::Busy), 8, Some("B")),
+        ("branch", Some(AgentActivity::Busy), 8, Some("B")),
         ("activity:Stop:B", Some(AgentActivity::Busy), 8, Some("B")),
         (
             "activity:UserPromptSubmit:C",
@@ -9051,7 +9128,7 @@ fn claude_metrics_missing_initial_file_preserves_activity_and_recovers_same_path
     assert_claude_metrics_completion(false, true, false, false);
 }
 #[test]
-fn claude_metrics_clear_freezes_components_and_prevents_reader_reopening() {
+fn claude_metrics_unsupported_fork_freezes_components_and_prevents_reader_reopening() {
     assert_claude_metrics_completion(false, false, true, false);
 }
 #[test]
@@ -9312,7 +9389,8 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         );
     }
     if clear {
-        for (index, command) in ["clear", "grow-transcript", "statusline-unknown", "root"]
+        // Unsupported bare fork freezes reporting; later callbacks cannot reopen metrics.
+        for (index, command) in ["branch", "grow-transcript", "statusline-unknown", "root"]
             .into_iter()
             .enumerate()
         {
@@ -13765,6 +13843,253 @@ fn claude_input_requests_wait_alert_once_each_and_restore_without_unread() {
         Some(unread),
         "Input alerts never acknowledge Unread"
     );
+
+    dashboard.detach();
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "CLAUDE_ALERT_FINISHED");
+}
+
+#[test]
+fn claude_supported_conversation_switches_rebind_ready_and_input_without_unread_ack() {
+    let _guard = env_lock();
+    use ovrcr::protocol::{AgentActivity, ReporterHealth};
+    const READY: &str = "OVRCR · response ready";
+    const INPUT: &str = "OVRCR · input needed";
+    const CONV_B: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "claude-setup");
+    let (summary, probe) = claude_alert_session(&fixture, &fixture.socket, "claude-switch");
+    let expected_a = std::fs::read_to_string(&probe).unwrap();
+    let mut index = 0;
+
+    claude_activity_callback(&fixture, summary.id, &mut index, "root");
+    let gen1 = fixture
+        .session_summary(summary.id)
+        .agent
+        .unwrap()
+        .binding
+        .clone();
+    assert_eq!(gen1.conversation, expected_a);
+    assert_eq!(gen1.generation, 1);
+
+    let mut dashboard = DesktopAlertDashboard::start_for(
+        &fixture,
+        Some("desktop_notifications = true\n"),
+        "claude-switch",
+    );
+    dashboard.select("setup", "HOOK_READY");
+
+    claude_activity_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "activity:UserPromptSubmit:A",
+    );
+    claude_activity_callback(&fixture, summary.id, &mut index, "activity:Stop:A");
+    assert_eq!(
+        dashboard.wait_alert_titles(1, summary.id, "claude-switch"),
+        [READY]
+    );
+    let unread_a = fixture
+        .session_summary(summary.id)
+        .unread
+        .clone()
+        .expect("Ready on A is unread");
+    claude_activity_callback(&fixture, summary.id, &mut index, "activity:Notification:A");
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::WaitingInput
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(2, summary.id, "claude-switch"),
+        [READY, INPUT]
+    );
+
+    claude_activity_callback(&fixture, summary.id, &mut index, "clear");
+    let after_leave = fixture.session_summary(summary.id);
+    assert_eq!(
+        after_leave.agent.as_ref().unwrap().health.state,
+        ReporterHealth::Connected
+    );
+    assert!(
+        after_leave
+            .agent
+            .as_ref()
+            .unwrap()
+            .input_requests
+            .is_empty()
+    );
+    assert_eq!(after_leave.unread, Some(unread_a.clone()));
+    assert_eq!(after_leave.agent.as_ref().unwrap().binding, gen1);
+
+    claude_activity_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("clear-replace:{CONV_B}"),
+    );
+    let on_b = fixture.session_summary(summary.id).agent.unwrap();
+    assert_eq!(on_b.binding.conversation, CONV_B);
+    assert_eq!(on_b.binding.generation, 2);
+    assert_eq!(on_b.health.state, ReporterHealth::Connected);
+    assert_eq!(
+        fixture.session_summary(summary.id).unread,
+        Some(unread_a.clone())
+    );
+
+    // Late A events cannot open requests or Ready on B.
+    for command in [
+        "activity:Stop:A",
+        "activity:Notification:A",
+        &format!("activity:Stop:A:{expected_a}"),
+        &format!("activity:Notification:A:{expected_a}"),
+    ] {
+        claude_activity_callback(&fixture, summary.id, &mut index, command);
+    }
+    let stale = fixture.session_summary(summary.id);
+    assert!(stale.agent.as_ref().unwrap().input_requests.is_empty());
+    assert_eq!(stale.agent.as_ref().unwrap().binding.generation, 2);
+    assert_eq!(
+        dashboard.wait_alert_titles(2, summary.id, "claude-switch"),
+        [READY, INPUT]
+    );
+
+    claude_activity_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("activity:UserPromptSubmit:B:{CONV_B}"),
+    );
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::Busy
+    );
+    claude_activity_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("activity:Stop:B:{CONV_B}"),
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(3, summary.id, "claude-switch"),
+        [READY, INPUT, READY]
+    );
+    let ready_b = fixture.session_summary(summary.id);
+    assert_eq!(ready_b.activity, AgentActivity::ResponseReady);
+    let unread_b = ready_b.unread.clone().expect("Ready on B");
+    assert_ne!(unread_b, unread_a);
+    claude_activity_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("activity:Notification:B:{CONV_B}"),
+    );
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::WaitingInput
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(4, summary.id, "claude-switch"),
+        [READY, INPUT, READY, INPUT]
+    );
+
+    // A <- B <- A via in-process resume.
+    claude_activity_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("prompt-exit:{CONV_B}"),
+    );
+    assert!(
+        fixture
+            .session_summary(summary.id)
+            .agent
+            .as_ref()
+            .unwrap()
+            .input_requests
+            .is_empty()
+    );
+    claude_activity_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("resume-to:{expected_a}"),
+    );
+    let back_a = fixture.session_summary(summary.id).agent.unwrap();
+    assert_eq!(back_a.binding.conversation, expected_a);
+    assert_eq!(back_a.binding.generation, 3);
+    assert_eq!(
+        fixture.session_summary(summary.id).unread,
+        Some(unread_b.clone()),
+        "switch back is not a review"
+    );
+
+    // Late B events cannot affect current A lifetime.
+    claude_activity_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("activity:Stop:B:{CONV_B}"),
+    );
+    assert_eq!(
+        fixture
+            .session_summary(summary.id)
+            .agent
+            .as_ref()
+            .unwrap()
+            .binding
+            .generation,
+        3
+    );
+    assert_ne!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::ResponseReady
+    );
+
+    claude_activity_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("activity:UserPromptSubmit:C:{expected_a}"),
+    );
+    claude_activity_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("activity:Stop:C:{expected_a}"),
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(5, summary.id, "claude-switch"),
+        [READY, INPUT, READY, INPUT, READY]
+    );
+    let ready_again = fixture.session_summary(summary.id);
+    assert_eq!(ready_again.activity, AgentActivity::ResponseReady);
+    assert_ne!(ready_again.unread, Some(unread_b));
+
+    // Same-conversation compact invents no replacement.
+    let before_compact = fixture.session_summary(summary.id);
+    claude_activity_callback(&fixture, summary.id, &mut index, "compact");
+    assert_eq!(fixture.session_summary(summary.id), before_compact);
+
+    // Unsupported bare fork → persistent unavailable warning; Claude keeps running.
+    claude_activity_callback(&fixture, summary.id, &mut index, "branch");
+    let unavailable = fixture.session_summary(summary.id).agent.unwrap();
+    assert_eq!(unavailable.health.state, ReporterHealth::Unavailable);
+    assert_eq!(
+        unavailable.health.reason.as_deref(),
+        Some("identity_transition_unavailable")
+    );
+    assert!(matches!(
+        fixture.session_summary(summary.id).phase,
+        ovrcr::session::SessionPhase::Running
+    ));
 
     dashboard.detach();
     assert_eq!(

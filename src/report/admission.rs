@@ -1,4 +1,5 @@
-//! Initial-only Claude admission. Provider interpretation stays outside runtime.
+//! Claude admission and supported in-process conversation replacements.
+//! Provider interpretation stays outside runtime.
 use super::InvocationLease;
 use super::claude::{ClaudeEventKind, parse_claude_hook};
 use super::reporter::{self, Reporter};
@@ -78,6 +79,7 @@ pub fn receiver(
         initial_source: launch.map(|(_, source)| source),
         announced: false,
         initial_accepted: false,
+        pending_leave: None,
         prompt: None,
         open_requests: Vec::new(),
         metrics: None,
@@ -390,6 +392,17 @@ impl InitialSource {
     }
 }
 
+/// Native SessionEnd reasons that authorize a following SessionStart replacement.
+/// `Clear` pairs with `SessionStart(source=clear)`. `Switch` covers observed
+/// `prompt_input_exit` / `resume` ends that precede in-process resume or a
+/// foreground fork (`SessionStart(source=fork)`). Background fork has no such
+/// leave of the current conversation and remains unobservable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingLeave {
+    Clear,
+    Switch,
+}
+
 /// Claude's hooks and statusline. The conversation this invocation certified, the turn
 /// identity its prompts establish, and the transcript reader are this receiver's; the
 /// binding, the revisions and the teardown are the reporter's.
@@ -400,6 +413,8 @@ struct Hooks {
     /// Whether the certified announcement this invocation waits for has already arrived.
     announced: bool,
     initial_accepted: bool,
+    /// Leave of the current foreground conversation awaiting a matching SessionStart.
+    pending_leave: Option<PendingLeave>,
     prompt: Option<String>,
     /// Open human-input requests for this binding, oldest first. Approvals use
     /// `approval:{prompt_id}` from a verified root `Notification(permission_prompt)`.
@@ -494,13 +509,26 @@ impl Hooks {
         if event.session != expected && !transition {
             return reporter::IGNORED.to_vec();
         }
+        let session_end = matches!(&event.kind, ClaudeEventKind::SessionEnd { .. });
+        if (transition || session_end)
+            && self.initial_accepted
+            && self.bound(reporter)
+            && let Some(response) = self.follow_transition(reporter, &event, &expected, deadline)
+        {
+            return response;
+        }
         let clear = matches!(&event.kind, ClaudeEventKind::SessionEnd { reason } if reason.as_deref() == Some("clear"));
         if transition || clear {
+            // Unsupported / ambiguous / pre-admission transitions: retire reporting without
+            // guessing a replacement identity. Claude itself keeps running.
             return if self.freeze(reporter, deadline) {
                 reporter::IGNORED.to_vec()
             } else {
                 reporter::UNAVAILABLE.to_vec()
             };
+        }
+        if session_end {
+            return reporter::IGNORED.to_vec();
         }
         if let Some(state) = event.kind.activity() {
             if !self.bound(reporter) {
@@ -745,9 +773,124 @@ impl Hooks {
         final_metrics.usage.value.coverage = ovrcr_protocol::UsageCoverage::Partial;
         reporter.finalize(Box::new(final_metrics), deadline);
     }
-    /// A conversation transition or a clear ends this invocation's reporting: the binding
-    /// it certified is no longer what is on screen, and nothing replaces it here.
+    /// Retire obsolete turn and request state for the conversation being left. Does not
+    /// change the binding; a later supported SessionStart establishes the replacement.
+    fn retire_turn_state(&mut self, reporter: &mut Reporter, deadline: Instant) -> Option<Vec<u8>> {
+        self.stop_collector(deadline);
+        self.prompt = None;
+        self.metrics = None;
+        self.cost_watermark = None;
+        self.collector_caught_up = false;
+        self.close_approvals_except(reporter, None, deadline)
+    }
+
+    /// Follow a native clear / resume / foreground-fork replacement when evidence names the
+    /// new foreground identity. Returns `None` when the event is not an admitted form.
+    fn follow_transition(
+        &mut self,
+        reporter: &mut Reporter,
+        event: &super::claude::ClaudeEvent,
+        previous: &str,
+        deadline: Instant,
+    ) -> Option<Vec<u8>> {
+        match &event.kind {
+            ClaudeEventKind::SessionEnd { reason } => {
+                let leave = match reason.as_deref() {
+                    Some("clear") => PendingLeave::Clear,
+                    Some("prompt_input_exit") | Some("resume") => PendingLeave::Switch,
+                    _ => return Some(reporter::IGNORED.to_vec()),
+                };
+                if event.session != previous {
+                    return Some(reporter::IGNORED.to_vec());
+                }
+                let failed = self.retire_turn_state(reporter, deadline);
+                self.pending_leave = Some(leave);
+                Some(failed.unwrap_or_else(|| reporter::ACCEPTED.to_vec()))
+            }
+            ClaudeEventKind::SessionStart { source } => {
+                let source = source.as_str();
+                let admit = match source {
+                    // SessionStart(source=clear) names a replacement; the preceding
+                    // SessionEnd(clear) is recorded when observed but is not required to
+                    // invent identity from a later callback alone.
+                    "clear" if event.session != previous => true,
+                    // In-process resume to another conversation, or back to this one after
+                    // an observed leave. A repeated resume announcement for the current
+                    // binding without a leave is not a replacement.
+                    "resume" if event.session != previous || self.pending_leave.is_some() => true,
+                    "resume" => return Some(reporter::IGNORED.to_vec()),
+                    // Foreground /branch: SessionEnd of the current conversation then
+                    // SessionStart(source=fork, new id). A bare fork SessionStart cannot
+                    // be distinguished from background fork (named source gap).
+                    "fork"
+                        if event.session != previous
+                            && self.pending_leave == Some(PendingLeave::Switch) =>
+                    {
+                        true
+                    }
+                    _ => false,
+                };
+                if !admit {
+                    return None;
+                }
+                if source == "clear"
+                    && self.pending_leave.is_some()
+                    && self.pending_leave != Some(PendingLeave::Clear)
+                {
+                    return None;
+                }
+                Some(self.replace_foreground(
+                    reporter,
+                    &event.session,
+                    event.transcript_path.clone(),
+                    deadline,
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// Bind the new foreground conversation under a fresh Reporting generation and start
+    /// its transcript reader when the announcement names one.
+    fn replace_foreground(
+        &mut self,
+        reporter: &mut Reporter,
+        conversation: &str,
+        transcript: Option<String>,
+        deadline: Instant,
+    ) -> Vec<u8> {
+        if let Some(failed) = self.retire_turn_state(reporter, deadline) {
+            return failed;
+        }
+        self.pending_leave = None;
+        let force = self.expected.as_deref() == Some(conversation);
+        self.expected = Some(conversation.to_owned());
+        self.transcript_path = transcript;
+        if !reporter.bind(conversation, deadline, force) {
+            return reporter::UNAVAILABLE.to_vec();
+        }
+        self.start_collector(reporter, deadline);
+        if let Some(reference) = self.recovery.as_mut() {
+            reference.conversation = conversation.into();
+            if let Some(history) = self.transcript_path.as_ref() {
+                reference.history = history.into();
+            }
+            if !reference.history.as_os_str().is_empty()
+                && !reporter.retain_conversation(
+                    ovrcr_protocol::ConversationReference::Claude(reference.clone()),
+                    deadline,
+                )
+            {
+                return reporter::UNAVAILABLE.to_vec();
+            }
+        }
+        reporter::ACCEPTED.to_vec()
+    }
+
+    /// An unsupported or ambiguous transition ends this invocation's reporting: the
+    /// binding it certified is no longer trustworthy, and nothing replaces it here.
     fn freeze(&mut self, reporter: &mut Reporter, deadline: Instant) -> bool {
+        self.pending_leave = None;
         self.stop_collector(deadline);
         let _ = self.close_approvals_except(reporter, None, deadline);
         reporter.invalidate_conversation(deadline)
@@ -824,6 +967,7 @@ mod tests {
             initial_source: Some(initial_source),
             announced: false,
             initial_accepted: false,
+            pending_leave: None,
             prompt: None,
             open_requests: Vec::new(),
             metrics: None,
@@ -948,6 +1092,251 @@ mod tests {
                 "an initial admission replaces no binding, and binds exactly once"
             );
         }
+    }
+
+    const REPLACED: &str = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+
+    fn bind_startup(receiver: &mut Hooks, reporter: &mut Reporter) {
+        assert_eq!(
+            drive(receiver, reporter, &start("startup")),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            reporter.binding().map(|b| b.conversation.as_str()),
+            Some(EXPECTED)
+        );
+    }
+
+    fn session_end(reason: &str, session: &str) -> Vec<u8> {
+        envelope(serde_json::json!({
+            "hook_event_name":"SessionEnd",
+            "reason":reason,
+            "session_id":session,
+        }))
+    }
+
+    fn session_start(source: &str, session: &str) -> Vec<u8> {
+        envelope(serde_json::json!({
+            "hook_event_name":"SessionStart",
+            "source":source,
+            "session_id":session,
+            "transcript_path":format!("/exact/{session}.jsonl"),
+        }))
+    }
+
+    fn activity(event: &str, prompt: &str, session: &str) -> Vec<u8> {
+        let mut payload = serde_json::json!({
+            "hook_event_name":event,
+            "session_id":session,
+            "prompt_id":prompt,
+        });
+        if event == "Notification" {
+            payload["notification_type"] = "permission_prompt".into();
+        }
+        envelope(payload)
+    }
+
+    #[test]
+    fn supported_clear_and_resume_rebind_with_fresh_generations_and_drop_stale_requests() {
+        let (mut reporter, supervisor) = Supervisor::reporter(AgentProvider::Claude);
+        let mut receiver = hooks(InitialSource::Startup);
+        bind_startup(&mut receiver, &mut reporter);
+
+        assert_eq!(
+            drive(
+                &mut receiver,
+                &mut reporter,
+                &activity("UserPromptSubmit", "turn-a", EXPECTED)
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(
+                &mut receiver,
+                &mut reporter,
+                &activity("Notification", "turn-a", EXPECTED)
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(receiver.open_requests.len(), 1);
+
+        assert_eq!(
+            drive(
+                &mut receiver,
+                &mut reporter,
+                &session_end("clear", EXPECTED)
+            ),
+            reporter::ACCEPTED
+        );
+        assert!(
+            !reporter.closed(),
+            "SessionEnd(clear) alone must not invent permanent invalidation"
+        );
+        assert_eq!(receiver.open_requests.len(), 0);
+        assert_eq!(receiver.pending_leave, Some(PendingLeave::Clear));
+        assert_eq!(
+            reporter
+                .binding()
+                .map(|b| (b.conversation.as_str(), b.generation)),
+            Some((EXPECTED, 1))
+        );
+
+        assert_eq!(
+            drive(
+                &mut receiver,
+                &mut reporter,
+                &session_start("clear", REPLACED)
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            reporter
+                .binding()
+                .map(|b| (b.conversation.as_str(), b.generation)),
+            Some((REPLACED, 2))
+        );
+        assert_eq!(receiver.pending_leave, None);
+        assert_eq!(receiver.expected.as_deref(), Some(REPLACED));
+
+        // Late events from conversation A cannot affect B.
+        assert_eq!(
+            drive(
+                &mut receiver,
+                &mut reporter,
+                &activity("Stop", "turn-a", EXPECTED)
+            ),
+            reporter::IGNORED
+        );
+        assert_eq!(
+            drive(
+                &mut receiver,
+                &mut reporter,
+                &activity("UserPromptSubmit", "turn-b", REPLACED)
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(
+                &mut receiver,
+                &mut reporter,
+                &activity("Stop", "turn-b", REPLACED)
+            ),
+            reporter::ACCEPTED
+        );
+
+        // A -> B -> A: third generation.
+        assert_eq!(
+            drive(
+                &mut receiver,
+                &mut reporter,
+                &session_end("prompt_input_exit", REPLACED)
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(
+                &mut receiver,
+                &mut reporter,
+                &session_start("resume", EXPECTED)
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            reporter
+                .binding()
+                .map(|b| (b.conversation.as_str(), b.generation)),
+            Some((EXPECTED, 3))
+        );
+
+        let binds: Vec<_> = supervisor
+            .observed()
+            .into_iter()
+            .filter(|entry| matches!(entry, Observed::Bind { .. }))
+            .collect();
+        assert_eq!(binds.len(), 3, "{binds:?}");
+    }
+
+    #[test]
+    fn foreground_fork_after_leave_rebinds_but_bare_fork_freezes() {
+        let (mut reporter, supervisor) = Supervisor::reporter(AgentProvider::Claude);
+        let mut receiver = hooks(InitialSource::Startup);
+        bind_startup(&mut receiver, &mut reporter);
+
+        assert_eq!(
+            drive(
+                &mut receiver,
+                &mut reporter,
+                &session_end("resume", EXPECTED)
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(receiver.pending_leave, Some(PendingLeave::Switch));
+        assert_eq!(
+            drive(
+                &mut receiver,
+                &mut reporter,
+                &session_start("fork", REPLACED)
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            reporter
+                .binding()
+                .map(|b| (b.conversation.as_str(), b.generation)),
+            Some((REPLACED, 2))
+        );
+
+        // Bare fork without a leave of the current conversation is the background-fork gap.
+        let (mut reporter, supervisor2) = Supervisor::reporter(AgentProvider::Claude);
+        let mut receiver = hooks(InitialSource::Startup);
+        bind_startup(&mut receiver, &mut reporter);
+        assert_eq!(
+            drive(
+                &mut receiver,
+                &mut reporter,
+                &session_start("fork", REPLACED)
+            ),
+            reporter::IGNORED
+        );
+        assert!(reporter.closed());
+        assert_eq!(
+            Supervisor::health(&supervisor2.observed()),
+            vec![(
+                ReporterHealth::Unavailable,
+                "identity_transition_unavailable".to_owned()
+            )]
+        );
+        let _ = supervisor;
+    }
+
+    #[test]
+    fn compact_and_foreign_end_do_not_invent_replacement() {
+        let (mut reporter, _supervisor) = Supervisor::reporter(AgentProvider::Claude);
+        let mut receiver = hooks(InitialSource::Startup);
+        bind_startup(&mut receiver, &mut reporter);
+        let before = reporter.binding().cloned();
+
+        assert_eq!(
+            drive(
+                &mut receiver,
+                &mut reporter,
+                &session_start("compact", EXPECTED)
+            ),
+            reporter::IGNORED
+        );
+        assert_eq!(reporter.binding(), before.as_ref());
+        assert!(!reporter.closed());
+
+        assert_eq!(
+            drive(
+                &mut receiver,
+                &mut reporter,
+                &session_end("other", EXPECTED)
+            ),
+            reporter::IGNORED
+        );
+        assert_eq!(reporter.binding(), before.as_ref());
+        assert_eq!(receiver.pending_leave, None);
     }
 
     #[test]
