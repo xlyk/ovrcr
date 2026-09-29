@@ -26,16 +26,16 @@ The [official status-line reference](https://code.claude.com/docs/en/statusline)
 
 ## Foreground admission support
 
-| Transition | Task 1 acceptance still needed |
+| Transition | Status |
 | --- | --- |
-| Initial start | Certified for the narrow interactive Claude Code 2.1.267 launch grammar, supervisor-selected UUID and root startup discriminator; actual managed routing captured in attempt09. |
-| Foreground branch | Distinguish the new foreground conversation from a background fork. |
-| Background fork | Prove the current foreground binding remains unchanged. |
-| Clear | Capture identity replacement and callbacks arriving after the next transition. |
-| Resume | Capture foreground replacement and exclusion of stale callbacks. |
-| Compaction | Prove same-conversation identity persists and capture context replacement. |
+| Initial start | Supported for the narrow interactive Claude Code launch grammar, supervisor-selected UUID and root startup discriminator. |
+| Clear | Supported: `SessionEnd(reason=clear)` retires obsolete turn/request state without claiming permanent invalidation; `SessionStart(source=clear, new id)` rebinds a fresh Reporting generation. |
+| In-process resume | Supported: after an observed leave (`prompt_input_exit` / `resume`) or when `SessionStart(source=resume)` names a different conversation, rebind to that id. Same-id resume without a leave is treated as a duplicate announcement. |
+| Foreground branch | Supported only with native leave of the current conversation then `SessionStart(source=fork, new id)` (observed `/branch` form). |
+| Compaction | Same-conversation: `SessionStart(source=compact)` does not invent a replacement or replay Ready. |
+| Background fork | **Named gap / blocker:** a bare `SessionStart(source=fork)` without a preceding leave of the current conversation cannot be distinguished from background fork; reporting becomes `identity_transition_unavailable` without guessing identity or restarting Claude. |
 
-The approved design requires identity to become unavailable for an ambiguous candidate. New metrics for that candidate must stop, and a new managed invocation is required. In-process switching is not certified. These restrictions must also appear in setup and doctor output when those commands are implemented; this research record does not implement them.
+Ambiguous or unsupported transitions keep Claude running, clear open Input requests, and surface persistent recovery guidance (`ovrcr agent doctor claude --json`). Switching does not acknowledge server-owned Unread and does not replay history as new alerts.
 
 ## Blocking dependencies
 
