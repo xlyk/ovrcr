@@ -9562,6 +9562,15 @@ fn codex_hook_native_helper() {
         if parts.get(3) == Some(&"resume-source") {
             payload["source"] = "resume".into();
         }
+        if parts.get(3) == Some(&"startup-source") {
+            payload["source"] = "startup".into();
+        }
+        if parts.get(3) == Some(&"clear-source") {
+            payload["source"] = "clear".into();
+        }
+        if parts.get(3) == Some(&"compact-source") {
+            payload["source"] = "compact".into();
+        }
         if parts.get(3) == Some(&"missing") {
             payload.as_object_mut().unwrap().remove("turn_id");
         }
@@ -11176,6 +11185,397 @@ fn codex_input_requests_wait_alert_once_each_and_restore_without_unread() {
         fixture.session_summary(summary.id).unread,
         Some(unread_after_c),
         "Input alerts never acknowledge Unread"
+    );
+
+    dashboard.detach();
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "CODEX_NATIVE_EXIT=17");
+}
+
+#[test]
+fn codex_supported_conversation_switches_rebind_ready_and_input_without_unread_ack() {
+    let _guard = env_lock();
+    use ovrcr::protocol::{AgentActivity, ReporterHealth};
+    const READY: &str = "OVRCR · response ready";
+    const INPUT: &str = "OVRCR · input needed";
+    const CONV_A: &str = "01a08e5c-7480-7052-9964-9224aadebef0";
+    const CONV_B: &str = "01a08e94-0deb-76c3-a2b5-540c4874a53f";
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "codex-setup");
+    let (summary, _probe) = codex_session_named(&fixture, &fixture.socket, "codex-switch");
+    let mut index = 0;
+    let mut dashboard = DesktopAlertDashboard::start_for(
+        &fixture,
+        Some("desktop_notifications = true\n"),
+        "codex-switch",
+    );
+    dashboard.select("setup", "HOOK_READY");
+
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("UserPromptSubmit:{CONV_A}:A"),
+    );
+    let gen1 = fixture
+        .session_summary(summary.id)
+        .agent
+        .unwrap()
+        .binding
+        .clone();
+    assert_eq!(gen1.conversation, CONV_A);
+    assert_eq!(gen1.generation, 1);
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("Stop:{CONV_A}:A"),
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(1, summary.id, "codex-switch"),
+        [READY]
+    );
+    let unread_a = fixture
+        .session_summary(summary.id)
+        .unread
+        .clone()
+        .expect("Ready on A is unread");
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("UserPromptSubmit:{CONV_A}:A2"),
+    );
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("PermissionRequest:{CONV_A}:A2"),
+    );
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::WaitingInput
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(2, summary.id, "codex-switch"),
+        [READY, INPUT]
+    );
+
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("SessionStart:{CONV_B}:boot:clear-source"),
+    );
+    let on_b = fixture.session_summary(summary.id).agent.unwrap();
+    assert_eq!(on_b.binding.conversation, CONV_B);
+    assert_eq!(on_b.binding.generation, 2);
+    assert_eq!(on_b.health.state, ReporterHealth::Connected);
+    assert!(on_b.input_requests.is_empty());
+    assert_eq!(
+        fixture.session_summary(summary.id).unread,
+        Some(unread_a.clone()),
+        "clear switch must not acknowledge Unread"
+    );
+
+    for command in [
+        format!("Stop:{CONV_A}:A2"),
+        format!("PermissionRequest:{CONV_A}:A2"),
+        format!("Stop:{CONV_A}:A"),
+    ] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, &command);
+    }
+    let stale = fixture.session_summary(summary.id);
+    assert!(stale.agent.as_ref().unwrap().input_requests.is_empty());
+    assert_eq!(stale.agent.as_ref().unwrap().binding.generation, 2);
+    assert_eq!(
+        dashboard.wait_alert_titles(2, summary.id, "codex-switch"),
+        [READY, INPUT]
+    );
+
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("UserPromptSubmit:{CONV_B}:B"),
+    );
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::Busy
+    );
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("Stop:{CONV_B}:B"),
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(3, summary.id, "codex-switch"),
+        [READY, INPUT, READY]
+    );
+    let unread_b = fixture
+        .session_summary(summary.id)
+        .unread
+        .clone()
+        .expect("Ready on B");
+    assert_ne!(unread_b, unread_a);
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("UserPromptSubmit:{CONV_B}:B2"),
+    );
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("PermissionRequest:{CONV_B}:B2"),
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(4, summary.id, "codex-switch"),
+        [READY, INPUT, READY, INPUT]
+    );
+
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("SessionStart:{CONV_A}:boot:resume-source"),
+    );
+    let back_a = fixture.session_summary(summary.id).agent.unwrap();
+    assert_eq!(back_a.binding.conversation, CONV_A);
+    assert_eq!(back_a.binding.generation, 3);
+    assert!(back_a.input_requests.is_empty());
+    assert_eq!(
+        fixture.session_summary(summary.id).unread,
+        Some(unread_b.clone()),
+        "switch back is not a review"
+    );
+
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("Stop:{CONV_B}:B"),
+    );
+    assert_ne!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::ResponseReady
+    );
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("UserPromptSubmit:{CONV_A}:C"),
+    );
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("Stop:{CONV_A}:C"),
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(5, summary.id, "codex-switch"),
+        [READY, INPUT, READY, INPUT, READY]
+    );
+    let ready_again = fixture.session_summary(summary.id);
+    assert_eq!(ready_again.activity, AgentActivity::ResponseReady);
+    assert_ne!(ready_again.unread, Some(unread_b));
+
+    let before_compact = fixture.session_summary(summary.id);
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("SessionStart:{CONV_A}:boot:compact-source"),
+    );
+    assert_eq!(fixture.session_summary(summary.id), before_compact);
+
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("SessionStart:{CONV_B}:boot:startup-source"),
+    );
+    let unavailable = fixture.session_summary(summary.id).agent.unwrap();
+    assert_eq!(unavailable.health.state, ReporterHealth::Unavailable);
+    assert_eq!(
+        unavailable.health.reason.as_deref(),
+        Some("identity_transition_unavailable")
+    );
+    assert!(matches!(
+        fixture.session_summary(summary.id).phase,
+        ovrcr::session::SessionPhase::Running
+    ));
+
+    dashboard.detach();
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "CODEX_NATIVE_EXIT=17");
+}
+
+#[test]
+fn codex_reopened_path_follows_switch_and_handles_genuine_input() {
+    let _guard = env_lock();
+    use ovrcr::protocol::{AgentActivity, InputKind, ReporterHealth, SampleQuality};
+    const READY: &str = "OVRCR · response ready";
+    const INPUT: &str = "OVRCR · input needed";
+    let conversation = "01a08e5c-7480-7052-9964-9224aadebef0";
+    let switched = "01a08e94-0deb-76c3-a2b5-540c4874a53f";
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "codex-setup");
+    let (summary, _probe) = codex_resume_session_named(
+        &fixture,
+        &fixture.socket,
+        "codex-reopen-switch",
+        conversation,
+    );
+    let mut index = 0;
+    let mut dashboard = DesktopAlertDashboard::start_for(
+        &fixture,
+        Some("desktop_notifications = true\n"),
+        "codex-reopen-switch",
+    );
+    dashboard.select("setup", "HOOK_READY");
+
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("SessionStart:{conversation}:boot:resume-source"),
+    );
+    assert_eq!(
+        fixture
+            .session_summary(summary.id)
+            .recovery
+            .as_ref()
+            .map(|r| r.attached),
+        Some(true)
+    );
+
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("UserPromptSubmit:{conversation}:A"),
+    );
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("PermissionRequest:{conversation}:A"),
+    );
+    let waiting = fixture.session_summary(summary.id);
+    assert_eq!(waiting.activity, AgentActivity::WaitingInput);
+    assert_eq!(
+        waiting.agent.as_ref().unwrap().input_requests,
+        vec![ovrcr::protocol::InputRequest {
+            id: "approval:A".into(),
+            kind: InputKind::Approval,
+        }]
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(1, summary.id, "codex-reopen-switch"),
+        [INPUT]
+    );
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("PostToolUse:{conversation}:A"),
+    );
+    assert!(
+        fixture
+            .session_summary(summary.id)
+            .agent
+            .as_ref()
+            .unwrap()
+            .input_requests
+            .is_empty()
+    );
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("Stop:{conversation}:A"),
+    );
+    let ready = fixture.session_summary(summary.id);
+    assert_eq!(ready.activity, AgentActivity::ResponseReady);
+    assert_eq!(
+        ready
+            .agent
+            .as_ref()
+            .unwrap()
+            .activity
+            .as_ref()
+            .unwrap()
+            .quality,
+        SampleQuality::Observed
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(2, summary.id, "codex-reopen-switch"),
+        [INPUT, READY]
+    );
+    let unread = ready.unread.clone().expect("reopened Ready unread");
+
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("SessionStart:{switched}:boot:clear-source"),
+    );
+    let on_b = fixture.session_summary(summary.id).agent.unwrap();
+    assert_eq!(on_b.binding.conversation, switched);
+    assert_eq!(on_b.binding.generation, 2);
+    assert_eq!(on_b.health.state, ReporterHealth::Connected);
+    assert_eq!(
+        fixture.session_summary(summary.id).unread,
+        Some(unread.clone())
+    );
+
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("UserPromptSubmit:{switched}:B"),
+    );
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("PermissionRequest:{switched}:B"),
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(3, summary.id, "codex-reopen-switch"),
+        [INPUT, READY, INPUT]
+    );
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("Stop:{switched}:B"),
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(4, summary.id, "codex-reopen-switch"),
+        [INPUT, READY, INPUT, READY]
+    );
+    assert_ne!(
+        fixture.session_summary(summary.id).unread,
+        Some(unread),
+        "new Ready replaces Presented Unread identity without switch ack"
     );
 
     dashboard.detach();
