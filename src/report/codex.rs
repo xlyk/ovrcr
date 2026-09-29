@@ -2,7 +2,8 @@
 use super::InvocationLease;
 use super::reporter::{self, Reporter};
 use ovrcr_protocol::{
-    ActivitySample, AgentActivity, AgentObservation, AgentProvider, SampleQuality,
+    ActivitySample, AgentActivity, AgentObservation, AgentProvider, ContextSample, Measurement,
+    MetricsSample, SampleQuality, UsageCoverage, UsageScope, UsageTotals, validate_agent_id,
 };
 use ovrcr_runtime::agent_runner::HookHandler;
 use std::{
@@ -46,7 +47,7 @@ fn eligible_launch(argv: &[OsString]) -> Option<EligibleLaunch> {
     while let Some(arg) = args.next() {
         let arg = arg.to_str()?;
         match arg {
-            "--no-alt-screen" | "--full-auto" => {}
+            "--no-alt-screen" | "--full-auto" | "--dangerously-bypass-hook-trust" => {}
             "--model" | "-m" | "--profile" | "-p" | "--sandbox" | "-s" | "--ask-for-approval"
             | "-a" | "--cd" | "-C" => {
                 let value = args.next()?;
@@ -172,6 +173,7 @@ pub fn receiver(lease: Option<InvocationLease>, argv: &[OsString]) -> HookHandle
         expected,
         initial_source,
         initial_accepted: false,
+        model: None,
     })
 }
 
@@ -187,6 +189,10 @@ struct Hooks {
     initial_source: Option<InitialSource>,
     /// Certified SessionStart for this invocation has been accepted (resume attach).
     initial_accepted: bool,
+    /// Model last accepted for this binding from Codex's own hook report. Cleared on a
+    /// fresh generation or freeze so a later identical report is published again. Never
+    /// invented from the launch `--model` flag or terminal text.
+    model: Option<String>,
 }
 
 impl Hooks {
@@ -239,9 +245,14 @@ impl Hooks {
             "clear" | "resume" if session != current => {
                 self.replace_foreground(reporter, session, payload, deadline)
             }
-            "clear" | "resume" | "compact" => reporter::IGNORED.to_vec(),
+            "clear" | "resume" | "compact" => {
+                // Same conversation: no rebind. Still pick up a mid-session model report.
+                self.finish_with_model(reporter, payload, deadline, reporter::IGNORED.to_vec())
+            }
             "startup" if session != current => self.freeze(reporter, deadline),
-            "startup" => reporter::IGNORED.to_vec(),
+            "startup" => {
+                self.finish_with_model(reporter, payload, deadline, reporter::IGNORED.to_vec())
+            }
             _ => self.freeze(reporter, deadline),
         }
     }
@@ -258,6 +269,9 @@ impl Hooks {
         }
         self.active = None;
         self.turn = None;
+        // A fresh binding starts without a published model: inventing one from a prior
+        // conversation or the launch flag would mislabel the sidebar.
+        self.model = None;
         let force = self.expected.as_deref() == Some(session);
         self.expected = Some(session.to_owned());
         if let Some(unavailable) = reporter.bind_or_disable(session, deadline, force) {
@@ -265,7 +279,7 @@ impl Hooks {
         }
         self.retain(reporter, payload, session, deadline);
         self.initial_accepted = true;
-        reporter::ACCEPTED.to_vec()
+        self.finish_with_model(reporter, payload, deadline, reporter::ACCEPTED.to_vec())
     }
 
     /// Unsupported or ambiguous transition: persistent identity_transition_unavailable.
@@ -274,6 +288,7 @@ impl Hooks {
         let _ = self.close_approvals(reporter, deadline);
         self.active = None;
         self.turn = None;
+        self.model = None;
         if reporter.invalidate_conversation(deadline) {
             reporter::IGNORED.to_vec()
         } else {
@@ -323,6 +338,77 @@ impl Hooks {
             })
             .collect();
         reporter.publish(AgentObservation::Input(requests), deadline)
+    }
+
+    /// Publish Codex's own hook-reported model as a Metrics observation. `None` means
+    /// nothing changed (missing, invalid, or identical); `Some` is a failed publish the
+    /// caller must return. Never invents a model when Codex has not reported one.
+    fn publish_model(
+        &mut self,
+        reporter: &mut Reporter,
+        model: Option<&str>,
+        deadline: Instant,
+    ) -> Option<Vec<u8>> {
+        let model = model.filter(|value| validate_agent_id(value).is_ok())?;
+        if self.model.as_deref() == Some(model) {
+            return None;
+        }
+        let source = "codex-hook".to_owned();
+        let sample = MetricsSample {
+            model: Some(model.to_owned()),
+            context: Measurement {
+                value: ContextSample {
+                    used_tokens: None,
+                    capacity_tokens: None,
+                    quality: SampleQuality::Observed,
+                },
+                source: source.clone(),
+            },
+            usage: Measurement {
+                value: UsageTotals {
+                    scope: UsageScope::Conversation,
+                    coverage: UsageCoverage::Partial,
+                    input_tokens: None,
+                    output_tokens: None,
+                    cache_read_tokens: None,
+                    cache_write_tokens: None,
+                    reasoning_output_tokens: None,
+                },
+                source: source.clone(),
+            },
+            cost: Measurement {
+                value: None,
+                source,
+            },
+        };
+        let published = reporter.publish(AgentObservation::Metrics(Box::new(sample)), deadline);
+        if published == reporter::ACCEPTED {
+            self.model = Some(model.to_owned());
+            None
+        } else {
+            Some(published)
+        }
+    }
+
+    /// After an accepted or ignored primary outcome on a bound session, publish any model
+    /// Codex reported on this frame. Unavailable / disabled outcomes are left alone.
+    fn finish_with_model(
+        &mut self,
+        reporter: &mut Reporter,
+        payload: &serde_json::Value,
+        deadline: Instant,
+        primary: Vec<u8>,
+    ) -> Vec<u8> {
+        if primary.as_slice() != reporter::ACCEPTED && primary.as_slice() != reporter::IGNORED {
+            return primary;
+        }
+        if reporter.binding().is_none() {
+            return primary;
+        }
+        if let Some(failed) = self.publish_model(reporter, payload["model"].as_str(), deadline) {
+            return failed;
+        }
+        primary
     }
 }
 
@@ -400,7 +486,12 @@ impl reporter::Frames for Hooks {
                 }
                 self.retain(reporter, payload, session, deadline);
                 self.initial_accepted = true;
-                return reporter::ACCEPTED.to_vec();
+                return self.finish_with_model(
+                    reporter,
+                    payload,
+                    deadline,
+                    reporter::ACCEPTED.to_vec(),
+                );
             }
             // Bound invocations follow supported clear/resume replacements; conflicting
             // startup (fork/backtrack) is a named unobservable-gap blocker.
@@ -417,7 +508,12 @@ impl reporter::Frames for Hooks {
             }
             self.retain(reporter, payload, session, deadline);
             self.initial_accepted = true;
-            return reporter::ACCEPTED.to_vec();
+            return self.finish_with_model(
+                reporter,
+                payload,
+                deadline,
+                reporter::ACCEPTED.to_vec(),
+            );
         }
         let Some(turn) = payload["turn_id"]
             .as_str()
@@ -449,17 +545,28 @@ impl reporter::Frames for Hooks {
             if !self.current_turn(session, turn, reporter) {
                 return reporter::IGNORED.to_vec();
             }
-            return self.open_approval(reporter, turn, deadline);
+            let primary = self.open_approval(reporter, turn, deadline);
+            return self.finish_with_model(reporter, payload, deadline, primary);
         }
         // Allow / deny / cancel / next tool close every open approval for this turn: Codex
         // PermissionRequest has no resolve id, so the closing boundary is the next
         // attributable root activity after a genuine open (mirrors Claude).
         if matches!(event, "PreToolUse" | "PostToolUse") {
-            if !self.current_turn(session, turn, reporter) || self.open_requests.is_empty() {
+            if !self.current_turn(session, turn, reporter) {
                 return reporter::IGNORED.to_vec();
             }
+            if self.open_requests.is_empty() {
+                // No approval to close; still accept a model report on this root hook.
+                return self.finish_with_model(
+                    reporter,
+                    payload,
+                    deadline,
+                    reporter::IGNORED.to_vec(),
+                );
+            }
             self.open_requests.clear();
-            return self.publish_requests(reporter, deadline);
+            let primary = self.publish_requests(reporter, deadline);
+            return self.finish_with_model(reporter, payload, deadline, primary);
         }
         let state = if event == "UserPromptSubmit" {
             // Exact resume cannot bind from a prompt alone — SessionStart(source=resume)
@@ -501,14 +608,15 @@ impl reporter::Frames for Hooks {
                 AgentActivity::Idle
             }
         };
-        reporter.publish(
+        let published = reporter.publish(
             AgentObservation::Activity(ActivitySample {
                 state,
                 quality: SampleQuality::Observed,
                 turn: Some(turn.to_owned()),
             }),
             deadline,
-        )
+        );
+        self.finish_with_model(reporter, payload, deadline, published)
     }
 }
 
@@ -529,6 +637,7 @@ mod tests {
                 expected: None,
                 initial_source: Some(InitialSource::Startup),
                 initial_accepted: false,
+                model: None,
             },
             reporter,
             supervisor,
@@ -552,6 +661,7 @@ mod tests {
                 expected: Some(expected.into()),
                 initial_source: Some(InitialSource::Resume),
                 initial_accepted: false,
+                model: None,
             },
             reporter,
             supervisor,
@@ -1486,5 +1596,121 @@ mod tests {
             Supervisor::inputs(&observed),
             vec![vec![("approval:t1".into(), InputKind::Approval)], vec![],]
         );
+    }
+
+    fn with_model(frame: &[u8], model: &str) -> Vec<u8> {
+        let mut value: serde_json::Value = serde_json::from_slice(frame).unwrap();
+        value["payload"]["model"] = model.into();
+        serde_json::to_vec(&value).unwrap()
+    }
+
+    fn with_recovery(hooks: &mut Hooks) {
+        hooks.recovery = Some(ovrcr_protocol::CodexConversation {
+            conversation: String::new(),
+            executable: "/bin/codex".into(),
+            history: None,
+            config_dir: "/config".into(),
+            options: vec![],
+        });
+    }
+
+    #[test]
+    fn session_start_and_later_hooks_publish_the_reported_model() {
+        let root = "01a08e5c-7480-7052-9964-9224aadebef0";
+        let (mut hooks, mut reporter, supervisor) = start();
+        with_recovery(&mut hooks);
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &with_model(&session_start("startup", root), "gpt-6-astra")
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &with_model(&hook("UserPromptSubmit", root, "t1"), "gpt-6-astra")
+            ),
+            reporter::ACCEPTED
+        );
+        // Mid-session switch: a later root hook replaces the previous model.
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &with_model(&hook("Stop", root, "t1"), "gpt-6-luna")
+            ),
+            reporter::ACCEPTED
+        );
+        // Identical model on another frame is accepted but not republished.
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &with_model(&hook("UserPromptSubmit", root, "t2"), "gpt-6-luna")
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            Supervisor::models(&supervisor.observed()),
+            vec![Some("gpt-6-astra".into()), Some("gpt-6-luna".into())],
+            "mid-session switch replaces the previous model; identical is not republished"
+        );
+    }
+
+    #[test]
+    fn no_model_is_invented_when_codex_has_not_reported_one() {
+        let (mut hooks, mut reporter, supervisor) = start();
+        // Bind via prompt alone (no SessionStart model) — common in synthetic tests.
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("UserPromptSubmit", "root", "t1")
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &hook("Stop", "root", "t1")),
+            reporter::ACCEPTED
+        );
+        // Empty model invents nothing either.
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &with_model(&hook("UserPromptSubmit", "root", "t2"), "")
+            ),
+            reporter::ACCEPTED
+        );
+        assert!(
+            Supervisor::models(&supervisor.observed()).is_empty(),
+            "hooks without a model invent nothing"
+        );
+    }
+
+    #[test]
+    fn launch_model_flag_is_not_read_as_the_reported_model() {
+        // eligible_launch accepts --model, but the receiver never copies that flag into
+        // Metrics: only Codex's own hook payload may publish a model.
+        let args = |values: &[&str]| values.iter().map(OsString::from).collect::<Vec<_>>();
+        assert_eq!(
+            eligible_launch(&args(&["codex", "--model", "from-launch-flag"])),
+            Some(EligibleLaunch::Fresh)
+        );
+        let root = "01a08e5c-7480-7052-9964-9224aadebef0";
+        let (mut hooks, mut reporter, supervisor) = start();
+        with_recovery(&mut hooks);
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &session_start("startup", root)),
+            reporter::ACCEPTED
+        );
+        assert!(
+            Supervisor::models(&supervisor.observed()).is_empty(),
+            "SessionStart without model must not invent the launch flag"
+        );
+        assert_eq!(hooks.model, None);
     }
 }

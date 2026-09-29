@@ -40,6 +40,7 @@ fn codex_grammar_accepts_fresh_and_exact_resume_only() {
     for values in [
         vec!["codex"],
         vec!["codex", "--no-alt-screen", "-C", "/tmp", "hello"],
+        vec!["codex", "--dangerously-bypass-hook-trust"],
         vec!["codex", "--", "resume"],
         vec!["codex", "resume", id],
         vec!["codex", "resume", id, "--model", "gpt"],
