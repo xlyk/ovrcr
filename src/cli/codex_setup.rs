@@ -9,6 +9,9 @@ use toml::Value;
 const HOOKS: &[&str] = &[
     "SessionStart",
     "UserPromptSubmit",
+    "PermissionRequest",
+    "PreToolUse",
+    "PostToolUse",
     "Stop",
     "Interrupt",
     "SessionEnd",
@@ -171,7 +174,7 @@ pub(super) fn doctor(
         "release_status":"patch_compatible_hooks_only",
         "configuration":{"status":configuration,"effective_configuration":"unverified","hook_trust":"unverified","delivery":"unverified","issues":issues},
         "session_status":if session.is_some() { "not_inspected_use_session_usage" } else { "not_requested" },
-        "capabilities":{"initial_invocation":{"fresh":supported,"resume":false,"fork":false,"picker":false},"activity":"last_observed_root_turn","ready":"available","input_requests":"unavailable","completion_quality":"observed","metrics":"unavailable","task_success":false},
+        "capabilities":{"initial_invocation":{"fresh":supported,"resume":false,"fork":false,"picker":false},"activity":"last_observed_root_turn","ready":"available","input_requests":"approvals_available","questions":"unavailable_no_distinct_surface","completion_quality":"observed","metrics":"unavailable","task_success":false},
         "requirements":REQUIREMENTS, "launch_forms":FORMS,
         "remediation":"Run `ovrcr agent setup codex --print --settings PATH`, review the composition and trust hooks through native Codex. Launch through the Dashboard agent picker or `ovrcr agent run codex -- codex`. A plain `codex` launch stays untracked. Select stable codex-cli >=0.153.0. Doctor only invokes --version; configuration presence does not prove hook trust or delivery."
     })).map_err(RuntimeError::internal)?);

@@ -113,13 +113,19 @@ pub fn receiver(lease: Option<InvocationLease>, argv: &[OsString]) -> HookHandle
     })();
     reporter.handler(Hooks {
         active: None,
+        turn: None,
+        open_requests: Vec::new(),
         recovery,
     })
 }
 
 /// Codex's frames: one open response cycle at a time, identified by its session and turn.
+/// Approvals use `approval:{turn_id}` from a verified root `PermissionRequest`.
 struct Hooks {
     active: Option<String>,
+    /// Current root turn for Input correlation; kept through Stop/Interrupt like Claude's prompt.
+    turn: Option<String>,
+    open_requests: Vec<(String, ovrcr_protocol::InputKind)>,
     recovery: Option<ovrcr_protocol::CodexConversation>,
 }
 
@@ -153,6 +159,50 @@ impl Hooks {
             deadline,
         );
     }
+
+    fn approval_id(turn: &str) -> String {
+        format!("approval:{turn}")
+    }
+
+    fn current_turn(&self, session: &str, turn: &str, reporter: &Reporter) -> bool {
+        self.turn.as_deref() == Some(turn)
+            && reporter
+                .binding()
+                .is_some_and(|binding| binding.conversation == session)
+    }
+
+    fn open_approval(&mut self, reporter: &mut Reporter, turn: &str, deadline: Instant) -> Vec<u8> {
+        let id = Self::approval_id(turn);
+        if self.open_requests.iter().any(|(open, _)| open == &id)
+            || self.open_requests.len() >= ovrcr_protocol::MAX_INPUT_REQUESTS
+        {
+            return reporter::IGNORED.to_vec();
+        }
+        self.open_requests
+            .push((id, ovrcr_protocol::InputKind::Approval));
+        self.publish_requests(reporter, deadline)
+    }
+
+    fn close_approvals(&mut self, reporter: &mut Reporter, deadline: Instant) -> Option<Vec<u8>> {
+        if self.open_requests.is_empty() {
+            return None;
+        }
+        self.open_requests.clear();
+        let published = self.publish_requests(reporter, deadline);
+        (published.as_slice() != reporter::ACCEPTED).then_some(published)
+    }
+
+    fn publish_requests(&mut self, reporter: &mut Reporter, deadline: Instant) -> Vec<u8> {
+        let requests = self
+            .open_requests
+            .iter()
+            .map(|(id, kind)| ovrcr_protocol::InputRequest {
+                id: id.clone(),
+                kind: *kind,
+            })
+            .collect();
+        reporter.publish(AgentObservation::Input(requests), deadline)
+    }
 }
 
 impl reporter::Frames for Hooks {
@@ -185,7 +235,14 @@ impl reporter::Frames for Hooks {
         }
         if !matches!(
             event,
-            "SessionStart" | "UserPromptSubmit" | "Stop" | "Interrupt" | "SessionEnd"
+            "SessionStart"
+                | "UserPromptSubmit"
+                | "Stop"
+                | "Interrupt"
+                | "SessionEnd"
+                | "PermissionRequest"
+                | "PreToolUse"
+                | "PostToolUse"
         ) {
             return reporter::IGNORED.to_vec();
         }
@@ -226,9 +283,30 @@ impl reporter::Frames for Hooks {
                         .binding()
                         .is_some_and(|binding| binding.conversation == session))
             {
+                let _ = self.close_approvals(reporter, deadline);
+                self.turn = None;
                 reporter.disable();
             }
             return reporter::IGNORED.to_vec();
+        }
+        // Verified approval open: root PermissionRequest for the current turn. PreToolUse,
+        // PostToolUse and auto-approved tools never open a request. Publish Input only —
+        // do not rewrite the underlying activity sample (Busy or Ready).
+        if event == "PermissionRequest" {
+            if !self.current_turn(session, turn, reporter) {
+                return reporter::IGNORED.to_vec();
+            }
+            return self.open_approval(reporter, turn, deadline);
+        }
+        // Allow / deny / cancel / next tool close every open approval for this turn: Codex
+        // PermissionRequest has no resolve id, so the closing boundary is the next
+        // attributable root activity after a genuine open (mirrors Claude).
+        if matches!(event, "PreToolUse" | "PostToolUse") {
+            if !self.current_turn(session, turn, reporter) || self.open_requests.is_empty() {
+                return reporter::IGNORED.to_vec();
+            }
+            self.open_requests.clear();
+            return self.publish_requests(reporter, deadline);
         }
         let state = if event == "UserPromptSubmit" {
             // Deduplicate *before* any revisions, binding changes, or freshness updates.
@@ -242,12 +320,20 @@ impl reporter::Frames for Hooks {
             if let Some(unavailable) = reporter.bind_or_disable(session, deadline, false) {
                 return unavailable;
             }
+            // A new root turn retires any approval still open for a prior turn_id.
+            if let Some(failed) = self.close_approvals(reporter, deadline) {
+                return failed;
+            }
             self.retain(reporter, payload, session, deadline);
             self.active = Some(identity);
+            self.turn = Some(turn.to_owned());
             AgentActivity::Busy
         } else {
             if self.active.as_ref() != Some(&identity) {
                 return reporter::IGNORED.to_vec();
+            }
+            if let Some(failed) = self.close_approvals(reporter, deadline) {
+                return failed;
             }
             self.active = None;
             if event == "Stop" {
@@ -278,6 +364,8 @@ mod tests {
         (
             Hooks {
                 active: None,
+                turn: None,
+                open_requests: Vec::new(),
                 recovery: None,
             },
             reporter,
@@ -538,5 +626,280 @@ mod tests {
         );
         assert!(reporter.closed());
         assert_eq!(states(supervisor).len(), 1);
+    }
+
+    fn tool_hook(event: &str, session: &str, turn: &str, tool_use_id: Option<&str>) -> Vec<u8> {
+        let mut payload = serde_json::json!({
+            "hook_event_name": event,
+            "session_id": session,
+            "turn_id": turn,
+            "tool_name": "Bash",
+        });
+        if let Some(id) = tool_use_id {
+            payload["tool_use_id"] = id.into();
+        }
+        serde_json::to_vec(&serde_json::json!({
+            "provider": "codex",
+            "origin": "codex-hook",
+            "payload": payload,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn permission_request_opens_approval_identity_and_closes_on_next_root_activity() {
+        use ovrcr_protocol::InputKind;
+        let (mut hooks, mut reporter, supervisor) = start();
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("UserPromptSubmit", "root", "t1")
+            ),
+            reporter::ACCEPTED
+        );
+        // PreToolUse alone never opens Input.
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &tool_hook("PreToolUse", "root", "t1", Some("exec-1"))
+            ),
+            reporter::IGNORED
+        );
+        assert!(hooks.open_requests.is_empty());
+        // Verified PermissionRequest opens approval:{turn_id}.
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &tool_hook("PermissionRequest", "root", "t1", None)
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            hooks.open_requests,
+            vec![("approval:t1".into(), InputKind::Approval)]
+        );
+        // Duplicate PermissionRequest for the same turn is not a second request.
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &tool_hook("PermissionRequest", "root", "t1", None)
+            ),
+            reporter::IGNORED
+        );
+        assert_eq!(hooks.open_requests.len(), 1);
+        // Child / wrong turn cannot open or clear.
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &serde_json::to_vec(&serde_json::json!({
+                    "provider":"codex","origin":"codex-hook","payload":{
+                        "hook_event_name":"PermissionRequest",
+                        "session_id":"root","turn_id":"t1","tool_name":"Bash",
+                        "agent_id":"child"
+                    }
+                }))
+                .unwrap()
+            ),
+            reporter::IGNORED
+        );
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &tool_hook("PermissionRequest", "root", "other", None)
+            ),
+            reporter::IGNORED
+        );
+        assert_eq!(
+            hooks.open_requests.len(),
+            1,
+            "stale/child PermissionRequest must not clear"
+        );
+        // Allow path: PostToolUse closes; underlying Busy sample is untouched.
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &tool_hook("PostToolUse", "root", "t1", Some("exec-1"))
+            ),
+            reporter::ACCEPTED
+        );
+        assert!(hooks.open_requests.is_empty());
+        // Finish t1 before opening a distinct later turn (Codex is one cycle at a time).
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &hook("Stop", "root", "t1")),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("UserPromptSubmit", "root", "t2")
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &tool_hook("PermissionRequest", "root", "t2", None)
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            hooks.open_requests,
+            vec![("approval:t2".into(), InputKind::Approval)]
+        );
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &hook("Stop", "root", "t2")),
+            reporter::ACCEPTED
+        );
+        assert!(hooks.open_requests.is_empty());
+        let observed = supervisor.observed();
+        assert_eq!(
+            Supervisor::inputs(&observed),
+            vec![
+                vec![("approval:t1".into(), InputKind::Approval)],
+                vec![],
+                vec![("approval:t2".into(), InputKind::Approval)],
+                vec![],
+            ]
+        );
+        assert_eq!(
+            Supervisor::activity(&observed).last().unwrap().2,
+            AgentActivity::ResponseReady
+        );
+    }
+
+    #[test]
+    fn permission_request_can_cover_ready_and_native_fixture_correlates_unanswered_selector() {
+        use ovrcr_protocol::InputKind;
+        let (mut hooks, mut reporter, supervisor) = start();
+        drive(
+            &mut hooks,
+            &mut reporter,
+            &hook("UserPromptSubmit", "root", "t1"),
+        );
+        drive(&mut hooks, &mut reporter, &hook("Stop", "root", "t1"));
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &tool_hook("PermissionRequest", "root", "t1", None)
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            hooks.open_requests,
+            vec![("approval:t1".into(), InputKind::Approval)]
+        );
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &tool_hook("PreToolUse", "root", "t1", Some("exec-2"))
+            ),
+            reporter::ACCEPTED
+        );
+        assert!(hooks.open_requests.is_empty());
+        let observed = supervisor.observed();
+        assert_eq!(
+            Supervisor::activity(&observed).last().unwrap().2,
+            AgentActivity::ResponseReady,
+            "closing Input must not rewrite the underlying Ready sample"
+        );
+        assert_eq!(
+            Supervisor::inputs(&observed),
+            vec![vec![("approval:t1".into(), InputKind::Approval)], vec![],]
+        );
+
+        // Native matrix: PermissionRequest fires while the unanswered selector is present.
+        let unanswered = include_str!(
+            "../../tests/fixtures/agent-reporting/codex/0.153.0/native-matrix/permission-unanswered.json"
+        );
+        let value: serde_json::Value = serde_json::from_str(unanswered).unwrap();
+        assert_eq!(
+            value["callback"]["event"]["hook_event_name"],
+            "PermissionRequest"
+        );
+        assert!(value["parent_cua_selector_unanswered"].as_bool().unwrap());
+        assert!(value["marker_absent"].as_bool().unwrap());
+        assert!(value["callback"]["event"].get("tool_use_id").is_none());
+        let allowed = include_str!(
+            "../../tests/fixtures/agent-reporting/codex/0.153.0/native-matrix/permission-allowed.json"
+        );
+        let allowed: serde_json::Value = serde_json::from_str(allowed).unwrap();
+        let names: Vec<_> = allowed["callbacks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["event"]["hook_event_name"].as_str().unwrap())
+            .take(3)
+            .collect();
+        assert_eq!(
+            names,
+            ["PreToolUse", "PermissionRequest", "PostToolUse"],
+            "allow path is PreToolUse → PermissionRequest → PostToolUse"
+        );
+    }
+
+    #[test]
+    fn auto_approved_tools_and_interrupt_do_not_invent_or_leak_requests() {
+        use ovrcr_protocol::InputKind;
+        let (mut hooks, mut reporter, supervisor) = start();
+        drive(
+            &mut hooks,
+            &mut reporter,
+            &hook("UserPromptSubmit", "root", "t1"),
+        );
+        // Auto-approved: PreToolUse + PostToolUse without PermissionRequest.
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &tool_hook("PreToolUse", "root", "t1", Some("exec-a"))
+            ),
+            reporter::IGNORED
+        );
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &tool_hook("PostToolUse", "root", "t1", Some("exec-a"))
+            ),
+            reporter::IGNORED
+        );
+        assert!(hooks.open_requests.is_empty());
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &tool_hook("PermissionRequest", "root", "t1", None)
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            hooks.open_requests,
+            vec![("approval:t1".into(), InputKind::Approval)]
+        );
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &hook("Interrupt", "root", "t1")),
+            reporter::ACCEPTED
+        );
+        assert!(hooks.open_requests.is_empty());
+        let observed = supervisor.observed();
+        assert_eq!(
+            Supervisor::activity(&observed).last().unwrap().2,
+            AgentActivity::Idle
+        );
+        assert_eq!(
+            Supervisor::inputs(&observed),
+            vec![vec![("approval:t1".into(), InputKind::Approval)], vec![],]
+        );
     }
 }

@@ -10711,6 +10711,257 @@ fn desktop_codex_callback(
 }
 
 #[test]
+fn codex_input_requests_wait_alert_once_each_and_restore_without_unread() {
+    let _guard = env_lock();
+    use ovrcr::protocol::{AgentActivity, InputKind, SampleQuality};
+    const READY: &str = "OVRCR · response ready";
+    const INPUT: &str = "OVRCR · input needed";
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "codex-setup");
+    let (summary, _probe) = codex_session_named(&fixture, &fixture.socket, "codex-input");
+    let bin = env!("CARGO_BIN_EXE_ovrcr");
+    let config = fixture.root.path().join("config.toml");
+    let mut index = 0;
+
+    let mut dashboard = DesktopAlertDashboard::start_for(
+        &fixture,
+        Some("desktop_notifications = true\n"),
+        "codex-input",
+    );
+    dashboard.select("setup", "HOOK_READY");
+
+    // Fresh root turn Busy; PreToolUse alone never opens Input.
+    desktop_codex_callback(&fixture, summary.id, &mut index, "UserPromptSubmit:root:A");
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::Busy
+    );
+    desktop_codex_callback(&fixture, summary.id, &mut index, "PreToolUse:root:A");
+    assert!(
+        fixture
+            .session_summary(summary.id)
+            .agent
+            .as_ref()
+            .unwrap()
+            .input_requests
+            .is_empty()
+    );
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::Busy
+    );
+
+    // Verified PermissionRequest: WaitingInput, one Input request, one alert, no Unread.
+    desktop_codex_callback(&fixture, summary.id, &mut index, "PermissionRequest:root:A");
+    let waiting = fixture.session_summary(summary.id);
+    assert_eq!(waiting.activity, AgentActivity::WaitingInput);
+    let agent = waiting.agent.as_ref().expect("bound");
+    assert_eq!(
+        agent.input_requests,
+        vec![ovrcr::protocol::InputRequest {
+            id: "approval:A".into(),
+            kind: InputKind::Approval,
+        }]
+    );
+    assert_eq!(
+        agent.activity.as_ref().unwrap().state,
+        AgentActivity::Busy,
+        "a wait never overwrites the underlying sample"
+    );
+    assert_eq!(
+        agent.activity.as_ref().unwrap().quality,
+        SampleQuality::Observed
+    );
+    assert_eq!(
+        waiting.unread, None,
+        "Input requests do not manufacture Unread"
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(1, summary.id, "codex-input"),
+        [INPUT]
+    );
+    let listed = cli_with_output(
+        bin,
+        &config,
+        &fixture.socket,
+        &["terminal", "list", "--json"],
+    );
+    assert!(listed.status.success());
+    let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let row = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == summary.id.0)
+        .unwrap();
+    assert_eq!(row["activity"], "waiting_input");
+    assert_eq!(row["agent"]["input_requests"][0]["kind"], "Approval");
+    assert_eq!(row["agent"]["input_requests"][0]["id"], "approval:A");
+    assert_eq!(row["unread"], serde_json::Value::Null);
+
+    // Duplicate opening of the same approval id does not repeat the alert.
+    desktop_codex_callback(&fixture, summary.id, &mut index, "PermissionRequest:root:A");
+    assert_eq!(
+        fixture
+            .session_summary(summary.id)
+            .agent
+            .as_ref()
+            .unwrap()
+            .input_requests
+            .len(),
+        1
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(1, summary.id, "codex-input"),
+        [INPUT],
+        "duplicate PermissionRequest is not a second request"
+    );
+
+    // Child / wrong-turn PermissionRequest cannot open or clear.
+    for command in ["PermissionRequest:root:A:child", "PermissionRequest:root:Z"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let still = fixture.session_summary(summary.id);
+    assert_eq!(still.activity, AgentActivity::WaitingInput);
+    assert_eq!(still.agent.as_ref().unwrap().input_requests.len(), 1);
+    assert_eq!(
+        dashboard.wait_alert_titles(1, summary.id, "codex-input"),
+        [INPUT]
+    );
+
+    // Allow path: PostToolUse closes the correlated approval and restores Busy.
+    desktop_codex_callback(&fixture, summary.id, &mut index, "PostToolUse:root:A");
+    let allowed = fixture.session_summary(summary.id);
+    assert_eq!(allowed.activity, AgentActivity::Busy);
+    assert!(allowed.agent.as_ref().unwrap().input_requests.is_empty());
+    assert_eq!(allowed.unread, None);
+    assert_eq!(
+        dashboard.wait_alert_titles(1, summary.id, "codex-input"),
+        [INPUT],
+        "closing a request is not an alert"
+    );
+
+    // Finish A, then a distinct later turn alerts once.
+    desktop_codex_callback(&fixture, summary.id, &mut index, "Stop:root:A");
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::ResponseReady
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(2, summary.id, "codex-input"),
+        [INPUT, READY]
+    );
+    desktop_codex_callback(&fixture, summary.id, &mut index, "UserPromptSubmit:root:B");
+    desktop_codex_callback(&fixture, summary.id, &mut index, "PermissionRequest:root:B");
+    let second = fixture.session_summary(summary.id);
+    assert_eq!(second.activity, AgentActivity::WaitingInput);
+    assert_eq!(
+        second.agent.as_ref().unwrap().input_requests[0].id,
+        "approval:B"
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(3, summary.id, "codex-input"),
+        [INPUT, READY, INPUT]
+    );
+
+    // Deny/cancel path: Stop closes the open approval, then Ready/Unread is a separate lane.
+    desktop_codex_callback(&fixture, summary.id, &mut index, "Stop:root:B");
+    let ready = fixture.session_summary(summary.id);
+    assert_eq!(ready.activity, AgentActivity::ResponseReady);
+    assert!(ready.agent.as_ref().unwrap().input_requests.is_empty());
+    let unread = ready.unread.clone().expect("Observed Ready is unread");
+    assert_eq!(
+        dashboard.wait_alert_titles(4, summary.id, "codex-input"),
+        [INPUT, READY, INPUT, READY]
+    );
+
+    // Request on top of Ready (same turn B): WaitingInput, Unread untouched.
+    desktop_codex_callback(&fixture, summary.id, &mut index, "PermissionRequest:root:B");
+    let over_ready = fixture.session_summary(summary.id);
+    assert_eq!(over_ready.activity, AgentActivity::WaitingInput);
+    assert_eq!(
+        over_ready
+            .agent
+            .as_ref()
+            .unwrap()
+            .activity
+            .as_ref()
+            .unwrap()
+            .state,
+        AgentActivity::ResponseReady,
+        "Ready is what the wait is covering"
+    );
+    assert_eq!(over_ready.unread, Some(unread.clone()));
+    assert_eq!(
+        dashboard.wait_alert_titles(5, summary.id, "codex-input"),
+        [INPUT, READY, INPUT, READY, INPUT]
+    );
+    // Closing restores Ready underneath without acknowledging Unread.
+    desktop_codex_callback(&fixture, summary.id, &mut index, "PreToolUse:root:B");
+    let restored = fixture.session_summary(summary.id);
+    assert_eq!(restored.activity, AgentActivity::ResponseReady);
+    assert!(restored.agent.as_ref().unwrap().input_requests.is_empty());
+    assert_eq!(restored.unread, Some(unread.clone()));
+
+    // Reattach baselines an open request instead of replaying it.
+    desktop_codex_callback(&fixture, summary.id, &mut index, "UserPromptSubmit:root:C");
+    desktop_codex_callback(&fixture, summary.id, &mut index, "PermissionRequest:root:C");
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::WaitingInput
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(6, summary.id, "codex-input"),
+        [INPUT, READY, INPUT, READY, INPUT, INPUT]
+    );
+    dashboard.detach();
+    drop(dashboard);
+    let mut dashboard = DesktopAlertDashboard::start_for(
+        &fixture,
+        Some("desktop_notifications = true\n"),
+        "codex-input",
+    );
+    dashboard.select("setup", "HOOK_READY");
+    assert_eq!(
+        dashboard.wait_alert_titles(6, summary.id, "codex-input"),
+        [INPUT, READY, INPUT, READY, INPUT, INPUT],
+        "a request open at reattach is a baseline, not a new opening"
+    );
+    desktop_codex_callback(&fixture, summary.id, &mut index, "PostToolUse:root:C");
+    // Codex admits one response cycle at a time; close C before a new turn.
+    desktop_codex_callback(&fixture, summary.id, &mut index, "Stop:root:C");
+    let unread_after_c = fixture
+        .session_summary(summary.id)
+        .unread
+        .clone()
+        .expect("Stop C replaced Unread with the newer Ready");
+    assert_ne!(unread_after_c, unread);
+    desktop_codex_callback(&fixture, summary.id, &mut index, "UserPromptSubmit:root:D");
+    desktop_codex_callback(&fixture, summary.id, &mut index, "PermissionRequest:root:D");
+    assert_eq!(
+        dashboard.wait_alert_titles(8, summary.id, "codex-input"),
+        [INPUT, READY, INPUT, READY, INPUT, INPUT, READY, INPUT],
+        "a genuinely new request after reattach alerts once"
+    );
+    assert_eq!(
+        fixture.session_summary(summary.id).unread,
+        Some(unread_after_c),
+        "Input alerts never acknowledge Unread"
+    );
+
+    dashboard.detach();
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "CODEX_NATIVE_EXIT=17");
+}
+
+#[test]
 fn codex_unread_real_cli_and_dashboard_review_preserve_native_reporting() {
     let _guard = env_lock();
     let fixture = ControlFixture::new_bounded();

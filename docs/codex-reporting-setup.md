@@ -12,7 +12,7 @@ the same managed reporting contract:
 ovrcr agent run codex -- codex
 ```
 
-A direct `codex` launch is untracked; the managed wrapper is required even when the hooks are configured and doctor reports a supported version. Running the wrapper in a terminal outside OVRCR also leaves reporting unavailable. The wrapper preserves ordinary native behavior when reporting cannot be admitted. Doctor reports Ready as available and Input-request support as unavailable until that dependent ticket; one working capability does not certify the other.
+A direct `codex` launch is untracked; the managed wrapper is required even when the hooks are configured and doctor reports a supported version. Running the wrapper in a terminal outside OVRCR also leaves reporting unavailable. The wrapper preserves ordinary native behavior when reporting cannot be admitted. Doctor reports Ready as available and Approval Input requests as available from verified root `PermissionRequest` hooks (`approval:{turn_id}`); questions remain unavailable until a distinct question open/close surface is verified. One working capability does not certify the other.
 
 The legacy `agent run --provider codex -- codex` form also works. Native argv remains unchanged. The executable basename must be `codex`. Supported optional arguments are `--no-alt-screen`, `--full-auto`, and separate-token `--model/-m`, `--profile/-p`, `--sandbox/-s`, `--ask-for-approval/-a`, `--cd/-C` with a nonempty value that does not start with `-`. At most one initial prompt is supported; use `--` before a prompt matching a native subcommand. Trust hooks before submitting the first tracked prompt: an initial prompt supplied while Codex displays hook review may run untracked.
 
@@ -47,6 +47,21 @@ command = "exec '/absolute/path/to/ovrcr' report codex --stdin"
 type = "command"
 command = "exec '/absolute/path/to/ovrcr' report codex --stdin"
 
+[[hooks.PermissionRequest]]
+[[hooks.PermissionRequest.hooks]]
+type = "command"
+command = "exec '/absolute/path/to/ovrcr' report codex --stdin"
+
+[[hooks.PreToolUse]]
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "exec '/absolute/path/to/ovrcr' report codex --stdin"
+
+[[hooks.PostToolUse]]
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = "exec '/absolute/path/to/ovrcr' report codex --stdin"
+
 [[hooks.Stop]]
 [[hooks.Stop.hooks]]
 type = "command"
@@ -63,13 +78,13 @@ type = "command"
 command = "exec '/absolute/path/to/ovrcr' report codex --stdin"
 ```
 
-Keep these command hooks synchronous and use direct `exec` so receiver process attribution reaches the native Codex parent. The helper returns successful exit with empty stdout as a native no-op response, including outside a managed launch. It never returns an approval decision. Review and individually trust the five OVRCR reporters through Codex's native UI. Preserve the existing trust and enablement of unrelated JSON and plugin hooks, including any that still need review; trusting the OVRCR reporters does not establish that those other hooks ran. Setup and doctor do not bypass trust or change permission policy. To remove this setup, remove only the exact added reporter handlers, preserving other handlers and their declaration order.
+Keep these command hooks synchronous and use direct `exec` so receiver process attribution reaches the native Codex parent. The helper returns successful exit with empty stdout as a native no-op response, including outside a managed launch. It never returns an approval decision. Review and individually trust the OVRCR reporters through Codex's native UI. The PermissionRequest reporter never returns an approval decision; preserve unrelated approval handlers and their order. Preserve the existing trust and enablement of unrelated JSON and plugin hooks, including any that still need review; trusting the OVRCR reporters does not establish that those other hooks ran. Setup and doctor do not bypass trust or change permission policy. To remove this setup, remove only the exact added reporter handlers, preserving other handlers and their declaration order.
 
 Doctor invokes only the selected executable's bounded `--version` probe. Its default executable is `codex`; `--executable PATH` overrides it. It neither needs a running OVRCR server nor starts a provider conversation or reads credentials. `probe_status: supported` establishes stable patch-range compatibility. `configuration.status: supplied_file_supported` establishes the presence of expected synchronous commands in that supplied file. The `effective_configuration`, `hook_trust` and `delivery` fields remain `unverified`, including when those checks pass. Its `release_status` names the accepted implementation contract; it is not an installed-session result. `--session` does not inspect a Codex session; use `ovrcr session usage ID` for the current server snapshot and complete the [native installation check](codex-ready-installation.md#verify-the-installed-path-natively).
 
 ## What the indicator means
 
-An authenticated root `UserPromptSubmit` binds the observed conversation and marks Busy. Its matching `Stop` marks ResponseReady with Observed quality once; this means the matching root Stop was observed and the response is available to review, not task success or confirmed settling. Other native Stop hooks may still affect provider behavior. `Interrupt` closes that turn as Idle without Ready. Native Ctrl-C produced Idle in the retained check; an earlier Escape attempt left Busy. Session end or reporter loss marks reporter health Unavailable. The snapshot retains its last activity as a historical observation; that retained activity does not establish current readiness.
+An authenticated root `UserPromptSubmit` binds the observed conversation and marks Busy. A matching root `PermissionRequest` opens an Approval Input request (`approval:{turn_id}`), so effective activity is WaitingInput and an input-needed alert can fire once per request identity; the next attributable root activity closes it. `PreToolUse`/`PostToolUse` alone never open a request. Its matching `Stop` marks ResponseReady with Observed quality once; this means the matching root Stop was observed and the response is available to review, not task success or confirmed settling. Other native Stop hooks may still affect provider behavior. `Interrupt` closes that turn as Idle without Ready. Native Ctrl-C produced Idle in the retained check; an earlier Escape attempt left Busy. Session end or reporter loss marks reporter health Unavailable. The snapshot retains its last activity as a historical observation; that retained activity does not establish current readiness.
 
 The last Ready observation survives dashboard reconnect while the server remains alive. New observed activity replaces it; reporting becoming Unavailable preserves the last observation with Unavailable health. The next authenticated prompt clears Ready to Busy and may rebind after the prior turn closed. In-process backtracking without a new prompt does not change the displayed last-observed-turn identity. No foreground-history guarantee is implied.
 
@@ -102,7 +117,7 @@ activity, quality, reporter health and native behavior. Removing the terminal or
 losing the server loses its unread state; there is no durable response history.
 Unread tracking requires no notification preference or additional hook setup.
 
-Initial resume, picker/last, fork, exec, remote and unknown versions/options are unsupported for reporting and retain ordinary native behavior. This scope excludes continuous selected-history tracking, subagent readiness, WaitingInput, context/usage/cost metrics, confirmed completion and transcript collection. No Linux native GUI acceptance, metrics support or concurrent provider-launch throughput is claimed. Existing Claude acceptance does not cover Codex.
+Initial resume, picker/last, fork, exec, remote and unknown versions/options are unsupported for reporting and retain ordinary native behavior. Approval Input requests are available from matching root `PermissionRequest` with identity `approval:{turn_id}`; the next attributable root activity (`PreToolUse`/`PostToolUse`/`Stop`/`Interrupt`/new prompt) closes the set. Questions remain unavailable (no distinct question surface). This scope still excludes continuous selected-history tracking, subagent readiness, context/usage/cost metrics, confirmed completion and transcript collection. No Linux native GUI acceptance, metrics support or concurrent provider-launch throughput is claimed. Existing Claude acceptance does not cover Codex.
 
 ## Retained conversation recovery
 

@@ -507,14 +507,18 @@ command = "my-approval-handler"
     let before: toml::Value = toml::from_str(original).unwrap();
     assert_eq!(value["projects"], before["projects"]);
     assert_eq!(value["hooks"]["state"], before["hooks"]["state"]);
+    // Existing approval handlers stay first; OVRCR appends its PermissionRequest reporter.
     assert_eq!(
-        value["hooks"]["PermissionRequest"],
-        before["hooks"]["PermissionRequest"]
+        value["hooks"]["PermissionRequest"][0],
+        before["hooks"]["PermissionRequest"][0]
     );
     assert_eq!(value["hooks"]["Stop"][0], before["hooks"]["Stop"][0]);
     for event in [
         "SessionStart",
         "UserPromptSubmit",
+        "PermissionRequest",
+        "PreToolUse",
+        "PostToolUse",
         "Stop",
         "Interrupt",
         "SessionEnd",
