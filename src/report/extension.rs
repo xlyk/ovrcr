@@ -484,8 +484,7 @@ impl Events {
                 source,
             },
         };
-        let published =
-            reporter.publish(AgentObservation::Metrics(Box::new(sample)), deadline);
+        let published = reporter.publish(AgentObservation::Metrics(Box::new(sample)), deadline);
         if published == reporter::ACCEPTED {
             self.model = Some(model.to_owned());
             None
@@ -1696,10 +1695,7 @@ mod tests {
                 "model",
                 "claude-sonnet-4".into(),
             );
-            assert_eq!(
-                drive(&mut events, &mut reporter, &same),
-                reporter::ACCEPTED
-            );
+            assert_eq!(drive(&mut events, &mut reporter, &same), reporter::ACCEPTED);
             assert_eq!(
                 Supervisor::models(&supervisor.observed()),
                 vec![Some("grok-4.7".into()), Some("claude-sonnet-4".into())],

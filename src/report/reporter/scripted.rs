@@ -175,9 +175,7 @@ impl Supervisor {
             .iter()
             .filter_map(|entry| match entry {
                 Observed::Report(report) => match &report.observation {
-                    ovrcr_protocol::AgentObservation::Metrics(sample) => {
-                        Some(sample.model.clone())
-                    }
+                    ovrcr_protocol::AgentObservation::Metrics(sample) => Some(sample.model.clone()),
                     _ => None,
                 },
                 _ => None,
