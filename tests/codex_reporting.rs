@@ -34,12 +34,16 @@ fn codex_hook_outside_managed_invocation_is_silent_without_reading_stdin() {
 }
 
 #[test]
-fn codex_fresh_grammar_rejects_resume_remote_and_unknown_forms() {
+fn codex_grammar_accepts_fresh_and_exact_resume_only() {
     let args = |values: &[&str]| values.iter().map(OsString::from).collect::<Vec<_>>();
+    let id = "01a08e5c-7480-7052-9964-9224aadebef0";
     for values in [
         vec!["codex"],
         vec!["codex", "--no-alt-screen", "-C", "/tmp", "hello"],
         vec!["codex", "--", "resume"],
+        vec!["codex", "resume", id],
+        vec!["codex", "resume", id, "--model", "gpt"],
+        vec!["codex", "--model", "gpt", "resume", id],
     ] {
         assert!(
             ovrcr::report::codex::eligible_argv(&args(&values)),
@@ -48,6 +52,8 @@ fn codex_fresh_grammar_rejects_resume_remote_and_unknown_forms() {
     }
     for values in [
         vec!["codex", "resume"],
+        vec!["codex", "resume", "not-a-uuid"],
+        vec!["codex", "resume", id, "extra"],
         vec!["codex", "fork"],
         vec!["codex", "exec"],
         vec!["codex", "cloud"],

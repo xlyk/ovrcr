@@ -9481,6 +9481,9 @@ fn codex_hook_native_helper() {
         if parts.get(3) == Some(&"child") {
             payload["agent_id"] = "child".into();
         }
+        if parts.get(3) == Some(&"resume-source") {
+            payload["source"] = "resume".into();
+        }
         if parts.get(3) == Some(&"missing") {
             payload.as_object_mut().unwrap().remove("turn_id");
         }
@@ -9741,6 +9744,43 @@ fn codex_session_named(
 
 /// Both extension harnesses run the same Node host: only the executable name, the
 /// version line it answers and the managed provider differ.
+fn codex_resume_session_named(
+    fixture: &ControlFixture,
+    socket: &Path,
+    name: &str,
+    conversation: &str,
+) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let native = fixture.root.path().join("codex");
+    std::fs::write(&native, "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'codex-cli 0.153.1\\n'; exit; fi\nexec \"$OVRCR_TEST_EXECUTABLE\" --ignored --exact codex_hook_native_helper --nocapture\n").unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let probe = fixture.root.path().join(format!("{name}-channel"));
+    let codex_home = fixture.root.path().join(format!("{name}-codex-home"));
+    std::fs::create_dir_all(&codex_home).unwrap();
+    let summary = fixture.create_codex_session_summary(name, vec![
+        "/bin/sh".into(), "-c".into(),
+        r#"stty -echo; printf '%s
+' "$OVRCR_HOOK_TOKEN" > "$4.capability"; export CODEX_HOME="$6" OVRCR_TEST_EXECUTABLE="$3" OVRCR_TEST_PROBE="$4" OVRCR_HOOK_SOCKET="$5"; "$1" agent run codex -- "$2" resume "$7"; printf 'CODEX_NATIVE_EXIT=%s
+' "$?"; IFS= read -r done"#.into(),
+        "codex-resume-fixture".into(),
+        env!("CARGO_BIN_EXE_ovrcr").into(),
+        native.into_os_string(),
+        std::env::current_exe().unwrap().into_os_string(),
+        probe.clone().into_os_string(),
+        socket.as_os_str().into(),
+        codex_home.into_os_string(),
+        conversation.into(),
+    ]);
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains_until(
+        summary.id,
+        "CODEX_NATIVE_READY",
+        Instant::now() + Duration::from_secs(5),
+    );
+    fixture.wait_terminal_contains(summary.id, "agent awaiting certified resume");
+    (summary, probe)
+}
+
 fn harness_session_named(
     fixture: &ControlFixture,
     socket: &Path,
@@ -10716,6 +10756,109 @@ fn desktop_codex_callback(
     );
     fixture.wait_terminal_contains(session, &format!("CODEX_CALLBACK={index}"));
     *index += 1;
+}
+
+#[test]
+fn codex_exact_resume_reports_ready_unread_and_alert_without_historical_replay() {
+    let _guard = env_lock();
+    use ovrcr::protocol::{AgentActivity, SampleQuality};
+    const READY: &str = "OVRCR · response ready";
+    let conversation = "01a08e5c-7480-7052-9964-9224aadebef0";
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "codex-setup");
+    let (summary, _probe) = codex_resume_session_named(
+        &fixture,
+        &fixture.socket,
+        "codex-resume-ready",
+        conversation,
+    );
+    let mut index = 0;
+    let mut dashboard = DesktopAlertDashboard::start_for(
+        &fixture,
+        Some("desktop_notifications = true\n"),
+        "codex-resume-ready",
+    );
+    dashboard.select("setup", "HOOK_READY");
+
+    // Historical Stop before certified resume identity invents nothing.
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("Stop:{conversation}:historical"),
+    );
+    assert!(fixture.session_summary(summary.id).agent.is_none());
+    assert!(fixture.session_summary(summary.id).unread.is_none());
+    dashboard.wait_record(&dashboard.record.clone(), 0, |_| {
+        panic!("historical Stop alert")
+    });
+
+    // Matching SessionStart(source=resume) attaches without Ready or alert.
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("SessionStart:{conversation}:boot:resume-source"),
+    );
+    let attached = fixture.session_summary(summary.id);
+    assert_eq!(
+        attached.recovery.as_ref().map(|r| r.attached),
+        Some(true),
+        "{attached:?}"
+    );
+    assert!(attached.unread.is_none(), "resume attach invented Unread");
+    assert_eq!(attached.activity, AgentActivity::Unknown);
+    dashboard.wait_record(&dashboard.record.clone(), 0, |_| {
+        panic!("resume attach alert")
+    });
+
+    // New resumed turn: Busy then Observed Ready/Unread and one response-ready alert.
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("UserPromptSubmit:{conversation}:new"),
+    );
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::Busy
+    );
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("Stop:{conversation}:new"),
+    );
+    let ready = fixture.session_summary(summary.id);
+    assert_eq!(ready.activity, AgentActivity::ResponseReady);
+    assert_eq!(
+        ready
+            .agent
+            .as_ref()
+            .unwrap()
+            .activity
+            .as_ref()
+            .unwrap()
+            .quality,
+        SampleQuality::Observed
+    );
+    assert!(ready.unread.is_some(), "resumed Ready missing Unread");
+    assert_eq!(
+        dashboard.wait_alert_titles(1, summary.id, "codex-resume-ready"),
+        [READY]
+    );
+    // Duplicate Stop cannot create another Ready alert.
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("Stop:{conversation}:new"),
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(1, summary.id, "codex-resume-ready"),
+        [READY],
+        "duplicate Stop replayed Ready alert"
+    );
 }
 
 #[test]

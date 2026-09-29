@@ -19,31 +19,55 @@ pub fn version(bytes: &[u8]) -> Option<&str> {
     super::versions::parse(value).map(|_| value)
 }
 
-/// Fresh interactive grammar only. Provider arguments are never rewritten.
+/// Fresh interactive launches and exact `codex resume UUID`. Provider argv is never rewritten.
 pub fn eligible_argv(argv: &[OsString]) -> bool {
+    eligible_launch(argv).is_some()
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum EligibleLaunch {
+    Fresh,
+    Resume(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InitialSource {
+    Startup,
+    Resume,
+}
+
+fn eligible_launch(argv: &[OsString]) -> Option<EligibleLaunch> {
     if argv.first().and_then(|s| Path::new(s).file_name()) != Some(OsStr::new("codex")) {
-        return false;
+        return None;
     }
     let mut args = argv[1..].iter();
     let mut prompt = false;
+    let mut resume = None;
     while let Some(arg) = args.next() {
-        let Some(arg) = arg.to_str() else {
-            return false;
-        };
+        let arg = arg.to_str()?;
         match arg {
             "--no-alt-screen" | "--full-auto" => {}
             "--model" | "-m" | "--profile" | "-p" | "--sandbox" | "-s" | "--ask-for-approval"
             | "-a" | "--cd" | "-C" => {
-                if args
-                    .next()
-                    .is_none_or(|v| v.is_empty() || v.to_string_lossy().starts_with('-'))
-                {
-                    return false;
+                let value = args.next()?;
+                if value.is_empty() || value.to_string_lossy().starts_with('-') {
+                    return None;
                 }
             }
-            "--" => return !prompt && args.count() == 1,
+            "--" => {
+                return (resume.is_none() && !prompt && args.count() == 1)
+                    .then_some(EligibleLaunch::Fresh);
+            }
+            "resume" if resume.is_none() && !prompt => {
+                let value = args.next()?.to_str()?;
+                if !ovrcr_runtime::codex_recovery::is_exact_identity(value) {
+                    return None;
+                }
+                resume = Some(value.to_owned());
+            }
             value
                 if !value.starts_with('-')
+                    && resume.is_none()
                     && !prompt
                     && !matches!(
                         value,
@@ -60,20 +84,24 @@ pub fn eligible_argv(argv: &[OsString]) -> bool {
                             | "sandbox"
                             | "debug"
                             | "apply"
-                            | "resume"
                             | "fork"
                             | "cloud"
                             | "features"
                             | "help"
                     ) =>
             {
-                prompt = true
+                prompt = true;
             }
-            _ => return false,
+            _ => return None,
         }
     }
-    true
+    match (resume, prompt) {
+        (Some(conversation), false) => Some(EligibleLaunch::Resume(conversation)),
+        (None, _) => Some(EligibleLaunch::Fresh),
+        (Some(_), true) => None,
+    }
 }
+
 pub fn supported_version(executable: &OsStr) -> bool {
     super::admission::probe_version(executable)
         .as_deref()
@@ -81,25 +109,41 @@ pub fn supported_version(executable: &OsStr) -> bool {
         .is_some_and(|v| super::versions::CODEX.accepts(v))
 }
 pub fn receiver(lease: Option<InvocationLease>, argv: &[OsString]) -> HookHandler {
-    let unavailable = reporter::preflight(
-        lease.is_some(),
-        argv,
-        eligible_argv,
-        reporter::interactive(),
-    )
-    .or_else(|| {
-        (!supported_version(&argv[0])).then_some("version probe unsupported or unavailable")
-    });
-    // Only for an admitted fresh Codex launch: refresh managed daemon so 0.158+
-    // hooks inherit this invocation's private channel.
+    let reserved = lease.is_some();
+    let preflight = reporter::preflight(reserved, argv, eligible_argv, reporter::interactive());
+    let launch = if preflight.is_none() && supported_version(&argv[0]) {
+        eligible_launch(argv)
+    } else {
+        None
+    };
+    let unavailable = if launch.is_some() {
+        None
+    } else {
+        preflight.or_else(|| {
+            (!supported_version(&argv[0])).then_some("version probe unsupported or unavailable")
+        })
+    };
+    // Admitted fresh or exact resume: refresh managed daemon so 0.158+ hooks
+    // inherit this invocation's private channel.
     if unavailable.is_none() {
         ovrcr_runtime::codex_recovery::prepare_managed_launch();
     }
     let mut reporter = Reporter::new(AgentProvider::Codex, lease, None);
     if let Some(reason) = unavailable {
         reporter.unavailable("Codex", reason);
+    } else if matches!(launch, Some(EligibleLaunch::Resume(_))) {
+        eprintln!("agent awaiting certified resume");
     }
-    let recovery = (|| {
+    let expected = match &launch {
+        Some(EligibleLaunch::Resume(conversation)) => Some(conversation.clone()),
+        Some(EligibleLaunch::Fresh) | None => None,
+    };
+    let initial_source = match &launch {
+        Some(EligibleLaunch::Resume(_)) => Some(InitialSource::Resume),
+        Some(EligibleLaunch::Fresh) => Some(InitialSource::Startup),
+        None => None,
+    };
+    let recovery = launch.as_ref().and_then(|launch| {
         let executable = std::path::PathBuf::from(argv.first()?);
         let executable = if executable.is_absolute() {
             executable
@@ -108,19 +152,26 @@ pub fn receiver(lease: Option<InvocationLease>, argv: &[OsString]) -> HookHandle
                 .map(|directory| directory.join(&executable))
                 .find(|path| path.is_absolute() && path.is_file())?
         };
+        let conversation = match launch {
+            EligibleLaunch::Resume(conversation) => conversation.clone(),
+            EligibleLaunch::Fresh => String::new(),
+        };
         Some(ovrcr_protocol::CodexConversation {
-            conversation: String::new(),
+            conversation,
             executable,
             history: None,
             config_dir: ovrcr_runtime::codex_recovery::config_dir().ok()?,
             options: ovrcr_runtime::codex_recovery::launch_options(argv).ok()?,
         })
-    })();
+    });
     reporter.handler(Hooks {
         active: None,
         turn: None,
         open_requests: Vec::new(),
         recovery,
+        expected,
+        initial_source,
+        initial_accepted: false,
     })
 }
 
@@ -132,6 +183,10 @@ struct Hooks {
     turn: Option<String>,
     open_requests: Vec<(String, ovrcr_protocol::InputKind)>,
     recovery: Option<ovrcr_protocol::CodexConversation>,
+    expected: Option<String>,
+    initial_source: Option<InitialSource>,
+    /// Certified SessionStart for this invocation has been accepted (resume attach).
+    initial_accepted: bool,
 }
 
 impl Hooks {
@@ -258,7 +313,43 @@ impl reporter::Frames for Hooks {
             return reporter::IGNORED.to_vec();
         };
         if event == "SessionStart" {
-            if payload["source"] != "startup" || self.recovery.is_none() {
+            let Some(source) = payload["source"].as_str() else {
+                return reporter::IGNORED.to_vec();
+            };
+            // Exact resume must certify Root identity before any reporting is admitted.
+            if self.initial_source == Some(InitialSource::Resume) {
+                if self.initial_accepted {
+                    // In-process switches stay conservative until conversation-switch tickets.
+                    if self.active.is_some() {
+                        reporter.invalidate_conversation(deadline);
+                    }
+                    reporter.disable();
+                    return reporter::UNAVAILABLE.to_vec();
+                }
+                let Some(expected) = self.expected.as_deref() else {
+                    return reporter::IGNORED.to_vec();
+                };
+                if source != "resume" {
+                    if session == expected {
+                        reporter.disable();
+                        return reporter::UNAVAILABLE.to_vec();
+                    }
+                    return reporter::IGNORED.to_vec();
+                }
+                if session != expected
+                    || self.recovery.is_none()
+                    || payload["transcript_path"].as_str().is_none()
+                {
+                    return reporter::IGNORED.to_vec();
+                }
+                if let Some(unavailable) = reporter.bind_or_disable(session, deadline, false) {
+                    return unavailable;
+                }
+                self.retain(reporter, payload, session, deadline);
+                self.initial_accepted = true;
+                return reporter::ACCEPTED.to_vec();
+            }
+            if source != "startup" || self.recovery.is_none() {
                 return reporter::IGNORED.to_vec();
             }
             if self.active.is_some() {
@@ -269,6 +360,7 @@ impl reporter::Frames for Hooks {
                 return unavailable;
             }
             self.retain(reporter, payload, session, deadline);
+            self.initial_accepted = true;
             return reporter::ACCEPTED.to_vec();
         }
         let Some(turn) = payload["turn_id"]
@@ -314,6 +406,20 @@ impl reporter::Frames for Hooks {
             return self.publish_requests(reporter, deadline);
         }
         let state = if event == "UserPromptSubmit" {
+            // Exact resume cannot bind from a prompt alone — SessionStart(source=resume)
+            // must establish the Root identity first. Historical Stop/Submit before that
+            // stay ignored and never invent Ready.
+            if self.initial_source == Some(InitialSource::Resume) && !self.initial_accepted {
+                return reporter::IGNORED.to_vec();
+            }
+            if self.initial_source == Some(InitialSource::Resume)
+                && self
+                    .expected
+                    .as_deref()
+                    .is_some_and(|expected| expected != session)
+            {
+                return reporter::IGNORED.to_vec();
+            }
             // Deduplicate *before* any revisions, binding changes, or freshness updates.
             if let Some(answer) = reporter.admit_cycle(&identity) {
                 return answer;
@@ -372,6 +478,32 @@ mod tests {
                 turn: None,
                 open_requests: Vec::new(),
                 recovery: None,
+                expected: None,
+                initial_source: Some(InitialSource::Startup),
+                initial_accepted: false,
+            },
+            reporter,
+            supervisor,
+        )
+    }
+
+    fn resume_hooks(expected: &str) -> (Hooks, Reporter, Supervisor) {
+        let (reporter, supervisor) = Supervisor::reporter(AgentProvider::Codex);
+        (
+            Hooks {
+                active: None,
+                turn: None,
+                open_requests: Vec::new(),
+                recovery: Some(ovrcr_protocol::CodexConversation {
+                    conversation: expected.into(),
+                    executable: "/bin/codex".into(),
+                    history: None,
+                    config_dir: "/config".into(),
+                    options: vec![],
+                }),
+                expected: Some(expected.into()),
+                initial_source: Some(InitialSource::Resume),
+                initial_accepted: false,
             },
             reporter,
             supervisor,
@@ -470,6 +602,143 @@ mod tests {
             retained[1].history, None,
             "mismatched file retained an old recoverable identity"
         );
+    }
+
+    #[test]
+    fn exact_resume_admits_matching_root_then_reports_new_turn_without_historical_ready() {
+        let id = "01a08e5c-7480-7052-9964-9224aadebef0";
+        let other = "01a08e94-0deb-76c3-a2b5-540c4874a53f";
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("exact.jsonl");
+        std::fs::write(
+            &path,
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"source\":\"cli\"}}}}\n"
+            ),
+        )
+        .unwrap();
+        let (mut hooks, mut reporter, _supervisor) = resume_hooks(id);
+        hooks.recovery.as_mut().unwrap().config_dir = root.path().into();
+        let frame = |source: &str, session: &str, child: bool| {
+            serde_json::to_vec(&serde_json::json!({
+                "provider": "codex", "origin": "codex-hook", "payload": {
+                    "hook_event_name": "SessionStart", "source": source, "session_id": session,
+                    "transcript_path": path, "agent_id": if child { "child" } else { "" },
+                }
+            }))
+            .unwrap()
+        };
+        // Historical / mismatched / child identity cannot attach.
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &hook("Stop", id, "historical")),
+            reporter::IGNORED
+        );
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("UserPromptSubmit", id, "historical")
+            ),
+            reporter::IGNORED
+        );
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &frame("startup", id, false)),
+            reporter::UNAVAILABLE
+        );
+        let (mut hooks, mut reporter, supervisor) = resume_hooks(id);
+        hooks.recovery.as_mut().unwrap().config_dir = root.path().into();
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &frame("resume", other, false)),
+            reporter::IGNORED
+        );
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &frame("resume", id, true)),
+            reporter::IGNORED
+        );
+        assert!(reporter.binding().is_none());
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &frame("resume", id, false)),
+            reporter::ACCEPTED
+        );
+        assert!(hooks.initial_accepted);
+        assert_eq!(
+            reporter.binding().map(|b| b.conversation.as_str()),
+            Some(id)
+        );
+        // New resumed turn: Busy then Observed Ready once; repeats do not republish.
+        // SessionStart itself must not have invented Ready — only the new turn pair.
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("UserPromptSubmit", id, "new-turn")
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &hook("Stop", id, "new-turn")),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &hook("Stop", id, "new-turn")),
+            reporter::IGNORED
+        );
+        assert_eq!(
+            states(supervisor),
+            vec![
+                (
+                    1,
+                    AgentActivity::Busy,
+                    Some("new-turn".into()),
+                    SampleQuality::Observed
+                ),
+                (
+                    1,
+                    AgentActivity::ResponseReady,
+                    Some("new-turn".into()),
+                    SampleQuality::Observed
+                ),
+            ],
+            "historical resume attach must not invent an extra Ready"
+        );
+    }
+
+    #[test]
+    fn eligible_launch_accepts_exact_resume_and_rejects_picker_or_prompted_resume() {
+        let args = |values: &[&str]| values.iter().map(OsString::from).collect::<Vec<_>>();
+        let id = "01a08e5c-7480-7052-9964-9224aadebef0";
+        assert_eq!(
+            eligible_launch(&args(&["codex", "resume", id])),
+            Some(EligibleLaunch::Resume(id.into()))
+        );
+        assert_eq!(
+            eligible_launch(&args(&[
+                "codex",
+                "--model",
+                "gpt",
+                "resume",
+                id,
+                "--no-alt-screen"
+            ])),
+            Some(EligibleLaunch::Resume(id.into()))
+        );
+        assert_eq!(
+            eligible_launch(&args(&["codex", "resume", id, "--model", "gpt"])),
+            Some(EligibleLaunch::Resume(id.into()))
+        );
+        assert_eq!(
+            eligible_launch(&args(&["codex"])),
+            Some(EligibleLaunch::Fresh)
+        );
+        for values in [
+            vec!["codex", "resume"],
+            vec!["codex", "resume", "not-a-uuid"],
+            vec!["codex", "resume", id, "prompt"],
+            vec!["codex", "fork", id],
+            vec!["codex", "exec"],
+        ] {
+            assert_eq!(eligible_launch(&args(&values)), None, "{values:?}");
+        }
     }
 
     #[test]

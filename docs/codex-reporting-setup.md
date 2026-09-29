@@ -117,7 +117,7 @@ activity, quality, reporter health and native behavior. Removing the terminal or
 losing the server loses its unread state; there is no durable response history.
 Unread tracking requires no notification preference or additional hook setup.
 
-Initial resume, picker/last, fork, exec, remote and unknown versions/options are unsupported for reporting and retain ordinary native behavior. Approval Input requests are available from matching root `PermissionRequest` with identity `approval:{turn_id}`; the next attributable root activity (`PreToolUse`/`PostToolUse`/`Stop`/`Interrupt`/new prompt) closes the set. Questions remain unavailable (no distinct question surface). This scope still excludes continuous selected-history tracking, subagent readiness, context/usage/cost metrics, confirmed completion and transcript collection. No Linux native GUI acceptance, metrics support or concurrent provider-launch throughput is claimed. Existing Claude acceptance does not cover Codex.
+Exact `codex resume UUID` (managed Reopen / initial resume) is supported for reporting after matching SessionStart(source=resume) Root identity. Picker/last, fork, exec, remote and unknown versions/options remain unsupported for reporting and retain ordinary native behavior. Approval Input requests are available from matching root `PermissionRequest` with identity `approval:{turn_id}`; the next attributable root activity (`PreToolUse`/`PostToolUse`/`Stop`/`Interrupt`/new prompt) closes the set. Questions remain unavailable (no distinct question surface). This scope still excludes continuous selected-history tracking, subagent readiness, context/usage/cost metrics, confirmed completion and transcript collection. No Linux native GUI acceptance, metrics support or concurrent provider-launch throughput is claimed. Existing Claude acceptance does not cover Codex.
 
 ## Retained conversation recovery
 
@@ -144,12 +144,17 @@ contents and credentials are not copied or fingerprinted. The operator must keep
 the referenced configuration/account and native history stable during recovery.
 Native hook trust and approval settings are never bypassed.
 
-**Initial resume reporting remains unavailable for the entire resumed invocation.**
-The Dashboard says `Codex resume: reporting unavailable; attachment not confirmed`;
-CLI inventory reports `reporting_unavailable: true` and `recovery.attached: false`.
-Process launch does not prove conversation attachment. Old Busy, Ready, Unread,
-input requests and timing are not restored. A later prompt in this resumed run
-does not enable reporting or update its retained identity.
+**Exact resume reporting requires certified attachment.** Managed Reopen launches
+`codex resume UUID` through the existing reporting path. The Dashboard shows
+`Agent launched; awaiting conversation attachment` until a matching root
+`SessionStart` with `source=resume` binds the intended conversation; CLI inventory
+keeps `recovery.attached: false` until then. Process launch alone does not prove
+attachment. Old Busy, Ready, Unread, input requests and timing are not restored.
+After attachment, a new root turn produces Observed Busy then Ready/Unread through
+the existing delivery path; historical Stop/Submit callbacks and Dashboard
+attach/reconnect do not invent Ready. Input-request availability on resume uses
+the same verified `PermissionRequest` path as fresh launches and is not claimed
+separately by this reopen slice.
 
 Recovery names the **last authoritative hook identity**, not continuously selected
 history. Native backtracking can switch conversations without a hook until the

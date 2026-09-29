@@ -161,7 +161,7 @@ fn codex_reopen_uses_exact_identity_without_prompt_across_two_restarts() {
             &id_arg,
             &format!("RETAINED_CODEX_CWD:{}", cwd.display()),
         );
-        wait_output(&live, &id_arg, "Codex reporting unavailable");
+        wait_output(&live, &id_arg, "agent awaiting certified resume");
         let rows = json(&live, &["terminal", "list"]);
         let row = rows
             .as_array()
@@ -171,9 +171,10 @@ fn codex_reopen_uses_exact_identity_without_prompt_across_two_restarts() {
             .unwrap();
         assert_eq!(row["recovery"]["conversation"], conversation);
         assert_eq!(row["recovery"]["attached"], false);
-        assert!(row["agent"].is_null(), "old reporting survived: {row}");
-        assert_eq!(row["reporting_unavailable"], true);
-        assert!(row["unread"].is_null());
+        assert!(
+            row["unread"].is_null(),
+            "reopen restored historical Unread: {row}"
+        );
         assert_eq!(
             std::fs::read_to_string(live.root.path().join("argv")).unwrap(),
             format!(
@@ -181,7 +182,62 @@ fn codex_reopen_uses_exact_identity_without_prompt_across_two_restarts() {
                 format!("resume\n{conversation}\n").repeat(attempt)
             )
         );
+        // Repeated restart before another provider callback must keep the reference.
     }
+    // Historical Stop before certified resume identity cannot invent Ready.
+    json(
+        &live,
+        &["terminal", "send", &id_arg, "--text", "historical-stop"],
+    );
+    wait_output(&live, &id_arg, "RETAINED_CODEX_HISTORICAL_IGNORED");
+    let rows = json(&live, &["terminal", "list"]);
+    let row = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == id)
+        .unwrap();
+    assert_eq!(row["recovery"]["attached"], false);
+    assert!(
+        row["unread"].is_null(),
+        "historical Stop created Unread: {row}"
+    );
+    // Matching SessionStart(source=resume) establishes attachment without Ready.
+    json(
+        &live,
+        &["terminal", "send", &id_arg, "--text", "resume-attach"],
+    );
+    wait_output(&live, &id_arg, "RETAINED_CODEX_RESUME_ATTACHED");
+    let rows = json(&live, &["terminal", "list"]);
+    let row = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == id)
+        .unwrap();
+    assert_eq!(row["recovery"]["conversation"], conversation);
+    assert_eq!(row["recovery"]["attached"], true, "{row}");
+    assert!(
+        row["unread"].is_null(),
+        "resume attach invented Ready: {row}"
+    );
+    // A new resumed turn reports Busy then Observed Ready/Unread once.
+    json(&live, &["terminal", "send", &id_arg, "--text", "attach"]);
+    wait_output(&live, &id_arg, "RETAINED_CODEX_RESUMED_READY");
+    let rows = json(&live, &["terminal", "list"]);
+    let row = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == id)
+        .unwrap();
+    assert_eq!(row["activity"], "response_ready", "{row}");
+    assert_eq!(row["agent"]["activity"]["quality"], "Observed", "{row}");
+    assert!(
+        row["unread"].is_object(),
+        "resumed Ready missing Unread: {row}"
+    );
+    assert_eq!(row["recovery"]["attached"], true);
     json(&live, &["shutdown", "--kill"]);
     live.join();
     let database = std::fs::read(ovrcr::config::database_path(&live.config)).unwrap();
@@ -430,6 +486,9 @@ fn retained_codex_native_helper() {
         .join(format!("rollout-2026-09-10T19-46-58-{id}.jsonl"));
     std::fs::create_dir_all(history.parent().unwrap()).unwrap();
     std::fs::write(&history, format!("{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"cli_version\":\"0.153.0\",\"source\":\"cli\"}}}}\n")).unwrap();
+    let resumed =
+        std::env::var_os("RETAINED_CODEX_MODE").as_deref() == Some(std::ffi::OsStr::new("resume"));
+    let session_source = if resumed { "resume" } else { "startup" };
     println!(
         "RETAINED_CODEX_CWD:{}",
         std::env::current_dir().unwrap().display()
@@ -449,16 +508,54 @@ fn retained_codex_native_helper() {
                 .unwrap();
             println!("RETAINED_CODEX_FOREIGN_IGNORED");
         }
-        if line == "attach" || line == "startup" {
-            let events: &[&str] = if line == "startup" {
-                &["SessionStart"]
+        if line == "historical-stop" {
+            // A Stop restored during resume attach must not invent Ready.
+            let payload = serde_json::to_vec(&serde_json::json!({
+                "hook_event_name": "Stop", "session_id": id, "turn_id": "historical",
+                "transcript_path": history,
+            }))
+            .unwrap();
+            use std::io::Write;
+            let mut hook = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+                .args(["report", "codex", "--stdin"])
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            hook.stdin.take().unwrap().write_all(&payload).unwrap();
+            assert!(hook.wait().unwrap().success());
+            println!("RETAINED_CODEX_HISTORICAL_IGNORED");
+        }
+        if line == "attach" || line == "startup" || line == "resume-attach" {
+            let (events, turn, marker) = if line == "startup" || line == "resume-attach" {
+                (
+                    &["SessionStart"][..],
+                    "turn-1",
+                    if resumed {
+                        "RETAINED_CODEX_RESUME_ATTACHED"
+                    } else {
+                        "RETAINED_CODEX_STARTUP"
+                    },
+                )
             } else {
-                &["UserPromptSubmit", "Stop"]
+                (
+                    &["UserPromptSubmit", "Stop"][..],
+                    if resumed { "resumed-turn" } else { "turn-1" },
+                    if resumed {
+                        "RETAINED_CODEX_RESUMED_READY"
+                    } else {
+                        "RETAINED_CODEX_ATTACHED"
+                    },
+                )
             };
             for event in events {
                 let payload = serde_json::to_vec(&serde_json::json!({
-                    "hook_event_name": event, "source": "startup", "session_id": id, "turn_id": "turn-1", "transcript_path": history,
-                })).unwrap();
+                    "hook_event_name": event,
+                    "source": session_source,
+                    "session_id": id,
+                    "turn_id": turn,
+                    "transcript_path": history,
+                }))
+                .unwrap();
                 use std::io::Write;
                 let mut hook = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
                     .args(["report", "codex", "--stdin"])
@@ -468,14 +565,7 @@ fn retained_codex_native_helper() {
                 hook.stdin.take().unwrap().write_all(&payload).unwrap();
                 assert!(hook.wait().unwrap().success());
             }
-            println!(
-                "{}",
-                if line == "startup" {
-                    "RETAINED_CODEX_STARTUP"
-                } else {
-                    "RETAINED_CODEX_ATTACHED"
-                }
-            );
+            println!("{marker}");
         }
     }
 }

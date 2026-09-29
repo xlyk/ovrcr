@@ -526,10 +526,12 @@ do not trigger recovery. Native GUI acceptance of this automatic path is tracked
 separately in #127. See [Claude recovery support](agent-reporting-support.md#retained-claude-conversations).
 
 Codex recovery resumes the exact UUID from its last authenticated root hook.
-Initial Codex resume reporting remains unavailable for that invocation; the status
-says `Codex resume: reporting unavailable; attachment not confirmed`, not Ready.
-The saved reference survives another restart before any new prompt. Silent native
-history switches cannot update it without a supported hook. See
+Until matching `SessionStart(source=resume)` binds that conversation, status says
+`Agent launched; awaiting conversation attachment` — process creation is not
+attachment, and historical Ready is not restored. After attachment, a new root
+turn reports Observed Ready/Unread through the existing path. The saved reference
+survives another restart before any new prompt. Silent native history switches
+cannot update it without a supported hook. See
 [Codex recovery limitations](codex-reporting-setup.md#retained-conversation-recovery).
 
 Pi and Oh My Pi retain the exact native session ID and file from their managed
