@@ -443,16 +443,17 @@ fn trusted_native_root(
 }
 
 fn native_tree_contains(peer: libc::pid_t, root: libc::pid_t) -> bool {
+    // The native root connecting as itself is not a hook helper (Codex recovery
+    // fixtures send forged SessionStart that way). Require a strict descendant:
+    // direct children (0.153 TUI hooks) and nested daemon helpers (0.158+).
+    if peer == root || peer <= 1 || root <= 1 {
+        return false;
+    }
     let mut current = peer;
     for _ in 0..32 {
-        if current == root {
-            return true;
-        }
-        if current <= 1 {
-            return false;
-        }
         match process_parent(current) {
-            Some(parent) if parent > 0 && parent != current => current = parent,
+            Some(parent) if parent == root => return true,
+            Some(parent) if parent > 1 && parent != current => current = parent,
             _ => return false,
         }
     }
@@ -614,7 +615,10 @@ mod tests {
     fn native_tree_contains_direct_child_and_deeper_descendants() {
         let self_pid = unsafe { libc::getpid() };
         let parent = process_parent(self_pid).expect("parent");
-        assert!(native_tree_contains(self_pid, self_pid));
+        assert!(
+            !native_tree_contains(self_pid, self_pid),
+            "the native root itself is not a hook helper"
+        );
         assert!(native_tree_contains(self_pid, parent));
         // Init is not under this process; a non-ancestor root never matches.
         assert!(!native_tree_contains(1, self_pid));
