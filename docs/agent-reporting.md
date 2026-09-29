@@ -327,7 +327,8 @@ Codex's own hook payload (`model` on authenticated root hooks such as
 model replaces the previous one. The Dashboard sidebar shows `pi:<model>`,
 `omp:<model>`, or `codex:<model>`. Until the first report the row stays the agent
 name alone. The model never comes from the launch flag or from terminal text.
-Claude's existing model report is unchanged.
+Claude's existing model report is unchanged. Grok has no safe model report; a
+managed Grok row stays `grok`.
 
 ## Context usage
 
