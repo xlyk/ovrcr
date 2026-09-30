@@ -388,6 +388,9 @@ pub(super) fn next_dashboard_messages(
         redraw = true;
         // A synthetic release targets the session that is focused now; the server rejects it
         // once the replacement SetView has moved focus, and the outbox keeps it leading the batch.
+        // A final Ok may race input that arrived during Loading. Keep its guard through
+        // the following bounded input drain, including InputPending continuation batches.
+        dashboard.defer_agent_typing_until_input_boundary();
         for request in dashboard.handle_server_message(message) {
             write_frame(stream, &request)?;
         }
@@ -473,12 +476,13 @@ pub(super) fn drain_dashboard_input_then_emit_with<
         return Ok(input_boundary);
     }
 
+    let typing_changed = dashboard.finish_agent_input_boundary();
     let desktop_changed = dashboard.emit_desktop_notifications();
     if emit_pending_history_copy(terminal, dashboard) {
         flush(stream, dashboard)?;
         return Ok(DashboardBoundary::Work);
     }
-    Ok(if desktop_changed {
+    Ok(if desktop_changed || typing_changed {
         DashboardBoundary::Work
     } else {
         input_boundary
@@ -847,6 +851,131 @@ mod unread_review_tests {
         };
         dashboard.select_session(summary.id);
         (dashboard, summary)
+    }
+
+    #[test]
+    fn agent_loading_acknowledgement_discards_already_pending_input_before_cutover() {
+        use std::collections::VecDeque;
+        for count in [0, 2, DASHBOARD_INPUT_BATCH_LIMIT + 3] {
+            let (mut dashboard, mut agent) = fixture();
+            agent.id = SessionId(2);
+            agent.name = "destination-agent".into();
+            agent.kind = crate::protocol::SessionKind::Agent {
+                name: "fixture-agent".into(),
+            };
+            agent.unread = None;
+            dashboard.hierarchy.projects[0].workspaces[0]
+                .sessions
+                .push(agent);
+            dashboard.key(KeyCode::Char('s'));
+            let DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
+                panic!("Agent confirmation must request view");
+            };
+            let Request::SetView { view } = request.request else {
+                panic!("SetView");
+            };
+            dashboard.drain_outbox();
+            let mut bytes = Vec::new();
+            let mut terminal = Terminal::with_options(
+                CrosstermBackend::new(&mut bytes),
+                TerminalOptions {
+                    viewport: Viewport::Fixed(Rect::new(0, 0, 120, 20)),
+                },
+            )
+            .unwrap();
+            let (mut stream, mut peer) = UnixStream::pair().unwrap();
+            peer.set_read_timeout(Some(Duration::from_millis(30)))
+                .unwrap();
+            let (sender, messages) = dashboard_message_channel();
+            for pane in &view.panes {
+                sender
+                    .send(ServerMessage::Response {
+                        request_id: request.request_id,
+                        response: Response::Screen {
+                            session: pane.session,
+                            run: pane.run,
+                            revision: view.revision,
+                            size: pane.size,
+                            bytes: Vec::new(),
+                        },
+                    })
+                    .unwrap();
+            }
+            // These complete events were pending during Loading before the final Ok arrives.
+            let events = std::cell::RefCell::new(
+                (0..count)
+                    .map(|i| {
+                        if i % 2 == 0 {
+                            Event::Paste("EARLY_CUTOVER_PASTE".into())
+                        } else {
+                            Event::Key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE))
+                        }
+                    })
+                    .collect::<VecDeque<_>>(),
+            );
+            sender
+                .send(ServerMessage::Response {
+                    request_id: request.request_id,
+                    response: Response::Ok,
+                })
+                .unwrap();
+            assert!(next_dashboard_messages(&messages, &mut dashboard, &mut stream).unwrap());
+            let mut mouse_enabled = false;
+            loop {
+                let boundary = drain_dashboard_input_then_emit_with(
+                    &mut terminal,
+                    &mut stream,
+                    &mut dashboard,
+                    &mut mouse_enabled,
+                    || Ok(!events.borrow().is_empty()),
+                    |terminal, stream, dashboard, mouse_enabled| {
+                        let action =
+                            dashboard.event_action(events.borrow_mut().pop_front().unwrap());
+                        send_dashboard_action(terminal, stream, dashboard, mouse_enabled, action)
+                    },
+                )
+                .unwrap();
+                if boundary != DashboardBoundary::InputPending {
+                    break;
+                }
+                assert_eq!(
+                    dashboard.mode,
+                    super::super::InputMode::Browse,
+                    "bounded drain must keep the loading guard"
+                );
+            }
+            assert!(
+                crate::protocol::read_frame::<ClientMessage>(&mut peer).is_err(),
+                "already-pending loading events must produce no destination Input"
+            );
+            assert_eq!(
+                dashboard.focused_session(),
+                Some(SessionId(2)),
+                "rejected j cannot navigate in Browse"
+            );
+            assert_eq!(
+                dashboard.mode,
+                super::super::InputMode::Terminal,
+                "quiet input boundary completes acknowledged typing"
+            );
+            let action = dashboard.event_action(Event::Key(KeyEvent::new(
+                KeyCode::Char('z'),
+                KeyModifiers::NONE,
+            )));
+            send_dashboard_action(
+                &mut terminal,
+                &mut stream,
+                &mut dashboard,
+                &mut mouse_enabled,
+                action,
+            )
+            .unwrap();
+            let sent: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+            assert!(
+                matches!(sent.request, Request::Input { .. }),
+                "fresh post-boundary input remains usable"
+            );
+        }
     }
 
     #[test]

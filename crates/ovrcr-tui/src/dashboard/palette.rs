@@ -11,7 +11,7 @@ use super::state::{
 use super::{Dashboard, DashboardAction, InputMode};
 use crate::protocol::{
     BranchRequest, ClientMessage, CreateSessionRequest, Request, Response, SessionKind,
-    SessionLaunch, new_workspace_id,
+    SessionLaunch, SessionPhase, SessionRunId, SessionSummary, new_workspace_id,
 };
 use crate::session::SessionId;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -23,6 +23,7 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use unicode_width::UnicodeWidthStr;
 
 #[derive(Default)]
 struct Suggestions {
@@ -53,6 +54,7 @@ enum Command {
     RemoveWorkspace,
     RemoveProject,
     Switch(SessionId),
+    SwitchAgent(SessionId, SessionRunId),
     Hint(Action),
 }
 
@@ -95,8 +97,42 @@ enum Page {
     },
 }
 
+struct AgentCandidate {
+    session: SessionSummary,
+    search_identity: String,
+    unavailable: Option<&'static str>,
+}
+
+fn running_agent(session: &SessionSummary) -> bool {
+    !session.archived
+        && session.phase == SessionPhase::Running
+        && matches!(session.kind, SessionKind::Agent { .. })
+}
+
+impl AgentCandidate {
+    fn reason(&self, dashboard: &Dashboard) -> Option<&'static str> {
+        if self.unavailable.is_some() {
+            return self.unavailable;
+        }
+        match find_session(dashboard, self.session.id) {
+            None => Some("Agent unavailable: session removed; reopen Agents to refresh"),
+            Some(current) if current.run != self.session.run => {
+                Some("Agent unavailable: process run changed; reopen Agents to refresh")
+            }
+            Some(current) if !running_agent(current) => {
+                Some("Agent unavailable: paused or stopped; reopen Agents to refresh")
+            }
+            Some(current) if dashboard.focused_session() == Some(current.id) => {
+                Some("Agent unavailable: already focused; reopen Agents to refresh")
+            }
+            _ => None,
+        }
+    }
+}
+
 pub(super) struct Palette {
     page: Page,
+    agents: Option<Vec<AgentCandidate>>,
     pending: Option<u64>,
     archive: Option<Vec<crate::protocol::SessionSummary>>,
     error: Option<String>,
@@ -168,6 +204,7 @@ impl Palette {
                 query: String::new(),
                 selected: 0,
             },
+            agents: None,
             pending: None,
             archive: None,
             error: None,
@@ -325,7 +362,91 @@ fn accept_pick(field: &mut Field) -> bool {
 }
 
 impl Dashboard {
+    pub(super) fn open_agent_search(&mut self) -> DashboardAction {
+        self.agent_typing = None;
+        self.cancel_mouse_gesture();
+        self.whichkey = None;
+        self.mode = InputMode::Browse;
+        if let Some(begin) = self.history_begin_request.as_mut() {
+            begin.cancelled = true;
+        }
+        let current = self.focused_session();
+        let mut candidates = self
+            .hierarchy_rows(true)
+            .into_iter()
+            .filter_map(|row| {
+                let super::TreeRow::Session { id } = row else {
+                    return None;
+                };
+                let session = find_session(self, id)?;
+                (Some(id) != current && running_agent(session)).then(|| AgentCandidate {
+                    session: session.clone(),
+                    search_identity: format!(
+                        "{} / {} (#{}) / {}",
+                        session_workspace_heading(self, session),
+                        session.display_name(),
+                        session.id.0,
+                        match &session.kind {
+                            SessionKind::Agent { name } => name.as_str(),
+                            SessionKind::Terminal => session.label.as_str(),
+                        }
+                    ),
+                    unavailable: None,
+                })
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_by_key(|candidate| {
+            if super::ready::activity(&candidate.session)
+                == crate::protocol::AgentActivity::WaitingInput
+            {
+                0
+            } else if candidate.session.unread.is_some() {
+                1
+            } else {
+                2
+            }
+        });
+        let mut palette = Palette::new();
+        palette.agents = Some(candidates);
+        self.palette = Some(palette);
+        DashboardAction::Redraw
+    }
+
+    pub(super) fn refresh_agent_search(&mut self) {
+        let Some(mut palette) = self.palette.take() else {
+            return;
+        };
+        if let Some(candidates) = &mut palette.agents {
+            for candidate in candidates {
+                candidate.unavailable = candidate.reason(self);
+            }
+        }
+        self.palette = Some(palette);
+    }
+
+    fn entry_session<'a>(
+        &'a self,
+        command: &Command,
+        palette: &'a Palette,
+    ) -> Option<&'a SessionSummary> {
+        match *command {
+            Command::Switch(id) => find_session(self, id),
+            Command::SwitchAgent(id, run) => {
+                find_session(self, id).filter(|s| s.run == run).or_else(|| {
+                    palette
+                        .agents
+                        .as_ref()?
+                        .iter()
+                        .find(|c| c.session.id == id)
+                        .map(|c| &c.session)
+                })
+            }
+            _ => None,
+        }
+    }
+
     pub(super) fn open_palette(&mut self) -> DashboardAction {
+        self.agent_typing = None;
         self.cancel_mouse_gesture();
         self.whichkey = None;
         if let Some(begin) = self.history_begin_request.as_mut() {
@@ -360,6 +481,7 @@ impl Dashboard {
         }
         self.palette = Some(Palette {
             page: self.palette_form(Command::CreateTerminal),
+            agents: None,
             pending: None,
             archive: None,
             error: None,
@@ -972,7 +1094,27 @@ impl Dashboard {
         &self,
         query: &str,
         archive: Option<&[crate::protocol::SessionSummary]>,
+        agents: Option<&[AgentCandidate]>,
     ) -> Vec<Entry> {
+        if let Some(candidates) = agents {
+            let query = query.to_lowercase();
+            return candidates
+                .iter()
+                .filter_map(|candidate| {
+                    let label = candidate.search_identity.clone();
+                    query
+                        .split_whitespace()
+                        .all(|word| label.to_lowercase().contains(word))
+                        .then_some(Entry {
+                            label,
+                            command: Command::SwitchAgent(
+                                candidate.session.id,
+                                candidate.session.run,
+                            ),
+                        })
+                })
+                .collect();
+        }
         if let Some(rows) = archive {
             let query = query.to_lowercase();
             return rows
@@ -1489,7 +1631,11 @@ impl Dashboard {
                 match &mut palette.page {
                     Page::Search { query, selected } => {
                         let count = self
-                            .palette_entries(query, palette.archive.as_deref())
+                            .palette_entries(
+                                query,
+                                palette.archive.as_deref(),
+                                palette.agents.as_deref(),
+                            )
                             .len();
                         if count > 0 {
                             *selected = if backwards {
@@ -1549,10 +1695,26 @@ impl Dashboard {
             }
             KeyCode::Enter => match &mut palette.page {
                 Page::Search { query, selected } => {
-                    let entries = self.palette_entries(query, palette.archive.as_deref());
+                    let entries = self.palette_entries(
+                        query,
+                        palette.archive.as_deref(),
+                        palette.agents.as_deref(),
+                    );
                     *selected = (*selected).min(entries.len().saturating_sub(1));
                     if let Some(entry) = entries.get(*selected) {
                         match entry.command.clone() {
+                            Command::SwitchAgent(id, run) => {
+                                let candidate = palette.agents.as_ref().and_then(|candidates| {
+                                    candidates
+                                        .iter()
+                                        .find(|c| c.session.id == id && c.session.run == run)
+                                });
+                                if let Some(reason) = candidate.and_then(|c| c.reason(self)) {
+                                    palette.error = Some(reason.into());
+                                } else if candidate.is_some() {
+                                    return self.confirm_agent_switch(id, run);
+                                }
+                            }
                             Command::Switch(id) => {
                                 if let Some(request_id) = palette.suggestions.inspect {
                                     self.ignored_responses.insert(request_id);
@@ -2497,10 +2659,20 @@ impl Dashboard {
                     .cursor
                     .display(query, body.width.saturating_sub(8) as usize);
                 lines.push(Line::from(format!("Search: {visible}")));
-                let entries = self.palette_entries(query, palette.archive.as_deref());
+                let entries = self.palette_entries(
+                    query,
+                    palette.archive.as_deref(),
+                    palette.agents.as_deref(),
+                );
                 if entries.is_empty() {
                     lines.push(Line::from(if palette.archive.is_some() {
                         "No matching archived sessions"
+                    } else if palette.agents.is_some() {
+                        if query.is_empty() {
+                            "No other running agents"
+                        } else {
+                            "No matching agents"
+                        }
                     } else {
                         "No matching actions or terminals"
                     }));
@@ -2510,14 +2682,23 @@ impl Dashboard {
                 let start = selected.saturating_sub(count - 1);
                 for (index, entry) in entries.iter().enumerate().skip(start).take(count) {
                     let available = usize::from(body.width.saturating_sub(2));
-                    let label = if let Command::Switch(id) = entry.command
-                        && let Some(session) = find_session(self, id)
-                    {
-                        let suffix = format!(" (#{})", id.0);
-                        if available >= suffix.len() {
+                    let label = if let Some(session) = self.entry_session(&entry.command, palette) {
+                        let id = session.id;
+                        let mut suffix = format!(" (#{})", id.0);
+                        if palette.agents.is_some()
+                            && available < 48
+                            && let SessionKind::Agent { name } = &session.kind
+                        {
+                            let name_width = available
+                                .saturating_sub(suffix.width() + 1)
+                                .min(available / 2);
+                            suffix.push_str(&format!(" {}", clip_text(name, name_width)));
+                        }
+                        let suffix_width = suffix.width();
+                        if available >= suffix_width {
                             format!(
                                 "{}{}",
-                                clip_text(session.display_name(), available - suffix.len()),
+                                clip_text(session.display_name(), available - suffix_width),
                                 suffix
                             )
                         } else {
@@ -2535,7 +2716,53 @@ impl Dashboard {
                             Style::default().fg(TEXT)
                         },
                     ));
-                    if let Command::Unarchive(id, _)
+                    if let Command::SwitchAgent(id, run) = entry.command {
+                        let reason = palette
+                            .agents
+                            .as_ref()
+                            .and_then(|candidates| {
+                                candidates
+                                    .iter()
+                                    .find(|c| c.session.id == id && c.session.run == run)
+                            })
+                            .and_then(|candidate| candidate.reason(self));
+                        let detail = if let Some(reason) = reason {
+                            reason.to_owned()
+                        } else if let Some(session) = self.entry_session(&entry.command, palette) {
+                            // ponytail: static picker spinner; pass draw time if animation is needed.
+                            let status = super::status::SessionStatus::of(session, 0);
+                            let agent = match &session.kind {
+                                SessionKind::Agent { name } => name.as_str(),
+                                SessionKind::Terminal => session.label.as_str(),
+                            };
+                            let mut activity = status
+                                .unread
+                                .unwrap_or_else(|| status.activity.trim().to_owned());
+                            if let Some(health) = status
+                                .reporting_health
+                                .filter(|health| !activity.contains(health))
+                            {
+                                activity.push_str(&format!(" · {health}"));
+                            }
+                            if available < 48 {
+                                status.compact
+                            } else {
+                                format!(
+                                    "{} {} · {} · {}",
+                                    status.glyph,
+                                    activity,
+                                    agent,
+                                    session_workspace_heading(self, session)
+                                )
+                            }
+                        } else {
+                            String::new()
+                        };
+                        lines.push(Line::styled(
+                            format!("  {detail}"),
+                            Style::default().fg(SUBTEXT),
+                        ));
+                    } else if let Command::Unarchive(id, _)
                     | Command::DeleteArchived(id, _, _)
                     | Command::AcknowledgeStopped(id, _) = &entry.command
                         && let Some(row) = palette
@@ -2664,6 +2891,7 @@ impl Dashboard {
         let (area, inner, body, buttons) = palette_geometry(frame.area());
         frame.render_widget(Clear, area);
         let title = match &palette.page {
+            Page::Search { .. } if palette.agents.is_some() => "Agents",
             Page::Search { .. } if palette.archive.is_some() => "Archived sessions",
             Page::Search { .. } => "Command palette",
             Page::Form { command, .. } => match command {
@@ -2716,14 +2944,26 @@ impl Dashboard {
             body,
         );
         let detail = if let Page::Search { query, selected } = &palette.page {
-            let entries = self.palette_entries(query, palette.archive.as_deref());
+            let entries =
+                self.palette_entries(query, palette.archive.as_deref(), palette.agents.as_deref());
             let selected = (*selected).min(entries.len().saturating_sub(1));
             entries
                 .get(selected)
                 .map(|entry| {
-                    if let Command::Switch(id) = entry.command
-                        && let Some(session) = find_session(self, id)
-                    {
+                    if let Some(session) = self.entry_session(&entry.command, palette) {
+                        if palette.agents.is_some() && footer_height < 3 {
+                            let width = usize::from(inner.width);
+                            let project_width = width.saturating_sub(1) / 2;
+                            let workspace =
+                                find_workspace(self, &session.project, &session.workspace)
+                                    .map(|workspace| workspace_label(self, workspace))
+                                    .unwrap_or_else(|| session.workspace.clone());
+                            return format!(
+                                "{}/{}\n↑↓ select · Enter · Esc",
+                                clip_text(&session.project, project_width),
+                                clip_text(&workspace, width.saturating_sub(project_width + 1))
+                            );
+                        }
                         format!(
                             "{}\n{}\n↑/↓ select · Enter focus · Esc close",
                             clip_text(
@@ -3377,6 +3617,51 @@ mod launch_tests {
             unread: None,
         }
     }
+    #[test]
+    fn agents_first_enter_chooses_captured_attention_priority() {
+        let help = super::super::keymap::agents_binding().description;
+        for term in ["Waiting Input", "Unread", "current", "captured", "reopen"] {
+            assert!(
+                help.contains(term),
+                "shared Agents discoverability omits {term}: {help}"
+            );
+        }
+        let mut d = dashboard();
+        let mut rows = (1..=3).map(summary).collect::<Vec<_>>();
+        for row in &mut rows {
+            row.kind = SessionKind::Agent {
+                name: "codex".into(),
+            };
+        }
+        rows[1].activity = AgentActivity::Busy;
+        rows[2].activity = AgentActivity::WaitingInput;
+        d.hierarchy.projects[0].workspaces[0].sessions = rows;
+        d.select_session(SessionId(1));
+        d.open_agent_search();
+        assert_eq!(
+            d.palette
+                .as_ref()
+                .unwrap()
+                .agents
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|c| c.session.id)
+                .collect::<Vec<_>>(),
+            vec![SessionId(3), SessionId(2)]
+        );
+        let DashboardAction::Request(request) =
+            d.palette_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        else {
+            panic!("first attention result must select");
+        };
+        assert!(
+            matches!(request.request, Request::SetView { view } if view.focused == Some(SessionId(3)))
+        );
+        assert_eq!(d.mode, InputMode::Browse);
+        assert!(d.agent_typing.is_some());
+    }
+
     fn start_workspace(d: &mut Dashboard, start: &str) {
         d.open_create_workspace();
         let p = d.palette.as_mut().unwrap();
@@ -4350,7 +4635,7 @@ mod launch_tests {
         d.hierarchy.projects[0].workspaces[0].sessions = vec![row];
         d.select_session(SessionId(1));
         assert!(
-            d.palette_entries("", None)
+            d.palette_entries("", None, None)
                 .iter()
                 .any(|entry| entry.label == "Retry resume conversation")
         );
@@ -4745,7 +5030,7 @@ mod launch_tests {
         let mut certain = summary(10);
         certain.archived = true;
         certain.phase = SessionPhase::Stopped;
-        let entries = d.palette_entries("", Some(&[filed, certain]));
+        let entries = d.palette_entries("", Some(&[filed, certain]), None);
         let acknowledge: Vec<_> = entries
             .iter()
             .filter(|entry| entry.label.starts_with("Acknowledge stopped: "))
