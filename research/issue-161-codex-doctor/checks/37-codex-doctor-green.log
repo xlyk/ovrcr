@@ -1,0 +1,11 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161-codex-doctor)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.49s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-d417dae38b82c478)
+
+running 1 test
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpfk0Naq/private/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpfk0Naq/private/server.sock
+ovrcr server stopped
+test codex_doctor_inspects_identity_freeze_and_preserves_native_input ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 125 filtered out; finished in 3.23s

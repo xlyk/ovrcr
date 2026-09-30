@@ -1,0 +1,20 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "-p",
+    "ovrcr",
+    "--test",
+    "agent_setup",
+    "--all-features",
+    "--",
+    "--test-threads=1"
+  ],
+  "cwd": "/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161-codex-doctor",
+  "revision": "d480fb384c1c8b04f8090f353f2944d4ef0a6f1d",
+  "diff_sha256": "df3ce8fc21c01ff93ca7f69274b3de893e3eb1ba015676010dd1ba8e5dbe4664",
+  "started": "2026-09-30T22:48:18.331485+00:00",
+  "exit_code": 0,
+  "finished": "2026-09-30T22:48:28.005037+00:00"
+}

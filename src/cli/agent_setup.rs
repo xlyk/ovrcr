@@ -467,7 +467,7 @@ fn claude_boot_hook_warning() -> Option<String> {
 
 // Health reasons are arbitrary provider text on the wire. Doctor must expose
 // only known diagnostic codes, never private provider strings or identities.
-fn public_health_reason(reason: Option<&str>) -> Option<&str> {
+pub(super) fn public_health_reason(reason: Option<&str>) -> Option<&str> {
     reason.filter(|reason| {
         matches!(
             *reason,

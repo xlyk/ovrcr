@@ -1,0 +1,22 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "-p",
+    "ovrcr",
+    "--test",
+    "server_lifecycle",
+    "--all-features",
+    "codex_doctor_inspects_identity_freeze_and_preserves_native_input",
+    "--",
+    "--exact",
+    "--nocapture"
+  ],
+  "cwd": "/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161-codex-doctor",
+  "revision": "d480fb384c1c8b04f8090f353f2944d4ef0a6f1d",
+  "diff_sha256": "2d53bcde8cf12bde1873793e5d2eb7b6a6f5fcdf721c1f1544a691456343c9ea",
+  "started": "2026-09-30T22:36:08.540579+00:00",
+  "exit_code": 101,
+  "finished": "2026-09-30T22:36:52.973753+00:00"
+}
