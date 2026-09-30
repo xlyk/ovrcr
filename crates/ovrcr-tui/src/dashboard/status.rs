@@ -60,6 +60,10 @@ pub(super) struct SessionStatus {
     /// The activity clause the headers append, leading space included: ` busy observed`,
     /// ` input needed · confirm`, ` unavailable`, or ` idle` without an agent.
     pub activity: String,
+    /// Reporting loss also remains textual when an Input request overrides activity.
+    pub reporting_health: Option<String>,
+    /// Essential Agent state for a narrow picker row, without explanatory detail.
+    pub compact: String,
     /// Recovery explanations remain actionable after the managed process exits.
     pub recovery_diagnostic: bool,
     /// The Unread clause, which replaces a header line outright when present.
@@ -97,6 +101,12 @@ impl SessionStatus {
                 .map(|started| format_elapsed_at(started, now_unix_ms))
                 .unwrap_or_default(),
             activity: activity_clause(session),
+            compact: compact_agent_clause(session),
+            reporting_health: session
+                .agent
+                .as_ref()
+                .filter(|agent| unavailable(agent))
+                .map(unavailable_clause),
             recovery_diagnostic: session.recovery.as_ref().is_some_and(|recovery| {
                 recovery.unavailable.is_some()
                     || recovery.failure.is_some()
@@ -126,6 +136,45 @@ fn format_elapsed_at(started_unix_ms: u64, now_unix_ms: u64) -> String {
 /// reporter behind it has nobody left to confirm it and reads Unavailable (`is_none_or`).
 fn unavailable(agent: &AgentSnapshot) -> bool {
     agent.health.state == ReporterHealth::Unavailable
+}
+
+fn compact_agent_clause(session: &SessionSummary) -> String {
+    if session.unread.is_some() && session.agent.is_none() {
+        return unread_clause(session);
+    }
+    let activity = super::ready::activity(session);
+    let lost = session.agent.as_ref().is_some_and(unavailable);
+    let state = if lost && activity != AgentActivity::WaitingInput {
+        "Unavailable"
+    } else {
+        match activity {
+            AgentActivity::Unknown => "Unknown",
+            AgentActivity::Idle => "Idle",
+            AgentActivity::Busy => "Busy",
+            AgentActivity::WaitingInput => "Input",
+            AgentActivity::ResponseReady => "Ready",
+            AgentActivity::Error => "Error",
+        }
+    };
+    let mut text = if session.unread.is_some() {
+        format!("Unread {state}")
+    } else {
+        state.to_owned()
+    };
+    if lost && activity == AgentActivity::WaitingInput {
+        text.push_str(if session.unread.is_some() {
+            " Unavail"
+        } else {
+            " Unavailable"
+        });
+    } else if !lost
+        && activity != AgentActivity::WaitingInput
+        && let Some(sample) = session.agent.as_ref().and_then(|a| a.activity.as_ref())
+    {
+        text.push(' ');
+        text.push_str(quality(sample.quality));
+    }
+    text
 }
 
 fn unread_clause(session: &SessionSummary) -> String {
@@ -614,6 +663,11 @@ mod tests {
             SessionStatus::of(&ready, 0).unread.as_deref(),
             Some("Unread Unavailable")
         );
+
+        assert_eq!(SessionStatus::of(&ready, 0).compact, "Unread Unavailable");
+        ready.unread = None;
+        ready.activity = AgentActivity::Unknown;
+        assert_eq!(SessionStatus::of(&ready, 0).compact, "Unknown");
 
         // An open Input request outranks the Ready sample inside the Unread clause too, and
         // the glyph goes with it while the Unread itself stands.

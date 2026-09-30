@@ -2186,6 +2186,11 @@ fn three_failed_title_attempts_close_window_and_survive_restart() {
     wait_call_count(&calls, 2);
     bump_history(&history, "{\"role\":\"assistant\",\"content\":\"again-3\"}");
     wait_call_count(&calls, 3);
+    // The call marker precedes process exit and persistence of its failed result.
+    let deadline = Instant::now() + Duration::from_secs(12);
+    while subject_counts(&live, session.id, conversation) != (0, 3) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
     assert_eq!(subject_counts(&live, session.id, conversation), (0, 3));
     assert_eq!(
         sessions(&live)

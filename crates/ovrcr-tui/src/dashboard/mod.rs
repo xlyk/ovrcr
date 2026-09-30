@@ -235,6 +235,7 @@ pub struct Dashboard {
     /// The whole view state machine: the revision, the one in-flight `SetView`, the
     /// acknowledged view, and the marks pane readiness is derived from.
     handshake: view_handshake::ViewHandshake,
+    agent_typing: Option<state::AgentTyping>,
     /// One display request per retained run; the server persists launch failures across reconnects.
     recovery_requests:
         std::collections::HashMap<(SessionId, crate::protocol::SessionRunId), Option<u64>>,

@@ -166,9 +166,19 @@ intercepts only `Ctrl-g`. The keys below are Browse mode:
 | `[` | Freeze the current screen for copying |
 | `PageUp` | Open the session's retained history |
 | `t` `Ctrl-t` | Scheduled tasks |
+| `s` | Search other running agents across every project and workspace |
 | `:` | Command palette |
 | `Space` `?` | Contextual key groups; `?` also supports arrows and Enter |
 | `q` | Detach; the server and every session keep running |
+
+From Terminal mode, press `Ctrl-g` then lowercase `s` to search other running
+agents. Type words from the session title, project or workspace, use arrows to
+choose, and press Enter once. Typing becomes available when the selected screen
+is ready; no second Enter is needed. Input during loading is discarded, never
+queued. Escape cancels the picker without changing the selection. Waiting Input
+comes first, then Unread, then the remaining agents; hierarchy order breaks ties.
+The opening order stays fixed while status, reporting health and location update.
+Rows show status text, Agent identity and the session ID for duplicate titles.
 
 The sidebar gives each session one line: a status glyph, its name, and its
 model right-aligned in the provider colour. Projects are upper-case section
@@ -194,6 +204,7 @@ workspace group. `a` Register project and `q` Detach remain available at the top
 | `Space w x` | Remove the selected workspace, with confirmation |
 | `Space p n` | Create a workspace in the selected project |
 | `Space p x` | Unregister the selected project, with confirmation |
+| `Space v s` | Search other running agents |
 | `Space v t` | Open scheduled tasks |
 
 The popup names the current prefix and target. Backspace returns to the group

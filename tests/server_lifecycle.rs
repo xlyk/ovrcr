@@ -3647,22 +3647,23 @@ fn pause_resume_backpressured_input_keeps_controls_available() {
         .set_read_timeout(Some(Duration::from_millis(10)))
         .unwrap();
     while read_frame::<ServerMessage>(&mut dashboard).is_ok() {}
-    write_frame(
-        &mut dashboard,
-        &ClientMessage {
-            request_id: 20,
-            request: Request::Input {
-                run: ovrcr_protocol::SessionRunId(1),
-                session,
-                bytes: vec![b'x'; 512 * 1024],
-            },
-        },
-    )
-    .unwrap();
     dashboard
         .set_read_timeout(Some(Duration::from_millis(300)))
         .unwrap();
-    assert!(read_frame::<ServerMessage>(&mut dashboard).is_err());
+    // Metadata events may arrive while input is blocked; only its own response matters.
+    let observed = client::request(
+        &mut dashboard,
+        20,
+        Request::Input {
+            run: ovrcr_protocol::SessionRunId(1),
+            session,
+            bytes: vec![b'x'; 512 * 1024],
+        },
+    );
+    assert!(
+        observed.is_err(),
+        "backpressured input unexpectedly completed: {observed:?}"
+    );
 
     let mut blocked_send = connect_server(&harness.fixture.socket).unwrap();
     blocked_send

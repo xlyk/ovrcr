@@ -2663,6 +2663,64 @@ fn binding_named(dashboard: &Dashboard, key: &str) -> super::keymap::KeyBinding 
 }
 
 #[test]
+fn agent_confirmation_enters_terminal_only_after_complete_acknowledgement() {
+    use crate::DashboardAction;
+    use crate::protocol::{Request, Response, ServerMessage, SessionKind, SessionPhase};
+    for cancel in 0..3 {
+        let mut dashboard = keymap_dashboard(SessionPhase::Running);
+        let mut agent = keymap_session(13, SessionPhase::Running);
+        agent.kind = SessionKind::Agent {
+            name: "fixture-agent".into(),
+        };
+        dashboard.hierarchy.projects[0].workspaces[0]
+            .sessions
+            .push(agent);
+        dashboard.key(KeyCode::Char('s'));
+        let DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
+            panic!("confirmation must request a view, never PTY bytes");
+        };
+        let Request::SetView { view } = request.request else {
+            panic!("SetView");
+        };
+        assert_eq!(dashboard.mode, InputMode::Browse);
+        if cancel == 1 {
+            dashboard.ctrl('g');
+        }
+        if cancel == 2 {
+            dashboard.retarget(super::state::PaneChange::Resize);
+        }
+        let pane = &view.panes[0];
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id: request.request_id,
+            response: Response::Screen {
+                session: pane.session,
+                run: pane.run,
+                revision: view.revision,
+                size: pane.size,
+                bytes: Vec::new(),
+            },
+        });
+        assert_eq!(
+            dashboard.mode,
+            InputMode::Browse,
+            "a snapshot alone cannot enable typing"
+        );
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id: request.request_id,
+            response: Response::Ok,
+        });
+        assert_eq!(
+            dashboard.mode,
+            if cancel == 0 {
+                InputMode::Terminal
+            } else {
+                InputMode::Browse
+            }
+        );
+    }
+}
+
+#[test]
 fn keymap_gives_each_key_in_a_mode_exactly_one_binding() {
     use super::keymap::{Action, KeyBinding, keymap};
     // Ctrl-g is the one binding whose key carries a modifier.
@@ -3466,7 +3524,7 @@ fn browse_footer_lists_only_the_menu_search_and_help_keys() {
     dashboard.mode = InputMode::Terminal;
     assert_eq!(
         super::hints::footer(&dashboard, 120),
-        "Terminal mode  Ctrl-g browse"
+        "Terminal mode  Ctrl-g browse  then s Agents"
     );
 }
 
