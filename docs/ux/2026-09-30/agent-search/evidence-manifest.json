@@ -1,0 +1,98 @@
+{
+  "02-unicode-duplicates.ax.txt": {
+    "bytes": 13739,
+    "sha256": "feca75fc66a7896d0becfb3d50ab82592736af00965f09bbe576541e68121a11"
+  },
+  "02-unicode-duplicates.jpg": {
+    "bytes": 481961,
+    "sha256": "76b84bf51839655922a3232bedfaacc6ca1e3dcf55270d9014d5475c45698665"
+  },
+  "03-unicode-destination.ax.txt": {
+    "bytes": 13371,
+    "sha256": "cf35bf39664d1ee992d8b0ed1d04dcd0dde83de5c4cd92a44ff22132d6056c47"
+  },
+  "03-unicode-destination.jpg": {
+    "bytes": 365796,
+    "sha256": "21d3e83b4108a1b2924855e5029b535c34704c25f88670e11628649c29ce7077"
+  },
+  "04-fifty-last-selection.ax.txt": {
+    "bytes": 13771,
+    "sha256": "31fd531da779ab4411618e70d1ea1346a3c9760d57e3baad22c692e85b7f26e9"
+  },
+  "04-fifty-last-selection.jpg": {
+    "bytes": 484954,
+    "sha256": "e6c08fbe8db907cfd6c5d5195e4ea26cf11523aa7842c79907cf6b4937de3a2b"
+  },
+  "05-fifty-destination.ax.txt": {
+    "bytes": 13151,
+    "sha256": "9a34fdc1b3bab26f63234b05143ce3c9dc5f8936789991d0abdfe209e0adcea3"
+  },
+  "05-fifty-destination.jpg": {
+    "bytes": 365031,
+    "sha256": "adbd1950aec15855e6b1450cd136910c3770d9c13ead70993922641d9463622a"
+  },
+  "07-compact-unicode-duplicates.ax.txt": {
+    "bytes": 4273,
+    "sha256": "294abbac7573a1000d9fe0d67173b450ef5628037132fb13d66f95d5b959dcf7"
+  },
+  "07-compact-unicode-duplicates.jpg": {
+    "bytes": 113810,
+    "sha256": "e0ab3680de14ec972df302d79f271b25c81464c94a18a45df4b0e40b7f9ca096"
+  },
+  "08-compact-cancel.ax.txt": {
+    "bytes": 3651,
+    "sha256": "a44092e91f66b5a09238edd3729848a5a211a2d61151fd9faf293c20fb260366"
+  },
+  "08-compact-cancel.jpg": {
+    "bytes": 109647,
+    "sha256": "e0e9b0a18203eef6e4eb3e798286cfa2e9e6e664714cf7ae56cb49531581e361"
+  },
+  "09-current-excluded.ax.txt": {
+    "bytes": 4201,
+    "sha256": "305f5fc3f8b5a2a205b2dfb2a9b8ff27f7fcb124f48a87d90f4ae935de40d087"
+  },
+  "09-current-excluded.jpg": {
+    "bytes": 74433,
+    "sha256": "60c8cf5600fef4cd60a34f0aa67535e4c6ec2ba0402d65fee05c794c31a2d4fb"
+  },
+  "10-compact-native-shortcut.ax.txt": {
+    "bytes": 3651,
+    "sha256": "8630301fd490e44ac54fb1ae69a67c827b7469165c8f512b3ecfeb14e03dd88f"
+  },
+  "10-compact-native-shortcut.jpg": {
+    "bytes": 116653,
+    "sha256": "084e9d549d13e5f352ba180d3c6f1b0ddb7633312f88407984b83cab40763338"
+  },
+  "attempts.md": {
+    "bytes": 1482,
+    "sha256": "d84037761ffe1b99bcbf1041888af7a31bb606f6568debe3c24b2f1896add609"
+  },
+  "build-evidence.json": {
+    "bytes": 659,
+    "sha256": "8cdff7bc59bd3a265b8edd433e2aefafc5903e32f4752fb891e8362c2b898335"
+  },
+  "cleanup.json": {
+    "bytes": 1358,
+    "sha256": "7a8da7b44694952eb603bf423e738ae9577b4c481067363594a0342d4a325c83"
+  },
+  "compact-pty-size.txt": {
+    "bytes": 511,
+    "sha256": "f05d2c28070da80c5da2ff8de260b3423f52f9a11467634a339f1121604b3e56"
+  },
+  "fifty-inventory.json": {
+    "bytes": 43411,
+    "sha256": "f932ccb41d8f81de7921c16a4d0913de50028204ad06a85e22a3b379c22f4e1a"
+  },
+  "native-routing-verification-final.log": {
+    "bytes": 113,
+    "sha256": "05332a86c3c5d30d45f7666c122751376781c2fbcecf0a5f57e03ef6733f80d3"
+  },
+  "native-routing-verification.json": {
+    "bytes": 8234,
+    "sha256": "489892dc9961cf419ff110a4d47b679b2c480d7ecf4a37b50615a75d212cf7b1"
+  },
+  "search-regressions.log": {
+    "bytes": 1674,
+    "sha256": "199bcf49f9b408096c73f3b9277461fb1bb89b6046cf9565f3b0fdf95de04127"
+  }
+}

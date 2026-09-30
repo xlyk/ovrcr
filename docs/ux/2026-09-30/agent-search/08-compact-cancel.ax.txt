@@ -1,0 +1,46 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                   [Actions] [Menu]
+     - navigation-22               │pid: 9095  elapsed: 2m  agent unknown
+       └ codex                     │navigation-36                        
+     - navigation-24               │READY_synthetic-37                   
+       └ codex                     │RECEIVED_synthetic-37_FIFTY_NATIVE_OK
+     - navigation-26               │                                     
+       └ codex                     │                               
+		3 text (settable) 󰚩 OVRCR  agent runtime                                   [Actions] [Menu]
+		4 text (settable)      - navigation-22               │pid: 9095  elapsed: 2m  agent unknown
+		5 text (settable)        └ codex                     │navigation-36                        
+		6 text (settable)      - navigation-24               │READY_synthetic-37                   
+		7 text (settable)        └ codex                     │RECEIVED_synthetic-37_FIFTY_NATIVE_OK
+		8 text (settable)      - navigation-26               │                                     
+		9 text (settable)        └ codex                     │                                     
+		10 text (settable)      - navigation-28               │                                     
+		11 text (settable)        └ codex                     │                                     
+		12 text (settable)      - navigation-30               │                                     
+		13 text (settable)        └ codex                     │                                     
+		14 text (settable)      - navigation-32               │                                     
+		15 text (settable)        └ codex                     │                                     
+		16 text (settable)      - navigation-34               │                                     
+		17 text (settable)        └ codex                     │                                     
+		18 text (settable) ▌    - navigation-36               │                                     
+		19 text (settable) ▌      └ codex                     │                                     
+		20 text (settable) Quota left                         │                                     
+		21 text (settable) Claude — waiting for report        │                                     
+		22 text (settable) Codex — unavailable                │                                     
+		23 text (settable) Grok — unavailable                 │                                     
+		24 text (settable) BROWSE  Space Menu  : Search  ? Help                                     
+	25 close button
+	26 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	27 minimize button
+	28 text OVRCR GUI
+29 menu bar
+	30 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                   [Actions] [Menu]
+     - navigation-22               │pid: 9095  elapsed: 2m  agent unknown
+       └ codex                     │navigation-36                        
+     - navigation-24               │READY_synthetic-37                   
+       └ codex                     │RECEIVED_synthetic-37_FIFTY_NATIVE_OK
+     - navigation-26               │                                     
+       └ codex                     │                               

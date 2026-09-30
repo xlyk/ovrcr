@@ -1,0 +1,24 @@
+[
+  [
+    "39123",
+    "29212",
+    "29200",
+    "??",
+    "/Users/xlyk/Documents/Codex/2026-09-30/task-6/issue-216/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+  ],
+  [
+    "39595",
+    "39123",
+    "29200",
+    "??",
+    "/Users/xlyk/Documents/Codex/2026-09-30/task-6/issue-216/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+  ],
+  [
+    "68068",
+    "39123",
+    "68068",
+    "ttys049",
+    "/Users/xlyk/Documents/Codex/2026-09-30/task-6/issue-216/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+  ]
+]
+22 73
