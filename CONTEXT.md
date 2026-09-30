@@ -85,8 +85,8 @@ Text delivered into a session as a paste, which may be followed by Enter.
 _Avoid_: Keystroke
 
 **Ready**:
-The accepted root observation of a completed response cycle from a supported readiness provider (Codex, Pi, Oh My Pi), identified by binding, cycle identity (the `turn` field), and activity revision.
-_Avoid_: Confirmed activity as a success claim, Claude observations, a desktop alert
+The accepted root observation of a completed response cycle from a supported readiness provider, identified by binding, cycle identity (the `turn` field), and activity revision. It does not establish task success.
+_Avoid_: Confirmed activity as a success claim, a desktop alert
 
 **Unread**:
 The current Ready observation that has not been marked reviewed.
@@ -99,6 +99,10 @@ _Avoid_: a newer Unread as the review target
 **Input request**:
 An open request for a human answer, identified by binding, namespace and request identity. A binding carries a bounded set of them, published whole; while any is open the session's effective activity is WaitingInput, and closing the last one restores the underlying activity.
 _Avoid_: Unread, a Ready observation, a tool call, or an alert as the request
+
+**Alert**:
+An OVRCR notice that a response is ready to review or that an agent needs a human answer. Receiving or clicking it does not review the response or answer the request.
+_Avoid_: Ready, Unread or Input request as interchangeable terms
 
 **Reporter**:
 The in-process owner of one managed invocation's reporting: the lease, the binding and Reporting generation that lease carries, the one revision set every observation is numbered from, the retained identities it fences, and the teardown. One per invocation, shared by every provider; the provider's receiver translates that provider's frames into observations and chooses which of these the provider needs.
