@@ -1176,7 +1176,7 @@ fn automatic_local_terminals_policy_controls_provisioning_paths() {
         (Some("off"), false, false),
         (Some("default_branch_only"), true, false),
     ] {
-        let fixture = Live::binary();
+        let fixture = Live::idle().bounded();
         live::git(&fixture.repo, &["branch", "-m", "trunk"]);
         let dashboard = fixture.root.path().join("dashboard.toml");
         match policy {
@@ -1191,6 +1191,7 @@ fn automatic_local_terminals_policy_controls_provisioning_paths() {
                 let _ = std::fs::remove_file(&dashboard);
             }
         }
+        fixture.start_binary_env(&[("OVRCR_DASHBOARD_CONFIG", dashboard.as_os_str())]);
 
         assert_eq!(
             fixture.request(Request::AddProject {
@@ -1329,6 +1330,26 @@ fn automatic_local_terminals_policy_controls_provisioning_paths() {
         }
         for pgid in fixture.session_groups() {
             fixture.own_group(pgid);
+        }
+        let root = fixture.root.path().to_owned();
+        let groups = fixture.owned_groups();
+        eprintln!(
+            "policy={policy:?} fixture={} owned_groups={groups:?}",
+            root.display()
+        );
+        drop(fixture);
+        assert!(
+            !root.exists(),
+            "policy={policy:?} fixture cleanup: {}",
+            root.display()
+        );
+        for pgid in groups {
+            assert_eq!(unsafe { libc::kill(-pgid, 0) }, -1, "owned group {pgid}");
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::ESRCH)
+            );
+            eprintln!("policy={policy:?} owned_pgid={pgid} absent=true");
         }
     }
 }
