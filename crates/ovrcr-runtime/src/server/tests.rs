@@ -7750,9 +7750,68 @@ fn live_local_sessions(state: &ServerState, project: &str, workspace: &str) -> u
         .count()
 }
 
+struct ProvisioningCleanup {
+    state: Arc<ServerState>,
+    bridge: Option<JoinHandle<()>>,
+    dispatcher: Option<JoinHandle<()>>,
+}
+
+impl ProvisioningCleanup {
+    fn new(
+        state: Arc<ServerState>,
+        events: ReportingReceiver<SessionEvent>,
+        commands: ReportingReceiver<DispatchMessage>,
+    ) -> Self {
+        let dispatch = state.dispatch.clone();
+        let dispatch_state = state.clone();
+        Self {
+            state,
+            bridge: Some(thread::spawn(move || bridge_events(events, dispatch))),
+            dispatcher: Some(thread::spawn(move || {
+                run_dispatcher(dispatch_state, commands)
+            })),
+        }
+    }
+}
+
+impl Drop for ProvisioningCleanup {
+    fn drop(&mut self) {
+        let owned: Vec<_> = self
+            .state
+            .sessions
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect();
+        let mut cleaned = true;
+        for session in owned {
+            let group = session.summary().pid.map(|pid| pid as libc::pid_t);
+            if let Err(error) = session.terminate(Duration::from_secs(2)) {
+                cleaned &= error.is::<crate::session::AlreadyExited>();
+                eprintln!("provisioning cleanup termination: {error:#}");
+            }
+            if let Some(group) = group {
+                let absent = wait_test_group_absent(group, Duration::from_secs(2));
+                cleaned &= absent;
+                eprintln!(
+                    "provisioning cleanup owned_pgid={group} absent={absent} before_fixture_teardown=true"
+                );
+            }
+        }
+        self.state.events.lock().unwrap().take();
+        cleaned &= join_test_thread_slot(&mut self.bridge, Duration::from_secs(2));
+        cleaned &= self.state.dispatch.send(DispatchMessage::Stop).is_ok();
+        cleaned &= join_test_thread_slot(&mut self.dispatcher, Duration::from_secs(2));
+        assert!(
+            cleaned || thread::panicking(),
+            "provisioning cleanup failed"
+        );
+    }
+}
+
 #[test]
 fn automatic_local_terminals_default_branch_only_skips_feature_workspaces() {
-    unsafe { std::env::set_var("SHELL", "/bin/sh") };
     let dir = tempfile::tempdir().unwrap();
     let repo = dir.path().join("repo");
     init_repo_with_default(&repo, "trunk");
@@ -7764,8 +7823,8 @@ fn automatic_local_terminals_default_branch_only_skips_feature_workspaces() {
     let socket = socket_dir.path().join("server.sock");
     let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
     let retained = SessionStore::open(&config).unwrap();
-    let (events, _event_receiver) = event_channel(None);
-    let (dispatch, _dispatch_receiver) = dispatch_channel(None);
+    let (events, event_receiver) = event_channel(None);
+    let (dispatch, dispatch_receiver) = dispatch_channel(None);
     let state = Arc::new(ServerState {
         tasks: None,
         socket: socket.clone(),
@@ -7787,6 +7846,7 @@ fn automatic_local_terminals_default_branch_only_skips_feature_workspaces() {
         #[cfg(feature = "acceptance-diagnostics")]
         dashboard_monitor: None,
     });
+    let _cleanup = ProvisioningCleanup::new(state.clone(), event_receiver, dispatch_receiver);
 
     state
         .add_project(
@@ -7822,14 +7882,13 @@ fn automatic_local_terminals_default_branch_only_skips_feature_workspaces() {
     assert_eq!(live_local_sessions(&state, "fixture", "feature-topic"), 0);
 
     // Explicit terminal launch still works under default_branch_only.
-    let shell = std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into());
     let created = state
         .create_session(ovrcr_protocol::CreateSessionRequest {
             project: "fixture".into(),
             workspace: "feature-topic".into(),
             name: "manual".into(),
             label: None,
-            argv: vec![shell],
+            argv: vec!["/bin/sh".into()],
             kind: ovrcr_protocol::SessionKind::Terminal,
         })
         .unwrap();
@@ -7838,7 +7897,6 @@ fn automatic_local_terminals_default_branch_only_skips_feature_workspaces() {
 
 #[test]
 fn automatic_local_terminals_on_and_off_cover_root_and_feature() {
-    unsafe { std::env::set_var("SHELL", "/bin/sh") };
     for (policy, expect_root, expect_feature) in [
         ("on", true, true),
         ("off", false, false),
@@ -7855,8 +7913,8 @@ fn automatic_local_terminals_on_and_off_cover_root_and_feature() {
         let socket = socket_dir.path().join("server.sock");
         let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
         let retained = SessionStore::open(&config).unwrap();
-        let (events, _event_receiver) = event_channel(None);
-        let (dispatch, _dispatch_receiver) = dispatch_channel(None);
+        let (events, event_receiver) = event_channel(None);
+        let (dispatch, dispatch_receiver) = dispatch_channel(None);
         let state = Arc::new(ServerState {
             tasks: None,
             socket: socket.clone(),
@@ -7878,6 +7936,7 @@ fn automatic_local_terminals_on_and_off_cover_root_and_feature() {
             #[cfg(feature = "acceptance-diagnostics")]
             dashboard_monitor: None,
         });
+        let _cleanup = ProvisioningCleanup::new(state.clone(), event_receiver, dispatch_receiver);
 
         state
             .add_project(
@@ -7938,7 +7997,6 @@ fn automatic_local_terminals_on_and_off_cover_root_and_feature() {
 
 #[test]
 fn changing_automatic_local_policy_leaves_existing_terminals() {
-    unsafe { std::env::set_var("SHELL", "/bin/sh") };
     let dir = tempfile::tempdir().unwrap();
     let repo = dir.path().join("repo");
     init_repo_with_default(&repo, "main");
@@ -7950,8 +8008,8 @@ fn changing_automatic_local_policy_leaves_existing_terminals() {
     let socket = socket_dir.path().join("server.sock");
     let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
     let retained = SessionStore::open(&config).unwrap();
-    let (events, _event_receiver) = event_channel(None);
-    let (dispatch, _dispatch_receiver) = dispatch_channel(None);
+    let (events, event_receiver) = event_channel(None);
+    let (dispatch, dispatch_receiver) = dispatch_channel(None);
     let state = Arc::new(ServerState {
         tasks: None,
         socket: socket.clone(),
@@ -7973,6 +8031,7 @@ fn changing_automatic_local_policy_leaves_existing_terminals() {
         #[cfg(feature = "acceptance-diagnostics")]
         dashboard_monitor: None,
     });
+    let _cleanup = ProvisioningCleanup::new(state.clone(), event_receiver, dispatch_receiver);
 
     state
         .add_project(

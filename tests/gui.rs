@@ -520,6 +520,166 @@ fn outer_pty_parses_attributes_and_resize_reaches_the_tty() -> Result<()> {
 }
 
 #[test]
+fn real_dashboard_cycles_local_policy_and_same_server_provisions_from_saved_setting() -> Result<()>
+{
+    use ovrcr::protocol::{
+        BranchRequest, CreateSessionRequest, Request, Response, SessionKind, client,
+    };
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
+    let root = demo.root().to_owned();
+    let mut pgids = demo_session_groups(&root)?;
+    let settings = root.join("dashboard.toml");
+    // Control connections serve one request each. Every request uses this
+    // fixture's socket; check the original live session identities after reload.
+    let request = |request| -> Result<Response> {
+        let mut control = ovrcr::protocol::connect_server(root.join("server.sock"))?;
+        control.set_read_timeout(Some(Duration::from_secs(5)))?;
+        client::request(&mut control, 1, request)
+    };
+    let Response::Hierarchy(initial) = request(Request::List)? else {
+        bail!("initial hierarchy");
+    };
+    let saved_policy = || -> Result<String> {
+        let saved: toml::Table = toml::from_str(&std::fs::read_to_string(&settings)?)?;
+        Ok(saved["automatic_local_terminals"]
+            .as_str()
+            .unwrap()
+            .to_owned())
+    };
+    let provision = |id: &str, locals: usize| -> Result<Vec<ovrcr::protocol::SessionSummary>> {
+        client::expect_ok(request(Request::CreateWorkspace {
+            project: "consigint".into(),
+            id: id.into(),
+            branch: BranchRequest::New {
+                branch: format!("feature/{id}"),
+                base: "main".into(),
+            },
+        })?)?;
+        let Response::Hierarchy(hierarchy) = request(Request::List)? else {
+            bail!("provisioned hierarchy");
+        };
+        let workspace = hierarchy
+            .projects
+            .iter()
+            .find(|p| p.name == "consigint")
+            .unwrap()
+            .workspaces
+            .iter()
+            .find(|w| w.id == id)
+            .unwrap();
+        assert_eq!(workspace.sessions.len(), locals, "workspace={id}");
+        assert!(
+            workspace
+                .sessions
+                .iter()
+                .all(|s| s.name == "local" && s.phase.is_live())
+        );
+        Ok(workspace.sessions.clone())
+    };
+    let mut terminal = demo.dashboard(40, 160, Default::default())?;
+    wait_screen(&terminal, "claude:sonnet-4")?;
+    assert_eq!(saved_policy()?, "on");
+    terminal.send(b"L")?;
+    wait_screen(&terminal, "Automatic local terminals: off")?;
+    assert_eq!(saved_policy()?, "off");
+    provision("policy-off", 0)?;
+
+    let Response::CreatedSession(manual) = request(Request::CreateSession(CreateSessionRequest {
+        project: "consigint".into(),
+        workspace: "policy-off".into(),
+        name: "policy-manual".into(),
+        label: None,
+        kind: SessionKind::Terminal,
+        argv: vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "printf 'POLICY_%s\\n' EXPLICIT; exec /bin/sh -i".into(),
+        ],
+    }))?
+    else {
+        bail!("explicit terminal launch failed under off");
+    };
+    assert!(manual.phase.is_live());
+    pgids.push(manual.pid.unwrap() as i32);
+    wait_screen(&terminal, "policy-manual")?;
+    select_sidebar_session(&mut terminal, "policy-manual")?;
+    enter_selected_session(&mut terminal, "POLICY_EXPLICIT")?;
+    terminal.send(b"\x07")?;
+    wait_screen(&terminal, "BROWSE")?;
+    terminal.stop()?;
+
+    let mut terminal = demo.dashboard(40, 160, Default::default())?;
+    wait_screen(&terminal, "claude:sonnet-4")?;
+    terminal.send(b"L")?;
+    wait_screen(&terminal, "Automatic local terminals: default branch only")?;
+    assert_eq!(saved_policy()?, "default_branch_only");
+    provision("policy-default", 0)?;
+    terminal.send(b"L")?;
+    wait_screen(&terminal, "Automatic local terminals: on")?;
+    assert_eq!(saved_policy()?, "on");
+    for session in provision("policy-on", 1)? {
+        pgids.push(session.pid.unwrap() as i32);
+    }
+    let Response::Hierarchy(current) = request(Request::List)? else {
+        bail!("current hierarchy");
+    };
+    for previous in initial
+        .projects
+        .iter()
+        .flat_map(|p| &p.workspaces)
+        .flat_map(|w| &w.sessions)
+    {
+        let session = current
+            .projects
+            .iter()
+            .flat_map(|p| &p.workspaces)
+            .flat_map(|w| &w.sessions)
+            .find(|s| s.id == previous.id)
+            .unwrap();
+        assert_eq!(session.run, previous.run);
+        assert_eq!(session.pid, previous.pid);
+        assert!(
+            session.phase.is_live(),
+            "existing session changed: {}",
+            session.name
+        );
+    }
+    terminal.send(b"L")?;
+    wait_screen(&terminal, "Automatic local terminals: off")?;
+    let before = std::fs::read_to_string(&settings)?;
+    std::fs::set_permissions(&settings, std::fs::Permissions::from_mode(0o444))?;
+    terminal.send(b"L")?;
+    wait_screen(&terminal, "Could not save automatic local terminals")?;
+    assert_eq!(std::fs::read_to_string(&settings)?, before);
+    std::fs::set_permissions(&settings, std::fs::Permissions::from_mode(0o600))?;
+    terminal.send(b"L")?;
+    wait_screen(&terminal, "Automatic local terminals: default branch only")?;
+    assert_eq!(
+        saved_policy()?,
+        "default_branch_only",
+        "failed save must leave the in-memory cycle unchanged"
+    );
+    terminal.stop()?;
+    demo.shutdown()?;
+    assert!(!root.exists());
+    for pgid in pgids {
+        assert_eq!(
+            unsafe { libc::kill(-pgid, 0) },
+            -1,
+            "demo group {pgid} survived cleanup"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+        eprintln!("local policy fixture owned_pgid={pgid} absent=true");
+    }
+    Ok(())
+}
+
+#[test]
 fn real_dashboard_saves_alert_preferences_and_reloads_config() -> Result<()> {
     let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
     let root = demo.root().to_owned();

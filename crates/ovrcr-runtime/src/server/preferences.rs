@@ -76,14 +76,20 @@ impl fmt::Display for AutomaticLocalTerminals {
 
 /// Resolve the preference beside the registry, matching `title_model` lookup.
 pub fn load_automatic_local_terminals(registry_path: &Path) -> AutomaticLocalTerminals {
-    let path = std::env::var_os("OVRCR_DASHBOARD_CONFIG")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            registry_path
-                .parent()
-                .unwrap_or_else(|| Path::new("."))
-                .join("dashboard.toml")
-        });
+    let override_path = std::env::var_os("OVRCR_DASHBOARD_CONFIG").map(PathBuf::from);
+    load_automatic_local_terminals_at(registry_path, override_path.as_deref())
+}
+
+fn load_automatic_local_terminals_at(
+    registry_path: &Path,
+    override_path: Option<&Path>,
+) -> AutomaticLocalTerminals {
+    let path = override_path.map(Path::to_path_buf).unwrap_or_else(|| {
+        registry_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("dashboard.toml")
+    });
     let Ok(text) = fs::read_to_string(path) else {
         return AutomaticLocalTerminals::default();
     };
@@ -100,9 +106,6 @@ pub fn load_automatic_local_terminals(registry_path: &Path) -> AutomaticLocalTer
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static DASHBOARD_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn default_is_default_branch_only() {
@@ -140,18 +143,15 @@ mod tests {
 
     #[test]
     fn missing_or_invalid_dashboard_toml_uses_default() {
-        let _guard = DASHBOARD_ENV_LOCK.lock().unwrap();
-        // Prefer sibling dashboard.toml over a leaked env from another test.
-        unsafe { std::env::remove_var("OVRCR_DASHBOARD_CONFIG") };
         let root = tempfile::tempdir().unwrap();
         let config = root.path().join("config.toml");
         assert_eq!(
-            load_automatic_local_terminals(&config),
+            load_automatic_local_terminals_at(&config, None),
             AutomaticLocalTerminals::DefaultBranchOnly
         );
         std::fs::write(root.path().join("dashboard.toml"), "not = toml {\n").unwrap();
         assert_eq!(
-            load_automatic_local_terminals(&config),
+            load_automatic_local_terminals_at(&config, None),
             AutomaticLocalTerminals::DefaultBranchOnly
         );
         std::fs::write(
@@ -160,7 +160,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            load_automatic_local_terminals(&config),
+            load_automatic_local_terminals_at(&config, None),
             AutomaticLocalTerminals::DefaultBranchOnly
         );
         std::fs::write(
@@ -169,25 +169,27 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            load_automatic_local_terminals(&config),
+            load_automatic_local_terminals_at(&config, None),
             AutomaticLocalTerminals::Off
         );
     }
 
     #[test]
     fn env_override_selects_dashboard_path() {
-        let _guard = DASHBOARD_ENV_LOCK.lock().unwrap();
         let root = tempfile::tempdir().unwrap();
         let config = root.path().join("config.toml");
         let custom = root.path().join("custom-dashboard.toml");
+        std::fs::write(
+            root.path().join("dashboard.toml"),
+            "automatic_local_terminals = \"off\"\n",
+        )
+        .unwrap();
         std::fs::write(&custom, "automatic_local_terminals = \"on\"\n").unwrap();
-        let previous = std::env::var_os("OVRCR_DASHBOARD_CONFIG");
-        unsafe { std::env::set_var("OVRCR_DASHBOARD_CONFIG", &custom) };
-        let loaded = load_automatic_local_terminals(&config);
-        match previous {
-            Some(value) => unsafe { std::env::set_var("OVRCR_DASHBOARD_CONFIG", value) },
-            None => unsafe { std::env::remove_var("OVRCR_DASHBOARD_CONFIG") },
-        }
+        assert_eq!(
+            load_automatic_local_terminals_at(&config, None),
+            AutomaticLocalTerminals::Off
+        );
+        let loaded = load_automatic_local_terminals_at(&config, Some(&custom));
         assert_eq!(loaded, AutomaticLocalTerminals::On);
     }
 }
