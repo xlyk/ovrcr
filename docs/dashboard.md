@@ -29,6 +29,10 @@ or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts
 The sidebar's **Quota left** block shows remaining Claude, Codex and Grok account
 allowance. See [provider allowance](provider-quota.md) for native sources,
 collection settings, freshness and reset behavior.
+Providers remain visible before the first report, with waiting or unavailable
+states. Narrow sidebars put window values and full state text on a second row
+before sacrificing labels or percentages. The tree scrolls above the reserved
+quota rows; sidebar and pane dividers remain draggable over their full height.
 
 | Key | Action |
 | --- | --- |

@@ -11,7 +11,7 @@ use super::view_handshake::{Acknowledged, Desire, RequestedView};
 use super::{Dashboard, DashboardAction, InputMode, KeyEncoding, TreeRow, history_view_size};
 use crate::protocol::{
     ClientMessage, ErrorCode, HierarchySnapshot, HistoryOpened, HistoryRows, HistorySnapshotId,
-    Request, Response, ServerEvent, ServerMessage, SessionRunId,
+    QuotaSnapshot, Request, Response, ServerEvent, ServerMessage, SessionRunId,
 };
 use crate::session::{SessionId, SessionPhase, TerminalSize};
 use crossterm::event::{
@@ -567,7 +567,7 @@ impl Dashboard {
             tasks: None,
             desktop: super::desktop::DesktopNotifications::default(),
             unread: Default::default(),
-            quotas: Default::default(),
+            quotas: Some(QuotaSnapshot::default()),
             quota_details: None,
             hierarchy: HierarchySnapshot {
                 projects: Vec::new(),
@@ -2407,7 +2407,7 @@ impl Dashboard {
             };
         }
 
-        let sidebar = self.sidebar_rects(area).0;
+        let sidebar = super::render::sidebar_area(area, self.sidebar_preference());
         let rects = self.pane_rects(area);
         if mouse.kind == MouseEventKind::Down(MouseButton::Left)
             && mouse.row >= sidebar.y

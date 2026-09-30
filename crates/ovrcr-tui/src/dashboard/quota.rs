@@ -1,6 +1,6 @@
 use super::{Dashboard, DashboardAction, InputMode, render::sidebar_area};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
-use ovrcr_protocol::{ProviderQuota, QuotaSource, QuotaState, QuotaWindow};
+use ovrcr_protocol::{ProviderQuota, QuotaSnapshot, QuotaSource, QuotaState, QuotaWindow};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -146,17 +146,14 @@ impl Dashboard {
     pub(super) fn sidebar_rects(&self, area: Rect) -> (Rect, Rect) {
         let sidebar = sidebar_area(area, self.sidebar_preference());
         let desired = self.quotas.as_ref().map_or(0, |quota| {
-            1 + [&quota.claude, &quota.codex, &quota.grok]
-                .iter()
-                .map(|provider| {
-                    provider
-                        .windows
-                        .iter()
-                        .filter(|window| window.general)
-                        .count()
-                        .clamp(1, 2) as u16
-                })
-                .sum::<u16>()
+            if sidebar.width < 8 {
+                0
+            } else {
+                sidebar_quota_rows(quota, sidebar.width, 0)
+                    .iter()
+                    .map(|(_, height)| height)
+                    .sum()
+            }
         });
         let height = if sidebar.width < 8 || sidebar.height <= 3 {
             0
@@ -177,65 +174,95 @@ impl Dashboard {
         if area.is_empty() {
             return;
         }
-        let mut lines = vec![if area.height == 1 {
-            "Quota left: details".into()
-        } else {
-            "Quota left".into()
-        }];
-        for provider in [&quota.claude, &quota.codex, &quota.grok] {
-            if !provider.windows.iter().any(|window| window.general) {
-                lines.push(format!(
-                    "{} — {}",
-                    provider.provider.name(),
-                    provider.state.label()
-                ));
-            } else {
-                for (index, window) in provider
-                    .windows
-                    .iter()
-                    .filter(|window| window.general)
-                    .take(2)
-                    .enumerate()
-                {
-                    let name = if index == 0 {
-                        provider.provider.name()
-                    } else {
-                        ""
-                    };
-                    let prefix = format!("{name:6} {:2}", window.label);
-                    let suffix = window_text(provider, window, now);
-                    let reserved = ratatui::text::Line::raw(format!("{prefix} {suffix}")).width();
-                    let bar_width = usize::from(area.width).saturating_sub(reserved + 3).min(10);
-                    let bar = if bar_width >= 3
-                        && !window.over_limit
-                        && window.resets_unix_ms.is_none_or(|reset| reset > now)
-                    {
-                        window
-                            .remaining_basis_points()
-                            .map(|left| {
-                                let filled = usize::from(left) * bar_width / 10_000;
-                                format!(
-                                    " [{}{}]",
-                                    "█".repeat(filled),
-                                    "░".repeat(bar_width - filled)
-                                )
-                            })
-                            .unwrap_or_default()
-                    } else {
-                        String::new()
-                    };
-                    lines.push(format!("{prefix}{bar} {suffix}"));
-                }
-            }
-        }
-        for (offset, text) in lines.into_iter().take(usize::from(area.height)).enumerate() {
+        if area.height == 1 {
             frame.render_widget(
-                Paragraph::new(super::render::clip_text(&text, usize::from(area.width)))
+                Paragraph::new("Quota left: details")
                     .style(Style::default().fg(super::render::TEXT)),
-                Rect::new(area.x, area.y + offset as u16, area.width, 1),
+                area,
             );
+            return;
+        }
+        let mut offset = 0;
+        for (text, height) in sidebar_quota_rows(quota, area.width, now) {
+            frame.render_widget(
+                Paragraph::new(text)
+                    .wrap(Wrap { trim: false })
+                    .style(Style::default().fg(super::render::TEXT)),
+                Rect::new(area.x, area.y + offset, area.width, height),
+            );
+            offset += height;
         }
     }
+}
+
+/// Reserve the same rows for current, stale, and reset-due states, without a clock-driven resize.
+fn sidebar_quota_rows(quota: &QuotaSnapshot, width: u16, now: u64) -> Vec<(String, u16)> {
+    let height = |text: &str| {
+        Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .line_count(width) as u16
+    };
+    let mut rows = vec![("Quota left".into(), height("Quota left"))];
+    for provider in [&quota.claude, &quota.codex, &quota.grok] {
+        if !provider.windows.iter().any(|window| window.general) {
+            let text = format!("{} — {}", provider.provider.name(), provider.state.label());
+            if ratatui::text::Line::raw(&text).width() > usize::from(width) {
+                rows.push((provider.provider.name().into(), 1));
+                rows.push((
+                    provider.state.label().into(),
+                    height(provider.state.label()),
+                ));
+            } else {
+                rows.push((text, 1));
+            }
+        } else {
+            for (index, window) in provider
+                .windows
+                .iter()
+                .filter(|window| window.general)
+                .take(2)
+                .enumerate()
+            {
+                let name = if index == 0 {
+                    provider.provider.name()
+                } else {
+                    ""
+                };
+                let prefix = format!("{name:6} {:2}", window.label);
+                let suffix = window_text(provider, window, now);
+                let longest_state = "0% exhausted stale";
+                if ratatui::text::Line::raw(format!("{prefix} {longest_state}")).width()
+                    > usize::from(width)
+                {
+                    rows.push((prefix.clone(), height(&prefix)));
+                    rows.push((suffix, height(longest_state)));
+                    continue;
+                }
+                let reserved = ratatui::text::Line::raw(format!("{prefix} {suffix}")).width();
+                let bar_width = usize::from(width).saturating_sub(reserved + 3).min(10);
+                let bar = if bar_width >= 3
+                    && !window.over_limit
+                    && window.resets_unix_ms.is_none_or(|reset| reset > now)
+                {
+                    window
+                        .remaining_basis_points()
+                        .map(|left| {
+                            let filled = usize::from(left) * bar_width / 10_000;
+                            format!(
+                                " [{}{}]",
+                                "█".repeat(filled),
+                                "░".repeat(bar_width - filled)
+                            )
+                        })
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                rows.push((format!("{prefix}{bar} {suffix}"), 1));
+            }
+        }
+    }
+    rows
 }
 
 pub(super) fn window_text(provider: &ProviderQuota, window: &QuotaWindow, now: u64) -> String {

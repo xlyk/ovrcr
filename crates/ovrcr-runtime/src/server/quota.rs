@@ -348,13 +348,7 @@ impl Rpc {
             .map_err(|_| Failure::new(QuotaState::Unavailable))?;
         let input = child.stdin.take().unwrap();
         let output = child.stdout.take().unwrap();
-        let flags = unsafe { libc::fcntl(output.as_raw_fd(), libc::F_GETFL) };
-        if flags >= 0 {
-            unsafe {
-                libc::fcntl(output.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK);
-            }
-        }
-        Ok(Self {
+        let rpc = Self {
             child,
             input,
             output,
@@ -362,7 +356,15 @@ impl Rpc {
             next_id: 1,
             account_epoch: 0,
             workspace: None,
-        })
+        };
+        for fd in [rpc.input.as_raw_fd(), rpc.output.as_raw_fd()] {
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+            if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
+            {
+                return Err(Failure::new(QuotaState::Unavailable));
+            }
+        }
+        Ok(rpc)
     }
     fn bytes(&mut self, state: &ServerState, deadline: Instant) -> Result<bool> {
         loop {
@@ -371,6 +373,9 @@ impl Rpc {
                 || !state.dashboard.is_claimed()
             {
                 return Err(Failure::new(QuotaState::Unavailable));
+            }
+            if Instant::now() >= deadline {
+                return Ok(true);
             }
             let mut chunk = [0u8; 16_384];
             match self.output.read(&mut chunk) {
@@ -394,6 +399,15 @@ impl Rpc {
     }
     fn message(&mut self, state: &ServerState, deadline: Instant) -> Result<Option<Value>> {
         loop {
+            if state.stopping.load(Ordering::Acquire)
+                || state.shutdown.load(Ordering::Acquire)
+                || !state.dashboard.is_claimed()
+            {
+                return Err(Failure::new(QuotaState::Unavailable));
+            }
+            if Instant::now() >= deadline {
+                return Ok(None);
+            }
             if let Some(end) = self.buffer.iter().position(|byte| *byte == b'\n') {
                 let line = self.buffer.drain(..=end).collect::<Vec<_>>();
                 if let Ok(message) = serde_json::from_slice::<Value>(&line) {
@@ -409,13 +423,30 @@ impl Rpc {
             }
         }
     }
-    fn send(&mut self, message: Value) -> Result<()> {
+    fn send(&mut self, message: Value, state: &ServerState, deadline: Instant) -> Result<()> {
         let mut bytes =
             serde_json::to_vec(&message).map_err(|_| Failure::new(QuotaState::Invalid))?;
         bytes.push(b'\n');
-        self.input
-            .write_all(&bytes)
-            .map_err(|_| Failure::new(QuotaState::Unavailable))
+        let mut remaining = bytes.as_slice();
+        while !remaining.is_empty() {
+            if state.stopping.load(Ordering::Acquire)
+                || state.shutdown.load(Ordering::Acquire)
+                || !state.dashboard.is_claimed()
+                || Instant::now() >= deadline
+            {
+                return Err(Failure::new(QuotaState::Unavailable));
+            }
+            match self.input.write(remaining) {
+                Ok(0) => return Err(Failure::new(QuotaState::Unavailable)),
+                Ok(count) => remaining = &remaining[count..],
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::park_timeout(Duration::from_millis(10));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => return Err(Failure::new(QuotaState::Unavailable)),
+            }
+        }
+        Ok(())
     }
     fn call(
         &mut self,
@@ -426,7 +457,11 @@ impl Rpc {
     ) -> Result<Value> {
         let id = self.next_id;
         self.next_id += 1;
-        self.send(json!({"jsonrpc":"2.0", "id":id, "method":method, "params":params}))?;
+        self.send(
+            json!({"jsonrpc":"2.0", "id":id, "method":method, "params":params}),
+            state,
+            deadline,
+        )?;
         while let Some(reply) = self.message(state, deadline)? {
             if reply["id"] != id {
                 continue;
@@ -511,7 +546,11 @@ fn native_client(
     };
     rpc.call("initialize", init, state, deadline)?;
     if provider == QuotaProvider::Codex {
-        rpc.send(json!({"jsonrpc":"2.0", "method":"initialized", "params":{}}))?;
+        rpc.send(
+            json!({"jsonrpc":"2.0", "method":"initialized", "params":{}}),
+            state,
+            deadline,
+        )?;
     }
     rpc.workspace = Some(workspace);
     Ok(rpc)
@@ -716,4 +755,101 @@ fn native_windows(provider: QuotaProvider, value: &Value) -> Result<Vec<QuotaWin
     .validate()
     .map_err(|_| Failure::new(QuotaState::Invalid))?;
     Ok(windows)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expired_request_does_not_accept_a_buffered_reply() {
+        let (stream, _dashboard) = std::os::unix::net::UnixStream::pair().unwrap();
+        let state = super::super::tests::test_state(
+            Some(super::super::DashboardSink::new()),
+            Some((Arc::new(()), stream)),
+        );
+        let root = tempfile::tempdir().unwrap();
+        let program = NativeCommand {
+            command: "/bin/cat".into(),
+            home: None,
+        };
+        let mut rpc = Rpc::spawn(QuotaProvider::Codex, &program, &[], root.path())
+            .ok()
+            .unwrap();
+        rpc.buffer = b"{\"id\":1,\"result\":{\"late\":true}}\n".to_vec();
+        assert!(
+            matches!(rpc.message(&state, Instant::now()), Ok(None)),
+            "a complete buffered message bypassed the expired receive deadline"
+        );
+        let result = rpc.call("account/read", json!({}), &state, Instant::now());
+        assert!(
+            matches!(
+                result,
+                Err(Failure {
+                    state: QuotaState::Unavailable,
+                    ..
+                })
+            ),
+            "a complete buffered reply bypassed the expired request deadline"
+        );
+    }
+
+    #[test]
+    fn native_client_that_does_not_read_cannot_block_request_writes() {
+        let (stream, _dashboard) = std::os::unix::net::UnixStream::pair().unwrap();
+        let state = super::super::tests::test_state(
+            Some(super::super::DashboardSink::new()),
+            Some((Arc::new(()), stream)),
+        );
+        let root = tempfile::tempdir().unwrap();
+        let program = NativeCommand {
+            command: "/bin/sh".into(),
+            home: None,
+        };
+        let mut rpc = Rpc::spawn(
+            QuotaProvider::Codex,
+            &program,
+            &["-c", "exec sleep 30"],
+            root.path(),
+        )
+        .ok()
+        .unwrap();
+        let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done = finished.clone();
+        let pgid = rpc.child.id() as libc::pid_t;
+        // Release a broken blocking implementation after a second. The Rpc still
+        // owns the unreaped leader, and this thread is joined before it can drop.
+        let watchdog = std::thread::spawn(move || {
+            let limit = Instant::now() + Duration::from_secs(1);
+            while !done.load(Ordering::Acquire) {
+                if Instant::now() >= limit {
+                    unsafe {
+                        libc::kill(-pgid, libc::SIGKILL);
+                    }
+                    break;
+                }
+                std::thread::park_timeout(Duration::from_millis(10));
+            }
+        });
+        let started = Instant::now();
+        let result = rpc.call(
+            "account/read",
+            json!({"fixture": "x".repeat(131_072)}),
+            &state,
+            started + Duration::from_millis(100),
+        );
+        finished.store(true, Ordering::Release);
+        watchdog.join().unwrap();
+        assert!(matches!(
+            result,
+            Err(Failure {
+                state: QuotaState::Unavailable,
+                ..
+            })
+        ));
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "native stdin write waited for the watchdog instead of its request deadline"
+        );
+    }
 }

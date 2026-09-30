@@ -224,7 +224,7 @@ impl ServerState {
     /// Only the selected native Claude invocation can replace the retained source.
     fn refresh_claude_quota(&self) {
         use ovrcr_protocol::{
-            AgentProvider, ProviderQuota, QuotaProvider, QuotaSource, QuotaState,
+            AgentProvider, ProviderQuota, QuotaProvider, QuotaSource, QuotaState, ReporterHealth,
         };
         let focused = self.dashboard.view().and_then(|view| view.focused);
         let old = self.quotas.lock().unwrap().claude.clone();
@@ -252,6 +252,13 @@ impl ServerState {
                     .agent
                     .filter(|agent| agent.binding.provider == AgentProvider::Claude)
                 {
+                    let state = if summary.phase.is_live()
+                        && agent.health.state == ReporterHealth::Connected
+                    {
+                        QuotaState::Waiting
+                    } else {
+                        QuotaState::Unavailable
+                    };
                     let source = QuotaSource::Session {
                         session: summary.id,
                         run: summary.run,
@@ -259,11 +266,10 @@ impl ServerState {
                     };
                     if old.source.as_ref() == Some(&source) {
                         let mut quota = old.clone();
-                        quota.state = QuotaState::Unavailable;
+                        quota.state = state;
                         quota
                     } else {
-                        let mut quota =
-                            ProviderQuota::unknown(QuotaProvider::Claude, QuotaState::Waiting);
+                        let mut quota = ProviderQuota::unknown(QuotaProvider::Claude, state);
                         quota.source = Some(source);
                         quota
                     }

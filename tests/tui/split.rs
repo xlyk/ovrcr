@@ -371,6 +371,86 @@ fn divider_drag_resizes_both_panes_and_revokes_input_until_acknowledged() {
 }
 
 #[test]
+fn quota_block_keeps_sidebar_border_draggable_at_the_bottom() {
+    let mut dashboard = dashboard_fixture();
+    let area = wide_area();
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::QuotaChanged(
+        Box::default(),
+    )));
+    let initial = request_view(&mut dashboard, area, 0);
+    acknowledge_all_view_targets(&mut dashboard, initial);
+    assert_view_input_allowed(&mut dashboard);
+    for (kind, column) in [
+        (MouseEventKind::Down(MouseButton::Left), 39),
+        (MouseEventKind::Drag(MouseButton::Left), 49),
+        (MouseEventKind::Up(MouseButton::Left), 49),
+    ] {
+        assert_eq!(
+            dashboard.mouse_action(mouse_event(kind, column, 38, KeyModifiers::NONE), area),
+            DashboardAction::Redraw
+        );
+    }
+    assert_eq!(pane_widths(&dashboard, area), vec![70]);
+    assert_view_input_blocked(&mut dashboard);
+    assert!(rendered_rows(&dashboard, 120, 40)[38].contains("Grok — unavailable"));
+    assert_eq!(
+        rendered_rows(&dashboard, 120, 40)[38].chars().nth(49),
+        Some('│')
+    );
+    let resized = request_view(&mut dashboard, area, 0);
+    assert_eq!(
+        set_view(&resized).panes[0].size,
+        TerminalSize { rows: 36, cols: 70 }
+    );
+    acknowledge_all_view_targets(&mut dashboard, resized);
+    assert_view_input_allowed(&mut dashboard);
+}
+
+#[test]
+fn quota_block_keeps_split_divider_draggable_at_the_bottom() {
+    let mut dashboard = dashboard_fixture();
+    let area = wide_area();
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::QuotaChanged(
+        Box::default(),
+    )));
+    split(&mut dashboard);
+    let initial = request_view(&mut dashboard, area, 0);
+    acknowledge_all_view_targets(&mut dashboard, initial);
+    assert_view_input_allowed(&mut dashboard);
+    let divider = dashboard.pane_rects(area)[0].terminal.right();
+    for (kind, column) in [
+        (MouseEventKind::Down(MouseButton::Left), divider),
+        (MouseEventKind::Drag(MouseButton::Left), 60),
+        (MouseEventKind::Up(MouseButton::Left), 60),
+    ] {
+        assert_eq!(
+            dashboard.mouse_action(mouse_event(kind, column, 38, KeyModifiers::NONE), area),
+            DashboardAction::Redraw
+        );
+    }
+    assert_eq!(pane_widths(&dashboard, area), vec![20, 59]);
+    assert_view_input_blocked(&mut dashboard);
+    assert_eq!(
+        rendered_rows(&dashboard, 120, 40)[38].chars().nth(60),
+        Some('│')
+    );
+    let resized = request_view(&mut dashboard, area, 0);
+    assert_eq!(
+        set_view(&resized)
+            .panes
+            .iter()
+            .map(|pane| pane.size)
+            .collect::<Vec<_>>(),
+        vec![
+            TerminalSize { rows: 36, cols: 20 },
+            TerminalSize { rows: 36, cols: 59 }
+        ]
+    );
+    acknowledge_all_view_targets(&mut dashboard, resized);
+    assert_view_input_allowed(&mut dashboard);
+}
+
+#[test]
 fn divider_gesture_releases_all_application_buttons_without_resizing() {
     let mut dashboard = dashboard_fixture();
     let area = wide_area();

@@ -8209,7 +8209,7 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         },
     )
     .unwrap();
-    for (index, command) in ["root", "statusline-quota"].into_iter().enumerate() {
+    for (index, command) in ["root", "statusline"].into_iter().enumerate() {
         assert_eq!(
             fixture.request(Request::SendTerminal {
                 session: summary.id,
@@ -8220,8 +8220,6 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         );
         fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={index}"));
     }
-    // The control round trip barriers the reporting callbacks; a Dashboard List then
-    // drains their actual publications through the same production consumer as the app.
     write_frame(
         &mut stream,
         &ClientMessage {
@@ -8230,9 +8228,45 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         },
     )
     .unwrap();
+    let mut waiting = None;
     loop {
         let message = read_frame::<ServerMessage>(&mut stream).unwrap();
+        if let ServerMessage::Event(ServerEvent::QuotaChanged(snapshot)) = &message {
+            waiting = Some(snapshot.claude.state);
+        }
         let done = matches!(&message, ServerMessage::Response { request_id: 3, .. });
+        dashboard.handle_server_message(message);
+        if done {
+            break;
+        }
+    }
+    assert_eq!(
+        waiting,
+        Some(ovrcr::protocol::QuotaState::Waiting),
+        "a connected Claude source with no quota must keep waiting through ordinary metrics"
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "statusline-quota".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "ADMISSION_CALLBACK=2");
+    // The control round trip barriers the reporting callbacks; a Dashboard List then
+    // drains their actual publications through the same production consumer as the app.
+    write_frame(
+        &mut stream,
+        &ClientMessage {
+            request_id: 4,
+            request: Request::List,
+        },
+    )
+    .unwrap();
+    loop {
+        let message = read_frame::<ServerMessage>(&mut stream).unwrap();
+        let done = matches!(&message, ServerMessage::Response { request_id: 4, .. });
         dashboard.handle_server_message(message);
         if done {
             break;

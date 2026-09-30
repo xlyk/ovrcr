@@ -2584,7 +2584,7 @@ fn lifecycle_response_preserves_error_chain_and_code() {
     );
 }
 
-fn test_state(
+pub(super) fn test_state(
     dashboard: Option<Arc<DashboardSink>>,
     stream: Option<(Arc<()>, UnixStream)>,
 ) -> Arc<ServerState> {

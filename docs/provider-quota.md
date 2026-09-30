@@ -8,7 +8,7 @@ The bottom-left **Quota left** block shows account allowance remaining, not a te
 - **Codex:** a task-owned `codex app-server`, using native account and rate-limit reads. Window durations come from the response; primary and secondary are not assumed to mean 5h and 7d. Model-specific buckets remain in details, not general sidebar bars. The reviewed version is **0.155.1**.
 - **Grok:** a task-owned standalone ACP client, using native auth metadata and typed billing. The native weekly or monthly period determines its label. Prepaid credits, on-demand spend, session tokens and cost are not general allowance. Team/non-user contexts are unsupported. The reviewed version is **1.0.40**.
 
-Claude's selected source follows the focused managed Claude session and is retained when focus moves elsewhere. Details identify its Session, run and Reporting generation. Native collectors use the configured native profile; account metadata stays private and never appears on the Dashboard wire.
+Claude's selected source follows the focused managed Claude session and is retained when focus moves elsewhere. A connected source keeps **waiting for report** until native quota arrives; ordinary metrics and resizing do not make it unavailable. Details identify its Session, run and Reporting generation. Native collectors use the configured native profile; account metadata stays private and never appears on the Dashboard wire.
 
 ## Enable native collection
 
@@ -27,10 +27,10 @@ command = "grok"
 # home = "/absolute/path/to/grok-profile" # native GROK_HOME
 ```
 
-Omit `home` to use the native client's existing profile. OVRCR does not provide login, extract tokens, copy credentials, or attach to a shared native client. Unsupported versions fail closed. Native collection runs only while a Dashboard is attached, with one worker per provider, a five-minute cadence, bounded replies/deadlines, and failure backoff. Fifty Sessions do not create fifty account readers.
+Omit `home` to use the native client's existing profile. OVRCR does not provide login, extract tokens, copy credentials, or attach to a shared native client. Unsupported versions fail closed. Native collection runs only while a Dashboard is attached, with one worker per provider, a five-minute cadence, bounded replies and a twenty-second request deadline, and failure backoff. The deadline covers native writes and incoming notifications as well as replies. Fifty Sessions do not create fifty account readers.
 
 ## Interpret the display
 
-A bar represents `100 − consumed`; `—` is unknown, not zero or full. Exhausted and over-limit reports are distinct. Passed reset times show **reset due**; OVRCR never refills allowance locally. Unavailable or stale sources retain last-good values with a stale marker.
+A bar represents `100 − consumed`; `—` is unknown, not zero or full. Exhausted and over-limit reports are distinct. Passed reset times show **reset due**; OVRCR never refills allowance locally. Unavailable or stale sources retain last-good values with a stale marker. Before any source reports, Claude shows waiting and the opt-in native providers show unavailable. Narrow sidebars place the window's full state below its identity; use details when the window is too short to show all quota rows.
 
 Details distinguish the last changed observation from the last successful native account check. Repeated Claude callbacks cannot claim a backend check. Account changes invalidate older native generations, including A→B→A notifications received during a read. Quota snapshots are bounded, in-memory Server state and are not persisted as account history.

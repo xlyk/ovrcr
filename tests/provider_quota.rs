@@ -33,6 +33,11 @@ fn native_quota_rpc_fixture() {
                 serde_json::json!({"account": {"type":"chatgpt", "email":"fixture@example.invalid", "planType":"plus"}})
             }
             "account/rateLimits/read" => {
+                if std::env::var("OVRCR_QUOTA_FIXTURE_MODE").as_deref() == Ok("flood") {
+                    loop {
+                        println!("{}", serde_json::json!({"method":"fixture/progress"}));
+                    }
+                }
                 if std::env::var("OVRCR_QUOTA_FIXTURE_MODE").as_deref() == Ok("switch") {
                     println!(
                         "{}",
@@ -328,6 +333,81 @@ fn attach(fixture: &live::Live) -> std::os::unix::net::UnixStream {
             other => panic!("unexpected greeting: {other:?}"),
         }
     }
+}
+
+#[test]
+fn providers_remain_visible_before_any_native_quota_source_reports() {
+    let fixture = live::Live::binary();
+    fixture.ready("feature/quota-waiting");
+    let mut socket = connect_server(&fixture.socket).unwrap();
+    write_frame(
+        &mut socket,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let mut dashboard = ovrcr::tui::Dashboard::new(TerminalSize {
+        rows: 32,
+        cols: 120,
+    });
+    dashboard.install_area(ratatui::layout::Rect::new(0, 0, 120, 32));
+    dashboard.handle_server_message(read_frame::<ServerMessage>(&mut socket).unwrap());
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 32)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard(frame, &dashboard))
+        .unwrap();
+    let screen = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    for expected in [
+        "Quota left",
+        "Claude — waiting for report",
+        "Codex — unavailable",
+        "Grok — unavailable",
+    ] {
+        assert!(screen.contains(expected), "missing {expected}: {screen}");
+    }
+}
+
+#[test]
+fn unrelated_native_messages_cannot_extend_the_account_request_deadline() {
+    let fixture = native_fixture("flood");
+    let mut socket = attach(&fixture);
+    socket
+        .set_read_timeout(Some(Duration::from_secs(25)))
+        .unwrap();
+    let started = std::time::Instant::now();
+    loop {
+        let message = read_frame::<ServerMessage>(&mut socket)
+            .expect("notification flood kept the native request alive beyond its deadline");
+        if let ServerMessage::Event(ServerEvent::QuotaChanged(snapshot)) = message
+            && snapshot.codex.state == QuotaState::Unavailable
+            && matches!(
+                snapshot.codex.source,
+                Some(QuotaSource::NativeProfile { .. })
+            )
+        {
+            assert!(started.elapsed() < Duration::from_secs(25));
+            assert!(snapshot.codex.windows.is_empty());
+            break;
+        }
+    }
+    assert!(
+        std::fs::read_to_string(fixture.root.path().join("native-methods"))
+            .unwrap()
+            .lines()
+            .any(|method| method == "account/rateLimits/read")
+    );
+    assert!(
+        matches!(fixture.request(Request::List), Response::Hierarchy(_)),
+        "native flood blocked the server's control path"
+    );
 }
 
 #[test]
