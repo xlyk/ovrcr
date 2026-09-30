@@ -7726,8 +7726,19 @@ fn agent_admission_native_helper() {
             | "statusline-wrong"
             | "statusline-unknown"
             | "statusline-lower"
-            | "statusline-context-unknown" => {
+            | "statusline-context-unknown"
+            | "statusline-quota" => {
                 payload = serde_json::json!({"session_id":expected,"cost":{"total_cost_usd":0.25},"context_window":{"context_window_size":100,"current_usage":{"input_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}});
+                if line == "statusline-quota" {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs();
+                    payload["rate_limits"] = serde_json::json!({
+                        "five_hour": {"used_percentage": 42, "resets_at": now + 18_000},
+                        "seven_day": {"used_percentage": 18, "resets_at": now + 604_800}
+                    });
+                }
                 if line == "statusline-wrong" {
                     payload["session_id"] = "foreign".into();
                 }
@@ -8145,6 +8156,175 @@ fn agent_admission_failed_unavailable_publication_disconnects_watch() {
 #[test]
 fn agent_admission_failed_bind_status_disconnects_watch() {
     assert_initial_admission("branch", Some(AdmissionFault::RejectStatus));
+}
+
+#[test]
+fn native_claude_quota_reaches_sidebar_through_real_reporting_and_dashboard_socket() {
+    use ovrcr::session::TerminalSize;
+    use std::os::unix::fs::PermissionsExt;
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("quota-setup", "quota-setup");
+    let native = fixture.root.path().join("claude");
+    std::fs::write(&native, r#"#!/bin/sh
+if [ "$1" = --version ]; then printf '2.1.285 (Claude Code)\n'; exit 0; fi
+OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admission_native_helper --nocapture
+"#).unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let summary = fixture.create_session_summary("quota-claude", vec![
+        "sh".into(), "-c".into(),
+        r#"stty -echo; export OVRCR_HOOK_SOCKET="$5" OVRCR_TEST_PROBE="$4" OVRCR_TEST_EXECUTABLE="$3"; "$1" agent run --provider claude -- "$2""#.into(),
+        "quota-fixture".into(), env!("CARGO_BIN_EXE_ovrcr").into(),
+        native.into_os_string(), std::env::current_exe().unwrap().into_os_string(),
+        fixture.root.path().join("quota-probe").into_os_string(), fixture.socket.clone().into_os_string(),
+    ]);
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains(summary.id, "ADMISSION_READY");
+    let mut stream = connect_dashboard(&fixture.socket, 1);
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let mut dashboard = ovrcr::tui::Dashboard::new(TerminalSize {
+        rows: 32,
+        cols: 100,
+    });
+    dashboard.install_area(ratatui::layout::Rect::new(0, 0, 100, 32));
+    if let Response::Hierarchy(hierarchy) = fixture.request(Request::List) {
+        dashboard.install_hierarchy(hierarchy);
+    } else {
+        panic!("real Server did not return hierarchy");
+    }
+    dashboard.install_focus(summary.id);
+    write_frame(
+        &mut stream,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::Select {
+                session: summary.id,
+                size: TerminalSize {
+                    rows: 32,
+                    cols: 100,
+                },
+            },
+        },
+    )
+    .unwrap();
+    for (index, command) in ["root", "statusline"].into_iter().enumerate() {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: command.into(),
+                submit: true,
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={index}"));
+    }
+    write_frame(
+        &mut stream,
+        &ClientMessage {
+            request_id: 3,
+            request: Request::List,
+        },
+    )
+    .unwrap();
+    let mut waiting = None;
+    loop {
+        let message = read_frame::<ServerMessage>(&mut stream).unwrap();
+        if let ServerMessage::Event(ServerEvent::QuotaChanged(snapshot)) = &message {
+            waiting = Some(snapshot.claude.state);
+        }
+        let done = matches!(&message, ServerMessage::Response { request_id: 3, .. });
+        dashboard.handle_server_message(message);
+        if done {
+            break;
+        }
+    }
+    assert_eq!(
+        waiting,
+        Some(ovrcr::protocol::QuotaState::Waiting),
+        "a connected Claude source with no quota must keep waiting through ordinary metrics"
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "statusline-quota".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "ADMISSION_CALLBACK=2");
+    // The control round trip barriers the reporting callbacks; a Dashboard List then
+    // drains their actual publications through the same production consumer as the app.
+    write_frame(
+        &mut stream,
+        &ClientMessage {
+            request_id: 4,
+            request: Request::List,
+        },
+    )
+    .unwrap();
+    loop {
+        let message = read_frame::<ServerMessage>(&mut stream).unwrap();
+        let done = matches!(&message, ServerMessage::Response { request_id: 4, .. });
+        dashboard.handle_server_message(message);
+        if done {
+            break;
+        }
+    }
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 32)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard(frame, &dashboard))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let sidebar = (0..32)
+        .map(|y| (0..39).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        sidebar.contains("Quota left"),
+        "quota block missing: {sidebar}"
+    );
+    assert!(
+        sidebar
+            .lines()
+            .any(|row| row.contains("Claude") && row.contains("5h") && row.contains("58%")),
+        "five-hour remaining allowance missing: {sidebar}"
+    );
+    assert!(
+        sidebar
+            .lines()
+            .any(|row| row.contains("7d") && row.contains("82%")),
+        "seven-day remaining allowance missing: {sidebar}"
+    );
+    dashboard.key(crossterm::event::KeyCode::Char('u'));
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard(frame, &dashboard))
+        .unwrap();
+    let details = (0..32)
+        .map(|y| {
+            (0..100)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        details.contains("Quota details"),
+        "details action missing: {details}"
+    );
+    assert!(
+        details.contains(&format!("session #{}", summary.id.0)),
+        "source missing: {details}"
+    );
+    assert!(
+        details.contains("Reporting generation"),
+        "generation missing: {details}"
+    );
+    assert!(
+        details.contains("last observation") && details.contains("reset:"),
+        "provenance missing: {details}"
+    );
 }
 
 #[test]

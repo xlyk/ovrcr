@@ -9,6 +9,7 @@ mod keymap;
 mod outbox;
 mod palette;
 pub(crate) mod picker;
+mod quota;
 mod ready;
 mod render;
 mod settings;
@@ -227,6 +228,8 @@ pub struct Dashboard {
     desktop: desktop::DesktopNotifications,
     tasks: Option<TasksView>,
     hierarchy: HierarchySnapshot,
+    quotas: Option<crate::protocol::QuotaSnapshot>,
+    quota_details: Option<u16>,
     // Review names Presented, not a newer Unread that arrived before the next draw.
     unread: unread::Unread,
     mode: InputMode,

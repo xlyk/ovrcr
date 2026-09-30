@@ -31,6 +31,7 @@ mod connections;
 mod dashboard;
 mod dispatch;
 mod outbound;
+mod quota;
 mod reporting_queue;
 mod startup;
 mod title;
@@ -48,6 +49,7 @@ use outbound::{DashboardDelivery, Enqueue};
 pub use outbound::{DashboardOutbound, DashboardSink};
 #[cfg(feature = "acceptance-diagnostics")]
 pub use outbound::{DashboardQueueMonitor, DashboardQueueSnapshot};
+pub use quota::{NativeQuotaUpdate, normalize_native_quota};
 #[cfg(feature = "acceptance-diagnostics")]
 pub use startup::run_server_with_diagnostics;
 pub use startup::{ServerPaths, prepare_socket_directory, run_server};
@@ -123,6 +125,16 @@ fn dispatch_weight(message: &DispatchMessage) -> usize {
             bincode::serde::encode_to_vec(view, bincode::config::standard())
                 .map_or(0, |bytes| bytes.len())
         }
+        DispatchMessage::NativeQuota(update) => {
+            update.report.windows.as_ref().map_or(0, |windows| {
+                windows
+                    .iter()
+                    .map(|window| {
+                        std::mem::size_of_val(window) + window.id.len() + window.label.len()
+                    })
+                    .sum()
+            })
+        }
         DispatchMessage::Session(event) => event_weight(event),
         _ => 0,
     }
@@ -187,6 +199,7 @@ pub struct ServerState {
     pub registry: Mutex<Registry>,
     pub sessions: Mutex<HashMap<SessionId, Arc<Session>>>,
     pub(super) dashboard: ActiveDashboard,
+    quotas: Mutex<ovrcr_protocol::QuotaSnapshot>,
     pub(crate) retained: parking_lot::Mutex<SessionStore>,
     observations: parking_lot::Mutex<HashMap<(String, String), CheckoutObservation>>,
     pub mutation_lock: Mutex<()>,
@@ -208,6 +221,89 @@ pub struct ServerState {
 }
 
 impl ServerState {
+    /// Only the selected native Claude invocation can replace the retained source.
+    fn refresh_claude_quota(&self) {
+        use ovrcr_protocol::{
+            AgentProvider, ProviderQuota, QuotaProvider, QuotaSource, QuotaState, ReporterHealth,
+        };
+        let focused = self.dashboard.view().and_then(|view| view.focused);
+        let old = self.quotas.lock().unwrap().claude.clone();
+        let selected = focused
+            .and_then(|id| self.sessions.lock().unwrap().get(&id).cloned())
+            .filter(|session| {
+                session
+                    .summary()
+                    .agent
+                    .as_ref()
+                    .is_some_and(|agent| agent.binding.provider == AgentProvider::Claude)
+            })
+            .or_else(|| match &old.source {
+                Some(QuotaSource::Session { session, .. }) => {
+                    self.sessions.lock().unwrap().get(session).cloned()
+                }
+                _ => None,
+            });
+        let next = match selected {
+            Some(session) => {
+                let summary = session.summary();
+                if let Some(quota) = session.quota_snapshot() {
+                    quota
+                } else if let Some(agent) = summary
+                    .agent
+                    .filter(|agent| agent.binding.provider == AgentProvider::Claude)
+                {
+                    let state = if summary.phase.is_live()
+                        && agent.health.state == ReporterHealth::Connected
+                    {
+                        QuotaState::Waiting
+                    } else {
+                        QuotaState::Unavailable
+                    };
+                    let source = QuotaSource::Session {
+                        session: summary.id,
+                        run: summary.run,
+                        binding: agent.binding,
+                    };
+                    if old.source.as_ref() == Some(&source) {
+                        let mut quota = old.clone();
+                        quota.state = state;
+                        quota
+                    } else {
+                        let mut quota = ProviderQuota::unknown(QuotaProvider::Claude, state);
+                        quota.source = Some(source);
+                        quota
+                    }
+                } else {
+                    let mut quota = old.clone();
+                    quota.state = QuotaState::Unavailable;
+                    quota
+                }
+            }
+            None if old.source.is_some() => {
+                let mut quota = old.clone();
+                quota.state = QuotaState::Unavailable;
+                quota
+            }
+            None => old.clone(),
+        };
+        if next != old {
+            self.quotas.lock().unwrap().claude = next;
+            self.publish_quotas();
+        }
+    }
+
+    fn publish_quotas(&self) {
+        let snapshot = self.quotas.lock().unwrap().clone();
+        // No eligible native source: preserve the existing handshake/tree behavior.
+        if snapshot == ovrcr_protocol::QuotaSnapshot::default() {
+            return;
+        }
+        self.dashboard
+            .try_send(ServerMessage::Event(ServerEvent::QuotaChanged(Box::new(
+                snapshot,
+            ))));
+    }
+
     pub fn hierarchy(&self) -> HierarchySnapshot {
         self.observe_checkouts();
         snapshot_from_state(self)
@@ -1173,6 +1269,7 @@ impl ServerState {
         let retained = SessionStore::open(&registry_path).unwrap();
         Arc::new(Self {
             tasks: Some(tasks),
+            quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
             socket: registry_path.with_extension("sock"),
             registry_path,
             registry: Mutex::new(Registry::default()),

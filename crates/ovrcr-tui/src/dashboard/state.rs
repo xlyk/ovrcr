@@ -4,16 +4,14 @@ use super::copy::{
 };
 use super::event_loop::DASHBOARD_IDLE_REDRAW_INTERVAL;
 use super::input::{encode_key, encode_mouse, is_browse_key};
-use super::render::{
-    METADATA_HEIGHT, sidebar_area, tree_line_at, tree_line_count, tree_row_heights, tree_row_start,
-};
+use super::render::{tree_line_at, tree_line_count, tree_row_heights, tree_row_start};
 use super::settings::DashboardSettings;
 use super::status::SPINNER_INTERVAL;
 use super::view_handshake::{Acknowledged, Desire, RequestedView};
 use super::{Dashboard, DashboardAction, InputMode, KeyEncoding, TreeRow, history_view_size};
 use crate::protocol::{
     ClientMessage, ErrorCode, HierarchySnapshot, HistoryOpened, HistoryRows, HistorySnapshotId,
-    Request, Response, ServerEvent, ServerMessage, SessionRunId,
+    QuotaSnapshot, Request, Response, ServerEvent, ServerMessage, SessionRunId,
 };
 use crate::session::{SessionId, SessionPhase, TerminalSize};
 use crossterm::event::{
@@ -569,6 +567,8 @@ impl Dashboard {
             tasks: None,
             desktop: super::desktop::DesktopNotifications::default(),
             unread: Default::default(),
+            quotas: Some(QuotaSnapshot::default()),
+            quota_details: None,
             hierarchy: HierarchySnapshot {
                 projects: Vec::new(),
             },
@@ -1263,9 +1263,7 @@ impl Dashboard {
     }
 
     pub(super) fn tree_viewport_height(&self) -> usize {
-        usize::from(self.focused_size().rows)
-            .saturating_add(usize::from(METADATA_HEIGHT))
-            .max(1)
+        usize::from(self.sidebar_rects(self.outer_area).0.height)
     }
 
     fn visible_selection_index(&self, rows: &[TreeRow]) -> Option<usize> {
@@ -1299,7 +1297,7 @@ impl Dashboard {
 
     /// Lines each visible row takes in the sidebar drawn for `self.outer_area`.
     fn tree_heights(&self, rows: &[TreeRow]) -> Vec<usize> {
-        let width = sidebar_area(self.outer_area, self.sidebar_width).width;
+        let width = self.sidebar_rects(self.outer_area).0.width;
         tree_row_heights(self, rows, usize::from(width))
     }
 
@@ -1363,6 +1361,9 @@ impl Dashboard {
                 self.tasks = None;
             }
             return DashboardAction::Redraw;
+        }
+        if self.quota_details.is_some() {
+            return self.quota_details_key(key);
         }
         if self.palette.is_some() {
             return self.palette_key(key);
@@ -2071,6 +2072,7 @@ impl Dashboard {
             return DashboardAction::Redraw;
         }
         match event {
+            Event::Paste(_) if self.quota_details.is_some() => DashboardAction::None,
             Event::Paste(_) if self.whichkey.is_some() => DashboardAction::None,
             Event::Paste(text) if self.palette.is_some() => self.palette_paste(&text),
             Event::Key(key) => self.key_action(key),
@@ -2114,6 +2116,9 @@ impl Dashboard {
     }
 
     pub fn mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
+        if self.quota_details.is_some() {
+            return self.quota_details_mouse(mouse);
+        }
         if self.palette.is_some() {
             return self.palette_mouse(mouse, area);
         }
@@ -2175,6 +2180,9 @@ impl Dashboard {
     }
 
     pub(crate) fn mouse_capture_required(&self) -> bool {
+        if self.quota_details.is_some() {
+            return true;
+        }
         if self.palette.is_some() {
             return true;
         }
@@ -2267,7 +2275,7 @@ impl Dashboard {
         if !matches!(self.mode, InputMode::Browse | InputMode::Terminal) || self.sidebar_hidden {
             return None;
         }
-        let sidebar = sidebar_area(area, self.sidebar_width);
+        let sidebar = self.sidebar_rects(area).0;
         if mouse.kind == MouseEventKind::Moved {
             let inside = point_in_rect(mouse, sidebar);
             let next = inside
@@ -2399,7 +2407,7 @@ impl Dashboard {
             };
         }
 
-        let sidebar = sidebar_area(area, self.sidebar_preference());
+        let sidebar = super::render::sidebar_area(area, self.sidebar_preference());
         let rects = self.pane_rects(area);
         if mouse.kind == MouseEventKind::Down(MouseButton::Left)
             && mouse.row >= sidebar.y
@@ -3246,6 +3254,10 @@ impl Dashboard {
                             let _ = self.request_view_at(self.outer_area);
                         }
                     }
+                }
+                ServerEvent::QuotaChanged(snapshot) => {
+                    self.quotas = Some(*snapshot);
+                    self.ensure_selection_visible(&self.visible_rows());
                 }
                 ServerEvent::SessionChanged(summary) => {
                     if find_session(self, summary.id)

@@ -30,6 +30,7 @@ mod agent_search;
 mod copy_history;
 mod mouse;
 mod palette;
+mod quota;
 mod sidebar;
 mod split;
 mod unread;

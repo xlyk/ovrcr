@@ -2584,7 +2584,7 @@ fn lifecycle_response_preserves_error_chain_and_code() {
     );
 }
 
-fn test_state(
+pub(super) fn test_state(
     dashboard: Option<Arc<DashboardSink>>,
     stream: Option<(Arc<()>, UnixStream)>,
 ) -> Arc<ServerState> {
@@ -2601,6 +2601,7 @@ fn test_state_with_dispatch(
         Arc::new(ServerState {
             tasks: None,
             socket: PathBuf::from("/tmp/ovrcr-test.sock"),
+            quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
             registry_path: PathBuf::from("config.toml"),
             registry: Mutex::new(Registry::default()),
             sessions: Mutex::new(HashMap::new()),
@@ -2643,6 +2644,7 @@ fn test_state_with_socket(
         Arc::new(ServerState {
             tasks: None,
             socket,
+            quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
             registry_path: PathBuf::from("config.toml"),
             registry: Mutex::new(registry),
             sessions: Mutex::new(HashMap::new()),
@@ -5274,6 +5276,7 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
     let _socket_guard = UnixListener::bind(&socket_path).unwrap();
     let state = Arc::new(ServerState {
         tasks: None,
+        quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
         socket: socket_path,
         registry_path: root.path().join("config.toml"),
         registry: Mutex::new(registry),
@@ -5486,6 +5489,7 @@ fn session_output_flows_while_another_session_spawns() {
     .unwrap();
     let state = Arc::new(ServerState {
         tasks: None,
+        quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
         socket: socket_path,
         registry_path: root.path().join("config.toml"),
         registry: Mutex::new(registry),
@@ -7540,6 +7544,7 @@ fn failed_root_shell_keeps_setup_pending_and_does_not_duplicate_launch() {
     let state = Arc::new(ServerState {
         tasks: None,
         socket: dir.path().join("socket"),
+        quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
         registry_path: config,
         registry: Mutex::new(registry),
         sessions: Mutex::new(HashMap::new()),

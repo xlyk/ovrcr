@@ -1582,6 +1582,9 @@ fn empty_workspace_selection_does_not_cover_a_retained_terminal() {
 fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
     let mut dashboard = Dashboard::new(TerminalSize { rows: 34, cols: 88 });
     dashboard.install_area(Rect::new(0, 0, 120, 40));
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::QuotaChanged(
+        Box::default(),
+    )));
     dashboard.install_hierarchy(HierarchySnapshot {
         projects: vec![ProjectSummary {
             name: "project".into(),
@@ -1622,11 +1625,12 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
         })
         .collect::<Vec<_>>();
     assert_eq!(
-        rendered[36],
+        rendered[34],
         format!("▌    - session-50{}sh ", " ".repeat(19))
     );
-    assert_eq!(rendered[37].trim_end(), "");
-    for (index, row) in (36..=37).enumerate() {
+    assert_eq!(rendered[35].trim_end(), "Quota left");
+    // The last tree row remains selectable; quota cells cannot select/close a session.
+    for (index, row) in (34..=35).enumerate() {
         let action = dashboard.mouse_action(
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
