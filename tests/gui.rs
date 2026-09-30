@@ -542,10 +542,16 @@ fn real_dashboard_saves_alert_preferences_and_reloads_config() -> Result<()> {
     let saved: toml::Table = toml::from_str(&std::fs::read_to_string(&settings)?)?;
     assert_eq!(saved["desktop_notifications"].as_bool(), Some(true));
     assert_eq!(saved["ready_sound"].as_bool(), Some(true));
-    assert!(
-        !root.join("dashboard.toml").exists(),
-        "must save to the selected path"
-    );
+    // Demo setup may write dashboard.toml for server-side automatic_local_terminals.
+    // Alert toggles must still land only in OVRCR_DASHBOARD_CONFIG.
+    if root.join("dashboard.toml").exists() {
+        let demo: toml::Table =
+            toml::from_str(&std::fs::read_to_string(root.join("dashboard.toml"))?)?;
+        assert!(
+            demo.get("desktop_notifications").is_none() && demo.get("ready_sound").is_none(),
+            "alert toggles must save to the selected path, not demo dashboard.toml"
+        );
+    }
     terminal.stop()?;
 
     let mut terminal = launch()?;
