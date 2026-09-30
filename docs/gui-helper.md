@@ -19,6 +19,12 @@ your shell environment while overriding the demo paths and terminal capabilities
 and uses an installed JetBrains Mono Nerd Font Mono when available, with a
 monospace fallback.
 
+For quota acceptance, set `OVRCR_GUI_QUOTA_CONFIG` to a TOML fragment containing
+only the `[quota]` configuration. The helper appends it to its disposable config
+before starting the real Server. Point its commands at owned native RPC fixtures
+for deterministic evidence, or explicitly authorized native clients for account
+acceptance; the ordinary demo does not enable native collection.
+
 ## Using the window
 
 Click the terminal to focus it. Select a session and press `Enter`, then type

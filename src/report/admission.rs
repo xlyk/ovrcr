@@ -704,6 +704,12 @@ impl Hooks {
         if self.expected.as_ref() != Some(&sample.conversation) {
             return;
         }
+        if let Some(quota) = sample.quota {
+            let _ = reporter.publish(
+                ovrcr_protocol::AgentObservation::Quota(Box::new(quota)),
+                deadline,
+            );
+        }
         if let Some(cost) = &sample.cost.value {
             if self.cost_watermark.is_some_and(|old| cost.usd_ticks < old) {
                 return;

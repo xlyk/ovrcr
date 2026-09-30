@@ -14,6 +14,7 @@ pub struct ClaudeMetrics {
     pub model: Option<String>,
     pub context: Measurement<ContextSample>,
     pub cost: Measurement<Option<UsageCost>>,
+    pub quota: Option<ovrcr_protocol::QuotaReport>,
 }
 
 #[derive(Deserialize)]
@@ -22,6 +23,7 @@ struct StatuslineInput {
     #[serde(default, deserialize_with = "present_raw")]
     agent_id: Option<Box<RawValue>>,
     cost: Option<StatuslineCost>,
+    rate_limits: Option<Box<RawValue>>,
 }
 
 #[derive(Deserialize)]
@@ -73,7 +75,56 @@ pub fn parse_claude_metrics(input: &[u8]) -> Result<ClaudeMetrics> {
             quality: SampleQuality::Observed,
         }),
         cost: measurement(cost),
+        quota: raw.rate_limits.map(|value| parse_quota(&value)),
     })
+}
+
+fn parse_quota(raw: &RawValue) -> ovrcr_protocol::QuotaReport {
+    use ovrcr_protocol::{QuotaReport, QuotaState, QuotaWindow};
+    let parsed = (|| -> Option<Vec<QuotaWindow>> {
+        let value: Value = serde_json::from_str(raw.get()).ok()?;
+        let object = value.as_object()?;
+        let mut windows = Vec::new();
+        for (id, label) in [("five_hour", "5h"), ("seven_day", "7d")] {
+            let Some(window) = object.get(id).filter(|v| !v.is_null()) else {
+                continue;
+            };
+            let window = window.as_object()?;
+            let used = match window.get("used_percentage").filter(|v| !v.is_null()) {
+                Some(value) => Some(value.as_f64()?),
+                None => None,
+            };
+            if used.is_some_and(|value| !value.is_finite() || value < 0.0) {
+                return None;
+            }
+            let over_limit = used.is_some_and(|value| value > 100.0);
+            let resets_unix_ms = match window.get("resets_at").filter(|v| !v.is_null()) {
+                Some(value) => Some(value.as_u64()?.checked_mul(1_000)?),
+                None => None,
+            };
+            windows.push(QuotaWindow {
+                id: id.into(),
+                label: label.into(),
+                general: true,
+                used_basis_points: used
+                    .filter(|_| !over_limit)
+                    .map(|value| (value * 100.0).floor() as u16),
+                over_limit,
+                resets_unix_ms,
+            });
+        }
+        Some(windows)
+    })();
+    match parsed {
+        Some(windows) => QuotaReport {
+            windows: Some(windows),
+            state: QuotaState::Current,
+        },
+        None => QuotaReport {
+            windows: None,
+            state: QuotaState::Invalid,
+        },
+    }
 }
 
 /// Input is an original, JSON-validated lexeme, never a reserialized f64.
@@ -351,6 +402,40 @@ mod tests {
                     .unwrap();
             assert_eq!(sample.context.value.used_tokens, None);
             assert_eq!(sample.cost.value, None);
+        }
+    }
+
+    #[test]
+    fn native_quota_distinguishes_missing_zero_exhausted_overlimit_and_invalid_without_losing_metrics()
+     {
+        use ovrcr_protocol::QuotaState;
+        for (value, remaining, over_limit) in [
+            ("null", None, false),
+            ("0", Some(10000), false),
+            ("42", Some(5800), false),
+            ("100", Some(0), false),
+            ("101", None, true),
+            ("99.9999", Some(1), false),
+        ] {
+            let input = format!(
+                r#"{{"session_id":"c","rate_limits":{{"five_hour":{{"used_percentage":{value},"resets_at":1000}}}}}}"#
+            );
+            let sample = parse_claude_metrics(input.as_bytes()).unwrap();
+            let quota = sample.quota.unwrap();
+            assert_eq!(quota.state, QuotaState::Current);
+            let windows = quota.windows.unwrap();
+            assert_eq!(windows.len(), 1);
+            assert_eq!(windows[0].remaining_basis_points(), remaining, "{value}");
+            assert_eq!(windows[0].over_limit, over_limit, "{value}");
+            assert_eq!(windows[0].resets_unix_ms, Some(1000000));
+        }
+        for value in ["-1", "1e999", "\"42\"", "true"] {
+            let input = format!(
+                r#"{{"session_id":"c","context_window":{{"context_window_size":100,"current_usage":{{"input_tokens":30,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}},"rate_limits":{{"five_hour":{{"used_percentage":{value}}}}}}}"#
+            );
+            let sample = parse_claude_metrics(input.as_bytes()).unwrap();
+            assert_eq!(sample.context.value.used_tokens, Some(30));
+            assert_eq!(sample.quota.unwrap().state, QuotaState::Invalid);
         }
     }
 

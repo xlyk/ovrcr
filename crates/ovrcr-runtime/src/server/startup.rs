@@ -178,6 +178,7 @@ fn run_server_inner(
         registry: Mutex::new(registry),
         sessions: Mutex::new(HashMap::new()),
         dashboard: ActiveDashboard::default(),
+        quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
         retained: parking_lot::Mutex::new(retained),
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
@@ -203,6 +204,14 @@ fn run_server_inner(
     let dispatcher = thread::Builder::new()
         .name("ovrcr-dispatcher".into())
         .spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver))?;
+    let quota_state = Arc::clone(&state);
+    let quota_thread = thread::Builder::new()
+        .name("ovrcr-codex-quota".into())
+        .spawn(move || quota::run(quota_state, ovrcr_protocol::QuotaProvider::Codex))?;
+    let grok_state = Arc::clone(&state);
+    let grok_quota_thread = thread::Builder::new()
+        .name("ovrcr-grok-quota".into())
+        .spawn(move || quota::run(grok_state, ovrcr_protocol::QuotaProvider::Grok))?;
     state.ensure_protected_roots();
     let refresh_state = Arc::clone(&state);
     let refresh = thread::Builder::new()
@@ -288,12 +297,16 @@ fn run_server_inner(
     // Wake parked workers before joining them; shutdown must not wait for the next poll.
     refresh.thread().unpark();
     title_thread.thread().unpark();
+    quota_thread.thread().unpark();
+    grok_quota_thread.thread().unpark();
     signal_handle.close();
     let _ = signal_thread.join();
     let task_shutdown = task_manager.stop();
     if let Some(snapshot) = state.dashboard.snapshot() {
         state.dashboard.disconnect(snapshot);
     }
+    let _ = quota_thread.join();
+    let _ = grok_quota_thread.join();
     let _ = dispatch.send(DispatchMessage::Stop);
     dispatcher
         .join()

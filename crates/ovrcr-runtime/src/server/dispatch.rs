@@ -14,6 +14,7 @@ pub enum DispatchMessage {
         session: SessionId,
     },
     RefreshHierarchy,
+    NativeQuota(Box<super::quota::NativeQuotaUpdate>),
     SetView {
         owner: Arc<()>,
         request_id: u64,
@@ -82,6 +83,7 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: ReportingReceiver<Dispa
                 dispatch_refresh_session(&state, session)
             }
             DispatchMessage::RefreshHierarchy => dispatch_refresh_hierarchy(&state),
+            DispatchMessage::NativeQuota(update) => super::quota::apply(&state, *update),
             DispatchMessage::SetView {
                 owner,
                 request_id,
@@ -379,6 +381,7 @@ fn persist_session_exit(state: &ServerState, session: &Session) {
 }
 
 pub(super) fn publish_session_changed(state: &ServerState, id: SessionId) {
+    state.refresh_claude_quota();
     if let Some(summary) = state.session_summary(id) {
         state
             .dashboard
@@ -718,6 +721,8 @@ fn dispatch_set_view_with_resize(
     }
     drop(registered);
     drop(retained);
+    state.refresh_claude_quota();
+    state.publish_quotas();
     let _ = completion.send(DispatchCompletion::Complete);
 }
 

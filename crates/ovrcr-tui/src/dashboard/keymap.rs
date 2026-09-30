@@ -40,6 +40,7 @@ pub(super) enum Action {
     ToggleNotifications,
     ToggleSound,
     ToggleSidebar,
+    QuotaDetails,
     Leader,
     Help,
     /// Open a key-popup group rather than run an action.
@@ -329,6 +330,7 @@ impl Dashboard {
             Action::ToggleNotifications => self.toggle_desktop_notifications(),
             Action::ToggleSound => self.toggle_ready_sound(),
             Action::ToggleSidebar => self.toggle_sidebar(),
+            Action::QuotaDetails => self.open_quota_details(),
             Action::Leader => self.open_whichkey(true),
             Action::Help => self.open_whichkey(false),
             Action::Capture(code) => self.capture_key(KeyEvent::new(code, KeyModifiers::NONE)),
@@ -614,6 +616,15 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
     let running = selected.is_some_and(|s| s.phase == SessionPhase::Running);
     let paused = selected.is_some_and(|s| s.phase == SessionPhase::Paused);
     let mut view = vec![
+        key_binding(
+            "u",
+            "Quota details",
+            "Inspect native provider allowance, source, reset and freshness".into(),
+            Char('u'),
+            Action::QuotaDetails,
+        )
+        .bare()
+        .group('v', "u"),
         key_binding(
             "t/Ctrl-t",
             "Tasks",

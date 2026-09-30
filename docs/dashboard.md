@@ -26,6 +26,10 @@ or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts
 
 ## Browse keys
 
+The sidebar's **Quota left** block shows remaining Claude, Codex and Grok account
+allowance. See [provider allowance](provider-quota.md) for native sources,
+collection settings, freshness and reset behavior.
+
 | Key | Action |
 | --- | --- |
 | `j` / `k` / Down / Up | Select the next or previous visible sidebar row |
@@ -43,6 +47,7 @@ or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts
 | `[` | Freeze the current screen for copying |
 | `PageUp` | Open the session's retained history |
 | `t` or `Ctrl-t` | Open scheduled tasks |
+| `u` | Open [provider allowance details](provider-quota.md), including when the sidebar is hidden |
 | `:` | Open the command palette |
 | `Space` | Show contextual groups, then choose an action |
 | `?` | Browse the same popup with arrows and `Enter` |
