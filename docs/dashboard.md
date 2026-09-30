@@ -26,6 +26,14 @@ or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts
 
 ## Browse keys
 
+The sidebar's **Quota left** block shows remaining Claude, Codex and Grok account
+allowance. See [provider allowance](provider-quota.md) for native sources,
+collection settings, freshness and reset behavior.
+Providers remain visible before the first report, with waiting or unavailable
+states. Narrow sidebars put window values and full state text on a second row
+before sacrificing labels or percentages. The tree scrolls above the reserved
+quota rows; sidebar and pane dividers remain draggable over their full height.
+
 | Key | Action |
 | --- | --- |
 | `j` / `k` / Down / Up | Select the next or previous visible sidebar row |
@@ -44,6 +52,7 @@ or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts
 | `PageUp` | Open the session's retained history |
 | `t` or `Ctrl-t` | Open scheduled tasks |
 | `s` | Search other running agents across all projects and workspaces |
+| `u` | Open [provider allowance details](provider-quota.md), including when the sidebar is hidden |
 | `:` | Open the command palette |
 | `Space` | Show contextual groups, then choose an action |
 | `?` | Browse the same popup with arrows and `Enter` |

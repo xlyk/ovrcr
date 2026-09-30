@@ -64,6 +64,14 @@ impl Demo {
             self.root.join("dashboard.toml"),
             "automatic_local_terminals = \"on\"\n",
         )?;
+        if let Some(path) = std::env::var_os("OVRCR_GUI_QUOTA_CONFIG") {
+            let fragment = fs::read_to_string(path).context("read GUI quota config fragment")?;
+            let mut config = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(self.root.join("config.toml"))?;
+            writeln!(config, "\n{fragment}")?;
+        }
         self.create_project_fixture(&repositories, &workspaces, "consigint")?;
         self.create_project_fixture(&repositories, &workspaces, "spacelift-agent")?;
         let lifecycle = self.create_workspace_fixture("consigint", "worktree-lifecycle")?;

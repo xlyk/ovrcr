@@ -46,9 +46,6 @@ pub fn run_dashboard(
 ) -> Result<()> {
     let size = terminal_size()?;
     let pane_size = pane_size(size);
-    write_client(&mut stream, 1, Request::DashboardHello)?;
-    let initial = read_server(&mut stream)?;
-    dashboard_hello_result(&initial)?;
     let mut dashboard = Dashboard::new(pane_size);
     dashboard.configuration_paths = Some(configuration_paths);
     let (settings, settings_error) = load_dashboard_settings(&settings_path);
@@ -58,14 +55,9 @@ pub fn run_dashboard(
         dashboard.config_dir = parent.to_path_buf();
     }
     dashboard.settings_path = Some(settings_path);
-    dashboard.handle_server_message(initial);
-    write_client(
-        &mut stream,
-        2,
-        Request::DashboardGeometry { size: pane_size },
-    )?;
-    let geometry_ack = read_server(&mut stream)?;
-    dashboard.handle_server_message(geometry_ack);
+    // Hello and geometry reserve IDs 1 and 2, including while events arrive.
+    dashboard.next_request_id = 3;
+    initialize_dashboard(&mut stream, &mut dashboard, pane_size)?;
     if let Some(warning) = startup_warning {
         dashboard.set_error(warning);
     }
@@ -721,6 +713,59 @@ fn read_server(stream: &mut UnixStream) -> Result<ServerMessage> {
     crate::protocol::read_frame(stream)
 }
 
+fn initialize_dashboard(
+    stream: &mut UnixStream,
+    dashboard: &mut Dashboard,
+    size: TerminalSize,
+) -> Result<()> {
+    write_client(stream, 1, Request::DashboardHello)?;
+    let initial = read_initial_response(stream, dashboard, 1)?;
+    dashboard_hello_result(&initial)?;
+    if !matches!(
+        &initial,
+        ServerMessage::Response {
+            response: Response::Hierarchy(_),
+            ..
+        }
+    ) {
+        bail!("unexpected dashboard hello response");
+    }
+    dashboard.handle_server_message(initial);
+    write_client(stream, 2, Request::DashboardGeometry { size })?;
+    let geometry_ack = read_initial_response(stream, dashboard, 2)?;
+    match &geometry_ack {
+        ServerMessage::Response {
+            response: Response::Ok,
+            ..
+        } => {}
+        ServerMessage::Response {
+            response: Response::Error { code, message },
+            ..
+        } => {
+            bail!("dashboard geometry failed ({code:?}): {message}");
+        }
+        _ => bail!("unexpected dashboard geometry response"),
+    }
+    dashboard.handle_server_message(geometry_ack);
+    Ok(())
+}
+
+fn read_initial_response(
+    stream: &mut UnixStream,
+    dashboard: &mut Dashboard,
+    request_id: u64,
+) -> Result<ServerMessage> {
+    loop {
+        let message = read_server(stream)?;
+        if matches!(&message, ServerMessage::Response { request_id: id, .. } if *id == request_id) {
+            return Ok(message);
+        }
+        for request in dashboard.handle_server_message(message) {
+            write_frame(stream, &request)?;
+        }
+    }
+}
+
 pub(super) fn read_initial_selection(
     stream: &mut UnixStream,
     dashboard: &mut Dashboard,
@@ -851,6 +896,147 @@ mod unread_review_tests {
         };
         dashboard.select_session(summary.id);
         (dashboard, summary)
+    }
+
+    #[test]
+    fn startup_waits_for_hello_and_geometry_responses_amid_quota_events() {
+        let (seed, _) = fixture();
+        let hierarchy = seed.hierarchy.clone();
+        let size = TerminalSize {
+            rows: 20,
+            cols: 120,
+        };
+        let mut dashboard = Dashboard::new(size);
+        dashboard.next_request_id = 3;
+        let (mut stream, mut peer) = UnixStream::pair().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let expected = hierarchy.clone();
+        let server = thread::spawn(move || {
+            let hello: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+            assert_eq!(hello.request_id, 1);
+            assert!(matches!(hello.request, Request::DashboardHello));
+            // Quota workers can publish after the owner is claimed but before
+            // the hello's hierarchy is enqueued. Force that production ordering.
+            for _ in 0..2 {
+                crate::protocol::write_frame(
+                    &mut peer,
+                    &ServerMessage::Event(ServerEvent::QuotaChanged(Box::default())),
+                )
+                .unwrap();
+            }
+            crate::protocol::write_frame(
+                &mut peer,
+                &ServerMessage::Response {
+                    request_id: 1,
+                    response: Response::Hierarchy(hierarchy),
+                },
+            )
+            .unwrap();
+            let geometry: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+            assert_eq!(geometry.request_id, 2);
+            assert!(matches!(
+                geometry.request,
+                Request::DashboardGeometry { .. }
+            ));
+            crate::protocol::write_frame(
+                &mut peer,
+                &ServerMessage::Event(ServerEvent::QuotaChanged(Box::default())),
+            )
+            .unwrap();
+            crate::protocol::write_frame(
+                &mut peer,
+                &ServerMessage::Response {
+                    request_id: 2,
+                    response: Response::Ok,
+                },
+            )
+            .unwrap();
+        });
+        initialize_dashboard(&mut stream, &mut dashboard, size).unwrap();
+        server.join().unwrap();
+        assert_eq!(dashboard.hierarchy, expected);
+        let first = dashboard
+            .visible_rows()
+            .into_iter()
+            .find_map(|row| match row {
+                TreeRow::Session { id } => Some(id),
+                _ => None,
+            });
+        assert_eq!(first, Some(SessionId(1)));
+        assert_eq!(
+            dashboard.quotas,
+            Some(crate::protocol::QuotaSnapshot::default())
+        );
+    }
+
+    #[test]
+    fn startup_propagates_matching_errors_after_interleaved_messages() {
+        for failed_id in [1, 2] {
+            let size = TerminalSize {
+                rows: 20,
+                cols: 120,
+            };
+            let mut dashboard = Dashboard::new(size);
+            dashboard.next_request_id = 3;
+            let (mut stream, mut peer) = UnixStream::pair().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let server = thread::spawn(move || {
+                let _: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+                if failed_id == 2 {
+                    crate::protocol::write_frame(
+                        &mut peer,
+                        &ServerMessage::Response {
+                            request_id: 1,
+                            response: Response::Hierarchy(crate::protocol::HierarchySnapshot {
+                                projects: vec![],
+                            }),
+                        },
+                    )
+                    .unwrap();
+                    let _: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+                }
+                crate::protocol::write_frame(
+                    &mut peer,
+                    &ServerMessage::Event(ServerEvent::QuotaChanged(Box::default())),
+                )
+                .unwrap();
+                crate::protocol::write_frame(
+                    &mut peer,
+                    &ServerMessage::Response {
+                        request_id: 42,
+                        response: Response::Ok,
+                    },
+                )
+                .unwrap();
+                crate::protocol::write_frame(
+                    &mut peer,
+                    &ServerMessage::Response {
+                        request_id: failed_id,
+                        response: Response::Error {
+                            code: crate::protocol::ErrorCode::Conflict,
+                            message: "matching startup failure".into(),
+                        },
+                    },
+                )
+                .unwrap();
+            });
+            let error = initialize_dashboard(&mut stream, &mut dashboard, size).unwrap_err();
+            server.join().unwrap();
+            assert!(
+                error.to_string().contains("matching startup failure"),
+                "{error:#}"
+            );
+            assert!(
+                error
+                    .to_string()
+                    .contains(if failed_id == 1 { "hello" } else { "geometry" })
+            );
+        }
     }
 
     #[test]

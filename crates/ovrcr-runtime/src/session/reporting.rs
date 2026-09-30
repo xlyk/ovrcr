@@ -11,6 +11,7 @@ pub(super) struct ReportingState {
     owner: Option<Arc<()>>,
     pub snapshot: Option<AgentSnapshot>,
     measurements: MeasurementWatermarks,
+    quota: Option<(AgentBinding, ProviderQuota, u64)>,
     // One turn only, retained across reporting resets for the server lifetime.
     ready: Option<(ReadyObservation, bool)>,
 }
@@ -152,6 +153,29 @@ impl ReportingState {
                 snapshot.input_requests = requests.clone();
                 snapshot.input_revision = report.revision;
             }
+            AgentObservation::Quota(incoming) => {
+                if self.quota.as_ref().is_some_and(|(binding, _, revision)| {
+                    binding == &report.binding && report.revision <= *revision
+                }) {
+                    bail!("stale quota revision");
+                }
+                let mut quota = self
+                    .quota
+                    .as_ref()
+                    .filter(|(binding, _, _)| binding == &report.binding)
+                    .map(|(_, quota, _)| quota.clone())
+                    .unwrap_or_else(|| {
+                        ProviderQuota::unknown(QuotaProvider::Claude, QuotaState::Waiting)
+                    });
+                if let Some(windows) = &incoming.windows {
+                    if quota.observed_unix_ms.is_none() || quota.windows != *windows {
+                        quota.observed_unix_ms = Some(now_ms());
+                    }
+                    quota.windows = windows.clone();
+                }
+                quota.state = incoming.state;
+                self.quota = Some((report.binding.clone(), quota, report.revision));
+            }
         }
         Ok(true)
     }
@@ -214,6 +238,25 @@ impl MeasurementWatermarks {
 }
 
 impl Session {
+    pub(crate) fn quota_snapshot(&self) -> Option<ProviderQuota> {
+        let state = self.state.lock().unwrap();
+        let snapshot = state.reporting.snapshot.as_ref()?;
+        let (binding, quota, _) = state.reporting.quota.as_ref()?;
+        if binding != &snapshot.binding {
+            return None;
+        }
+        let mut quota = quota.clone();
+        quota.source = Some(QuotaSource::Session {
+            session: self.summary.id,
+            run: self.run(),
+            binding: binding.clone(),
+        });
+        if !state.phase.is_live() || snapshot.health.state != ReporterHealth::Connected {
+            quota.state = QuotaState::Unavailable;
+        }
+        Some(quota)
+    }
+
     pub(crate) fn agent_command(
         &self,
         request: &Request,

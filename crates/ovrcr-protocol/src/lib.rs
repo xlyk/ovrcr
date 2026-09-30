@@ -4,6 +4,8 @@ pub mod client;
 mod codec;
 pub mod context;
 pub mod freshness;
+pub mod quota;
+pub use quota::*;
 mod registry;
 mod session;
 pub mod task;

@@ -406,7 +406,11 @@ impl Dashboard {
     ) -> Result<(), B::Error> {
         let area = terminal.draw(|frame| draw_dashboard(frame, self))?.area;
         // Overlays may obscure the response; keep the last unobscured Presented Unread.
-        if self.tasks.is_none() && self.palette.is_none() && self.whichkey.is_none() {
+        if self.tasks.is_none()
+            && self.palette.is_none()
+            && self.whichkey.is_none()
+            && self.quota_details.is_none()
+        {
             self.unread
                 .commit_presented(self.action_session().and_then(|session| {
                     let visible = self.pane_rects(area).iter().any(|rect| {
@@ -469,13 +473,14 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         );
     }
     let rows = dashboard.visible_rows();
-    let width = usize::from(layout.sidebar_content.width);
+    let (tree, _) = dashboard.sidebar_rects(frame.area());
+    let width = usize::from(tree.width);
     let heights = tree_row_heights(dashboard, &rows, width);
     let stacked = heights.contains(&2);
     let viewport_height = if dashboard.sidebar_hidden {
         0
     } else {
-        usize::from(layout.sidebar_content.height)
+        usize::from(tree.height)
     };
     let start = dashboard.tree_offset.min(tree_line_count(&rows, &heights));
     for screen_line in 0..viewport_height {
@@ -484,11 +489,13 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         else {
             continue;
         };
-        let y = layout.sidebar_content.y.saturating_add(screen_line as u16);
+        let y = tree.y.saturating_add(screen_line as u16);
         let (line, style) = tree_line_text(dashboard, row, row_line, stacked, width, now_unix_ms);
-        let line_area = Rect::new(layout.sidebar_content.x, y, layout.sidebar_content.width, 1);
+        let line_area = Rect::new(tree.x, y, tree.width, 1);
         frame.render_widget(Paragraph::new(line).style(style), line_area);
     }
+
+    dashboard.draw_quota(frame, now_unix_ms);
 
     let rects = dashboard.pane_rects(frame.area());
     let split_hidden = dashboard.panes.len() == 2 && rects.len() == 1;
@@ -734,6 +741,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     dashboard.draw_start_screen(frame);
     dashboard.draw_palette(frame);
     dashboard.draw_whichkey(frame);
+    dashboard.draw_quota_details(frame, now_unix_ms);
 }
 
 impl Dashboard {

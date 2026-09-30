@@ -520,6 +520,107 @@ fn outer_pty_parses_attributes_and_resize_reaches_the_tty() -> Result<()> {
 }
 
 #[test]
+fn real_dashboard_initial_selection_survives_quota_events_before_startup_responses() -> Result<()> {
+    use ovrcr::protocol::{
+        ClientMessage, QuotaSnapshot, QuotaState, Response, ServerEvent, ServerMessage,
+    };
+    use std::os::unix::net::UnixListener;
+    let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
+    let root = demo.root().to_owned();
+    let pgids = demo_session_groups(&root)?;
+    let socket = root.join("startup-proxy.sock");
+    let listener = UnixListener::bind(&socket)?;
+    let upstream = root.join("server.sock");
+    let proxy = thread::spawn(move || -> Result<()> {
+        let (mut front, _) = listener.accept()?;
+        ovrcr::protocol::exchange_preamble(&mut front)?;
+        let mut back = ovrcr::protocol::connect_server(upstream)?;
+        let mut front_read = front.try_clone()?;
+        let mut back_write = back.try_clone()?;
+        let forward = thread::spawn(move || -> Result<()> {
+            while let Ok(message) = ovrcr::protocol::read_frame::<ClientMessage>(&mut front_read) {
+                if ovrcr::protocol::write_frame(&mut back_write, &message).is_err() {
+                    break;
+                }
+            }
+            // Relay detach EOF to the real owner, including when the test fails.
+            let _ = back_write.shutdown(std::net::Shutdown::Write);
+            Ok(())
+        });
+        let result = (|| -> Result<()> {
+            while let Ok(message) = ovrcr::protocol::read_frame::<ServerMessage>(&mut back) {
+                let count = match &message {
+                    ServerMessage::Response {
+                        request_id: 1,
+                        response: Response::Hierarchy(_),
+                    } => 2,
+                    ServerMessage::Response {
+                        request_id: 2,
+                        response: Response::Ok,
+                    } => 1,
+                    _ => 0,
+                };
+                for _ in 0..count {
+                    let mut quota = QuotaSnapshot::default();
+                    quota.grok.state = QuotaState::Invalid;
+                    ovrcr::protocol::write_frame(
+                        &mut front,
+                        &ServerMessage::Event(ServerEvent::QuotaChanged(Box::new(quota))),
+                    )?;
+                }
+                if ovrcr::protocol::write_frame(&mut front, &message).is_err() {
+                    break;
+                }
+            }
+            Ok(())
+        })();
+        let _ = front.shutdown(std::net::Shutdown::Both);
+        let _ = back.shutdown(std::net::Shutdown::Both);
+        forward
+            .join()
+            .map_err(|_| anyhow::anyhow!("startup forwarder panicked"))??;
+        result
+    });
+    let mut command = portable_pty::CommandBuilder::new(env!("CARGO_BIN_EXE_ovrcr"));
+    command.env("OVRCR_CONFIG", root.join("config.toml"));
+    command.env("OVRCR_SOCKET", &socket);
+    command.env("TERM", "xterm-256color");
+    let mut terminal = Terminal::start(command, 40, 160, Default::default())?;
+    // The actual first session's child output proves selection, not just rows.
+    wait_screen(&terminal, "local (#1)")?;
+    wait_screen(&terminal, "Grok")?;
+    wait_screen(&terminal, "invalid report")?;
+    terminal.send(b"L")?;
+    wait_screen(&terminal, "Automatic local terminals: off")?;
+    terminal.send(b"N")?;
+    wait_screen(&terminal, "Desktop notifications: on")?;
+    let settings: toml::Table =
+        toml::from_str(&std::fs::read_to_string(root.join("dashboard.toml"))?)?;
+    assert_eq!(settings["automatic_local_terminals"].as_str(), Some("off"));
+    assert_eq!(settings["desktop_notifications"].as_bool(), Some(true));
+    terminal.send(b"\rprintf 'STARTUP_%s\\n' INPUT_OK\r")?;
+    wait_screen(&terminal, "STARTUP_INPUT_OK")?;
+    terminal.stop()?;
+    proxy
+        .join()
+        .map_err(|_| anyhow::anyhow!("startup proxy panicked"))??;
+    demo.shutdown()?;
+    assert!(!root.exists());
+    for pgid in pgids {
+        assert_eq!(
+            unsafe { libc::kill(-pgid, 0) },
+            -1,
+            "owned group {pgid} survived cleanup"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn real_dashboard_cycles_local_policy_and_same_server_provisions_from_saved_setting() -> Result<()>
 {
     use ovrcr::protocol::{

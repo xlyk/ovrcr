@@ -188,6 +188,8 @@ pub enum AgentObservation {
     /// all. Published whole so a snapshot is never assembled from deltas. Appended last:
     /// bincode numbers variants by declaration order.
     Input(Vec<InputRequest>),
+    /// Native Claude account allowance, independently revised from session metrics.
+    Quota(Box<crate::QuotaReport>),
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderReport {
@@ -463,6 +465,12 @@ impl ProviderReport {
             AgentObservation::Metrics(m) => m.validate(),
             AgentObservation::Health(h) => optional_id(&h.reason),
             AgentObservation::Input(requests) => validate_input_requests(requests),
+            AgentObservation::Quota(quota) => {
+                if self.binding.provider != AgentProvider::Claude {
+                    bail!("session quota requires a native Claude source");
+                }
+                quota.validate()
+            }
         }
     }
 }

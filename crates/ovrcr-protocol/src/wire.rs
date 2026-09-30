@@ -407,6 +407,7 @@ pub enum ServerEvent {
         revision: u64,
     },
     SessionChanged(Box<SessionSummary>),
+    QuotaChanged(Box<crate::QuotaSnapshot>),
 }
 
 #[cfg(test)]
@@ -855,6 +856,7 @@ mod wire_snapshot {
                 "SessionChanged",
                 ServerEvent::SessionChanged(Box::new(summary())),
             ),
+            ("QuotaChanged", ServerEvent::QuotaChanged(Box::default())),
         ]
     }
 
@@ -897,6 +899,55 @@ mod wire_snapshot {
                 .iter()
                 .map(|(n, v)| (format!("ServerEvent::{n}"), encode(v))),
         );
+        for state in [
+            crate::QuotaState::Waiting,
+            crate::QuotaState::Current,
+            crate::QuotaState::Unavailable,
+            crate::QuotaState::NotSignedIn,
+            crate::QuotaState::Unsupported,
+            crate::QuotaState::Invalid,
+            crate::QuotaState::SourceConflict,
+        ] {
+            all.push((format!("QuotaState::{state:?}"), encode(&state)));
+        }
+        let window = crate::QuotaWindow {
+            id: "native/primary".into(),
+            label: "5h".into(),
+            general: true,
+            used_basis_points: Some(4200),
+            over_limit: false,
+            resets_unix_ms: Some(1000000),
+        };
+        all.push(("QuotaWindow".into(), encode(&window)));
+        all.push((
+            "QuotaSource::NativeProfile".into(),
+            encode(&crate::QuotaSource::NativeProfile {
+                profile: "native".into(),
+                generation: 2,
+            }),
+        ));
+        all.push((
+            "QuotaSource::Session".into(),
+            encode(&crate::QuotaSource::Session {
+                session: SessionId(1),
+                run: SessionRunId(4),
+                binding: crate::AgentBinding {
+                    provider: crate::AgentProvider::Claude,
+                    invocation: "inv".into(),
+                    conversation: "conv".into(),
+                    generation: 2,
+                },
+            }),
+        ));
+        all.push((
+            "AgentObservation::Quota".into(),
+            encode(&crate::AgentObservation::Quota(Box::new(
+                crate::QuotaReport {
+                    windows: Some(vec![window]),
+                    state: crate::QuotaState::Current,
+                },
+            ))),
+        ));
         all.extend(
             task_requests()
                 .iter()
@@ -1076,6 +1127,27 @@ mod wire_snapshot {
         (
             "ServerEvent::SessionChanged",
             "030100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e0201000000010401050600",
+        ),
+        (
+            "ServerEvent::QuotaChanged",
+            "04000000000000010000000002020000000002",
+        ),
+        ("QuotaState::Waiting", "00"),
+        ("QuotaState::Current", "01"),
+        ("QuotaState::Unavailable", "02"),
+        ("QuotaState::NotSignedIn", "03"),
+        ("QuotaState::Unsupported", "04"),
+        ("QuotaState::Invalid", "05"),
+        ("QuotaState::SourceConflict", "06"),
+        (
+            "QuotaWindow",
+            "0e6e61746976652f7072696d6172790235680101fb68100001fc40420f00",
+        ),
+        ("QuotaSource::NativeProfile", "01066e617469766502"),
+        ("QuotaSource::Session", "0001040003696e7604636f6e7602"),
+        (
+            "AgentObservation::Quota",
+            "0401010e6e61746976652f7072696d6172790235680101fb68100001fc40420f0001",
         ),
         ("TaskRequest::ListTasks", "00"),
         ("TaskRequest::GetTask", "0301"),
