@@ -58,6 +58,12 @@ impl Demo {
             &crate::config::Registry::default(),
             &self.root.join("config.toml"),
         )?;
+        // Demo workspaces intentionally keep automatic local shells on every
+        // worktree so the GUI helper exercises a full sidebar of terminals.
+        fs::write(
+            self.root.join("dashboard.toml"),
+            "automatic_local_terminals = \"on\"\n",
+        )?;
         self.create_project_fixture(&repositories, &workspaces, "consigint")?;
         self.create_project_fixture(&repositories, &workspaces, "spacelift-agent")?;
         let lifecycle = self.create_workspace_fixture("consigint", "worktree-lifecycle")?;
