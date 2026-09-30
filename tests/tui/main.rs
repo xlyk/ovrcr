@@ -25,6 +25,8 @@ use ratatui::{Terminal, TerminalOptions, Viewport};
 use std::path::PathBuf;
 use std::sync::mpsc::TrySendError;
 
+mod agent_attention;
+mod agent_search;
 mod copy_history;
 mod mouse;
 mod palette;
@@ -249,7 +251,7 @@ fn deliver_all_view_screens(
             request_id,
             response: Response::Screen {
                 session: pane.session,
-                run: ovrcr_protocol::SessionRunId(1),
+                run: pane.run,
                 revision: view.revision,
                 size: pane.size,
                 bytes: Vec::new(),

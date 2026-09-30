@@ -180,6 +180,44 @@ server through the fixture socket, verify every owned process group is gone,
 stop only the task-owned GUI launcher, and remove only its recorded disposable
 root. Do not weaken the normal cleanup guard to make a crash check pass.
 
+### Other-running-agent search
+
+Use two explicitly Agent-launch fixtures in different disposable projects or
+workspaces. The helper's labeled shell fixtures still have Terminal launch kind
+and must not count as search destinations. Use a disposable configured Agent
+preset or the production `CreateSession` request with an input-acknowledging
+shell command; never start a paid provider just to populate this check.
+
+From Browse, press lowercase `s`; also check `Space v s`. Confirm Agents lists
+the other Running agents and shows the selected project/workspace. Filter using
+words from a different project and session title. Press Enter once and confirm
+Terminal mode after the matching screen is ready, without a second Enter. Send
+a unique marker and confirm a separately
+printed acknowledgement only in the chosen Agent, not the previous PTY.
+From Terminal, press `Ctrl-g` then `s`; confirm the current Agent is omitted.
+Escape must preserve the selection in Browse. Pause an owned candidate while
+the picker is open, then confirm it: the unavailable reason must remain visible
+and no neighboring row may be selected. Resume it; it stays unavailable until
+reopening. While a view is loading, input and paste must be rejected rather than
+replayed; cancel pending typing with `Ctrl-g` and verify a late completion stays
+in Browse. Repeat selection into an Agent already in the other pane and confirm
+it is focused without duplication. Keep screenshots and matching accessibility
+text for these outcomes. The outer-PTY acceptance fixture deterministically
+holds a real view's final acknowledgement to prove loading-input rejection,
+including a pending keyboard/paste burst released across acknowledgement cutover.
+The event-loop regression forces acknowledgement-before-input ordering and a
+multi-batch input drain; Terminal mode begins only at the quiet input boundary.
+
+For attention-first presentation, publish accepted fixture observations through
+the existing reporting protocol: Waiting Input, Busy plus Unread, reviewed Ready,
+error and unavailable reporting. Verify that only Waiting Input and otherwise
+Unread are promoted, and that a current attention-bearing Agent is excluded.
+While the picker remains open, change an observation and confirm visible status
+updates without moving its highlight or rows; reopening must use the new order.
+Check duplicate titles, compact selected location and offscreen filtering at the
+fifty-session limit. Preserve screenshots, accessibility text and destination
+acknowledgements; opening or selecting must not clear Unread or resolve Input.
+
 ## 3. Mouse forwarding and wheel history
 
 ### Dashboard controls

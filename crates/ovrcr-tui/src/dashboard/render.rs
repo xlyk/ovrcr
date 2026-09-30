@@ -6,7 +6,9 @@ use super::status::SessionStatus;
 use super::{Dashboard, HistoryView, InputMode, PaneRects, PaneState, TreeRow, history_view_size};
 use crate::session::{SessionPhase, TerminalSize};
 use crate::task_tui::draw_tasks;
-use ovrcr_protocol::{CostKind, HistoryColor, SessionSummary, UsageCoverage, UsageScope};
+use ovrcr_protocol::{
+    CostKind, HistoryColor, SessionKind, SessionSummary, UsageCoverage, UsageScope,
+};
 use ovrcr_terminal::vt100;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -1150,7 +1152,8 @@ fn tree_line_text(
                 // The agent and model under a name they could not share a line with,
                 // hung from the name by a corner connector two cells in from the glyph.
                 let (agent, model) = sidebar_agent_label(session).unwrap_or_default();
-                let color = label_color(&session.label);
+                let color =
+                    label_color(harness_agent_name(session).unwrap_or(session.label.as_str()));
                 let agent_style = Style::default().fg(if status.exited {
                     faded(color, 65)
                 } else {
@@ -1228,7 +1231,8 @@ fn tree_line_text(
                 let right = if close_mark {
                     vec![mark.clone()]
                 } else if let Some((agent, model)) = fitted {
-                    let color = label_color(&session.label);
+                    let color =
+                        label_color(harness_agent_name(session).unwrap_or(session.label.as_str()));
                     let mut spans = vec![Span::styled(
                         agent,
                         Style::default().fg(if exited { faded(color, 65) } else { color }),
@@ -1368,20 +1372,33 @@ fn agent_label_needs_own_line(session: &SessionSummary, width: usize) -> bool {
     })
 }
 
+/// Harness identity shown in the sidebar: the agent kind for managed agents so a
+/// CLI launcher whose stored label is still `ovrcr` does not masquerade as the
+/// harness; terminals keep the executable label, and quiet local shells stay bare.
+fn harness_agent_name(session: &SessionSummary) -> Option<&str> {
+    match &session.kind {
+        SessionKind::Agent { name } => {
+            let name = name.trim();
+            (!name.is_empty()).then_some(name)
+        }
+        SessionKind::Terminal => {
+            if session.name == "local" && session.display_name() == "local" {
+                return None;
+            }
+            let agent = session
+                .label
+                .split_once('/')
+                .map_or(session.label.as_str(), |(agent, _)| agent)
+                .trim();
+            (!agent.is_empty()).then_some(agent)
+        }
+    }
+}
+
 /// The agent name and its `:model` suffix (empty when no model is known), or `None`
 /// for a quiet local shell or a session without an agent label.
 fn sidebar_agent_label(session: &SessionSummary) -> Option<(String, String)> {
-    if session.name == "local" && session.display_name() == "local" {
-        return None;
-    }
-    let agent = session
-        .label
-        .split_once('/')
-        .map_or(session.label.as_str(), |(agent, _)| agent)
-        .trim();
-    if agent.is_empty() {
-        return None;
-    }
+    let agent = harness_agent_name(session)?;
     let reported = session
         .agent
         .as_ref()
@@ -1502,5 +1519,170 @@ pub(super) fn pane_size(size: TerminalSize) -> TerminalSize {
     TerminalSize {
         rows: inner.height.max(1),
         cols: inner.width.max(1),
+    }
+}
+
+#[cfg(test)]
+mod harness_agent_label_tests {
+    use super::{harness_agent_name, sidebar_agent_label};
+    use ovrcr_protocol::{
+        AgentActivity, AgentBinding, AgentProvider, AgentSnapshot, ContextSample, HealthSample,
+        Measurement, MetricsSample, MetricsSnapshot, ReporterHealth, SampleQuality, SessionId,
+        SessionKind, SessionPhase, SessionRunId, SessionSummary, UsageCost, UsageCoverage,
+        UsageScope, UsageTotals,
+    };
+
+    fn session(kind: SessionKind, name: &str, label: &str) -> SessionSummary {
+        SessionSummary {
+            id: SessionId(1),
+            archived: false,
+            cwd: "/work".into(),
+            run: SessionRunId(1),
+            kind,
+            recovery: None,
+            project: "p".into(),
+            workspace: "w".into(),
+            name: name.into(),
+            label: label.into(),
+            pid: Some(1),
+            started_unix_ms: Some(1),
+            phase: SessionPhase::Running,
+            activity: AgentActivity::Idle,
+            agent: None,
+            agent_epoch: 0,
+            unread: None,
+            context_usage: None,
+            title: None,
+        }
+    }
+
+    fn measure<T>(value: T) -> Measurement<T> {
+        Measurement {
+            value,
+            source: "test".into(),
+        }
+    }
+
+    #[test]
+    fn cli_created_pi_with_ovrcr_label_shows_pi_harness() {
+        let session = session(
+            SessionKind::Agent { name: "pi".into() },
+            "feature-agent",
+            "ovrcr",
+        );
+        assert_eq!(harness_agent_name(&session), Some("pi"));
+        assert_eq!(
+            sidebar_agent_label(&session),
+            Some(("pi".into(), String::new()))
+        );
+    }
+
+    #[test]
+    fn cli_created_claude_with_ovrcr_label_shows_claude_harness() {
+        let session = session(
+            SessionKind::Agent {
+                name: "claude".into(),
+            },
+            "review",
+            "ovrcr",
+        );
+        assert_eq!(harness_agent_name(&session), Some("claude"));
+        assert_eq!(
+            sidebar_agent_label(&session),
+            Some(("claude".into(), String::new()))
+        );
+    }
+
+    #[test]
+    fn stored_and_reported_models_keep_kind_harness_not_ovrcr_label() {
+        let stored = session(
+            SessionKind::Agent { name: "pi".into() },
+            "feature-agent",
+            "ovrcr / grok-4.7",
+        );
+        assert_eq!(
+            sidebar_agent_label(&stored),
+            Some(("pi".into(), ":grok-4.7".into()))
+        );
+
+        let mut reported = session(
+            SessionKind::Agent { name: "pi".into() },
+            "feature-agent",
+            "ovrcr",
+        );
+        reported.agent = Some(AgentSnapshot {
+            binding: AgentBinding {
+                provider: AgentProvider::Pi,
+                invocation: "inv".into(),
+                conversation: "conv".into(),
+                generation: 1,
+            },
+            activity: None,
+            metrics: Some(MetricsSnapshot {
+                sample: MetricsSample {
+                    model: Some("grok-4.7".into()),
+                    context: measure(ContextSample {
+                        used_tokens: None,
+                        capacity_tokens: None,
+                        quality: SampleQuality::Observed,
+                    }),
+                    usage: measure(UsageTotals {
+                        scope: UsageScope::Conversation,
+                        coverage: UsageCoverage::Partial,
+                        input_tokens: None,
+                        output_tokens: None,
+                        cache_read_tokens: None,
+                        cache_write_tokens: None,
+                        reasoning_output_tokens: None,
+                    }),
+                    cost: measure(None::<UsageCost>),
+                },
+                received_unix_ms: 1,
+                context_received_unix_ms: 1,
+                usage_received_unix_ms: 1,
+                cost_received_unix_ms: 1,
+            }),
+            health: HealthSample {
+                state: ReporterHealth::Connected,
+                reason: None,
+            },
+            activity_revision: 1,
+            metrics_revision: 1,
+            health_revision: 1,
+            input_requests: Vec::new(),
+            input_revision: 0,
+        });
+        assert_eq!(
+            sidebar_agent_label(&reported),
+            Some(("pi".into(), ":grok-4.7".into()))
+        );
+    }
+
+    #[test]
+    fn ordinary_shell_keeps_executable_label() {
+        let session = session(SessionKind::Terminal, "build", "zsh");
+        assert_eq!(harness_agent_name(&session), Some("zsh"));
+        assert_eq!(
+            sidebar_agent_label(&session),
+            Some(("zsh".into(), String::new()))
+        );
+    }
+
+    #[test]
+    fn quiet_local_shell_has_no_harness_label() {
+        let session = session(SessionKind::Terminal, "local", "zsh");
+        assert_eq!(harness_agent_name(&session), None);
+        assert_eq!(sidebar_agent_label(&session), None);
+    }
+
+    #[test]
+    fn custom_session_name_stays_separate_from_harness() {
+        let session = session(
+            SessionKind::Agent { name: "pi".into() },
+            "my custom title",
+            "ovrcr",
+        );
+        assert_eq!(session.display_name(), "my custom title");
+        assert_eq!(harness_agent_name(&session), Some("pi"));
     }
 }

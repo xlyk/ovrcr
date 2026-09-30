@@ -47,6 +47,7 @@ collection settings, freshness and reset behavior.
 | `[` | Freeze the current screen for copying |
 | `PageUp` | Open the session's retained history |
 | `t` or `Ctrl-t` | Open scheduled tasks |
+| `s` | Search other running agents across all projects and workspaces |
 | `u` | Open [provider allowance details](provider-quota.md), including when the sidebar is hidden |
 | `:` | Open the command palette |
 | `Space` | Show contextual groups, then choose an action |
@@ -60,6 +61,50 @@ collection settings, freshness and reset behavior.
 that `x` closes. `Ctrl` reaches Browse only as `Ctrl-t`, whatever else is held
 with it; every other `Ctrl`-modified key is ignored. `Esc` and `Ctrl-g` cancel a
 history request that has not opened yet.
+
+## Search other running agents
+
+Press lowercase `s` in Browse, `Space v s` from the View menu, or sequentially
+`Ctrl-g` then `s` while typing into a terminal. When space permits, the Terminal
+footer shows this sequence. Uppercase `S` still toggles ready sound; `:` still
+opens the full command palette.
+
+The Agents picker includes nonarchived Agent-launch sessions with a running,
+unpaused process, regardless of activity or reporting health. It includes every
+project and workspace, even when their sidebar sections are collapsed or the
+sidebar is hidden. Local shells, inactive agents and the currently focused
+session are excluded. With no destinations it says **No other running agents**.
+It never starts or reopens a process.
+
+On opening, effective Waiting Input comes first, then otherwise Unread, then
+other Running agents. Waiting Input plus Unread appears once in the first group;
+Busy plus Unread remains in the second. Reviewed Ready, errors and reporting
+loss receive no additional priority. Fully expanded hierarchy order breaks ties.
+Rows reuse the dashboard's status wording, including Unread and reporting health,
+and show Agent identity and session ID; the selected location remains visible
+in compact layouts. Unsupported or unavailable reporting never excludes a
+Running agent or implies Ready.
+
+Search uses case-insensitive, every-word substring matching against the full
+session title, Agent name, session ID, project and workspace identity. Opening or changing the query
+highlights the first match; arrows move the highlight. One Enter selects the
+highlighted destination and enables Terminal mode only after every matching
+visible screen, the final view acknowledgement and the drain of already-pending
+loading input. Enter used to choose never
+reaches either PTY. During loading, keyboard input and paste are discarded,
+never queued; the footer shows **Loading agent**. `Ctrl-g` or Escape cancels
+pending typing and stays in Browse. Pane/window focus, selection or geometry
+changes, lifecycle/run changes and failed, incomplete or superseded views also cancel it.
+A late acknowledgement cannot enable an obsolete choice. Escape while the picker
+is still open closes it in Browse without changing selection.
+
+Membership, process runs, searchable identities and attention-ranked order are
+captured when the picker opens. Live status, title, location and reporting health
+update without reordering choices; updates cannot replace a highlighted choice. New agents and updated search identities appear on reopening. A removed, paused, stopped, archived or
+restarted candidate stays unavailable until reopening, with a visible reason;
+confirming it never selects a neighboring row. Switching focuses the other pane
+if it already shows that session; otherwise only the focused pane is replaced.
+It does not mark Unread reviewed or change process or conversation state.
 
 ## Unread responses
 
@@ -237,7 +282,7 @@ workspace also shows a `root` marker. A warning marker appears when that
 checkout is not on the default branch. Duplicate visible names include the
 worktree path. A branch change updates the label in place; selection and panes
 stay on that workspace. A session row starts with a status
-glyph and the session name, with the agent name from its label right-aligned in the
+glyph and the session name, with the agent harness (from session kind for agents, else the label) right-aligned in the
 provider colour. When a model is known, it follows a colon in the quiet gray,
 as in `pi:grok-4.7`. A model that repeats the agent name drops that repeat, and a
 missing model leaves the agent name alone. A long name clips with `…` before that

@@ -15,6 +15,7 @@ use ovrcr_protocol::{SessionKind, SessionPhase};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Action {
     Palette,
+    Agents,
     CreateTerminal,
     CreateWorkspace,
     RegisterProject,
@@ -242,6 +243,7 @@ impl Dashboard {
     /// Run a binding's action. The key popup and the palette reach the same
     /// handlers as a bare key press.
     pub(super) fn run(&mut self, action: Action) -> DashboardAction {
+        self.agent_typing = None;
         // Opening a group stays inside the popup: it neither closes the popup
         // nor clears the notice, so it answers before the shared preamble.
         if let Action::Group(group) = action {
@@ -256,6 +258,7 @@ impl Dashboard {
         }
         match action {
             Action::Palette => self.open_palette(),
+            Action::Agents => self.open_agent_search(),
             Action::CreateTerminal => self.open_create_terminal(),
             Action::CreateWorkspace => self.open_create_workspace(),
             Action::RegisterProject => self.open_register_project(),
@@ -349,6 +352,18 @@ impl Dashboard {
             _ => DashboardAction::None,
         }
     }
+}
+
+pub(super) fn agents_binding() -> KeyBinding {
+    key_binding(
+        "s",
+        "Agents",
+        "Other running agents: Waiting Input first, then Unread; excludes current Agent. Candidates/order captured on open; reopen to refresh. Enter switches; typing waits for acknowledged screens. Loading input is discarded; Ctrl-g/Esc cancels."
+            .into(),
+        KeyCode::Char('s'),
+        Action::Agents,
+    )
+    .group('v', "s")
 }
 
 pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
@@ -616,6 +631,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
     let running = selected.is_some_and(|s| s.phase == SessionPhase::Running);
     let paused = selected.is_some_and(|s| s.phase == SessionPhase::Paused);
     let mut view = vec![
+        agents_binding(),
         key_binding(
             "u",
             "Quota details",
@@ -805,4 +821,29 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             key_binding("q", "Detach", "Detach this dashboard; the server and every session keep running".into(), Char('q'), Action::Detach),
         ] },
     ]
+}
+
+#[cfg(test)]
+mod agent_search_tests {
+    use super::*;
+
+    #[test]
+    fn agent_search_binding_is_discoverable_without_intercepting_terminal_s() {
+        let mut dashboard = Dashboard::new(ovrcr_protocol::TerminalSize { rows: 24, cols: 80 });
+        let binding = dashboard
+            .key_binding_for(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE))
+            .expect("Browse must expose Agents");
+        assert_eq!(binding.name, "Agents");
+        assert!(
+            binding.group.is_some(),
+            "the menu must expose the same action"
+        );
+        assert!(binding.enabled(), "empty search remains available");
+        dashboard.mode = InputMode::Terminal;
+        assert!(
+            dashboard
+                .key_binding_for(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE))
+                .is_none()
+        );
+    }
 }

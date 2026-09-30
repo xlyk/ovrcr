@@ -552,6 +552,15 @@ pub(super) enum PaneChange {
     },
 }
 
+pub(super) struct AgentTyping {
+    session: SessionId,
+    run: SessionRunId,
+    revision: u64,
+    /// The production loop must discard already-pending input before acknowledgement cutover.
+    defer_until_input_boundary: bool,
+    pub(super) rejected: Option<&'static str>,
+}
+
 impl Dashboard {
     pub fn new(size: TerminalSize) -> Self {
         Self {
@@ -567,6 +576,7 @@ impl Dashboard {
             panes: vec![super::PaneState::new(size)],
             focused_pane: 0,
             handshake: Default::default(),
+            agent_typing: None,
             recovery_requests: Default::default(),
             outer_area: Rect::new(0, 0, size.cols, size.rows),
             collapsed_projects: HashSet::new(),
@@ -724,6 +734,101 @@ impl Dashboard {
     pub(super) fn pane_ready(&self, pane: &super::PaneState) -> bool {
         pane.session
             .is_some_and(|session| self.handshake.is_ready(session))
+    }
+
+    pub(super) fn confirm_agent_switch(
+        &mut self,
+        session: SessionId,
+        run: SessionRunId,
+    ) -> DashboardAction {
+        self.select_session(session);
+        let coalesced = self.handshake.in_flight();
+        if coalesced {
+            // Even a focus-only round trip must not inherit the older acknowledgement.
+            self.mark_pending_parser_discarded();
+        }
+        let previous_revision = self.handshake.revision();
+        let action = self.request_selected();
+        // A coalesced choice owns the next revision, never the older request still in flight.
+        let revision = if coalesced {
+            previous_revision.checked_add(1)
+        } else {
+            Some(self.handshake.revision())
+        };
+        self.agent_typing = revision.map(|revision| AgentTyping {
+            session,
+            run,
+            revision,
+            defer_until_input_boundary: false,
+            rejected: None,
+        });
+        self.finish_agent_switch();
+        action
+    }
+
+    fn finish_agent_switch(&mut self) {
+        let Some(intent) = &self.agent_typing else {
+            return;
+        };
+        if self.handshake.revision() > intent.revision {
+            self.agent_typing = None;
+            self.set_error("Agent switch cancelled: view changed");
+            return;
+        }
+        if self.mode != InputMode::Browse
+            || self.palette.is_some()
+            || self.whichkey.is_some()
+            || self.tasks.is_some()
+            || self.copy.is_some()
+            || self.history.is_some()
+            || self
+                .history_begin_request
+                .as_ref()
+                .is_some_and(|begin| !begin.cancelled)
+            || self.deferred_history_at_tail.is_some()
+        {
+            self.agent_typing = None;
+            return;
+        }
+        if self.focused_session() != Some(intent.session)
+            || !find_session(self, intent.session).is_some_and(|s| {
+                s.run == intent.run
+                    && s.phase == SessionPhase::Running
+                    && !s.archived
+                    && matches!(s.kind, crate::protocol::SessionKind::Agent { .. })
+            })
+        {
+            self.agent_typing = None;
+            self.set_error("Agent switch cancelled: destination changed or is no longer running");
+            return;
+        }
+        let ready = self.handshake.acknowledged().is_some_and(|view| {
+            view.revision == intent.revision
+                && view.focused == Some(intent.session)
+                && view
+                    .targets
+                    .iter()
+                    .all(|(id, _, _)| self.handshake.is_ready(*id))
+        });
+        if ready && !intent.defer_until_input_boundary {
+            self.agent_typing = None;
+            self.mode = InputMode::Terminal;
+        }
+    }
+
+    pub(super) fn defer_agent_typing_until_input_boundary(&mut self) {
+        if let Some(intent) = &mut self.agent_typing {
+            intent.defer_until_input_boundary = true;
+        }
+    }
+
+    pub(super) fn finish_agent_input_boundary(&mut self) -> bool {
+        let previous_mode = self.mode;
+        if let Some(intent) = &mut self.agent_typing {
+            intent.defer_until_input_boundary = false;
+        }
+        self.finish_agent_switch();
+        self.mode != previous_mode
     }
 
     /// How many panes the in-flight view expects snapshots for.
@@ -1046,6 +1151,10 @@ impl Dashboard {
     }
 
     pub(crate) fn visible_rows(&self) -> Vec<TreeRow> {
+        self.hierarchy_rows(false)
+    }
+
+    pub(super) fn hierarchy_rows(&self, include_collapsed: bool) -> Vec<TreeRow> {
         let mut projects = self.hierarchy.projects.iter().collect::<Vec<_>>();
         projects.sort_by(|left, right| left.name.cmp(&right.name));
         let mut rows = Vec::new();
@@ -1053,7 +1162,7 @@ impl Dashboard {
             rows.push(TreeRow::Project {
                 name: project.name.clone(),
             });
-            if self.collapsed_projects.contains(&project.name) {
+            if !include_collapsed && self.collapsed_projects.contains(&project.name) {
                 continue;
             }
             let mut workspaces = project.workspaces.iter().collect::<Vec<_>>();
@@ -1064,9 +1173,10 @@ impl Dashboard {
                     project: project.name.clone(),
                     id: workspace.id.clone(),
                 });
-                if self
-                    .collapsed_workspaces
-                    .contains(&(project.name.clone(), workspace.id.clone()))
+                if !include_collapsed
+                    && self
+                        .collapsed_workspaces
+                        .contains(&(project.name.clone(), workspace.id.clone()))
                 {
                     continue;
                 }
@@ -1232,6 +1342,19 @@ impl Dashboard {
     pub fn key_action(&mut self, key: KeyEvent) -> DashboardAction {
         if key.kind == KeyEventKind::Press {
             self.desktop.notice = None;
+        }
+        if let Some(intent) = &mut self.agent_typing {
+            if key.kind == KeyEventKind::Release {
+                return DashboardAction::None;
+            }
+            if is_browse_key(key) || key.code == KeyCode::Esc {
+                self.agent_typing = None;
+                self.cancel_mouse_gesture();
+                self.mode = InputMode::Browse;
+                return DashboardAction::EnterBrowse;
+            }
+            intent.rejected = Some("input");
+            return DashboardAction::Redraw;
         }
         if let Some(tasks) = &mut self.tasks {
             if tasks.event(Event::Key(key)) {
@@ -1725,6 +1848,9 @@ impl Dashboard {
     /// which releases apply, so a reader can tell "deliberate" from "forgotten" in one
     /// place instead of eight.
     pub(super) fn retarget(&mut self, change: PaneChange) {
+        if self.agent_typing.take().is_some() {
+            self.set_error("Agent switch cancelled: view changed");
+        }
         use PaneChange::*;
         let discard_pending_parser = !matches!(change, Focus | Resize);
         let release_capture = !matches!(
@@ -1950,6 +2076,10 @@ impl Dashboard {
             Event::Paste(_) if self.whichkey.is_some() => DashboardAction::None,
             Event::Paste(text) if self.palette.is_some() => self.palette_paste(&text),
             Event::Key(key) => self.key_action(key),
+            Event::Paste(_) if self.agent_typing.is_some() => {
+                self.agent_typing.as_mut().unwrap().rejected = Some("paste");
+                DashboardAction::Redraw
+            }
             Event::Paste(text) if self.mode == InputMode::Terminal => {
                 if !self.input_is_allowed() {
                     self.refuse_input()
@@ -1961,8 +2091,13 @@ impl Dashboard {
                     ))
                 }
             }
-            Event::Mouse(mouse) => self.mouse_action(mouse, self.outer_area),
+            Event::Mouse(mouse) => {
+                let action = self.mouse_action(mouse, self.outer_area);
+                self.finish_agent_switch();
+                action
+            }
             Event::FocusLost => {
+                self.agent_typing = None;
                 self.cancel_mouse_gesture();
                 self.mouse.hovered = None;
                 self.mouse_focused = false;
@@ -1972,7 +2107,10 @@ impl Dashboard {
                 self.mouse_focused = true;
                 DashboardAction::Redraw
             }
-            Event::Resize(_, _) => DashboardAction::Redraw,
+            Event::Resize(_, _) => {
+                self.agent_typing = None;
+                DashboardAction::Redraw
+            }
             Event::Paste(_) => DashboardAction::None,
         }
     }
@@ -2914,6 +3052,17 @@ impl Dashboard {
                             }
                         }
                         Some(Acknowledged::Incomplete { view }) => {
+                            if self
+                                .agent_typing
+                                .as_ref()
+                                .is_some_and(|intent| intent.revision == view.revision)
+                            {
+                                self.agent_typing = None;
+                                self.set_error(
+                                    "Agent switch cancelled: incomplete view acknowledgement",
+                                );
+                                self.error_owned_by_view = true;
+                            }
                             // The first retry is immediate, because no failure is recorded while
                             // a request is in flight; recording it after that re-request makes
                             // the next snapshot-less `Ok` wait out the backoff instead of
@@ -2989,6 +3138,13 @@ impl Dashboard {
                     // view is recorded for one backoff-delayed retry.
                     let refused = self.handshake.refuse(request_id, Instant::now());
                     if let Some(view) = &refused {
+                        if self
+                            .agent_typing
+                            .as_ref()
+                            .is_some_and(|intent| intent.revision == view.revision)
+                        {
+                            self.agent_typing = None;
+                        }
                         for (session, _, _) in &view.targets {
                             if let Some(pane) = self
                                 .panes
@@ -3132,6 +3288,8 @@ impl Dashboard {
                 }
             },
         }
+        self.refresh_agent_search();
+        self.finish_agent_switch();
         self.drain_outbox()
     }
 
@@ -3430,6 +3588,9 @@ impl Dashboard {
         }
         if !changed {
             return false;
+        }
+        if self.agent_typing.take().is_some() {
+            self.set_error("Agent switch cancelled: pane run changed");
         }
         self.dismiss_close_confirm_for(summary.id);
         self.unread.forget_session(summary.id);

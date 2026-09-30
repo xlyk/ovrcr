@@ -583,6 +583,499 @@ fn join_reader(reader: JoinHandle<()>, timeout: Duration) -> Result<()> {
     result.map_err(|_| anyhow::anyhow!("outer reader panicked"))
 }
 
+fn create_search_agent(
+    fixture: &mut AcceptanceFixture,
+    name: &str,
+) -> Result<ovrcr::protocol::SessionSummary> {
+    let workspace = fixture
+        .list()?
+        .projects
+        .into_iter()
+        .flat_map(|p| p.workspaces)
+        .find(|w| w.name == "feature/acceptance")
+        .context("fixture workspace")?;
+    let response = fixture.request(Request::CreateSession(ovrcr::protocol::CreateSessionRequest {
+        project: "fixture".into(), workspace: workspace.id, name: name.into(), label: None,
+        kind: ovrcr::protocol::SessionKind::Agent { name: "fixture-agent".into() },
+        argv: vec!["/bin/sh".into(), "-c".into(), format!("stty -echo; umask 077; printf '%s' \"$OVRCR_HOOK_TOKEN\" > '{}'; printf 'READY_{name}\\n'; while IFS= read -r line; do printf 'RECEIVED_{name}_%s\\n' \"$line\"; done", fixture.live.root.path().join(format!("{name}.capability")).display()).into()],
+    }));
+    fixture.managed_pgids = fixture.session_pgids()?;
+    match response {
+        Response::CreatedSession(session) => Ok(*session),
+        other => bail!("agent launch failed: {other:?}"),
+    }
+}
+
+#[test]
+fn agent_search_selects_and_types_through_real_dashboard() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    let first = create_search_agent(&mut fixture, "agent-a")?;
+    let second = create_search_agent(&mut fixture, "agent-b")?;
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    dashboard.send(b"sagent-a\r")?;
+    dashboard.wait_for_screen(
+        |screen| {
+            screen.contains("READY_agent-a")
+                && screen.contains("Terminal mode")
+                && !screen.contains("\u{250c} Agents")
+        },
+        wait_deadline(),
+    )?;
+    dashboard.send(b"s\r")?;
+    dashboard.wait_for(b"RECEIVED_agent-a_s", wait_deadline())?;
+    dashboard.send(b"\x07s")?;
+    dashboard.wait_for_screen(|screen| screen.contains("\u{250c} Agents"), wait_deadline())?;
+    dashboard.send(b"agent-b\r")?;
+    dashboard.wait_for_screen(
+        |screen| {
+            screen.contains("READY_agent-b")
+                && screen.contains("Terminal mode")
+                && !screen.contains("\u{250c} Agents")
+        },
+        wait_deadline(),
+    )?;
+    assert!(
+        !fixture.read_terminal(first.id)?.contains("agent-b"),
+        "filter must not leak into the previous child"
+    );
+    dashboard.send(b"SEARCH_INPUT_OK\r")?;
+    dashboard.wait_for(b"RECEIVED_agent-b_SEARCH_INPUT_OK", wait_deadline())?;
+    assert!(
+        !fixture.read_terminal(first.id)?.contains("SEARCH_INPUT_OK"),
+        "payload must reach only the selected agent"
+    );
+    assert!(
+        fixture
+            .read_terminal(second.id)?
+            .contains("RECEIVED_agent-b_SEARCH_INPUT_OK")
+    );
+    eprintln!(
+        "agent search fixture: root={} socket={} groups={:?}",
+        fixture.root.path().display(),
+        fixture.socket.display(),
+        fixture.managed_pgids
+    );
+    dashboard.detach()?;
+    fixture.shutdown()?;
+    Ok(())
+}
+
+type AgentViewGate = (Receiver<()>, Sender<()>, JoinHandle<Result<()>>);
+
+/// Hold one real SetView's final Ok, without a production testing endpoint.
+fn gate_agent_view(
+    socket: &Path,
+    upstream: &Path,
+    target: ovrcr::protocol::SessionId,
+) -> Result<AgentViewGate> {
+    use std::os::unix::net::UnixListener;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    };
+    let listener = UnixListener::bind(socket)?;
+    let upstream = upstream.to_owned();
+    let (held_tx, held_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let thread = thread::spawn(move || -> Result<()> {
+        let (mut front, _) = listener.accept()?;
+        ovrcr::protocol::exchange_preamble(&mut front)?;
+        let mut back = ovrcr::protocol::connect_server(upstream)?;
+        let mut front_read = front.try_clone()?;
+        let mut back_write = back.try_clone()?;
+        let selected = Arc::new(AtomicU64::new(0));
+        let request_id = selected.clone();
+        let forward = thread::spawn(move || -> Result<()> {
+            while let Ok(message) =
+                ovrcr::protocol::read_frame::<ovrcr::protocol::ClientMessage>(&mut front_read)
+            {
+                if matches!(&message.request, Request::SetView { view } if view.focused == Some(target))
+                {
+                    let _ = selected.compare_exchange(
+                        0,
+                        message.request_id,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    );
+                }
+                if let Err(error) = ovrcr::protocol::write_frame(&mut back_write, &message) {
+                    if error.downcast_ref::<std::io::Error>().is_some_and(|e| {
+                        matches!(
+                            e.kind(),
+                            std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+                        )
+                    }) {
+                        break;
+                    }
+                    return Err(error);
+                }
+            }
+            Ok(())
+        });
+        let result = (|| -> Result<()> {
+            while let Ok(message) =
+                ovrcr::protocol::read_frame::<ovrcr::protocol::ServerMessage>(&mut back)
+            {
+                if matches!(&message, ovrcr::protocol::ServerMessage::Response { request_id: id, response: Response::Ok } if *id != 0 && *id == request_id.load(Ordering::SeqCst))
+                {
+                    held_tx.send(())?;
+                    release_rx.recv_timeout(wait_deadline())?;
+                    request_id.store(u64::MAX, Ordering::SeqCst);
+                }
+                if let Err(error) = ovrcr::protocol::write_frame(&mut front, &message) {
+                    // Dashboard detach exits without waiting for its final response.
+                    if error.downcast_ref::<std::io::Error>().is_some_and(|e| {
+                        matches!(
+                            e.kind(),
+                            std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+                        )
+                    }) {
+                        break;
+                    }
+                    return Err(error);
+                }
+            }
+            Ok(())
+        })();
+        let _ = front.shutdown(std::net::Shutdown::Both);
+        let _ = back.shutdown(std::net::Shutdown::Both);
+        forward
+            .join()
+            .map_err(|_| anyhow::anyhow!("view proxy forwarder panicked"))??;
+        result
+    });
+    Ok((held_rx, release_tx, thread))
+}
+
+#[test]
+fn agent_search_real_loading_input_is_discarded_and_never_replayed() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    let first = create_search_agent(&mut fixture, "agent-a")?;
+    let second = create_search_agent(&mut fixture, "agent-b")?;
+    let actual_socket = fixture.live.socket.clone();
+    let proxy_socket = actual_socket.with_file_name("view-gate.sock");
+    let (held, release, proxy) = gate_agent_view(&proxy_socket, &actual_socket, second.id)?;
+    fixture.live.socket = proxy_socket;
+    let outer = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    );
+    fixture.live.socket = actual_socket;
+    let mut dashboard = outer?;
+    dashboard.send(b"sagent-a\r")?;
+    dashboard.wait_for_screen(
+        |s| s.contains("READY_agent-a") && s.contains("Terminal mode"),
+        wait_deadline(),
+    )?;
+    dashboard.send(b"\x07sagent-b\r")?;
+    held.recv_timeout(wait_deadline())?;
+    dashboard.send(b"LOADING_KBD_REJECT\r\x1b[200~LOADING_PASTE_REJECT\x1b[201~")?;
+    dashboard.wait_for_screen(|s| s.contains("paste was not sent"), wait_deadline())?;
+    // Leave a multi-batch burst pending at acknowledgement cutover; unlike the
+    // preceding paste, do not wait for a rejection frame before releasing Ok.
+    dashboard.send(
+        b"CUTOVER_QUEUE_REJECT\r\x1b[200~CUTOVER_PASTE_REJECT\r\x1b[201~"
+            .repeat(64)
+            .as_slice(),
+    )?;
+    release.send(())?;
+    dashboard.wait_for_screen(|s| s.contains("Terminal mode"), wait_deadline())?;
+    dashboard.send(b"AFTER_GATE_OK\r")?;
+    dashboard.wait_for(b"RECEIVED_agent-b_AFTER_GATE_OK", wait_deadline())?;
+    for session in [first.id, second.id] {
+        let text = fixture.read_terminal(session)?;
+        assert!(
+            !text.contains("LOADING_KBD_REJECT")
+                && !text.contains("LOADING_PASTE_REJECT")
+                && !text.contains("CUTOVER_QUEUE_REJECT")
+                && !text.contains("CUTOVER_PASTE_REJECT"),
+            "loading input must not appear later in either child: {text}"
+        );
+        assert!(
+            !text
+                .lines()
+                .any(|line| line == "RECEIVED_agent-a_" || line == "RECEIVED_agent-b_"),
+            "confirmation Enter must be consumed: {text}"
+        );
+    }
+    assert!(!fixture.read_terminal(first.id)?.contains("AFTER_GATE_OK"));
+    dashboard.detach()?;
+    proxy
+        .join()
+        .map_err(|_| anyhow::anyhow!("view proxy panicked"))??;
+    fixture.shutdown()?;
+    Ok(())
+}
+
+#[test]
+fn agent_attention_ranks_accepted_reports_and_selects_the_real_destination() -> Result<()> {
+    use ovrcr::protocol as p;
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    let unread = create_search_agent(&mut fixture, "agent-a-unread")?;
+    let waiting = create_search_agent(&mut fixture, "agent-z-input")?;
+    let mut leases = Vec::new();
+    for session in [&unread, &waiting] {
+        let deadline = Instant::now() + wait_deadline();
+        while !fixture
+            .read_terminal(session.id)?
+            .contains(&format!("READY_{}", session.name))
+        {
+            if Instant::now() >= deadline {
+                bail!("fixture reporter child did not become ready");
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let token = std::fs::read_to_string(
+            fixture
+                .live
+                .root
+                .path()
+                .join(format!("{}.capability", session.name)),
+        )?;
+        assert_eq!(
+            token.len(),
+            64,
+            "fixture capability must have expected shape"
+        );
+        let bytes = (0..32)
+            .map(|i| u8::from_str_radix(&token[i * 2..i * 2 + 2], 16))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let capability: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("fixture capability shape"))?;
+        let mut admission = p::connect_server(&fixture.socket)?;
+        admission.set_read_timeout(Some(wait_deadline()))?;
+        let Response::AgentOperation(p::AgentOperationResult::Reserved(reserved)) =
+            p::client::request(
+                &mut admission,
+                1,
+                Request::ReserveAgent(p::ReserveAgent {
+                    session: session.id,
+                    capability: p::AgentSecret(capability),
+                    operation: "fixture-reserve".into(),
+                    expected_epoch: 0,
+                    invocation: format!("fixture-{}", session.id.0),
+                    provider: p::AgentProvider::Codex,
+                }),
+            )?
+        else {
+            bail!("reserve fixture reporter");
+        };
+        let auth = p::SupervisorAuth {
+            session: session.id,
+            lease: reserved.lease,
+        };
+        let mut lease = p::connect_server(&fixture.socket)?;
+        lease.set_read_timeout(Some(wait_deadline()))?;
+        assert_eq!(
+            p::client::request(&mut lease, 1, Request::SupervisorHello(auth.clone()))?,
+            Response::Ok
+        );
+        drop(admission);
+        let Response::AgentOperation(p::AgentOperationResult::Bound(binding)) =
+            fixture.request(Request::Supervisor(p::SupervisorRequest {
+                auth,
+                operation: "fixture-bind".into(),
+                command: p::AgentCommand::Bind {
+                    expected_binding: None,
+                    conversation: format!("conversation-{}", session.id.0),
+                },
+            }))
+        else {
+            bail!("bind fixture reporter");
+        };
+        let activity = |state, revision| {
+            Request::AgentReport(p::AgentReport {
+                session: session.id,
+                capability,
+                sequence: None,
+                update: p::AgentUpdate::Provider(p::ProviderReport {
+                    binding: binding.clone(),
+                    revision,
+                    observation: p::AgentObservation::Activity(p::ActivitySample {
+                        state,
+                        quality: p::SampleQuality::Observed,
+                        turn: Some("fixture-turn".into()),
+                    }),
+                }),
+            })
+        };
+        if session.id == unread.id {
+            assert_eq!(
+                fixture.request(activity(p::AgentActivity::ResponseReady, 1)),
+                Response::Ok
+            );
+        }
+        assert_eq!(
+            fixture.request(activity(p::AgentActivity::Busy, 2)),
+            Response::Ok
+        );
+        if session.id == waiting.id {
+            assert_eq!(
+                fixture.request(Request::AgentReport(p::AgentReport {
+                    session: session.id,
+                    capability,
+                    sequence: None,
+                    update: p::AgentUpdate::Provider(p::ProviderReport {
+                        binding,
+                        revision: 1,
+                        observation: p::AgentObservation::Input(vec![p::InputRequest {
+                            id: "question:fixture".into(),
+                            kind: p::InputKind::Confirm
+                        }])
+                    })
+                })),
+                Response::Ok
+            );
+        }
+        leases.push(lease);
+    }
+    let rows = fixture.list()?;
+    let rows = rows
+        .projects
+        .iter()
+        .flat_map(|p| &p.workspaces)
+        .flat_map(|w| &w.sessions)
+        .collect::<Vec<_>>();
+    assert!(
+        rows.iter()
+            .find(|s| s.id == unread.id)
+            .unwrap()
+            .unread
+            .is_some()
+    );
+    assert_eq!(
+        rows.iter()
+            .find(|s| s.id == waiting.id)
+            .unwrap()
+            .agent
+            .as_ref()
+            .unwrap()
+            .effective_activity(),
+        p::AgentActivity::WaitingInput
+    );
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    dashboard.send(b"s")?;
+    dashboard.wait_for_screen(
+        |s| s.contains("Agents") && s.contains("input needed") && s.contains("Unread"),
+        wait_deadline(),
+    )?;
+    let screen = dashboard.parser.screen().contents();
+    assert!(
+        screen.find("› agent-z-input").unwrap() < screen.find("  agent-a-unread").unwrap(),
+        "accepted input must outrank earlier alphabetical Unread result: {screen}"
+    );
+    dashboard.send(b"\r")?;
+    dashboard.wait_for_screen(
+        |s| s.contains("READY_agent-z-input") && s.contains("Terminal mode"),
+        wait_deadline(),
+    )?;
+    dashboard.send(b"ATTENTION_DESTINATION_OK\r")?;
+    dashboard.wait_for(
+        b"RECEIVED_agent-z-input_ATTENTION_DESTINATION_OK",
+        wait_deadline(),
+    )?;
+    assert!(
+        !fixture
+            .read_terminal(unread.id)?
+            .contains("ATTENTION_DESTINATION_OK")
+    );
+    let live = fixture.list()?;
+    let rows = live
+        .projects
+        .iter()
+        .flat_map(|p| &p.workspaces)
+        .flat_map(|w| &w.sessions)
+        .collect::<Vec<_>>();
+    assert!(
+        rows.iter()
+            .find(|s| s.id == unread.id)
+            .unwrap()
+            .unread
+            .is_some()
+    );
+    assert_eq!(
+        rows.iter()
+            .find(|s| s.id == waiting.id)
+            .unwrap()
+            .agent
+            .as_ref()
+            .unwrap()
+            .input_requests
+            .len(),
+        1,
+        "navigation cannot resolve accepted input requests"
+    );
+    dashboard.detach()?;
+    drop(leases);
+    fixture.shutdown()?;
+    Ok(())
+}
+
+#[test]
+fn agent_search_navigates_fifty_live_sessions_through_real_dashboard() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    let mut last = None;
+    // The fixture already owns four live shells; add agents up to the real limit.
+    for index in 0..46 {
+        last = Some(create_search_agent(
+            &mut fixture,
+            &format!("navigation-{index:02}"),
+        )?);
+    }
+    assert_eq!(ovrcr::protocol::client::session_count(&fixture.list()?), 50);
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    dashboard.send(b"s")?;
+    dashboard.wait_for_screen(|screen| screen.contains("\u{250c} Agents"), wait_deadline())?;
+    dashboard.send(&b"\x1b[B".repeat(45))?;
+    dashboard.wait_for_screen(|screen| screen.contains("› navigation-45"), wait_deadline())?;
+    dashboard.send(b"\r")?;
+    dashboard.wait_for(b"READY_navigation-45", wait_deadline())?;
+    dashboard.send(b"FIFTY_NAV_OK\r")?;
+    dashboard.wait_for(b"RECEIVED_navigation-45_FIFTY_NAV_OK", wait_deadline())?;
+    assert!(
+        fixture
+            .read_terminal(last.unwrap().id)?
+            .contains("RECEIVED_navigation-45_FIFTY_NAV_OK")
+    );
+    dashboard.detach()?;
+    fixture.shutdown()?;
+    Ok(())
+}
+
 #[test]
 fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()> {
     let mut fixture = AcceptanceFixture::new()?;

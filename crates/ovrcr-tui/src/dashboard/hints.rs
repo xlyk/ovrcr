@@ -3,6 +3,15 @@ use super::{Dashboard, InputMode};
 
 pub(super) fn footer(dashboard: &Dashboard, width: u16) -> String {
     use unicode_width::UnicodeWidthStr;
+    if let Some(intent) = &dashboard.agent_typing {
+        let rejected = intent
+            .rejected
+            .map_or(String::new(), |kind| format!(": {kind} was not sent"));
+        return format!("Loading agent{rejected}  Ctrl-g cancel")
+            .chars()
+            .take(usize::from(width))
+            .collect();
+    }
     let history = dashboard
         .history
         .as_ref()
@@ -20,7 +29,15 @@ pub(super) fn footer(dashboard: &Dashboard, width: u16) -> String {
         }
         InputMode::History if history.is_some_and(|v| v.anchor.is_some()) => "HISTORY SELECT",
         InputMode::History => "HISTORY",
-        InputMode::Terminal => return "Terminal mode  Ctrl-g browse".into(),
+        InputMode::Terminal => {
+            let mut text = "Terminal mode  Ctrl-g browse".to_owned();
+            let agents = super::keymap::agents_binding();
+            let hint = format!("  then {} {}", agents.key, agents.name);
+            if text.width() + hint.width() <= usize::from(width) {
+                text.push_str(&hint);
+            }
+            return text;
+        }
     };
     let mut text: String = mode.chars().take(usize::from(width)).collect();
     let groups = keymap(dashboard);

@@ -711,14 +711,7 @@ impl ServerState {
             )
         };
         self.check_live_capacity()?;
-        let label = request.label.unwrap_or_else(|| {
-            request
-                .argv
-                .first()
-                .and_then(|arg| Path::new(arg).file_name())
-                .map(|value| value.to_string_lossy().into_owned())
-                .unwrap_or_default()
-        });
+        let label = default_session_label(&request.kind, request.label, &request.argv);
         let record = self.retained.lock().create(SessionMetadata {
             project: request.project,
             workspace: request.workspace,
@@ -2302,6 +2295,108 @@ impl ServerState {
         Ok(())
     }
 }
+
+/// Harness identity for a new session when the client omits `label`.
+/// Agent sessions take the provider name from `kind` so a managed launcher
+/// whose argv0 is `ovrcr` does not publish OVRCR as the harness. Terminal
+/// sessions keep the executable basename. An explicit label always wins.
+fn default_session_label(
+    kind: &SessionKind,
+    explicit: Option<String>,
+    argv: &[std::ffi::OsString],
+) -> String {
+    if let Some(label) = explicit {
+        return label;
+    }
+    match kind {
+        SessionKind::Agent { name } => name.clone(),
+        SessionKind::Terminal => argv
+            .first()
+            .and_then(|arg| Path::new(arg).file_name())
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+    }
+}
+
+#[cfg(test)]
+mod default_session_label_tests {
+    use super::default_session_label;
+    use ovrcr_protocol::SessionKind;
+    use std::ffi::OsString;
+
+    fn argv(args: &[&str]) -> Vec<OsString> {
+        args.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn managed_pi_launcher_uses_agent_kind_not_ovrcr_argv0() {
+        assert_eq!(
+            default_session_label(
+                &SessionKind::Agent { name: "pi".into() },
+                None,
+                &argv(&["/usr/local/bin/ovrcr", "agent", "run", "pi", "--", "pi"]),
+            ),
+            "pi"
+        );
+    }
+
+    #[test]
+    fn managed_claude_launcher_uses_agent_kind_not_ovrcr_argv0() {
+        assert_eq!(
+            default_session_label(
+                &SessionKind::Agent {
+                    name: "claude".into()
+                },
+                None,
+                &argv(&[
+                    "ovrcr",
+                    "agent",
+                    "run",
+                    "--provider",
+                    "claude",
+                    "--",
+                    "claude"
+                ]),
+            ),
+            "claude"
+        );
+    }
+
+    #[test]
+    fn shell_session_keeps_executable_basename() {
+        assert_eq!(
+            default_session_label(&SessionKind::Terminal, None, &argv(&["/bin/zsh", "-l"]),),
+            "zsh"
+        );
+    }
+
+    #[test]
+    fn explicit_label_wins_over_agent_kind() {
+        assert_eq!(
+            default_session_label(
+                &SessionKind::Agent { name: "pi".into() },
+                Some("custom-harness".into()),
+                &argv(&["ovrcr", "agent", "run", "pi", "--", "pi"]),
+            ),
+            "custom-harness"
+        );
+    }
+
+    #[test]
+    fn direct_agent_executable_matches_kind_when_label_omitted() {
+        assert_eq!(
+            default_session_label(
+                &SessionKind::Agent {
+                    name: "codex".into()
+                },
+                None,
+                &argv(&["codex"]),
+            ),
+            "codex"
+        );
+    }
+}
+
 fn snapshot(state: &Arc<ServerState>) -> HierarchySnapshot {
     snapshot_from_state(state)
 }

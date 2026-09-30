@@ -90,7 +90,8 @@ fn palette_creates_switches_and_closes_a_real_terminal() -> Result<()> {
         );
         std::thread::yield_now();
     }
-    terminal.send(b"\rprintf 'PALETTE_%s\\n' LIVE\r")?;
+    enter_selected_session(&mut terminal, "palette-check")?;
+    terminal.send(b"printf 'PALETTE_%s\\n' LIVE\r")?;
     wait_screen(&terminal, "PALETTE_LIVE")?;
     let inventory = std::process::Command::new(env!("CARGO_BIN_EXE_ovrcr"))
         .args(["terminal", "list", "--json"])
@@ -127,7 +128,11 @@ fn palette_creates_switches_and_closes_a_real_terminal() -> Result<()> {
         std::io::Error::last_os_error().raw_os_error(),
         Some(libc::ESRCH)
     );
-    terminal.send(b"\rprintf 'AFTER_%s\\n' CLOSE\r")?;
+    // Removal and replacement SetView complete asynchronously. Select the
+    // surviving shell and wait for typing readiness before sending shell text.
+    select_sidebar_session(&mut terminal, "$ local")?;
+    enter_selected_session(&mut terminal, "local (#1)")?;
+    terminal.send(b"printf 'AFTER_%s\\n' CLOSE\r")?;
     wait_screen(&terminal, "AFTER_CLOSE")?;
     terminal.stop()?;
     demo.shutdown()?;
