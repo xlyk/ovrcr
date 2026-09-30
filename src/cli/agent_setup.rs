@@ -465,6 +465,31 @@ fn claude_boot_hook_warning() -> Option<String> {
     })
 }
 
+// Health reasons are arbitrary provider text on the wire. Doctor must expose
+// only known diagnostic codes, never private provider strings or identities.
+fn public_health_reason(reason: Option<&str>) -> Option<&str> {
+    reason.filter(|reason| {
+        matches!(
+            *reason,
+            "identity_transition_unavailable"
+                | "collector_unavailable"
+                | "source_unavailable"
+                | "read_unavailable"
+                | "source_rebuilding"
+                | "usage_regression"
+                | "record_limit"
+                | "invalid_usage_record"
+                | "unrecognized_usage_record"
+                | "foreign_usage_record"
+                | "conflicting_usage_record"
+                | "accounting_limit"
+                | "incomplete_final_accounting"
+                | "supervisor_disconnected"
+                | "unfinalized_release"
+        )
+    })
+}
+
 pub(super) fn doctor(
     path: Option<&Path>,
     session: Option<u64>,
@@ -510,14 +535,20 @@ pub(super) fn doctor(
                 Some(session) => match &session.agent {
                     Some(agent) => {
                         binding = json!({"provider":agent.binding.provider, "generation":agent.binding.generation});
-                        health = json!({"state":agent.health.state, "activity_available":agent.activity.is_some(), "metrics_available":agent.metrics.is_some(),
+                        health = json!({"state":agent.health.state, "reason":public_health_reason(agent.health.reason.as_deref()), "activity_available":agent.activity.is_some(), "metrics_available":agent.metrics.is_some(),
                             "usage_available":agent.metrics.as_ref().is_some_and(|metrics| metrics.sample.usage.value.input_tokens.is_some() || metrics.sample.usage.value.output_tokens.is_some()),
                             "usage_coverage":agent.metrics.as_ref().map(|metrics| metrics.sample.usage.value.coverage),
                             "cost_available":agent.metrics.as_ref().is_some_and(|metrics| metrics.sample.cost.value.is_some())});
                         if agent.health.state == ReporterHealth::Unavailable {
-                            remediation.push("Reporting is unavailable. Check the supervised launcher and reporting hooks; restart a fresh supported invocation after correcting configuration.".into());
+                            remediation.push(if agent.health.reason.as_deref() == Some("identity_transition_unavailable") {
+                                "Reporting cannot safely identify the foreground conversation after an unsupported or ambiguous transition. Claude is still usable; configuration repair cannot recover this reporting lifetime. When ready, start a fresh supervised invocation with `ovrcr agent run claude -- claude`.".into()
+                            } else {
+                                "Reporting is unavailable. Check the source_health reason and supervised launcher/reporting hooks; start a fresh supported invocation after correcting the reported cause.".into()
+                            });
+                            "reporting_unavailable"
+                        } else {
+                            "bound"
                         }
-                        "bound"
                     }
                     None => {
                         remediation.push("Start Claude through the Dashboard agent picker or `ovrcr agent run claude -- claude` (legacy `--provider claude` also works). Resume a known canonical UUIDv4 with `claude --resume UUID`; 2.1.268+ also accepts `claude -r UUID`. A plain `claude` launch stays untracked.".into());
@@ -590,6 +621,25 @@ pub(super) fn with_version_probe<T>(probe: impl FnOnce() -> T) -> AppResult<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn doctor_health_reason_exposes_known_codes_and_redacts_arbitrary_text() {
+        for code in [
+            "identity_transition_unavailable",
+            "invalid_usage_record",
+            "source_unavailable",
+        ] {
+            assert_eq!(public_health_reason(Some(code)), Some(code));
+        }
+        for reason in [
+            None,
+            Some("NEVER_PRIVATE_REASON"),
+            Some("identity_transition_unavailable PRIVATE"),
+            Some("/private/path"),
+        ] {
+            assert_eq!(public_health_reason(reason), None);
+        }
+    }
+
     #[test]
     fn configuration_issues_flag_missing_hooks_and_accept_setup_output() {
         let executable = "/opt/ovrcr";

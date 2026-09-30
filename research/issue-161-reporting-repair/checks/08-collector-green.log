@@ -1,0 +1,29 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.12s
+     Running tests/claude_reporting.rs (target/debug/deps/claude_reporting-57d8e9e68f9c946e)
+
+running 16 tests
+test collector_rejects_oversized_configuration_before_spawn ... ok
+owned expired-deadline helper PID/PGID 95129 eventually reaped while parent remains alive
+test collector_expired_deadline_transfers_reaping_ownership ... ok
+owned helper PID/PGID 95122 cleaned by bounded Drop
+test collector_drop_is_bounded_for_a_stalled_helper ... ok
+test collector_skips_synthetic_assistants_and_continues_counting_real_requests ... ok
+test collector_differing_duplicate_freezes_before_replacement ... ok
+owned exited helper PID/PGID 95126 reaped while parent alive; cancel=Ok(())
+test collector_actual_helper_appends_partial_record_and_equal_replay ... ok
+test collector_cancel_reaps_an_exited_group_before_confirming_absence ... ok
+test collector_missing_file_retries_same_path_and_truncation_preserves_watermark ... ok
+test collector_replacement_does_not_publish_a_smaller_prefix ... ok
+test collector_reads_only_one_chunk_and_excludes_sidechains ... ok
+owned stopped helper PID/PGID 95573 killed and reaped
+test collector_stalled_helper_is_nonblocking_and_owned_group_cleanup_is_bounded ... ok
+test collector_foreign_usage_and_nonregular_source_fail_without_content_leaks ... ok
+test collector_raw_record_limit_preserves_prefix ... ok
+owned environment probe PID/PGID 95131 cleaned
+test collector_launch_clears_inherited_environment ... ok
+test collector_production_byte_cap_freezes_before_identity_cap ... ok
+test collector_production_identity_cap_freezes_later_unique_usage ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.67s
+

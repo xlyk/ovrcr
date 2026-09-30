@@ -1,0 +1,9 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.97s
+     Running unittests src/main.rs (target/debug/deps/ovrcr-aa7d852c0796ab61)
+
+running 1 test
+test cli::agent_setup::tests::doctor_health_reason_exposes_known_codes_and_redacts_arbitrary_text ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+

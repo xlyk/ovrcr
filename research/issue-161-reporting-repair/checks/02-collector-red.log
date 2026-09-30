@@ -1,0 +1,21 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.06s
+     Running tests/claude_reporting.rs (target/debug/deps/claude_reporting-57d8e9e68f9c946e)
+
+running 1 test
+
+thread 'collector_skips_synthetic_assistants_and_continues_counting_real_requests' (437383676) panicked at tests/claude_reporting.rs:214:5:
+assertion `left == right` failed
+  left: Some("invalid_usage_record")
+ right: None
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test collector_skips_synthetic_assistants_and_continues_counting_real_requests ... FAILED
+
+failures:
+
+failures:
+    collector_skips_synthetic_assistants_and_continues_counting_real_requests
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.62s
+
+error: test failed, to rerun pass `-p ovrcr --test claude_reporting`

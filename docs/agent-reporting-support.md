@@ -49,6 +49,14 @@ Ambiguous or unsupported transitions keep Claude running, clear open Input reque
 
 Live captures establish equal-usage duplicate rows with the same `(message.id, requestId)` and different record UUIDs. They do not establish differing-value replacement. The partial reader must stop before applying a conflicting counted value and label its retained result unavailable; it cannot claim the retained number remains current or is a lower bound. Recognized root-transcript records do not cover every native usage category. Missing cost remains unknown; explicit zero is a value.
 
+The explicit Claude assistant model `<synthetic>` denotes a provider-generated
+message, including interruption/error records without `requestId`. These records
+are excluded before API usage normalization, after the reader verifies conversation
+and root/sidechain metadata. This prevents interrupted history from disabling
+otherwise valid reporting; it does not expand accounting coverage or admit unknown
+malformed API records. Source review and isolated application-path evidence are
+recorded in [the #161 repair report](../research/issue-161-reporting-repair/README.md).
+
 Task 1 remains open. The source fixtures support later parser work only after its prerequisite contracts are resolved. Existing manual reporting instructions remain in [agent-reporting.md](agent-reporting.md).
 
 ## Local execution evidence

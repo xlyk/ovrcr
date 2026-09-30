@@ -1,0 +1,12 @@
+{
+  "artifact": "Claude Code 2.1.286 installed native binary",
+  "sha256": "75e3016e9d2570767b08e43a7467d4817a4f149232c169ca295f2c95fef21433",
+  "review_date": "2026-09-30T21:39:58.249839+00:00",
+  "findings": {
+    "explicit_synthetic_model_constant": true,
+    "assistant_constructor_sets_synthetic_model": true,
+    "assistant_constructor_omits_request_id": true,
+    "native_usage_path_excludes_synthetic_model": true
+  },
+  "limits": "Read-only source inspection. No real provider invocation or native resume acceptance. The observed interruption defect is separately recorded in issue #161."
+}

@@ -1,0 +1,20 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "-p",
+    "ovrcr",
+    "--test",
+    "server_lifecycle",
+    "claude_doctor_names",
+    "--",
+    "--nocapture"
+  ],
+  "cwd": "/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161",
+  "revision": "46178d8d9753b226bf704811c2645a9a00aeaf87",
+  "diff_sha256": "222bbf4e2ddd24d02b52b82c4a1541ec8d5f5882ca665582e09ce87509ac0958",
+  "started": "2026-09-30T21:35:45.248528+00:00",
+  "exit_code": 101,
+  "finished": "2026-09-30T21:35:46.189490+00:00"
+}

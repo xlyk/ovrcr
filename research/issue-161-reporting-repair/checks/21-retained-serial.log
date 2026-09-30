@@ -1,0 +1,29 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.22s
+     Running tests/retained_sessions.rs (target/debug/deps/retained_sessions-31fa517f113e0015)
+
+running 22 tests
+test archive_round_trip_survives_restart_and_rejects_old_recovery_without_deleting_history ... ok
+test attached_agent_natural_exit_stays_explicit_after_a_verified_reboot ... ok
+test automatic_recovery_failure_requires_explicit_retry_even_after_reconnect ... ok
+test automatic_recovery_rechecks_ownership_disposition_and_identity_on_server ... ok
+test claude_reopen_retains_exact_conversation_before_another_callback ... ok
+test close_exited_row_moves_it_to_the_archive_without_process_acknowledgement ... ok
+test codex_reopen_uses_exact_identity_without_prompt_across_two_restarts ... ok
+test displayed_interrupted_claude_recovers_through_real_dashboard_and_coalesces_duplicates ... ok
+test exact_resume_preserves_long_arguments_before_shell_startup ... ok
+test extension_conversations_switch_and_survive_repeated_restart ... ok
+test full_capacity_records_automatic_failure_without_retrying_when_a_slot_opens ... ok
+test grok_managed_launch_retains_its_history_file_for_titles_without_resume ... ok
+test real_process_discovery_failure_does_not_archive_the_record ... ok
+test reopen_keeps_the_row_starts_a_fresh_shell_and_coalesces_delayed_duplicates ... ok
+test restore_native_picker_in_zsh_after_loading_user_configuration ... ok
+test restore_without_reporting_executes_native_picker_in_shell ... ok
+test retained_claude_native_helper ... ignored, controlled native executable entered only by the retained-session fixture
+test retained_codex_native_helper ... ignored, controlled native executable entered only by the retained-session fixture
+test retained_rows_preserve_identity_and_title_without_restoring_output_or_live_state ... ok
+test workspace_removal_blocks_live_and_uncertain_rows_and_preserves_records_on_failures ... ok
+test workspace_removal_protects_provider_history_inside_an_ignored_directory ... ok
+test workspace_removal_retains_archive_context_through_project_removal_and_restart ... ok
+
+test result: ok. 20 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 84.43s
+

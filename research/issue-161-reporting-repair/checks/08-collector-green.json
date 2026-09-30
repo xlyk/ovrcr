@@ -1,0 +1,19 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "-p",
+    "ovrcr",
+    "--test",
+    "claude_reporting",
+    "--",
+    "--nocapture"
+  ],
+  "cwd": "/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161",
+  "revision": "46178d8d9753b226bf704811c2645a9a00aeaf87",
+  "diff_sha256": "c20afd2cdd908f3e31debe721c56918b45f1be6e0f1fbf9a19f253cd0a6e736a",
+  "started": "2026-09-30T21:38:03.411227+00:00",
+  "exit_code": 0,
+  "finished": "2026-09-30T21:38:06.439758+00:00"
+}

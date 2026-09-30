@@ -1,0 +1,23 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-4a5c248bf0fa0f5a)
+
+running 1 test
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6ZDn4D/private/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6ZDn4D/private/server.sock
+
+thread 'claude_interrupted_resume_keeps_reporting_healthy_and_delivers_new_ready' (437424127) panicked at tests/server_lifecycle.rs:8510:13:
+assertion `left == right` failed
+  left: Unavailable
+ right: Connected
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ovrcr server stopped
+test claude_interrupted_resume_keeps_reporting_healthy_and_delivers_new_ready ... FAILED
+
+failures:
+
+failures:
+    claude_interrupted_resume_keeps_reporting_healthy_and_delivers_new_ready
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 124 filtered out; finished in 3.25s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`

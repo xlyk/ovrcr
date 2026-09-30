@@ -199,6 +199,35 @@ fn collector_differing_duplicate_freezes_before_replacement() {
 }
 
 #[test]
+fn collector_skips_synthetic_assistants_and_continues_counting_real_requests() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("root.jsonl");
+    let synthetic = json!({"type":"assistant","sessionId":"root","isSidechain":false,
+        "message":{"id":"interruption","model":"<synthetic>","usage":null}});
+    fs::write(
+        &path,
+        format!("{}{synthetic}\n{}", row("before", 10), row("after", 20)),
+    )
+    .unwrap();
+    let mut controller = launch(&path);
+    let sample = caught_up(&mut controller);
+    assert_eq!(sample.diagnostic, None);
+    assert_eq!(sample.usage.input_tokens, Some(30));
+    assert_eq!(sample.retained_identities, 2);
+    let mut foreign = synthetic;
+    foreign["sessionId"] = json!("foreign");
+    writeln!(
+        OpenOptions::new().append(true).open(&path).unwrap(),
+        "{foreign}"
+    )
+    .unwrap();
+    let rejected = caught_up(&mut controller);
+    assert_eq!(rejected.diagnostic.as_deref(), Some("foreign_usage_record"));
+    assert_eq!(rejected.usage.input_tokens, Some(30));
+    assert_eq!(rejected.retained_identities, 2);
+}
+
+#[test]
 fn collector_replacement_does_not_publish_a_smaller_prefix() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("root.jsonl");

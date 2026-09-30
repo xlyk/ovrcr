@@ -1,0 +1,24 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.94s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-4a5c248bf0fa0f5a)
+
+running 1 test
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpWsJs9w/private/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpWsJs9w/private/server.sock
+
+thread 'claude_doctor_names_identity_freeze_and_preserves_native_input' (437421289) panicked at tests/server_lifecycle.rs:14769:5:
+assertion `left == right` failed
+  left: String("bound")
+ right: "reporting_unavailable"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ovrcr server stopped
+test claude_doctor_names_identity_freeze_and_preserves_native_input ... FAILED
+
+failures:
+
+failures:
+    claude_doctor_names_identity_freeze_and_preserves_native_input
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 124 filtered out; finished in 2.67s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`

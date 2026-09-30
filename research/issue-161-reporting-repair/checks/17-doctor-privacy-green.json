@@ -1,0 +1,17 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "-p",
+    "ovrcr",
+    "--test",
+    "agent_setup"
+  ],
+  "cwd": "/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161",
+  "revision": "46178d8d9753b226bf704811c2645a9a00aeaf87",
+  "diff_sha256": "a90bebccb62e84c3add1761dce0abfb1642462009a239ad1936fdcc8eaeba1be",
+  "started": "2026-09-30T21:43:45.628483+00:00",
+  "exit_code": 0,
+  "finished": "2026-09-30T21:43:54.107935+00:00"
+}
