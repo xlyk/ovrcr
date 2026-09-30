@@ -58,6 +58,12 @@ impl Demo {
             &crate::config::Registry::default(),
             &self.root.join("config.toml"),
         )?;
+        // Demo workspaces intentionally keep automatic local shells on every
+        // worktree so the GUI helper exercises a full sidebar of terminals.
+        fs::write(
+            self.root.join("dashboard.toml"),
+            "automatic_local_terminals = \"on\"\n",
+        )?;
         if let Some(path) = std::env::var_os("OVRCR_GUI_QUOTA_CONFIG") {
             let fragment = fs::read_to_string(path).context("read GUI quota config fragment")?;
             let mut config = fs::OpenOptions::new()

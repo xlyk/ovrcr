@@ -79,6 +79,21 @@ impl AcceptanceFixture {
             "main",
         ])?;
         require_success(output, "workspace create")?;
+        // Default policy no longer auto-creates feature-workspace locals.
+        let output = self.cli(&[
+            "new",
+            "--project",
+            "fixture",
+            "--workspace",
+            "feature/acceptance",
+            "--name",
+            "local",
+            "--",
+            "sh",
+            "-c",
+            "while :; do sleep 3600; done",
+        ])?;
+        require_success(output, "feature local shell")?;
         let output = self.cli(&[
             "new",
             "--project",

@@ -15,15 +15,15 @@ fn native_quota_rpc_fixture() {
     for line in std::io::stdin().lock().lines() {
         let request: serde_json::Value = serde_json::from_str(&line.unwrap()).unwrap();
         let method = request["method"].as_str().unwrap();
-        writeln!(
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log)
-                .unwrap(),
-            "{method}"
-        )
-        .unwrap();
+        // Codex and Grok share this append log. Keep each method and its
+        // newline in one write so concurrent native processes cannot splice rows.
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log)
+            .unwrap()
+            .write_all(format!("{method}\n").as_bytes())
+            .unwrap();
         let Some(id) = request.get("id") else {
             continue;
         };

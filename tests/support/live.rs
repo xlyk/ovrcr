@@ -268,6 +268,24 @@ impl Live {
             }),
             Response::Ok
         );
+        // Default policy is default_branch_only, so feature workspaces no longer
+        // receive an automatic local shell. Fixtures that need one create it
+        // explicitly so capacity and CLI suites keep a live session to drive.
+        let shell = std::env::var_os("SHELL")
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "/bin/sh".into());
+        let Response::CreatedSession(_) = self.request(Request::CreateSession(
+            ovrcr::protocol::CreateSessionRequest {
+                project: PROJECT.into(),
+                workspace: WORKSPACE.into(),
+                name: "local".into(),
+                label: None,
+                argv: vec![shell],
+                kind: ovrcr::protocol::SessionKind::Terminal,
+            },
+        )) else {
+            panic!("feature workspace local shell");
+        };
         *ready = Some(branch.to_owned());
     }
 

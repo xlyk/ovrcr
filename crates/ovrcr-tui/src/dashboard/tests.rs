@@ -3094,6 +3094,56 @@ fn a_clicked_popup_row_clears_the_desktop_notice() {
 }
 
 #[test]
+fn automatic_local_terminal_binding_persists_cycle_and_keeps_setting_on_failure() {
+    use super::settings::AutomaticLocalTerminals;
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("dashboard.toml");
+    std::fs::write(&path, "branch_prefix = 'fix/'\nextra = 'keep'\n").unwrap();
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 120,
+    });
+    dashboard.settings_path = Some(path.clone());
+    for expected in [
+        AutomaticLocalTerminals::On,
+        AutomaticLocalTerminals::Off,
+        AutomaticLocalTerminals::DefaultBranchOnly,
+    ] {
+        dashboard.key(KeyCode::Char('L'));
+        assert_eq!(dashboard.settings.automatic_local_terminals, expected);
+        let (loaded, error) = super::settings::load_dashboard_settings(&path);
+        assert_eq!(error, None);
+        assert_eq!(loaded.automatic_local_terminals, expected);
+        assert_eq!(loaded.branch_prefix, "fix/");
+        let saved: toml::Table = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved["extra"].as_str(), Some("keep"));
+        let mut restarted = Dashboard::new(TerminalSize {
+            rows: 24,
+            cols: 120,
+        });
+        restarted.settings_path = Some(path.clone());
+        restarted.settings = loaded;
+        dashboard = restarted;
+    }
+    let invalid = "automatic_local_terminals = 42\n";
+    std::fs::write(&path, invalid).unwrap();
+    dashboard.key(KeyCode::Char('L'));
+    assert_eq!(
+        dashboard.settings.automatic_local_terminals,
+        AutomaticLocalTerminals::DefaultBranchOnly
+    );
+    assert!(
+        dashboard
+            .desktop
+            .notice
+            .as_ref()
+            .unwrap()
+            .contains("Could not save automatic local terminals")
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), invalid);
+}
+
+#[test]
 fn alert_toggles_persist_across_dashboard_restart() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("custom-dashboard.toml");

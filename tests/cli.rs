@@ -1017,11 +1017,11 @@ while IFS= read -r line; do :; done
         }),
         "feature workspace missing inspector session: {listed}"
     );
+    // Default automatic_local_terminals is default_branch_only, so feature
+    // workspaces no longer receive an automatic local shell from workspace create.
     assert!(
-        rows.iter().any(|row| {
-            row["name"] == "local" && row["phase"] == "running" && row["id"] != numeric_id
-        }),
-        "feature workspace missing local shell: {listed}"
+        rows.iter().all(|row| row["name"] != "local"),
+        "feature workspace must not auto-create local under default policy: {listed}"
     );
 
     std::fs::write(&first_gate, b"go").unwrap();

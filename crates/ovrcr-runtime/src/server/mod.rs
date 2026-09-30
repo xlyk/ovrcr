@@ -31,6 +31,7 @@ mod connections;
 mod dashboard;
 mod dispatch;
 mod outbound;
+mod preferences;
 mod quota;
 mod reporting_queue;
 mod startup;
@@ -49,6 +50,7 @@ use outbound::{DashboardDelivery, Enqueue};
 pub use outbound::{DashboardOutbound, DashboardSink};
 #[cfg(feature = "acceptance-diagnostics")]
 pub use outbound::{DashboardQueueMonitor, DashboardQueueSnapshot};
+pub use preferences::AutomaticLocalTerminals;
 pub use quota::{NativeQuotaUpdate, normalize_native_quota};
 #[cfg(feature = "acceptance-diagnostics")]
 pub use startup::run_server_with_diagnostics;
@@ -1594,7 +1596,15 @@ impl ServerState {
         name: String,
         branch: BranchRequest,
     ) -> Result<()> {
-        self.create_workspace_inner(project, name, branch, WorkspaceLaunch::Shell)
+        // Feature worktrees are never the default-branch root workspace.
+        let launch = if preferences::load_automatic_local_terminals(&self.registry_path)
+            .should_create(false)
+        {
+            WorkspaceLaunch::Shell
+        } else {
+            WorkspaceLaunch::None
+        };
+        self.create_workspace_inner(project, name, branch, launch)
             .map(|_| ())
     }
 
@@ -2186,6 +2196,13 @@ impl ServerState {
         }
         let root_id = root.id.clone();
         if self.has_admitted_root_shell(project, &root_id) {
+            self.set_setup_pending(project, &root_id, false)?;
+            return Ok(());
+        }
+        // Root workspace is the detected default-branch checkout.
+        let policy = preferences::load_automatic_local_terminals(&self.registry_path);
+        if !policy.should_create(true) {
+            // Preference skips automatic local creation; existing rows stay untouched.
             self.set_setup_pending(project, &root_id, false)?;
             return Ok(());
         }

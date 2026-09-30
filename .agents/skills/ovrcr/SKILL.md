@@ -24,7 +24,7 @@ Done when the JSON names the repo. Register a repository only when the user aske
 ovrcr project add NAME /absolute/repo --workspace-root /absolute/worktrees
 ```
 
-Registration creates the protected root workspace on the detected default branch and starts its `local` shell.
+Registration creates the protected root workspace on the detected default branch. Whether it also starts a `local` shell follows `automatic_local_terminals` in `dashboard.toml` (default **default branch only**).
 
 ## 2. Create a workspace
 
@@ -36,7 +36,7 @@ ovrcr workspace create --project NAME --branch existing/branch --json
 ovrcr workspace get --project NAME --branch temp/topic --json
 ```
 
-Done when `workspace get` returns `path` and `branch`. Creation also starts a separate `local` shell. Leave that shell running.
+Done when `workspace get` returns `path` and `branch`. Creation starts a separate `local` shell only when `automatic_local_terminals` is `on` (the default is **default branch only**, so feature workspaces do not get one automatically). Start a terminal explicitly with `ovrcr new` when you need a shell.
 
 ## 3. Open a terminal
 

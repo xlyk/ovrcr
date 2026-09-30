@@ -7705,3 +7705,370 @@ fn cli_created_agent_label_uses_kind_not_launcher_argv0() {
         }
     }
 }
+
+fn init_repo_with_default(repo: &Path, default_branch: &str) {
+    use std::process::Command;
+    std::fs::create_dir_all(repo).unwrap();
+    for args in [
+        ["init", "-b", default_branch].as_slice(),
+        ["config", "user.name", "OVRCR Tests"].as_slice(),
+        ["config", "user.email", "tests@example.invalid"].as_slice(),
+        ["commit", "--allow-empty", "-m", "initial"].as_slice(),
+    ] {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(repo)
+            .env_remove("GIT_DIR")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+fn write_local_policy(config: &Path, policy: &str) {
+    let dashboard = config
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("dashboard.toml");
+    std::fs::write(
+        dashboard,
+        format!("automatic_local_terminals = \"{policy}\"\n"),
+    )
+    .unwrap();
+}
+
+fn live_local_sessions(state: &ServerState, project: &str, workspace: &str) -> usize {
+    state
+        .session_summaries()
+        .into_iter()
+        .filter(|session| {
+            session.project == project
+                && session.workspace == workspace
+                && !session.archived
+                && session.name == "local"
+                && session.phase.is_live()
+        })
+        .count()
+}
+
+struct ProvisioningCleanup {
+    state: Arc<ServerState>,
+    bridge: Option<JoinHandle<()>>,
+    dispatcher: Option<JoinHandle<()>>,
+}
+
+impl ProvisioningCleanup {
+    fn new(
+        state: Arc<ServerState>,
+        events: ReportingReceiver<SessionEvent>,
+        commands: ReportingReceiver<DispatchMessage>,
+    ) -> Self {
+        let dispatch = state.dispatch.clone();
+        let dispatch_state = state.clone();
+        Self {
+            state,
+            bridge: Some(thread::spawn(move || bridge_events(events, dispatch))),
+            dispatcher: Some(thread::spawn(move || {
+                run_dispatcher(dispatch_state, commands)
+            })),
+        }
+    }
+}
+
+impl Drop for ProvisioningCleanup {
+    fn drop(&mut self) {
+        let owned: Vec<_> = self
+            .state
+            .sessions
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect();
+        let mut cleaned = true;
+        for session in owned {
+            let group = session.summary().pid.map(|pid| pid as libc::pid_t);
+            if let Err(error) = session.terminate(Duration::from_secs(2)) {
+                cleaned &= error.is::<crate::session::AlreadyExited>();
+                eprintln!("provisioning cleanup termination: {error:#}");
+            }
+            if let Some(group) = group {
+                let absent = wait_test_group_absent(group, Duration::from_secs(2));
+                cleaned &= absent;
+                eprintln!(
+                    "provisioning cleanup owned_pgid={group} absent={absent} before_fixture_teardown=true"
+                );
+            }
+        }
+        self.state.events.lock().unwrap().take();
+        cleaned &= join_test_thread_slot(&mut self.bridge, Duration::from_secs(2));
+        cleaned &= self.state.dispatch.send(DispatchMessage::Stop).is_ok();
+        cleaned &= join_test_thread_slot(&mut self.dispatcher, Duration::from_secs(2));
+        assert!(
+            cleaned || thread::panicking(),
+            "provisioning cleanup failed"
+        );
+    }
+}
+
+#[test]
+fn automatic_local_terminals_default_branch_only_skips_feature_workspaces() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    init_repo_with_default(&repo, "trunk");
+    let repo = std::fs::canonicalize(&repo).unwrap();
+    let config = dir.path().join("config.toml");
+    // No dashboard.toml → default_branch_only.
+    crate::config::save_registry_atomic(&Registry::default(), &config).unwrap();
+    let socket_dir = tempfile::tempdir().unwrap();
+    let socket = socket_dir.path().join("server.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let retained = SessionStore::open(&config).unwrap();
+    let (events, event_receiver) = event_channel(None);
+    let (dispatch, dispatch_receiver) = dispatch_channel(None);
+    let state = Arc::new(ServerState {
+        tasks: None,
+        quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
+        socket: socket.clone(),
+        registry_path: config.clone(),
+        registry: Mutex::new(Registry::default()),
+        sessions: Mutex::new(HashMap::new()),
+        dashboard: ActiveDashboard::default(),
+        retained: parking_lot::Mutex::new(retained),
+        observations: parking_lot::Mutex::new(HashMap::new()),
+        mutation_lock: Mutex::new(()),
+        dispatch,
+        shutdown: AtomicBool::new(false),
+        stopping: AtomicBool::new(false),
+        events: Mutex::new(Some(events)),
+        #[cfg(test)]
+        resize_hook: Mutex::new(None),
+        before_view_publish_hook: Mutex::new(None),
+        before_dashboard_write_hook: Mutex::new(None),
+        #[cfg(feature = "acceptance-diagnostics")]
+        dashboard_monitor: None,
+    });
+    let _cleanup = ProvisioningCleanup::new(state.clone(), event_receiver, dispatch_receiver);
+
+    state
+        .add_project(
+            "fixture".into(),
+            repo.clone(),
+            dir.path().join("workspaces"),
+        )
+        .unwrap();
+    let root_id = state
+        .registry
+        .lock()
+        .unwrap()
+        .project("fixture")
+        .unwrap()
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.path == repo)
+        .unwrap()
+        .id
+        .clone();
+    assert_eq!(live_local_sessions(&state, "fixture", &root_id), 1);
+
+    state
+        .create_workspace(
+            "fixture".into(),
+            "feature-topic".into(),
+            BranchRequest::New {
+                branch: "feature/topic".into(),
+                base: "trunk".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(live_local_sessions(&state, "fixture", "feature-topic"), 0);
+
+    // Explicit terminal launch still works under default_branch_only.
+    let created = state
+        .create_session(ovrcr_protocol::CreateSessionRequest {
+            project: "fixture".into(),
+            workspace: "feature-topic".into(),
+            name: "manual".into(),
+            label: None,
+            argv: vec!["/bin/sh".into()],
+            kind: ovrcr_protocol::SessionKind::Terminal,
+        })
+        .unwrap();
+    assert!(created.phase.is_live());
+}
+
+#[test]
+fn automatic_local_terminals_on_and_off_cover_root_and_feature() {
+    for (policy, expect_root, expect_feature) in [
+        ("on", true, true),
+        ("off", false, false),
+        ("default_branch_only", true, false),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        init_repo_with_default(&repo, "develop");
+        let repo = std::fs::canonicalize(&repo).unwrap();
+        let config = dir.path().join("config.toml");
+        crate::config::save_registry_atomic(&Registry::default(), &config).unwrap();
+        write_local_policy(&config, policy);
+        let socket_dir = tempfile::tempdir().unwrap();
+        let socket = socket_dir.path().join("server.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let retained = SessionStore::open(&config).unwrap();
+        let (events, event_receiver) = event_channel(None);
+        let (dispatch, dispatch_receiver) = dispatch_channel(None);
+        let state = Arc::new(ServerState {
+            tasks: None,
+            quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
+            socket: socket.clone(),
+            registry_path: config.clone(),
+            registry: Mutex::new(Registry::default()),
+            sessions: Mutex::new(HashMap::new()),
+            dashboard: ActiveDashboard::default(),
+            retained: parking_lot::Mutex::new(retained),
+            observations: parking_lot::Mutex::new(HashMap::new()),
+            mutation_lock: Mutex::new(()),
+            dispatch,
+            shutdown: AtomicBool::new(false),
+            stopping: AtomicBool::new(false),
+            events: Mutex::new(Some(events)),
+            #[cfg(test)]
+            resize_hook: Mutex::new(None),
+            before_view_publish_hook: Mutex::new(None),
+            before_dashboard_write_hook: Mutex::new(None),
+            #[cfg(feature = "acceptance-diagnostics")]
+            dashboard_monitor: None,
+        });
+        let _cleanup = ProvisioningCleanup::new(state.clone(), event_receiver, dispatch_receiver);
+
+        state
+            .add_project(
+                "fixture".into(),
+                repo.clone(),
+                dir.path().join("workspaces"),
+            )
+            .unwrap();
+        let root_id = state
+            .registry
+            .lock()
+            .unwrap()
+            .project("fixture")
+            .unwrap()
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.path == repo)
+            .unwrap()
+            .id
+            .clone();
+        assert_eq!(
+            live_local_sessions(&state, "fixture", &root_id) == 1,
+            expect_root,
+            "policy={policy} root"
+        );
+        assert!(
+            !state
+                .registry
+                .lock()
+                .unwrap()
+                .project("fixture")
+                .unwrap()
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == root_id)
+                .unwrap()
+                .setup_pending,
+            "setup_pending must clear for policy={policy}"
+        );
+
+        state
+            .create_workspace(
+                "fixture".into(),
+                "feature-one".into(),
+                BranchRequest::New {
+                    branch: "feature/one".into(),
+                    base: "develop".into(),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            live_local_sessions(&state, "fixture", "feature-one") == 1,
+            expect_feature,
+            "policy={policy} feature"
+        );
+    }
+}
+
+#[test]
+fn changing_automatic_local_policy_leaves_existing_terminals() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    init_repo_with_default(&repo, "main");
+    let repo = std::fs::canonicalize(&repo).unwrap();
+    let config = dir.path().join("config.toml");
+    crate::config::save_registry_atomic(&Registry::default(), &config).unwrap();
+    write_local_policy(&config, "on");
+    let socket_dir = tempfile::tempdir().unwrap();
+    let socket = socket_dir.path().join("server.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let retained = SessionStore::open(&config).unwrap();
+    let (events, event_receiver) = event_channel(None);
+    let (dispatch, dispatch_receiver) = dispatch_channel(None);
+    let state = Arc::new(ServerState {
+        tasks: None,
+        quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
+        socket: socket.clone(),
+        registry_path: config.clone(),
+        registry: Mutex::new(Registry::default()),
+        sessions: Mutex::new(HashMap::new()),
+        dashboard: ActiveDashboard::default(),
+        retained: parking_lot::Mutex::new(retained),
+        observations: parking_lot::Mutex::new(HashMap::new()),
+        mutation_lock: Mutex::new(()),
+        dispatch,
+        shutdown: AtomicBool::new(false),
+        stopping: AtomicBool::new(false),
+        events: Mutex::new(Some(events)),
+        #[cfg(test)]
+        resize_hook: Mutex::new(None),
+        before_view_publish_hook: Mutex::new(None),
+        before_dashboard_write_hook: Mutex::new(None),
+        #[cfg(feature = "acceptance-diagnostics")]
+        dashboard_monitor: None,
+    });
+    let _cleanup = ProvisioningCleanup::new(state.clone(), event_receiver, dispatch_receiver);
+
+    state
+        .add_project(
+            "fixture".into(),
+            repo.clone(),
+            dir.path().join("workspaces"),
+        )
+        .unwrap();
+    let root_id = state
+        .registry
+        .lock()
+        .unwrap()
+        .project("fixture")
+        .unwrap()
+        .workspaces[0]
+        .id
+        .clone();
+    assert_eq!(live_local_sessions(&state, "fixture", &root_id), 1);
+    let before = state.session_summaries().len();
+
+    write_local_policy(&config, "off");
+    // Re-running setup on an already-complete root must not close or recreate shells.
+    state
+        .add_project(
+            "fixture".into(),
+            repo.clone(),
+            dir.path().join("workspaces"),
+        )
+        .unwrap_err();
+    assert_eq!(live_local_sessions(&state, "fixture", &root_id), 1);
+    assert_eq!(state.session_summaries().len(), before);
+}

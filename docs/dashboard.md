@@ -635,8 +635,9 @@ appends `/`; `Enter` keeps the typed text and moves on. An empty field lists
 `picker_roots` from `dashboard.toml`. Name becomes the repository basename once a
 path is chosen. Workspace root defaults to `<config dir>/workspaces/<name>` until
 you edit it, and is created on registration if missing. Registration creates the
-protected repository-root workspace on the detected default branch and starts one
-shell there. It does not switch Git.
+protected repository-root workspace on the detected default branch. Whether it
+also starts a `local` shell there follows `automatic_local_terminals` (default
+**default branch only**). It does not switch Git.
 
 ## Empty states
 
@@ -658,6 +659,7 @@ and a parse error shows in the footer and also uses defaults.
 ```toml
 desktop_notifications = false        # opt in to background Ready and input-needed alerts
 ready_sound = false                  # opt in to a sound for the same two alert kinds
+automatic_local_terminals = "default_branch_only"  # on | off | default_branch_only
 title_model = "pi/gpt-5-mini"        # optional model for agent conversation subjects
 branch_prefix = "feature/"            # prefix for new workspace branches
 picker_roots = ["~/Code", "~/src", "~"]
@@ -666,6 +668,18 @@ picker_roots = ["~/Code", "~/src", "~"]
 name = "claude"
 argv = ["claude", "--verbose"]
 ```
+
+`automatic_local_terminals` controls only **automatic** creation of terminals named
+`local` when a workspace is provisioned:
+
+- `on` — create a local terminal for every newly provisioned workspace.
+- `off` — never create local terminals automatically, including on the default-branch workspace.
+- `default_branch_only` — create a local terminal only in the project's detected default-branch (repository-root) workspace. This is the default when the key is missing.
+
+Changing the setting leaves existing terminals and agents untouched. Explicit
+terminal and agent launches remain available under every option. Cycle the
+preference from Browse with `L`, or edit `dashboard.toml` and keep the running
+server; the next provisioning read picks up the saved value.
 
 `picker_roots` defaults to `~/Code`, `~/src`, and `~`, keeping only the paths
 that exist. An `[[agents]]` row whose name matches a detected agent replaces its

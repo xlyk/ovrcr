@@ -94,7 +94,8 @@ ovrcr 0.1.0 (protocol 3)
 
 Register a repository and tell OVRCR where to put its worktrees. Registration
 creates a protected workspace at the repository checkout, on the detected default
-branch, and starts one shell there. OVRCR manages only registered repositories
+branch, and by default starts one `local` shell there (`automatic_local_terminals =
+"default_branch_only"` in `dashboard.toml`). OVRCR manages only registered repositories
 and workspaces it created, and creates the worktree directory on registration if
 it is missing:
 

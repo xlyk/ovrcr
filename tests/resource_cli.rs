@@ -859,6 +859,20 @@ fn sqlite_migration_is_authoritative_across_online_offline_and_restart() {
         "--base",
         "main",
     ]);
+    // Explicit terminal: default policy no longer auto-creates feature locals.
+    fixture.ok(&[
+        "new",
+        "--project",
+        "fixture",
+        "--workspace",
+        "feature/migrated",
+        "--name",
+        "local",
+        "--",
+        "/bin/sh",
+        "-c",
+        "while :; do sleep 3600; done",
+    ]);
     fixture.capture();
     let online = fixture.json(&[
         "workspace",
