@@ -11,6 +11,14 @@ Use the `ovrcr` on `PATH` (`command -v ovrcr`, then `ovrcr --version`). A `cargo
 
 The full contract is `docs/cli-reference.md` in the ovrcr checkout.
 
+`automatic_local_terminals` is one global preference in `dashboard.toml`:
+
+- `on` creates a `local` shell for every newly provisioned workspace.
+- `off` skips automatic shells, including in the default-branch workspace.
+- `default_branch_only` creates one only in the project's detected default-branch workspace. This is the default when no choice is saved.
+
+Cycle and save it with Browse `L`, or edit `dashboard.toml`. The saved choice survives restart; the running server reads it on the next provisioning request. Changing it leaves existing terminals and agents untouched. Explicit terminal and agent launches work under every option.
+
 ## 1. Resolve the project
 
 ```sh
