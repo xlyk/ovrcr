@@ -542,6 +542,11 @@ tracked in #127; Codex, Pi and Oh My Pi provider acceptance remains separate in
 Tests simulate boot-identity changes while reading
 native boot IDs; they do not reboot the machine.
 
+Detected Hermes launches through the managed process supervisor, with native argv
+unchanged and activity unknown. Native reporting and conversation recovery remain
+unavailable; source review is not native provider acceptance. See the
+[Hermes harness guide](docs/hermes-harness.md) for launch and read-only diagnostics.
+
 ## License
 
 OVRCR is released under the MIT license. See [`LICENSE`](LICENSE) for the full

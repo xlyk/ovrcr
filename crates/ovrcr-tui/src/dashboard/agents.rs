@@ -3,7 +3,7 @@ use std::ffi::{OsStr, OsString};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-const KNOWN_AGENTS: [&str; 11] = [
+const KNOWN_AGENTS: [&str; 12] = [
     "claude",
     "codex",
     "grok",
@@ -15,11 +15,12 @@ const KNOWN_AGENTS: [&str; 11] = [
     "goose",
     "amp",
     "cursor-agent",
+    "hermes",
 ];
 /// Detected agents OVRCR launches through `agent run <name> --` so managed reporting
-/// (or, for Grok, session-history retention for titles) attaches. Explicit custom
+/// (Grok retains history for titles; Hermes has process supervision only). Explicit custom
 /// overrides keep their argv unchanged; a raw shell command is never adopted silently.
-pub const MANAGED_AGENTS: [&str; 5] = ["claude", "codex", "pi", "omp", "grok"];
+pub const MANAGED_AGENTS: [&str; 6] = ["claude", "codex", "pi", "omp", "grok", "hermes"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentSource {
@@ -231,7 +232,7 @@ mod tests {
     #[test]
     fn managed_agents_launch_through_the_agent_run_route() {
         let dir = tempfile::tempdir().unwrap();
-        for name in ["claude", "codex", "pi", "omp", "grok", "gemini"] {
+        for name in ["claude", "codex", "pi", "omp", "grok", "hermes", "gemini"] {
             write_stub(dir.path(), name, 0o755);
         }
         let launcher = Path::new("/opt/ovrcr/bin/ovrcr");
@@ -304,6 +305,56 @@ mod tests {
         assert_eq!(
             overridden.iter().find(|e| e.name == "pi").unwrap().argv,
             vec![OsString::from("/custom/pi")]
+        );
+    }
+
+    #[test]
+    fn hermes_detection_uses_managed_launch_and_preserves_explicit_override() {
+        let dir = tempfile::tempdir().unwrap();
+        write_stub(dir.path(), "hermes", 0o755);
+        let launcher = Path::new("/opt/ovrcr/bin/ovrcr");
+        let entries = detect_agents(dir.path().as_os_str(), None, Some(launcher));
+        let hermes = entries.iter().find(|entry| entry.name == "hermes").unwrap();
+        assert_eq!(hermes.source, AgentSource::Detected);
+        assert_eq!(
+            hermes.argv,
+            vec![
+                launcher.as_os_str().to_owned(),
+                "agent".into(),
+                "run".into(),
+                "hermes".into(),
+                "--".into(),
+                dir.path().join("hermes").into_os_string(),
+            ]
+        );
+        let overridden = apply_overrides(
+            entries,
+            &[AgentOverride {
+                name: "hermes".into(),
+                argv: vec!["/custom/hermes".into(), "--profile".into(), "work".into()],
+            }],
+        );
+        assert_eq!(
+            overridden
+                .iter()
+                .find(|entry| entry.name == "hermes")
+                .unwrap()
+                .argv,
+            vec![
+                OsString::from("/custom/hermes"),
+                "--profile".into(),
+                "work".into()
+            ]
+        );
+        std::fs::set_permissions(
+            dir.path().join("hermes"),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+        assert!(
+            !detect_agents(dir.path().as_os_str(), None, Some(launcher))
+                .iter()
+                .any(|entry| entry.name == "hermes")
         );
     }
 }
