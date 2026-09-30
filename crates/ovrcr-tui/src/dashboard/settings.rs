@@ -2,12 +2,60 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+/// When OVRCR automatically creates a terminal named `local` for new workspaces.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AutomaticLocalTerminals {
+    On,
+    Off,
+    #[default]
+    DefaultBranchOnly,
+}
+
+impl AutomaticLocalTerminals {
+    pub const KEY: &'static str = "automatic_local_terminals";
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::On => "on",
+            Self::Off => "off",
+            Self::DefaultBranchOnly => "default_branch_only",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::On => "on",
+            Self::Off => "off",
+            Self::DefaultBranchOnly => "default branch only",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim() {
+            "on" => Some(Self::On),
+            "off" => Some(Self::Off),
+            "default_branch_only" | "default branch only" => Some(Self::DefaultBranchOnly),
+            _ => None,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::DefaultBranchOnly => Self::On,
+            Self::On => Self::Off,
+            Self::Off => Self::DefaultBranchOnly,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DashboardSettings {
     /// Desktop alerts for new background agent responses and Input requests. Off by default.
     pub desktop_notifications: bool,
     /// A sound for the same two alert kinds, independent of the desktop channel. Off by default.
     pub ready_sound: bool,
+    /// Automatic `local` terminal creation policy. Default branch only when unset.
+    pub automatic_local_terminals: AutomaticLocalTerminals,
     pub agents: Vec<AgentOverride>,
     pub picker_roots: Vec<PathBuf>,
     pub branch_prefix: String,
@@ -25,6 +73,7 @@ impl Default for DashboardSettings {
         Self {
             desktop_notifications: false,
             ready_sound: false,
+            automatic_local_terminals: AutomaticLocalTerminals::default(),
             agents: Vec::new(),
             picker_roots: default_picker_roots(),
             branch_prefix: "feature/".into(),
@@ -39,6 +88,8 @@ struct RawSettings {
     desktop_notifications: bool,
     #[serde(default)]
     ready_sound: bool,
+    #[serde(default)]
+    automatic_local_terminals: Option<String>,
     #[serde(default)]
     agents: Vec<AgentOverride>,
     picker_roots: Option<Vec<String>>,
@@ -69,6 +120,19 @@ pub(super) fn save_alert_setting(
 ) -> anyhow::Result<DashboardSettings> {
     save_settings(path, |document| {
         set_value(&mut document[key], enabled.into());
+        Ok(())
+    })
+}
+
+pub(super) fn save_automatic_local_terminals(
+    path: &Path,
+    policy: AutomaticLocalTerminals,
+) -> anyhow::Result<DashboardSettings> {
+    save_settings(path, |document| {
+        set_value(
+            &mut document[AutomaticLocalTerminals::KEY],
+            policy.as_str().into(),
+        );
         Ok(())
     })
 }
@@ -157,6 +221,11 @@ impl RawSettings {
         DashboardSettings {
             desktop_notifications: self.desktop_notifications,
             ready_sound: self.ready_sound,
+            automatic_local_terminals: self
+                .automatic_local_terminals
+                .as_deref()
+                .and_then(AutomaticLocalTerminals::parse)
+                .unwrap_or_default(),
             agents: self.agents,
             picker_roots: self
                 .picker_roots
@@ -235,6 +304,38 @@ mod tests {
         let (settings, error) = load_dashboard_settings(&path);
         assert!(!settings.ready_sound);
         assert!(error.is_some());
+    }
+
+    #[test]
+    fn automatic_local_terminals_defaults_and_parses() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("dashboard.toml");
+        assert_eq!(
+            load_dashboard_settings(&path).0.automatic_local_terminals,
+            AutomaticLocalTerminals::DefaultBranchOnly
+        );
+        std::fs::write(&path, "automatic_local_terminals = \"on\"\n").unwrap();
+        assert_eq!(
+            load_dashboard_settings(&path).0.automatic_local_terminals,
+            AutomaticLocalTerminals::On
+        );
+        save_automatic_local_terminals(&path, AutomaticLocalTerminals::Off).unwrap();
+        let (settings, error) = load_dashboard_settings(&path);
+        assert!(error.is_none());
+        assert_eq!(
+            settings.automatic_local_terminals,
+            AutomaticLocalTerminals::Off
+        );
+        std::fs::write(&path, "automatic_local_terminals = \"nope\"\n").unwrap();
+        let (settings, error) = load_dashboard_settings(&path);
+        assert!(
+            error.is_none(),
+            "unknown spelling falls back without parse failure"
+        );
+        assert_eq!(
+            settings.automatic_local_terminals,
+            AutomaticLocalTerminals::DefaultBranchOnly
+        );
     }
 
     #[test]

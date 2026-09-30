@@ -122,22 +122,24 @@ ovrcr terminal keystroke "$terminal_id" :ctrl-c:
 ovrcr terminal read "$terminal_id"
 ovrcr terminal read "$terminal_id" --max-lines 5
 ovrcr terminal close "$terminal_id"
-# Workspace creation also started a terminal named local. Find and close it:
-ovrcr terminal list --project example --workspace feature/cli-demo
-ovrcr terminal close LOCAL_TERMINAL_ID
+# With automatic_local_terminals=on, workspace creation also starts a terminal
+# named local. With the default (default_branch_only) it does not; create one
+# explicitly with terminal create / new when needed.
 # Removal keeps stopped sessions in the archive with their original paths:
 ovrcr workspace remove --project example --branch feature/cli-demo
-# Stop the root-workspace shell started by project add, then unregister:
+# Stop any root-workspace shell started by project add (default policy does),
+# then unregister:
 ovrcr terminal list --project example --workspace main
-ovrcr terminal close ROOT_TERMINAL_ID
+ovrcr terminal close ROOT_TERMINAL_ID   # skip when no shell was created
 ovrcr project remove example
 ```
 
 Arguments after `--` are passed directly to the executable. With no executable,
 `terminal create` and `new` launch `$SHELL`. Sessions start at the workspace checkout.
-`project add` creates the `--workspace-root` directory if it is missing, registers
-the protected repository-root workspace on the detected default branch, and starts
-one shell there. It does not switch Git.
+`project add` creates the `--workspace-root` directory if it is missing and registers
+the protected repository-root workspace on the detected default branch. Whether it
+also starts a `local` shell follows `automatic_local_terminals` in `dashboard.toml`
+(default **default branch only**). It does not switch Git.
 `--label TEXT` sets launch metadata such as the executable or agent label.
 Omit `--name` for a stable workspace-based name, or supply `--name TEXT` to
 choose one. Application title updates are ignored for all sessions.

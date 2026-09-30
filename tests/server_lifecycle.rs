@@ -1953,6 +1953,12 @@ fn control_lifecycle_enforces_every_removal_gate() {
 fn workspace_shell_failure_retains_worktree_and_registry() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new();
+    // Force automatic shell creation so a bad SHELL still exercises PartialFailure.
+    std::fs::write(
+        fixture.config.parent().unwrap().join("dashboard.toml"),
+        "automatic_local_terminals = \"on\"\n",
+    )
+    .unwrap();
     fixture.request(Request::AddProject {
         name: "fixture".into(),
         repo: fixture.repo.clone(),

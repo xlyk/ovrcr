@@ -40,6 +40,7 @@ pub(super) enum Action {
     PreviousSession,
     ToggleNotifications,
     ToggleSound,
+    CycleLocalTerminals,
     ToggleSidebar,
     Leader,
     Help,
@@ -331,6 +332,7 @@ impl Dashboard {
             }
             Action::ToggleNotifications => self.toggle_desktop_notifications(),
             Action::ToggleSound => self.toggle_ready_sound(),
+            Action::CycleLocalTerminals => self.cycle_automatic_local_terminals(),
             Action::ToggleSidebar => self.toggle_sidebar(),
             Action::Leader => self.open_whichkey(true),
             Action::Help => self.open_whichkey(false),
@@ -807,6 +809,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         KeyGroup { title: "Dashboard".into(), keys: vec![
             key_binding("N", if dashboard.settings.desktop_notifications { "Disable desktop notifications" } else { "Enable desktop notifications" }, "Toggle notifications for new background agent responses or input requests in this dashboard; no replay".into(), Char('N'), Action::ToggleNotifications).once(),
             key_binding("S", if dashboard.settings.ready_sound { "Disable ready sound" } else { "Enable ready sound" }, "Toggle a sound for new background agent responses or input requests in this dashboard, independent of desktop notifications; no replay".into(), Char('S'), Action::ToggleSound).once(),
+            key_binding("L", "Automatic local terminals", format!("Cycle automatic local terminal creation (currently {}); applies to newly provisioned workspaces only", dashboard.settings.automatic_local_terminals.label()), Char('L'), Action::CycleLocalTerminals).once(),
             key_binding("q", "Detach", "Detach this dashboard; the server and every session keep running".into(), Char('q'), Action::Detach),
         ] },
     ]
@@ -834,5 +837,21 @@ mod agent_search_tests {
                 .key_binding_for(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE))
                 .is_none()
         );
+    }
+}
+
+#[cfg(test)]
+mod local_terminals_binding_tests {
+    use super::*;
+
+    #[test]
+    fn automatic_local_terminals_binding_is_discoverable() {
+        let dashboard = Dashboard::new(ovrcr_protocol::TerminalSize { rows: 24, cols: 80 });
+        let binding = dashboard
+            .key_binding_for(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::NONE))
+            .expect("Browse must expose Automatic local terminals");
+        assert_eq!(binding.name, "Automatic local terminals");
+        assert!(binding.enabled());
+        assert_eq!(binding.action, Action::CycleLocalTerminals);
     }
 }

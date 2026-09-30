@@ -101,6 +101,28 @@ impl Dashboard {
         self.toggle_alert_setting("ready_sound", "Ready sound", !self.settings.ready_sound)
     }
 
+    pub(super) fn cycle_automatic_local_terminals(&mut self) -> DashboardAction {
+        let next = self.settings.automatic_local_terminals.next();
+        if let Some(path) = &self.settings_path {
+            match super::settings::save_automatic_local_terminals(path, next) {
+                Ok(settings) => self.settings = settings,
+                Err(error) => {
+                    self.desktop.notice = Some(format!(
+                        "Could not save automatic local terminals: {error:#}"
+                    ));
+                    return DashboardAction::Redraw;
+                }
+            }
+        } else {
+            self.settings.automatic_local_terminals = next;
+        }
+        self.desktop.notice = Some(format!(
+            "Automatic local terminals: {}",
+            self.settings.automatic_local_terminals.label()
+        ));
+        DashboardAction::Redraw
+    }
+
     fn toggle_alert_setting(&mut self, key: &str, name: &str, enabled: bool) -> DashboardAction {
         if let Some(path) = &self.settings_path {
             match super::settings::save_alert_setting(path, key, enabled) {

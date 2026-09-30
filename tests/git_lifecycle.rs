@@ -9,7 +9,7 @@ use ovrcr::git::{
     BranchSpec, UNAVAILABLE_CHECKOUT, checkout_name, create_worktree, default_branch,
     inspect_worktree, observe_registry, remove_worktree, root_warning, worktree_identity,
 };
-use ovrcr::protocol::{ErrorCode, Request, Response};
+use ovrcr::protocol::{BranchRequest, ErrorCode, Request, Response};
 
 struct GitFixture {
     dir: tempfile::TempDir,
@@ -1163,4 +1163,86 @@ fn detached_root_warning_uses_stored_default() {
     let warning = root_warning(&project).expect("detached root");
     assert!(warning.contains("trunk"), "{warning}");
     assert!(warning.contains("detached"), "{warning}");
+}
+
+#[test]
+fn automatic_local_terminals_policy_controls_provisioning_paths() {
+    for (policy, expect_root, expect_feature) in [
+        (None, true, false), // missing key → default_branch_only
+        (Some("on"), true, true),
+        (Some("off"), false, false),
+        (Some("default_branch_only"), true, false),
+    ] {
+        let fixture = Live::binary();
+        let dashboard = fixture.root.path().join("dashboard.toml");
+        match policy {
+            Some(value) => {
+                std::fs::write(
+                    &dashboard,
+                    format!("automatic_local_terminals = \"{value}\"\n"),
+                )
+                .unwrap();
+            }
+            None => {
+                let _ = std::fs::remove_file(&dashboard);
+            }
+        }
+
+        assert_eq!(
+            fixture.request(Request::AddProject {
+                name: "demo".into(),
+                repo: fixture.repo.clone(),
+                workspace_root: fixture.workspace_root.clone(),
+            }),
+            Response::Ok
+        );
+        let Response::Hierarchy(hierarchy) = fixture.request(Request::List) else {
+            panic!("hierarchy");
+        };
+        let root = hierarchy.projects[0]
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.path == fixture.repo)
+            .unwrap();
+        let root_locals = root
+            .sessions
+            .iter()
+            .filter(|session| session.name == "local" && session.phase.is_live())
+            .count();
+        assert_eq!(
+            root_locals == 1,
+            expect_root,
+            "policy={policy:?} root locals={root_locals}"
+        );
+
+        assert_eq!(
+            fixture.request(Request::CreateWorkspace {
+                project: "demo".into(),
+                id: "feature".into(),
+                branch: BranchRequest::New {
+                    branch: "feature/policy".into(),
+                    base: "main".into(),
+                },
+            }),
+            Response::Ok
+        );
+        let Response::Hierarchy(hierarchy) = fixture.request(Request::List) else {
+            panic!("hierarchy after feature");
+        };
+        let feature = hierarchy.projects[0]
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == "feature")
+            .unwrap();
+        let feature_locals = feature
+            .sessions
+            .iter()
+            .filter(|session| session.name == "local" && session.phase.is_live())
+            .count();
+        assert_eq!(
+            feature_locals == 1,
+            expect_feature,
+            "policy={policy:?} feature locals={feature_locals}"
+        );
+    }
 }
