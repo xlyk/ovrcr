@@ -17,4 +17,3 @@ test doctor_reports_partial_config_proof_missing_and_unsupported_versions_withou
 test doctor_interrupt_cleans_its_owned_version_probe_before_exit ... ok
 
 test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.46s
-

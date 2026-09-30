@@ -1515,4 +1515,3 @@ test dashboard::view_handshake::tests::repeated_snapshotless_acknowledgements_wa
 test dashboard::view_handshake::tests::user_change_owns_the_error_banner_once ... ok
 
 test result: ok. 196 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.89s
-

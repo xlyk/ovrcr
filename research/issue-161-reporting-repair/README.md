@@ -50,6 +50,10 @@ raw reason disclosure; neither is hidden by weakening assertions. An earlier tes
 fixture call failed to compile after adding an interrupted-history parameter; the
 [failed attempt](checks/03-doctor-red.log) is retained separately from behavioral RED.
 Each retained check has a sibling JSON command, result, source revision and diff hash.
+The PR's logs/accessibility text remove only trailing ASCII padding and extra empty
+EOF lines. [Normalization hashes](evidence-normalization.json) identify raw and
+normalized bytes; original captures remain in the task evidence directory. JSON
+and screenshots are unchanged, and the full diff whitespace check remains enabled.
 
 ## Current-main verification
 

@@ -26,4 +26,3 @@ test workspace_removal_protects_provider_history_inside_an_ignored_directory ...
 test workspace_removal_retains_archive_context_through_project_removal_and_restart ... ok
 
 test result: ok. 20 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 84.43s
-

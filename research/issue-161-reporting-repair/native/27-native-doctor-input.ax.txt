@@ -2,70 +2,70 @@ Window: "OVRCR GUI", App: OVRCR GUI.
 0 standard window OVRCR GUI, Secondary Actions: Raise
 	1 container
 		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
- CONSIGINT ────────────────────────────│Unread Unavailable response ready · observed                                                                                  
-  󰘬 main                          root │issue161 verified fixtu… · tokens conv partial 11  cost —                                                                     
+ CONSIGINT ────────────────────────────│Unread Unavailable response ready · observed
+  󰘬 main                          root │issue161 verified fixtu… · tokens conv partial 11  cost —
      $ lo
 		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
-		4 text (settable)  CONSIGINT ────────────────────────────│Unread Unavailable response ready · observed                                                                                  
-		5 text (settable)   󰘬 main                          root │issue161 verified fixtu… · tokens conv partial 11  cost —                                                                     
-		6 text (settable)      $ local                           │agent awaiting certified resume                                                                                               
-		7 text (settable)   󰘬 gui-consigint-auth-handoff         │OWNED SYNTHETIC CLAUDE FIXTURE. Commands: ready, freeze, doctor, ping, quit.                                                  
-		8 text (settable)      $ local                           │ready                                                                                                                         
-		9 text (settable)      - review auth handoff    grok:4.6 │FIXTURE_READY_HANDLED                                                                                                         
-		10 text (settable)      · issue161 fixture             [x]│freeze                                                                                                                        
-		11 text (settable) ▌    ✓ issue161 verified fixt…  claude │FIXTURE_FREEZE_HANDLED                                                                                                        
-		12 text (settable)   󰘬 gui-consigint-worktree-lifecycle   │doctor                                                                                                                        
-		13 text (settable)      $ local                           │DOCTOR_STATUS=reporting_unavailable                                                                                           
-		14 text (settable)      - implement lif…  claude:sonnet-4 │DOCTOR_REASON=identity_transition_unavailable                                                                                 
+		4 text (settable)  CONSIGINT ────────────────────────────│Unread Unavailable response ready · observed
+		5 text (settable)   󰘬 main                          root │issue161 verified fixtu… · tokens conv partial 11  cost —
+		6 text (settable)      $ local                           │agent awaiting certified resume
+		7 text (settable)   󰘬 gui-consigint-auth-handoff         │OWNED SYNTHETIC CLAUDE FIXTURE. Commands: ready, freeze, doctor, ping, quit.
+		8 text (settable)      $ local                           │ready
+		9 text (settable)      - review auth handoff    grok:4.6 │FIXTURE_READY_HANDLED
+		10 text (settable)      · issue161 fixture             [x]│freeze
+		11 text (settable) ▌    ✓ issue161 verified fixt…  claude │FIXTURE_FREEZE_HANDLED
+		12 text (settable)   󰘬 gui-consigint-worktree-lifecycle   │doctor
+		13 text (settable)      $ local                           │DOCTOR_STATUS=reporting_unavailable
+		14 text (settable)      - implement lif…  claude:sonnet-4 │DOCTOR_REASON=identity_transition_unavailable
 		15 text (settable)      - review websocke…  codex:gpt-5.4 │Reporting cannot safely identify the foreground conversation after an unsupported or ambiguous transition. Claude is still usa
-		16 text (settable)      - plan snapshot res…  pi:grok-4.6 │ble; configuration repair cannot recover this reporting lifetime. When ready, start a fresh supervised invocation with `ovrcr 
-		17 text (settable)                                        │agent run claude -- claude`.                                                                                                  
-		18 text (settable)  SPACELIFT-AGENT ──────────────────────│ping                                                                                                                          
-		19 text (settable)   󰘬 main                          root │CUA_NATIVE_INPUT_OK                                                                                                           
-		20 text (settable)      $ local                           │                                                                                                                              
-		21 text (settable)   󰘬 gui-spacelift-agent-pipeline-progr…│                                                                                                                              
-		22 text (settable)      $ local                           │                                                                                                                              
-		23 text (settable)      - build pipeline …  claude:opus-4 │                                                                                                                              
-		24 text (settable)   󰘬 gui-spacelift-agent-scope-quality  │                                                                                                                              
-		25 text (settable)      $ local                           │                                                                                                                              
-		26 text (settable)      - review scope qu…  codex:gpt-5.4 │                                                                                                                              
-		27 text (settable)                                        │                                                                                                                              
-		28 text (settable)                                        │                                                                                                                              
-		29 text (settable)                                        │                                                                                                                              
-		30 text (settable)                                        │                                                                                                                              
-		31 text (settable)                                        │                                                                                                                              
-		32 text (settable)                                        │                                                                                                                              
-		33 text (settable)                                        │                                                                                                                              
-		34 text (settable)                                        │                                                                                                                              
-		35 text (settable)                                        │                                                                                                                              
-		36 text (settable)                                        │                                                                                                                              
-		37 text (settable)                                        │                                                                                                                              
-		38 text (settable)                                        │                                                                                                                              
-		39 text (settable)                                        │                                                                                                                              
-		40 text (settable)                                        │                                                                                                                              
-		41 text (settable)                                        │                                                                                                                              
-		42 text (settable)                                        │                                                                                                                              
-		43 text (settable)                                        │                                                                                                                              
-		44 text (settable)                                        │                                                                                                                              
-		45 text (settable)                                        │                                                                                                                              
-		46 text (settable)                                        │                                                                                                                              
-		47 text (settable)                                        │                                                                                                                              
-		48 text (settable)                                        │                                                                                                                              
-		49 text (settable)                                        │                                                                                                                              
-		50 text (settable)                                        │                                                                                                                              
-		51 text (settable)                                        │                                                                                                                              
-		52 text (settable)                                        │                                                                                                                              
-		53 text (settable)                                        │                                                                                                                              
-		54 text (settable)                                        │                                                                                                                              
-		55 text (settable)                                        │                                                                                                                              
-		56 text (settable)                                        │                                                                                                                              
-		57 text (settable)                                        │                                                                                                                              
-		58 text (settable)                                        │                                                                                                                              
-		59 text (settable) Quota left                             │                                                                                                                              
-		60 text (settable) Claude — unavailable                   │                                                                                                                              
-		61 text (settable) Codex — unavailable                    │                                                                                                                              
-		62 text (settable) Grok — unavailable                     │                                                                                                                              
-		63 text (settable) Terminal mode  Ctrl-g browse  then s Agents                                                                                                                           
+		16 text (settable)      - plan snapshot res…  pi:grok-4.6 │ble; configuration repair cannot recover this reporting lifetime. When ready, start a fresh supervised invocation with `ovrcr
+		17 text (settable)                                        │agent run claude -- claude`.
+		18 text (settable)  SPACELIFT-AGENT ──────────────────────│ping
+		19 text (settable)   󰘬 main                          root │CUA_NATIVE_INPUT_OK
+		20 text (settable)      $ local                           │
+		21 text (settable)   󰘬 gui-spacelift-agent-pipeline-progr…│
+		22 text (settable)      $ local                           │
+		23 text (settable)      - build pipeline …  claude:opus-4 │
+		24 text (settable)   󰘬 gui-spacelift-agent-scope-quality  │
+		25 text (settable)      $ local                           │
+		26 text (settable)      - review scope qu…  codex:gpt-5.4 │
+		27 text (settable)                                        │
+		28 text (settable)                                        │
+		29 text (settable)                                        │
+		30 text (settable)                                        │
+		31 text (settable)                                        │
+		32 text (settable)                                        │
+		33 text (settable)                                        │
+		34 text (settable)                                        │
+		35 text (settable)                                        │
+		36 text (settable)                                        │
+		37 text (settable)                                        │
+		38 text (settable)                                        │
+		39 text (settable)                                        │
+		40 text (settable)                                        │
+		41 text (settable)                                        │
+		42 text (settable)                                        │
+		43 text (settable)                                        │
+		44 text (settable)                                        │
+		45 text (settable)                                        │
+		46 text (settable)                                        │
+		47 text (settable)                                        │
+		48 text (settable)                                        │
+		49 text (settable)                                        │
+		50 text (settable)                                        │
+		51 text (settable)                                        │
+		52 text (settable)                                        │
+		53 text (settable)                                        │
+		54 text (settable)                                        │
+		55 text (settable)                                        │
+		56 text (settable)                                        │
+		57 text (settable)                                        │
+		58 text (settable)                                        │
+		59 text (settable) Quota left                             │
+		60 text (settable) Claude — unavailable                   │
+		61 text (settable) Codex — unavailable                    │
+		62 text (settable) Grok — unavailable                     │
+		63 text (settable) Terminal mode  Ctrl-g browse  then s Agents
 	64 close button
 	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
 	66 minimize button
@@ -74,6 +74,6 @@ Window: "OVRCR GUI", App: OVRCR GUI.
 	69 OVRCR GUI
 
 The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
- CONSIGINT ────────────────────────────│Unread Unavailable response ready · observed                                                                                  
-  󰘬 main                          root │issue161 verified fixtu… · tokens conv partial 11  cost —                                                                     
+ CONSIGINT ────────────────────────────│Unread Unavailable response ready · observed
+  󰘬 main                          root │issue161 verified fixtu… · tokens conv partial 11  cost —
      $ lo

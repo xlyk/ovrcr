@@ -17,4 +17,3 @@ test report::claude_metrics::tests::native_quota_distinguishes_missing_zero_exha
 test report::claude_metrics::tests::production_identity_cap_preserves_oldest_and_freezes_at_cap_plus_one ... ok
 
 test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 85 filtered out; finished in 0.37s
-
