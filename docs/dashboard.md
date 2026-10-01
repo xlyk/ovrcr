@@ -504,19 +504,14 @@ reporting support.
 Workspace defaults to the selected workspace. Name is optional: leave it blank
 for a stable workspace-based name, or enter your own name. After creation, typing goes to the new
 session immediately. `n` and other new launches are unavailable when the selected
-root workspace shows a warning. Detected `claude`, `codex`, `pi`, `omp`, `grok` and `hermes`
-entries launch through the managed `agent run` route; an
+root workspace shows a warning. Detected `claude`, `codex`, `pi`, `omp` and `grok`
+entries launch through the managed `agent run` route so reporting can attach; an
 `agents` override replaces the command entirely. Claude, Codex, Pi and Oh My Pi
 deliver Ready/Unread on their supported readiness paths (Claude Ready is Observed,
 never Confirmed settling). Claude/Codex Input-request support remains unavailable
 until their dependent tickets. Missing hook configuration shows
 a persistent Dashboard banner with the exact setup command; observed reporting loss
 keeps an `unavailable` status with its published reason.
-
-Hermes uses the same process supervisor with native arguments unchanged. Its row
-shows unknown activity; reporting, Ready/Unread, Input requests, metrics, generated
-titles and recovery remain unavailable. See [Hermes harness](hermes-harness.md) for
-setup/doctor guidance and the distinction between source review and native acceptance.
 
 ### Create workspace (`w`)
 

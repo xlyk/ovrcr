@@ -23,7 +23,6 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
             settings,
         } => {
             return match provider.as_str() {
-                "hermes" => super::hermes::setup(settings.as_deref()),
                 "grok" => Err(grok_needs_no_setup()),
                 "codex" => super::codex_setup::setup(settings.as_deref()),
                 "pi" | "omp" => super::managed::setup(
@@ -40,7 +39,6 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
         } => {
             let executable = executable.unwrap_or_else(|| provider.clone().into());
             return match provider.as_str() {
-                "hermes" => super::hermes::doctor(settings.as_deref(), session, &executable),
                 "grok" => Err(grok_needs_no_setup()),
                 "codex" => super::codex_setup::doctor(settings.as_deref(), session, &executable),
                 "pi" | "omp" => super::managed::doctor(
@@ -61,32 +59,22 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
         ),
     };
     let swallow_conflict = name != "claude";
-    // Hermes has no verified reporting adapter or conversation identity. Process
-    // supervision needs no reporting reservation and must not displace another reporter.
-    let mut lease = if name == "hermes" {
-        None
-    } else {
-        ovrcr::report::reserve_invocation_for(provider(&name))
-            .or_else(|error| {
-                if swallow_conflict {
-                    Ok(None)
-                } else {
-                    Err(error)
-                }
-            })
-            .map_err(|error| {
-                if let Some(report) = error.downcast_ref::<ovrcr::report::ReportError>() {
-                    RuntimeError::new(report.code(), report.to_string())
-                } else {
-                    RuntimeError::internal(error)
-                }
-            })?
-    };
+    let mut lease = ovrcr::report::reserve_invocation_for(provider(&name))
+        .or_else(|error| {
+            if swallow_conflict {
+                Ok(None)
+            } else {
+                Err(error)
+            }
+        })
+        .map_err(|error| {
+            if let Some(report) = error.downcast_ref::<ovrcr::report::ReportError>() {
+                RuntimeError::new(report.code(), report.to_string())
+            } else {
+                RuntimeError::internal(error)
+            }
+        })?;
     let status = ovrcr::agent_runner::run_native(&argv, move |available, native_argv| {
-        if name == "hermes" {
-            eprintln!("Hermes activity/reporting and recovery are unavailable; supervising native process only (see `ovrcr agent doctor hermes --json`).");
-            return None;
-        }
         if !available {
             drop(lease.take());
             eprintln!(
