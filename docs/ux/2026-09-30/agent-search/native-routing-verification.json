@@ -1,0 +1,311 @@
+{
+  "revision": "248e2e5f48681ea90c7516e09b149772dd92ae4b",
+  "session_count": 50,
+  "agent_count": 38,
+  "identities_runs_pids_phases_unread_preserved": true,
+  "unicode_marker_only_session": 14,
+  "fifty_marker_only_session": 50,
+  "overlay_queries_and_confirmation_enter_absent_from_synthetic_children": true,
+  "screens": {
+    "1": {
+      "cols": 37,
+      "id": 1,
+      "rows": 18,
+      "text": "consigint › printf 'CUA_CONFIG=%s\\nCU\nCUA_CONFIG=/var/folders/j9/h6rlffxd1r\nCUA_SOCKET=/var/folders/j9/h6rlffxd1r\nconsigint › "
+    },
+    "2": {
+      "cols": 120,
+      "id": 2,
+      "rows": 40,
+      "text": "spacelift-agent › "
+    },
+    "3": {
+      "cols": 120,
+      "id": 3,
+      "rows": 40,
+      "text": "4cb3796581ea55ff1c889b09d1df38dd › "
+    },
+    "4": {
+      "cols": 120,
+      "id": 4,
+      "rows": 40,
+      "text": "c0922cd111dad454c04a391d5975a796 › "
+    },
+    "5": {
+      "cols": 120,
+      "id": 5,
+      "rows": 40,
+      "text": "b434095fa2b2a374913e1a86a3dcdcd7 › "
+    },
+    "6": {
+      "cols": 120,
+      "id": 6,
+      "rows": 40,
+      "text": "3a3fc90fccb46ceda74faac4157f3eee › "
+    },
+    "7": {
+      "cols": 120,
+      "id": 7,
+      "rows": 40,
+      "text": "╭─ claude / sonnet-4 ────────────────────────────────────────╮\n│ fixture: lifecycle cleanup\n╰──────────────────────────────────────────────────╯\n\n✓ deterministic local transcript ready\nsh-3.2$ "
+    },
+    "8": {
+      "cols": 120,
+      "id": 8,
+      "rows": 40,
+      "text": "╭─ codex / gpt-5.4 ────────────────────────────────────────╮\n│ fixture: websocket shutdown review\n╰──────────────────────────────────────────────────╯\n\n✓ deterministic local transcript ready\nsh-3.2$ "
+    },
+    "9": {
+      "cols": 120,
+      "id": 9,
+      "rows": 40,
+      "text": "╭─ pi / grok-4.6 ────────────────────────────────────────╮\n│ fixture: snapshot restore plan\n╰──────────────────────────────────────────────────╯\n\n✓ deterministic local transcript ready\nsh-3.2$ "
+    },
+    "10": {
+      "cols": 120,
+      "id": 10,
+      "rows": 40,
+      "text": "╭─ grok / grok-4.6 ────────────────────────────────────────╮\n│ fixture: authentication handoff review\n╰──────────────────────────────────────────────────╯\n\n✓ deterministic local transcript ready\nsh-3.2$ "
+    },
+    "11": {
+      "cols": 120,
+      "id": 11,
+      "rows": 40,
+      "text": "╭─ claude / opus-4 ────────────────────────────────────────╮\n│ fixture: pipeline progress fixture\n╰──────────────────────────────────────────────────╯\n\n✓ deterministic local transcript ready\nsh-3.2$ "
+    },
+    "12": {
+      "cols": 120,
+      "id": 12,
+      "rows": 40,
+      "text": "╭─ codex / gpt-5.4 ────────────────────────────────────────╮\n│ fixture: scope quality review\n╰──────────────────────────────────────────────────╯\n\n✓ deterministic local transcript ready\nsh-3.2$ "
+    },
+    "13": {
+      "cols": 126,
+      "id": 13,
+      "rows": 57,
+      "text": "READY_synthetic-00"
+    },
+    "14": {
+      "cols": 126,
+      "id": 14,
+      "rows": 57,
+      "text": "READY_synthetic-01\nRECEIVED_synthetic-01_UNICODE_DESTINATION_OK"
+    },
+    "15": {
+      "cols": 126,
+      "id": 15,
+      "rows": 57,
+      "text": "READY_synthetic-02"
+    },
+    "16": {
+      "cols": 126,
+      "id": 16,
+      "rows": 57,
+      "text": "READY_synthetic-03"
+    },
+    "17": {
+      "cols": 126,
+      "id": 17,
+      "rows": 57,
+      "text": "READY_synthetic-04"
+    },
+    "18": {
+      "cols": 126,
+      "id": 18,
+      "rows": 57,
+      "text": "READY_synthetic-05"
+    },
+    "19": {
+      "cols": 126,
+      "id": 19,
+      "rows": 57,
+      "text": "READY_synthetic-06"
+    },
+    "20": {
+      "cols": 126,
+      "id": 20,
+      "rows": 57,
+      "text": "READY_synthetic-07"
+    },
+    "21": {
+      "cols": 126,
+      "id": 21,
+      "rows": 57,
+      "text": "READY_synthetic-08"
+    },
+    "22": {
+      "cols": 126,
+      "id": 22,
+      "rows": 57,
+      "text": "READY_synthetic-09"
+    },
+    "23": {
+      "cols": 126,
+      "id": 23,
+      "rows": 57,
+      "text": "READY_synthetic-10"
+    },
+    "24": {
+      "cols": 126,
+      "id": 24,
+      "rows": 57,
+      "text": "READY_synthetic-11"
+    },
+    "25": {
+      "cols": 126,
+      "id": 25,
+      "rows": 57,
+      "text": "READY_synthetic-12"
+    },
+    "26": {
+      "cols": 126,
+      "id": 26,
+      "rows": 57,
+      "text": "READY_synthetic-13"
+    },
+    "27": {
+      "cols": 126,
+      "id": 27,
+      "rows": 57,
+      "text": "READY_synthetic-14"
+    },
+    "28": {
+      "cols": 126,
+      "id": 28,
+      "rows": 57,
+      "text": "READY_synthetic-15"
+    },
+    "29": {
+      "cols": 126,
+      "id": 29,
+      "rows": 57,
+      "text": "READY_synthetic-16"
+    },
+    "30": {
+      "cols": 126,
+      "id": 30,
+      "rows": 57,
+      "text": "READY_synthetic-17"
+    },
+    "31": {
+      "cols": 126,
+      "id": 31,
+      "rows": 57,
+      "text": "READY_synthetic-18"
+    },
+    "32": {
+      "cols": 126,
+      "id": 32,
+      "rows": 57,
+      "text": "READY_synthetic-19"
+    },
+    "33": {
+      "cols": 126,
+      "id": 33,
+      "rows": 57,
+      "text": "READY_synthetic-20"
+    },
+    "34": {
+      "cols": 126,
+      "id": 34,
+      "rows": 57,
+      "text": "READY_synthetic-21"
+    },
+    "35": {
+      "cols": 126,
+      "id": 35,
+      "rows": 57,
+      "text": "READY_synthetic-22"
+    },
+    "36": {
+      "cols": 126,
+      "id": 36,
+      "rows": 57,
+      "text": "READY_synthetic-23"
+    },
+    "37": {
+      "cols": 126,
+      "id": 37,
+      "rows": 57,
+      "text": "READY_synthetic-24"
+    },
+    "38": {
+      "cols": 126,
+      "id": 38,
+      "rows": 57,
+      "text": "READY_synthetic-25"
+    },
+    "39": {
+      "cols": 126,
+      "id": 39,
+      "rows": 57,
+      "text": "READY_synthetic-26"
+    },
+    "40": {
+      "cols": 126,
+      "id": 40,
+      "rows": 57,
+      "text": "READY_synthetic-27"
+    },
+    "41": {
+      "cols": 126,
+      "id": 41,
+      "rows": 57,
+      "text": "READY_synthetic-28"
+    },
+    "42": {
+      "cols": 126,
+      "id": 42,
+      "rows": 57,
+      "text": "READY_synthetic-29"
+    },
+    "43": {
+      "cols": 126,
+      "id": 43,
+      "rows": 57,
+      "text": "READY_synthetic-30"
+    },
+    "44": {
+      "cols": 126,
+      "id": 44,
+      "rows": 57,
+      "text": "READY_synthetic-31"
+    },
+    "45": {
+      "cols": 126,
+      "id": 45,
+      "rows": 57,
+      "text": "READY_synthetic-32"
+    },
+    "46": {
+      "cols": 126,
+      "id": 46,
+      "rows": 57,
+      "text": "READY_synthetic-33"
+    },
+    "47": {
+      "cols": 126,
+      "id": 47,
+      "rows": 57,
+      "text": "READY_synthetic-34"
+    },
+    "48": {
+      "cols": 126,
+      "id": 48,
+      "rows": 57,
+      "text": "READY_synthetic-35"
+    },
+    "49": {
+      "cols": 126,
+      "id": 49,
+      "rows": 57,
+      "text": "READY_synthetic-36"
+    },
+    "50": {
+      "cols": 37,
+      "id": 50,
+      "rows": 18,
+      "text": "READY_synthetic-37\nRECEIVED_synthetic-37_FIFTY_NATIVE_OK\nRECEIVED_synthetic-37_s"
+    }
+  }
+}

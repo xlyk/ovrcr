@@ -1,0 +1,21 @@
+{
+  "application_revision": "248e2e5f48681ea90c7516e09b149772dd92ae4b",
+  "branch": "work/issue-216-acceptance-20260930",
+  "source_worktree_clean_at_build": true,
+  "command": "rtk proxy just gui",
+  "build_exit_code": 0,
+  "build_seconds": 21.9,
+  "launcher_session": 28644,
+  "launcher_exit_code": 0,
+  "bundle_binary_sha256": {
+    "ovrcr": "f9a4f6e9574037bec010fbdcbe6d20478b0f11443ee6b8c23355850e1ada46a3",
+    "ovrcr-gui": "02648496742c265a94fb65fc173f738f97846b0af53682b0d587f2cb6ad34ab3"
+  },
+  "host": {
+    "os": "macOS",
+    "version": "26.5.2",
+    "build": "25F84",
+    "arch": "arm64"
+  },
+  "recorded_at": "2026-09-30T22:31:16.004338+00:00"
+}
