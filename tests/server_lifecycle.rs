@@ -7372,6 +7372,153 @@ fn agent_run_native_helper() {
 }
 
 #[test]
+fn hermes_supervision_preserves_job_control_failure_and_peer_isolation() {
+    let fixture = ControlFixture::new_bounded();
+    fixture.ready("agent-hooks");
+    let peer = fixture.create_session_summary("hermes-peer", vec![
+        "sh".into(), "-c".into(),
+        "printf 'HERMES_PEER_READY\\n'; while IFS= read -r line; do printf 'HERMES_PEER_REPLY:%s\\n' \"$line\"; done".into(),
+    ]);
+    fixture.record_process_group(&peer);
+    fixture.wait_terminal_contains(peer.id, "HERMES_PEER_READY");
+    let probe = fixture.root.path().join("hermes-control-probe");
+    let summary = fixture.create_session_with_kind(
+        ovrcr_protocol::SessionKind::Agent { name: "hermes".into() },
+        "hermes-control",
+        vec![
+            "sh".into(), "-c".into(),
+            r#"stty -echo; stty -g > "$3.before"; export OVRCR_NATIVE_PROBE="$3"; "$1" agent run hermes -- "$2" --ignored --exact agent_run_native_helper --nocapture; code=$?; stty -g > "$3.after"; printf 'HERMES_WRAPPER_FINISHED=%s\n' "$code"; IFS= read -r done; printf HERMES_SHELL_RESTORED; exit "$code""#.into(),
+            "hermes-control-fixture".into(), env!("CARGO_BIN_EXE_ovrcr").into(),
+            std::env::current_exe().unwrap().into_os_string(), probe.clone().into_os_string(),
+        ],
+    );
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains(summary.id, "NATIVE_READY");
+    let values: Vec<i32> = std::fs::read_to_string(&probe)
+        .unwrap()
+        .split_whitespace()
+        .map(|value| value.parse().unwrap())
+        .collect();
+    let (pid, pgid, launcher, foreground) = (values[0], values[1], values[2], values[3]);
+    assert_eq!(unsafe { libc::getpgid(pid) }, pgid);
+    assert_eq!(pid, pgid, "native must own its group");
+    assert_eq!(foreground, pgid, "native must own terminal foreground");
+    fixture.own_group(pgid);
+    let native = PausePeer {
+        pid,
+        pgid,
+        address: probe.clone(),
+        preexit_marker: String::new(),
+    };
+    assert_eq!(
+        fixture.session_summary(summary.id).agent_epoch,
+        0,
+        "Hermes must not reserve reporting"
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "\u{3}".into(),
+            submit: false,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "NATIVE_INTERRUPTS=1");
+    assert_eq!(
+        fixture.request(Request::PauseSession {
+            session: summary.id
+        }),
+        Response::Ok
+    );
+    wait_peer_stopped(&native, Duration::from_secs(2));
+    assert_eq!(fixture.session_phase(summary.id), SessionPhase::Paused);
+    assert!(
+        matches!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: "must-not-reach-paused-child".into(),
+                submit: true,
+            }),
+            Response::Error { code: ErrorCode::Conflict, message } if message.contains("session is paused")
+        ),
+        "paused input must be refused"
+    );
+    assert_eq!(
+        fixture.request(Request::ResumeSession {
+            session: summary.id
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "hermes-after-resume".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "NATIVE_INPUT=hermes-after-resume");
+    assert_eq!(
+        std::fs::read_to_string(probe.with_extension("interrupts")).unwrap(),
+        "1"
+    );
+    let active = fixture.session_summary(summary.id);
+    assert_eq!(active.phase, SessionPhase::Running);
+    assert_eq!(active.agent_epoch, 0);
+    assert!(active.agent.is_none() && active.unread.is_none());
+    assert_eq!(unsafe { libc::kill(launcher, libc::SIGTERM) }, 0);
+    fixture.wait_terminal_contains(summary.id, "HERMES_WRAPPER_FINISHED=23");
+    assert_eq!(
+        std::fs::read(probe.with_extension("before")).unwrap(),
+        std::fs::read(probe.with_extension("after")).unwrap(),
+        "restore outer shell termios after failure"
+    );
+    assert!(
+        live::wait_group_absent(pgid, Duration::from_secs(2)),
+        "native group remains after forwarded termination"
+    );
+    let endpoint = std::fs::read_to_string(probe.with_extension("endpoint")).unwrap();
+    assert!(
+        !Path::new(&endpoint).exists(),
+        "private invocation socket remains"
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "finish".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "HERMES_SHELL_RESTORED");
+    fixture.wait_exited(summary.id);
+    assert_eq!(
+        fixture.session_phase(summary.id),
+        SessionPhase::Exited {
+            code: Some(23),
+            signal: None
+        }
+    );
+    assert!(live::wait_group_absent(
+        summary.pid.unwrap() as i32,
+        Duration::from_secs(2)
+    ));
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: peer.id,
+            text: "after-hermes-failure".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(peer.id, "HERMES_PEER_REPLY:after-hermes-failure");
+    assert_eq!(fixture.session_phase(peer.id), SessionPhase::Running);
+    println!(
+        "HERMES_SYNTHETIC_CONTROL native_group_removed=true private_endpoint_removed=true exit=23 peer_usable=true"
+    );
+}
+
+#[test]
 fn agent_run_owns_native_group_and_restores_terminal_after_forwarded_term() {
     let fixture = ControlFixture::new_bounded();
     fixture.create_hook_child("setup", "agent-run-setup");
@@ -9779,6 +9926,9 @@ fn codex_hook_native_helper() {
         )
         .unwrap();
     }
+    let configured: Option<toml::Value> = std::env::var_os("OVRCR_TEST_HOOK_CONFIG")
+        .filter(|path| !path.is_empty())
+        .map(|path| toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap());
     println!("CODEX_NATIVE_READY");
     for (index, line) in std::io::stdin().lock().lines().enumerate() {
         let line = line.unwrap();
@@ -9802,6 +9952,9 @@ fn codex_hook_native_helper() {
         if parts.get(3) == Some(&"compact-source") {
             payload["source"] = "compact".into();
         }
+        if parts.get(3) == Some(&"fork-source") {
+            payload["source"] = "fork".into();
+        }
         if parts.get(3) == Some(&"missing") {
             payload.as_object_mut().unwrap().remove("turn_id");
         }
@@ -9812,6 +9965,44 @@ fn codex_hook_native_helper() {
         } else {
             payload.to_string().into_bytes()
         };
+        if let Some(configured) = &configured {
+            // Bounded native-dispatch fixture: Codex 0.155.1 matches SessionStart
+            // against source. Exercise only generated unfiltered and legacy exact
+            // alternation groups, not a substitute for native regex/trust acceptance.
+            let mut dispatched = 0;
+            for group in configured["hooks"][parts[0]].as_array().unwrap() {
+                if parts[0] == "SessionStart" {
+                    match group.get("matcher").and_then(toml::Value::as_str) {
+                        None | Some("") => {}
+                        Some("startup|resume|clear|compact") => {
+                            let source = payload["source"].as_str().unwrap();
+                            if !["startup", "resume", "clear", "compact"].contains(&source) {
+                                continue;
+                            }
+                        }
+                        other => panic!("fixture does not model matcher {other:?}"),
+                    }
+                }
+                for handler in group["hooks"].as_array().unwrap() {
+                    assert_eq!(handler["type"].as_str(), Some("command"));
+                    assert!(handler.get("async").is_none());
+                    let mut child = Command::new("/bin/sh")
+                        .args(["-c", handler["command"].as_str().unwrap()])
+                        .stdin(std::process::Stdio::piped())
+                        .stdout(std::process::Stdio::piped())
+                        .spawn()
+                        .unwrap();
+                    child.stdin.take().unwrap().write_all(&bytes).unwrap();
+                    let output = child.wait_with_output().unwrap();
+                    assert!(output.status.success());
+                    assert!(output.stdout.is_empty());
+                    dispatched += 1;
+                }
+            }
+            println!("CODEX_REPORTERS={index}:{dispatched}");
+            println!("CODEX_CALLBACK={index}");
+            continue;
+        }
         let mut command = if parts.get(3) == Some(&"grandchild") {
             let mut command = Command::new("/bin/sh");
             command.args([
@@ -10028,9 +10219,23 @@ fn codex_session_named(
     socket: &Path,
     name: &str,
 ) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
+    codex_session_with_hook_settings(fixture, socket, name, None)
+}
+
+fn codex_session_with_hook_settings(
+    fixture: &ControlFixture,
+    socket: &Path,
+    name: &str,
+    settings: Option<&Path>,
+) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
     use std::os::unix::fs::PermissionsExt;
     let native = fixture.root.path().join("codex");
-    std::fs::write(&native, "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'codex-cli 0.153.1\\n'; exit; fi\nexec \"$OVRCR_TEST_EXECUTABLE\" --ignored --exact codex_hook_native_helper --nocapture\n").unwrap();
+    let native_version = if settings.is_some() {
+        "0.155.1"
+    } else {
+        "0.153.1"
+    };
+    std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'codex-cli {native_version}\\n'; exit; fi\nexec \"$OVRCR_TEST_EXECUTABLE\" --ignored --exact codex_hook_native_helper --nocapture\n")).unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
     let probe = fixture.root.path().join(format!("{name}-channel"));
     // Isolate CODEX_HOME so prepare_managed_launch never stops a host Codex daemon.
@@ -10039,9 +10244,9 @@ fn codex_session_named(
     let summary = fixture.create_codex_session_summary(name, vec![
         "/bin/sh".into(), "-c".into(),
         r#"stty -echo; printf '%s
-' "$OVRCR_HOOK_TOKEN" > "$4.capability"; export CODEX_HOME="$6" OVRCR_TEST_EXECUTABLE="$3" OVRCR_TEST_PROBE="$4" OVRCR_HOOK_SOCKET="$5"; "$1" agent run codex -- "$2"; printf 'CODEX_NATIVE_EXIT=%s
+' "$OVRCR_HOOK_TOKEN" > "$4.capability"; export CODEX_HOME="$6" OVRCR_TEST_EXECUTABLE="$3" OVRCR_TEST_PROBE="$4" OVRCR_HOOK_SOCKET="$5" OVRCR_TEST_HOOK_CONFIG="$7"; "$1" agent run codex -- "$2"; printf 'CODEX_NATIVE_EXIT=%s
 ' "$?"; IFS= read -r done"#.into(),
-        "codex-fixture".into(), env!("CARGO_BIN_EXE_ovrcr").into(), native.into_os_string(), std::env::current_exe().unwrap().into_os_string(), probe.clone().into_os_string(), socket.as_os_str().into(), codex_home.into_os_string(),
+        "codex-fixture".into(), env!("CARGO_BIN_EXE_ovrcr").into(), native.into_os_string(), std::env::current_exe().unwrap().into_os_string(), probe.clone().into_os_string(), socket.as_os_str().into(), codex_home.into_os_string(), settings.map_or_else(OsString::new, |path| path.as_os_str().into()),
     ]);
     fixture.record_process_group(&summary);
     fixture.wait_terminal_contains_until(
@@ -11419,6 +11624,261 @@ fn codex_input_requests_wait_alert_once_each_and_restore_without_unread() {
     );
 
     dashboard.detach();
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "CODEX_NATIVE_EXIT=17");
+}
+
+#[test]
+fn codex_setup_dispatches_fork_to_existing_identity_guard() {
+    let _guard = env_lock();
+    use ovrcr::protocol::{AgentActivity, ReporterHealth};
+    const CURRENT: &str = "01a08e5c-7480-7052-9964-9224aadebef0";
+    const FORKED: &str = "01a08e94-0deb-76c3-a2b5-540c4874a53f";
+    for legacy in [false, true] {
+        let fixture = ControlFixture::new_bounded();
+        fixture.create_hook_child("setup", "codex-setup");
+        let path = fixture.root.path().join("generated-codex.toml");
+        let setup = |settings: bool| {
+            let mut args = vec!["agent", "setup", "codex", "--print"];
+            if settings {
+                args.extend(["--settings", path.to_str().unwrap()]);
+            }
+            let output = cli_with_output(
+                env!("CARGO_BIN_EXE_ovrcr"),
+                &fixture.config,
+                &fixture.socket,
+                &args,
+            );
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            output.stdout
+        };
+        let mut bytes = setup(false);
+        if legacy {
+            let mut old: toml::Value =
+                toml::from_str(std::str::from_utf8(&bytes).unwrap()).unwrap();
+            old["hooks"]["SessionStart"][0]
+                .as_table_mut()
+                .unwrap()
+                .insert("matcher".into(), "startup|resume|clear|compact".into());
+            // Preserve opaque trust/permission values; setup must append without
+            // changing existing security state or writing the supplied file.
+            old["hooks"].as_table_mut().unwrap().insert(
+                "state".into(),
+                toml::from_str::<toml::Value>(
+                    "[legacy]\ntrusted_hash = 'preserve-only'\nenabled = false\n",
+                )
+                .unwrap(),
+            );
+            old.as_table_mut()
+                .unwrap()
+                .insert("approval_policy".into(), "on-request".into());
+            let original = toml::to_string(&old).unwrap();
+            std::fs::write(&path, &original).unwrap();
+            bytes = setup(true);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+            let composed: toml::Value =
+                toml::from_str(std::str::from_utf8(&bytes).unwrap()).unwrap();
+            assert_eq!(
+                composed["hooks"]["SessionStart"][0],
+                old["hooks"]["SessionStart"][0]
+            );
+            assert_eq!(composed["hooks"]["state"], old["hooks"]["state"]);
+            assert_eq!(composed["approval_policy"], old["approval_policy"]);
+            assert_eq!(
+                composed["hooks"]["SessionStart"].as_array().unwrap().len(),
+                2
+            );
+        }
+        std::fs::write(&path, &bytes).unwrap();
+        assert_eq!(setup(true), bytes, "composition must be idempotent");
+        let (summary, _) = codex_session_with_hook_settings(
+            &fixture,
+            &fixture.socket,
+            "codex-start-dispatch",
+            Some(&path),
+        );
+        let mut index = 0;
+        for callback in [
+            format!("SessionStart:{CURRENT}:boot:startup-source"),
+            format!("UserPromptSubmit:{CURRENT}:A"),
+            format!("Stop:{CURRENT}:A"),
+            format!("UserPromptSubmit:{CURRENT}:B"),
+            format!("PermissionRequest:{CURRENT}:B"),
+        ] {
+            desktop_codex_callback(&fixture, summary.id, &mut index, &callback);
+        }
+        fixture.wait_terminal_contains(
+            summary.id,
+            if legacy {
+                "CODEX_REPORTERS=0:2"
+            } else {
+                "CODEX_REPORTERS=0:1"
+            },
+        );
+        let before = fixture.session_summary(summary.id);
+        let agent = before.agent.unwrap();
+        assert_eq!(
+            agent.binding.generation, 1,
+            "duplicate startup must not invent a generation"
+        );
+        assert_eq!(agent.health.state, ReporterHealth::Connected);
+        assert_eq!(before.activity, AgentActivity::WaitingInput);
+        assert_eq!(agent.input_requests.len(), 1);
+        assert_eq!(agent.input_requests[0].id, "approval:B");
+        let unread = before
+            .unread
+            .expect("Ready remains unread during the next wait");
+        desktop_codex_callback(
+            &fixture,
+            summary.id,
+            &mut index,
+            &format!("SessionStart:{FORKED}:boot:fork-source"),
+        );
+        let frozen = fixture.session_summary(summary.id);
+        let guard = frozen.agent.unwrap();
+        assert_eq!(
+            guard.health.state,
+            ReporterHealth::Unavailable,
+            "generated configuration must deliver fork to the identity guard; legacy={legacy}"
+        );
+        assert_eq!(
+            guard.health.reason.as_deref(),
+            Some("identity_transition_unavailable")
+        );
+        assert_eq!(
+            guard.binding, agent.binding,
+            "fork must not invent a supported rebind"
+        );
+        assert!(guard.input_requests.is_empty());
+        assert_eq!(
+            guard.activity, agent.activity,
+            "retain only the last historical observation"
+        );
+        assert_eq!(frozen.unread, Some(unread.clone()));
+        assert_eq!(frozen.phase, SessionPhase::Running);
+        fixture.wait_terminal_contains(summary.id, "CODEX_REPORTERS=5:1");
+        for callback in [
+            format!("Stop:{CURRENT}:B"),
+            format!("UserPromptSubmit:{FORKED}:after-freeze"),
+            format!("Stop:{FORKED}:after-freeze"),
+        ] {
+            desktop_codex_callback(&fixture, summary.id, &mut index, &callback);
+        }
+        let late = fixture.session_summary(summary.id);
+        assert_eq!(late.agent, Some(guard));
+        assert_eq!(late.unread, Some(unread));
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: "exit".into(),
+                submit: true,
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, "CODEX_NATIVE_EXIT=17");
+    }
+}
+
+#[test]
+fn codex_doctor_inspects_identity_freeze_and_preserves_native_input() {
+    let _guard = env_lock();
+    const CURRENT: &str = "01a08e5c-7480-7052-9964-9224aadebef0";
+    const OTHER: &str = "01a08e94-0deb-76c3-a2b5-540c4874a53f";
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "codex-setup");
+    let (summary, _) = codex_session_named(&fixture, &fixture.socket, "codex-doctor");
+    let native = fixture.root.path().join("codex");
+    let doctor = || {
+        let output = cli_with_output(
+            env!("CARGO_BIN_EXE_ovrcr"),
+            &fixture.config,
+            &fixture.socket,
+            &[
+                "agent",
+                "doctor",
+                "codex",
+                "--json",
+                "--session",
+                &summary.id.0.to_string(),
+                "--executable",
+                native.to_str().unwrap(),
+            ],
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let value = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+        let public = value.to_string();
+        assert!(!public.contains(CURRENT), "{value}");
+        assert!(!public.contains(OTHER), "{value}");
+        assert!(value["binding"].get("invocation").is_none(), "{value}");
+        assert!(value["binding"].get("conversation").is_none(), "{value}");
+        value
+    };
+    let mut index = 0;
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("UserPromptSubmit:{CURRENT}:A"),
+    );
+    let healthy = doctor();
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("SessionStart:{OTHER}:boot:startup-source"),
+    );
+    let frozen = doctor();
+    assert_eq!(frozen["session_status"], "reporting_unavailable");
+    assert_eq!(frozen["source_health"]["state"], "Unavailable");
+    assert_eq!(
+        frozen["source_health"]["reason"],
+        "identity_transition_unavailable"
+    );
+    assert_eq!(healthy["session_status"], "bound");
+    assert_eq!(healthy["source_health"]["state"], "Connected");
+    assert!(healthy["source_health"]["reason"].is_null());
+    assert_eq!(frozen["binding"], healthy["binding"]);
+    let advice = frozen["remediation"]
+        .as_str()
+        .expect("keep Codex remediation a string");
+    assert!(advice.contains("foreground conversation"), "{frozen}");
+    assert!(
+        advice.contains("configuration repair cannot recover"),
+        "{frozen}"
+    );
+    assert!(
+        advice.contains("ovrcr agent run codex -- codex"),
+        "{frozen}"
+    );
+    assert!(matches!(
+        fixture.session_summary(summary.id).phase,
+        ovrcr::session::SessionPhase::Running
+    ));
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("UserPromptSubmit:{OTHER}:after-freeze"),
+    );
+    assert_eq!(
+        doctor()["source_health"]["reason"],
+        "identity_transition_unavailable"
+    );
     assert_eq!(
         fixture.request(Request::SendTerminal {
             session: summary.id,

@@ -465,7 +465,7 @@ fn excerpt(candidate: &Candidate) -> Result<Option<String>> {
                 return Ok(None);
             }
         }
-        AgentProvider::Hermes => return Ok(None),
+        AgentProvider::Hermes | AgentProvider::Cursor => return Ok(None),
     }
     let tail = read_tail(&candidate.history)?;
     let mut messages = Vec::new();

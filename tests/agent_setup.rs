@@ -252,11 +252,32 @@ fn doctor_inspects_unbound_and_unavailable_sessions_without_private_values() {
     let _env_lock = env_lock();
     use ovrcr::protocol::*;
     use std::os::unix::net::UnixListener;
-    for bound in [false, true] {
+    for (provider, binding_provider) in [
+        ("claude", None),
+        ("claude", Some(AgentProvider::Claude)),
+        ("codex", None),
+        ("codex", Some(AgentProvider::Codex)),
+        ("codex", Some(AgentProvider::Claude)),
+    ] {
         let root = tempfile::tempdir().unwrap();
         let listener = UnixListener::bind(root.path().join("socket")).unwrap();
+        listener.set_nonblocking(true).unwrap();
         let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(connection) => break connection,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "doctor did not inspect the session"
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(2));
+                    }
+                    Err(error) => panic!("inspection fixture: {error}"),
+                }
+            };
+            stream.set_nonblocking(false).unwrap();
             stream
                 .set_read_timeout(Some(std::time::Duration::from_secs(3)))
                 .unwrap();
@@ -282,9 +303,9 @@ fn doctor_inspects_unbound_and_unavailable_sessions_without_private_values() {
                 context_usage: None,
                 agent_epoch: 1,
                 unread: None,
-                agent: bound.then(|| AgentSnapshot {
+                agent: binding_provider.map(|binding_provider| AgentSnapshot {
                     binding: AgentBinding {
-                        provider: AgentProvider::Claude,
+                        provider: binding_provider,
                         invocation: "NEVER_PRIVATE_INVOCATION".into(),
                         conversation: "NEVER_PRIVATE_CONVERSATION".into(),
                         generation: 2,
@@ -314,24 +335,39 @@ fn doctor_inspects_unbound_and_unavailable_sessions_without_private_values() {
             )
             .unwrap();
         });
-        let output = command(&root)
-            .args(["agent", "doctor", "claude", "--json", "--executable"])
+        let mismatch = provider == "codex" && binding_provider == Some(AgentProvider::Claude);
+        let mut doctor = command(&root);
+        doctor
+            .args(["agent", "doctor", provider, "--json", "--executable"])
             .arg(root.path().join("missing"))
-            .env("OVRCR_SESSION_ID", "7")
-            .output()
-            .unwrap();
+            .env("OVRCR_SESSION_ID", if mismatch { "8" } else { "7" });
+        if mismatch {
+            doctor.args(["--session", "7"]);
+        }
+        let output = doctor.output().unwrap();
         server.join().unwrap();
         assert!(output.status.success());
         let value: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(
             value["session_status"],
-            if bound {
+            if mismatch {
+                "provider_mismatch"
+            } else if binding_provider.is_some() {
                 "reporting_unavailable"
             } else {
                 "unbound"
             }
         );
-        if bound {
+        if mismatch {
+            assert_eq!(value["binding"]["provider"], "Claude");
+            assert!(value["source_health"].is_null());
+            assert!(
+                value["remediation"]
+                    .as_str()
+                    .unwrap()
+                    .contains("another reporting provider")
+            );
+        } else if binding_provider.is_some() {
             assert_eq!(value["source_health"]["state"], "Unavailable");
             assert!(value["source_health"]["reason"].is_null());
         } else {
@@ -609,6 +645,48 @@ fn codex_doctor_defaults_dispatch_and_rejects_versions_without_server_or_secrets
 }
 
 #[test]
+fn codex_doctor_missing_session_and_failed_inspection_do_not_start_a_server() {
+    let _env_lock = env_lock();
+    let root = tempfile::tempdir().unwrap();
+    let run = || {
+        let output = command(&root)
+            .args([
+                "agent",
+                "doctor",
+                "codex",
+                "--json",
+                "--session",
+                "9",
+                "--executable",
+            ])
+            .arg(root.path().join("missing"))
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert!(!root.path().join("socket").exists());
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(value["binding"].is_null());
+        assert!(value["source_health"].is_null());
+        assert!(value["remediation"].is_string());
+        value
+    };
+    assert_eq!(run()["session_status"], "session_not_found");
+    assert!(!root.path().join("registry.toml").exists());
+    std::fs::write(
+        root.path().join("registry.toml"),
+        "NEVER_PRIVATE_CONFIG = [",
+    )
+    .unwrap();
+    let value = run();
+    assert_eq!(value["session_status"], "inspection_unavailable");
+    assert!(!value.to_string().contains("NEVER_PRIVATE_CONFIG"));
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("registry.toml")).unwrap(),
+        "NEVER_PRIVATE_CONFIG = ["
+    );
+}
+
+#[test]
 fn codex_doctor_checks_supplied_hooks_without_certifying_trust() {
     let _env_lock = env_lock();
     let root = tempfile::tempdir().unwrap();
@@ -619,7 +697,14 @@ fn codex_doctor_checks_supplied_hooks_without_certifying_trust() {
     assert!(setup.status.success());
     let base: toml::Value = toml::from_str(std::str::from_utf8(&setup.stdout).unwrap()).unwrap();
     let path = root.path().join("settings.toml");
-    for case in ["base", "filtered", "async", "wrong_type", "invalid"] {
+    for case in [
+        "base",
+        "filtered",
+        "legacy-start-filter",
+        "async",
+        "wrong_type",
+        "invalid",
+    ] {
         let mut value = base.clone();
         match case {
             "filtered" => {
@@ -627,6 +712,12 @@ fn codex_doctor_checks_supplied_hooks_without_certifying_trust() {
                     .as_table_mut()
                     .unwrap()
                     .insert("matcher".into(), "never".into());
+            }
+            "legacy-start-filter" => {
+                value["hooks"]["SessionStart"][0]
+                    .as_table_mut()
+                    .unwrap()
+                    .insert("matcher".into(), "startup|resume|clear|compact".into());
             }
             "async" => {
                 value["hooks"]["Stop"][0]["hooks"][0]
@@ -664,6 +755,12 @@ fn codex_doctor_checks_supplied_hooks_without_certifying_trust() {
                 "supplied_file_unsupported_or_unverified"
             }
         );
+        if case == "legacy-start-filter" {
+            assert_eq!(
+                result["configuration"]["issues"],
+                json!(["SessionStart:synchronous_reporter_missing"])
+            );
+        }
         assert_eq!(result["release_status"], "patch_compatible_hooks_only");
         assert_eq!(result["configuration"]["hook_trust"], "unverified");
         assert_eq!(result["configuration"]["delivery"], "unverified");

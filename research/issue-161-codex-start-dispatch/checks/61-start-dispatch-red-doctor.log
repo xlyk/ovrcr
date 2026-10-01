@@ -1,0 +1,24 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161-codex-start-dispatch)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.73s
+     Running tests/agent_setup.rs (target/debug/deps/agent_setup-ec4ad82545d7629b)
+
+running 1 test
+test codex_doctor_checks_supplied_hooks_without_certifying_trust ... FAILED
+
+failures:
+
+---- codex_doctor_checks_supplied_hooks_without_certifying_trust stdout ----
+
+thread 'codex_doctor_checks_supplied_hooks_without_certifying_trust' (448658151) panicked at tests/agent_setup.rs:741:9:
+assertion `left == right` failed
+  left: String("supplied_file_supported")
+ right: "supplied_file_unsupported_or_unverified"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    codex_doctor_checks_supplied_hooks_without_certifying_trust
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.68s
+
+error: test failed, to rerun pass `-p ovrcr --test agent_setup`

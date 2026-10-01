@@ -1,0 +1,20 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--test",
+    "agent_setup",
+    "codex_doctor_checks_supplied_hooks_without_certifying_trust",
+    "--",
+    "--exact",
+    "--test-threads=1"
+  ],
+  "cwd": "/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161-codex-start-dispatch",
+  "revision": "7b94e602ba0b9c5b1ad4fb67f4d8ec34effe71d9",
+  "diff_sha256": "681dc461ac2ba83dbe1ff1813d25cb29425dad56a138596c1bdb25356873e914",
+  "started": "2026-10-01T01:28:37.689437+00:00",
+  "exit_code": 101,
+  "finished": "2026-10-01T01:28:39.479351+00:00"
+}

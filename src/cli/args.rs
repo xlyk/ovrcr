@@ -5,7 +5,15 @@ use std::path::PathBuf;
 
 /// Providers accepted by `agent run|setup|doctor`, shared so help text and
 /// value parsing cannot drift between the three subcommands.
-pub(super) const PROVIDERS: [&str; 6] = ["claude", "codex", "pi", "omp", "grok", "hermes"];
+pub(super) const PROVIDERS: [&str; 7] = [
+    "claude",
+    "codex",
+    "pi",
+    "omp",
+    "grok",
+    "hermes",
+    "cursor-agent",
+];
 
 /// `ovrcr --version` output: the package version plus the wire protocol
 /// version, so a client and a long-running server can be compared.
@@ -107,6 +115,11 @@ pub(super) enum Command {
 
 #[derive(Subcommand)]
 pub(super) enum ReportCommand {
+    /// Passive source-pinned Cursor startup identity hook.
+    CursorAgent {
+        #[arg(long, required = true)]
+        stdin: bool,
+    },
     Activity {
         /// unknown, idle, busy, waiting-input, response-ready, or error.
         #[arg(long, value_parser = parse_activity_state)]
@@ -394,7 +407,7 @@ pub(super) enum AgentCommand {
         executable: Option<OsString>,
     },
     #[command(
-        long_about = "Run a native command with invocation supervision. Codex reporting supports stable interactive Codex CLI >=0.153.0 fresh launches with synchronous direct-exec hooks configured through report codex --stdin. Native argv is unchanged. Managed fresh root hooks retain exact conversation identity for terminal reopen; recovery executes codex resume UUID with no prompt and preserves the reference across restarts. Exact `codex resume UUID` admits reporting after matching SessionStart(source=resume) Root identity; process creation alone does not confirm attachment and historical responses are not replayed as Ready. Fork, picker-without-UUID, exec, remote, unknown versions/options and failed probes run with reporting unavailable. A root prompt establishes Busy; its Stop yields Ready once and Interrupt closes it without Ready. Missing ending hooks can leave Busy; no transcript or timeout implies completion. Initial conversation admission supports stable interactive Claude Code >=2.1.267 with a fresh startup or separate-token --resume UUID. 2.1.268 and later compatible patches also accept -r UUID. Resume values must be canonical lowercase UUIDv4. Eligible options: --model, --permission-mode, --agent, --agents, --settings, --setting-sources, --system-prompt, --append-system-prompt, --name/-n, --strict-mcp-config, --verbose, and permission bypass flags. One prompt is supported only for fresh launches; use an explicit -- before a prompt matching a native subcommand. Unknown or ambiguous options, help/version, history selection, and other execution modes run with original argv and admission unavailable. Eligible fresh invocations receive a supervisor-selected --session-id; resume argv remains unchanged. Pi and Oh My Pi: interactive terminal launches are supervised and load the owned OVRCR reporting extension beside the user's own extensions; help, version, print, RPC, JSON, ACP, export and package commands run native with reporting unavailable. Grok >=1.0.40: a fresh interactive launch in the current directory receives a supervisor-selected --session-id and retains the updates.jsonl that Grok's session store keeps for it, as a title source only; nothing is reported and resume stays unavailable. Resume, continue, fork, explicit session IDs, headless output, another working directory or worktree, and subcommands run with original argv. Hermes: process supervision only, with native argv unchanged and no OVRCR hooks/settings. Activity, readiness, Input requests, metrics, generated titles and recovery are unavailable; source review covers 0.20.5 but native acceptance is unverified. Use agent doctor hermes for filesystem discovery and capability guidance without executing Hermes."
+        long_about = "Run a native command with invocation supervision. Codex reporting supports stable interactive Codex CLI >=0.153.0 fresh launches with synchronous direct-exec hooks configured through report codex --stdin. Native argv is unchanged. Managed fresh root hooks retain exact conversation identity for terminal reopen; recovery executes codex resume UUID with no prompt and preserves the reference across restarts. Exact `codex resume UUID` admits reporting after matching SessionStart(source=resume) Root identity; process creation alone does not confirm attachment and historical responses are not replayed as Ready. Fork, picker-without-UUID, exec, remote, unknown versions/options and failed probes run with reporting unavailable. A root prompt establishes Busy; its Stop yields Ready once and Interrupt closes it without Ready. Missing ending hooks can leave Busy; no transcript or timeout implies completion. Initial conversation admission supports stable interactive Claude Code >=2.1.267 with a fresh startup or separate-token --resume UUID. 2.1.268 and later compatible patches also accept -r UUID. Resume values must be canonical lowercase UUIDv4. Eligible options: --model, --permission-mode, --agent, --agents, --settings, --setting-sources, --system-prompt, --append-system-prompt, --name/-n, --strict-mcp-config, --verbose, and permission bypass flags. One prompt is supported only for fresh launches; use an explicit -- before a prompt matching a native subcommand. Unknown or ambiguous options, help/version, history selection, and other execution modes run with original argv and admission unavailable. Eligible fresh invocations receive a supervisor-selected --session-id; resume argv remains unchanged. Pi and Oh My Pi: interactive terminal launches are supervised and load the owned OVRCR reporting extension beside the user's own extensions; help, version, print, RPC, JSON, ACP, export and package commands run native with reporting unavailable. Grok >=1.0.40: a fresh interactive launch in the current directory receives a supervisor-selected --session-id and retains the updates.jsonl that Grok's session store keeps for it, as a title source only; nothing is reported and resume stays unavailable. Resume, continue, fork, explicit session IDs, headless output, another working directory or worktree, and subcommands run with original argv. Hermes: process supervision only, with native argv unchanged and no OVRCR hooks/settings. Activity, readiness, Input requests, metrics, generated titles and recovery are unavailable; source review covers 0.20.5 but native acceptance is unverified. Use agent doctor hermes for filesystem discovery and capability guidance without executing Hermes. Cursor CLI 2026.09.10-fd3934a: fresh interactive cursor-agent or explicit agent alias, with no args or --model VALUE, loads a temporary local plugin for startup identity only. Activity, Ready/Unread, Input, metrics, titles and recovery are unavailable. Unsupported versions/options and resume/continue remain native unchanged with reporting unavailable."
     )]
     Run {
         #[arg(value_parser = PROVIDERS, required_unless_present = "legacy_provider")]

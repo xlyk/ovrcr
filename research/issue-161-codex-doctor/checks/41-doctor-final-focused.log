@@ -1,0 +1,20 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161-codex-doctor)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.50s
+     Running tests/agent_setup.rs (target/debug/deps/agent_setup-a77147c7867ce1db)
+
+running 13 tests
+test codex_doctor_checks_supplied_hooks_without_certifying_trust ... ok
+test codex_doctor_defaults_dispatch_and_rejects_versions_without_server_or_secrets ... ok
+test codex_doctor_missing_session_and_failed_inspection_do_not_start_a_server ... ok
+test codex_setup_preserves_handlers_trust_and_quotes_noop_helper ... ok
+test doctor_distinguishes_compatible_patches_from_tested_releases ... ok
+test doctor_does_not_certify_filtered_hooks_wrong_types_or_statusline_suffixes ... ok
+test doctor_inspects_unbound_and_unavailable_sessions_without_private_values ... ok
+test doctor_interrupt_cleans_its_owned_version_probe_before_exit ... ok
+test doctor_reports_partial_config_proof_missing_and_unsupported_versions_without_secrets ... ok
+test retarget_hooks_rewrites_managed_reporter_paths_and_stops ... ok
+test setup_migrates_only_exact_legacy_statusline_and_marks_hooks ... ok
+test setup_preserves_settings_and_external_renderer_bytes_once ... ok
+test setup_quotes_actual_executable_path ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.83s
