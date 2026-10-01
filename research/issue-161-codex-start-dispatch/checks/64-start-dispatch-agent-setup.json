@@ -1,0 +1,18 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--test",
+    "agent_setup",
+    "--",
+    "--test-threads=1"
+  ],
+  "cwd": "/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161-codex-start-dispatch",
+  "revision": "7b94e602ba0b9c5b1ad4fb67f4d8ec34effe71d9",
+  "diff_sha256": "5328e9ffebb5fffa17c4b9de304358b077ee489b8a8288946217a2537d154771",
+  "started": "2026-10-01T01:32:06.257195+00:00",
+  "exit_code": 0,
+  "finished": "2026-10-01T01:32:15.321215+00:00"
+}

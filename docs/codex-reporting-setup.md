@@ -33,11 +33,10 @@ Exact Codex 0.153.0 loads both JSON and TOML handlers, appending JSON declaratio
 
 The [installed-binary check](codex-ready-installation.md#verify-the-installed-path-natively) uses a temporary OVRCR registry, socket and workspace while retaining the intended authorized Codex configuration; it can run without stopping the normal server or its sessions. Verify the effective native hook list and each handler's trust status separately from delivery. A listed handler still needing review is not evidence of dispatch.
 
-The schema matches the [native Task 2 configuration](../research/codex-response-ready-acceptance/native-task-2/isolated-config.toml), without generating its trust state. Setup substitutes the current absolute OVRCR executable path and shell-quotes paths with spaces or apostrophes:
+The command shape follows the [native Task 2 configuration](../research/codex-response-ready-acceptance/native-task-2/isolated-config.toml), without generating its trust state. Setup substitutes the current absolute OVRCR executable path and shell-quotes paths with spaces or apostrophes:
 
 ```toml
 [[hooks.SessionStart]]
-matcher = "startup|resume|clear|compact"
 [[hooks.SessionStart.hooks]]
 type = "command"
 command = "exec '/absolute/path/to/ovrcr' report codex --stdin"
@@ -77,6 +76,24 @@ command = "exec '/absolute/path/to/ovrcr' report codex --stdin"
 type = "command"
 command = "exec '/absolute/path/to/ovrcr' report codex --stdin"
 ```
+
+Keep the `SessionStart` reporter unfiltered (omit `matcher`, or use an empty
+string). Codex 0.155.1 supplies `fork` as a Root source; the former
+`startup|resume|clear|compact` matcher suppresses that callback and prevents
+OVRCR's existing identity guard from seeing it. Setup preserves a filtered
+reporter and appends an unfiltered one; doctor flags a supplied file containing
+only the filtered reporter as missing `SessionStart` coverage. Review and trust
+the added handler through native Codex before relying on delivery. Retaining
+both groups can deliver supported sources twice; duplicate callbacks remain
+silent. No configuration or trust is written by setup.
+
+Receiving `fork` does not establish a supported foreground replacement: when
+already bound, it freezes reporting with `identity_transition_unavailable`,
+clears pending input requests, preserves Unread, and leaves Codex usable. This
+also applies to other unrecognized sources received while bound. Unfiltered
+configuration cannot observe a switch before Codex emits a hook. The
+[source trace and generated-command regression](../research/issue-161-codex-start-dispatch/README.md)
+are separate from genuine provider delivery and continuous foreground acceptance.
 
 Keep these command hooks synchronous and use direct `exec` so receiver process attribution reaches the native Codex parent. The helper returns successful exit with empty stdout as a native no-op response, including outside a managed launch. It never returns an approval decision. Review and individually trust the OVRCR reporters through Codex's native UI. The PermissionRequest reporter never returns an approval decision; preserve unrelated approval handlers and their order. Preserve the existing trust and enablement of unrelated JSON and plugin hooks, including any that still need review; trusting the OVRCR reporters does not establish that those other hooks ran. Setup and doctor do not bypass trust or change permission policy. To remove this setup, remove only the exact added reporter handlers, preserving other handlers and their declaration order.
 
@@ -128,7 +145,7 @@ activity, quality, reporter health and native behavior. Removing the terminal or
 losing the server loses its unread state; there is no durable response history.
 Unread tracking requires no notification preference or additional hook setup.
 
-Exact `codex resume UUID` (managed Reopen / initial resume) is supported for reporting after matching SessionStart(source=resume) Root identity. In-process replacements are followed only when native SessionStart evidence names a trustworthy foreground identity: `source=clear` or `source=resume` with a different conversation id rebinds a fresh Reporting generation; `source=compact` is same-conversation and invents no replacement. A conflicting `SessionStart(source=startup)` while already bound is the named fork/backtrack gap (`identity_transition_unavailable`) — Codex emits startup for forks, and backtracking has no observable invalidation before the next prompt, so later startup alone does not prove continuous identity during that gap. Picker/last, fork launch forms, exec, remote and unknown versions/options remain unsupported for reporting and retain ordinary native behavior. Approval Input requests are available from matching root `PermissionRequest` with identity `approval:{turn_id}`; the next attributable root activity (`PreToolUse`/`PostToolUse`/`Stop`/`Interrupt`/new prompt) closes the set. Questions remain unavailable (no distinct question surface). The current model still reaches the sidebar through the shared Metrics observation; this scope still excludes continuous selected-history tracking, subagent readiness, context/usage/cost metrics, confirmed completion and transcript collection. Switching does not acknowledge Unread. No Linux native GUI acceptance, metrics support or concurrent provider-launch throughput is claimed. Existing Claude acceptance does not cover Codex.
+Exact `codex resume UUID` (managed Reopen / initial resume) is supported for reporting after matching SessionStart(source=resume) Root identity. In-process replacements are followed only when native SessionStart evidence names a trustworthy foreground identity: `source=clear` or `source=resume` with a different conversation id rebinds a fresh Reporting generation; `source=compact` is same-conversation and invents no replacement. A conflicting `SessionStart(source=startup)` or a `source=fork` while already bound is the named fork/backtrack gap (`identity_transition_unavailable`). Earlier retained Codex evidence surfaced startup for forks; the pinned 0.155.1 source names fork explicitly. Backtracking has no observable invalidation before the next prompt, so a later callback alone does not prove continuous identity during that gap. Picker/last, fork launch forms, exec, remote and unknown versions/options remain unsupported for reporting and retain ordinary native behavior. Approval Input requests are available from matching root `PermissionRequest` with identity `approval:{turn_id}`; the next attributable root activity (`PreToolUse`/`PostToolUse`/`Stop`/`Interrupt`/new prompt) closes the set. Questions remain unavailable (no distinct question surface). The current model still reaches the sidebar through the shared Metrics observation; this scope still excludes continuous selected-history tracking, subagent readiness, context/usage/cost metrics, confirmed completion and transcript collection. Switching does not acknowledge Unread. No Linux native GUI acceptance, metrics support or concurrent provider-launch throughput is claimed. Existing Claude acceptance does not cover Codex.
 
 ## Retained conversation recovery
 

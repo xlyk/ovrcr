@@ -697,7 +697,14 @@ fn codex_doctor_checks_supplied_hooks_without_certifying_trust() {
     assert!(setup.status.success());
     let base: toml::Value = toml::from_str(std::str::from_utf8(&setup.stdout).unwrap()).unwrap();
     let path = root.path().join("settings.toml");
-    for case in ["base", "filtered", "async", "wrong_type", "invalid"] {
+    for case in [
+        "base",
+        "filtered",
+        "legacy-start-filter",
+        "async",
+        "wrong_type",
+        "invalid",
+    ] {
         let mut value = base.clone();
         match case {
             "filtered" => {
@@ -705,6 +712,12 @@ fn codex_doctor_checks_supplied_hooks_without_certifying_trust() {
                     .as_table_mut()
                     .unwrap()
                     .insert("matcher".into(), "never".into());
+            }
+            "legacy-start-filter" => {
+                value["hooks"]["SessionStart"][0]
+                    .as_table_mut()
+                    .unwrap()
+                    .insert("matcher".into(), "startup|resume|clear|compact".into());
             }
             "async" => {
                 value["hooks"]["Stop"][0]["hooks"][0]
@@ -742,6 +755,12 @@ fn codex_doctor_checks_supplied_hooks_without_certifying_trust() {
                 "supplied_file_unsupported_or_unverified"
             }
         );
+        if case == "legacy-start-filter" {
+            assert_eq!(
+                result["configuration"]["issues"],
+                json!(["SessionStart:synchronous_reporter_missing"])
+            );
+        }
         assert_eq!(result["release_status"], "patch_compatible_hooks_only");
         assert_eq!(result["configuration"]["hook_trust"], "unverified");
         assert_eq!(result["configuration"]["delivery"], "unverified");

@@ -17,7 +17,7 @@ const HOOKS: &[&str] = &[
     "Interrupt",
     "SessionEnd",
 ];
-const REQUIREMENTS: &str = "Requires stable Codex CLI >=0.153.0 and synchronous direct-exec command hooks. Review and trust these hooks in native Codex before the first tracked prompt; an initial prompt supplied during hook review may run untracked. Configuration presence does not prove hook trust or delivery. Hooks exit successfully with empty stdout (native no-op), never an approval decision. Launch through the Dashboard agent picker or `ovrcr agent run codex -- codex` inside an OVRCR terminal; a plain `codex` launch stays untracked. Exact Codex CLI 0.153.0 hooks-only support passed acceptance. Managed root startup/prompt hooks also retain exact conversation identity for terminal reopen. Recovery uses codex resume UUID without a prompt; exact resume admits reporting after matching SessionStart(source=resume) Root identity, without replaying historical Ready. Supported in-process clear/resume SessionStart replacements rebind reporting; conflicting startup while bound is identity_transition_unavailable (fork/backtrack gap). Native recovery acceptance is tracked separately in issue #128.";
+const REQUIREMENTS: &str = "Requires stable Codex CLI >=0.153.0 and synchronous direct-exec command hooks. Review and trust these hooks in native Codex before the first tracked prompt; an initial prompt supplied during hook review may run untracked. Configuration presence does not prove hook trust or delivery. Hooks exit successfully with empty stdout (native no-op), never an approval decision. Launch through the Dashboard agent picker or `ovrcr agent run codex -- codex` inside an OVRCR terminal; a plain `codex` launch stays untracked. Exact Codex CLI 0.153.0 hooks-only support passed acceptance. Managed root startup/prompt hooks also retain exact conversation identity for terminal reopen. Recovery uses codex resume UUID without a prompt; exact resume admits reporting after matching SessionStart(source=resume) Root identity, without replaying historical Ready. Keep SessionStart reporting unfiltered so unsupported sources reach the identity guard. Supported in-process clear/resume SessionStart replacements rebind reporting; fork or conflicting startup while bound is identity_transition_unavailable (fork/backtrack gap). Native recovery acceptance is tracked separately in issue #128.";
 const FORMS: &str = "Fresh interactive codex (executable basename codex): optional --no-alt-screen, --full-auto, --dangerously-bypass-hook-trust; separate-token --model/-m, --profile/-p, --sandbox/-s, --ask-for-approval/-a, --cd/-C followed by a nonempty value not starting with '-'; at most one prompt (use -- before a prompt matching a subcommand). Exact resume: `codex resume UUID` with the same optional flags and no prompt (UUID must be the exact canonical identity). Fork, picker-without-UUID, exec, remote, unknown options and other versions run natively with reporting unavailable.";
 
 fn settings(path: Option<&Path>) -> anyhow::Result<Value> {
@@ -34,11 +34,11 @@ fn settings(path: Option<&Path>) -> anyhow::Result<Value> {
 fn command() -> anyhow::Result<String> {
     Ok(format!("exec {} report codex --stdin", quote(&binary()?)))
 }
-fn reporter(group: &Value, event: &str, command: &str) -> bool {
+fn reporter(group: &Value, command: &str) -> bool {
     let matcher = group.get("matcher").and_then(Value::as_str);
-    let matches = group.get("matcher").is_none()
-        || matcher == Some("")
-        || (event == "SessionStart" && matcher == Some("startup|resume|clear|compact"));
+    // Every root SessionStart must reach the receiver, including unsupported
+    // sources that freeze reporting instead of guessing a foreground identity.
+    let matches = group.get("matcher").is_none() || matcher == Some("");
     matches
         && group
             .get("hooks")
@@ -70,7 +70,7 @@ pub(super) fn boot_hook_warning() -> Option<String> {
                     .get("hooks")
                     .and_then(|h| h.get(*event))
                     .and_then(Value::as_array)
-                    .is_some_and(|groups| groups.iter().any(|g| reporter(g, event, &command)))
+                    .is_some_and(|groups| groups.iter().any(|g| reporter(g, &command)))
                 {
                     issues.push(format!("{event}:synchronous_reporter_missing"));
                 }
@@ -104,14 +104,8 @@ pub(super) fn setup(path: Option<&Path>) -> AppResult<()> {
                 .or_insert_with(|| Value::Array(vec![]))
                 .as_array_mut()
                 .ok_or_else(|| anyhow::anyhow!("hook event must be an array"))?;
-            if !groups.iter().any(|group| reporter(group, event, &command)) {
+            if !groups.iter().any(|group| reporter(group, &command)) {
                 let mut group = toml::map::Map::new();
-                if *event == "SessionStart" {
-                    group.insert(
-                        "matcher".into(),
-                        Value::String("startup|resume|clear|compact".into()),
-                    );
-                }
                 let mut handler = toml::map::Map::new();
                 handler.insert("type".into(), Value::String("command".into()));
                 handler.insert("command".into(), Value::String(command.clone()));
@@ -160,7 +154,7 @@ pub(super) fn doctor(
                     .get("hooks")
                     .and_then(|h| h.get(*event))
                     .and_then(Value::as_array)
-                    .is_some_and(|groups| groups.iter().any(|g| reporter(g, event, &command)))
+                    .is_some_and(|groups| groups.iter().any(|g| reporter(g, &command)))
                 {
                     issues.push(format!("{event}:synchronous_reporter_missing"));
                 }
@@ -241,15 +235,15 @@ mod tests {
         )
         .unwrap();
         let command = "exec exact report codex --stdin";
-        assert!(reporter(&base, "Stop", command));
-        assert!(!reporter(&base, "Stop", "exec other report codex --stdin"));
+        assert!(reporter(&base, command));
+        assert!(!reporter(&base, "exec other report codex --stdin"));
         for matcher in [Value::String("never".into()), Value::Boolean(false)] {
             let mut group = base.clone();
             group
                 .as_table_mut()
                 .unwrap()
                 .insert("matcher".into(), matcher);
-            assert!(!reporter(&group, "Stop", command));
+            assert!(!reporter(&group, command));
         }
         for asynchronous in [Value::Boolean(true), Value::String("false".into())] {
             let mut group = base.clone();
@@ -257,15 +251,16 @@ mod tests {
                 .as_table_mut()
                 .unwrap()
                 .insert("async".into(), asynchronous);
-            assert!(!reporter(&group, "Stop", command));
+            assert!(!reporter(&group, command));
         }
         let mut startup = base.clone();
         startup
             .as_table_mut()
             .unwrap()
             .insert("matcher".into(), "startup|resume|clear|compact".into());
-        assert!(reporter(&startup, "SessionStart", command));
-        assert!(!reporter(&startup, "Stop", command));
+        assert!(!reporter(&startup, command));
+        startup["matcher"] = "".into();
+        assert!(reporter(&startup, command));
     }
     #[test]
     fn boot_hook_warning_names_missing_codex_hooks_with_setup_command() {

@@ -1,0 +1,21 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161-codex-start-dispatch)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.72s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-4a5c248bf0fa0f5a)
+
+running 14 tests
+test codex_doctor_inspects_identity_freeze_and_preserves_native_input ... ok
+test codex_exact_resume_reports_ready_unread_and_alert_without_historical_replay ... ok
+test codex_hook_native_helper ... ignored, Codex synchronous native child fixture
+test codex_input_requests_wait_alert_once_each_and_restore_without_unread ... ok
+test codex_managed_hooks_ready_interrupt_duplicates_and_rebind ... ok
+test codex_managed_lost_bind_receipt_recovers_before_busy ... ok
+test codex_managed_missing_end_disables_overlap_without_native_failure ... ok
+test codex_managed_native_death_never_synthesizes_ready_and_removes_socket ... ok
+test codex_reopened_path_follows_switch_and_handles_genuine_input ... ok
+test codex_setup_dispatches_fork_to_existing_identity_guard ... ok
+test codex_supported_conversation_switches_rebind_ready_and_input_without_unread_ack ... ok
+test codex_unread_is_discarded_on_terminal_removal_and_server_restart ... ok
+test codex_unread_real_cli_and_dashboard_review_preserve_native_reporting ... ok
+test picker_shaped_claude_and_codex_launches_use_the_managed_reporting_route ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 113 filtered out; finished in 44.85s
