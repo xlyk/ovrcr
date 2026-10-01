@@ -1,0 +1,19 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161)
+error[E0061]: this function takes 3 arguments but 2 arguments were supplied
+    --> tests/server_lifecycle.rs:8943:5
+     |
+8943 |     assert_agent_admission_resume("-r", "2.1.274");
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^----------------- argument #3 of type `bool` is missing
+     |
+note: function defined here
+    --> tests/server_lifecycle.rs:8356:4
+     |
+8356 | fn assert_agent_admission_resume(resume_flag: &str, version: &str, interrupted: bool) {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^                                   -----------------
+help: provide the argument
+     |
+8943 |     assert_agent_admission_resume("-r", "2.1.274", /* bool */);
+     |                                                  ++++++++++++
+
+For more information about this error, try `rustc --explain E0061`.
+error: could not compile `ovrcr` (test "server_lifecycle") due to 1 previous error

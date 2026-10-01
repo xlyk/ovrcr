@@ -325,10 +325,15 @@ fn doctor_inspects_unbound_and_unavailable_sessions_without_private_values() {
         let value: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(
             value["session_status"],
-            if bound { "bound" } else { "unbound" }
+            if bound {
+                "reporting_unavailable"
+            } else {
+                "unbound"
+            }
         );
         if bound {
             assert_eq!(value["source_health"]["state"], "Unavailable");
+            assert!(value["source_health"]["reason"].is_null());
         } else {
             assert_eq!(value["binding"], Value::Null);
         }

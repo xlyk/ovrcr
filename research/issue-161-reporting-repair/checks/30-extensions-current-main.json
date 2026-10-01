@@ -1,0 +1,14 @@
+{
+  "command": [
+    "node",
+    "--test",
+    "tests/pi_reporting_extension.mjs",
+    "tests/omp_reporting_extension.mjs"
+  ],
+  "cwd": "/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161",
+  "revision": "248e2e5f48681ea90c7516e09b149772dd92ae4b",
+  "diff_sha256": "b5e0775ba4fd98606a32ef07e8b40fdd8c563644834540a70c51416f731c43d2",
+  "started": "2026-09-30T22:03:13.527430+00:00",
+  "exit_code": 0,
+  "finished": "2026-09-30T22:03:22.274386+00:00"
+}

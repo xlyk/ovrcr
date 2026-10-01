@@ -8346,15 +8346,20 @@ fn agent_admission_branch_freezes_without_replacement_or_reopening() {
 
 #[test]
 fn agent_admission_explicit_resume_preserves_argv_and_collects_conversation_usage() {
-    assert_agent_admission_resume("--resume", "2.1.267");
+    assert_agent_admission_resume("--resume", "2.1.267", false);
 }
 
 #[test]
 fn agent_admission_short_resume_on_2_1_268_preserves_argv_and_lifecycle() {
-    assert_agent_admission_resume("-r", "2.1.268");
+    assert_agent_admission_resume("-r", "2.1.268", false);
 }
 
-fn assert_agent_admission_resume(resume_flag: &str, version: &str) {
+#[test]
+fn claude_interrupted_resume_keeps_reporting_healthy_and_delivers_new_ready() {
+    assert_agent_admission_resume("--resume", "2.1.267", true);
+}
+
+fn assert_agent_admission_resume(resume_flag: &str, version: &str, interrupted: bool) {
     use std::os::unix::fs::PermissionsExt;
     let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
@@ -8449,6 +8454,22 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
     assert_eq!(std::fs::read_to_string(&probe).unwrap(), expected);
     assert!(fixture.session_summary(summary.id).agent.is_none());
 
+    if interrupted {
+        // Native interruption/API-error assistants have no requestId. They are
+        // provider-generated transcript entries, not metered API responses.
+        let synthetic = serde_json::json!({"type":"assistant","sessionId":expected,
+            "isSidechain":false,"message":{"id":"interrupted","model":"<synthetic>",
+            "usage":{"input_tokens":0,"output_tokens":0,"output_tokens_details":null}}});
+        writeln!(
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(&transcript)
+                .unwrap(),
+            "{synthetic}"
+        )
+        .unwrap();
+    }
+
     for (index, command) in ["wrong", "child", "missing-source", "resume-root"]
         .into_iter()
         .enumerate()
@@ -8475,6 +8496,16 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         .expect("matching resume root did not bind");
     assert_eq!(bound.binding.conversation, expected);
 
+    let mut dashboard = interrupted.then(|| {
+        let mut dashboard = DesktopAlertDashboard::start_for(
+            &fixture,
+            Some("desktop_notifications = true\n"),
+            "resume-admission",
+        );
+        dashboard.select("setup", "HOOK_READY");
+        dashboard
+    });
+
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
         let current = fixture.session_summary(summary.id).agent.unwrap();
@@ -8482,6 +8513,11 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
             metrics.sample.usage.value.input_tokens == Some(10)
                 && metrics.sample.usage.value.output_tokens == Some(1)
         }) {
+            assert_eq!(
+                current.health.state,
+                ovrcr::protocol::ReporterHealth::Connected
+            );
+            assert_eq!(current.health.reason, None);
             assert_eq!(
                 current.metrics.unwrap().sample.usage.value.scope,
                 ovrcr::protocol::UsageScope::Conversation
@@ -8531,6 +8567,14 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
             "new resumed-turn transcript record was not counted once"
         );
         thread::park_timeout(Duration::from_millis(5));
+    }
+
+    if let Some(dashboard) = &mut dashboard {
+        assert_eq!(
+            dashboard.wait_alert_titles(1, summary.id, "resume-admission"),
+            ["OVRCR · response ready"]
+        );
+        dashboard.detach();
     }
 
     assert_eq!(
@@ -8902,7 +8946,7 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
 
 #[test]
 fn agent_admission_later_patch_preserves_resume_identity_and_lifecycle() {
-    assert_agent_admission_resume("-r", "2.1.274");
+    assert_agent_admission_resume("-r", "2.1.274", false);
 }
 
 #[test]
@@ -14679,6 +14723,76 @@ fn claude_supported_conversation_switches_rebind_ready_and_input_without_unread_
     ));
 
     dashboard.detach();
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "CLAUDE_ALERT_FINISHED");
+}
+
+#[test]
+fn claude_doctor_names_identity_freeze_and_preserves_native_input() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "claude-setup");
+    let (summary, _) = claude_alert_session(&fixture, &fixture.socket, "claude-doctor");
+    let native = fixture.root.path().join("claude-doctor-bin/claude");
+    let doctor = || {
+        let output = cli_with_output(
+            env!("CARGO_BIN_EXE_ovrcr"),
+            &fixture.config,
+            &fixture.socket,
+            &[
+                "agent",
+                "doctor",
+                "claude",
+                "--json",
+                "--session",
+                &summary.id.0.to_string(),
+                "--executable",
+                native.to_str().unwrap(),
+            ],
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let mut index = 0;
+    claude_activity_callback(&fixture, summary.id, &mut index, "root");
+    let healthy = doctor();
+    assert_eq!(healthy["session_status"], "bound");
+    assert_eq!(healthy["source_health"]["state"], "Connected");
+    assert!(healthy["source_health"]["reason"].is_null());
+    claude_activity_callback(&fixture, summary.id, &mut index, "branch");
+    let frozen = doctor();
+    assert_eq!(frozen["session_status"], "reporting_unavailable");
+    assert_eq!(frozen["source_health"]["state"], "Unavailable");
+    assert_eq!(
+        frozen["source_health"]["reason"],
+        "identity_transition_unavailable"
+    );
+    assert_eq!(frozen["binding"], healthy["binding"]);
+    let advice = frozen["remediation"].to_string();
+    assert!(advice.contains("foreground conversation"), "{frozen}");
+    assert!(advice.contains("fresh supervised invocation"), "{frozen}");
+    assert!(!advice.contains("correcting configuration"), "{frozen}");
+    claude_activity_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "activity:UserPromptSubmit:A",
+    );
+    assert_eq!(
+        doctor()["source_health"]["reason"],
+        "identity_transition_unavailable"
+    );
     assert_eq!(
         fixture.request(Request::SendTerminal {
             session: summary.id,

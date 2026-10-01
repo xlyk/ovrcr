@@ -1,0 +1,19 @@
+{
+  "base_revision": "248e2e5f48681ea90c7516e09b149772dd92ae4b",
+  "fixture_sha256": "3319421dbad03c965928e88565cedd83ff8ca6f624cf5ff8d2f0c4c0a9b27dab",
+  "launcher": "rtk proxy just gui",
+  "launcher_exit_code": 0,
+  "computer_use": "Codex cua_repl native app input, screenshots and accessibility",
+  "ready_commands": [
+    "ready"
+  ],
+  "doctor_input_commands": [
+    "freeze",
+    "doctor",
+    "ping"
+  ],
+  "desktop_notifications": false,
+  "ready_sound": false,
+  "provider_account_used": false,
+  "fixture_failure": "First doctor attempt assumed OVRCR_SESSION_ID in sanitized native environment; fixture now reads explicit public session ID. Product unchanged."
+}

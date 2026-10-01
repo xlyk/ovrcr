@@ -250,6 +250,11 @@ impl ClaudeUsageAccumulator {
             return Ok(false);
         }
         let message = record.get("message").context("missing assistant message")?;
+        // Claude generates interruption/error assistants without a metered request.
+        // Classify this explicit native category before requiring API usage identity.
+        if message.get("model").and_then(Value::as_str) == Some("<synthetic>") {
+            return Ok(false);
+        }
         let key = (record_id(message, "id")?, record_id(record, "requestId")?);
         let usage = message
             .get("usage")
@@ -370,6 +375,28 @@ mod tests {
             "message":{"id":message,"usage":{"input_tokens":input,
             "cache_read_input_tokens":4,"cache_creation_input_tokens":2,
             "output_tokens":8,"output_tokens_details":{"thinking_tokens":3}}}})
+    }
+
+    #[test]
+    fn synthetic_assistants_do_not_require_request_identity_or_count_usage() {
+        let mut totals = ClaudeUsageAccumulator::default();
+        let synthetic = json!({"type":"assistant", "message":{
+            "id":"synthetic", "model":"<synthetic>", "usage":null
+        }});
+        assert!(!totals.apply_unique_record(&synthetic).unwrap());
+        let mut synthetic_with_usage = record("synthetic", "ignored", 100);
+        synthetic_with_usage["message"]["model"] = json!("<synthetic>");
+        assert!(!totals.apply_unique_record(&synthetic_with_usage).unwrap());
+        assert_eq!(totals.retained_identities(), 0);
+        assert_eq!(totals.snapshot().input_tokens, None);
+        assert_eq!(totals.diagnostic(), None);
+        assert!(
+            totals
+                .apply_unique_record(&record("real", "request", 10))
+                .unwrap()
+        );
+        assert_eq!(totals.snapshot().input_tokens, Some(16));
+        assert_eq!(totals.retained_identities(), 1);
     }
 
     #[test]

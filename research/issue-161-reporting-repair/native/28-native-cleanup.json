@@ -1,0 +1,129 @@
+{
+  "checked_at": "2026-09-30T22:00:50.538909+00:00",
+  "root_removed": true,
+  "socket_removed": true,
+  "processes": [
+    {
+      "pid": 73458,
+      "gone": true
+    },
+    {
+      "pid": 74056,
+      "gone": true
+    },
+    {
+      "pid": 74214,
+      "gone": true
+    },
+    {
+      "pid": 74731,
+      "gone": true
+    },
+    {
+      "pid": 74944,
+      "gone": true
+    },
+    {
+      "pid": 75089,
+      "gone": true
+    },
+    {
+      "pid": 75252,
+      "gone": true
+    },
+    {
+      "pid": 75647,
+      "gone": true
+    },
+    {
+      "pid": 75943,
+      "gone": true
+    },
+    {
+      "pid": 76190,
+      "gone": true
+    },
+    {
+      "pid": 76369,
+      "gone": true
+    },
+    {
+      "pid": 76804,
+      "gone": true
+    },
+    {
+      "pid": 77031,
+      "gone": true
+    },
+    {
+      "pid": 77213,
+      "gone": true
+    },
+    {
+      "pid": 70376,
+      "gone": true
+    },
+    {
+      "pid": 96546,
+      "gone": true
+    }
+  ],
+  "groups": [
+    {
+      "pgid": 70376,
+      "gone": true
+    },
+    {
+      "pgid": 74214,
+      "gone": true
+    },
+    {
+      "pgid": 74731,
+      "gone": true
+    },
+    {
+      "pgid": 74944,
+      "gone": true
+    },
+    {
+      "pgid": 75089,
+      "gone": true
+    },
+    {
+      "pgid": 75252,
+      "gone": true
+    },
+    {
+      "pgid": 75647,
+      "gone": true
+    },
+    {
+      "pgid": 75943,
+      "gone": true
+    },
+    {
+      "pgid": 76190,
+      "gone": true
+    },
+    {
+      "pgid": 76369,
+      "gone": true
+    },
+    {
+      "pgid": 76804,
+      "gone": true
+    },
+    {
+      "pgid": 77031,
+      "gone": true
+    },
+    {
+      "pgid": 77213,
+      "gone": true
+    },
+    {
+      "pgid": 96546,
+      "gone": true
+    }
+  ]
+}

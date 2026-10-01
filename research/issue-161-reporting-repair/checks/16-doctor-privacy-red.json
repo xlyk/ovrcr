@@ -1,0 +1,20 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "-p",
+    "ovrcr",
+    "--test",
+    "agent_setup",
+    "doctor_inspects_unbound",
+    "--",
+    "--nocapture"
+  ],
+  "cwd": "/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161",
+  "revision": "46178d8d9753b226bf704811c2645a9a00aeaf87",
+  "diff_sha256": "ab62faf1f827bc2565426bdb5b94af10a9f3007e048d8b5b024f0cdf52f440d4",
+  "started": "2026-09-30T21:42:53.702844+00:00",
+  "exit_code": 101,
+  "finished": "2026-09-30T21:42:55.236876+00:00"
+}

@@ -123,6 +123,10 @@ Error), Unread for the latest correlated root Ready turn, current context, parti
 token usage, and estimated cost when available. Unknown values remain unknown. A
 connected reporter does not imply complete accounting or Confirmed settling. Read
 the [reporting contract](agent-reporting.md) for scope and freshness semantics.
+Claude's explicit `<synthetic>` assistant records (including interruption/error
+messages) are excluded from partial usage counting; they are not metered API
+responses. Other malformed usage and foreign-conversation records still make the
+source unavailable.
 
 Supported in-process clear / resume / foreground-branch replacements rebind
 reporting to the new foreground conversation under a fresh Reporting generation.
@@ -131,6 +135,12 @@ with `ovrcr agent doctor claude --json` recovery guidance and leaves Claude runn
 start a fresh supervised invocation only when you need a new lease after that
 warning. Detaching the dashboard leaves the running invocation intact; server death
 does not preserve live sessions or reporting state.
+Doctor retains the binding details but reports `session_status=reporting_unavailable`
+and a recognized diagnostic code in `source_health.reason` when reporting is
+unavailable; unknown/private provider reason text remains redacted. An identity
+freeze names the ambiguous foreground conversation and explains that configuration
+repair cannot recover that reporting lifetime. It does not restart or interrupt
+the native agent.
 
 ## Remove the integration
 

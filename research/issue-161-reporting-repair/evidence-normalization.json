@@ -1,0 +1,70 @@
+{
+  "rule": "Remove trailing ASCII spaces/tabs and extra empty EOF lines only. Original bytes retained at /Users/xlyk/Documents/Codex/2026-09-30/task-4/evidence. Screenshots and JSON unchanged.",
+  "files": [
+    {
+      "path": "checks/07-focused-green.log",
+      "raw_sha256": "90c5e0b4b481e70e20899b0841db352e1558e1170ffa99d4eb9e7914f8f3b89e",
+      "normalized_sha256": "8d09016f6f75aaa6914a437f4c3a599775fb7bdffc912e54a2b10f90d6319e85"
+    },
+    {
+      "path": "checks/08-collector-green.log",
+      "raw_sha256": "24394a80a8c4d3ce52e9a2e8ba2c197255cf49108c30e756cdee7e43e0d03cdd",
+      "normalized_sha256": "7cc7325311ab5a2ddf55cdb0e5eca5cdc88a5874eecef8f8eca388c6da71d863"
+    },
+    {
+      "path": "checks/09-doctor-green.log",
+      "raw_sha256": "2fb7186d7c828621e83fa3eb99d250a34262f28c99dd90d9b59cae5934aa444a",
+      "normalized_sha256": "a54d0577c59395b29d9b0572938854b6688c6b131cf97b13c3d258702165cdcd"
+    },
+    {
+      "path": "checks/10-resume-green.log",
+      "raw_sha256": "7e436eb3652f728571665e083b70348da642578d5365d6ee64af6a4d8b61af17",
+      "normalized_sha256": "eda42fc426bf6bbb7a6de4d278a3059df8727f1e818e221f124e4f024c32be8d"
+    },
+    {
+      "path": "checks/13-doctests.log",
+      "raw_sha256": "94997e269674292e5a53faa946c13f525a3fd9ee64dcfe038b54770e53bb1e20",
+      "normalized_sha256": "ea2740441536a4870fbf1517cd9ed4ba5ce6216d8e6d91f720511e24d64f4608"
+    },
+    {
+      "path": "checks/17-doctor-privacy-green.log",
+      "raw_sha256": "55ce7a422dab1373187301a30e12e4549e63c204781dda22c844da27850731a3",
+      "normalized_sha256": "f5080f1fdc0194d89755ce1e2247a7326b1c3a378b438aabb599a9eb5cb80ff7"
+    },
+    {
+      "path": "checks/18-doctor-unit.log",
+      "raw_sha256": "5cef9b35d7c4d6cd4f8475c5f0bddcb71d8aacb99a880ccd3e598b9005c2904f",
+      "normalized_sha256": "c2297247ff66db347282451e637345d115aced44121591a22ec5d42be4672a63"
+    },
+    {
+      "path": "checks/21-retained-serial.log",
+      "raw_sha256": "a23a3aa8a9be42121eb4741fbcbc288ddde39dc87c7ae1d96a04d2daf63fe47b",
+      "normalized_sha256": "d9f721a45600121293af458daef3d32befe8740cd67d477b03d12237caeb0b08"
+    },
+    {
+      "path": "checks/22-workspace-serial.log",
+      "raw_sha256": "28987c31dd151e0f5b72ae0978ee7875392b99b00cabe7be6f1197d386220570",
+      "normalized_sha256": "84a882fad2b8a0f438238dabb2f4dca02ce3026490de8f4e49c87ee62058e335"
+    },
+    {
+      "path": "checks/29-doctests-current-main.log",
+      "raw_sha256": "bc2f54bec12e1ebd87c5328ed4f96e5e2c3b84008cd297a5f1f2c82bd6f95999",
+      "normalized_sha256": "f4f8ecfd0a71e8e4eaa41a5e1d5fe8d0f9fba5310096c48a0619920018f33d5b"
+    },
+    {
+      "path": "native/25b-native-fixture-failed.ax.txt",
+      "raw_sha256": "07b5da9b83f0bf921b02b92fee1368b690640ecac715e55d973d85c02da9e29c",
+      "normalized_sha256": "88a27e1b69d1219e528b0ded8e774d8c8c9b4c8a7d6d56c6b54485e2b0ba9c68"
+    },
+    {
+      "path": "native/26-native-ready-final.ax.txt",
+      "raw_sha256": "096fa661f93f6a4bef49fdd537ec2bd241c8b377499cacc574bcb1fc72ac53cf",
+      "normalized_sha256": "bb0f7444f98cc62a58c06897ffbe2f3aeafd47b6ae4af7320ab4740415ba3754"
+    },
+    {
+      "path": "native/27-native-doctor-input.ax.txt",
+      "raw_sha256": "fd3e5be1820ba4e18b750b82ac179762d5801d58572258cf17cd9ea45c74e36c",
+      "normalized_sha256": "07b2d8212d2b52e80eae4e8913276832ecf0e813605d0321ce1e515ef7aae7c8"
+    }
+  ]
+}

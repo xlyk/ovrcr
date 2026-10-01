@@ -1,0 +1,87 @@
+{
+  "gui": {
+    "pid": 73458,
+    "ppid": 70666,
+    "pgid": 70644,
+    "command": "/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+  },
+  "server": {
+    "pid": 74056,
+    "ppid": 73458,
+    "pgid": 70644,
+    "command": "/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+  },
+  "root": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-jwXfPK",
+  "socket": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-jwXfPK/server.sock",
+  "config": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-jwXfPK/config.toml",
+  "desktop_notifications": false,
+  "ready_sound": false,
+  "revision": "248e2e5f48681ea90c7516e09b149772dd92ae4b",
+  "live_sessions": [
+    {
+      "id": 1,
+      "pid": 74214,
+      "pgid": 74214
+    },
+    {
+      "id": 2,
+      "pid": 74731,
+      "pgid": 74731
+    },
+    {
+      "id": 3,
+      "pid": 74944,
+      "pgid": 74944
+    },
+    {
+      "id": 4,
+      "pid": 75089,
+      "pgid": 75089
+    },
+    {
+      "id": 5,
+      "pid": 75252,
+      "pgid": 75252
+    },
+    {
+      "id": 6,
+      "pid": 75647,
+      "pgid": 75647
+    },
+    {
+      "id": 7,
+      "pid": 75943,
+      "pgid": 75943
+    },
+    {
+      "id": 8,
+      "pid": 76190,
+      "pgid": 76190
+    },
+    {
+      "id": 9,
+      "pid": 76369,
+      "pgid": 76369
+    },
+    {
+      "id": 10,
+      "pid": 76804,
+      "pgid": 76804
+    },
+    {
+      "id": 11,
+      "pid": 77031,
+      "pgid": 77031
+    },
+    {
+      "id": 12,
+      "pid": 77213,
+      "pgid": 77213
+    },
+    {
+      "id": 14,
+      "pid": 70376,
+      "pgid": 70376
+    }
+  ]
+}

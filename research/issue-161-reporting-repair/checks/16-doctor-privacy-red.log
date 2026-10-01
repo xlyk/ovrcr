@@ -1,0 +1,19 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.63s
+     Running tests/agent_setup.rs (target/debug/deps/agent_setup-ec4ad82545d7629b)
+
+running 1 test
+
+thread 'doctor_inspects_unbound_and_unavailable_sessions_without_private_values' (437730952) panicked at tests/agent_setup.rs:332:13:
+assertion failed: value["source_health"]["reason"].is_null()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test doctor_inspects_unbound_and_unavailable_sessions_without_private_values ... FAILED
+
+failures:
+
+failures:
+    doctor_inspects_unbound_and_unavailable_sessions_without_private_values
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.57s
+
+error: test failed, to rerun pass `-p ovrcr --test agent_setup`
