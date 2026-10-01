@@ -1,0 +1,292 @@
+TAP version 13
+# Subtest: session switches capture OMP's exact native file and ephemeral identity
+ok 1 - session switches capture OMP's exact native file and ephemeral identity
+  ---
+  duration_ms: 225.521459
+  type: 'test'
+  ...
+# Subtest: inert outside a managed invocation and outside the terminal UI
+ok 2 - inert outside a managed invocation and outside the terminal UI
+  ---
+  duration_ms: 3.819792
+  type: 'test'
+  ...
+# Subtest: registers OMP's lifecycle and switch events
+ok 3 - registers OMP's lifecycle and switch events
+  ---
+  duration_ms: 1.726542
+  type: 'test'
+  ...
+# Subtest: a switch names the conversation it left by id, never by its file path
+ok 4 - a switch names the conversation it left by id, never by its file path
+  ---
+  duration_ms: 316.530875
+  type: 'test'
+  ...
+# Subtest: a same-file reload is a switch that names the conversation it is already on
+ok 5 - a same-file reload is a switch that names the conversation it is already on
+  ---
+  duration_ms: 332.22075
+  type: 'test'
+  ...
+# Subtest: tree navigation invalidates the response cycle and carries only idleness
+ok 6 - tree navigation invalidates the response cycle and carries only idleness
+  ---
+  duration_ms: 343.558583
+  type: 'test'
+  ...
+# Subtest: the reattach command re-announces this producer once and says so
+ok 7 - the reattach command re-announces this producer once and says so
+  ---
+  duration_ms: 327.843417
+  type: 'test'
+  ...
+# Subtest: a print-mode reattach delivers nothing, spawns no helper, and says it is unavailable
+ok 8 - a print-mode reattach delivers nothing, spawns no helper, and says it is unavailable
+  ---
+  duration_ms: 1.876834
+  type: 'test'
+  ...
+# Subtest: an approval opens and closes one namespaced request and carries no reason
+ok 9 - an approval opens and closes one namespaced request and carries no reason
+  ---
+  duration_ms: 335.323083
+  type: 'test'
+  ...
+# Subtest: a denial closes the approval exactly as an allow does
+ok 10 - a denial closes the approval exactly as an allow does
+  ---
+  duration_ms: 364.426417
+  type: 'test'
+  ...
+# Subtest: an approval from another session id or with none emits nothing
+ok 11 - an approval from another session id or with none emits nothing
+  ---
+  duration_ms: 1.634
+  type: 'test'
+  ...
+# Subtest: two approvals overlap: each frame carries its own tool call id
+ok 12 - two approvals overlap: each frame carries its own tool call id
+  ---
+  duration_ms: 203.615083
+  type: 'test'
+  ...
+# Subtest: the ask tool's lifetime is one question request keyed by its tool call id
+ok 13 - the ask tool's lifetime is one question request keyed by its tool call id
+  ---
+  duration_ms: 190.5335
+  type: 'test'
+  ...
+# Subtest: a tool that is not ask emits nothing
+ok 14 - a tool that is not ask emits nothing
+  ---
+  duration_ms: 1.251292
+  type: 'test'
+  ...
+# Subtest: an approval opened during a question keeps both requests and their order
+ok 15 - an approval opened during a question keeps both requests and their order
+  ---
+  duration_ms: 350.531875
+  type: 'test'
+  ...
+# Subtest: an end that failed, timed out or aborted still closes the question
+ok 16 - an end that failed, timed out or aborted still closes the question
+  ---
+  duration_ms: 188.229125
+  type: 'test'
+  ...
+# Subtest: an approval requested and resolved in one tick is delivered open before close
+ok 17 - an approval requested and resolved in one tick is delivered open before close
+  ---
+  duration_ms: 188.694
+  type: 'test'
+  ...
+# Subtest: an ask execution that starts and ends in one tick is delivered open before close
+ok 18 - an ask execution that starts and ends in one tick is delivered open before close
+  ---
+  duration_ms: 190.092875
+  type: 'test'
+  ...
+# Subtest: a print-mode child emits no approval or question frames
+ok 19 - a print-mode child emits no approval or question frames
+  ---
+  duration_ms: 1.9785
+  type: 'test'
+  ...
+# Subtest: an end that will continue keeps the cycle open; the final end settles it as observed work
+ok 20 - an end that will continue keeps the cycle open; the final end settles it as observed work
+  ---
+  duration_ms: 385.815084
+  type: 'test'
+  ...
+# Subtest: error and aborted ends settle as error and aborted; no assistant message is none
+ok 21 - error and aborted ends settle as error and aborted; no assistant message is none
+  ---
+  duration_ms: 377.4555
+  type: 'test'
+  ...
+# Subtest: a tool error followed by a successful assistant response is a successful cycle
+ok 22 - a tool error followed by a successful assistant response is a successful cycle
+  ---
+  duration_ms: 276.229833
+  type: 'test'
+  ...
+# Subtest: an in-place session switch re-announces the conversation and closes any open cycle
+ok 23 - an in-place session switch re-announces the conversation and closes any open cycle
+  ---
+  duration_ms: 359.91125
+  type: 'test'
+  ...
+# Subtest: shutdown reports once with reason quit and disables
+ok 24 - shutdown reports once with reason quit and disables
+  ---
+  duration_ms: 315.687292
+  type: 'test'
+  ...
+# Subtest: a next start racing an un-awaited end opens a new cycle; the settled end keeps run 1
+ok 25 - a next start racing an un-awaited end opens a new cycle; the settled end keeps run 1
+  ---
+  duration_ms: 366.005833
+  type: 'test'
+  ...
+# Subtest: reports the current model from getModel and model_select
+ok 26 - reports the current model from getModel and model_select
+  ---
+  duration_ms: 331.462792
+  type: 'test'
+  ...
+# Subtest: a session switch re-announces the model for the new conversation
+ok 27 - a session switch re-announces the model for the new conversation
+  ---
+  duration_ms: 338.36825
+  type: 'test'
+  ...
+# Subtest: captures exact native history at each conversation boundary
+ok 28 - captures exact native history at each conversation boundary
+  ---
+  duration_ms: 384.685375
+  type: 'test'
+  ...
+# Subtest: inert outside a managed invocation: registers nothing
+ok 29 - inert outside a managed invocation: registers nothing
+  ---
+  duration_ms: 1.779291
+  type: 'test'
+  ...
+# Subtest: one response cycle: start, end, settled carry run, outcome and ordered sequence
+ok 30 - one response cycle: start, end, settled carry run, outcome and ordered sequence
+  ---
+  duration_ms: 343.188375
+  type: 'test'
+  ...
+# Subtest: error and aborted outcomes come from the last assistant message; a second run increments
+ok 31 - error and aborted outcomes come from the last assistant message; a second run increments
+  ---
+  duration_ms: 375.534583
+  type: 'test'
+  ...
+# Subtest: continuations inside one cycle keep the run; the last end before settled decides the outcome
+ok 32 - continuations inside one cycle keep the run; the last end before settled decides the outcome
+  ---
+  duration_ms: 303.26925
+  type: 'test'
+  ...
+# Subtest: non-tui modes never spawn a helper; shutdown reports once then disables
+ok 33 - non-tui modes never spawn a helper; shutdown reports once then disables
+  ---
+  duration_ms: 292.507041
+  type: 'test'
+  ...
+# Subtest: a print-mode shutdown drains nothing and spawns no helper
+ok 34 - a print-mode shutdown drains nothing and spawns no helper
+  ---
+  duration_ms: 1.961416
+  type: 'test'
+  ...
+# Subtest: a hung helper is killed at the deadline and the handler still resolves
+ok 35 - a hung helper is killed at the deadline and the handler still resolves
+  ---
+  duration_ms: 904.710458
+  type: 'test'
+  ...
+# Subtest: queue overflow disables reporting and sends one content-free unavailable notice
+ok 36 - queue overflow disables reporting and sends one content-free unavailable notice
+  ---
+  duration_ms: 907.664375
+  type: 'test'
+  ...
+# Subtest: a tool error followed by a successful assistant response is a successful cycle
+ok 37 - a tool error followed by a successful assistant response is a successful cycle
+  ---
+  duration_ms: 238.981042
+  type: 'test'
+  ...
+# Subtest: resume and fork announce the conversation without a cycle; a run whose last assistant errored is an error
+ok 38 - resume and fork announce the conversation without a cycle; a run whose last assistant errored is an error
+  ---
+  duration_ms: 347.140416
+  type: 'test'
+  ...
+# Subtest: an outer prompt span opens and closes one Input request; the title never leaves
+ok 39 - an outer prompt span opens and closes one Input request; the title never leaves
+  ---
+  duration_ms: 348.983541
+  type: 'test'
+  ...
+# Subtest: a prompt can open while no cycle is running and never touches the cycle
+ok 40 - a prompt can open while no cycle is running and never touches the cycle
+  ---
+  duration_ms: 333.468416
+  type: 'test'
+  ...
+# Subtest: a transition names the conversation it left by id, never by its file path
+ok 41 - a transition names the conversation it left by id, never by its file path
+  ---
+  duration_ms: 346.314333
+  type: 'test'
+  ...
+# Subtest: tree navigation invalidates the response cycle and carries only idleness
+ok 42 - tree navigation invalidates the response cycle and carries only idleness
+  ---
+  duration_ms: 349.918667
+  type: 'test'
+  ...
+# Subtest: the reattach command re-announces a disabled producer once and says so
+ok 43 - the reattach command re-announces a disabled producer once and says so
+  ---
+  duration_ms: 347.804667
+  type: 'test'
+  ...
+# Subtest: a shutdown drain discards the queue and delivers only the final frame in one deadline
+ok 44 - a shutdown drain discards the queue and delivers only the final frame in one deadline
+  ---
+  duration_ms: 320.034875
+  type: 'test'
+  ...
+# Subtest: a replacement factory is a new instance that names the conversation it replaced
+ok 45 - a replacement factory is a new instance that names the conversation it replaced
+  ---
+  duration_ms: 350.83625
+  type: 'test'
+  ...
+# Subtest: reports the current model from getModel and model_select
+ok 46 - reports the current model from getModel and model_select
+  ---
+  duration_ms: 345.199375
+  type: 'test'
+  ...
+# Subtest: omits model until the session reports one
+ok 47 - omits model until the session reports one
+  ---
+  duration_ms: 182.951041
+  type: 'test'
+  ...
+1..47
+# tests 47
+# suites 0
+# pass 47
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 7078.678792
