@@ -1,0 +1,12 @@
+{
+  "revision": "d480fb384c1c8b04f8090f353f2944d4ef0a6f1d",
+  "captured_at": "2026-09-30T22:56:40.949097+00:00",
+  "files": {
+    "src/cli/agent_setup.rs": "0068aa5298450899425c1cad24099689c7eb2ca9c5bc8b2ecbe7e5e2dca121c4",
+    "src/cli/codex_setup.rs": "022832ee3dd3ca9c271d178ea09027ca4223d7e8a95a2ec498bcd4e81d8b6ae3",
+    "tests/agent_setup.rs": "a728b02d4527d518f4be1dcc7d65294a32c7a78fc50f3671390face06f6b7544",
+    "tests/server_lifecycle.rs": "b7f5bf0fb7540e718efcad4be75024d46e922e8a84a9f8b997b7f63e0c5b1c82"
+  },
+  "source_test_diff_sha256": "97150f80b9c0432a06f2586989a4d8af5773eddc0d2573a9e37e21fe28dde8bf",
+  "note": "Source and test bytes unchanged during full workspace run; subsequent documentation edits are recorded separately."
+}

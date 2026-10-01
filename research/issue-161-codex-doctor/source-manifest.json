@@ -1,0 +1,161 @@
+{
+  "revision": "be2951ea34f0d295ed0becf97079f92fa5f6950e",
+  "files": [
+    {
+      "path": "codex-rs/hooks/src/events/mod.rs",
+      "sha256": "215121424f62569df3ec920b22a059d1620edf47e1618bdebc4fb23ee6aed5ae",
+      "command": [
+        "rtk",
+        "proxy",
+        "gh",
+        "api",
+        "repos/openai/codex/contents/codex-rs/hooks/src/events/mod.rs?ref=be2951ea34f0d295ed0becf97079f92fa5f6950e"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "codex-rs/hooks/src/events/session_start.rs",
+      "sha256": "72af711f8a090e7eac86ef7b3ca081ee478639a5fe231cd7c3d4610c5df00d32",
+      "command": [
+        "rtk",
+        "proxy",
+        "gh",
+        "api",
+        "repos/openai/codex/contents/codex-rs/hooks/src/events/session_start.rs?ref=be2951ea34f0d295ed0becf97079f92fa5f6950e"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "codex-rs/core/src/hook_runtime.rs",
+      "sha256": "78f8bf2a054e7e6164c994cee070a6f4e734f62884e2b563ea8d55f8bb773d5b",
+      "command": [
+        "rtk",
+        "proxy",
+        "gh",
+        "api",
+        "repos/openai/codex/contents/codex-rs/core/src/hook_runtime.rs?ref=be2951ea34f0d295ed0becf97079f92fa5f6950e"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "codex-rs/core/src/tools/handlers/request_user_input.rs",
+      "sha256": "f8cf561ba3e6c6527bdc6b7c66330b4a3e71ce978bde52077f4b4e5efbf3a016",
+      "command": [
+        "rtk",
+        "proxy",
+        "gh",
+        "api",
+        "repos/openai/codex/contents/codex-rs/core/src/tools/handlers/request_user_input.rs?ref=be2951ea34f0d295ed0becf97079f92fa5f6950e"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "codex-rs/tui/src/app/event_dispatch.rs",
+      "sha256": "717cd81d9c2b1350edbe5267636a0c065afffb2b3ffacbb6c3083caf5344761d",
+      "command": [
+        "rtk",
+        "proxy",
+        "gh",
+        "api",
+        "repos/openai/codex/contents/codex-rs/tui/src/app/event_dispatch.rs?ref=be2951ea34f0d295ed0becf97079f92fa5f6950e"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "codex-rs/tui/src/app/thread_routing.rs",
+      "sha256": "c1bf14f54344cec9f9cab0323eb4b24b68d7bd9d82626025237058c4ee22a6e5",
+      "command": [
+        "rtk",
+        "proxy",
+        "gh",
+        "api",
+        "repos/openai/codex/contents/codex-rs/tui/src/app/thread_routing.rs?ref=be2951ea34f0d295ed0becf97079f92fa5f6950e"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "codex-rs/tui/src/app_backtrack.rs",
+      "sha256": "e2674ae8e0663aabc3ae1f2f8c04c93e3db74a66b2a92637bba38dc4153a356a",
+      "command": [
+        "rtk",
+        "proxy",
+        "gh",
+        "api",
+        "repos/openai/codex/contents/codex-rs/tui/src/app_backtrack.rs?ref=be2951ea34f0d295ed0becf97079f92fa5f6950e"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "codex-rs/core/src/session/handlers.rs",
+      "sha256": "a78f54aae6d1922e2898032cb9a96ddd8321986b061f0664bcf01e5b1dde75c9",
+      "command": [
+        "rtk",
+        "proxy",
+        "gh",
+        "api",
+        "repos/openai/codex/contents/codex-rs/core/src/session/handlers.rs?ref=be2951ea34f0d295ed0becf97079f92fa5f6950e"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "codex-rs/core/src/session/turn.rs",
+      "sha256": "a7b7496a4dbe7c51a87de978e740efd658fa5c9513007c0a61bef1c4006a0bec",
+      "command": [
+        "rtk",
+        "proxy",
+        "gh",
+        "api",
+        "repos/openai/codex/contents/codex-rs/core/src/session/turn.rs?ref=be2951ea34f0d295ed0becf97079f92fa5f6950e"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "codex-rs/core/src/session/session.rs",
+      "sha256": "ab0603e72920ab5560ad1f637c7d5131f87e2360d4343bbcd09cfdb8fe1379f9",
+      "command": [
+        "rtk",
+        "proxy",
+        "gh",
+        "api",
+        "repos/openai/codex/contents/codex-rs/core/src/session/session.rs?ref=be2951ea34f0d295ed0becf97079f92fa5f6950e"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "codex-rs/tui/src/app/new_session.rs",
+      "sha256": "1d9674a212156777a684563aa7e75be2d60ac6e4a20ead2fd7110fdf82ab1e1e",
+      "command": [
+        "rtk",
+        "proxy",
+        "gh",
+        "api",
+        "repos/openai/codex/contents/codex-rs/tui/src/app/new_session.rs?ref=be2951ea34f0d295ed0becf97079f92fa5f6950e"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "codex-rs/tui/src/app.rs",
+      "sha256": "529b8090838e3f9ea29c66925c61a441658424f8354cb62bd72537d3eafabd34",
+      "command": [
+        "rtk",
+        "proxy",
+        "gh",
+        "api",
+        "repos/openai/codex/contents/codex-rs/tui/src/app.rs?ref=be2951ea34f0d295ed0becf97079f92fa5f6950e"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "codex-rs/tui/src/app/session_lifecycle.rs",
+      "sha256": "2d1566962c9662758d9a09f3636cf31eb60187ed4427c0e2bd6cedecb4eb8bed",
+      "command": [
+        "rtk",
+        "proxy",
+        "gh",
+        "api",
+        "repos/openai/codex/contents/codex-rs/tui/src/app/session_lifecycle.rs?ref=be2951ea34f0d295ed0becf97079f92fa5f6950e"
+      ],
+      "exit_code": 0
+    }
+  ]
+}

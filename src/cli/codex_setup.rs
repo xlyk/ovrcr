@@ -1,7 +1,8 @@
 use super::{
     AppResult, RuntimeError,
-    agent_setup::{binary, quote, with_version_probe},
+    agent_setup::{binary, public_health_reason, quote, with_version_probe},
 };
+use ovrcr::protocol::{AgentProvider, ReporterHealth};
 use serde_json::json;
 use std::{ffi::OsStr, io::Read, path::Path};
 use toml::Value;
@@ -171,15 +172,60 @@ pub(super) fn doctor(
             }
         }
     };
+    let requested = session.or_else(|| std::env::var("OVRCR_SESSION_ID").ok()?.parse().ok());
+    let mut binding = serde_json::Value::Null;
+    let mut health = serde_json::Value::Null;
+    let mut guidance = String::new();
+    let session_status = match requested {
+        None => "not_requested",
+        Some(id) => match super::inspect() {
+            Err(_) => {
+                guidance.push_str("Session inspection was unavailable; check the configured OVRCR socket and server, then rerun doctor. ");
+                "inspection_unavailable"
+            }
+            Ok((_, sessions)) => match sessions.iter().find(|session| session.id.0 == id) {
+                None => {
+                    guidance.push_str("The requested session was not found; select a current session ID before checking its binding. ");
+                    "session_not_found"
+                }
+                Some(session) => match &session.agent {
+                    None => {
+                        guidance.push_str("This session has no reporting binding. Start Codex through the Dashboard agent picker or `ovrcr agent run codex -- codex`; a plain launch stays untracked. ");
+                        "unbound"
+                    }
+                    Some(agent) => {
+                        binding = json!({"provider":agent.binding.provider,"generation":agent.binding.generation});
+                        if agent.binding.provider != AgentProvider::Codex {
+                            guidance.push_str("This session is bound to another reporting provider; select a Codex session before diagnosing Codex reporting. ");
+                            "provider_mismatch"
+                        } else {
+                            health = json!({"state":agent.health.state,"reason":public_health_reason(agent.health.reason.as_deref()),"activity_available":agent.activity.is_some()});
+                            if agent.health.state == ReporterHealth::Unavailable {
+                                guidance.push_str(if agent.health.reason.as_deref() == Some("identity_transition_unavailable") {
+                                    "Reporting cannot safely identify the foreground conversation after an unsupported or ambiguous transition. Codex is still usable; configuration repair cannot recover this reporting lifetime. When ready, start a fresh supervised invocation with `ovrcr agent run codex -- codex`. "
+                                } else {
+                                    "Reporting is unavailable. Check the source_health reason and supervised launcher/reporting hooks; start a fresh supported invocation after correcting the reported cause. "
+                                });
+                                "reporting_unavailable"
+                            } else {
+                                "bound"
+                            }
+                        }
+                    }
+                },
+            },
+        },
+    };
+    guidance.push_str("Setup verification: run `ovrcr agent setup codex --print --settings PATH`, review the composition and trust hooks through native Codex. Launch through the Dashboard agent picker or `ovrcr agent run codex -- codex`. A plain `codex` launch stays untracked. Select stable codex-cli >=0.153.0. Doctor invokes the provider only for --version and inspects optional session state without starting a server; configuration presence does not prove hook trust or delivery.");
     println!("{}", serde_json::to_string_pretty(&json!({
         "provider":"codex", "executable":executable.to_string_lossy(), "version":version,
         "compatible_versions":policy.range(), "tested_versions":policy.tested, "version_compatible":supported, "version_tested":policy.tested(version), "probe_status":status,
         "release_status":"patch_compatible_hooks_only",
         "configuration":{"status":configuration,"effective_configuration":"unverified","hook_trust":"unverified","delivery":"unverified","issues":issues},
-        "session_status":if session.is_some() { "not_inspected_use_session_usage" } else { "not_requested" },
+        "session_status":session_status,"binding":binding,"source_health":health,
         "capabilities":{"initial_invocation":{"fresh":supported,"resume":"exact_uuid","fork":false,"picker":false},"conversation_switches":{"clear":"supported","resume":"supported","compact":"same_conversation_no_replacement","startup_while_bound":"identity_transition_unavailable_named_blocker","fork_launch":false},"activity":"last_observed_root_turn","ready":"available_fresh_and_exact_resume","input_requests":"approvals_available","questions":"unavailable_no_distinct_surface","completion_quality":"observed","metrics":"unavailable","task_success":false},
         "requirements":REQUIREMENTS, "launch_forms":FORMS,
-        "remediation":"Run `ovrcr agent setup codex --print --settings PATH`, review the composition and trust hooks through native Codex. Launch through the Dashboard agent picker or `ovrcr agent run codex -- codex`. A plain `codex` launch stays untracked. Select stable codex-cli >=0.153.0. Doctor only invokes --version; configuration presence does not prove hook trust or delivery."
+        "remediation":guidance
     })).map_err(RuntimeError::internal)?);
     Ok(())
 }

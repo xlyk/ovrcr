@@ -11431,6 +11431,106 @@ fn codex_input_requests_wait_alert_once_each_and_restore_without_unread() {
 }
 
 #[test]
+fn codex_doctor_inspects_identity_freeze_and_preserves_native_input() {
+    let _guard = env_lock();
+    const CURRENT: &str = "01a08e5c-7480-7052-9964-9224aadebef0";
+    const OTHER: &str = "01a08e94-0deb-76c3-a2b5-540c4874a53f";
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "codex-setup");
+    let (summary, _) = codex_session_named(&fixture, &fixture.socket, "codex-doctor");
+    let native = fixture.root.path().join("codex");
+    let doctor = || {
+        let output = cli_with_output(
+            env!("CARGO_BIN_EXE_ovrcr"),
+            &fixture.config,
+            &fixture.socket,
+            &[
+                "agent",
+                "doctor",
+                "codex",
+                "--json",
+                "--session",
+                &summary.id.0.to_string(),
+                "--executable",
+                native.to_str().unwrap(),
+            ],
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let value = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+        let public = value.to_string();
+        assert!(!public.contains(CURRENT), "{value}");
+        assert!(!public.contains(OTHER), "{value}");
+        assert!(value["binding"].get("invocation").is_none(), "{value}");
+        assert!(value["binding"].get("conversation").is_none(), "{value}");
+        value
+    };
+    let mut index = 0;
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("UserPromptSubmit:{CURRENT}:A"),
+    );
+    let healthy = doctor();
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("SessionStart:{OTHER}:boot:startup-source"),
+    );
+    let frozen = doctor();
+    assert_eq!(frozen["session_status"], "reporting_unavailable");
+    assert_eq!(frozen["source_health"]["state"], "Unavailable");
+    assert_eq!(
+        frozen["source_health"]["reason"],
+        "identity_transition_unavailable"
+    );
+    assert_eq!(healthy["session_status"], "bound");
+    assert_eq!(healthy["source_health"]["state"], "Connected");
+    assert!(healthy["source_health"]["reason"].is_null());
+    assert_eq!(frozen["binding"], healthy["binding"]);
+    let advice = frozen["remediation"]
+        .as_str()
+        .expect("keep Codex remediation a string");
+    assert!(advice.contains("foreground conversation"), "{frozen}");
+    assert!(
+        advice.contains("configuration repair cannot recover"),
+        "{frozen}"
+    );
+    assert!(
+        advice.contains("ovrcr agent run codex -- codex"),
+        "{frozen}"
+    );
+    assert!(matches!(
+        fixture.session_summary(summary.id).phase,
+        ovrcr::session::SessionPhase::Running
+    ));
+    desktop_codex_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        &format!("UserPromptSubmit:{OTHER}:after-freeze"),
+    );
+    assert_eq!(
+        doctor()["source_health"]["reason"],
+        "identity_transition_unavailable"
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "CODEX_NATIVE_EXIT=17");
+}
+
+#[test]
 fn codex_supported_conversation_switches_rebind_ready_and_input_without_unread_ack() {
     let _guard = env_lock();
     use ovrcr::protocol::{AgentActivity, ReporterHealth};

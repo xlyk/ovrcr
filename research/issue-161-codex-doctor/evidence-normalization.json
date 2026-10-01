@@ -1,0 +1,146 @@
+[
+  {
+    "file": "checks/36-codex-doctor-red.json",
+    "raw_sha256": "8b687feffd4c4b399c5579ee56b4051878510ae54a55b69795b9c8a2078203ba",
+    "normalized_sha256": "8b687feffd4c4b399c5579ee56b4051878510ae54a55b69795b9c8a2078203ba",
+    "normalization": "none"
+  },
+  {
+    "file": "checks/36-codex-doctor-red.log",
+    "raw_sha256": "c98da0ebccaeb1ac5ae5fbc0a84bc6e023d5a49f2b31db6229a19c05c391cd5f",
+    "normalized_sha256": "c98da0ebccaeb1ac5ae5fbc0a84bc6e023d5a49f2b31db6229a19c05c391cd5f",
+    "normalization": "none"
+  },
+  {
+    "file": "checks/37-codex-doctor-green.json",
+    "raw_sha256": "1a928bb0d608a55e5e141827032d4950e343c809cbf5ebe64e6075f71ec8b17b",
+    "normalized_sha256": "1a928bb0d608a55e5e141827032d4950e343c809cbf5ebe64e6075f71ec8b17b",
+    "normalization": "none"
+  },
+  {
+    "file": "checks/37-codex-doctor-green.log",
+    "raw_sha256": "4007f5340237c1059761b12f504e3d67dc69f92a8adb74c6d51bdd505aa4b46b",
+    "normalized_sha256": "5115529dab2d46ce272a454dfc3e49a6fc828b227792d70de2557beb8d191b53",
+    "normalization": "trailing ASCII whitespace and extra empty EOF lines only"
+  },
+  {
+    "file": "checks/38-doctor-setup.json",
+    "raw_sha256": "958927ceb81698b629d3c4107eae68b5a63a21c7b8a9a4291ec411571513b8fe",
+    "normalized_sha256": "958927ceb81698b629d3c4107eae68b5a63a21c7b8a9a4291ec411571513b8fe",
+    "normalization": "none"
+  },
+  {
+    "file": "checks/38-doctor-setup.log",
+    "raw_sha256": "44dba6035d45b4d46e5b355c29712db295d4856a7d060369fdcb495cf5e51bbe",
+    "normalized_sha256": "75dc42f93783f72adb671926c8807359decb0eea0ee93c30540e860ca26432eb",
+    "normalization": "trailing ASCII whitespace and extra empty EOF lines only"
+  },
+  {
+    "file": "checks/39-safe-reasons-unit.json",
+    "raw_sha256": "d626a1779eb9ab725c14d5c40d410ec4d1dd32c083cc551053bdc5b702045511",
+    "normalized_sha256": "d626a1779eb9ab725c14d5c40d410ec4d1dd32c083cc551053bdc5b702045511",
+    "normalization": "none"
+  },
+  {
+    "file": "checks/39-safe-reasons-unit.log",
+    "raw_sha256": "b59ec2f014dbfeaa15ecc7516c2d7fd1d2147295ae1ae6c154b34b7409bab32c",
+    "normalized_sha256": "645e4cd5b7382d87d98a7b751c3f6352aac25ca947d668fc04148cde20407906",
+    "normalization": "trailing ASCII whitespace and extra empty EOF lines only"
+  },
+  {
+    "file": "checks/40-doctor-final-focused.json",
+    "raw_sha256": "20d390a07f37c430b647e3317a9adaefd3717f369ae655bf55ad0d6a93cf2b17",
+    "normalized_sha256": "20d390a07f37c430b647e3317a9adaefd3717f369ae655bf55ad0d6a93cf2b17",
+    "normalization": "none"
+  },
+  {
+    "file": "checks/40-doctor-final-focused.log",
+    "raw_sha256": "9dfa2c16517d5ca550b96ccdd23a148cdfc17a218827e49de131cf932a6f218c",
+    "normalized_sha256": "9dfa2c16517d5ca550b96ccdd23a148cdfc17a218827e49de131cf932a6f218c",
+    "normalization": "none"
+  },
+  {
+    "file": "checks/41-doctor-final-focused.json",
+    "raw_sha256": "6aaf6c1fff50cb32a733247e88c8b5c22d931c65d5293b3e6ca12c8ef19f9fdb",
+    "normalized_sha256": "6aaf6c1fff50cb32a733247e88c8b5c22d931c65d5293b3e6ca12c8ef19f9fdb",
+    "normalization": "none"
+  },
+  {
+    "file": "checks/41-doctor-final-focused.log",
+    "raw_sha256": "85b2bc75214900ff8170cf645e90aefc72e223280a5d7225debb74559fe7ff4a",
+    "normalized_sha256": "27a1ea74277283c49b076e03da293e0238c4083bacb6a81b75140c6dd592b793",
+    "normalization": "trailing ASCII whitespace and extra empty EOF lines only"
+  },
+  {
+    "file": "checks/42-source-test-snapshot.json",
+    "raw_sha256": "a0d8f5ab6055902c8f27f63596234d6ad1f2243a65b73f25166a88260fecd22d",
+    "normalized_sha256": "a0d8f5ab6055902c8f27f63596234d6ad1f2243a65b73f25166a88260fecd22d",
+    "normalization": "none"
+  },
+  {
+    "file": "checks/42-workspace-serial.json",
+    "raw_sha256": "20ed543830426e9833153f08af58a715cf063e71f5ffd7ac73451500d5de3d54",
+    "normalized_sha256": "20ed543830426e9833153f08af58a715cf063e71f5ffd7ac73451500d5de3d54",
+    "normalization": "none"
+  },
+  {
+    "file": "checks/42-workspace-serial.log",
+    "raw_sha256": "5d10c3b1e1d748538041d1427efb1b4f166963a1c62ea55b2597b85fc500ef4a",
+    "normalized_sha256": "a3075de0257b184787892e0a0c68475eeff05afbd1e030f5765d0860f1fffe59",
+    "normalization": "trailing ASCII whitespace and extra empty EOF lines only"
+  },
+  {
+    "file": "checks/43-clippy.json",
+    "raw_sha256": "e597b7f41088bd6940c940754253664d8d6737542de5db10e9526ddd88418db3",
+    "normalized_sha256": "e597b7f41088bd6940c940754253664d8d6737542de5db10e9526ddd88418db3",
+    "normalization": "none"
+  },
+  {
+    "file": "checks/43-clippy.log",
+    "raw_sha256": "475d889fb25ea6d4cbf13cba3077f13c21cda3edd9672f853661815247340f73",
+    "normalized_sha256": "475d889fb25ea6d4cbf13cba3077f13c21cda3edd9672f853661815247340f73",
+    "normalization": "none"
+  },
+  {
+    "file": "checks/44-format.json",
+    "raw_sha256": "cf85a8a0617bc4c2be95028331182ed4f4b0419cc383bf2e5ce956ec8a8065fb",
+    "normalized_sha256": "cf85a8a0617bc4c2be95028331182ed4f4b0419cc383bf2e5ce956ec8a8065fb",
+    "normalization": "none"
+  },
+  {
+    "file": "checks/44-format.log",
+    "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "normalized_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "normalization": "none"
+  },
+  {
+    "file": "checks/45-extensions.json",
+    "raw_sha256": "7c2babbdce6cc78f3504a0d1c0d5b0b3c2a25891198088bd59b52be429c5862e",
+    "normalized_sha256": "7c2babbdce6cc78f3504a0d1c0d5b0b3c2a25891198088bd59b52be429c5862e",
+    "normalization": "none"
+  },
+  {
+    "file": "checks/45-extensions.log",
+    "raw_sha256": "3e92282ca2511532fa15eefab64f7570ecf1e360794b3549b85a8348e51dd81c",
+    "normalized_sha256": "3e92282ca2511532fa15eefab64f7570ecf1e360794b3549b85a8348e51dd81c",
+    "normalization": "none"
+  },
+  {
+    "file": "checks/46-doctests.json",
+    "raw_sha256": "0d74885aa466d028594271c1cf575334bcd41bfe92dc9dc08a270d5e42f863d2",
+    "normalized_sha256": "0d74885aa466d028594271c1cf575334bcd41bfe92dc9dc08a270d5e42f863d2",
+    "normalization": "none"
+  },
+  {
+    "file": "checks/46-doctests.log",
+    "raw_sha256": "0e7759f651bdf6b74e64ed3368b3c4858374148782b22df637943da3690c5563",
+    "normalized_sha256": "14956c904055e48b703544395a5b8c95a90e3293acd9a11ea9f04d0e385738a5",
+    "normalization": "trailing ASCII whitespace and extra empty EOF lines only"
+  },
+  {
+    "file": "checks/47-doctor-cleanup.json",
+    "raw_sha256": "ed8443cb5eb9d4380d51e15c161e85d70a43581639849b55f3ef0fb42c94b2d0",
+    "normalized_sha256": "ed8443cb5eb9d4380d51e15c161e85d70a43581639849b55f3ef0fb42c94b2d0",
+    "normalization": "none"
+  }
+]
