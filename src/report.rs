@@ -3,6 +3,7 @@ pub mod claude;
 pub mod claude_metrics;
 pub mod codex;
 pub mod collector;
+pub mod cursor;
 pub mod extension;
 pub mod grok;
 pub mod omp;
@@ -543,6 +544,17 @@ pub fn send_claude_statusline(input: &[u8], deadline: Instant) -> Result<()> {
 }
 pub fn send_codex_hook(input: &[u8], deadline: Instant) -> Result<()> {
     send_payload(input, "codex", "codex-hook", deadline)
+}
+pub fn send_cursor_hook(input: &[u8], deadline: Instant) -> Result<()> {
+    let Some(startup) = cursor::startup(input) else {
+        return Ok(());
+    };
+    send_payload(
+        &serde_json::to_vec(&startup)?,
+        "cursor-agent",
+        "cursor-hook",
+        deadline,
+    )
 }
 pub fn send_pi_event(input: &[u8], deadline: Instant) -> Result<()> {
     send_payload(input, "pi", "pi-extension", deadline)

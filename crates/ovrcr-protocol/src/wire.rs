@@ -985,6 +985,7 @@ mod wire_snapshot {
                 crate::AgentProvider::Pi,
                 crate::AgentProvider::Hermes,
                 crate::AgentProvider::Omp,
+                crate::AgentProvider::Cursor,
             ]
             .iter()
             .map(|provider| (format!("AgentProvider::{provider:?}"), encode(provider))),
@@ -1230,6 +1231,7 @@ mod wire_snapshot {
         ("AgentProvider::Pi", "03"),
         ("AgentProvider::Hermes", "04"),
         ("AgentProvider::Omp", "05"),
+        ("AgentProvider::Cursor", "06"),
         (
             "ConversationReference::Pi",
             "01066e61746976650d2f62696e2f70726f7669646572010e2f686973746f72792e6a736f6e6c072f636f6e66696700",

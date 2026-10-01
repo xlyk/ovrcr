@@ -23,6 +23,7 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
             settings,
         } => {
             return match provider.as_str() {
+                "cursor-agent" => super::cursor::setup(settings.as_deref()),
                 "hermes" => super::hermes::setup(settings.as_deref()),
                 "grok" => Err(grok_needs_no_setup()),
                 "codex" => super::codex_setup::setup(settings.as_deref()),
@@ -40,6 +41,7 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
         } => {
             let executable = executable.unwrap_or_else(|| provider.clone().into());
             return match provider.as_str() {
+                "cursor-agent" => super::cursor::doctor(settings.as_deref(), session, &executable),
                 "hermes" => super::hermes::doctor(settings.as_deref(), session, &executable),
                 "grok" => Err(grok_needs_no_setup()),
                 "codex" => super::codex_setup::doctor(settings.as_deref(), session, &executable),
@@ -95,6 +97,7 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
             return None;
         }
         Some(match name.as_str() {
+            "cursor-agent" => ovrcr::report::cursor::receiver(lease, native_argv),
             "codex" => ovrcr::report::codex::receiver(lease, native_argv),
             "pi" => ovrcr::report::pi::receiver(lease, native_argv),
             "omp" => ovrcr::report::omp::receiver(lease, native_argv),

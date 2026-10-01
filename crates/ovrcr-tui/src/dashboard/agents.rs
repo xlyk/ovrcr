@@ -20,7 +20,15 @@ const KNOWN_AGENTS: [&str; 12] = [
 /// Detected agents OVRCR launches through `agent run <name> --` so managed reporting
 /// (Grok retains history for titles; Hermes has process supervision only). Explicit custom
 /// overrides keep their argv unchanged; a raw shell command is never adopted silently.
-pub const MANAGED_AGENTS: [&str; 6] = ["claude", "codex", "pi", "omp", "grok", "hermes"];
+pub const MANAGED_AGENTS: [&str; 7] = [
+    "claude",
+    "codex",
+    "pi",
+    "omp",
+    "grok",
+    "hermes",
+    "cursor-agent",
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentSource {
@@ -230,9 +238,56 @@ mod tests {
     }
 
     #[test]
+    fn cursor_detection_uses_managed_launch() {
+        let dir = tempfile::tempdir().unwrap();
+        write_stub(dir.path(), "cursor-agent", 0o755);
+        let launcher = Path::new("/opt/ovrcr/bin/ovrcr");
+        let entries = detect_agents(dir.path().as_os_str(), None, Some(launcher));
+        let cursor = entries
+            .iter()
+            .find(|entry| entry.name == "cursor-agent")
+            .unwrap();
+        assert_eq!(
+            cursor.argv,
+            vec![
+                OsString::from(launcher),
+                "agent".into(),
+                "run".into(),
+                "cursor-agent".into(),
+                "--".into(),
+                dir.path().join("cursor-agent").into_os_string(),
+            ]
+        );
+        let custom = apply_overrides(
+            entries,
+            &[AgentOverride {
+                name: "cursor-agent".into(),
+                argv: vec!["/custom/cursor-agent".into(), "--resume".into()],
+            }],
+        );
+        assert_eq!(
+            custom
+                .iter()
+                .find(|entry| entry.name == "cursor-agent")
+                .unwrap()
+                .argv,
+            vec![OsString::from("/custom/cursor-agent"), "--resume".into()]
+        );
+    }
+
+    #[test]
     fn managed_agents_launch_through_the_agent_run_route() {
         let dir = tempfile::tempdir().unwrap();
-        for name in ["claude", "codex", "pi", "omp", "grok", "hermes", "gemini"] {
+        for name in [
+            "claude",
+            "codex",
+            "pi",
+            "omp",
+            "grok",
+            "hermes",
+            "cursor-agent",
+            "gemini",
+        ] {
             write_stub(dir.path(), name, 0o755);
         }
         let launcher = Path::new("/opt/ovrcr/bin/ovrcr");
