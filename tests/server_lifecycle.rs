@@ -7372,6 +7372,153 @@ fn agent_run_native_helper() {
 }
 
 #[test]
+fn hermes_supervision_preserves_job_control_failure_and_peer_isolation() {
+    let fixture = ControlFixture::new_bounded();
+    fixture.ready("agent-hooks");
+    let peer = fixture.create_session_summary("hermes-peer", vec![
+        "sh".into(), "-c".into(),
+        "printf 'HERMES_PEER_READY\\n'; while IFS= read -r line; do printf 'HERMES_PEER_REPLY:%s\\n' \"$line\"; done".into(),
+    ]);
+    fixture.record_process_group(&peer);
+    fixture.wait_terminal_contains(peer.id, "HERMES_PEER_READY");
+    let probe = fixture.root.path().join("hermes-control-probe");
+    let summary = fixture.create_session_with_kind(
+        ovrcr_protocol::SessionKind::Agent { name: "hermes".into() },
+        "hermes-control",
+        vec![
+            "sh".into(), "-c".into(),
+            r#"stty -echo; stty -g > "$3.before"; export OVRCR_NATIVE_PROBE="$3"; "$1" agent run hermes -- "$2" --ignored --exact agent_run_native_helper --nocapture; code=$?; stty -g > "$3.after"; printf 'HERMES_WRAPPER_FINISHED=%s\n' "$code"; IFS= read -r done; printf HERMES_SHELL_RESTORED; exit "$code""#.into(),
+            "hermes-control-fixture".into(), env!("CARGO_BIN_EXE_ovrcr").into(),
+            std::env::current_exe().unwrap().into_os_string(), probe.clone().into_os_string(),
+        ],
+    );
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains(summary.id, "NATIVE_READY");
+    let values: Vec<i32> = std::fs::read_to_string(&probe)
+        .unwrap()
+        .split_whitespace()
+        .map(|value| value.parse().unwrap())
+        .collect();
+    let (pid, pgid, launcher, foreground) = (values[0], values[1], values[2], values[3]);
+    assert_eq!(unsafe { libc::getpgid(pid) }, pgid);
+    assert_eq!(pid, pgid, "native must own its group");
+    assert_eq!(foreground, pgid, "native must own terminal foreground");
+    fixture.own_group(pgid);
+    let native = PausePeer {
+        pid,
+        pgid,
+        address: probe.clone(),
+        preexit_marker: String::new(),
+    };
+    assert_eq!(
+        fixture.session_summary(summary.id).agent_epoch,
+        0,
+        "Hermes must not reserve reporting"
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "\u{3}".into(),
+            submit: false,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "NATIVE_INTERRUPTS=1");
+    assert_eq!(
+        fixture.request(Request::PauseSession {
+            session: summary.id
+        }),
+        Response::Ok
+    );
+    wait_peer_stopped(&native, Duration::from_secs(2));
+    assert_eq!(fixture.session_phase(summary.id), SessionPhase::Paused);
+    assert!(
+        matches!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: "must-not-reach-paused-child".into(),
+                submit: true,
+            }),
+            Response::Error { code: ErrorCode::Conflict, message } if message.contains("session is paused")
+        ),
+        "paused input must be refused"
+    );
+    assert_eq!(
+        fixture.request(Request::ResumeSession {
+            session: summary.id
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "hermes-after-resume".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "NATIVE_INPUT=hermes-after-resume");
+    assert_eq!(
+        std::fs::read_to_string(probe.with_extension("interrupts")).unwrap(),
+        "1"
+    );
+    let active = fixture.session_summary(summary.id);
+    assert_eq!(active.phase, SessionPhase::Running);
+    assert_eq!(active.agent_epoch, 0);
+    assert!(active.agent.is_none() && active.unread.is_none());
+    assert_eq!(unsafe { libc::kill(launcher, libc::SIGTERM) }, 0);
+    fixture.wait_terminal_contains(summary.id, "HERMES_WRAPPER_FINISHED=23");
+    assert_eq!(
+        std::fs::read(probe.with_extension("before")).unwrap(),
+        std::fs::read(probe.with_extension("after")).unwrap(),
+        "restore outer shell termios after failure"
+    );
+    assert!(
+        live::wait_group_absent(pgid, Duration::from_secs(2)),
+        "native group remains after forwarded termination"
+    );
+    let endpoint = std::fs::read_to_string(probe.with_extension("endpoint")).unwrap();
+    assert!(
+        !Path::new(&endpoint).exists(),
+        "private invocation socket remains"
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "finish".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "HERMES_SHELL_RESTORED");
+    fixture.wait_exited(summary.id);
+    assert_eq!(
+        fixture.session_phase(summary.id),
+        SessionPhase::Exited {
+            code: Some(23),
+            signal: None
+        }
+    );
+    assert!(live::wait_group_absent(
+        summary.pid.unwrap() as i32,
+        Duration::from_secs(2)
+    ));
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: peer.id,
+            text: "after-hermes-failure".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(peer.id, "HERMES_PEER_REPLY:after-hermes-failure");
+    assert_eq!(fixture.session_phase(peer.id), SessionPhase::Running);
+    println!(
+        "HERMES_SYNTHETIC_CONTROL native_group_removed=true private_endpoint_removed=true exit=23 peer_usable=true"
+    );
+}
+
+#[test]
 fn agent_run_owns_native_group_and_restores_terminal_after_forwarded_term() {
     let fixture = ControlFixture::new_bounded();
     fixture.create_hook_child("setup", "agent-run-setup");
