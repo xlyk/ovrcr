@@ -1,0 +1,20 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--test",
+    "server_lifecycle",
+    "codex_setup_dispatches_fork_to_existing_identity_guard",
+    "--",
+    "--exact",
+    "--test-threads=1"
+  ],
+  "cwd": "/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161-codex-start-dispatch",
+  "revision": "7b94e602ba0b9c5b1ad4fb67f4d8ec34effe71d9",
+  "diff_sha256": "bf93fd8f76c867bf50c57d6ca8db4c04b93e7936e983b49164382afd606c9132",
+  "started": "2026-10-01T01:31:17.762322+00:00",
+  "exit_code": 0,
+  "finished": "2026-10-01T01:31:25.999175+00:00"
+}

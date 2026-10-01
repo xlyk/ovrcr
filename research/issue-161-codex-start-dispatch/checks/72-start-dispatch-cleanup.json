@@ -1,0 +1,8 @@
+{
+  "checked": "2026-10-01T01:54:59.148233+00:00",
+  "scope": "current slice worktree target binary prefix only; no global live-session inventory",
+  "matching_processes": [],
+  "fixture_cleanup": "Live::Drop checks only owned PGIDs, preserves roots on cleanup uncertainty; no cleanup-incomplete lines in full or scoped checks",
+  "source_and_tests_unchanged": true,
+  "cleanup_incomplete_logs": []
+}

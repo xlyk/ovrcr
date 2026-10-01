@@ -1,0 +1,26 @@
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161-codex-start-dispatch/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161-codex-start-dispatch/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161-codex-start-dispatch/crates/ovrcr-runtime)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161-codex-start-dispatch/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161-codex-start-dispatch)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 11.35s
+     Running unittests src/main.rs (target/debug/deps/ovrcr-aa7d852c0796ab61)
+
+running 1 test
+test cli::codex_setup::tests::configuration_presence_requires_unfiltered_synchronous_exact_command ... FAILED
+
+failures:
+
+---- cli::codex_setup::tests::configuration_presence_requires_unfiltered_synchronous_exact_command stdout ----
+
+thread 'cli::codex_setup::tests::configuration_presence_requires_unfiltered_synchronous_exact_command' (448595799) panicked at src/cli/codex_setup.rs:267:9:
+assertion failed: !reporter(&startup, "SessionStart", command)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    cli::codex_setup::tests::configuration_presence_requires_unfiltered_synchronous_exact_command
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p ovrcr --bin ovrcr`
