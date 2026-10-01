@@ -1167,13 +1167,17 @@ fn detached_root_warning_uses_stored_default() {
 
 #[test]
 fn automatic_local_terminals_policy_controls_provisioning_paths() {
+    use ovrcr::protocol::{CreateSessionRequest, SessionKind, SessionLaunch};
+    use std::time::{Duration, Instant};
+
     for (policy, expect_root, expect_feature) in [
         (None, true, false), // missing key → default_branch_only
         (Some("on"), true, true),
         (Some("off"), false, false),
         (Some("default_branch_only"), true, false),
     ] {
-        let fixture = Live::binary();
+        let fixture = Live::idle().bounded();
+        live::git(&fixture.repo, &["branch", "-m", "trunk"]);
         let dashboard = fixture.root.path().join("dashboard.toml");
         match policy {
             Some(value) => {
@@ -1187,6 +1191,7 @@ fn automatic_local_terminals_policy_controls_provisioning_paths() {
                 let _ = std::fs::remove_file(&dashboard);
             }
         }
+        fixture.start_binary_env(&[("OVRCR_DASHBOARD_CONFIG", dashboard.as_os_str())]);
 
         assert_eq!(
             fixture.request(Request::AddProject {
@@ -1209,9 +1214,10 @@ fn automatic_local_terminals_policy_controls_provisioning_paths() {
             .iter()
             .filter(|session| session.name == "local" && session.phase.is_live())
             .count();
+        assert_eq!(root.name, "trunk");
         assert_eq!(
-            root_locals == 1,
-            expect_root,
+            root_locals,
+            usize::from(expect_root),
             "policy={policy:?} root locals={root_locals}"
         );
 
@@ -1221,7 +1227,7 @@ fn automatic_local_terminals_policy_controls_provisioning_paths() {
                 id: "feature".into(),
                 branch: BranchRequest::New {
                     branch: "feature/policy".into(),
-                    base: "main".into(),
+                    base: "trunk".into(),
                 },
             }),
             Response::Ok
@@ -1240,9 +1246,110 @@ fn automatic_local_terminals_policy_controls_provisioning_paths() {
             .filter(|session| session.name == "local" && session.phase.is_live())
             .count();
         assert_eq!(
-            feature_locals == 1,
-            expect_feature,
+            feature_locals,
+            usize::from(expect_feature),
             "policy={policy:?} feature locals={feature_locals}"
         );
+
+        // Dashboard explicit workspace launches and direct terminal/agent
+        // launches must remain independent of the automatic preference.
+        for (label, kind) in [
+            ("terminal", SessionKind::Terminal),
+            (
+                "agent",
+                SessionKind::Agent {
+                    name: "policy-fixture".into(),
+                },
+            ),
+        ] {
+            let argv = vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "printf 'POLICY_%s\\n' EXPLICIT; exec /bin/sh -i".into(),
+            ];
+            for response in [
+                fixture.request(Request::CreateSession(CreateSessionRequest {
+                    project: "demo".into(),
+                    workspace: "feature".into(),
+                    name: format!("explicit-{label}"),
+                    label: None,
+                    argv: argv.clone(),
+                    kind: kind.clone(),
+                })),
+                fixture.request(Request::CreateWorkspaceWithLaunch {
+                    project: "demo".into(),
+                    id: format!("explicit-{label}"),
+                    branch: BranchRequest::New {
+                        branch: format!("feature/explicit-{label}"),
+                        base: "trunk".into(),
+                    },
+                    launch: Some(SessionLaunch {
+                        argv: argv.clone(),
+                        label: None,
+                        kind: kind.clone(),
+                    }),
+                }),
+            ] {
+                let Response::CreatedSession(session) = response else {
+                    panic!("policy={policy:?} {label} launch: {response:?}");
+                };
+                assert_eq!(session.kind, kind);
+                assert!(session.phase.is_live(), "policy={policy:?} {label}");
+                fixture.own_group(session.pid.unwrap() as libc::pid_t);
+                let deadline = Instant::now() + live::wait_deadline();
+                loop {
+                    let Response::TerminalText { text, .. } =
+                        fixture.request(Request::ReadTerminal {
+                            session: session.id,
+                            max_lines: Some(24),
+                        })
+                    else {
+                        panic!("read explicit {label}");
+                    };
+                    if text.contains("POLICY_EXPLICIT") {
+                        break;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "policy={policy:?} {label}: {text}"
+                    );
+                    std::thread::park_timeout(Duration::from_millis(10));
+                }
+            }
+        }
+        let Response::Hierarchy(hierarchy) = fixture.request(Request::List) else {
+            panic!("hierarchy after explicit launches");
+        };
+        for label in ["terminal", "agent"] {
+            let workspace = hierarchy.projects[0]
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == format!("explicit-{label}"))
+                .unwrap();
+            assert_eq!(workspace.sessions.len(), 1, "policy={policy:?} {label}");
+        }
+        for pgid in fixture.session_groups() {
+            fixture.own_group(pgid);
+        }
+        let root = fixture.root.path().to_owned();
+        let groups = fixture.owned_groups();
+        eprintln!(
+            "policy={policy:?} fixture={} owned_groups={groups:?}",
+            root.display()
+        );
+        drop(fixture);
+        assert!(
+            !root.exists(),
+            "policy={policy:?} fixture cleanup: {}",
+            root.display()
+        );
+        for pgid in groups {
+            assert_eq!(unsafe { libc::kill(-pgid, 0) }, -1, "owned group {pgid}");
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::ESRCH)
+            );
+            eprintln!("policy={policy:?} owned_pgid={pgid} absent=true");
+        }
     }
 }
