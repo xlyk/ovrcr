@@ -10,8 +10,10 @@ pub enum AgentProvider {
     Grok,
     Pi,
     Hermes,
-    /// Oh My Pi. Appended last: bincode numbers variants by declaration order.
+    /// Oh My Pi. Appended: bincode numbers variants by declaration order.
     Omp,
+    /// Cursor CLI. Appended: existing bincode discriminants stay unchanged.
+    Cursor,
 }
 
 impl AgentProvider {
@@ -24,6 +26,7 @@ impl AgentProvider {
             Self::Pi => "pi",
             Self::Hermes => "hermes",
             Self::Omp => "omp",
+            Self::Cursor => "cursor-agent",
         }
     }
 
@@ -36,6 +39,7 @@ impl AgentProvider {
             "pi" => Self::Pi,
             "hermes" => Self::Hermes,
             "omp" => Self::Omp,
+            "cursor-agent" => Self::Cursor,
             _ => return None,
         })
     }
@@ -686,7 +690,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn provider_names_round_trip_the_six_known_executables() {
+    fn provider_names_round_trip_known_executables() {
         for (provider, name) in [
             (AgentProvider::Claude, "claude"),
             (AgentProvider::Codex, "codex"),
@@ -694,6 +698,7 @@ pub(crate) mod tests {
             (AgentProvider::Pi, "pi"),
             (AgentProvider::Hermes, "hermes"),
             (AgentProvider::Omp, "omp"),
+            (AgentProvider::Cursor, "cursor-agent"),
         ] {
             assert_eq!(provider.name(), name);
             assert_eq!(AgentProvider::from_name(name), Some(provider));
@@ -711,6 +716,7 @@ pub(crate) mod tests {
             (AgentProvider::Claude, true),
             (AgentProvider::Grok, false),
             (AgentProvider::Hermes, false),
+            (AgentProvider::Cursor, false),
         ] {
             assert_eq!(provider.supports_readiness(), expected, "{provider:?}");
         }

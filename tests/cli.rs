@@ -2420,6 +2420,482 @@ fn hermes_cli_launch_uses_real_server_pty_and_truthful_lifecycle() {
 }
 
 #[test]
+fn cursor_diagnostics_are_read_only_and_capabilities_are_explicit() {
+    let root = tempfile::tempdir().unwrap();
+    let marker = root.path().join("provider-ran");
+    let native = root.path().join("cursor-agent");
+    std::fs::write(
+        &native,
+        format!("#!/bin/sh\ntouch '{}'\nexit 99\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut doctor = isolated_command(&root);
+    doctor
+        .args(["agent", "doctor", "cursor-agent", "--json", "--executable"])
+        .arg(&native);
+    let output = run_cli_bounded(doctor).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["provider"], "cursor-agent");
+    assert_eq!(report["probe_status"], "not_run");
+    assert_eq!(report["source_reviewed_versions"][0], "2026.09.10-fd3934a");
+    assert_eq!(report["capabilities"]["startup_identity"], "source_pinned");
+    for capability in [
+        "readiness",
+        "approvals",
+        "questions",
+        "recovery",
+        "metrics",
+        "generated_titles",
+    ] {
+        assert_eq!(
+            report["capabilities"][capability], "unavailable",
+            "{capability}"
+        );
+    }
+    let mut setup = isolated_command(&root);
+    setup.args(["agent", "setup", "cursor-agent", "--print"]);
+    let output = run_cli_bounded(setup).unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("temporary local plugin"));
+    let settings = root.path().join("private-settings");
+    std::fs::write(&settings, "DO_NOT_READ_OR_MODIFY").unwrap();
+    for action in ["setup", "doctor"] {
+        let mut command = isolated_command(&root);
+        command
+            .args(["agent", action, "cursor-agent", "--settings"])
+            .arg(&settings);
+        if action == "setup" {
+            command.arg("--print");
+        }
+        let output = run_cli_bounded(command).unwrap();
+        assert!(!output.status.success(), "unsupported settings accepted");
+    }
+    assert_eq!(
+        std::fs::read_to_string(settings).unwrap(),
+        "DO_NOT_READ_OR_MODIFY"
+    );
+    assert!(!marker.exists());
+    assert!(!root.path().join("server.sock").exists());
+}
+
+#[test]
+fn cursor_unavailable_launch_preserves_native_argv_and_exit() {
+    let root = tempfile::tempdir().unwrap();
+    let native = root.path().join("cursor-agent");
+    std::fs::write(
+        &native,
+        "#!/bin/sh\nprintf 'ARG:%s\\n' \"$@\"; printf 'NATIVE_ERROR' >&2; exit 17\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut command = isolated_command(&root);
+    command
+        .args(["agent", "run", "cursor-agent", "--"])
+        .arg(&native)
+        .args(["--resume", "native-id", "a b"]);
+    let output = run_cli_bounded(command).unwrap();
+    assert_eq!(output.status.code(), Some(17));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "ARG:--resume\nARG:native-id\nARG:a b\n"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("NATIVE_ERROR"));
+}
+
+#[test]
+fn cursor_help_describes_the_pinned_partial_capability() {
+    let root = tempfile::tempdir().unwrap();
+    let mut command = isolated_command(&root);
+    command.args(["agent", "run", "--help"]);
+    let output = run_cli_bounded(command).unwrap();
+    assert!(output.status.success());
+    let help = String::from_utf8(output.stdout).unwrap();
+    assert!(help.contains("Cursor CLI 2026.09.10-fd3934a"));
+    assert!(help.contains("startup identity only"));
+}
+
+fn cursor_create(
+    fixture: &live::Live,
+    native: &std::path::Path,
+    args: &[&str],
+) -> ovrcr::session::SessionId {
+    let mut command = Command::new(&fixture.executable);
+    command
+        .env("OVRCR_CONFIG", &fixture.config)
+        .env("OVRCR_SOCKET", &fixture.socket)
+        .args([
+            "terminal",
+            "create",
+            "--json",
+            "--project",
+            live::PROJECT,
+            "--workspace",
+            "feature/cursor-harness",
+            "--",
+        ])
+        .arg(&fixture.executable)
+        .args(["agent", "run", "cursor-agent", "--"])
+        .arg(native)
+        .args(args);
+    let output = run_cli_bounded(command).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let created: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    ovrcr::session::SessionId(created["id"].as_u64().unwrap())
+}
+
+#[test]
+fn cursor_plugin_creation_failure_preserves_native_argv_and_exit() {
+    let fixture = live::Live::idle().bounded();
+    let scratch = tempfile::Builder::new()
+        .prefix("ovrcr-cursor-test-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let temporary = scratch.path().join("tmp");
+    std::fs::create_dir(&temporary).unwrap();
+    fixture.start_binary_env(&[("TMPDIR", temporary.as_os_str())]);
+    fixture.ready("feature/cursor-harness");
+    // The synthetic probe displaces its task-owned TMPDIR after channel creation.
+    // A regular file at that path makes plugin creation fail. Native launch restores
+    // it so existing channel cleanup can finish; no shared paths or modes change.
+    let native = fixture.root.path().join("cursor-agent");
+    std::fs::write(&native, "#!/bin/sh\nif [ \"$1\" = --version ]; then mv \"$TMPDIR\" \"$TMPDIR-displaced\" || exit 98; printf 'fixture' > \"$TMPDIR\"; printf '2026.09.10-fd3934a\\n'; exit 0; fi\nrm \"$TMPDIR\" && mv \"$TMPDIR-displaced\" \"$TMPDIR\" || exit 99\nprintf 'ARG:%s\\n' \"$@\"; printf 'CURSOR_NATIVE_ONLY\\n'; exit 17\n").unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let id = cursor_create(&fixture, &native, &["--model", "auto"]);
+    cursor_wait_text(&fixture, id, "CURSOR_NATIVE_ONLY");
+    let Response::TerminalText { text, .. } = fixture.request(Request::ReadTerminal {
+        session: id,
+        max_lines: None,
+    }) else {
+        panic!("no text")
+    };
+    assert!(text.contains("local plugin unavailable:"), "{text}");
+    assert!(
+        text.contains("ARG:--model") && text.contains("ARG:auto"),
+        "{text}"
+    );
+    assert!(!text.contains("ARG:--plugin-dir"), "{text}");
+    let deadline = Instant::now() + live::wait_deadline();
+    loop {
+        let Response::Inventory { sessions, .. } = fixture.request(Request::Inspect) else {
+            panic!("no inventory")
+        };
+        let session = sessions.iter().find(|session| session.id == id).unwrap();
+        assert!(session.agent.is_none() && session.unread.is_none());
+        if session.phase
+            == (SessionPhase::Exited {
+                code: Some(17),
+                signal: None,
+            })
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "native exit was not preserved");
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
+    assert!(temporary.is_dir());
+    assert!(!scratch.path().join("tmp-displaced").exists());
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: true }),
+        Response::Ok
+    );
+    fixture.join();
+    assert!(!fixture.socket.exists());
+    let remaining = std::fs::read_dir(temporary)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    assert!(
+        remaining.is_empty(),
+        "owned channel or plugin survived exit: {remaining:?}"
+    );
+}
+
+#[test]
+fn cursor_rejected_managed_launches_preserve_argv_without_plugin_or_binding() {
+    let fixture = live::Live::binary().bounded();
+    fixture.ready("feature/cursor-harness");
+    let native = fixture.root.path().join("cursor-agent");
+    for (version, probe_exit, args) in [
+        ("unknown", 0, &[][..]),
+        ("2026.09.10-fd3934a", 9, &[][..]),
+        ("2026.09.10-fd3934a", 0, &["--resume", "native-id"][..]),
+        (
+            "2026.09.10-fd3934a",
+            0,
+            &["--plugin-dir", "user-plugin"][..],
+        ),
+        ("2026.09.10-fd3934a", 0, &["-p", "prompt"][..]),
+    ] {
+        std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '{version}\\n'; exit {probe_exit}; fi\nprintf 'ARG:%s\\n' \"$@\"; printf 'CURSOR_NATIVE_ONLY\\n'; exit 17\n")).unwrap();
+        std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let id = cursor_create(&fixture, &native, args);
+        cursor_wait_text(&fixture, id, "CURSOR_NATIVE_ONLY");
+        let Response::TerminalText { text, .. } = fixture.request(Request::ReadTerminal {
+            session: id,
+            max_lines: None,
+        }) else {
+            panic!("no text")
+        };
+        assert_eq!(
+            text.contains("ARG:--plugin-dir"),
+            args.contains(&"--plugin-dir"),
+            "{text}"
+        );
+        for arg in args {
+            assert!(text.contains(&format!("ARG:{arg}")), "{text}");
+        }
+        let deadline = Instant::now() + live::wait_deadline();
+        loop {
+            let Response::Inventory { sessions, .. } = fixture.request(Request::Inspect) else {
+                panic!("no inventory")
+            };
+            let session = sessions.iter().find(|s| s.id == id).unwrap();
+            assert!(session.agent.is_none() && session.unread.is_none());
+            if let Some(recovery) = &session.recovery {
+                assert!(recovery.conversation.is_none() && !recovery.attached);
+                assert_eq!(
+                    recovery.unavailable.as_deref(),
+                    Some("Native resume is not available for cursor-agent")
+                );
+            }
+            if session.phase
+                == (ovrcr::protocol::SessionPhase::Exited {
+                    code: Some(17),
+                    signal: None,
+                })
+            {
+                assert!(
+                    session.recovery.is_some(),
+                    "exited Agent must explain unavailable recovery"
+                );
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "native exit status not preserved"
+            );
+            std::thread::park_timeout(Duration::from_millis(10));
+        }
+    }
+}
+
+fn cursor_wait_text(fixture: &live::Live, id: ovrcr::session::SessionId, needle: &str) {
+    let deadline = Instant::now() + live::wait_deadline();
+    loop {
+        if let Response::TerminalText { text, .. } = fixture.request(Request::ReadTerminal {
+            session: id,
+            max_lines: None,
+        }) && text.contains(needle)
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "missing Cursor child output {needle}"
+        );
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn cursor_startup_identity_is_native_owned_and_no_semantics_are_inferred() {
+    use ovrcr::protocol::{AgentActivity, AgentProvider, SessionKind, SessionPhase};
+    let fixture = live::Live::binary().bounded();
+    fixture.ready("feature/cursor-harness");
+    let native = fixture.root.path().join("cursor-agent");
+    let probe = fixture.root.path().join("plugin-path");
+    let quote =
+        |path: &std::path::Path| format!("'{}'", path.to_str().unwrap().replace('\'', "'\"'\"'"));
+    std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '2026.09.10-fd3934a\\n'; exit 0; fi\nOVRCR_CURSOR_PLUGIN=\"$2\" OVRCR_CURSOR_PROBE={} exec {} --ignored --exact cursor_native_fixture --nocapture\n",
+        quote(&probe), quote(&std::env::current_exe().unwrap()))).unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let id = cursor_create(&fixture, &native, &[]);
+    cursor_wait_text(&fixture, id, "CURSOR_INVALID_REJECTED");
+    let inventory = || {
+        let Response::Inventory { sessions, .. } = fixture.request(Request::Inspect) else {
+            panic!("no inventory")
+        };
+        sessions
+            .into_iter()
+            .find(|session| session.id == id)
+            .unwrap()
+    };
+    assert!(
+        inventory().agent.is_none(),
+        "invalid startup manufactured identity"
+    );
+    let send = |text: &str| {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: id,
+                text: text.into(),
+                submit: true
+            }),
+            Response::Ok
+        )
+    };
+    send("bind");
+    cursor_wait_text(&fixture, id, "CURSOR_BOUND");
+    let session = inventory();
+    assert_eq!(
+        session.kind,
+        SessionKind::Agent {
+            name: "cursor-agent".into()
+        }
+    );
+    let agent = session.agent.as_ref().expect("native startup did not bind");
+    assert_eq!(
+        Some(agent.binding.provider),
+        AgentProvider::from_name("cursor-agent")
+    );
+    assert_eq!(
+        agent.binding.conversation,
+        "00000000-0000-4000-8000-000000000001"
+    );
+    assert_eq!(agent.effective_activity(), AgentActivity::Unknown);
+    assert!(agent.activity.is_none() && agent.metrics.is_none() && agent.input_requests.is_empty());
+    assert!(session.unread.is_none() && session.recovery.is_none());
+    let mut doctor = Command::new(&fixture.executable);
+    doctor
+        .env("OVRCR_CONFIG", &fixture.config)
+        .env("OVRCR_SOCKET", &fixture.socket)
+        .args(["agent", "doctor", "cursor-agent", "--json", "--session"])
+        .arg(id.0.to_string())
+        .arg("--executable")
+        .arg(&native);
+    let output = run_cli_bounded(doctor).unwrap();
+    assert!(output.status.success());
+    let diagnostic: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(diagnostic["session_status"], "bound");
+    assert_eq!(diagnostic["binding"]["provider"], "Cursor");
+    assert_eq!(
+        diagnostic["binding"]["generation"],
+        agent.binding.generation
+    );
+    assert_eq!(diagnostic["probe_status"], "not_run");
+    send("replace");
+    cursor_wait_text(&fixture, id, "CURSOR_REPLACEMENT_REJECTED");
+    assert_eq!(inventory().agent.unwrap().binding, agent.binding);
+    send("test input");
+    cursor_wait_text(&fixture, id, "CURSOR_REPLY:test input Busy Ready approval");
+    assert_eq!(inventory().agent, session.agent);
+    let plugin = std::path::PathBuf::from(std::fs::read_to_string(&probe).unwrap());
+    assert!(plugin.is_dir());
+    send("quit");
+    let deadline = Instant::now() + live::wait_deadline();
+    while !matches!(
+        inventory().phase,
+        SessionPhase::Exited {
+            code: Some(0),
+            signal: None
+        }
+    ) {
+        assert!(
+            Instant::now() < deadline,
+            "Cursor fixture did not exit cleanly"
+        );
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
+    assert!(!plugin.exists(), "temporary plugin survived native exit");
+    assert!(
+        matches!(fixture.request(Request::ReopenSession { session: id, expected_run: session.run, acknowledge_stopped: true }),
+        Response::Error { code: ovrcr::protocol::ErrorCode::InvalidRequest, message } if message.contains("Native resume is not available for cursor-agent"))
+    );
+}
+
+#[test]
+#[ignore = "synthetic native Cursor fixture launched through managed agent run"]
+fn cursor_native_fixture() {
+    use std::io::BufRead;
+    let plugin = std::path::PathBuf::from(std::env::var_os("OVRCR_CURSOR_PLUGIN").unwrap());
+    assert_eq!(
+        std::fs::metadata(&plugin).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    let hooks_path = plugin.join("hooks/hooks.json");
+    assert_eq!(
+        std::fs::metadata(&hooks_path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let hooks: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&hooks_path).unwrap()).unwrap();
+    assert_eq!(hooks["version"], 1);
+    assert_eq!(hooks["hooks"].as_object().unwrap().len(), 1);
+    let hook = hooks["hooks"]["sessionStart"][0]["command"]
+        .as_str()
+        .unwrap();
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(plugin.join(".cursor-plugin/plugin.json")).unwrap())
+            .unwrap();
+    let identifier = plugin
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .strip_prefix("ovrcr-cursor-")
+        .unwrap();
+    assert_eq!(identifier.len(), 64);
+    assert!(identifier.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    assert_eq!(manifest["name"], format!("ovrcr-reporting-{identifier}"));
+    std::fs::write(
+        std::env::var_os("OVRCR_CURSOR_PROBE").unwrap(),
+        plugin.to_str().unwrap(),
+    )
+    .unwrap();
+    let report = |conversation: &str, generation: &str| {
+        let payload = serde_json::json!({"hook_event_name":"sessionStart", "cursor_version":"2026.09.10-fd3934a",
+            "conversation_id":conversation,"session_id":conversation,"generation_id":generation,"is_background_agent":false,
+            "model":"fixture-model", "user_email":"fixture@example.invalid", "transcript_path":"DO_NOT_RETAIN"});
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", hook]).stdin(Stdio::piped());
+        let mut captured = spawn_captured(command).unwrap();
+        captured
+            .child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(&serde_json::to_vec(&payload).unwrap())
+            .unwrap();
+        let output = wait_captured(&mut captured, Instant::now() + Duration::from_secs(3)).unwrap();
+        assert!(output.status.success());
+        assert!(
+            output.stdout.is_empty(),
+            "passive hook changed native hook response"
+        );
+    };
+    let id = "00000000-0000-4000-8000-000000000001";
+    report(id, "foreign-generation");
+    println!("CURSOR_INVALID_REJECTED");
+    for line in std::io::stdin().lock().lines() {
+        let line = line.unwrap();
+        match line.as_str() {
+            "bind" => {
+                report(id, id);
+                report(id, id);
+                println!("CURSOR_BOUND");
+            }
+            "replace" => {
+                let other = "00000000-0000-4000-8000-000000000002";
+                report(other, other);
+                println!("CURSOR_REPLACEMENT_REJECTED");
+            }
+            "quit" => break,
+            _ => println!("CURSOR_REPLY:{line} Busy Ready approval"),
+        }
+    }
+}
+
+#[test]
 fn stable_titles_rename_reset_and_reopen_through_cli() {
     let fixture = live::Live::binary();
     fixture.ready("feature/cli-titles");

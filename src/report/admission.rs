@@ -191,7 +191,7 @@ fn eligible_launch(argv: &[OsString], version: ClaudeVersion) -> Option<Eligible
         (Some(_), true) => None,
     }
 }
-fn canonical_uuid_v4(value: &str) -> bool {
+pub(crate) fn canonical_uuid_v4(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 36
         && [8, 13, 18, 23]
