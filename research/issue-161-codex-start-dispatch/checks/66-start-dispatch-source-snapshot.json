@@ -1,0 +1,9 @@
+{
+  "base": "7b94e602ba0b9c5b1ad4fb67f4d8ec34effe71d9",
+  "files": {
+    "src/cli/codex_setup.rs": "7ed9f34b1ca532336b3216735137af04bd0fa5303b53ae00f797532fa2d165ad",
+    "tests/agent_setup.rs": "05cdb4e82b81b15903295ae750d92e118829706ac7af611c027719f91f2d7cf5",
+    "tests/server_lifecycle.rs": "038913b23428c1eca134a86b4961a7fe8a75ad5d96b16ccafeef8c87fb61334a"
+  },
+  "diff_sha256": "a7f6867fbc8e970d9bbb2ab3f7d7929c04d8625b3948fbda1e4478a23265e3b9"
+}

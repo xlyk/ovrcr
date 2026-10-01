@@ -1,0 +1,12 @@
+{
+  "command": [
+    "/opt/homebrew/opt/node@22/bin/node",
+    "--test",
+    "tests/pi_reporting_extension.mjs",
+    "tests/omp_reporting_extension.mjs"
+  ],
+  "status": "not_executed",
+  "error": "FileNotFoundError: assumed Node path absent; no tests ran",
+  "runner_exit_code": 1,
+  "recorded": "2026-10-01T01:37:48.773184+00:00"
+}

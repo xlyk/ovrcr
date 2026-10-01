@@ -1,0 +1,25 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Documents/Codex/2026-09-30/task-4/issue-161-codex-start-dispatch)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.60s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-4a5c248bf0fa0f5a)
+
+running 1 test
+test codex_setup_dispatches_fork_to_existing_identity_guard ... FAILED
+
+failures:
+
+---- codex_setup_dispatches_fork_to_existing_identity_guard stdout ----
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmplaLJS4/private/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmplaLJS4/private/server.sock
+
+thread 'codex_setup_dispatches_fork_to_existing_identity_guard' (448698996) panicked at tests/server_lifecycle.rs:11580:9:
+assertion failed: guard.activity.is_none()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ovrcr server stopped
+
+
+failures:
+    codex_setup_dispatches_fork_to_existing_identity_guard
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 126 filtered out; finished in 3.26s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`

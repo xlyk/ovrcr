@@ -1,0 +1,77 @@
+{
+  "revision": "be2951ea34f0d295ed0becf97079f92fa5f6950e",
+  "files": [
+    {
+      "path": "codex-rs/hooks/src/events/session_start.rs",
+      "sha256": "72af711f8a090e7eac86ef7b3ca081ee478639a5fe231cd7c3d4610c5df00d32",
+      "command": [
+        "rtk",
+        "proxy",
+        "gh",
+        "api",
+        "repos/openai/codex/contents/codex-rs/hooks/src/events/session_start.rs?ref=be2951ea34f0d295ed0becf97079f92fa5f6950e"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "codex-rs/core/src/hook_runtime.rs",
+      "sha256": "78f8bf2a054e7e6164c994cee070a6f4e734f62884e2b563ea8d55f8bb773d5b",
+      "command": [
+        "rtk",
+        "proxy",
+        "gh",
+        "api",
+        "repos/openai/codex/contents/codex-rs/core/src/hook_runtime.rs?ref=be2951ea34f0d295ed0becf97079f92fa5f6950e"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "codex-rs/core/src/session/turn.rs",
+      "sha256": "a7b7496a4dbe7c51a87de978e740efd658fa5c9513007c0a61bef1c4006a0bec",
+      "command": [
+        "rtk",
+        "proxy",
+        "gh",
+        "api",
+        "repos/openai/codex/contents/codex-rs/core/src/session/turn.rs?ref=be2951ea34f0d295ed0becf97079f92fa5f6950e"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "codex-rs/core/src/session/session.rs",
+      "sha256": "ab0603e72920ab5560ad1f637c7d5131f87e2360d4343bbcd09cfdb8fe1379f9",
+      "command": [
+        "rtk",
+        "proxy",
+        "gh",
+        "api",
+        "repos/openai/codex/contents/codex-rs/core/src/session/session.rs?ref=be2951ea34f0d295ed0becf97079f92fa5f6950e"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "codex-rs/hooks/src/engine/dispatcher.rs",
+      "sha256": "47db17f4eaab89841947d9e7887fbefa6bc40fb41d08e70caab10fd4c1fd0e42",
+      "command": [
+        "rtk",
+        "proxy",
+        "gh",
+        "api",
+        "repos/openai/codex/contents/codex-rs/hooks/src/engine/dispatcher.rs?ref=be2951ea34f0d295ed0becf97079f92fa5f6950e"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "codex-rs/hooks/src/events/common.rs",
+      "sha256": "0bf6568d921b2584a1e827d216772b55cd471d0e965ccef7449726c62508414e",
+      "command": [
+        "rtk",
+        "proxy",
+        "gh",
+        "api",
+        "repos/openai/codex/contents/codex-rs/hooks/src/events/common.rs?ref=be2951ea34f0d295ed0becf97079f92fa5f6950e"
+      ],
+      "exit_code": 0
+    }
+  ]
+}
