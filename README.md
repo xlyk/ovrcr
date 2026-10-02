@@ -461,8 +461,13 @@ left unchanged, which keeps a Codex trust hash valid. It does not add hooks or
 change trust. Keep `~/.local/bin` on your `PATH`. It builds into
 `CARGO_TARGET_DIR` when set, otherwise the checkout's `target` directory. A
 failed build, install, or hook retarget stops the launch; replacement is atomic
-so running processes keep their existing binary. Existing servers keep running
-their previous version until restarted.
+so running processes keep their existing binary. After install, `just run`
+probes the existing server with the same protocol handshake as a normal
+`ovrcr list`. On a version mismatch (or an older build that closes before
+handshake), it prints the existing error and asks interactively whether to
+`pkill` that server before continuing; answering no aborts and leaves the
+server running. Non-interactive runs abort with a pointer to `just restart`.
+Matching or absent servers are left alone.
 
 Or with Cargo directly — always name the package, since the workspace has five:
 
