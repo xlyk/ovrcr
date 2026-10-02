@@ -15,6 +15,9 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod write;
+pub use write::set;
+
 /// Environment variable that chooses the settings document path. It selects
 /// a file only; there is no per-setting environment layer.
 pub const DOCUMENT_ENV: &str = "OVRCR_DASHBOARD_CONFIG";

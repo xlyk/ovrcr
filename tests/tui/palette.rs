@@ -114,6 +114,19 @@ fn question_mark_popup_lists_ready_sound_beside_desktop_notifications() {
     assert!(text.contains("Enable ready sound"), "{text}");
     dashboard.key(KeyCode::Char('S'));
     assert!(!palette_text(&dashboard).contains("Which key"));
+    // The toggle applies when the Server's reading of the saved value arrives.
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SettingsChanged(
+        Box::new(ovrcr::protocol::SettingsReport {
+            path: "/srv/dashboard.toml".into(),
+            read_unix_ms: 0,
+            settings: ovrcr::protocol::Settings {
+                ready_sound: true,
+                ..Default::default()
+            },
+            rows: Vec::new(),
+            findings: Vec::new(),
+        }),
+    )));
     dashboard.key(KeyCode::Char('?'));
     let text = palette_text(&dashboard);
     assert!(text.contains("Disable ready sound"), "{text}");

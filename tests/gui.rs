@@ -752,7 +752,7 @@ fn real_dashboard_cycles_local_policy_and_same_server_provisions_from_saved_sett
     let before = std::fs::read_to_string(&settings)?;
     std::fs::set_permissions(&settings, std::fs::Permissions::from_mode(0o444))?;
     terminal.send(b"L")?;
-    wait_screen(&terminal, "Could not save automatic local terminals")?;
+    wait_screen(&terminal, "could not save automatic_local_terminals")?;
     assert_eq!(std::fs::read_to_string(&settings)?, before);
     std::fs::set_permissions(&settings, std::fs::Permissions::from_mode(0o600))?;
     terminal.send(b"L")?;
@@ -844,7 +844,7 @@ fn real_dashboard_saves_alert_preferences_and_reloads_config() -> Result<()> {
     std::fs::remove_file(&settings)?;
     std::fs::create_dir(&settings)?;
     terminal.send(b"S")?;
-    wait_screen(&terminal, "Could not save Ready sound")?;
+    wait_screen(&terminal, "could not save ready_sound")?;
     terminal.send(b":ready sound")?;
     wait_screen(&terminal, "Enable ready sound")?;
     terminal.send(b"\x1b")?;

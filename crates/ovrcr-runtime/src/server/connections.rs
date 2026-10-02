@@ -668,6 +668,12 @@ pub(super) fn handle_request_with_id(
                     },
                 )
         }
+        Request::SetSetting { path, value } => {
+            state.set_setting(&path, value.as_deref()).map_or_else(
+                |error| error_response(ErrorCode::InvalidRequest, format!("{error:#}")),
+                |()| Response::Ok,
+            )
+        }
         Request::SetSessionTitle { session, title } => {
             state.set_session_title(session, title).map_or_else(
                 |error| lifecycle_response_with_partial_hierarchy(state, error),

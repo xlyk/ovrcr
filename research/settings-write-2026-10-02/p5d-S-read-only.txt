@@ -1,0 +1,139 @@
+󰚩 OVRCR  agent runtime                                                                                                                                                                                                                                                                                                                                                             [Actions] [Menu]
+ CONSIGINT ────────────────────────────│pid: 32048  elapsed: 2m  agent unknown  local (#1)
+  󰘬 main                          root │local (#1)
+▌    $ local                           │consigint ›
+  󰘬 gui-consigint-auth-handoff         │
+     $ local                           │
+     - review auth handoff    grok:4.6 │
+  󰘬 gui-consigint-worktree-lifecycle   │
+     $ local                           │
+     - implement lif…  claude:sonnet-4 │
+     - review websocke…  codex:gpt-5.4 │
+     - plan snapshot res…  pi:grok-4.6 │
+                                       │
+ SPACELIFT-AGENT ──────────────────────│
+  󰘬 main                          root │
+     $ local                           │
+  󰘬 gui-spacelift-agent-pipeline-progr…│
+     $ local                           │
+     - build pipeline …  claude:opus-4 │
+  󰘬 gui-spacelift-agent-scope-quality  │
+     $ local                           │
+     - review scope qu…  codex:gpt-5.4 │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+Quota left                             │
+Claude — waiting for report            │
+Codex — unavailable                    │
+Grok — unavailable                     │
+ERROR: InvalidRequest: could not save ready_sound: settings document /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-9h3nwV/dashboard.toml is read-only

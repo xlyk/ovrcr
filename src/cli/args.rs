@@ -37,6 +37,21 @@ pub(super) struct Cli {
     pub(super) command: Option<Command>,
 }
 
+/// Edits go through the running Server, which validates, saves and
+/// republishes; with no Server running the document is edited directly.
+#[derive(Subcommand)]
+pub(super) enum SettingsCommand {
+    /// Set one setting. PATH is a setting path such as `quota.enabled`,
+    /// `picker_roots[0]` (index len appends), `agents[1].argv` or
+    /// `launch_choices.myproj.kind`. VALUE is TOML value text (`true`, `"kh/"`,
+    /// `["claude", "--verbose"]`); a bare word is taken as is for a string or
+    /// path setting.
+    Set { path: String, value: String },
+    /// Remove one setting, list element or launch choice from the document,
+    /// so the setting returns to its default.
+    Reset { path: String },
+}
+
 #[derive(Subcommand)]
 pub(super) enum Command {
     /// Run a native agent with invocation supervision.
@@ -92,7 +107,10 @@ pub(super) enum Command {
     List,
     /// Show the settings document this instance reads: each setting's owner,
     /// effective value and source, then any findings. Exits 0 with findings.
-    Settings,
+    Settings {
+        #[command(subcommand)]
+        command: Option<SettingsCommand>,
+    },
     /// Stop a session's process group and keep its final screen.
     Kill { id: u64 },
     /// Stop a running session with SIGSTOP.

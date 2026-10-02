@@ -64,8 +64,14 @@ impl ServerState {
     /// Stat the files; reload when a stamp changed. Returns whether the stored
     /// reading changed. Callers publish.
     pub(super) fn refresh_settings(&self) -> bool {
+        self.reload_settings(false)
+    }
+
+    /// `force` reloads even when the stamp looks unchanged, as after a write
+    /// that kept the length within the file system's mtime granularity.
+    fn reload_settings(&self, force: bool) -> bool {
         let stamp = Stamp::of(&self.registry_path);
-        if self.settings.lock().unwrap().stamp == stamp {
+        if !force && self.settings.lock().unwrap().stamp == stamp {
             return false;
         }
         let report = crate::settings::load(&self.registry_path);
@@ -85,6 +91,24 @@ impl ServerState {
             self.publish_settings();
         }
         changed
+    }
+
+    /// Apply one `SetSetting` edit to the latest document, holding the
+    /// settings lock so Server writes never interleave, then reload at once
+    /// and republish on a real change. External editors stay unlocked.
+    pub(super) fn set_setting(&self, path: &str, value: Option<&str>) -> anyhow::Result<()> {
+        {
+            let _writing = self.settings.lock().unwrap();
+            crate::settings::set(
+                &crate::settings::document_path(&self.registry_path),
+                path,
+                value,
+            )?;
+        }
+        if self.reload_settings(true) {
+            self.publish_settings();
+        }
+        Ok(())
     }
 
     pub(super) fn title_model(&self) -> Option<title::TitleModel> {
@@ -137,5 +161,65 @@ mod tests {
         std::fs::remove_file(&document).unwrap();
         assert!(state.poll_settings());
         assert_eq!(state.title_model(), None);
+    }
+
+    #[test]
+    fn set_setting_request_writes_the_document_and_reloads_at_once() {
+        use ovrcr_protocol::{ErrorCode, Request, Response};
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = super::super::tests::test_state(None, None);
+        Arc::get_mut(&mut state).unwrap().registry_path = dir.path().join("config.toml");
+        let document = dir.path().join("dashboard.toml");
+        std::fs::write(&document, "# mine\nbranch_prefix = \"a/\" # prefix\n").unwrap();
+        assert!(state.poll_settings());
+        let set = |path: &str, value: Option<&str>| {
+            super::super::connections::handle_request_with_id(
+                &state,
+                &mut ClientRole::Control,
+                Request::SetSetting {
+                    path: path.into(),
+                    value: value.map(str::to_owned),
+                },
+                1,
+                None,
+            )
+        };
+
+        // Same length as before: the reading follows without waiting for a
+        // stamp change or the watcher's next tick.
+        assert_eq!(set("branch_prefix", Some("\"b/\"")), Response::Ok);
+        assert_eq!(
+            std::fs::read_to_string(&document).unwrap(),
+            "# mine\nbranch_prefix = \"b/\" # prefix\n"
+        );
+        let reading = |state: &ServerState| state.settings.lock().unwrap().report.clone();
+        assert_eq!(reading(&state).settings.branch_prefix, "b/");
+
+        assert_eq!(set("quota.enabled", Some("true")), Response::Ok);
+        assert!(state.quota_settings().enabled);
+
+        for (path, value, message) in [
+            ("ready_sound", Some("\"yes\""), "expected a boolean"),
+            ("ready_sund", Some("true"), "no setting named ready_sund"),
+            ("picker_roots[3]", None, "no such element"),
+        ] {
+            let before = std::fs::read_to_string(&document).unwrap();
+            let Response::Error {
+                code,
+                message: error,
+            } = set(path, value)
+            else {
+                panic!("{path} accepted");
+            };
+            assert_eq!(code, ErrorCode::InvalidRequest);
+            assert!(error.contains(message), "{path}: {error}");
+            assert_eq!(std::fs::read_to_string(&document).unwrap(), before);
+        }
+
+        assert_eq!(set("quota.enabled", None), Response::Ok);
+        assert!(!state.quota_settings().enabled);
+        assert_eq!(set("branch_prefix", None), Response::Ok);
+        assert_eq!(std::fs::read_to_string(&document).unwrap(), "# mine\n");
+        assert_eq!(reading(&state).settings.branch_prefix, "feature/");
     }
 }

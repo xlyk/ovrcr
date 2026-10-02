@@ -733,8 +733,9 @@ two seconds and applies a saved change on its next check.
 
 Changing the setting leaves existing terminals and agents untouched. Explicit
 terminal and agent launches remain available under every option. Cycle the
-preference from Browse with `L`, or edit `dashboard.toml` and keep the running
-server; the next provisioning read picks up the saved value.
+preference from Browse with `L`, run `ovrcr settings set automatic_local_terminals
+on`, or edit `dashboard.toml` and keep the running server; the next provisioning
+read picks up the saved value.
 
 `picker_roots` defaults to `~/Code`, `~/src`, and `~`, keeping only the paths
 that exist. An `[[agents]]` row whose name matches a detected agent replaces its
@@ -747,39 +748,58 @@ terminal; `kind = "Agent"` and `preset = "claude"` remember an agent preset.
 These entries contain no one-off command text. Failed launches and Nothing yet
 leave the remembered choice unchanged.
 
-Alert toggles and remembered launch choices use the same settings writer. Each
-save reads the latest document and preserves comments, unrelated formatting,
-unknown keys and tables, other preferences, and other projects' choices. Existing
-symlinks are followed without replacing the link, and target permissions are
-retained. A missing ordinary file and its parent directories are created; new
-settings files are private (mode `0600`). Dangling links, read-only targets,
-and a document that is not valid TOML are rejected without changing the
-document. A wrongly typed value is the Server's finding, not the writer's: a save
-keeps it byte for byte, and a toggle of that same key replaces it. The writer
-saves to the document path the Server's reading names, never to one the
-Dashboard resolves itself.
+### Settings writer
+
+The Server is the only writer. The Dashboard touches no file: `N`, `S`, `L` and
+a remembered launch choice each send the Server a `SetSetting` request naming a
+setting path (`ready_sound`, `launch_choices."my.project"`) and TOML value text.
+`ovrcr settings set` and `reset` send the same request, and edit the document
+themselves only when no Server is running (see the
+[CLI reference](cli-reference.md#settings)). The Server checks the value against
+the setting's declared type, rejects a path that names no setting, edits the
+document it reads, re-reads it at once and sends the new reading to the
+Dashboard. It applies one edit at a time to the latest document; editors outside
+OVRCR are not locked.
+
+Each edit preserves comments, unrelated formatting, unknown keys and tables,
+other settings, and other projects' choices. A reset removes the key, list
+element or launch choice, and any table it leaves empty; comment lines above a
+removed key stay in the document. Existing symlinks are followed without
+replacing the link, and target permissions are retained. A missing ordinary
+file and its parent directories are created; new settings files are private
+(mode `0600`). Dangling links, read-only targets, and a document that is not
+valid TOML are rejected without changing the document; while the document is
+not valid TOML, editing is off until it is fixed by hand. A wrongly typed value
+elsewhere is a finding, not a reason to refuse: an edit keeps it byte for byte,
+and an edit of that same key replaces it. A value the loader would turn into a
+new finding for the edited setting, such as `ready_sound = "yes"`, is rejected
+with the expected type and the document is unchanged.
 
 Saves write and synchronize a temporary file beside the resolved target, then
 replace the target atomically. A failed save leaves the original document intact
-and removes its temporary file. External edits completed before a save begins are
-preserved; simultaneous writers are not locked.
+and removes its temporary file.
 
-An alert save failure leaves active preferences and alert channels unchanged and
-shows a save-failure notice. If a session starts but remembering fails, the session
-remains selected and usable. Its launch choice stays remembered in the current
-Dashboard, and the footer shows “Session started; could not remember launch
-choice”. The Dashboard does not retry creation or reopen the launch form.
+A toggle applies when the Server's new reading arrives, not when the key is
+pressed; the footer then names the change, for example **Desktop notifications:
+on**. A refused save shows the Server's message in the footer, such as
+**could not save ready_sound: settings document … is read-only**, and leaves
+active preferences and alert channels unchanged. If a session starts but
+remembering its launch choice fails, the session remains selected and usable,
+the choice stays remembered in the current Dashboard, and the footer shows
+**could not save launch_choices.…** with the reason. The Dashboard does not
+retry creation or reopen the launch form.
 
 ## Desktop notifications
 
 Desktop notifications are off by default. Set `desktop_notifications = true` in
 `dashboard.toml` to enable them when attaching. In browse mode, press uppercase
 `N`, or search the command palette for **desktop notifications**, to enable or
-disable them. Each toggle saves to the document the Server read (normally
-`dashboard.toml`) and takes effect immediately; the Server's reading at the next
-attach confirms it. A missing file is created; a save error is shown
-without changing the active preference. Other configuration values and comments are retained. Manual file edits are
-loaded on the next attach. In terminal mode `N` remains ordinary terminal input; use Ctrl-g first.
+disable them. Each toggle asks the Server to save it in the document it reads
+(normally `dashboard.toml`) and takes effect when the Server's new reading
+arrives, normally at once. A missing file is created; a refused save is shown
+without changing the active preference. Other configuration values and comments
+are retained. Manual file edits are loaded within two seconds. In terminal mode
+`N` remains ordinary terminal input; use Ctrl-g first.
 
 Two kinds of alert share these preferences and this host.
 **OVRCR · response ready** means a managed root response from a supported
@@ -830,7 +850,8 @@ Linux desktop delivery remains unverified.
 The ready sound is off by default and independent of desktop notifications:
 either, both or neither can be on. Set `ready_sound = true` in `dashboard.toml`
 to enable it when attaching. In browse mode, press uppercase `S`, or search the
-command palette for **ready sound**, to toggle and save it using the same settings file and failure behavior. In terminal mode `S` remains ordinary
+command palette for **ready sound**, to toggle and save it through the Server
+with the same settings file and failure behavior. In terminal mode `S` remains ordinary
 terminal input; use Ctrl-g first.
 
 A sound follows exactly the same selection as a desktop alert: a new unread

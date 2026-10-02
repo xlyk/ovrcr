@@ -16034,10 +16034,11 @@ fn hello_settings(fixture: &Live) -> SettingsReport {
 }
 
 /// The Dashboard's settings are the Server's reading of a document that only
-/// the Server's environment names; a Dashboard toggle saves to that document
-/// and the next hello confirms it.
+/// the Server's environment names. `N`, `S` and `L` send `SetSetting`, the
+/// Server saves the same document the Dashboard's old writer produced, and an
+/// attached Dashboard gets the new reading without waiting for the watcher.
 #[test]
-fn dashboard_hello_carries_the_servers_settings_and_confirms_a_toggle() {
+fn dashboard_hello_carries_the_servers_settings_and_toggles_save_through_the_request() {
     let fixture = Live::idle();
     let document = fixture
         .root
@@ -16068,28 +16069,208 @@ fn dashboard_hello_carries_the_servers_settings_and_confirms_a_toggle() {
         "the client's default document path is not the one in use"
     );
 
+    let mut attached = connect_server(&fixture.socket).unwrap();
+    write_frame(
+        &mut attached,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    next_settings(&mut attached, Duration::from_secs(5)).expect("no reading at hello");
+
     let mut dashboard =
         ovrcr::tui::Dashboard::new(ovrcr::session::TerminalSize { rows: 24, cols: 80 });
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SettingsChanged(
         Box::new(first),
     )));
-    dashboard.key(crossterm::event::KeyCode::Char('S'));
+    let mut text = String::from("branch_prefix = \"kh/\"\n");
+    for (key, line) in [
+        ('S', "ready_sound = true\n"),
+        ('N', "desktop_notifications = true\n"),
+        ('L', "automatic_local_terminals = \"on\"\n"),
+    ] {
+        let ovrcr::tui::DashboardAction::Request(message) =
+            dashboard.key(crossterm::event::KeyCode::Char(key))
+        else {
+            panic!("{key} sent no request");
+        };
+        assert!(
+            matches!(message.request, Request::SetSetting { .. }),
+            "{key}: {:?}",
+            message.request
+        );
+        assert_eq!(fixture.request(message.request), Response::Ok, "{key}");
+        text.push_str(line);
+        assert_eq!(std::fs::read_to_string(&document).unwrap(), text, "{key}");
+        let reading = next_settings(&mut attached, Duration::from_secs(5))
+            .unwrap_or_else(|| panic!("{key}: no reading after the save"));
+        dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SettingsChanged(
+            Box::new(reading),
+        )));
+    }
+    // One active Dashboard: release this one before the next hello.
+    drop(attached);
+    assert!(dashboard_settings_on(&fixture));
+
+    // Remembering a launch choice merges one project's entry and keeps the
+    // others; this is the request the palette sends (pinned in ovrcr-tui).
+    std::fs::write(
+        &document,
+        "# mine\n[launch_choices.\"other.project\"]\nkind = \"Agent\" # theirs\npreset = \"other\"\n",
+    )
+    .unwrap();
+    let response = fixture.request(Request::SetSetting {
+        path: "launch_choices.\"project.with.dots\"".into(),
+        value: Some("{ kind = \"Agent\", preset = \"claude\" }".into()),
+    });
+    assert_eq!(response, Response::Ok);
+    let saved = hello_settings(&fixture);
     assert_eq!(
-        std::fs::read_to_string(&document).unwrap(),
-        "branch_prefix = \"kh/\"\nready_sound = true\n"
+        saved.settings.launch_choices["project.with.dots"],
+        ovrcr::protocol::LaunchChoice::Agent("claude".into())
+    );
+    assert_eq!(
+        saved.settings.launch_choices["other.project"],
+        ovrcr::protocol::LaunchChoice::Agent("other".into())
+    );
+    assert!(
+        std::fs::read_to_string(&document)
+            .unwrap()
+            .starts_with("# mine\n[launch_choices.\"other.project\"]\nkind = \"Agent\" # theirs\n")
     );
 
-    let second = hello_settings(&fixture);
-    assert_eq!(second.path, document);
-    assert!(second.settings.ready_sound);
-    assert_eq!(second.settings.branch_prefix, "kh/");
-    assert!(second.findings.is_empty(), "{:?}", second.findings);
-    let row = second
+    // A refused edit names the expected type and leaves the document.
+    let before = std::fs::read_to_string(&document).unwrap();
+    for (path, value, message) in [
+        ("ready_sound", "\"loud\"", "expected a boolean"),
+        ("ready_sund", "true", "no setting named ready_sund"),
+    ] {
+        let Response::Error {
+            code,
+            message: error,
+        } = fixture.request(Request::SetSetting {
+            path: path.into(),
+            value: Some(value.into()),
+        })
+        else {
+            panic!("{path} accepted");
+        };
+        assert_eq!(code, ErrorCode::InvalidRequest);
+        assert!(error.contains(message), "{error}");
+        assert_eq!(std::fs::read_to_string(&document).unwrap(), before);
+    }
+}
+
+/// The alert and automatic-terminal settings the toggles turned on.
+fn dashboard_settings_on(fixture: &Live) -> bool {
+    let settings = hello_settings(fixture).settings;
+    settings.ready_sound
+        && settings.desktop_notifications
+        && settings.automatic_local_terminals == ovrcr::protocol::AutomaticLocalTerminals::On
+}
+
+fn ovrcr_settings(fixture: &Live, args: &[&str]) -> std::process::Output {
+    Command::new(&fixture.executable)
+        .arg("settings")
+        .args(args)
+        .env("OVRCR_SOCKET", &fixture.socket)
+        .env("OVRCR_CONFIG", &fixture.config)
+        .env_remove("OVRCR_DASHBOARD_CONFIG")
+        .output()
+        .unwrap()
+}
+
+/// With no Server running, `ovrcr settings set` edits the resolved document
+/// itself and says where; a Server started afterwards loads that value, and
+/// later edits go through it.
+#[test]
+fn settings_set_without_a_server_writes_the_document_a_later_server_loads() {
+    let fixture = Live::idle();
+    let document = fixture.config.with_file_name("dashboard.toml");
+    std::fs::write(&document, "# my settings\nready_sound = false # quiet\n").unwrap();
+
+    let set = ovrcr_settings(&fixture, &["set", "branch_prefix", "kh/"]);
+    assert!(set.status.success(), "{set:?}");
+    let stdout = String::from_utf8(set.stdout).unwrap();
+    assert_eq!(
+        stdout,
+        format!(
+            "Set branch_prefix in {} (no Server running)\n",
+            document.display()
+        )
+    );
+    let set = ovrcr_settings(&fixture, &["set", "picker_roots[0]", "\"/tmp/roots\""]);
+    assert!(set.status.success(), "{set:?}");
+    assert_eq!(
+        std::fs::read_to_string(&document).unwrap(),
+        "# my settings\nready_sound = false # quiet\nbranch_prefix = \"kh/\"\npicker_roots = [\"/tmp/roots\"]\n"
+    );
+    assert!(
+        !fixture.socket.exists(),
+        "a local edit never starts a Server"
+    );
+
+    let before = std::fs::read_to_string(&document).unwrap();
+    for (args, message) in [
+        (&["set", "ready_sound", "yes"][..], "expected a boolean"),
+        (
+            &["set", "quota.enabled", "\"on\""][..],
+            "expected a boolean",
+        ),
+        (&["set", "branch_prefix", "42"][..], "expected a string"),
+        (
+            &["set", "quota.codex.hom", "/x"][..],
+            "no setting named quota.codex.hom",
+        ),
+        (&["reset", "picker_roots[3]"][..], "no such element"),
+    ] {
+        let refused = ovrcr_settings(&fixture, args);
+        assert!(!refused.status.success(), "{args:?} accepted");
+        let stderr = String::from_utf8(refused.stderr).unwrap();
+        assert!(stderr.contains(message), "{args:?}: {stderr}");
+        assert_eq!(std::fs::read_to_string(&document).unwrap(), before);
+    }
+    let json = ovrcr_settings(&fixture, &["--json", "reset", "ready_sound"]);
+    assert!(json.status.success(), "{json:?}");
+    let json: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(json["path"], "ready_sound");
+    assert_eq!(json["document"], document.display().to_string());
+
+    fixture.start_binary();
+    let loaded = hello_settings(&fixture);
+    assert_eq!(loaded.settings.branch_prefix, "kh/");
+    assert_eq!(loaded.settings.picker_roots, [PathBuf::from("/tmp/roots")]);
+    let row = loaded
         .rows
         .iter()
-        .find(|row| row.key == "ready_sound")
+        .find(|row| row.key == "branch_prefix")
         .unwrap();
     assert_eq!(row.source, SettingSource::Document);
+
+    let through = ovrcr_settings(&fixture, &["set", "ready_sound", "true"]);
+    assert!(through.status.success(), "{through:?}");
+    assert_eq!(
+        String::from_utf8(through.stdout).unwrap(),
+        "Set ready_sound through the Server\n"
+    );
+    let reset = ovrcr_settings(&fixture, &["reset", "branch_prefix"]);
+    assert!(reset.status.success(), "{reset:?}");
+    let refused = ovrcr_settings(&fixture, &["set", "ready_sound", "loud"]);
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8(refused.stderr)
+            .unwrap()
+            .contains("expected a boolean")
+    );
+    let reading = hello_settings(&fixture);
+    assert!(reading.settings.ready_sound);
+    assert_eq!(reading.settings.branch_prefix, "feature/");
+    assert_eq!(
+        std::fs::read_to_string(&document).unwrap(),
+        "# my settings\npicker_roots = [\"/tmp/roots\"]\nready_sound = true\n"
+    );
 }
 
 /// Read Dashboard frames until a settings reading arrives or `within` passes.

@@ -1,5 +1,5 @@
 //! The Server's settings reading: what the Dashboard adopts, the footer line,
-//! the read-only Settings popup, and where the writer saves.
+//! the read-only Settings popup, and the save requests toggles send.
 
 use crate::*;
 use ovrcr::protocol::{
@@ -112,21 +112,30 @@ fn settings_popup_opens_from_the_menu_and_has_no_browse_key() {
 }
 
 #[test]
-fn settings_toggle_writes_to_the_published_path_and_applies_at_once() {
+fn settings_toggle_asks_the_server_and_applies_only_its_reading() {
     let root = tempfile::tempdir().unwrap();
     let published = root.path().join("published.toml");
     std::fs::write(&published, "ready_sound = true # mine\n").unwrap();
     let mut dashboard = dashboard_fixture();
     publish(&mut dashboard, report(published.clone(), 0));
-    dashboard.key(KeyCode::Char('S'));
+    let DashboardAction::Request(message) = dashboard.key(KeyCode::Char('S')) else {
+        panic!("S sent no request");
+    };
+    assert_eq!(
+        message.request,
+        ovrcr::protocol::Request::SetSetting {
+            path: "ready_sound".into(),
+            value: Some("false".into()),
+        }
+    );
     assert_eq!(
         std::fs::read_to_string(&published).unwrap(),
-        "ready_sound = false # mine\n"
+        "ready_sound = true # mine\n",
+        "the Dashboard touches no file"
     );
+    assert!(!rendered_footer(&dashboard, 120).contains("Ready sound: off"));
+    let mut saved = report(published, 0);
+    saved.settings.ready_sound = false;
+    publish(&mut dashboard, saved);
     assert!(rendered_footer(&dashboard, 120).contains("Ready sound: off"));
-    assert_eq!(
-        std::fs::read_dir(root.path()).unwrap().count(),
-        1,
-        "the writer used only the published path"
-    );
 }

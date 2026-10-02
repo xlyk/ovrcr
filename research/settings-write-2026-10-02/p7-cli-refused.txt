@@ -1,0 +1,2 @@
+InvalidRequest: could not save ready_sound: "loud" is not a TOML value; expected a boolean
+exit=1
