@@ -419,3 +419,22 @@ fn slash_filters_rows_across_groups() {
     dashboard.key(KeyCode::Esc);
     assert!(!open(&dashboard));
 }
+
+/// A remembered launch edits kind and preset together in one pick list.
+#[test]
+fn remembered_launch_picks_kind_and_preset_together() {
+    let (mut dashboard, _root, document) =
+        editor("[launch_choices.demo]\nkind = \"Agent\"\npreset = \"fixture\"\n");
+    select(&mut dashboard, "launches demo");
+    assert!(line_with(&dashboard, "demo  ").contains("Agent: fixture"));
+    dashboard.key(KeyCode::Enter);
+    let text = screen(&dashboard);
+    assert!(text.contains("› Agent: fixture"), "{text}");
+    dashboard.event_action(Event::Paste("terminal".into()));
+    let (path, value) = serve(&mut dashboard, &document, KeyCode::Enter);
+    assert_eq!(path, "launch_choices.demo");
+    assert_eq!(value.as_deref(), Some("{ kind = \"Terminal\" }"));
+    assert!(line_with(&dashboard, "demo  ").contains("Terminal"));
+    let saved = std::fs::read_to_string(&document).unwrap();
+    assert!(!saved.contains("preset"), "{saved}");
+}
