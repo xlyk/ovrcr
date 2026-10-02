@@ -17,6 +17,7 @@ contract scripts can rely on. Every command accepts `--help`.
 | `report` | Report agent activity, context, or status-line metrics from a provider hook |
 | `session` | Inspect or remove a session record |
 | `server` | Run the server in the foreground |
+| `settings` | Show the settings document, effective values and findings |
 
 `project create` aliases `project add`. `project delete` and `workspace delete`
 alias their guarded `remove` commands. The legacy top-level `new`, `list`,
@@ -75,6 +76,28 @@ for that same current branch, or `--path`. A detached checkout is shown as
 Two workspaces on the same branch is an error that lists candidate paths; pass
 `--path` to choose one. An old branch name does not match after the checkout
 moves.
+
+## Settings
+
+```sh
+ovrcr settings
+ovrcr settings --json
+```
+
+`settings` reads the settings document locally, as the Server does at startup:
+`dashboard.toml` beside `config.toml`, or the file `OVRCR_DASHBOARD_CONFIG` names.
+It never contacts or starts a server. It prints the resolved document path, then
+one line per setting with its key, owner (`Server` or `Dashboard`), source
+(`default` or `document`) and effective value (`unset` when there is none). An
+off consent setting (`desktop_notifications`, `title_model`, `quota.enabled`) is
+followed by what to set to turn it on. Findings come last: wrong types, unknown
+keys, unknown spellings, an unparseable document, and a `[quota]` table left in
+`config.toml`, each with its key and line when known. The command exits 0 even
+with findings.
+
+`--json` prints one object: `path`, `read_unix_ms`, `settings` (every effective
+value, typed), `rows` (`key`, `owner`, `value`, `source`, `off_state`) and
+`findings` (`key`, null for the whole document; `message`; `line`, nullable).
 
 ## Workspace removal
 

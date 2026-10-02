@@ -659,12 +659,20 @@ there; existing sessions stay usable. OVRCR does not switch the checkout.
 
 ## Dashboard settings
 
-Dashboard settings live in `dashboard.toml` beside `config.toml`. Override the
-path with `OVRCR_DASHBOARD_CONFIG`. Remembered launch choices stay in this file.
-Do not put these keys in `config.toml`. That path remains the instance identity
-for the project/workspace database (`config.toml.sqlite3`) and scheduled-task
-storage (`config.tasks`); it is not dashboard settings. A missing file uses defaults,
-and a parse error shows in the footer and also uses defaults.
+Every setting lives in one settings document, `dashboard.toml` beside
+`config.toml`, including the Server's `title_model`, `automatic_local_terminals`
+and `[quota]`. Override the path with `OVRCR_DASHBOARD_CONFIG`; it chooses a file
+only. Remembered launch choices stay in this file. Do not put settings in
+`config.toml`. That path remains the instance identity for the project/workspace
+database (`config.toml.sqlite3`) and scheduled-task storage (`config.tasks`); a
+`[quota]` table there configures nothing and is reported as a finding.
+
+A missing file uses defaults. A wrong-typed value keeps its own default, and an
+unknown key or an unknown spelling such as `automatic_local_terminals = "always"`
+is ignored; each is reported as a finding with its key and line. Only a document
+that is not valid TOML falls back to every default, with one document-level
+finding. Run `ovrcr settings` to see the document path, each setting's owner,
+effective value and source (default or document), and the findings.
 
 ```toml
 desktop_notifications = false        # opt in to background Ready and input-needed alerts
@@ -677,6 +685,17 @@ picker_roots = ["~/Code", "~/src", "~"]
 [[agents]]
 name = "claude"
 argv = ["claude", "--verbose"]
+
+[quota]                              # Codex and Grok account quota; see provider-quota.md
+enabled = false                      # opt in: native clients may refresh their own auth and logs
+
+[quota.codex]
+command = "codex"
+# home = "/absolute/path/to/codex-profile"
+
+[quota.grok]
+command = "grok"
+# home = "/absolute/path/to/grok-profile"
 ```
 
 `automatic_local_terminals` controls only **automatic** creation of terminals named

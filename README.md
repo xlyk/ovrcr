@@ -334,22 +334,23 @@ service installation, scheduling rules, and retained-work cleanup.
 | --- | --- |
 | Registry / config | `~/Library/Application Support/ovrcr/config.toml` on macOS, `$XDG_CONFIG_HOME/ovrcr/config.toml` (usually `~/.config/ovrcr`) on Linux |
 | Project/workspace database | The full registry path with `.sqlite3` appended. Default `config.toml` therefore uses `config.toml.sqlite3`, not `config.sqlite3`. |
-| Dashboard settings | `dashboard.toml` beside `config.toml` |
+| Settings document | `dashboard.toml` beside `config.toml`; every setting, including `title_model` and `[quota]` |
 | Scheduled tasks | `config.tasks` beside `config.toml` |
 | Server socket | `$XDG_RUNTIME_DIR/ovrcr/server.sock` on Linux, `$TMPDIR/ovrcr-UID/ovrcr/server.sock` on macOS and wherever `XDG_RUNTIME_DIR` is unset |
 | Server log | `server.log` beside the socket |
 
-`OVRCR_CONFIG` still names the `config.toml` path. Dashboard settings and
+`OVRCR_CONFIG` still names the `config.toml` path. The settings document and
 scheduled-task storage are derived from that path as before. After the first
 server start, project and workspace records live in the `.sqlite3` file. The
-server writes that database only and never rewrites `config.toml`. Keep
-dashboard settings in `dashboard.toml`.
+server writes that database only and never rewrites `config.toml`. Keep every
+setting in `dashboard.toml`; `ovrcr settings` shows what it holds and any
+findings.
 
 | Variable | Effect |
 | --- | --- |
 | `OVRCR_CONFIG` | Registry path; selects an isolated instance |
 | `OVRCR_SOCKET` | Server socket path; selects an isolated server |
-| `OVRCR_DASHBOARD_CONFIG` | `dashboard.toml` path |
+| `OVRCR_DASHBOARD_CONFIG` | Settings document path; chooses a file only. The installed service receives only `OVRCR_CONFIG` and `OVRCR_SOCKET`, so it reads `dashboard.toml` beside `config.toml` |
 
 Set `OVRCR_CONFIG` and `OVRCR_SOCKET` together for a test fixture or a second
 instance. OVRCR creates a missing socket directory with mode 700 and refuses to
