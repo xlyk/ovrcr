@@ -5,7 +5,7 @@ CODEX_HOME: unset (default ~/.codex)
 ~/.codex/config.toml model lines:
 3:model = "gpt-6.1-sol"
 4:model_reasoning_effort = "max"
-OVRCR_* set in this shell: OVRCR_AGENT_SOCKET OVRCR_AGENT_TOKEN 
+OVRCR_* set in this shell: OVRCR_AGENT_SOCKET OVRCR_AGENT_TOKEN
 
 $ echo "Reply with exactly: PONG" | env -u OVRCR_AGENT_SOCKET -u OVRCR_AGENT_TOKEN codex exec -s read-only --skip-git-repo-check -
 Reply with exactly: PONG
