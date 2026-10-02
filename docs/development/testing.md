@@ -29,8 +29,19 @@ on a thread of the test process, for tests that reach into server state or
 change the environment the server reads; `Live::binary` spawns the compiled
 `ovrcr`, for tests that need a real process — signals, exit status, a CLI
 talking to a server it did not start. `Live::idle` hands back the paths without
-a server, for tests whose subject is start-up itself. Session, CLI and terminal
-helpers stay in the suite that needs them, wrapped around a `Live`.
+a server, for tests whose subject is start-up itself. `Live::isolated_home` is
+`idle` for a fresh install: the binary server and every `Live::command` run with
+an empty private HOME and no `OVRCR_CONFIG`, so the default config path is the
+one under test. Session, CLI and terminal helpers stay in the suite that needs
+them, wrapped around a `Live`; `tests/support/claude_auth.rs` installs a
+stand-in `claude` whose `auth status --json` answer a test can change while a
+Server runs.
+
+The settings document matrix (`crates/ovrcr-runtime/tests/settings_matrix.rs`)
+is generated from the loader's own rows, so a new setting gets its missing,
+default, non-default, wrong-type and misspelling cases without new test code.
+A setting with an unset default, an enum, or a collection default the matrix
+cannot extend names itself in the matrix's failure and needs one table entry.
 
 ## Hosted CI schedule
 
