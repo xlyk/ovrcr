@@ -90,7 +90,7 @@ fn codex_native_read_reaches_remaining_bars_through_real_server_and_socket() {
     std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-cli 0.155.1'; exit 0; fi\nexec '{executable}' --ignored --exact native_quota_rpc_fixture --nocapture --quiet\n")).unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
     let config = serde_json::to_string(&native.to_string_lossy()).unwrap();
-    std::fs::write(&fixture.config, format!("projects = []\n[quota]\nenabled = true\n[quota.codex]\ncommand = {config}\n[quota.grok]\ncommand = '/not-a-native-fixture'\n")).unwrap();
+    std::fs::write(settings_document(&fixture), format!("[quota]\nenabled = true\n[quota.codex]\ncommand = {config}\n[quota.grok]\ncommand = '/not-a-native-fixture'\n")).unwrap();
     let log = fixture.root.path().join("native-methods");
     fixture.start_binary_env(&[("OVRCR_QUOTA_FIXTURE_LOG", log.as_os_str())]);
     let mut socket = connect_server(&fixture.socket).unwrap();
@@ -186,7 +186,7 @@ fn grok_native_billing_reaches_actual_monthly_remaining_bar() {
     std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then echo '1.0.40 (fixture) [stable]'; exit 0; fi\nexec '{executable}' --ignored --exact native_quota_rpc_fixture --nocapture --quiet\n")).unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
     let config = serde_json::to_string(&native.to_string_lossy()).unwrap();
-    std::fs::write(&fixture.config, format!("projects = []\n[quota]\nenabled = true\n[quota.codex]\ncommand = '/not-a-native-fixture'\n[quota.grok]\ncommand = {config}\n")).unwrap();
+    std::fs::write(settings_document(&fixture), format!("[quota]\nenabled = true\n[quota.codex]\ncommand = '/not-a-native-fixture'\n[quota.grok]\ncommand = {config}\n")).unwrap();
     let log = fixture.root.path().join("native-methods");
     fixture.start_binary_env(&[("OVRCR_QUOTA_FIXTURE_LOG", log.as_os_str())]);
     let mut socket = connect_server(&fixture.socket).unwrap();
@@ -268,26 +268,80 @@ fn grok_native_billing_reaches_actual_monthly_remaining_bar() {
     );
 }
 
-fn native_fixture(mode: &str) -> live::Live {
-    let fixture = live::Live::idle().bounded();
+/// The settings document beside the fixture's instance identity.
+fn settings_document(fixture: &live::Live) -> std::path::PathBuf {
+    fixture.config.with_file_name("dashboard.toml")
+}
+
+fn native_executable(fixture: &live::Live, name: &str, version: &str) -> std::path::PathBuf {
     let executable = std::env::current_exe()
         .unwrap()
         .to_string_lossy()
         .replace('\'', "'\\''");
-    let mut config = "projects = []\n[quota]\nenabled = true\n".to_string();
+    let native = fixture.root.path().join(name);
+    std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then echo '{version}'; exit 0; fi\nexec '{executable}' --ignored --exact native_quota_rpc_fixture --nocapture --quiet\n")).unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    native
+}
+
+#[test]
+fn quota_table_in_instance_identity_is_a_finding_and_starts_no_worker() {
+    let fixture = live::Live::idle().bounded();
+    let native = native_executable(&fixture, "codex", "codex-cli 0.155.1");
+    let command = serde_json::to_string(&native.to_string_lossy()).unwrap();
+    // Before the shared settings document this enabled collection.
+    std::fs::write(
+        &fixture.config,
+        format!("projects = []\n[quota]\nenabled = true\n[quota.codex]\ncommand = {command}\n"),
+    )
+    .unwrap();
+    let methods = fixture.root.path().join("native-methods");
+    let server_log = fixture.root.path().join("server.log");
+    fixture.start_binary_logged(
+        &[("OVRCR_QUOTA_FIXTURE_LOG", methods.as_os_str())],
+        &server_log,
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let log = std::fs::read_to_string(&server_log).unwrap_or_default();
+        if log.contains("settings finding") {
+            assert!(
+                log.contains("quota quota settings belong in dashboard.toml"),
+                "{log}"
+            );
+            assert!(log.contains("(line 2)"), "{log}");
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no settings finding logged: {log}"
+        );
+        std::thread::park_timeout(Duration::from_millis(20));
+    }
+    // Collection would start as soon as a Dashboard attaches.
+    let _socket = attach(&fixture);
+    // This wait asserts an absence: the enabled run above logs within it.
+    std::thread::sleep(Duration::from_secs(2));
+    assert!(
+        !methods.exists(),
+        "a [quota] table in config.toml started a native client"
+    );
+}
+
+fn native_fixture(mode: &str) -> live::Live {
+    let fixture = live::Live::idle().bounded();
+    let mut config = "[quota]\nenabled = true\n".to_string();
     for (name, version) in [
         ("codex", "codex-cli 0.155.1"),
         ("grok", "1.0.40 (fixture) [stable]"),
     ] {
-        let native = fixture.root.path().join(name);
-        std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then echo '{version}'; exit 0; fi\nexec '{executable}' --ignored --exact native_quota_rpc_fixture --nocapture --quiet\n")).unwrap();
-        std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let native = native_executable(&fixture, name, version);
         config.push_str(&format!(
             "[quota.{name}]\ncommand = {}\n",
             serde_json::to_string(&native.to_string_lossy()).unwrap()
         ));
     }
-    std::fs::write(&fixture.config, config).unwrap();
+    std::fs::write(settings_document(&fixture), config).unwrap();
     let log = fixture.root.path().join("native-methods");
     fixture.start_binary_env(&[
         ("OVRCR_QUOTA_FIXTURE_LOG", log.as_os_str()),

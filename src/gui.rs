@@ -66,11 +66,10 @@ impl Demo {
         )?;
         if let Some(path) = std::env::var_os("OVRCR_GUI_QUOTA_CONFIG") {
             let fragment = fs::read_to_string(path).context("read GUI quota config fragment")?;
-            let mut config = fs::OpenOptions::new()
-                .create(true)
+            let mut settings = fs::OpenOptions::new()
                 .append(true)
-                .open(self.root.join("config.toml"))?;
-            writeln!(config, "\n{fragment}")?;
+                .open(self.root.join("dashboard.toml"))?;
+            writeln!(settings, "\n{fragment}")?;
         }
         self.create_project_fixture(&repositories, &workspaces, "consigint")?;
         self.create_project_fixture(&repositories, &workspaces, "spacelift-agent")?;
@@ -250,6 +249,8 @@ impl Demo {
         command
             .env("OVRCR_CONFIG", self.root.join("config.toml"))
             .env("OVRCR_SOCKET", self.root.join("server.sock"))
+            // The demo's settings document is the one beside its config.toml.
+            .env_remove("OVRCR_DASHBOARD_CONFIG")
             .env("TERM", "xterm-256color")
             .env("COLORTERM", "truecolor")
             .env_remove("NO_COLOR");
@@ -267,6 +268,7 @@ impl Demo {
         let mut command = CommandBuilder::new(&self.executable);
         command.env("OVRCR_CONFIG", self.root.join("config.toml"));
         command.env("OVRCR_SOCKET", self.root.join("server.sock"));
+        command.env_remove("OVRCR_DASHBOARD_CONFIG");
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
         command.env_remove("NO_COLOR");

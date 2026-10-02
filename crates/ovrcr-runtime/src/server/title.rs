@@ -38,23 +38,6 @@ struct SeenFile {
     mtime: Option<SystemTime>,
 }
 
-pub(super) fn load_title_model(registry_path: &Path) -> Option<TitleModel> {
-    let path = std::env::var_os("OVRCR_DASHBOARD_CONFIG")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            registry_path
-                .parent()
-                .unwrap_or_else(|| Path::new("."))
-                .join("dashboard.toml")
-        });
-    let text = fs::read_to_string(path).ok()?;
-    let value: toml::Value = toml::from_str(&text).ok()?;
-    value
-        .get("title_model")
-        .and_then(|value| value.as_str())
-        .and_then(TitleModel::parse)
-}
-
 pub(super) struct TitleWorker {
     model: Option<TitleModel>,
     root: PathBuf,

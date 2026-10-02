@@ -6,6 +6,8 @@ pub mod context;
 pub mod freshness;
 pub mod quota;
 pub use quota::*;
+pub mod settings;
+pub use settings::*;
 mod registry;
 mod session;
 pub mod task;

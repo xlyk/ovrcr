@@ -21,8 +21,8 @@ and uses an installed JetBrains Mono Nerd Font Mono when available, with a
 monospace fallback.
 
 For quota acceptance, set `OVRCR_GUI_QUOTA_CONFIG` to a TOML fragment containing
-only the `[quota]` configuration. The helper appends it to its disposable config
-before starting the real Server. Point its commands at owned native RPC fixtures
+only the `[quota]` settings. The helper appends it to its disposable
+`dashboard.toml` before starting the real Server. Point its commands at owned native RPC fixtures
 for deterministic evidence, or explicitly authorized native clients for account
 acceptance; the ordinary demo does not enable native collection.
 

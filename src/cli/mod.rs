@@ -171,7 +171,53 @@ fn run(cli: Cli) -> AppResult<()> {
             command: SessionCommand::Remove { id },
         } => resources::remove_terminal(id, json_output),
         Command::Report { command } => run_report(command),
+        Command::Settings => {
+            let RegistryPath(config) = RegistryPath::resolve().map_err(RuntimeError::internal)?;
+            let report = ovrcr::settings::load(&config);
+            if json_output {
+                print_json(&serde_json::to_value(&report).map_err(RuntimeError::internal)?)
+            } else {
+                print!("{}", settings_text(&report));
+                Ok(())
+            }
+        }
     }
+}
+
+fn settings_text(report: &ovrcr::protocol::SettingsReport) -> String {
+    use std::fmt::Write;
+    let mut text = format!("Settings document: {}\n", report.path.display());
+    for row in &report.rows {
+        let source = match row.source {
+            ovrcr::protocol::SettingSource::Default => "default",
+            ovrcr::protocol::SettingSource::Document => "document",
+        };
+        let _ = writeln!(
+            text,
+            "  {:<26} {:<9} {:<8} {}",
+            row.key,
+            format!("{:?}", row.owner),
+            source,
+            row.value.as_deref().unwrap_or("unset")
+        );
+        if let Some(off) = &row.off_state {
+            let _ = writeln!(text, "  {:<26} {off}", "");
+        }
+    }
+    if report.findings.is_empty() {
+        text.push_str("No findings.\n");
+    } else {
+        let _ = writeln!(text, "Findings ({}):", report.findings.len());
+        for finding in &report.findings {
+            let line = finding
+                .line
+                .map(|line| format!(" (line {line})"))
+                .unwrap_or_default();
+            let key = finding.key.as_deref().unwrap_or("document");
+            let _ = writeln!(text, "  {key}{line}: {}", finding.message);
+        }
+    }
+    text
 }
 
 fn inspect() -> AppResult<(Registry, Vec<SessionSummary>)> {

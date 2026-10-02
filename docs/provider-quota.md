@@ -12,7 +12,7 @@ Claude's selected source follows the focused managed Claude session and is retai
 
 ## Enable native collection
 
-Claude callbacks do not need an additional switch. Codex and Grok collection is opt-in because native clients may refresh their own authentication and write their own logs. Add this to the OVRCR `config.toml`, then restart the Server after stopping or preserving your sessions through the normal lifecycle:
+Claude callbacks do not need an additional switch. Codex and Grok collection is opt-in because native clients may refresh their own authentication and write their own logs. Add this to the settings document, `dashboard.toml` beside the OVRCR `config.toml` (a `[quota]` table in `config.toml` configures nothing and `ovrcr settings` reports it as a finding), then restart the Server after stopping or preserving your sessions through the normal lifecycle:
 
 ```toml
 [quota]

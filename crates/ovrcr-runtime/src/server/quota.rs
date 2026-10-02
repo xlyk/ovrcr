@@ -1,14 +1,14 @@
 //! Server-owned native account collection. No credentials or native bodies cross this boundary.
 use super::{DispatchMessage, ServerState};
+use ovrcr_protocol::NativeCommand;
 use ovrcr_protocol::{
     ProviderQuota, QuotaProvider, QuotaReport, QuotaSource, QuotaState, QuotaWindow,
 };
-use serde::Deserialize;
 use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::process::CommandExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, atomic::Ordering, mpsc::TrySendError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -16,53 +16,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const POLL: Duration = Duration::from_secs(300);
 const REQUEST: Duration = Duration::from_secs(20);
 const MAX_RESPONSE: usize = 2 * 1024 * 1024;
-
-#[derive(Clone, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct NativeCommand {
-    command: PathBuf,
-    home: Option<PathBuf>,
-}
-impl Default for NativeCommand {
-    fn default() -> Self {
-        Self {
-            command: PathBuf::from("codex"),
-            home: None,
-        }
-    }
-}
-#[derive(Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct Config {
-    // Native clients may refresh their own auth/logs: require explicit consent.
-    enabled: bool,
-    codex: NativeCommand,
-    grok: NativeCommand,
-}
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            codex: NativeCommand::default(),
-            grok: NativeCommand {
-                command: "grok".into(),
-                home: None,
-            },
-        }
-    }
-}
-fn config(path: &Path) -> Config {
-    #[derive(Deserialize)]
-    struct Settings {
-        #[serde(default)]
-        quota: Config,
-    }
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|text| toml::from_str::<Settings>(&text).ok())
-        .map(|settings| settings.quota)
-        .unwrap_or_default()
-}
 
 pub struct NativeQuotaUpdate {
     pub(super) provider: QuotaProvider,
@@ -117,7 +70,7 @@ fn now_ms() -> u64 {
 }
 
 pub(super) fn run(state: Arc<ServerState>, provider: QuotaProvider) {
-    let config = config(&state.registry_path);
+    let config = crate::settings::load(&state.registry_path).settings.quota;
     if !config.enabled {
         return;
     }

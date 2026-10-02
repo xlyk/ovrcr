@@ -168,7 +168,25 @@ fn run_server_inner(
             return Err(error);
         }
     };
-    let title_model = title::load_title_model(&registry_path);
+    let settings = crate::settings::load(&registry_path);
+    for finding in &settings.findings {
+        eprintln!(
+            "settings finding in {}: {} {}{}",
+            settings.path.display(),
+            finding.key.as_deref().unwrap_or("(document)"),
+            finding.message,
+            finding
+                .line
+                .map(|line| format!(" (line {line})"))
+                .unwrap_or_default()
+        );
+    }
+    // The loader validated provider/model; parse cannot fail on its value.
+    let title_model = settings
+        .settings
+        .title_model
+        .as_deref()
+        .and_then(title::TitleModel::parse);
     let (events, event_receiver) = event_channel(event_monitor.as_ref());
     let (dispatch, dispatch_receiver) = dispatch_channel(dispatch_monitor.as_ref());
     let state = Arc::new(ServerState {

@@ -2761,6 +2761,7 @@ dependencies = [
  "signal-hook",
  "tempfile",
  "toml",
+ "toml_edit",
 ]
 
 [[package]]

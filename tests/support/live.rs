@@ -161,6 +161,8 @@ impl Live {
             .arg("server")
             .env("OVRCR_SOCKET", &self.socket)
             .env("OVRCR_CONFIG", &self.config)
+            // The settings document is the one beside `config`, never the developer's.
+            .env_remove("OVRCR_DASHBOARD_CONFIG")
             // The sessions a workspace opens run this shell. The developer's
             // own login shell and its rc files are not the test's subject.
             .env("SHELL", "/bin/sh")
