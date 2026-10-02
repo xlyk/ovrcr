@@ -134,11 +134,10 @@ fn subject_rows(live: &Live, id: SessionId) -> i64 {
     .unwrap()
 }
 
+const TITLE_SCRIPT: &str = "#!/bin/sh\nprintf '%s\\n' \"$*\" >> __CALLS__\nprintf '%s\\n' \"$PWD\" >> __CALLS__.cwd\nwhile IFS= read -r line; do printf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Fixture Topic\"}],\"stopReason\":\"stop\"}}'; printf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_result\",\"text\":\"ignored\"}],\"stopReason\":\"stop\"}}'; exit 0; done\n";
+
 fn title_fixture() -> (Live, std::path::PathBuf, std::path::PathBuf) {
-    start_title_fixture(
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> __CALLS__\nprintf '%s\\n' \"$PWD\" >> __CALLS__.cwd\nwhile IFS= read -r line; do printf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Fixture Topic\"}],\"stopReason\":\"stop\"}}'; printf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_result\",\"text\":\"ignored\"}],\"stopReason\":\"stop\"}}'; exit 0; done\n".to_owned(),
-        Some("title_model = 'pi/test'\n"),
-    )
+    start_title_fixture(TITLE_SCRIPT.to_owned(), Some("title_model = 'pi/test'\n"))
 }
 
 fn agent_program(token: &std::path::Path) -> Vec<std::ffi::OsString> {
@@ -3367,4 +3366,77 @@ done
     assert_eq!(row_b.display_name(), "Second Session Topic");
     assert_eq!((row_a.id, row_a.run), (id_a, run_a));
     assert_eq!((row_b.id, row_b.run), (id_b, run_b));
+}
+
+fn pi_agent_with_history(
+    live: &Live,
+    fake_pi: &std::path::Path,
+    name: &str,
+    conversation: &str,
+) -> SessionSummary {
+    let token = live.root.path().join(format!("{name}.token"));
+    let session = created(
+        live,
+        Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Agent { name: "pi".into() },
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: name.into(),
+            label: Some("pi".into()),
+            argv: agent_program(&token),
+        }),
+    );
+    wait_for(live, session.id, "AGENT_READY");
+    let history = live.root.path().join(format!("{name}.jsonl"));
+    std::fs::write(
+        &history,
+        format!("{{\"type\":\"session\",\"id\":\"{conversation}\"}}\n{{\"role\":\"user\",\"content\":\"please name it\"}}\n{{\"role\":\"assistant\",\"content\":\"the answer\"}}\n"),
+    )
+    .unwrap();
+    retain_pi_history(live, fake_pi, &session, &token, conversation, history);
+    session
+}
+
+#[test]
+fn title_model_set_and_cleared_while_running_starts_and_stops_titling() {
+    let (live, fake_pi, calls) = start_title_fixture(TITLE_SCRIPT.to_owned(), None);
+    let _dashboard = dashboard(&live);
+    let first = pi_agent_with_history(
+        &live,
+        &fake_pi,
+        "first-pi",
+        "00000000-0000-4000-8000-000000000011",
+    );
+    // Two watcher ticks with no model: nothing is titled.
+    std::thread::sleep(Duration::from_secs(4));
+    assert_eq!(call_count(&calls), 0, "titled without a title_model");
+
+    let settings = live.root.path().join("dashboard.toml");
+    std::fs::write(&settings, "title_model = 'pi/test'\n").unwrap();
+    wait_display(&live, first.id, "Fixture Topic");
+    assert_eq!(call_count(&calls), 1);
+
+    std::fs::write(&settings, "").unwrap();
+    // Let the watcher see the cleared model before new history appears.
+    std::thread::sleep(Duration::from_secs(3));
+    let second = pi_agent_with_history(
+        &live,
+        &fake_pi,
+        "second-pi",
+        "00000000-0000-4000-8000-000000000012",
+    );
+    std::thread::sleep(Duration::from_secs(4));
+    assert_eq!(
+        call_count(&calls),
+        1,
+        "titled after title_model was cleared"
+    );
+    assert_eq!(
+        sessions(&live)
+            .into_iter()
+            .find(|row| row.id == second.id)
+            .unwrap()
+            .display_name(),
+        "second-pi"
+    );
 }
