@@ -1,0 +1,61 @@
+󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ────────────────────────────│pid: 18642  elapsed: 0m  agent unknown  local (#1)
+  󰘬 main                          root │local (#1)
+▌    $ local                           │consigint ›
+  󰘬 gui-consigint-auth-handoff         │
+     $ local                           │
+     - review auth handoff    grok:4.6 │
+  󰘬 gui-consigint-worktree-lifecycle   │
+     $ local                           │
+     - implement lif…  claude:sonnet-4 │
+     - review websocke…  codex:gpt-5.4 │
+     - plan snapshot res…  pi:grok-4.6 │
+                                       │
+ SPACELIFT-AGENT ──────────────────────│
+  󰘬 main                          root │
+     $ local                           │  ┌Quota details · Esc close · ↑↓ scroll───────────────────────────────────────────┐
+  󰘬 gui-spacelift-agent-pipeline-progr…│  │Subscription allowance only.                                                    │
+     $ local                           │  │                                                                                │
+     - build pipeline …  claude:opus-4 │  │Claude — checking                                                               │
+  󰘬 gui-spacelift-agent-scope-quality  │  │reason: waiting for a managed Claude session's first response                   │
+     $ local                           │  │source: no native source selected                                               │
+     - review scope qu…  codex:gpt-5.4 │  │last observation: not reported                                                  │
+                                       │  │last account check: not reported (native callback is not a backend check)       │
+                                       │  │next check: not scheduled                                                       │
+                                       │  │                                                                                │
+                                       │  │Codex — off                                                                     │
+                                       │  │Codex/Grok usage off: set `quota.enabled = true` in dashboard.toml              │
+                                       │  │source: no native source selected                                               │
+                                       │  │last observation: not reported                                                  │
+                                       │  │last account check: not reported (native callback is not a backend check)       │
+                                       │  │next check: not scheduled                                                       │
+                                       │  │                                                                                │
+                                       │  │Grok — off                                                                      │
+                                       │  │Codex/Grok usage off: set `quota.enabled = true` in dashboard.toml              │
+                                       │  │source: no native source selected                                               │
+                                       │  │last observation: not reported                                                  │
+                                       │  │last account check: not reported (native callback is not a backend check)       │
+                                       │  │next check: not scheduled                                                       │
+                                       │  │                                                                                │
+                                       │  │                                                                                │
+                                       │  │                                                                                │
+                                       │  │                                                                                │
+                                       │  │                                                                                │
+                                       │  │                                                                                │
+                                       │  └────────────────────────────────────────────────────────────────────────────────┘
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+Quota left                             │
+Claude — checking                      │
+Codex usage off                        │
+Grok usage off                         │
+BROWSE  Space Menu  : Search  ? Help

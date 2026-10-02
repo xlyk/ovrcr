@@ -1,0 +1,6 @@
+[quota]
+enabled = true
+[quota.codex]
+command = "/Users/xlyk/Code/ovrcr-workspaces/090a055996de6d6616b3bea5891d2641/research/quota-display-2026-10-02/codex"
+[quota.grok]
+command = "/Users/xlyk/Code/ovrcr-workspaces/090a055996de6d6616b3bea5891d2641/research/quota-display-2026-10-02/grok-missing"

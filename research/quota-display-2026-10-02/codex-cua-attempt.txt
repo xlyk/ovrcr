@@ -1,0 +1,16 @@
+date: 2026-10-02T20:37:31Z
+codex --version: codex-cli 0.155.1
+codex login status: Logged in using ChatGPT
+CODEX_HOME: unset (default ~/.codex)
+~/.codex/config.toml model lines:
+3:model = "gpt-6.1-sol"
+4:model_reasoning_effort = "max"
+OVRCR_* set in this shell: OVRCR_AGENT_SOCKET OVRCR_AGENT_TOKEN 
+
+$ echo "Reply with exactly: PONG" | env -u OVRCR_AGENT_SOCKET -u OVRCR_AGENT_TOKEN codex exec -s read-only --skip-git-repo-check -
+Reply with exactly: PONG
+ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account."}}
+
+$ echo "Reply with exactly: PONG" | codex exec -s read-only --skip-git-repo-check -   # OVRCR_* left set
+Reply with exactly: PONG
+ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account."}}

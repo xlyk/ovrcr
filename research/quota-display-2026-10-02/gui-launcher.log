@@ -1,0 +1,9 @@
+c0be446be5e90db99acf3d5fe34eb4e67c06c030
+rtk proxy sh scripts/gui.sh
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/090a055996de6d6616b3bea5891d2641/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/090a055996de6d6616b3bea5891d2641/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/090a055996de6d6616b3bea5891d2641/crates/ovrcr-runtime)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/090a055996de6d6616b3bea5891d2641/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/090a055996de6d6616b3bea5891d2641)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.83s
+launcher exit 0
