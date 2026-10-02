@@ -8,6 +8,9 @@ use std::io::{BufRead, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
 
+/// Distinctive native body text; no Quota reason may contain it.
+const FIXTURE_BODY: &str = "upstream said: fixture@example.invalid overloaded";
+
 #[test]
 #[ignore = "task-owned native RPC fixture process"]
 fn native_quota_rpc_fixture() {
@@ -36,6 +39,20 @@ fn native_quota_rpc_fixture() {
         let Some(id) = request.get("id") else {
             continue;
         };
+        let mode = std::env::var("OVRCR_QUOTA_FIXTURE_MODE").unwrap_or_default();
+        if method == "account/rateLimits/read" && matches!(mode.as_str(), "http503" | "retry") {
+            // A native error whose body a Quota reason must never echo.
+            let mut data = serde_json::json!({"status": 503, "body": FIXTURE_BODY});
+            if mode == "retry" {
+                data["retryAfterSeconds"] = 900.into();
+            }
+            println!(
+                "{}",
+                serde_json::json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32000, "message":FIXTURE_BODY, "data":data}})
+            );
+            std::io::stdout().flush().unwrap();
+            continue;
+        }
         let result = match method {
             "initialize" => serde_json::json!({"capabilities": {}}),
             "account/read" => {
@@ -313,7 +330,11 @@ fn quota_table_in_instance_identity_is_a_finding_and_starts_no_worker() {
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
         let log = std::fs::read_to_string(&server_log).unwrap_or_default();
-        if log.contains("settings finding") {
+        // Wait for the whole line; eprintln can land in more than one write.
+        if log
+            .split_once("settings finding")
+            .is_some_and(|(_, rest)| rest.contains('\n'))
+        {
             assert!(
                 log.contains("quota quota settings belong in dashboard.toml"),
                 "{log}"
@@ -430,9 +451,9 @@ fn providers_remain_visible_before_any_native_quota_source_reports() {
         .collect::<String>();
     for expected in [
         "Quota left",
-        "Claude — waiting for report",
-        "Codex — unavailable",
-        "Grok — unavailable",
+        "Claude — checking",
+        "Codex — off",
+        "Grok — off",
     ] {
         assert!(screen.contains(expected), "missing {expected}: {screen}");
     }
@@ -458,6 +479,11 @@ fn unrelated_native_messages_cannot_extend_the_account_request_deadline() {
         {
             assert!(started.elapsed() < Duration::from_secs(25));
             assert!(snapshot.codex.windows.is_empty());
+            assert_eq!(
+                snapshot.codex.reason.as_deref(),
+                Some("timed out after 20 s")
+            );
+            assert_next_check(&snapshot.codex, 60);
             break;
         }
     }
@@ -707,4 +733,210 @@ fn quota_enabled_flips_live_without_restart() {
         rate_reads() == 2
     });
     assert_eq!(std::fs::read_to_string(&pids).unwrap().lines().count(), 2);
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+}
+
+/// The row's Next check is `seconds` from now, give or take the read itself.
+fn assert_next_check(quota: &ProviderQuota, seconds: u64) {
+    let next = quota.next_check_unix_ms.expect("no next check");
+    let expected = now_ms() + seconds * 1000;
+    assert!(
+        next <= expected + 1_000 && next + 5_000 >= expected,
+        "{:?} next check {}s out, expected {seconds}s",
+        quota.provider,
+        (next as i64 - now_ms() as i64) / 1000
+    );
+}
+
+/// Read Dashboard frames until a quota snapshot satisfies `done`.
+fn quota_until(
+    socket: &mut std::os::unix::net::UnixStream,
+    what: &str,
+    mut done: impl FnMut(&QuotaSnapshot) -> bool,
+) -> QuotaSnapshot {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        assert!(std::time::Instant::now() < deadline, "{what}");
+        if let ServerMessage::Event(ServerEvent::QuotaChanged(snapshot)) =
+            read_frame::<ServerMessage>(socket).unwrap()
+        {
+            for row in [&snapshot.claude, &snapshot.codex, &snapshot.grok] {
+                let reason = row.reason.as_deref().unwrap_or_default();
+                assert!(
+                    !reason.contains("fixture") && !reason.contains("overloaded"),
+                    "a Quota reason echoed native bytes: {reason}"
+                );
+            }
+            if done(&snapshot) {
+                return *snapshot;
+            }
+        }
+    }
+}
+
+fn reads(fixture: &live::Live, method: &str) -> usize {
+    std::fs::read_to_string(fixture.root.path().join("native-methods"))
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| *line == method)
+        .count()
+}
+
+#[test]
+fn enabled_attach_shows_checking_then_current_within_one_read() {
+    let fixture = native_fixture("normal");
+    let mut socket = attach(&fixture);
+    let first = quota_until(&mut socket, "no quota snapshot on attach", |_| true);
+    assert_eq!(first.codex.state, QuotaState::Checking);
+    assert_eq!(first.grok.state, QuotaState::Checking);
+    assert_eq!(first.claude.state, QuotaState::Checking);
+    assert_eq!(first.claude.reason.as_deref(), Some(CLAUDE_WAITING));
+    let current = quota_until(&mut socket, "native quotas never became current", |q| {
+        q.codex.state == QuotaState::Current && q.grok.state == QuotaState::Current
+    });
+    assert_eq!(reads(&fixture, "account/rateLimits/read"), 1);
+    assert_eq!(reads(&fixture, "_x.ai/billing"), 1);
+    assert_eq!(current.codex.reason, None);
+    assert_next_check(&current.codex, 300);
+    // Claude has no native reader: it keeps waiting for a managed session.
+    assert_eq!(current.claude.state, QuotaState::Checking);
+    assert!(matches!(
+        fixture.request(Request::RefreshQuota {
+            provider: Some(QuotaProvider::Claude)
+        }),
+        Response::Error { code: ErrorCode::InvalidRequest, message } if message.contains(CLAUDE_WAITING)
+    ));
+}
+
+#[test]
+fn disabled_quota_snapshot_carries_the_off_state_reason() {
+    // Off at hello is the protocol default the Dashboard already holds.
+    let off = QuotaSnapshot::default();
+    for row in [&off.codex, &off.grok] {
+        assert_eq!(row.state, QuotaState::Disabled);
+        assert_eq!(row.reason.as_deref(), Some(ovrcr::settings::QUOTA_OFF));
+    }
+    let fixture = native_fixture("normal");
+    let mut socket = attach(&fixture);
+    quota_until(&mut socket, "native quotas never became current", |q| {
+        q.codex.state == QuotaState::Current
+    });
+    std::fs::write(settings_document(&fixture), "[quota]\nenabled = false\n").unwrap();
+    let snapshot = quota_until(&mut socket, "turning quota off was not published", |q| {
+        q.codex.state == QuotaState::Disabled && q.grok.state == QuotaState::Disabled
+    });
+    for row in [&snapshot.codex, &snapshot.grok] {
+        assert_eq!(row.reason.as_deref(), Some(ovrcr::settings::QUOTA_OFF));
+        assert_eq!(row.next_check_unix_ms, None);
+        assert!(row.windows.is_empty());
+    }
+    assert!(matches!(
+        fixture.request(Request::RefreshQuota { provider: None }),
+        Response::Error { message, .. } if message == ovrcr::settings::QUOTA_OFF
+    ));
+}
+
+#[test]
+fn missing_executable_is_not_found_with_next_check_at_the_cap() {
+    let fixture = live::Live::idle().bounded();
+    std::fs::write(
+        settings_document(&fixture),
+        "[quota]\nenabled = true\n[quota.codex]\ncommand = 'ovrcr-no-such-native-client'\n[quota.grok]\ncommand = '/not-a-native-fixture'\n",
+    )
+    .unwrap();
+    fixture.start_binary_env(&[]);
+    let mut socket = attach(&fixture);
+    let snapshot = quota_until(&mut socket, "missing executables were not reported", |q| {
+        q.codex.state == QuotaState::Unavailable && q.grok.state == QuotaState::Unavailable
+    });
+    assert_eq!(
+        snapshot.codex.reason.as_deref(),
+        Some("codex not found on PATH")
+    );
+    assert_eq!(
+        snapshot.grok.reason.as_deref(),
+        Some("grok not found at the configured path")
+    );
+    assert_next_check(&snapshot.codex, 600);
+    assert_next_check(&snapshot.grok, 600);
+}
+
+#[test]
+fn retry_after_overrides_the_ladder_and_a_manual_refresh() {
+    let fixture = native_fixture("retry");
+    let mut socket = attach(&fixture);
+    let failed = quota_until(&mut socket, "HTTP 503 was not reported", |q| {
+        q.codex.state == QuotaState::Unavailable
+    });
+    assert_eq!(failed.codex.reason.as_deref(), Some("HTTP 503"));
+    // The ladder says one minute; the provider said fifteen.
+    assert_next_check(&failed.codex, 900);
+    assert_eq!(
+        fixture.request(Request::RefreshQuota {
+            provider: Some(QuotaProvider::Codex)
+        }),
+        Response::Ok
+    );
+    // This wait asserts an absence: an accepted refresh reads within 100 ms.
+    std::thread::sleep(Duration::from_secs(2));
+    assert_eq!(reads(&fixture, "account/rateLimits/read"), 1);
+}
+
+#[test]
+fn manual_refresh_skips_failure_backoff_once_per_cooldown() {
+    let fixture = native_fixture("http503");
+    let mut socket = attach(&fixture);
+    let failed = quota_until(&mut socket, "HTTP 503 was not reported", |q| {
+        q.codex.state == QuotaState::Unavailable
+    });
+    assert_eq!(failed.codex.reason.as_deref(), Some("HTTP 503"));
+    assert_next_check(&failed.codex, 60);
+    assert_eq!(reads(&fixture, "account/rateLimits/read"), 1);
+    assert_eq!(
+        fixture.request(Request::RefreshQuota { provider: None }),
+        Response::Ok
+    );
+    // Read at once, not a minute later; the second failure climbs the ladder.
+    let again = quota_until(&mut socket, "manual refresh did not read", |q| {
+        q.codex
+            .next_check_unix_ms
+            .is_some_and(|next| next > now_ms() + 90_000)
+    });
+    assert_next_check(&again.codex, 120);
+    assert_eq!(reads(&fixture, "account/rateLimits/read"), 2);
+    match fixture.request(Request::RefreshQuota { provider: None }) {
+        Response::QuotaCooldown { remaining_ms } => {
+            assert!((1..=30_000).contains(&remaining_ms), "{remaining_ms}")
+        }
+        other => panic!("second refresh within 30 s was not refused: {other:?}"),
+    }
+}
+
+#[test]
+fn set_setting_quota_enabled_off_publishes_disabled_rows() {
+    let fixture = native_fixture("normal");
+    let mut socket = attach(&fixture);
+    quota_until(&mut socket, "native quotas never became current", |q| {
+        q.codex.state == QuotaState::Current
+    });
+    assert_eq!(
+        fixture.request(Request::SetSetting {
+            path: "quota.enabled".into(),
+            value: Some("false".into()),
+        }),
+        Response::Ok
+    );
+    let snapshot = quota_until(&mut socket, "SetSetting off was not published", |q| {
+        q.codex.state == QuotaState::Disabled && q.grok.state == QuotaState::Disabled
+    });
+    assert_eq!(
+        snapshot.codex.reason.as_deref(),
+        Some(ovrcr::settings::QUOTA_OFF)
+    );
 }

@@ -331,6 +331,11 @@ pub enum Request {
         path: String,
         value: Option<String>,
     },
+    /// Mark the native quota worker (both when `None`) due now. Refused within
+    /// 30 s of the last accepted refresh; never skips a provider Retry-After.
+    RefreshQuota {
+        provider: Option<crate::QuotaProvider>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -399,6 +404,10 @@ pub enum Response {
     HistoryOpened(HistoryOpened),
     HistoryRows(HistoryRows),
     AgentOperation(crate::AgentOperationResult),
+    /// A manual quota refresh refused by the Server's cooldown.
+    QuotaCooldown {
+        remaining_ms: u64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -816,6 +825,12 @@ mod wire_snapshot {
                     expected_run: SessionRunId(4),
                 },
             ),
+            (
+                "RefreshQuota",
+                Request::RefreshQuota {
+                    provider: Some(crate::QuotaProvider::Grok),
+                },
+            ),
         ]
     }
 
@@ -898,6 +913,10 @@ mod wire_snapshot {
                         wrapped: false,
                     }],
                 }),
+            ),
+            (
+                "QuotaCooldown",
+                Response::QuotaCooldown { remaining_ms: 300 },
             ),
         ]
     }
@@ -986,6 +1005,8 @@ mod wire_snapshot {
             crate::QuotaState::Unsupported,
             crate::QuotaState::Invalid,
             crate::QuotaState::SourceConflict,
+            crate::QuotaState::Disabled,
+            crate::QuotaState::Checking,
         ] {
             all.push((format!("QuotaState::{state:?}"), encode(&state)));
         }
@@ -1016,6 +1037,17 @@ mod wire_snapshot {
                     conversation: "conv".into(),
                     generation: 2,
                 },
+            }),
+        ));
+        all.push((
+            "ProviderQuota".into(),
+            encode(&crate::ProviderQuota {
+                reason: Some("HTTP 503".into()),
+                next_check_unix_ms: Some(60_000),
+                ..crate::ProviderQuota::unknown(
+                    crate::QuotaProvider::Codex,
+                    crate::QuotaState::Unavailable,
+                )
             }),
         ));
         all.push((
@@ -1182,6 +1214,7 @@ mod wire_snapshot {
             "270f7069636b65725f726f6f74735b325d0105227e2f7822",
         ),
         ("Request::AcknowledgeSessionStopped", "240104"),
+        ("Request::RefreshQuota", "280102"),
         (
             "Request::MarkReviewed",
             "1e010103696e7604636f6e760101047475726e02",
@@ -1205,6 +1238,7 @@ mod wire_snapshot {
             "Response::HistoryRows",
             "090102030401010101780100020102030000",
         ),
+        ("Response::QuotaCooldown", "0bfb2c01"),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
         ("ServerEvent::ScreenDirty", "02010403"),
@@ -1214,7 +1248,7 @@ mod wire_snapshot {
         ),
         (
             "ServerEvent::QuotaChanged",
-            "04000000000000010000000002020000000002",
+            "04000000000008013577616974696e6720666f722061206d616e6167656420436c617564652073657373696f6e277320666972737420726573706f6e7365000100000000070142436f6465782f47726f6b207573616765206f66663a20736574206071756f74612e656e61626c6564203d20747275656020696e2064617368626f6172642e746f6d6c000200000000070142436f6465782f47726f6b207573616765206f66663a20736574206071756f74612e656e61626c6564203d20747275656020696e2064617368626f6172642e746f6d6c00",
         ),
         (
             "ServerEvent::SettingsChanged",
@@ -1227,12 +1261,15 @@ mod wire_snapshot {
         ("QuotaState::Unsupported", "04"),
         ("QuotaState::Invalid", "05"),
         ("QuotaState::SourceConflict", "06"),
+        ("QuotaState::Disabled", "07"),
+        ("QuotaState::Checking", "08"),
         (
             "QuotaWindow",
             "0e6e61746976652f7072696d6172790235680101fb68100001fc40420f00",
         ),
         ("QuotaSource::NativeProfile", "01066e617469766502"),
         ("QuotaSource::Session", "0001040003696e7604636f6e7602"),
+        ("ProviderQuota", "0100000000020108485454502035303301fb60ea"),
         (
             "AgentObservation::Quota",
             "0401010e6e61746976652f7072696d6172790235680101fb68100001fc40420f0001",

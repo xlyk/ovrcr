@@ -345,6 +345,7 @@ pub(super) fn handle_request_with_id(
         } => state
             .send_terminal(session, &text, submit)
             .map_or_else(error_for_lifecycle, |_| Response::Ok),
+        Request::RefreshQuota { provider } => super::quota::request_refresh(state, provider),
         Request::Keystroke {
             session,
             expected_run,

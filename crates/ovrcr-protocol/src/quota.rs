@@ -29,6 +29,10 @@ pub enum QuotaState {
     Unsupported,
     Invalid,
     SourceConflict,
+    /// The consent setting `quota.enabled` is off.
+    Disabled,
+    /// Enabled, and the first read for this source is in flight.
+    Checking,
 }
 
 impl QuotaState {
@@ -41,6 +45,8 @@ impl QuotaState {
             Self::Unsupported => "unsupported auth/version",
             Self::Invalid => "invalid report",
             Self::SourceConflict => "source conflict",
+            Self::Disabled => "off",
+            Self::Checking => "checking",
         }
     }
 }
@@ -127,7 +133,18 @@ pub struct ProviderQuota {
     /// Only an authoritative native account read advances this, not callback receipt.
     pub checked_unix_ms: Option<u64>,
     pub state: QuotaState,
+    /// OVRCR's own one-line classification of why the row is not current
+    /// (a Quota reason); never a native body, account value or credential.
+    pub reason: Option<String>,
+    /// When the Server will next ask the native provider (a Next check).
+    pub next_check_unix_ms: Option<u64>,
 }
+
+/// The off-state sentence of the `quota.enabled` consent setting.
+pub const QUOTA_OFF: &str = "Codex/Grok usage off: set `quota.enabled = true` in dashboard.toml";
+
+/// Claude's row while Checking: it is not refreshable and has no native reader.
+pub const CLAUDE_WAITING: &str = "waiting for a managed Claude session's first response";
 
 impl ProviderQuota {
     pub fn unknown(provider: QuotaProvider, state: QuotaState) -> Self {
@@ -138,6 +155,8 @@ impl ProviderQuota {
             observed_unix_ms: None,
             checked_unix_ms: None,
             state,
+            reason: None,
+            next_check_unix_ms: None,
         }
     }
 
@@ -157,12 +176,21 @@ pub struct QuotaSnapshot {
     pub grok: ProviderQuota,
 }
 
+/// The Server's snapshot with `quota.enabled` off and nothing reported. The
+/// Server sends no snapshot after hello while it still equals this.
 impl Default for QuotaSnapshot {
     fn default() -> Self {
+        let off = |provider| ProviderQuota {
+            reason: Some(QUOTA_OFF.into()),
+            ..ProviderQuota::unknown(provider, QuotaState::Disabled)
+        };
         Self {
-            claude: ProviderQuota::unknown(QuotaProvider::Claude, QuotaState::Waiting),
-            codex: ProviderQuota::unknown(QuotaProvider::Codex, QuotaState::Unavailable),
-            grok: ProviderQuota::unknown(QuotaProvider::Grok, QuotaState::Unavailable),
+            claude: ProviderQuota {
+                reason: Some(CLAUDE_WAITING.into()),
+                ..ProviderQuota::unknown(QuotaProvider::Claude, QuotaState::Checking)
+            },
+            codex: off(QuotaProvider::Codex),
+            grok: off(QuotaProvider::Grok),
         }
     }
 }

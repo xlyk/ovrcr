@@ -392,7 +392,7 @@ fn quota_block_keeps_sidebar_border_draggable_at_the_bottom() {
     }
     assert_eq!(pane_widths(&dashboard, area), vec![70]);
     assert_view_input_blocked(&mut dashboard);
-    assert!(rendered_rows(&dashboard, 120, 40)[38].contains("Grok — unavailable"));
+    assert!(rendered_rows(&dashboard, 120, 40)[38].contains("Grok — off"));
     assert_eq!(
         rendered_rows(&dashboard, 120, 40)[38].chars().nth(49),
         Some('│')

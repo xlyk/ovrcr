@@ -27,10 +27,41 @@ command = "grok"
 # home = "/absolute/path/to/grok-profile" # native GROK_HOME
 ```
 
-Omit `home` to use the native client's existing profile. OVRCR does not provide login, extract tokens, copy credentials, or attach to a shared native client. Unsupported versions fail closed. Native collection runs only while a Dashboard is attached, with one worker per provider, a five-minute cadence, bounded replies and a twenty-second request deadline, and failure backoff. The deadline covers native writes and incoming notifications as well as replies. Fifty Sessions do not create fifty account readers.
+Omit `home` to use the native client's existing profile. OVRCR does not provide login, extract tokens, copy credentials, or attach to a shared native client. Unsupported versions fail closed. Native collection runs only while a Dashboard is attached, with one worker per provider, a five-minute cadence, bounded replies and a twenty-second request deadline, and failure backoff (below). The deadline covers native writes and incoming notifications as well as replies. Fifty Sessions do not create fifty account readers. Every `quota.*` setting is live: a change restarts the native client and reads at once.
 
 ## Interpret the display
 
-A bar represents `100 − consumed`; `—` is unknown, not zero or full. Exhausted and over-limit reports are distinct. Passed reset times show **reset due**; OVRCR never refills allowance locally. Unavailable or stale sources retain last-good values with a stale marker. Before any source reports, Claude shows waiting and the opt-in native providers show unavailable. Narrow sidebars place the window's full state below its identity; use details when the window is too short to show all quota rows.
+A bar represents `100 − consumed`; `—` is unknown, not zero or full. Exhausted and over-limit reports are distinct. Passed reset times show **reset due**; OVRCR never refills allowance locally. Unavailable or stale sources retain last-good values with a stale marker. Before any source reports, Claude shows checking and each native provider shows checking when `quota.enabled` is on, or off when it is not. Narrow sidebars place the window's full state below its identity; use details when the window is too short to show all quota rows.
 
 Details distinguish the last changed observation from the last successful native account check. Repeated Claude callbacks cannot claim a backend check. Account changes invalidate older native generations, including A→B→A notifications received during a read. Quota snapshots are bounded, in-memory Server state and are not persisted as account history.
+
+## States, reasons and next check
+
+Each provider row carries a state, a **Quota reason** and a **Next check**, all set by the Server:
+
+| State | Meaning |
+| --- | --- |
+| off | `quota.enabled` is off. The reason is the off-state sentence naming the setting. |
+| checking | Enabled, and the first read is in flight. Claude stays here, with the reason "waiting for a managed Claude session's first response", until a managed session reports. |
+| current | The last read succeeded. The next check is five minutes later. |
+| unavailable, not signed in, unsupported, invalid, source conflict | The last read failed. The reason says why. |
+
+A reason is OVRCR's own one-line classification, such as "codex not found on PATH", "grok not found at the configured path", "codex version unsupported (needs 0.155.1)", "timed out after 20 s", "native pipe closed", "native client closed its output", "HTTP 503", "not signed in" or "team or non-user context unsupported". It never carries a native response body, an account value or a credential.
+
+After a failure the next check follows a ladder:
+
+- Transient failures (timeout, closed pipe or output, HTTP 5xx and other request failures) retry after 1, 2, 5, then 10 minutes, and stay at 10.
+- Deterministic failures (executable not found, unsupported version or method, team or non-user context, not signed in) wait 10 minutes at once.
+- A provider's Retry-After always wins over the ladder, bounded to between one minute and one day.
+
+A success resets the ladder. Changing any `quota.*` setting also resets it and reads at once.
+
+### Manual refresh
+
+`Request::RefreshQuota { provider }` (both native providers when `provider` is none) marks the worker due now. The Server enforces it:
+
+- One read per provider is in flight at a time; a refresh asked for during a read is answered by that read.
+- Accepted refreshes are at least 30 seconds apart. A refresh inside the cooldown is refused with `Response::QuotaCooldown { remaining_ms }`.
+- A refresh skips a failure backoff but never a provider's Retry-After.
+- Claude is not refreshable, and a refresh while `quota.enabled` is off is refused with the off-state sentence.
+
