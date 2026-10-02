@@ -16091,3 +16091,67 @@ fn dashboard_hello_carries_the_servers_settings_and_confirms_a_toggle() {
         .unwrap();
     assert_eq!(row.source, SettingSource::Document);
 }
+
+/// Read Dashboard frames until a settings reading arrives or `within` passes.
+fn next_settings(stream: &mut UnixStream, within: Duration) -> Option<SettingsReport> {
+    let deadline = Instant::now() + within;
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return None;
+        }
+        stream.set_read_timeout(Some(left)).unwrap();
+        match read_frame::<ServerMessage>(stream) {
+            Ok(ServerMessage::Event(ServerEvent::SettingsChanged(report))) => return Some(*report),
+            Ok(_) => {}
+            Err(_) if Instant::now() >= deadline => return None,
+            Err(error) => panic!("dashboard read failed: {error}"),
+        }
+    }
+}
+
+/// The Server's watcher republishes an edit to an attached Dashboard within
+/// 3 seconds, and stays quiet while the file is unchanged or rewritten with
+/// the same reading.
+#[test]
+fn settings_edit_while_attached_republishes_only_real_changes() {
+    let fixture = Live::idle();
+    let document = fixture.config.with_file_name("dashboard.toml");
+    std::fs::write(&document, "branch_prefix = \"a/\"\n").unwrap();
+    fixture.start_binary();
+    let mut stream = connect_server(&fixture.socket).unwrap();
+    write_frame(
+        &mut stream,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let hello = next_settings(&mut stream, Duration::from_secs(5)).expect("no reading at hello");
+    assert_eq!(hello.settings.branch_prefix, "a/");
+
+    // Unchanged file: two watcher ticks and nothing is sent.
+    assert!(next_settings(&mut stream, Duration::from_millis(4500)).is_none());
+
+    let edited = Instant::now();
+    std::fs::write(
+        &document,
+        "branch_prefix = \"b/\"\nready_sound = \"loud\"\n",
+    )
+    .unwrap();
+    let changed = next_settings(&mut stream, Duration::from_secs(3))
+        .expect("edit was not republished within 3 seconds");
+    assert!(edited.elapsed() <= Duration::from_secs(3));
+    assert_eq!(changed.settings.branch_prefix, "b/");
+    assert_eq!(changed.findings.len(), 1, "{:?}", changed.findings);
+    assert_eq!(changed.findings[0].key.as_deref(), Some("ready_sound"));
+
+    // Same reading, new mtime and length: reloaded but not republished.
+    std::fs::write(
+        &document,
+        "branch_prefix = \"b/\"\nready_sound = \"loud\"  \n",
+    )
+    .unwrap();
+    assert!(next_settings(&mut stream, Duration::from_millis(4500)).is_none());
+}

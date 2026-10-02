@@ -70,15 +70,9 @@ fn now_ms() -> u64 {
 }
 
 pub(super) fn run(state: Arc<ServerState>, provider: QuotaProvider) {
-    let config = crate::settings::load(&state.registry_path).settings.quota;
-    if !config.enabled {
+    if !matches!(provider, QuotaProvider::Codex | QuotaProvider::Grok) {
         return;
     }
-    let program = match provider {
-        QuotaProvider::Codex => &config.codex,
-        QuotaProvider::Grok => &config.grok,
-        _ => return,
-    };
     let (identity_method, limits_method) = match provider {
         QuotaProvider::Codex => ("account/read", "account/rateLimits/read"),
         _ => ("_x.ai/auth/info", "_x.ai/billing"),
@@ -107,6 +101,17 @@ pub(super) fn run(state: Arc<ServerState>, provider: QuotaProvider) {
                 Err(_) => break,
             }
         }
+        // `quota.enabled` is live: off stops this cycle's client and waits for
+        // the next settings change; on collects at once.
+        let config = state.quota_settings();
+        if !config.enabled {
+            if client.take().is_some() {
+                identity = None;
+            }
+            due = Instant::now();
+            std::thread::park_timeout(Duration::from_millis(100));
+            continue;
+        }
         if !state.dashboard.is_claimed() {
             client = None;
             std::thread::park_timeout(Duration::from_millis(100));
@@ -118,6 +123,10 @@ pub(super) fn run(state: Arc<ServerState>, provider: QuotaProvider) {
             (|| {
                 let deadline = Instant::now() + REQUEST;
                 if client.is_none() {
+                    let program = match provider {
+                        QuotaProvider::Codex => &config.codex,
+                        _ => &config.grok,
+                    };
                     client = Some(native_client(provider, program, &state, deadline)?);
                 }
                 let rpc = client.as_mut().unwrap();

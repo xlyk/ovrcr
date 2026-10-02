@@ -2605,6 +2605,7 @@ fn test_state_with_dispatch(
             tasks: None,
             socket: PathBuf::from("/tmp/ovrcr-test.sock"),
             quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
+            settings: Mutex::new(super::watch::Watched::empty()),
             registry_path: PathBuf::from("config.toml"),
             registry: Mutex::new(Registry::default()),
             sessions: Mutex::new(HashMap::new()),
@@ -2648,6 +2649,7 @@ fn test_state_with_socket(
             tasks: None,
             socket,
             quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
+            settings: Mutex::new(super::watch::Watched::empty()),
             registry_path: PathBuf::from("config.toml"),
             registry: Mutex::new(registry),
             sessions: Mutex::new(HashMap::new()),
@@ -5288,6 +5290,7 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
     let state = Arc::new(ServerState {
         tasks: None,
         quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
+        settings: Mutex::new(super::watch::Watched::empty()),
         socket: socket_path,
         registry_path: root.path().join("config.toml"),
         registry: Mutex::new(registry),
@@ -5501,6 +5504,7 @@ fn session_output_flows_while_another_session_spawns() {
     let state = Arc::new(ServerState {
         tasks: None,
         quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
+        settings: Mutex::new(super::watch::Watched::empty()),
         socket: socket_path,
         registry_path: root.path().join("config.toml"),
         registry: Mutex::new(registry),
@@ -7556,6 +7560,7 @@ fn failed_root_shell_keeps_setup_pending_and_does_not_duplicate_launch() {
         tasks: None,
         socket: dir.path().join("socket"),
         quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
+        settings: Mutex::new(super::watch::Watched::empty()),
         registry_path: config,
         registry: Mutex::new(registry),
         sessions: Mutex::new(HashMap::new()),
@@ -7844,6 +7849,7 @@ fn automatic_local_terminals_default_branch_only_skips_feature_workspaces() {
     let state = Arc::new(ServerState {
         tasks: None,
         quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
+        settings: Mutex::new(super::watch::Watched::empty()),
         socket: socket.clone(),
         registry_path: config.clone(),
         registry: Mutex::new(Registry::default()),
@@ -7935,6 +7941,7 @@ fn automatic_local_terminals_on_and_off_cover_root_and_feature() {
         let state = Arc::new(ServerState {
             tasks: None,
             quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
+            settings: Mutex::new(super::watch::Watched::empty()),
             socket: socket.clone(),
             registry_path: config.clone(),
             registry: Mutex::new(Registry::default()),
@@ -8031,6 +8038,7 @@ fn changing_automatic_local_policy_leaves_existing_terminals() {
     let state = Arc::new(ServerState {
         tasks: None,
         quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
+        settings: Mutex::new(super::watch::Watched::empty()),
         socket: socket.clone(),
         registry_path: config.clone(),
         registry: Mutex::new(Registry::default()),

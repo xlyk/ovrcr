@@ -721,6 +721,9 @@ command = "grok"
 # home = "/absolute/path/to/grok-profile"
 ```
 
+Every setting takes effect without a restart: the Server checks the file every
+two seconds and applies a saved change on its next check.
+
 `automatic_local_terminals` controls only **automatic** creation of terminals named
 `local` when a workspace is provisioned:
 

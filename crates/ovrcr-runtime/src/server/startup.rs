@@ -168,11 +168,11 @@ fn run_server_inner(
             return Err(error);
         }
     };
-    let settings = crate::settings::load(&registry_path);
-    for finding in &settings.findings {
+    let settings = watch::Watched::load(&registry_path);
+    for finding in &settings.report.findings {
         eprintln!(
             "settings finding in {}: {} {}{}",
-            settings.path.display(),
+            settings.report.path.display(),
             finding.key.as_deref().unwrap_or("(document)"),
             finding.message,
             finding
@@ -181,12 +181,6 @@ fn run_server_inner(
                 .unwrap_or_default()
         );
     }
-    // The loader validated provider/model; parse cannot fail on its value.
-    let title_model = settings
-        .settings
-        .title_model
-        .as_deref()
-        .and_then(title::TitleModel::parse);
     let (events, event_receiver) = event_channel(event_monitor.as_ref());
     let (dispatch, dispatch_receiver) = dispatch_channel(dispatch_monitor.as_ref());
     let state = Arc::new(ServerState {
@@ -197,6 +191,7 @@ fn run_server_inner(
         sessions: Mutex::new(HashMap::new()),
         dashboard: ActiveDashboard::default(),
         quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
+        settings: Mutex::new(settings),
         retained: parking_lot::Mutex::new(retained),
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
@@ -262,7 +257,7 @@ fn run_server_inner(
     let title_state = Arc::clone(&state);
     let title_thread = thread::Builder::new()
         .name("ovrcr-title-worker".into())
-        .spawn(move || title::TitleWorker::new(title_model, titles_dir).run(title_state))?;
+        .spawn(move || title::TitleWorker::new(titles_dir).run(title_state))?;
     let mut signals = signal_hook::iterator::Signals::new([libc::SIGTERM, libc::SIGINT])?;
     let signal_handle = signals.handle();
     let signal_state = Arc::downgrade(&state);

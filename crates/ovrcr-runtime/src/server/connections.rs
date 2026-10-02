@@ -203,6 +203,7 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                 &identity,
                 response_message(message.request_id, Response::Hierarchy(state.hierarchy())),
             );
+            state.refresh_settings();
             state.publish_settings();
             state.publish_quotas();
             continue;

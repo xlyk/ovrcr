@@ -35,6 +35,7 @@ mod quota;
 mod reporting_queue;
 mod startup;
 mod title;
+mod watch;
 
 use connections::{
     combine_control_and_refresh, error_chain_string, error_for_lifecycle, error_response,
@@ -201,6 +202,7 @@ pub struct ServerState {
     pub sessions: Mutex<HashMap<SessionId, Arc<Session>>>,
     pub(super) dashboard: ActiveDashboard,
     quotas: Mutex<ovrcr_protocol::QuotaSnapshot>,
+    settings: Mutex<watch::Watched>,
     pub(crate) retained: parking_lot::Mutex<SessionStore>,
     observations: parking_lot::Mutex<HashMap<(String, String), CheckoutObservation>>,
     pub mutation_lock: Mutex<()>,
@@ -305,10 +307,10 @@ impl ServerState {
             ))));
     }
 
-    /// Send the Server's current reading of the settings document. It is
-    /// read here rather than cached, so a hello always sees the saved file.
-    fn publish_settings(&self) {
-        let report = crate::settings::load(&self.registry_path);
+    /// Send the Server's stored reading of the settings document, the one its
+    /// workers use. The watcher (`watch.rs`) keeps it within 2 s of the file.
+    pub(super) fn publish_settings(&self) {
+        let report = self.settings.lock().unwrap().report.clone();
         self.dashboard
             .try_send(ServerMessage::Event(ServerEvent::SettingsChanged(
                 Box::new(report),
@@ -1281,6 +1283,7 @@ impl ServerState {
         Arc::new(Self {
             tasks: Some(tasks),
             quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
+            settings: Mutex::new(watch::Watched::empty()),
             socket: registry_path.with_extension("sock"),
             registry_path,
             registry: Mutex::new(Registry::default()),

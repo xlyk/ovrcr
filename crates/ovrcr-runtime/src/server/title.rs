@@ -13,7 +13,7 @@ const EXCERPT_LIMIT: usize = 8 * 1024;
 const MESSAGE_LIMIT: usize = 8;
 const TITLE_TIMEOUT: Duration = Duration::from_secs(30);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct TitleModel {
     provider: String,
     model: String,
@@ -39,25 +39,24 @@ struct SeenFile {
 }
 
 pub(super) struct TitleWorker {
-    model: Option<TitleModel>,
     root: PathBuf,
     seen: HashMap<SessionId, SeenFile>,
     /// Sessions that became due and still need a title call. Survives across
     /// ticks so a session observed while another call runs is not forgotten
     /// when its history file does not change again.
     due: HashSet<SessionId>,
-    missing_pi: bool,
+    /// The model whose Pi executable was missing; a different model retries.
+    missing_pi: Option<TitleModel>,
     serial: u64,
 }
 
 impl TitleWorker {
-    pub(super) fn new(model: Option<TitleModel>, root: PathBuf) -> Self {
+    pub(super) fn new(root: PathBuf) -> Self {
         Self {
-            model,
             root,
             seen: HashMap::new(),
             due: HashSet::new(),
-            missing_pi: false,
+            missing_pi: None,
             serial: 0,
         }
     }
@@ -71,6 +70,8 @@ impl TitleWorker {
             }
             if last.elapsed() >= POLL_INTERVAL {
                 last = Instant::now();
+                // This poll is the Server's settings watcher tick (decision 3).
+                state.poll_settings();
                 if state.dashboard.is_claimed() {
                     self.tick(&state);
                 }
@@ -79,10 +80,10 @@ impl TitleWorker {
     }
 
     fn tick(&mut self, state: &Arc<ServerState>) {
-        let Some(model) = self.model.clone() else {
+        let Some(model) = state.title_model() else {
             return;
         };
-        if self.missing_pi {
+        if self.missing_pi.as_ref() == Some(&model) {
             return;
         }
         let records: Vec<_> = {
@@ -213,7 +214,7 @@ impl TitleWorker {
                         super::dispatch::publish_session_changed(state, record.id);
                     }
                 }
-                CallResult::MissingPi => self.missing_pi = true,
+                CallResult::MissingPi => self.missing_pi = Some(model.clone()),
                 CallResult::Failed => {
                     let _ = state.retained.lock().record_subject_attempt(
                         record.id,

@@ -12,6 +12,15 @@ use std::time::Duration;
 #[ignore = "task-owned native RPC fixture process"]
 fn native_quota_rpc_fixture() {
     let log = std::env::var_os("OVRCR_QUOTA_FIXTURE_LOG").unwrap();
+    if let Some(pids) = std::env::var_os("OVRCR_QUOTA_FIXTURE_PIDS") {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(pids)
+            .unwrap()
+            .write_all(format!("{}\n", std::process::id()).as_bytes())
+            .unwrap();
+    }
     for line in std::io::stdin().lock().lines() {
         let request: serde_json::Value = serde_json::from_str(&line.unwrap()).unwrap();
         let method = request["method"].as_str().unwrap();
@@ -626,4 +635,76 @@ fn account_a_to_b_to_a_during_native_read_cannot_publish_old_allowance() {
             }
         }
     }
+}
+
+fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !done() {
+        assert!(std::time::Instant::now() < deadline, "{what}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn alive(pid: i32) -> bool {
+    unsafe { libc::kill(pid, 0) == 0 }
+}
+
+#[test]
+fn quota_enabled_flips_live_without_restart() {
+    let fixture = live::Live::idle().bounded();
+    let native = fixture.root.path().join("codex");
+    let executable = std::env::current_exe()
+        .unwrap()
+        .to_string_lossy()
+        .replace('\'', "'\\''");
+    std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-cli 0.155.1'; exit 0; fi\nexec '{executable}' --ignored --exact native_quota_rpc_fixture --nocapture --quiet\n")).unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let settings = fixture.root.path().join("dashboard.toml");
+    let quota = |enabled: bool| {
+        format!(
+            "[quota]\nenabled = {enabled}\n[quota.codex]\ncommand = {}\n[quota.grok]\ncommand = '/not-a-native-fixture'\n",
+            serde_json::to_string(&native.to_string_lossy()).unwrap()
+        )
+    };
+    std::fs::write(&settings, quota(false)).unwrap();
+    let log = fixture.root.path().join("native-methods");
+    let pids = fixture.root.path().join("native-pids");
+    fixture.start_binary_env(&[
+        ("OVRCR_QUOTA_FIXTURE_LOG", log.as_os_str()),
+        ("OVRCR_QUOTA_FIXTURE_PIDS", pids.as_os_str()),
+    ]);
+    let _socket = attach(&fixture);
+    // Disabled at startup: the worker waits instead of exiting, and spawns nothing.
+    std::thread::sleep(Duration::from_secs(3));
+    assert!(!log.exists(), "disabled quota spawned a native client");
+
+    std::fs::write(&settings, quota(true)).unwrap();
+    let rate_reads = || {
+        std::fs::read_to_string(&log)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| *line == "account/rateLimits/read")
+            .count()
+    };
+    wait_until("enabling quota did not start collection", || {
+        rate_reads() == 1
+    });
+    let first: i32 = std::fs::read_to_string(&pids)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(alive(first));
+
+    std::fs::write(&settings, quota(false)).unwrap();
+    wait_until("disabling quota did not stop the native client", || {
+        !alive(first)
+    });
+
+    // The worker survived being disabled: enabling again collects with a new client.
+    std::fs::write(&settings, quota(true)).unwrap();
+    wait_until("re-enabling quota did not collect again", || {
+        rate_reads() == 2
+    });
+    assert_eq!(std::fs::read_to_string(&pids).unwrap().lines().count(), 2);
 }
