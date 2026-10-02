@@ -169,7 +169,9 @@ impl Loader<'_> {
             let roots = roots.iter().map(|root| expand_tilde(root)).collect();
             self.accept("picker_roots", &mut settings.picker_roots, roots);
         }
+        self.drop_unknown_fields(table, "agents", &["name", "argv"]);
         self.value::<Vec<AgentOverride>>(table, "agents", &mut settings.agents);
+        self.drop_unknown_fields(table, "launch_choices", &["kind", "preset"]);
         if let Some(choices) =
             self.take::<BTreeMap<String, DocumentLaunchChoice>>(table, "launch_choices")
         {
@@ -224,6 +226,59 @@ impl Loader<'_> {
         }
     }
 
+    /// Remove fields an element of list or table setting `key` does not
+    /// define, each as its own finding, so one unknown field never resets the
+    /// whole collection. A wrong-typed element still does.
+    fn drop_unknown_fields(&mut self, table: &mut toml::Table, key: &str, known: &[&str]) {
+        let mut elements: Vec<(String, Segment, &mut toml::Table)> = Vec::new();
+        match table.get_mut(key) {
+            Some(toml::Value::Array(rows)) => {
+                for (index, row) in rows.iter_mut().enumerate() {
+                    if let toml::Value::Table(fields) = row {
+                        elements.push((format!("{key}[{index}]"), Segment::Index(index), fields));
+                    }
+                }
+            }
+            Some(toml::Value::Table(entries)) => {
+                for (name, entry) in entries.iter_mut() {
+                    if let toml::Value::Table(fields) = entry {
+                        elements.push((
+                            format!("{key}.{name}"),
+                            Segment::Key(name.clone()),
+                            fields,
+                        ));
+                    }
+                }
+            }
+            _ => return,
+        }
+        let mut unknown = Vec::new();
+        for (display, element, fields) in elements {
+            fields.retain(|field, _| {
+                let keep = known.contains(&field);
+                if !keep {
+                    unknown.push((
+                        format!("{display}.{field}"),
+                        vec![
+                            Segment::Key(key.to_owned()),
+                            element.clone(),
+                            Segment::Key(field.to_owned()),
+                        ],
+                    ));
+                }
+                keep
+            });
+        }
+        for (display, path) in unknown {
+            let line = self.line_path(&path);
+            self.findings.push(SettingsFinding {
+                key: Some(display),
+                message: "unknown setting; ignored".into(),
+                line,
+            });
+        }
+    }
+
     fn unknown(&mut self, table: toml::Table, prefix: &str) {
         for name in table.keys() {
             self.finding(
@@ -243,18 +298,46 @@ impl Loader<'_> {
     }
 
     fn line(&self, key: &str) -> Option<u32> {
-        let mut table: &dyn toml_edit::TableLike = self.spans.as_ref()?.as_table();
-        let mut segments = key.split('.').peekable();
-        while let Some(segment) = segments.next() {
-            let (key, item) = table.get_key_value(segment)?;
-            if segments.peek().is_none() {
-                let span = key.span().or_else(|| item.span())?;
-                return Some(line_at(self.text, span.start));
-            }
-            table = item.as_table_like()?;
-        }
-        None
+        let path: Vec<_> = key
+            .split('.')
+            .map(|name| Segment::Key(name.into()))
+            .collect();
+        self.line_path(&path)
     }
+
+    /// Line of the last key on `path`, through tables, `[[array]]` tables and
+    /// inline arrays of inline tables.
+    fn line_path(&self, path: &[Segment]) -> Option<u32> {
+        let mut table: &dyn toml_edit::TableLike = self.spans.as_ref()?.as_table();
+        let mut item: Option<&toml_edit::Item> = None;
+        let mut span = None;
+        for segment in path {
+            match segment {
+                Segment::Key(name) => {
+                    if let Some(item) = item {
+                        table = item.as_table_like()?;
+                    }
+                    let (key, next) = table.get_key_value(name)?;
+                    span = key.span().or_else(|| next.span());
+                    item = Some(next);
+                }
+                Segment::Index(index) => {
+                    let array = item.take()?;
+                    table = match array.as_array_of_tables() {
+                        Some(tables) => tables.get(*index)? as &dyn toml_edit::TableLike,
+                        None => array.as_array()?.get(*index)?.as_inline_table()?,
+                    };
+                }
+            }
+        }
+        span.map(|span| line_at(self.text, span.start))
+    }
+}
+
+#[derive(Clone)]
+enum Segment {
+    Key(String),
+    Index(usize),
 }
 
 /// The document's spelling of a launch choice: `kind = "Agent"`, `preset = "…"`.
@@ -605,6 +688,50 @@ command = "/opt/grok"
         finding("ready_sund", 1, "unknown setting", &report);
         finding("quota.enabeld", 3, "unknown setting", &report);
         finding("quota.codex.hom", 5, "unknown setting", &report);
+    }
+
+    #[test]
+    fn unknown_field_in_a_launch_choice_keeps_the_choice() {
+        let report = read(
+            "[launch_choices.p]\nkind = \"Agent\"\npreset = \"x\"\nextra = 42\n\n[launch_choices.q]\nkind = \"Terminal\"\n",
+        );
+        assert_eq!(report.findings.len(), 1, "{:?}", report.findings);
+        finding(
+            "launch_choices.p.extra",
+            4,
+            "unknown setting; ignored",
+            &report,
+        );
+        assert_eq!(
+            report.settings.launch_choices["p"],
+            LaunchChoice::Agent("x".into())
+        );
+        assert_eq!(report.settings.launch_choices["q"], LaunchChoice::Terminal);
+        assert_eq!(
+            row(&report, "launch_choices").source,
+            SettingSource::Document
+        );
+    }
+
+    #[test]
+    fn unknown_field_in_an_agents_row_keeps_the_row() {
+        let report = read(
+            "[[agents]]\nname = \"a\"\nargv = [\"a\"]\n\n[[agents]]\nname = \"b\"\nargv = [\"b\"]\nextra = true\n",
+        );
+        assert_eq!(report.findings.len(), 1, "{:?}", report.findings);
+        finding("agents[1].extra", 8, "unknown setting; ignored", &report);
+        let names: Vec<_> = report
+            .settings
+            .agents
+            .iter()
+            .map(|agent| agent.name.as_str())
+            .collect();
+        assert_eq!(names, ["a", "b"]);
+
+        let report = read("agents = [{ name = \"a\", argv = [\"a\"], extra = 1 }]\n");
+        assert_eq!(report.findings.len(), 1, "{:?}", report.findings);
+        finding("agents[0].extra", 1, "unknown setting; ignored", &report);
+        assert_eq!(report.settings.agents.len(), 1);
     }
 
     #[test]
