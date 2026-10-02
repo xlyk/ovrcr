@@ -3002,3 +3002,70 @@ fn stable_titles_rename_reset_and_reopen_through_cli() {
     }
     run(&["terminal", "close", &id_text, "--json"]);
 }
+
+#[test]
+fn settings_command_reports_document_rows_and_findings_and_json_round_trips() {
+    use ovrcr::protocol::{SettingSource, SettingsReport};
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("config.toml"),
+        "projects = []\n[quota]\nenabled = true\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.path().join("dashboard.toml"),
+        "ready_sound = \"yes\"\nautomatic_local_terminals = \"always\"\nbranch_prefix = \"kh/\"\nmystery = 1\n[quota.codex]\ncommand = \"/opt/codex\"\n",
+    )
+    .unwrap();
+    let json = isolated_command(&root)
+        .env_remove("OVRCR_DASHBOARD_CONFIG")
+        .args(["settings", "--json"])
+        .output()
+        .unwrap();
+    assert!(json.status.success(), "{json:?}");
+    let report: SettingsReport = serde_json::from_slice(&json.stdout).unwrap();
+    let expected = ovrcr::settings::load_document(
+        &root.path().join("config.toml"),
+        &root.path().join("dashboard.toml"),
+    );
+    assert_eq!(report.path, root.path().join("dashboard.toml"));
+    assert_eq!(report.rows, expected.rows);
+    assert_eq!(report.findings, expected.findings);
+    assert_eq!(report.settings, expected.settings);
+    assert_eq!(report.findings.len(), 4, "{:?}", report.findings);
+    let source = |key: &str| {
+        report
+            .rows
+            .iter()
+            .find(|row| row.key == key)
+            .unwrap()
+            .source
+    };
+    assert_eq!(source("branch_prefix"), SettingSource::Document);
+    assert_eq!(source("quota.codex.command"), SettingSource::Document);
+    assert_eq!(source("ready_sound"), SettingSource::Default);
+    let reencoded: SettingsReport =
+        serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
+    assert_eq!(reencoded, report);
+
+    let text = isolated_command(&root)
+        .env_remove("OVRCR_DASHBOARD_CONFIG")
+        .arg("settings")
+        .output()
+        .unwrap();
+    assert!(text.status.success(), "{text:?}");
+    let text = String::from_utf8(text.stdout).unwrap();
+    for expected in [
+        "Settings document: ",
+        "branch_prefix              Dashboard document kh/",
+        "quota.enabled              Server    default  false",
+        "Codex/Grok usage off: set `quota.enabled = true` in dashboard.toml",
+        "Findings (4):",
+        "ready_sound (line 1): ",
+        "automatic_local_terminals (line 2): unknown value \"always\"",
+        "mystery (line 4): unknown setting; ignored",
+        "quota (line 2): quota settings belong in dashboard.toml",
+    ] {
+        assert!(text.contains(expected), "missing {expected:?} in:\n{text}");
+    }
+}

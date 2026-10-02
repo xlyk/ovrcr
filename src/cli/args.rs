@@ -90,6 +90,9 @@ pub(super) enum Command {
     New(NewArgs),
     /// List projects, workspaces, and sessions.
     List,
+    /// Show the settings document this instance reads: each setting's owner,
+    /// effective value and source, then any findings. Exits 0 with findings.
+    Settings,
     /// Stop a session's process group and keep its final screen.
     Kill { id: u64 },
     /// Stop a running session with SIGSTOP.
