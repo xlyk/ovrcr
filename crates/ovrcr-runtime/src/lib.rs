@@ -9,6 +9,7 @@ pub mod recovery;
 pub mod retained;
 pub mod server;
 pub mod session;
+pub mod settings;
 pub mod task_manager;
 pub mod task_paging;
 pub mod task_runner;

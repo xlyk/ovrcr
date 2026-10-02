@@ -31,7 +31,6 @@ mod connections;
 mod dashboard;
 mod dispatch;
 mod outbound;
-mod preferences;
 mod quota;
 mod reporting_queue;
 mod startup;
@@ -50,7 +49,7 @@ use outbound::{DashboardDelivery, Enqueue};
 pub use outbound::{DashboardOutbound, DashboardSink};
 #[cfg(feature = "acceptance-diagnostics")]
 pub use outbound::{DashboardQueueMonitor, DashboardQueueSnapshot};
-pub use preferences::AutomaticLocalTerminals;
+pub use ovrcr_protocol::AutomaticLocalTerminals;
 pub use quota::{NativeQuotaUpdate, normalize_native_quota};
 #[cfg(feature = "acceptance-diagnostics")]
 pub use startup::run_server_with_diagnostics;
@@ -1597,7 +1596,9 @@ impl ServerState {
         branch: BranchRequest,
     ) -> Result<()> {
         // Feature worktrees are never the default-branch root workspace.
-        let launch = if preferences::load_automatic_local_terminals(&self.registry_path)
+        let launch = if crate::settings::load(&self.registry_path)
+            .settings
+            .automatic_local_terminals
             .should_create(false)
         {
             WorkspaceLaunch::Shell
@@ -2200,7 +2201,9 @@ impl ServerState {
             return Ok(());
         }
         // Root workspace is the detected default-branch checkout.
-        let policy = preferences::load_automatic_local_terminals(&self.registry_path);
+        let policy = crate::settings::load(&self.registry_path)
+            .settings
+            .automatic_local_terminals;
         if !policy.should_create(true) {
             // Preference skips automatic local creation; existing rows stay untouched.
             self.set_setup_pending(project, &root_id, false)?;
