@@ -22,7 +22,7 @@ pub use write::set;
 /// a file only; there is no per-setting environment layer.
 pub const DOCUMENT_ENV: &str = "OVRCR_DASHBOARD_CONFIG";
 
-pub const QUOTA_OFF: &str = "Codex/Grok usage off: set `quota.enabled = true` in dashboard.toml";
+pub use ovrcr_protocol::QUOTA_OFF;
 pub const TITLES_OFF: &str =
     "Automatic titles off: set `title_model = \"provider/model\"` in dashboard.toml";
 pub const DESKTOP_NOTIFICATIONS_OFF: &str = "Desktop alerts off: set `desktop_notifications = true` in dashboard.toml (needs OS notification permission)";

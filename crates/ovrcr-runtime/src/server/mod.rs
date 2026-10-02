@@ -202,6 +202,7 @@ pub struct ServerState {
     pub sessions: Mutex<HashMap<SessionId, Arc<Session>>>,
     pub(super) dashboard: ActiveDashboard,
     quotas: Mutex<ovrcr_protocol::QuotaSnapshot>,
+    quota_refresh: Mutex<quota::Refresh>,
     settings: Mutex<watch::Watched>,
     pub(crate) retained: parking_lot::Mutex<SessionStore>,
     observations: parking_lot::Mutex<HashMap<(String, String), CheckoutObservation>>,
@@ -227,8 +228,10 @@ impl ServerState {
     /// Only the selected native Claude invocation can replace the retained source.
     fn refresh_claude_quota(&self) {
         use ovrcr_protocol::{
-            AgentProvider, ProviderQuota, QuotaProvider, QuotaSource, QuotaState, ReporterHealth,
+            AgentProvider, CLAUDE_WAITING, ProviderQuota, QuotaProvider, QuotaSource, QuotaState,
+            ReporterHealth,
         };
+        const NOT_REPORTING: &str = "managed Claude session not reporting";
         let focused = self.dashboard.view().and_then(|view| view.focused);
         let old = self.quotas.lock().unwrap().claude.clone();
         let selected = focused
@@ -255,36 +258,39 @@ impl ServerState {
                     .agent
                     .filter(|agent| agent.binding.provider == AgentProvider::Claude)
                 {
-                    let state = if summary.phase.is_live()
+                    let (state, reason) = if summary.phase.is_live()
                         && agent.health.state == ReporterHealth::Connected
                     {
-                        QuotaState::Waiting
+                        (QuotaState::Checking, CLAUDE_WAITING)
                     } else {
-                        QuotaState::Unavailable
+                        (QuotaState::Unavailable, NOT_REPORTING)
                     };
                     let source = QuotaSource::Session {
                         session: summary.id,
                         run: summary.run,
                         binding: agent.binding,
                     };
-                    if old.source.as_ref() == Some(&source) {
-                        let mut quota = old.clone();
-                        quota.state = state;
-                        quota
+                    let mut quota = if old.source.as_ref() == Some(&source) {
+                        old.clone()
                     } else {
                         let mut quota = ProviderQuota::unknown(QuotaProvider::Claude, state);
                         quota.source = Some(source);
                         quota
-                    }
+                    };
+                    quota.state = state;
+                    quota.reason = Some(reason.into());
+                    quota
                 } else {
                     let mut quota = old.clone();
                     quota.state = QuotaState::Unavailable;
+                    quota.reason = Some(NOT_REPORTING.into());
                     quota
                 }
             }
             None if old.source.is_some() => {
                 let mut quota = old.clone();
                 quota.state = QuotaState::Unavailable;
+                quota.reason = Some(NOT_REPORTING.into());
                 quota
             }
             None => old.clone(),
@@ -295,12 +301,16 @@ impl ServerState {
         }
     }
 
+    /// The default (quota off, nothing reported) is what a new Dashboard
+    /// already holds, so it is not sent; a settings change sends it anyway.
     fn publish_quotas(&self) {
         let snapshot = self.quotas.lock().unwrap().clone();
-        // No eligible native source: preserve the existing handshake/tree behavior.
-        if snapshot == ovrcr_protocol::QuotaSnapshot::default() {
-            return;
+        if snapshot != ovrcr_protocol::QuotaSnapshot::default() {
+            self.send_quotas(snapshot);
         }
+    }
+
+    fn send_quotas(&self, snapshot: ovrcr_protocol::QuotaSnapshot) {
         self.dashboard
             .try_send(ServerMessage::Event(ServerEvent::QuotaChanged(Box::new(
                 snapshot,
@@ -1283,6 +1293,7 @@ impl ServerState {
         Arc::new(Self {
             tasks: Some(tasks),
             quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
+            quota_refresh: Mutex::default(),
             settings: Mutex::new(watch::Watched::empty()),
             socket: registry_path.with_extension("sock"),
             registry_path,

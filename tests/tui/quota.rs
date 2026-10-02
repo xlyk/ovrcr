@@ -44,9 +44,9 @@ fn quota_waiting_providers_are_visible_before_the_first_native_report() {
     let rows = sidebar_rows(&dashboard, 39, 1_000);
     for expected in [
         "Quota left",
-        "Claude — waiting for report",
-        "Codex — unavailable",
-        "Grok — unavailable",
+        "Claude — checking",
+        "Codex — off",
+        "Grok — off",
     ] {
         assert!(
             rows.iter().any(|row| row == expected),
@@ -63,12 +63,7 @@ fn quota_narrow_sidebar_preserves_waiting_provider_and_full_state() {
     )));
     narrow_sidebar(&mut dashboard);
     let rows = sidebar_rows(&dashboard, 19, 1_000);
-    for expected in [
-        "Claude",
-        "waiting for report",
-        "Codex — unavailable",
-        "Grok — unavailable",
-    ] {
+    for expected in ["Claude — checking", "Codex — off", "Grok — off"] {
         assert!(
             rows.iter().any(|row| row == expected),
             "{expected}: {rows:?}"
@@ -127,14 +122,8 @@ fn quota_narrow_sidebar_preserves_window_identity_percentage_and_full_state() {
             if now > 301_000 { "80% stale" } else { "80%" },
             "{rows:?}"
         );
-        assert!(
-            rows.iter().any(|row| row == "Codex — unavailable"),
-            "{rows:?}"
-        );
-        assert!(
-            rows.iter().any(|row| row == "Grok — unavailable"),
-            "{rows:?}"
-        );
+        assert!(rows.iter().any(|row| row == "Codex — off"), "{rows:?}");
+        assert!(rows.iter().any(|row| row == "Grok — off"), "{rows:?}");
     }
 }
 

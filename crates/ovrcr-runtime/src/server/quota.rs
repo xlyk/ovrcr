@@ -1,8 +1,8 @@
 //! Server-owned native account collection. No credentials or native bodies cross this boundary.
 use super::{DispatchMessage, ServerState};
-use ovrcr_protocol::NativeCommand;
+use ovrcr_protocol::{CLAUDE_WAITING, ErrorCode, NativeCommand, Response};
 use ovrcr_protocol::{
-    ProviderQuota, QuotaProvider, QuotaReport, QuotaSource, QuotaState, QuotaWindow,
+    ProviderQuota, QuotaProvider, QuotaReport, QuotaSnapshot, QuotaSource, QuotaState, QuotaWindow,
 };
 use serde_json::{Value, json};
 use std::io::{Read, Write};
@@ -16,16 +16,126 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const POLL: Duration = Duration::from_secs(300);
 const REQUEST: Duration = Duration::from_secs(20);
 const MAX_RESPONSE: usize = 2 * 1024 * 1024;
+/// Least time between accepted manual refreshes.
+const COOLDOWN: Duration = Duration::from_secs(30);
 
 pub struct NativeQuotaUpdate {
     pub(super) provider: QuotaProvider,
     pub(super) generation: u64,
     pub(super) report: QuotaReport,
     pub(super) checked: bool,
+    pub(super) reason: Option<String>,
+    pub(super) next_check_unix_ms: Option<u64>,
+}
+
+/// Manual refresh state shared by the Server and the native workers.
+#[derive(Default)]
+pub(super) struct Refresh {
+    last: Option<Instant>,
+    due: [bool; 2],
+}
+
+fn slot(provider: QuotaProvider) -> Option<usize> {
+    match provider {
+        QuotaProvider::Codex => Some(0),
+        QuotaProvider::Grok => Some(1),
+        QuotaProvider::Claude => None,
+    }
+}
+
+/// `Request::RefreshQuota`: mark the workers due now, once per cooldown.
+pub(super) fn request_refresh(state: &ServerState, provider: Option<QuotaProvider>) -> Response {
+    if provider == Some(QuotaProvider::Claude) {
+        return Response::Error {
+            code: ErrorCode::InvalidRequest,
+            message: format!("Claude quota is not refreshable: {CLAUDE_WAITING}"),
+        };
+    }
+    if !state.quota_settings().enabled {
+        return Response::Error {
+            code: ErrorCode::InvalidRequest,
+            message: crate::settings::QUOTA_OFF.into(),
+        };
+    }
+    let mut refresh = state.quota_refresh.lock().unwrap();
+    let now = Instant::now();
+    if let Some(left) = refresh
+        .last
+        .map(|last| COOLDOWN.saturating_sub(now - last))
+        .filter(|left| !left.is_zero())
+    {
+        return Response::QuotaCooldown {
+            remaining_ms: left.as_millis() as u64,
+        };
+    }
+    refresh.last = Some(now);
+    for (index, native) in [QuotaProvider::Codex, QuotaProvider::Grok]
+        .into_iter()
+        .enumerate()
+    {
+        if provider.is_none_or(|provider| provider == native) {
+            refresh.due[index] = true;
+        }
+    }
+    Response::Ok
+}
+
+/// A native row before any read: Checking when enabled, otherwise Disabled
+/// with the consent setting's off-state sentence.
+fn consent_row(provider: QuotaProvider, enabled: bool) -> ProviderQuota {
+    if enabled {
+        ProviderQuota::unknown(provider, QuotaState::Checking)
+    } else if provider == QuotaProvider::Grok {
+        QuotaSnapshot::default().grok
+    } else {
+        QuotaSnapshot::default().codex
+    }
+}
+
+pub(super) fn initial(enabled: bool) -> QuotaSnapshot {
+    QuotaSnapshot {
+        codex: consent_row(QuotaProvider::Codex, enabled),
+        grok: consent_row(QuotaProvider::Grok, enabled),
+        ..QuotaSnapshot::default()
+    }
+}
+
+/// Follow `quota.enabled` in the Server's stored reading. Returns whether a row changed.
+pub(super) fn sync_consent(state: &ServerState) -> bool {
+    let enabled = state.quota_settings().enabled;
+    let mut snapshots = state.quotas.lock().unwrap();
+    let snapshots = &mut *snapshots;
+    let mut changed = false;
+    for row in [&mut snapshots.codex, &mut snapshots.grok] {
+        if enabled == (row.state == QuotaState::Disabled) {
+            *row = consent_row(row.provider, enabled);
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Minutes before retrying after the `failures`th consecutive failure.
+const LADDER: [u64; 4] = [1, 2, 5, 10];
+
+/// A provider Retry-After wins; a deterministic failure waits the cap at once.
+fn backoff(failures: u32, deterministic: bool, retry_after: Option<Duration>) -> Duration {
+    retry_after.unwrap_or_else(|| {
+        let step = if deterministic {
+            LADDER.len() - 1
+        } else {
+            (failures.max(1) as usize - 1).min(LADDER.len() - 1)
+        };
+        Duration::from_secs(LADDER[step] * 60)
+    })
 }
 
 pub(super) fn apply(state: &ServerState, update: NativeQuotaUpdate) {
-    if update.generation == 0 || update.report.validate().is_err() {
+    // A read that finished after `quota.enabled` went off keeps the row Disabled.
+    if update.generation == 0
+        || update.report.validate().is_err()
+        || !state.quota_settings().enabled
+    {
         return;
     }
     let mut snapshots = state.quotas.lock().unwrap();
@@ -42,7 +152,7 @@ pub(super) fn apply(state: &ServerState, update: NativeQuotaUpdate) {
         return;
     }
     if update.generation != old_generation {
-        *target = ProviderQuota::unknown(update.provider, QuotaState::Waiting);
+        *target = ProviderQuota::unknown(update.provider, QuotaState::Checking);
         target.source = Some(QuotaSource::NativeProfile {
             profile: format!("{} selected native profile", update.provider.name()),
             generation: update.generation,
@@ -55,6 +165,8 @@ pub(super) fn apply(state: &ServerState, update: NativeQuotaUpdate) {
         target.windows = windows;
     }
     target.state = update.report.state;
+    target.reason = update.reason;
+    target.next_check_unix_ms = update.next_check_unix_ms;
     if update.checked {
         target.checked_unix_ms = Some(now_ms());
     }
@@ -70,9 +182,9 @@ fn now_ms() -> u64 {
 }
 
 pub(super) fn run(state: Arc<ServerState>, provider: QuotaProvider) {
-    if !matches!(provider, QuotaProvider::Codex | QuotaProvider::Grok) {
+    let Some(slot) = slot(provider) else {
         return;
-    }
+    };
     let (identity_method, limits_method) = match provider {
         QuotaProvider::Codex => ("account/read", "account/rateLimits/read"),
         _ => ("_x.ai/auth/info", "_x.ai/billing"),
@@ -86,8 +198,11 @@ pub(super) fn run(state: Arc<ServerState>, provider: QuotaProvider) {
     let mut identity = None;
     let mut client = None;
     let mut due = Instant::now();
+    // The end of a provider Retry-After, which no manual refresh skips.
+    let mut hold: Option<Instant> = None;
     let mut failures = 0u32;
     let mut pending = None;
+    let mut last_config = None;
     while !state.shutdown.load(Ordering::Acquire) && !state.stopping.load(Ordering::Acquire) {
         if let Some(update) = pending.take() {
             match state
@@ -101,14 +216,18 @@ pub(super) fn run(state: Arc<ServerState>, provider: QuotaProvider) {
                 Err(_) => break,
             }
         }
-        // `quota.enabled` is live: off stops this cycle's client and waits for
-        // the next settings change; on collects at once.
+        // Every `quota.*` setting is live: any change, `enabled` included,
+        // drops this cycle's client and backoff and reads at once when enabled.
         let config = state.quota_settings();
-        if !config.enabled {
-            if client.take().is_some() {
-                identity = None;
-            }
+        if last_config.as_ref() != Some(&config) {
+            client = None;
+            identity = None;
             due = Instant::now();
+            hold = None;
+            failures = 0;
+            last_config = Some(config.clone());
+        }
+        if !config.enabled {
             std::thread::park_timeout(Duration::from_millis(100));
             continue;
         }
@@ -116,6 +235,11 @@ pub(super) fn run(state: Arc<ServerState>, provider: QuotaProvider) {
             client = None;
             std::thread::park_timeout(Duration::from_millis(100));
             continue;
+        }
+        if std::mem::take(&mut state.quota_refresh.lock().unwrap().due[slot])
+            && hold.is_none_or(|hold| Instant::now() >= hold)
+        {
+            due = Instant::now();
         }
         let mut checked = false;
         let result = if Instant::now() >= due {
@@ -142,9 +266,11 @@ pub(super) fn run(state: Arc<ServerState>, provider: QuotaProvider) {
                         generation,
                         report: QuotaReport {
                             windows: None,
-                            state: QuotaState::Waiting,
+                            state: QuotaState::Checking,
                         },
                         checked: false,
+                        reason: None,
+                        next_check_unix_ms: None,
                     }));
                 }
                 let account_epoch = rpc.account_epoch;
@@ -156,7 +282,7 @@ pub(super) fn run(state: Arc<ServerState>, provider: QuotaProvider) {
                 if before != after || account_epoch != rpc.account_epoch {
                     generation += 1;
                     identity = Some(after);
-                    return Err(Failure::new(QuotaState::SourceConflict));
+                    return Err(changed_during_read());
                 }
                 normalize_native_quota(provider, &limits).map_err(Failure::new)
             })()
@@ -185,7 +311,7 @@ pub(super) fn run(state: Arc<ServerState>, provider: QuotaProvider) {
                         _ => {
                             generation += 1;
                             due = Instant::now();
-                            Err(Failure::new(QuotaState::SourceConflict))
+                            Err(changed_during_read())
                         }
                     }
                 }
@@ -202,11 +328,16 @@ pub(super) fn run(state: Arc<ServerState>, provider: QuotaProvider) {
             std::thread::park_timeout(Duration::from_millis(100));
             continue;
         };
-        let (report, successful) = match result {
+        if checked {
+            // One read per provider: a refresh asked for during it is answered by it.
+            state.quota_refresh.lock().unwrap().due[slot] = false;
+        }
+        let (report, successful, reason) = match result {
             Ok(windows) => {
                 failures = 0;
                 if checked {
                     due = Instant::now() + POLL;
+                    hold = None;
                 }
                 (
                     QuotaReport {
@@ -214,15 +345,15 @@ pub(super) fn run(state: Arc<ServerState>, provider: QuotaProvider) {
                         state: QuotaState::Current,
                     },
                     true,
+                    None,
                 )
             }
             Err(error) => {
                 if error.state != QuotaState::Waiting {
                     failures = failures.saturating_add(1);
-                    due = Instant::now()
-                        + error
-                            .retry_after
-                            .unwrap_or(POLL * (1u32 << failures.min(3)));
+                    due =
+                        Instant::now() + backoff(failures, error.deterministic, error.retry_after);
+                    hold = error.retry_after.map(|_| due);
                     client = None;
                 }
                 (
@@ -231,29 +362,58 @@ pub(super) fn run(state: Arc<ServerState>, provider: QuotaProvider) {
                         state: error.state,
                     },
                     false,
+                    Some(error.reason),
                 )
             }
         };
+        let next_check = due.saturating_duration_since(Instant::now()).as_millis() as u64;
         pending = Some(Box::new(NativeQuotaUpdate {
             provider,
             generation,
             report,
             checked: checked && successful,
+            reason,
+            next_check_unix_ms: Some(now_ms() + next_check),
         }));
     }
 }
 
+/// A failed read and its Quota reason: OVRCR's own words, never native bytes.
 struct Failure {
     state: QuotaState,
     retry_after: Option<Duration>,
+    reason: String,
+    /// Retrying soon cannot help: not found, unsupported, not signed in.
+    deterministic: bool,
 }
 impl Failure {
     fn new(state: QuotaState) -> Self {
         Self {
             state,
             retry_after: None,
+            reason: state.label().into(),
+            deterministic: matches!(state, QuotaState::NotSignedIn | QuotaState::Unsupported),
         }
     }
+    fn because(mut self, reason: impl Into<String>) -> Self {
+        self.reason = reason.into();
+        self
+    }
+    fn unavailable(reason: impl Into<String>) -> Self {
+        Self::new(QuotaState::Unavailable).because(reason)
+    }
+}
+
+fn timed_out() -> Failure {
+    Failure::unavailable(format!("timed out after {} s", REQUEST.as_secs()))
+}
+
+fn interrupted() -> Failure {
+    Failure::unavailable("read interrupted")
+}
+
+fn changed_during_read() -> Failure {
+    Failure::new(QuotaState::SourceConflict).because("account changed during read")
 }
 type Result<T> = std::result::Result<T, Failure>;
 
@@ -305,9 +465,25 @@ impl Rpc {
                 home,
             );
         }
-        let mut child = command
-            .spawn()
-            .map_err(|_| Failure::new(QuotaState::Unavailable))?;
+        let name = provider.name().to_lowercase();
+        let mut child = command.spawn().map_err(|error| {
+            let reason = if error.kind() != std::io::ErrorKind::NotFound {
+                format!("{name} could not start")
+            } else if program
+                .command
+                .as_os_str()
+                .as_encoded_bytes()
+                .contains(&b'/')
+            {
+                format!("{name} not found at the configured path")
+            } else {
+                format!("{name} not found on PATH")
+            };
+            Failure {
+                deterministic: true,
+                ..Failure::unavailable(reason)
+            }
+        })?;
         let input = child.stdin.take().unwrap();
         let output = child.stdout.take().unwrap();
         let rpc = Self {
@@ -323,7 +499,7 @@ impl Rpc {
             let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
             if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
             {
-                return Err(Failure::new(QuotaState::Unavailable));
+                return Err(Failure::unavailable(format!("{name} could not start")));
             }
         }
         Ok(rpc)
@@ -334,7 +510,7 @@ impl Rpc {
                 || state.shutdown.load(Ordering::Acquire)
                 || !state.dashboard.is_claimed()
             {
-                return Err(Failure::new(QuotaState::Unavailable));
+                return Err(interrupted());
             }
             if Instant::now() >= deadline {
                 return Ok(true);
@@ -344,14 +520,14 @@ impl Rpc {
                 Ok(0) => return Ok(false),
                 Ok(count) => {
                     if self.buffer.len() + count > MAX_RESPONSE {
-                        return Err(Failure::new(QuotaState::Invalid));
+                        return Err(Failure::new(QuotaState::Invalid).because("reply too large"));
                     }
                     self.buffer.extend_from_slice(&chunk[..count]);
                     return Ok(true);
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(_) => return Err(Failure::new(QuotaState::Unavailable)),
+                Err(_) => return Err(Failure::unavailable("native output failed")),
             }
             if Instant::now() >= deadline {
                 return Ok(true);
@@ -365,7 +541,7 @@ impl Rpc {
                 || state.shutdown.load(Ordering::Acquire)
                 || !state.dashboard.is_claimed()
             {
-                return Err(Failure::new(QuotaState::Unavailable));
+                return Err(interrupted());
             }
             if Instant::now() >= deadline {
                 return Ok(None);
@@ -381,7 +557,7 @@ impl Rpc {
             } else if Instant::now() >= deadline {
                 return Ok(None);
             } else if !self.bytes(state, deadline)? {
-                return Err(Failure::new(QuotaState::Unavailable));
+                return Err(Failure::unavailable("native client closed its output"));
             }
         }
     }
@@ -394,18 +570,20 @@ impl Rpc {
             if state.stopping.load(Ordering::Acquire)
                 || state.shutdown.load(Ordering::Acquire)
                 || !state.dashboard.is_claimed()
-                || Instant::now() >= deadline
             {
-                return Err(Failure::new(QuotaState::Unavailable));
+                return Err(interrupted());
+            }
+            if Instant::now() >= deadline {
+                return Err(timed_out());
             }
             match self.input.write(remaining) {
-                Ok(0) => return Err(Failure::new(QuotaState::Unavailable)),
+                Ok(0) => return Err(Failure::unavailable("native pipe closed")),
                 Ok(count) => remaining = &remaining[count..],
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     std::thread::park_timeout(Duration::from_millis(10));
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(_) => return Err(Failure::new(QuotaState::Unavailable)),
+                Err(_) => return Err(Failure::unavailable("native pipe closed")),
             }
         }
         Ok(())
@@ -429,22 +607,31 @@ impl Rpc {
                 continue;
             }
             if let Some(error) = reply.get("error") {
-                let state = match error["code"].as_i64() {
-                    Some(-32601) => QuotaState::Unsupported,
-                    _ if error["data"]["status"].as_u64() == Some(401) => QuotaState::NotSignedIn,
-                    _ => QuotaState::Unavailable,
+                // Only the code and status numbers are read; the message never is.
+                let status = error["data"]["status"].as_u64();
+                let failure = match (error["code"].as_i64(), status) {
+                    (Some(-32601), _) => {
+                        Failure::new(QuotaState::Unsupported).because("method not supported")
+                    }
+                    (_, Some(401)) => Failure::new(QuotaState::NotSignedIn),
+                    (_, Some(status @ 100..=599)) => Failure::unavailable(format!("HTTP {status}")),
+                    _ => Failure::unavailable("request failed"),
                 };
+                // At least the ladder's first step, so a zero cannot spin the worker.
                 let retry_after = error["data"]["retryAfterSeconds"]
                     .as_u64()
-                    .map(|seconds| Duration::from_secs(seconds.clamp(300, 86_400)));
-                return Err(Failure { state, retry_after });
+                    .map(|seconds| Duration::from_secs(seconds.clamp(60, 86_400)));
+                return Err(Failure {
+                    retry_after,
+                    ..failure
+                });
             }
             return reply
                 .get("result")
                 .cloned()
                 .ok_or_else(|| Failure::new(QuotaState::Invalid));
         }
-        Err(Failure::new(QuotaState::Unavailable))
+        Err(timed_out())
     }
 }
 impl Drop for Rpc {
@@ -477,22 +664,26 @@ fn native_client(
     state: &ServerState,
     deadline: Instant,
 ) -> Result<Rpc> {
-    let workspace = tempfile::tempdir().map_err(|_| Failure::new(QuotaState::Unavailable))?;
+    let workspace = tempfile::tempdir()
+        .map_err(|_| Failure::unavailable("could not create a native workspace"))?;
     let mut version = Rpc::spawn(provider, program, &["--version"], workspace.path())?;
     while version.bytes(state, deadline)? {
         if Instant::now() >= deadline {
-            return Err(Failure::new(QuotaState::Unavailable));
+            return Err(timed_out());
         }
     }
-    let version =
-        std::str::from_utf8(&version.buffer).map_err(|_| Failure::new(QuotaState::Unsupported))?;
+    let name = provider.name().to_lowercase();
+    let version = std::str::from_utf8(&version.buffer).map_err(|_| {
+        Failure::new(QuotaState::Unsupported).because(format!("{name} version unreadable"))
+    })?;
     let supported = if provider == QuotaProvider::Codex {
         "0.155.1"
     } else {
         "1.0.40"
     };
     if !version.split_whitespace().any(|part| part == supported) {
-        return Err(Failure::new(QuotaState::Unsupported));
+        return Err(Failure::new(QuotaState::Unsupported)
+            .because(format!("{name} version unsupported (needs {supported})")));
     }
     let args: &[&str] = if provider == QuotaProvider::Codex {
         &["app-server"]
@@ -524,7 +715,7 @@ fn codex_identity(value: &Value) -> Result<String> {
         return Err(Failure::new(QuotaState::NotSignedIn));
     }
     if account["type"] != "chatgpt" {
-        return Err(Failure::new(QuotaState::Unsupported));
+        return Err(Failure::new(QuotaState::Unsupported).because("unsupported account type"));
     }
     let email = account["email"]
         .as_str()
@@ -639,7 +830,9 @@ fn native_identity(provider: QuotaProvider, value: &Value) -> Result<String> {
             .as_str()
             .is_some_and(|kind| !kind.eq_ignore_ascii_case("user"))
     {
-        return Err(Failure::new(QuotaState::Unsupported));
+        return Err(
+            Failure::new(QuotaState::Unsupported).because("team or non-user context unsupported")
+        );
     }
     let identity = value["principalId"]
         .as_str()
@@ -722,6 +915,197 @@ fn native_windows(provider: QuotaProvider, value: &Value) -> Result<Vec<QuotaWin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn enabled_state(enabled: bool) -> Arc<ServerState> {
+        let state = super::super::tests::test_state(None, None);
+        state.settings.lock().unwrap().report.settings.quota.enabled = enabled;
+        state
+    }
+
+    #[test]
+    fn backoff_climbs_one_two_five_ten_and_caps() {
+        let minutes = |failures, deterministic, retry_after| {
+            backoff(failures, deterministic, retry_after).as_secs() / 60
+        };
+        let ladder: Vec<_> = (1..=6).map(|n| minutes(n, false, None)).collect();
+        assert_eq!(ladder, [1, 2, 5, 10, 10, 10]);
+        assert_eq!(minutes(1, true, None), 10, "deterministic goes to the cap");
+        let retry = Some(Duration::from_secs(900));
+        assert_eq!(minutes(1, false, retry), 15, "Retry-After beats the ladder");
+        assert_eq!(minutes(4, true, retry), 15, "Retry-After beats the cap");
+    }
+
+    #[test]
+    fn native_error_reason_is_classified_without_its_body() {
+        let (stream, _dashboard) = std::os::unix::net::UnixStream::pair().unwrap();
+        let state = super::super::tests::test_state(
+            Some(super::super::DashboardSink::new()),
+            Some((Arc::new(()), stream)),
+        );
+        let root = tempfile::tempdir().unwrap();
+        let program = NativeCommand {
+            command: "/bin/cat".into(),
+            home: None,
+        };
+        let body = "secret-body account@example.invalid";
+        for (error, state_expected, reason, deterministic, retry) in [
+            (
+                json!({"code":-32000, "message":body, "data":{"status":503, "detail":body}}),
+                QuotaState::Unavailable,
+                "HTTP 503",
+                false,
+                None,
+            ),
+            (
+                json!({"code":-32000, "message":body, "data":{"status":429, "retryAfterSeconds":5}}),
+                QuotaState::Unavailable,
+                "HTTP 429",
+                false,
+                Some(60),
+            ),
+            (
+                json!({"code":-32000, "message":body, "data":{"status":401}}),
+                QuotaState::NotSignedIn,
+                "not signed in",
+                true,
+                None,
+            ),
+            (
+                json!({"code":-32601, "message":body}),
+                QuotaState::Unsupported,
+                "method not supported",
+                true,
+                None,
+            ),
+            (
+                json!({"code":-32000, "message":body}),
+                QuotaState::Unavailable,
+                "request failed",
+                false,
+                None,
+            ),
+        ] {
+            let mut rpc = Rpc::spawn(QuotaProvider::Codex, &program, &[], root.path())
+                .ok()
+                .unwrap();
+            // /bin/cat echoes the request; the queued error answers it first.
+            rpc.buffer = format!("{}\n", json!({"id":1, "error":error})).into_bytes();
+            let Err(failure) = rpc.call(
+                "account/read",
+                json!({}),
+                &state,
+                Instant::now() + Duration::from_secs(5),
+            ) else {
+                panic!("error reply accepted")
+            };
+            assert_eq!(failure.state, state_expected);
+            assert_eq!(failure.reason, reason);
+            assert_eq!(failure.deterministic, deterministic);
+            assert_eq!(failure.retry_after.map(|d| d.as_secs()), retry);
+            assert!(!failure.reason.contains("secret") && !failure.reason.contains('@'));
+        }
+        let mut rpc = Rpc::spawn(QuotaProvider::Codex, &program, &[], root.path())
+            .ok()
+            .unwrap();
+        let Err(failure) = rpc.call("account/read", json!({}), &state, Instant::now()) else {
+            panic!("expired request accepted")
+        };
+        assert_eq!(failure.reason, "timed out after 20 s");
+        let missing = NativeCommand {
+            command: "ovrcr-no-such-native-client".into(),
+            home: None,
+        };
+        let Err(failure) = Rpc::spawn(QuotaProvider::Grok, &missing, &[], root.path()) else {
+            panic!("missing executable spawned")
+        };
+        assert_eq!(failure.reason, "grok not found on PATH");
+        assert!(failure.deterministic);
+    }
+
+    #[test]
+    fn manual_refresh_has_a_server_cooldown_and_excludes_claude() {
+        let off = enabled_state(false);
+        assert!(matches!(
+            request_refresh(&off, None),
+            Response::Error { message, .. } if message == crate::settings::QUOTA_OFF
+        ));
+        assert!(off.quota_refresh.lock().unwrap().last.is_none());
+        let state = enabled_state(true);
+        assert!(matches!(
+            request_refresh(&state, Some(QuotaProvider::Claude)),
+            Response::Error {
+                code: ErrorCode::InvalidRequest,
+                ..
+            }
+        ));
+        assert_eq!(
+            request_refresh(&state, Some(QuotaProvider::Grok)),
+            Response::Ok
+        );
+        assert_eq!(state.quota_refresh.lock().unwrap().due, [false, true]);
+        match request_refresh(&state, None) {
+            Response::QuotaCooldown { remaining_ms } => {
+                assert!((29_000..=30_000).contains(&remaining_ms), "{remaining_ms}")
+            }
+            other => panic!("refresh inside the cooldown accepted: {other:?}"),
+        }
+        assert_eq!(state.quota_refresh.lock().unwrap().due, [false, true]);
+        state.quota_refresh.lock().unwrap().last = Some(Instant::now() - COOLDOWN);
+        assert_eq!(request_refresh(&state, None), Response::Ok);
+        assert_eq!(state.quota_refresh.lock().unwrap().due, [true, true]);
+    }
+
+    #[test]
+    fn disabled_initial_snapshot_is_the_handshake_default() {
+        // The hello skips an unchanged snapshot, so the default must say it all.
+        assert_eq!(initial(false), QuotaSnapshot::default());
+        assert_eq!(
+            QuotaSnapshot::default().grok.reason.as_deref(),
+            Some(crate::settings::QUOTA_OFF)
+        );
+        assert_ne!(initial(true), QuotaSnapshot::default());
+    }
+
+    #[test]
+    fn consent_rows_follow_quota_enabled() {
+        let state = enabled_state(false);
+        *state.quotas.lock().unwrap() = initial(false);
+        assert_eq!(
+            state.quotas.lock().unwrap().codex.reason.as_deref(),
+            Some(crate::settings::QUOTA_OFF)
+        );
+        assert!(!sync_consent(&state));
+        state.settings.lock().unwrap().report.settings.quota.enabled = true;
+        assert!(sync_consent(&state));
+        let snapshot = state.quotas.lock().unwrap().clone();
+        assert_eq!(
+            snapshot.codex,
+            ProviderQuota::unknown(QuotaProvider::Codex, QuotaState::Checking)
+        );
+        assert_eq!(snapshot.grok.state, QuotaState::Checking);
+        assert_eq!(snapshot.claude.reason.as_deref(), Some(CLAUDE_WAITING));
+        // A late native result after the switch goes off cannot revive the row.
+        state.settings.lock().unwrap().report.settings.quota.enabled = false;
+        assert!(sync_consent(&state));
+        apply(
+            &state,
+            NativeQuotaUpdate {
+                provider: QuotaProvider::Codex,
+                generation: 2,
+                report: QuotaReport {
+                    windows: Some(Vec::new()),
+                    state: QuotaState::Current,
+                },
+                checked: true,
+                reason: None,
+                next_check_unix_ms: None,
+            },
+        );
+        assert_eq!(
+            state.quotas.lock().unwrap().codex.state,
+            QuotaState::Disabled
+        );
+    }
 
     #[test]
     fn expired_request_does_not_accept_a_buffered_reply() {

@@ -81,14 +81,28 @@ impl ServerState {
             return false;
         }
         watched.report = report;
+        drop(watched);
+        quota::sync_consent(self);
         true
     }
 
     /// The watcher tick: republish only on a real change.
     pub(super) fn poll_settings(&self) -> bool {
-        let changed = self.refresh_settings();
+        self.reload_and_publish(false)
+    }
+
+    /// Republish the settings reading, and the quota rows that follow
+    /// `quota.enabled`, when a reload changed them.
+    fn reload_and_publish(&self, force: bool) -> bool {
+        let quotas = self.quotas.lock().unwrap().clone();
+        let changed = self.reload_settings(force);
         if changed {
             self.publish_settings();
+            let now = self.quotas.lock().unwrap().clone();
+            if now != quotas {
+                // Even the default: turning quota off returns to it.
+                self.send_quotas(now);
+            }
         }
         changed
     }
@@ -105,9 +119,7 @@ impl ServerState {
                 value,
             )?;
         }
-        if self.reload_settings(true) {
-            self.publish_settings();
-        }
+        self.reload_and_publish(true);
         Ok(())
     }
 

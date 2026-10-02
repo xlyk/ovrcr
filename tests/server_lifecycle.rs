@@ -8389,7 +8389,7 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
     loop {
         let message = read_frame::<ServerMessage>(&mut stream).unwrap();
         if let ServerMessage::Event(ServerEvent::QuotaChanged(snapshot)) = &message {
-            waiting = Some(snapshot.claude.state);
+            waiting = Some(snapshot.claude.clone());
         }
         let done = matches!(&message, ServerMessage::Response { request_id: 3, .. });
         dashboard.handle_server_message(message);
@@ -8397,10 +8397,19 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
             break;
         }
     }
+    let waiting = waiting.expect("no quota snapshot");
     assert_eq!(
-        waiting,
-        Some(ovrcr::protocol::QuotaState::Waiting),
-        "a connected Claude source with no quota must keep waiting through ordinary metrics"
+        waiting.state,
+        ovrcr::protocol::QuotaState::Checking,
+        "a connected Claude source with no quota must keep checking through ordinary metrics"
+    );
+    assert!(matches!(
+        waiting.source,
+        Some(ovrcr::protocol::QuotaSource::Session { .. })
+    ));
+    assert_eq!(
+        waiting.reason.as_deref(),
+        Some(ovrcr::protocol::CLAUDE_WAITING)
     );
     assert_eq!(
         fixture.request(Request::SendTerminal {
