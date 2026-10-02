@@ -82,8 +82,9 @@ pub struct AgentOverride {
     pub argv: Vec<String>,
 }
 
+/// A plain enum on the wire: bincode cannot decode serde-tagged enums. The
+/// settings loader reads the document's `kind`/`preset` form itself.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "preset")]
 pub enum LaunchChoice {
     Terminal,
     Agent(String),
@@ -194,4 +195,43 @@ pub struct SettingsReport {
     pub settings: Settings,
     pub rows: Vec<SettingRow>,
     pub findings: Vec<SettingsFinding>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_is_default_branch_only() {
+        assert_eq!(
+            AutomaticLocalTerminals::default(),
+            AutomaticLocalTerminals::DefaultBranchOnly
+        );
+        assert!(AutomaticLocalTerminals::DefaultBranchOnly.should_create(true));
+        assert!(!AutomaticLocalTerminals::DefaultBranchOnly.should_create(false));
+        assert!(AutomaticLocalTerminals::On.should_create(false));
+        assert!(!AutomaticLocalTerminals::Off.should_create(true));
+    }
+
+    #[test]
+    fn parse_accepts_documented_spellings() {
+        assert_eq!(
+            AutomaticLocalTerminals::parse("on"),
+            Some(AutomaticLocalTerminals::On)
+        );
+        assert_eq!(
+            AutomaticLocalTerminals::parse("off"),
+            Some(AutomaticLocalTerminals::Off)
+        );
+        assert_eq!(
+            AutomaticLocalTerminals::parse("default_branch_only"),
+            Some(AutomaticLocalTerminals::DefaultBranchOnly)
+        );
+        assert_eq!(
+            AutomaticLocalTerminals::parse("default branch only"),
+            Some(AutomaticLocalTerminals::DefaultBranchOnly)
+        );
+        assert_eq!(AutomaticLocalTerminals::parse("always"), None);
+        assert_eq!(AutomaticLocalTerminals::parse(""), None);
+    }
 }
