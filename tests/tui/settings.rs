@@ -426,7 +426,7 @@ fn remembered_launch_picks_kind_and_preset_together() {
     let (mut dashboard, _root, document) =
         editor("[launch_choices.demo]\nkind = \"Agent\"\npreset = \"fixture\"\n");
     select(&mut dashboard, "launches demo");
-    assert!(line_with(&dashboard, "demo  ").contains("Agent: fixture"));
+    line_with(&dashboard, "demo  Agent: fixture");
     dashboard.key(KeyCode::Enter);
     let text = screen(&dashboard);
     assert!(text.contains("› Agent: fixture"), "{text}");
@@ -434,7 +434,7 @@ fn remembered_launch_picks_kind_and_preset_together() {
     let (path, value) = serve(&mut dashboard, &document, KeyCode::Enter);
     assert_eq!(path, "launch_choices.demo");
     assert_eq!(value.as_deref(), Some("{ kind = \"Terminal\" }"));
-    assert!(line_with(&dashboard, "demo  ").contains("Terminal"));
+    line_with(&dashboard, "demo  Terminal");
     let saved = std::fs::read_to_string(&document).unwrap();
     assert!(!saved.contains("preset"), "{saved}");
 }

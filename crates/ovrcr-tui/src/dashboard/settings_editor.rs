@@ -691,7 +691,10 @@ impl Dashboard {
         match &mut editor.edit {
             Some(Edit {
                 pick: Some(list), ..
-            }) => editor.cursor.insert(&mut list.query, &text),
+            }) => {
+                editor.cursor.insert(&mut list.query, &text);
+                list.selected = 0;
+            }
             Some(edit) => editor.cursor.insert(&mut edit.text, &text),
             None if editor.filtering => {
                 editor.cursor.insert(&mut editor.filter, &text);
