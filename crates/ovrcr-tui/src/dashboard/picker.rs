@@ -359,7 +359,7 @@ fn subsequence(query: &str, label: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::super::settings::HOME_ENV_LOCK;
+    static HOME_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     use super::*;
 
     fn with_home<T>(home: &Path, body: impl FnOnce() -> T) -> T {

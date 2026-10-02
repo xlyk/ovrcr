@@ -32,27 +32,20 @@ pub mod task_tui {
 }
 pub mod tui {
     pub use ovrcr_tui::{
-        DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, DashboardAction, DashboardSettings,
-        KeyEncoding, PaneRects, actual_drawn_inner_rect, dashboard_message_channel, detect_agents,
+        DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, DashboardAction, KeyEncoding, PaneRects,
+        Settings, actual_drawn_inner_rect, dashboard_message_channel, detect_agents,
         draw_dashboard, draw_dashboard_at, encode_key, encode_mouse, encode_paste, pane_rects,
         render_terminal, write_clipboard,
     };
 
     pub fn run_dashboard(
         stream: std::os::unix::net::UnixStream,
-        settings_path: std::path::PathBuf,
         startup_warning: Option<String>,
     ) -> anyhow::Result<()> {
         let paths = (
             crate::config::RegistryPath::resolve()?.0,
             crate::server::ServerPaths::resolve()?.socket,
         );
-        ovrcr_tui::run_dashboard(
-            stream,
-            crate::task_cli::request,
-            settings_path,
-            paths,
-            startup_warning,
-        )
+        ovrcr_tui::run_dashboard(stream, crate::task_cli::request, paths, startup_warning)
     }
 }

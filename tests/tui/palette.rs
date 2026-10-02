@@ -21,7 +21,7 @@ fn extra_workspace_hierarchy(id: impl Into<String>) -> HierarchySnapshot {
 }
 
 fn install_picker_roots(dashboard: &mut Dashboard, roots: Vec<PathBuf>) {
-    dashboard.install_settings(ovrcr::tui::DashboardSettings {
+    dashboard.install_settings(ovrcr::tui::Settings {
         picker_roots: roots,
         ..Default::default()
     });

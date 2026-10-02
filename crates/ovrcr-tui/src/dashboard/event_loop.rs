@@ -1,5 +1,4 @@
 use super::render::pane_size;
-use super::settings::load_dashboard_settings;
 use super::terminal_guard::TerminalGuard;
 use super::{
     DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, DashboardAction, PANIC_TERMINAL_RESTORED, TreeRow,
@@ -40,21 +39,18 @@ pub fn dashboard_message_channel() -> (
 pub fn run_dashboard(
     mut stream: UnixStream,
     task_request: TaskRequestFn,
-    settings_path: PathBuf,
     configuration_paths: (PathBuf, PathBuf),
     startup_warning: Option<String>,
 ) -> Result<()> {
     let size = terminal_size()?;
     let pane_size = pane_size(size);
     let mut dashboard = Dashboard::new(pane_size);
-    dashboard.configuration_paths = Some(configuration_paths);
-    let (settings, settings_error) = load_dashboard_settings(&settings_path);
-    dashboard.settings = settings;
-    dashboard.settings_path = Some(settings_path.clone());
-    if let Some(parent) = settings_path.parent() {
+    // Workspace roots default beside the instance identity. Settings, and the
+    // document path the writer edits, arrive from the Server after hello.
+    if let Some(parent) = configuration_paths.0.parent() {
         dashboard.config_dir = parent.to_path_buf();
     }
-    dashboard.settings_path = Some(settings_path);
+    dashboard.configuration_paths = Some(configuration_paths);
     // Hello and geometry reserve IDs 1 and 2, including while events arrive.
     dashboard.next_request_id = 3;
     initialize_dashboard(&mut stream, &mut dashboard, pane_size)?;
@@ -86,10 +82,6 @@ pub fn run_dashboard(
         )?;
     }
     dashboard.next_request_id = 4;
-    // Applied last: the handshake acknowledgements above clear the banner they do not own.
-    if let Some(error) = settings_error {
-        dashboard.set_error(error);
-    }
 
     let mut guard = TerminalGuard::enter()?;
     let mut mouse_enabled = guard.mouse;

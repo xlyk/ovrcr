@@ -1,0 +1,5 @@
+automatic_local_terminals = "on"
+
+ready_sound = true
+mystery = 1
+

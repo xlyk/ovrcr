@@ -20,7 +20,6 @@ use ovrcr::session::{SessionId, SessionSummary};
 use ovrcr::tui::run_dashboard;
 use serde_json::json;
 use std::os::unix::net::UnixStream;
-use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use args::*;
@@ -66,7 +65,6 @@ fn run(cli: Cli) -> AppResult<()> {
         let paths = ServerPaths::resolve().map_err(RuntimeError::internal)?;
         return run_dashboard(
             connect_or_start(&paths).map_err(RuntimeError::internal)?,
-            dashboard_settings_path().map_err(RuntimeError::internal)?,
             agent_setup::boot_hook_warning(),
         )
         .map_err(RuntimeError::internal);
@@ -311,15 +309,4 @@ fn send_request(stream: &mut UnixStream, request: Request) -> Result<Response> {
             error
         }
     })
-}
-
-fn dashboard_settings_path() -> Result<PathBuf> {
-    if let Some(path) = std::env::var_os("OVRCR_DASHBOARD_CONFIG") {
-        return Ok(PathBuf::from(path));
-    }
-    let RegistryPath(config) = RegistryPath::resolve()?;
-    Ok(config
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("dashboard.toml"))
 }

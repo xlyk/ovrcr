@@ -29,7 +29,7 @@ pub use copy::write_clipboard;
 pub use event_loop::{dashboard_message_channel, run_dashboard};
 pub use input::{encode_key, encode_mouse};
 pub use render::{actual_drawn_inner_rect, draw_dashboard, draw_dashboard_at, render_terminal};
-pub use settings::{DashboardSettings, LaunchChoice};
+pub use settings::{LaunchChoice, Settings};
 pub(crate) use state::{HistoryView, PendingHistoryBegin};
 
 use crate::task_tui::TasksView;
@@ -229,7 +229,10 @@ pub struct Dashboard {
     tasks: Option<TasksView>,
     hierarchy: HierarchySnapshot,
     quotas: Option<crate::protocol::QuotaSnapshot>,
-    quota_details: Option<u16>,
+    /// The read-only details popup on screen, and its scroll offset.
+    details: Option<(quota::Details, u16)>,
+    /// The Server's latest settings reading; `settings` is its typed half.
+    settings_report: Option<Box<crate::protocol::SettingsReport>>,
     // Review names Presented, not a newer Unread that arrived before the next draw.
     unread: unread::Unread,
     mode: InputMode,
@@ -273,7 +276,7 @@ pub struct Dashboard {
     /// Requests waiting for the event loop's next drain.
     outbox: outbox::Outbox,
     ignored_responses: HashSet<u64>,
-    settings: settings::DashboardSettings,
+    settings: settings::Settings,
     settings_path: Option<std::path::PathBuf>,
     config_dir: std::path::PathBuf,
     /// Ids of requests that own the error banner, so their plain `Ok` may clear it. Requests the

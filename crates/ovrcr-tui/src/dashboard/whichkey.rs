@@ -181,7 +181,7 @@ impl Dashboard {
                 }
                 hints.push(binding.with_group_key(slot.key));
             }
-            let removal = match group {
+            let menu_only = match group {
                 'w' => {
                     let root = current.is_some_and(|workspace| workspace.root);
                     let mut binding = key_binding(
@@ -205,9 +205,18 @@ impl Dashboard {
                     KeyCode::Char('x'),
                     Action::RemoveProject,
                 )),
+                // Menu-only, like removal: Settings has no Browse key.
+                'v' => Some(key_binding(
+                    ",",
+                    "Settings",
+                    "Show the settings the Server read from dashboard.toml, findings first; read-only"
+                        .into(),
+                    KeyCode::Char(','),
+                    Action::Settings,
+                )),
                 _ => None,
             };
-            if let Some(binding) = removal {
+            if let Some(binding) = menu_only {
                 hints.push(binding);
             }
             return vec![KeyGroup { title, keys: hints }];

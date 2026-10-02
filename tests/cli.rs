@@ -1241,6 +1241,11 @@ fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
         } => {}
         response => panic!("unexpected dashboard hello response: {response:?}"),
     }
+    // The Server's settings reading follows every hello.
+    match read_frame::<ServerMessage>(&mut stream).unwrap() {
+        ServerMessage::Event(ovrcr::protocol::ServerEvent::SettingsChanged(_)) => {}
+        message => panic!("expected the settings reading after hello: {message:?}"),
+    }
     write_frame(
         &mut stream,
         &ClientMessage {

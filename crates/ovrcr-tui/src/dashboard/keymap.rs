@@ -43,6 +43,9 @@ pub(super) enum Action {
     CycleLocalTerminals,
     ToggleSidebar,
     QuotaDetails,
+    /// The read-only Settings popup. Reached from the menu and the palette
+    /// only; it has no Browse key of its own.
+    Settings,
     Leader,
     Help,
     /// Open a key-popup group rather than run an action.
@@ -336,6 +339,7 @@ impl Dashboard {
             Action::CycleLocalTerminals => self.cycle_automatic_local_terminals(),
             Action::ToggleSidebar => self.toggle_sidebar(),
             Action::QuotaDetails => self.open_quota_details(),
+            Action::Settings => self.open_details(super::quota::Details::Settings),
             Action::Leader => self.open_whichkey(true),
             Action::Help => self.open_whichkey(false),
             Action::Capture(code) => self.capture_key(KeyEvent::new(code, KeyModifiers::NONE)),

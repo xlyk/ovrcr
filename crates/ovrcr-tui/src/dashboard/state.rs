@@ -5,7 +5,7 @@ use super::copy::{
 use super::event_loop::DASHBOARD_IDLE_REDRAW_INTERVAL;
 use super::input::{encode_key, encode_mouse, is_browse_key};
 use super::render::{tree_line_at, tree_line_count, tree_row_heights, tree_row_start};
-use super::settings::DashboardSettings;
+use super::settings::Settings;
 use super::status::SPINNER_INTERVAL;
 use super::view_handshake::{Acknowledged, Desire, RequestedView};
 use super::{Dashboard, DashboardAction, InputMode, KeyEncoding, TreeRow, history_view_size};
@@ -568,7 +568,8 @@ impl Dashboard {
             desktop: super::desktop::DesktopNotifications::default(),
             unread: Default::default(),
             quotas: Some(QuotaSnapshot::default()),
-            quota_details: None,
+            details: None,
+            settings_report: None,
             hierarchy: HierarchySnapshot {
                 projects: Vec::new(),
             },
@@ -602,7 +603,7 @@ impl Dashboard {
             history_page_error: false,
             outbox: super::outbox::Outbox::default(),
             ignored_responses: HashSet::new(),
-            settings: DashboardSettings::default(),
+            settings: Settings::default(),
             settings_path: None,
             config_dir: std::path::PathBuf::new(),
             error_owning_requests: HashSet::new(),
@@ -629,8 +630,26 @@ impl Dashboard {
         let _ = self.update_hierarchy(hierarchy);
     }
 
-    pub fn install_settings(&mut self, settings: DashboardSettings) {
+    pub fn install_settings(&mut self, settings: Settings) {
         self.settings = settings;
+    }
+
+    /// Adopt the Server's reading: every setting, and the document path the
+    /// writer edits. The footer says so once at attach and again whenever the
+    /// number of findings changes.
+    fn install_settings_report(&mut self, report: crate::protocol::SettingsReport) {
+        let previous = self
+            .settings_report
+            .as_ref()
+            .map(|report| report.findings.len());
+        let count = report.findings.len();
+        if previous.map_or(count > 0, |previous| previous != count) {
+            self.desktop.notice = Some(super::settings::findings_notice(count));
+        }
+        self.settings = report.settings.clone();
+        self.apply_alert_channels();
+        self.settings_path = Some(report.path.clone());
+        self.settings_report = Some(Box::new(report));
     }
 
     pub fn install_config_dir(&mut self, dir: std::path::PathBuf) {
@@ -1362,8 +1381,8 @@ impl Dashboard {
             }
             return DashboardAction::Redraw;
         }
-        if self.quota_details.is_some() {
-            return self.quota_details_key(key);
+        if self.details.is_some() {
+            return self.details_key(key);
         }
         if self.palette.is_some() {
             return self.palette_key(key);
@@ -2072,7 +2091,7 @@ impl Dashboard {
             return DashboardAction::Redraw;
         }
         match event {
-            Event::Paste(_) if self.quota_details.is_some() => DashboardAction::None,
+            Event::Paste(_) if self.details.is_some() => DashboardAction::None,
             Event::Paste(_) if self.whichkey.is_some() => DashboardAction::None,
             Event::Paste(text) if self.palette.is_some() => self.palette_paste(&text),
             Event::Key(key) => self.key_action(key),
@@ -2116,8 +2135,8 @@ impl Dashboard {
     }
 
     pub fn mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
-        if self.quota_details.is_some() {
-            return self.quota_details_mouse(mouse);
+        if self.details.is_some() {
+            return self.details_mouse(mouse);
         }
         if self.palette.is_some() {
             return self.palette_mouse(mouse, area);
@@ -2180,7 +2199,7 @@ impl Dashboard {
     }
 
     pub(crate) fn mouse_capture_required(&self) -> bool {
-        if self.quota_details.is_some() {
+        if self.details.is_some() {
             return true;
         }
         if self.palette.is_some() {
@@ -3259,6 +3278,7 @@ impl Dashboard {
                     self.quotas = Some(*snapshot);
                     self.ensure_selection_visible(&self.visible_rows());
                 }
+                ServerEvent::SettingsChanged(report) => self.install_settings_report(*report),
                 ServerEvent::SessionChanged(summary) => {
                     if find_session(self, summary.id)
                         .is_some_and(|current| current.run.0 > summary.run.0)

@@ -785,12 +785,15 @@ fn real_dashboard_saves_alert_preferences_and_reloads_config() -> Result<()> {
     let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
     let root = demo.root().to_owned();
     let pgids = demo_session_groups(&root)?;
-    let settings = root.join("preferences/custom.toml");
+    // The client names its own document; the Server (started without it) reads
+    // the one beside config.toml. Toggles must follow the Server's reading.
+    let client_only = root.join("preferences/custom.toml");
+    let settings = root.join("dashboard.toml");
     let launch = || -> Result<Terminal> {
         let mut command = portable_pty::CommandBuilder::new(env!("CARGO_BIN_EXE_ovrcr"));
         command.env("OVRCR_CONFIG", root.join("config.toml"));
         command.env("OVRCR_SOCKET", root.join("server.sock"));
-        command.env("OVRCR_DASHBOARD_CONFIG", &settings);
+        command.env("OVRCR_DASHBOARD_CONFIG", &client_only);
         command.env("TERM", "xterm-256color");
         Terminal::start(command, 40, 160, Default::default())
     };
@@ -803,16 +806,15 @@ fn real_dashboard_saves_alert_preferences_and_reloads_config() -> Result<()> {
     let saved: toml::Table = toml::from_str(&std::fs::read_to_string(&settings)?)?;
     assert_eq!(saved["desktop_notifications"].as_bool(), Some(true));
     assert_eq!(saved["ready_sound"].as_bool(), Some(true));
-    // Demo setup may write dashboard.toml for server-side automatic_local_terminals.
-    // Alert toggles must still land only in OVRCR_DASHBOARD_CONFIG.
-    if root.join("dashboard.toml").exists() {
-        let demo: toml::Table =
-            toml::from_str(&std::fs::read_to_string(root.join("dashboard.toml"))?)?;
-        assert!(
-            demo.get("desktop_notifications").is_none() && demo.get("ready_sound").is_none(),
-            "alert toggles must save to the selected path, not demo dashboard.toml"
-        );
-    }
+    assert_eq!(
+        saved["automatic_local_terminals"].as_str(),
+        Some("on"),
+        "the demo's own setting survives the toggles"
+    );
+    assert!(
+        !client_only.exists(),
+        "the Dashboard must not save to a document the Server does not read"
+    );
     terminal.stop()?;
 
     let mut terminal = launch()?;
@@ -830,7 +832,7 @@ fn real_dashboard_saves_alert_preferences_and_reloads_config() -> Result<()> {
 
     std::fs::write(
         &settings,
-        "desktop_notifications = false\nready_sound = true\n",
+        "automatic_local_terminals = \"on\"\ndesktop_notifications = false\nready_sound = true\n",
     )?;
     let mut terminal = launch()?;
     wait_screen(&terminal, "claude:sonnet-4")?;

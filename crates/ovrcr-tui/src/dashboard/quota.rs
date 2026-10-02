@@ -8,23 +8,34 @@ use ratatui::{
     widgets::{Block, Clear, Paragraph, Wrap},
 };
 
+/// A read-only popup over the dashboard. Both share scrolling and closing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Details {
+    Quota,
+    Settings,
+}
+
 impl Dashboard {
     pub(super) fn open_quota_details(&mut self) -> DashboardAction {
+        self.open_details(Details::Quota)
+    }
+
+    pub(super) fn open_details(&mut self, details: Details) -> DashboardAction {
         self.cancel_mouse_gesture();
         self.mode = InputMode::Browse;
         self.palette = None;
         self.whichkey = None;
-        self.quota_details = Some(0);
+        self.details = Some((details, 0));
         DashboardAction::Redraw
     }
 
-    pub(super) fn quota_details_key(&mut self, key: KeyEvent) -> DashboardAction {
+    pub(super) fn details_key(&mut self, key: KeyEvent) -> DashboardAction {
         if key.kind == KeyEventKind::Release {
             return DashboardAction::None;
         }
         if matches!(key.code, KeyCode::Esc | KeyCode::Enter) || super::input::is_browse_key(key) {
-            self.quota_details = None;
-        } else if let Some(scroll) = &mut self.quota_details {
+            self.details = None;
+        } else if let Some((_, scroll)) = &mut self.details {
             match key.code {
                 KeyCode::Down | KeyCode::Char('j') => *scroll = scroll.saturating_add(1),
                 KeyCode::Up | KeyCode::Char('k') => *scroll = scroll.saturating_sub(1),
@@ -37,8 +48,8 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
-    pub(super) fn quota_details_mouse(&mut self, mouse: MouseEvent) -> DashboardAction {
-        if let Some(scroll) = &mut self.quota_details {
+    pub(super) fn details_mouse(&mut self, mouse: MouseEvent) -> DashboardAction {
+        if let Some((_, scroll)) = &mut self.details {
             match mouse.kind {
                 MouseEventKind::ScrollDown => *scroll = scroll.saturating_add(1),
                 MouseEventKind::ScrollUp => *scroll = scroll.saturating_sub(1),
@@ -48,8 +59,8 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
-    pub(super) fn draw_quota_details(&self, frame: &mut Frame<'_>, now: u64) {
-        let Some(scroll) = self.quota_details else {
+    pub(super) fn draw_details(&self, frame: &mut Frame<'_>, now: u64) {
+        let Some((details, scroll)) = self.details else {
             return;
         };
         let outer = frame.area();
@@ -61,14 +72,35 @@ impl Dashboard {
             width,
             height,
         );
-        let block = Block::bordered()
-            .title("Quota details · Esc close · ↑↓ scroll")
-            .style(
-                Style::default()
-                    .bg(super::render::BASE)
-                    .fg(super::render::TEXT),
-            );
+        let (title, lines) = match details {
+            Details::Quota => (
+                "Quota details · Esc close · ↑↓ scroll",
+                self.quota_lines(now),
+            ),
+            Details::Settings => (
+                "Settings · read-only · Esc close · ↑↓ scroll",
+                super::settings::report_lines(self.settings_report.as_deref(), now),
+            ),
+        };
+        let block = Block::bordered().title(title).style(
+            Style::default()
+                .bg(super::render::BASE)
+                .fg(super::render::TEXT),
+        );
         let inner = block.inner(area);
+        let paragraph = Paragraph::new(lines.join("\n")).wrap(Wrap { trim: false });
+        let max_scroll = paragraph
+            .line_count(inner.width)
+            .saturating_sub(usize::from(inner.height));
+        frame.render_widget(Clear, area);
+        frame.render_widget(block, area);
+        frame.render_widget(
+            paragraph.scroll((scroll.min(max_scroll.min(u16::MAX as usize) as u16), 0)),
+            inner,
+        );
+    }
+
+    fn quota_lines(&self, now: u64) -> Vec<String> {
         let quota = self.quotas.clone().unwrap_or_default();
         let mut lines = Vec::new();
         let age = |stamp| {
@@ -130,16 +162,7 @@ impl Dashboard {
             }
             lines.push(String::new());
         }
-        let paragraph = Paragraph::new(lines.join("\n")).wrap(Wrap { trim: false });
-        let max_scroll = paragraph
-            .line_count(inner.width)
-            .saturating_sub(usize::from(inner.height));
-        frame.render_widget(Clear, area);
-        frame.render_widget(block, area);
-        frame.render_widget(
-            paragraph.scroll((scroll.min(max_scroll.min(u16::MAX as usize) as u16), 0)),
-            inner,
-        );
+        lines
     }
 
     /// Rendering and every tree interaction share this reduced rectangle.
