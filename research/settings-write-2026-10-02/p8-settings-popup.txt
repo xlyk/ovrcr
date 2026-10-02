@@ -1,0 +1,139 @@
+󰚩 OVRCR  agent runtime                                                                                                                                                                                                                                                                                                                                                             [Actions] [Menu]
+ CONSIGINT ────────────────────────────│pid: 32048  elapsed: 3m  agent unknown  local (#1)
+  󰘬 main                          root │local (#1)
+▌    $ local                           │consigint ›
+  󰘬 gui-consigint-auth-handoff         │
+     $ local                           │
+     - review auth handoff    grok:4.6 │
+  󰘬 gui-consigint-worktree-lifecycle   │
+     $ local                           │
+     - implement lif…  claude:sonnet-4 │
+     - review websocke…  codex:gpt-5.4 │
+     - plan snapshot res…  pi:grok-4.6 │
+                                       │
+ SPACELIFT-AGENT ──────────────────────│
+  󰘬 main                          root │
+     $ local                           │
+  󰘬 gui-spacelift-agent-pipeline-progr…│
+     $ local                           │
+     - build pipeline …  claude:opus-4 │
+  󰘬 gui-spacelift-agent-scope-quality  │
+     $ local                           │
+     - review scope qu…  codex:gpt-5.4 │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │                                                                                                                ┌Settings · read-only · Esc close · ↑↓ scroll────────────────────────────────────┐
+                                       │                                                                                                                │Document:                                                                       │
+                                       │                                                                                                                │/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-9h3nwV/dashboard.toml│
+                                       │                                                                                                                │Read by the Server 12s ago                                                      │
+                                       │                                                                                                                │                                                                                │
+                                       │                                                                                                                │Findings: 0                                                                     │
+                                       │                                                                                                                │                                                                                │
+                                       │                                                                                                                │desktop_notifications = true  (Dashboard, document)                             │
+                                       │                                                                                                                │ready_sound = true  (Dashboard, document)                                       │
+                                       │                                                                                                                │automatic_local_terminals = off  (Server, document)                             │
+                                       │                                                                                                                │title_model = unset  (Server, default)                                          │
+                                       │                                                                                                                │  Automatic titles off: set `title_model = "provider/model"` in dashboard.toml  │
+                                       │                                                                                                                │branch_prefix = feature/  (Dashboard, default)                                  │
+                                       │                                                                                                                │picker_roots = ["/Users/xlyk/Code", "/Users/xlyk"]  (Dashboard, default)        │
+                                       │                                                                                                                │agents = []  (Dashboard, default)                                               │
+                                       │                                                                                                                │launch_choices = {}  (Dashboard, default)                                       │
+                                       │                                                                                                                │quota.enabled = false  (Server, default)                                        │
+                                       │                                                                                                                │  Codex/Grok usage off: set `quota.enabled = true` in dashboard.toml            │
+                                       │                                                                                                                │quota.codex.command = codex  (Server, default)                                  │
+                                       │                                                                                                                │quota.codex.home = unset  (Server, default)                                     │
+                                       │                                                                                                                │quota.grok.command = grok  (Server, default)                                    │
+                                       │                                                                                                                │quota.grok.home = unset  (Server, default)                                      │
+                                       │                                                                                                                │                                                                                │
+                                       │                                                                                                                │                                                                                │
+                                       │                                                                                                                │                                                                                │
+                                       │                                                                                                                │                                                                                │
+                                       │                                                                                                                │                                                                                │
+                                       │                                                                                                                │                                                                                │
+                                       │                                                                                                                │                                                                                │
+                                       │                                                                                                                └────────────────────────────────────────────────────────────────────────────────┘
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+Quota left                             │
+Claude — waiting for report            │
+Codex — unavailable                    │
+Grok — unavailable                     │
+ERROR: InvalidRequest: could not save ready_sound: settings document /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-9h3nwV/dashboard.toml is read-only

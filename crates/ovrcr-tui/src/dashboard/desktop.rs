@@ -3,12 +3,14 @@
 //! preferences, host and reconnect baseline. Selection and pane visibility
 //! do not suppress or cancel otherwise valid alerts.
 use super::ready::{delivery_live, input_live};
+use super::settings::{AutomaticLocalTerminals, Settings};
 use super::{Dashboard, DashboardAction};
 #[cfg(test)]
 use ovrcr_protocol::{AgentActivity, AgentProvider, SessionPhase};
 use ovrcr_protocol::{
     AgentBinding, HierarchySnapshot, InputRequest, ReadyObservation, SessionId, SessionSummary,
 };
+use ovrcr_protocol::{ClientMessage, Request};
 use std::collections::VecDeque;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
@@ -78,7 +80,7 @@ pub(super) struct DesktopNotifications {
 }
 
 impl Dashboard {
-    fn alert_channels(&self) -> u8 {
+    pub(super) fn alert_channels(&self) -> u8 {
         let mut channels = 0;
         if self.settings.desktop_notifications {
             channels |= CHANNEL_DESKTOP;
@@ -92,49 +94,58 @@ impl Dashboard {
     pub(super) fn toggle_desktop_notifications(&mut self) -> DashboardAction {
         self.toggle_alert_setting(
             "desktop_notifications",
-            "Desktop notifications",
             !self.settings.desktop_notifications,
         )
     }
 
     pub(super) fn toggle_ready_sound(&mut self) -> DashboardAction {
-        self.toggle_alert_setting("ready_sound", "Ready sound", !self.settings.ready_sound)
+        self.toggle_alert_setting("ready_sound", !self.settings.ready_sound)
     }
 
     pub(super) fn cycle_automatic_local_terminals(&mut self) -> DashboardAction {
         let next = self.settings.automatic_local_terminals.next();
-        if let Some(path) = &self.settings_path
-            && let Err(error) = super::settings::save_automatic_local_terminals(path, next)
-        {
-            self.desktop.notice = Some(format!(
-                "Could not save automatic local terminals: {error:#}"
-            ));
-            return DashboardAction::Redraw;
-        }
-        // Applies at once; the Server's next reading confirms it.
-        self.settings.automatic_local_terminals = next;
-        self.desktop.notice = Some(format!(
-            "Automatic local terminals: {}",
-            self.settings.automatic_local_terminals.label()
-        ));
-        DashboardAction::Redraw
+        self.set_setting(
+            AutomaticLocalTerminals::KEY,
+            format!("\"{}\"", next.as_str()),
+        )
     }
 
-    fn toggle_alert_setting(&mut self, key: &str, name: &str, enabled: bool) -> DashboardAction {
-        // Embedded dashboards constructed without a published path stay in memory.
-        if let Some(path) = &self.settings_path
-            && let Err(error) = super::settings::save_alert_setting(path, key, enabled)
-        {
-            self.desktop.notice = Some(format!("Could not save {name}: {error:#}"));
-            return DashboardAction::Redraw;
+    fn toggle_alert_setting(&mut self, key: &str, enabled: bool) -> DashboardAction {
+        self.set_setting(key, enabled.to_string())
+    }
+
+    /// Ask the Server to save one setting. Nothing changes here until the
+    /// Server's next reading arrives; a refusal shows as the footer error.
+    fn set_setting(&mut self, path: &str, value: String) -> DashboardAction {
+        DashboardAction::Request(ClientMessage {
+            request_id: self.error_owning_request_id(),
+            request: Request::SetSetting {
+                path: path.into(),
+                value: Some(value),
+            },
+        })
+    }
+
+    /// Footer notice for an alert or automatic-terminal setting a new Server
+    /// reading changed, whether by a toggle here or an edit elsewhere.
+    pub(super) fn settings_changed_notice(&mut self, before: &Settings) {
+        let on_off = |enabled: bool| if enabled { "on" } else { "off" };
+        let settings = &self.settings;
+        if before.automatic_local_terminals != settings.automatic_local_terminals {
+            self.desktop.notice = Some(format!(
+                "Automatic local terminals: {}",
+                settings.automatic_local_terminals.label()
+            ));
         }
-        // Applies at once; the Server's next reading confirms it.
-        match key {
-            "desktop_notifications" => self.settings.desktop_notifications = enabled,
-            "ready_sound" => self.settings.ready_sound = enabled,
-            _ => unreachable!(),
+        if before.ready_sound != settings.ready_sound {
+            self.desktop.notice = Some(format!("Ready sound: {}", on_off(settings.ready_sound)));
         }
-        self.alerts_changed(name, enabled)
+        if before.desktop_notifications != settings.desktop_notifications {
+            self.desktop.notice = Some(format!(
+                "Desktop notifications: {}",
+                on_off(settings.desktop_notifications)
+            ));
+        }
     }
 
     /// Hand the current alert preferences to a running host.
@@ -146,12 +157,6 @@ impl Dashboard {
         if let Some(host) = &mut self.desktop.host {
             host.set_channels(channels);
         }
-    }
-
-    fn alerts_changed(&mut self, name: &str, enabled: bool) -> DashboardAction {
-        self.apply_alert_channels();
-        self.desktop.notice = Some(format!("{name}: {}", if enabled { "on" } else { "off" }));
-        DashboardAction::Redraw
     }
 
     #[cfg(test)]
@@ -838,7 +843,7 @@ mod tests {
             rows: 24,
             cols: 120,
         });
-        d.key(KeyCode::Char('N'));
+        super::super::tests::press_setting(&mut d, 'N');
         d.handle_server_message(ServerMessage::Response {
             request_id: 1,
             response: Response::Hierarchy(snapshot_with_requests(
@@ -962,7 +967,7 @@ mod tests {
             rows: 24,
             cols: 120,
         });
-        d.key(KeyCode::Char('N'));
+        super::super::tests::press_setting(&mut d, 'N');
         let open = [
             request("approval:c1", InputKind::Approval),
             request("question:q1", InputKind::Select),
@@ -1017,7 +1022,7 @@ mod tests {
             rows: 24,
             cols: 120,
         });
-        d.key(KeyCode::Char('N'));
+        super::super::tests::press_setting(&mut d, 'N');
         deliver(&mut d, snapshot(1, "a", AgentActivity::Busy));
         d
     }
@@ -1143,7 +1148,7 @@ mod tests {
             rows: 24,
             cols: 120,
         });
-        d.key(KeyCode::Char('N'));
+        super::super::tests::press_setting(&mut d, 'N');
         let mut ready = snapshot(2, "old", AgentActivity::ResponseReady);
         d.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
             session(&mut ready).clone(),
@@ -1299,21 +1304,21 @@ mod tests {
             rows: 24,
             cols: 120,
         });
-        d.key(KeyCode::Char('N'));
+        super::super::tests::press_setting(&mut d, 'N');
         d.handle_server_message(ServerMessage::Response {
             request_id: 1,
             response: Response::Hierarchy(snapshot(2, "a", AgentActivity::ResponseReady)),
         });
         assert!(d.desktop.pending.is_empty(), "attach is a baseline");
-        d.key(KeyCode::Char('N'));
+        super::super::tests::press_setting(&mut d, 'N');
         deliver(&mut d, snapshot(4, "b", AgentActivity::ResponseReady));
         assert!(d.desktop.pending.is_empty(), "disabled event is consumed");
-        d.key(KeyCode::Char('N'));
+        super::super::tests::press_setting(&mut d, 'N');
         deliver(&mut d, snapshot(4, "b", AgentActivity::ResponseReady));
         assert!(d.desktop.pending.is_empty(), "enable does not replay");
         deliver(&mut d, snapshot(6, "c", AgentActivity::ResponseReady));
         assert_eq!(d.desktop.pending.len(), 1);
-        d.key(KeyCode::Char('N'));
+        super::super::tests::press_setting(&mut d, 'N');
         assert!(
             d.desktop.pending.is_empty(),
             "disable cancels queued candidates"
@@ -1525,8 +1530,8 @@ mod tests {
     fn desktop_cancelled_host_failure_cannot_replace_new_toggle_notice() {
         let mut d = dashboard();
         let (_received, failed) = stub_host(&mut d);
-        d.key(KeyCode::Char('N'));
-        d.key(KeyCode::Char('N'));
+        super::super::tests::press_setting(&mut d, 'N');
+        super::super::tests::press_setting(&mut d, 'N');
         failed.send((0, CHANNEL_DESKTOP)).unwrap();
         assert!(!d.emit_desktop_notifications());
         assert_eq!(
@@ -1634,13 +1639,16 @@ mod tests {
     #[test]
     fn ready_sound_toggle_is_independent_and_only_disabling_both_cancels_pending() {
         let mut d = dashboard();
-        assert_eq!(d.key(KeyCode::Char('S')), DashboardAction::Redraw);
+        assert!(matches!(
+            super::super::tests::press_setting(&mut d, 'S'),
+            DashboardAction::Request(_)
+        ));
         assert!(d.settings.ready_sound && d.settings.desktop_notifications);
         assert_eq!(d.desktop.notice.as_deref(), Some("Ready sound: on"));
         let (_receiver, _failed) = stub_host(&mut d);
         deliver(&mut d, snapshot(2, "a", AgentActivity::ResponseReady));
         assert_eq!(d.desktop.pending.len(), 1);
-        d.key(KeyCode::Char('N'));
+        super::super::tests::press_setting(&mut d, 'N');
         assert_eq!(
             d.desktop.pending.len(),
             1,
@@ -1653,7 +1661,7 @@ mod tests {
             0,
             "no cancellation while enabled"
         );
-        d.key(KeyCode::Char('S'));
+        super::super::tests::press_setting(&mut d, 'S');
         assert_eq!(d.desktop.notice.as_deref(), Some("Ready sound: off"));
         assert!(
             d.desktop.pending.is_empty(),
@@ -1662,7 +1670,7 @@ mod tests {
         let host = d.desktop.host.as_ref().unwrap();
         assert_eq!(host.channels.load(Ordering::Acquire), 0);
         assert_eq!(host.epoch.load(Ordering::Acquire), 1);
-        d.key(KeyCode::Char('S'));
+        super::super::tests::press_setting(&mut d, 'S');
         deliver(&mut d, snapshot(2, "a", AgentActivity::ResponseReady));
         assert!(d.desktop.pending.is_empty(), "enabling sound never replays");
         deliver(&mut d, snapshot(4, "b", AgentActivity::ResponseReady));
@@ -1691,7 +1699,7 @@ mod tests {
     #[test]
     fn sound_host_failure_reports_its_own_notice() {
         let mut d = dashboard();
-        d.key(KeyCode::Char('S'));
+        super::super::tests::press_setting(&mut d, 'S');
         let (_receiver, failed) = stub_host(&mut d);
         d.desktop.notice = None;
         failed.send((0, CHANNEL_SOUND)).unwrap();
@@ -1710,7 +1718,7 @@ mod tests {
             d.desktop.notice.as_deref(),
             Some("Desktop notifications and ready sound unavailable")
         );
-        d.key(KeyCode::Char('S'));
+        super::super::tests::press_setting(&mut d, 'S');
         d.desktop.notice = None;
         failed.send((0, CHANNEL_SOUND)).unwrap();
         assert!(
@@ -1723,7 +1731,7 @@ mod tests {
     #[test]
     fn ready_sound_toggle_does_not_intercept_native_input() {
         let mut d = dashboard();
-        d.key(KeyCode::Char('S'));
+        super::super::tests::press_setting(&mut d, 'S');
         d.select_session(SessionId(1));
         let request = d.view_request(d.outer_area, 78).unwrap().unwrap();
         let ovrcr_protocol::Request::SetView { view } = request.request else {

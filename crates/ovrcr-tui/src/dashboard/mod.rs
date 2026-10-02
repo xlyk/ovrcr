@@ -277,7 +277,6 @@ pub struct Dashboard {
     outbox: outbox::Outbox,
     ignored_responses: HashSet<u64>,
     settings: settings::Settings,
-    settings_path: Option<std::path::PathBuf>,
     config_dir: std::path::PathBuf,
     /// Ids of requests that own the error banner, so their plain `Ok` may clear it. Requests the
     /// dashboard sends on its own behalf, such as a synthetic mouse release, are absent.

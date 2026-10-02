@@ -322,6 +322,15 @@ pub enum Request {
         expected_run: SessionRunId,
         key: String,
     },
+    /// Edit one setting in the settings document. `path` is a setting path
+    /// such as `quota.codex.command`, `picker_roots[2]` or
+    /// `launch_choices.myproj.kind`; `value` is TOML value text, and `None`
+    /// removes the key or element. The Server validates, writes, re-reads and
+    /// republishes `SettingsChanged`.
+    SetSetting {
+        path: String,
+        value: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -794,6 +803,13 @@ mod wire_snapshot {
                 },
             ),
             (
+                "SetSetting",
+                Request::SetSetting {
+                    path: "picker_roots[2]".into(),
+                    value: Some("\"~/x\"".into()),
+                },
+            ),
+            (
                 "AcknowledgeSessionStopped",
                 Request::AcknowledgeSessionStopped {
                     session: SessionId(1),
@@ -1161,6 +1177,10 @@ mod wire_snapshot {
         ("Request::DeleteArchivedSession", "220104"),
         ("Request::RecoverSession", "250104"),
         ("Request::Keystroke", "260104033a6a3a"),
+        (
+            "Request::SetSetting",
+            "270f7069636b65725f726f6f74735b325d0105227e2f7822",
+        ),
         ("Request::AcknowledgeSessionStopped", "240104"),
         (
             "Request::MarkReviewed",

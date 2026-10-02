@@ -1,0 +1,3 @@
+automatic_local_terminals = "on"
+desktop_notifications = true
+ready_sound = true

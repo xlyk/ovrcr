@@ -604,7 +604,6 @@ impl Dashboard {
             outbox: super::outbox::Outbox::default(),
             ignored_responses: HashSet::new(),
             settings: Settings::default(),
-            settings_path: None,
             config_dir: std::path::PathBuf::new(),
             error_owning_requests: HashSet::new(),
         }
@@ -634,21 +633,24 @@ impl Dashboard {
         self.settings = settings;
     }
 
-    /// Adopt the Server's reading: every setting, and the document path the
-    /// writer edits. The footer says so once at attach and again whenever the
-    /// number of findings changes.
+    /// Adopt the Server's reading: every setting, including the ones a
+    /// `SetSetting` request asked it to change. The footer names a changed
+    /// alert or automatic-terminal setting, and the findings once at attach and
+    /// again whenever their number changes.
     fn install_settings_report(&mut self, report: crate::protocol::SettingsReport) {
         let previous = self
             .settings_report
             .as_ref()
             .map(|report| report.findings.len());
         let count = report.findings.len();
+        let before = std::mem::replace(&mut self.settings, report.settings.clone());
+        if previous.is_some() {
+            self.settings_changed_notice(&before);
+        }
         if previous.map_or(count > 0, |previous| previous != count) {
             self.desktop.notice = Some(super::settings::findings_notice(count));
         }
-        self.settings = report.settings.clone();
         self.apply_alert_channels();
-        self.settings_path = Some(report.path.clone());
         self.settings_report = Some(Box::new(report));
     }
 
@@ -3719,7 +3721,7 @@ impl Dashboard {
 
     /// An id for a request the user asked for, whose failure shows in the error banner and whose
     /// plain `Ok` may therefore clear it. The set is released by every final response.
-    fn error_owning_request_id(&mut self) -> u64 {
+    pub(super) fn error_owning_request_id(&mut self) -> u64 {
         let id = self.next_request_id();
         self.error_owning_requests.insert(id);
         id

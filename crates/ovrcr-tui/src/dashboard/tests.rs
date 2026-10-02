@@ -1963,7 +1963,10 @@ fn ready_sound_action_is_opt_in_and_discoverable() {
             .collect()
     };
     assert!(names(&dashboard).contains(&("S".into(), "Enable ready sound".into())));
-    assert_eq!(dashboard.key(KeyCode::Char('S')), DashboardAction::Redraw);
+    assert!(matches!(
+        press_setting(&mut dashboard, 'S'),
+        DashboardAction::Request(_)
+    ));
     assert!(names(&dashboard).contains(&("S".into(), "Disable ready sound".into())));
     assert!(
         names(&dashboard).contains(&("N".into(), "Enable desktop notifications".into())),
@@ -1978,7 +1981,10 @@ fn desktop_notification_action_is_opt_in_and_discoverable() {
         rows: 24,
         cols: 120,
     });
-    assert_eq!(dashboard.key(KeyCode::Char('N')), DashboardAction::Redraw);
+    assert!(matches!(
+        press_setting(&mut dashboard, 'N'),
+        DashboardAction::Request(_)
+    ));
     let hints = super::keymap::keymap(&dashboard);
     assert!(
         hints
@@ -1986,7 +1992,10 @@ fn desktop_notification_action_is_opt_in_and_discoverable() {
             .flat_map(|group| &group.keys)
             .any(|hint| { hint.name == "Disable desktop notifications" && hint.key == "N" })
     );
-    assert_eq!(dashboard.key(KeyCode::Char('N')), DashboardAction::Redraw);
+    assert!(matches!(
+        press_setting(&mut dashboard, 'N'),
+        DashboardAction::Request(_)
+    ));
     let hints = super::keymap::keymap(&dashboard);
     assert!(
         hints
@@ -3093,217 +3102,166 @@ fn a_clicked_popup_row_clears_the_desktop_notice() {
     );
 }
 
-#[test]
-fn automatic_local_terminal_binding_persists_cycle_and_keeps_setting_on_failure() {
-    use super::settings::AutomaticLocalTerminals;
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("dashboard.toml");
-    std::fs::write(&path, "branch_prefix = 'fix/'\nextra = 'keep'\n").unwrap();
-    let mut dashboard = Dashboard::new(TerminalSize {
-        rows: 24,
-        cols: 120,
-    });
-    dashboard.settings_path = Some(path.clone());
-    for expected in [
-        AutomaticLocalTerminals::On,
-        AutomaticLocalTerminals::Off,
-        AutomaticLocalTerminals::DefaultBranchOnly,
-    ] {
-        dashboard.key(KeyCode::Char('L'));
-        assert_eq!(dashboard.settings.automatic_local_terminals, expected);
-        let saved = super::settings::written(&path);
-        assert_eq!(
-            saved[AutomaticLocalTerminals::KEY].as_str(),
-            Some(expected.as_str())
-        );
-        assert_eq!(saved["branch_prefix"].as_str(), Some("fix/"));
-        assert_eq!(saved["extra"].as_str(), Some("keep"));
-        // A restarted Dashboard learns the saved value from the Server's reading.
-        let mut restarted = Dashboard::new(TerminalSize {
-            rows: 24,
-            cols: 120,
+/// The Server's reading of `settings`, as it arrives after an edit.
+pub(super) fn settings_reading(settings: super::settings::Settings) -> ServerMessage {
+    ServerMessage::Event(ServerEvent::SettingsChanged(Box::new(
+        crate::protocol::SettingsReport {
+            path: "/server/dashboard.toml".into(),
+            read_unix_ms: 0,
+            settings,
+            rows: Vec::new(),
+            findings: Vec::new(),
+        },
+    )))
+}
+
+/// Press `N` or `S` in Browse and answer as the Server does: save, publish
+/// the new reading, then acknowledge. Returns what the key produced.
+pub(super) fn press_setting(dashboard: &mut Dashboard, key: char) -> super::DashboardAction {
+    if dashboard.settings_report.is_none() {
+        dashboard.handle_server_message(settings_reading(dashboard.settings.clone()));
+    }
+    let action = dashboard.key(KeyCode::Char(key));
+    if let super::DashboardAction::Request(crate::protocol::ClientMessage {
+        request_id,
+        request: Request::SetSetting { path, value },
+    }) = &action
+    {
+        let mut settings = dashboard.settings.clone();
+        let on = value.as_deref() == Some("true");
+        match path.as_str() {
+            "desktop_notifications" => settings.desktop_notifications = on,
+            "ready_sound" => settings.ready_sound = on,
+            other => panic!("not an alert setting: {other}"),
+        }
+        dashboard.handle_server_message(settings_reading(settings));
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id: *request_id,
+            response: Response::Ok,
         });
-        restarted.settings_path = Some(path.clone());
-        restarted.settings.automatic_local_terminals = expected;
-        dashboard = restarted;
     }
-    // A wrongly typed value is a Server finding, not a reason to refuse: the
-    // edit replaces it and keeps every other line.
-    std::fs::write(
-        &path,
-        "automatic_local_terminals = 42\nbranch_prefix = 'fix/'\n",
-    )
-    .unwrap();
-    dashboard.key(KeyCode::Char('L'));
-    assert_eq!(
-        dashboard.settings.automatic_local_terminals,
-        AutomaticLocalTerminals::On
-    );
-    assert_eq!(
-        std::fs::read_to_string(&path).unwrap(),
-        "automatic_local_terminals = \"on\"\nbranch_prefix = 'fix/'\n"
-    );
-    let invalid = "automatic_local_terminals = [\n";
-    std::fs::write(&path, invalid).unwrap();
-    dashboard.key(KeyCode::Char('L'));
-    assert_eq!(
-        dashboard.settings.automatic_local_terminals,
-        AutomaticLocalTerminals::On
-    );
-    assert!(
-        dashboard
-            .desktop
-            .notice
-            .as_ref()
-            .unwrap()
-            .contains("Could not save automatic local terminals")
-    );
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), invalid);
+    action
+}
+
+/// The `SetSetting` a key produced, as `(request id, path, value)`.
+fn set_setting(action: super::DashboardAction) -> (u64, String, Option<String>) {
+    match action {
+        super::DashboardAction::Request(crate::protocol::ClientMessage {
+            request_id,
+            request: Request::SetSetting { path, value },
+        }) => (request_id, path, value),
+        action => panic!("expected SetSetting, got {action:?}"),
+    }
 }
 
 #[test]
-fn alert_toggles_persist_across_dashboard_restart() {
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("custom-dashboard.toml");
-    std::fs::write(&path, "branch_prefix = 'fix/'\npicker_roots = ['/tmp']\nextra = 'keep'\n[[agents]]\nname = 'shell'\nargv = ['/bin/sh']\n").unwrap();
+fn automatic_local_terminal_binding_asks_the_server_and_follows_its_reading() {
+    use super::settings::AutomaticLocalTerminals;
     let mut dashboard = Dashboard::new(TerminalSize {
         rows: 24,
         cols: 120,
     });
-    dashboard.settings_path = Some(path.clone());
-    dashboard.key(KeyCode::Char('N'));
-    dashboard.key(KeyCode::Char('S'));
-    let raw = super::settings::written(&path);
-    assert_eq!(
-        raw["desktop_notifications"].as_bool(),
-        Some(true),
-        "notification toggle must survive restart"
-    );
-    assert_eq!(
-        raw["ready_sound"].as_bool(),
-        Some(true),
-        "sound toggle must survive restart"
-    );
-    assert_eq!(raw["branch_prefix"].as_str(), Some("fix/"));
-    assert_eq!(raw["agents"][0]["argv"][0].as_str(), Some("/bin/sh"));
-    assert_eq!(raw["extra"].as_str(), Some("keep"));
-    // A restarted Dashboard learns the saved values from the Server's reading.
-    let mut restarted = Dashboard::new(TerminalSize {
-        rows: 24,
-        cols: 120,
-    });
-    restarted.settings.desktop_notifications = true;
-    restarted.settings.ready_sound = true;
-    restarted.settings_path = Some(path.clone());
-    restarted.key(KeyCode::Char('N'));
-    restarted.key(KeyCode::Char('S'));
-    let raw = super::settings::written(&path);
-    assert_eq!(raw["desktop_notifications"].as_bool(), Some(false));
-    assert_eq!(raw["ready_sound"].as_bool(), Some(false));
-}
-
-#[test]
-fn alert_toggle_save_failure_leaves_setting_and_file_unchanged() {
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("dashboard.toml");
-    let invalid = "desktop_notifications = [\n";
-    std::fs::write(&path, invalid).unwrap();
-    let mut dashboard = Dashboard::new(TerminalSize {
-        rows: 24,
-        cols: 120,
-    });
-    dashboard.settings_path = Some(path.clone());
-    for key in ['N', 'S'] {
-        dashboard.key(KeyCode::Char(key));
-        assert!(!dashboard.settings.desktop_notifications);
-        assert!(!dashboard.settings.ready_sound);
-        assert!(
-            dashboard
-                .desktop
-                .notice
-                .as_ref()
-                .unwrap()
-                .contains("Could not save")
+    dashboard.handle_server_message(settings_reading(dashboard.settings.clone()));
+    for (value, expected) in [
+        ("\"on\"", AutomaticLocalTerminals::On),
+        ("\"off\"", AutomaticLocalTerminals::Off),
+        (
+            "\"default_branch_only\"",
+            AutomaticLocalTerminals::DefaultBranchOnly,
+        ),
+    ] {
+        let before = dashboard.settings.automatic_local_terminals;
+        let (_, path, sent) = set_setting(dashboard.key(KeyCode::Char('L')));
+        assert_eq!(path, AutomaticLocalTerminals::KEY);
+        assert_eq!(sent.as_deref(), Some(value));
+        assert_eq!(
+            dashboard.settings.automatic_local_terminals, before,
+            "nothing changes before the Server's reading"
         );
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), invalid);
+        let mut settings = dashboard.settings.clone();
+        settings.automatic_local_terminals = expected;
+        dashboard.handle_server_message(settings_reading(settings));
+        assert_eq!(dashboard.settings.automatic_local_terminals, expected);
+        assert_eq!(
+            dashboard.desktop.notice.as_deref(),
+            Some(format!("Automatic local terminals: {}", expected.label()).as_str())
+        );
     }
-}
-
-#[test]
-fn alert_toggle_preserves_comments_and_other_preference_edits() {
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("dashboard.toml");
-    let original = "# My alerts\ndesktop_notifications = false # notification preference\nready_sound = true # sound preference\nbranch_prefix = 'fix/' # keep formatting\n";
-    std::fs::write(&path, original).unwrap();
-    let mut dashboard = Dashboard::new(TerminalSize {
-        rows: 24,
-        cols: 120,
+    // A refused save is the footer error and leaves the setting.
+    let (request_id, ..) = set_setting(dashboard.key(KeyCode::Char('L')));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id,
+        response: Response::Error {
+            code: ErrorCode::InvalidRequest,
+            message: "settings document /x is not valid TOML; editing is off".into(),
+        },
     });
-    dashboard.settings_path = Some(path.clone());
-    // The other preference was edited on disk after the dashboard started.
-    dashboard.key(KeyCode::Char('N'));
     assert_eq!(
-        std::fs::read_to_string(&path).unwrap(),
-        original.replace(
-            "desktop_notifications = false",
-            "desktop_notifications = true"
-        )
+        dashboard.settings.automatic_local_terminals,
+        AutomaticLocalTerminals::DefaultBranchOnly
     );
-    assert!(
-        !dashboard.settings.ready_sound,
-        "the Dashboard learns other settings only from the Server's reading"
-    );
-}
-
-#[test]
-fn alert_toggle_refuses_dangling_symlink_and_read_only_config() {
-    use std::os::unix::fs::{PermissionsExt, symlink};
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("dashboard.toml");
-    let target = root.path().join("actual.toml");
-    symlink(&target, &path).unwrap();
-    let mut dashboard = Dashboard::new(TerminalSize {
-        rows: 24,
-        cols: 120,
-    });
-    dashboard.settings_path = Some(path.clone());
-    dashboard.key(KeyCode::Char('N'));
-    assert!(!dashboard.settings.desktop_notifications);
-    assert!(
-        std::fs::symlink_metadata(&path)
-            .unwrap()
-            .file_type()
-            .is_symlink()
-    );
-    assert!(!target.exists());
-    std::fs::write(&target, "desktop_notifications = false\n").unwrap();
-    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o444)).unwrap();
-    dashboard.key(KeyCode::Char('S'));
-    assert!(!dashboard.settings.ready_sound);
     assert!(
         dashboard
-            .desktop
-            .notice
-            .as_ref()
-            .unwrap()
-            .contains("Could not save")
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("editing is off")),
+        "{:?}",
+        dashboard.error
     );
+}
+
+#[test]
+fn alert_toggles_ask_the_server_and_apply_only_its_reading() {
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 120,
+    });
+    dashboard.handle_server_message(settings_reading(dashboard.settings.clone()));
+    let (_, path, value) = set_setting(dashboard.key(KeyCode::Char('N')));
     assert_eq!(
-        std::fs::read_to_string(&target).unwrap(),
-        "desktop_notifications = false\n"
+        (path.as_str(), value.as_deref()),
+        ("desktop_notifications", Some("true"))
     );
-    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).unwrap();
-    dashboard.key(KeyCode::Char('N'));
+    let (_, path, value) = set_setting(dashboard.key(KeyCode::Char('S')));
+    assert_eq!(
+        (path.as_str(), value.as_deref()),
+        ("ready_sound", Some("true"))
+    );
+    assert!(!dashboard.settings.desktop_notifications);
+    assert!(!dashboard.settings.ready_sound);
+    assert_eq!(dashboard.alert_channels(), 0, "no optimistic alert change");
+
+    let mut settings = dashboard.settings.clone();
+    settings.desktop_notifications = true;
+    dashboard.handle_server_message(settings_reading(settings.clone()));
     assert!(dashboard.settings.desktop_notifications);
-    assert!(
-        std::fs::symlink_metadata(&path)
-            .unwrap()
-            .file_type()
-            .is_symlink()
-    );
     assert_eq!(
-        std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
-        0o640
+        dashboard.desktop.notice.as_deref(),
+        Some("Desktop notifications: on")
+    );
+    settings.ready_sound = true;
+    dashboard.handle_server_message(settings_reading(settings));
+    assert_eq!(dashboard.desktop.notice.as_deref(), Some("Ready sound: on"));
+    assert_eq!(dashboard.alert_channels(), 0b11);
+
+    // With both on, the toggles ask for off.
+    let (_, _, value) = set_setting(dashboard.key(KeyCode::Char('N')));
+    assert_eq!(value.as_deref(), Some("false"));
+    let (request_id, _, value) = set_setting(dashboard.key(KeyCode::Char('S')));
+    assert_eq!(value.as_deref(), Some("false"));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id,
+        response: Response::Error {
+            code: ErrorCode::InvalidRequest,
+            message: "settings document /x is read-only".into(),
+        },
+    });
+    assert!(dashboard.settings.ready_sound);
+    assert!(
+        dashboard
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("read-only"))
     );
 }
 

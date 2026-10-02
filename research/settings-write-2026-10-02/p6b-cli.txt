@@ -1,0 +1,2 @@
+Set ready_sound through the Server
+exit=0

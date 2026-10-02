@@ -17,7 +17,7 @@ contract scripts can rely on. Every command accepts `--help`.
 | `report` | Report agent activity, context, or status-line metrics from a provider hook |
 | `session` | Inspect or remove a session record |
 | `server` | Run the server in the foreground |
-| `settings` | Show the settings document, effective values and findings |
+| `settings` | Show the settings document, effective values and findings; `set` and `reset` change one setting |
 
 `project create` aliases `project add`. `project delete` and `workspace delete`
 alias their guarded `remove` commands. The legacy top-level `new`, `list`,
@@ -84,7 +84,7 @@ ovrcr settings
 ovrcr settings --json
 ```
 
-`settings` reads the settings document locally, as the Server does at startup:
+`settings` with no subcommand reads the settings document locally, as the Server does at startup:
 `dashboard.toml` beside `config.toml`, or the file `OVRCR_DASHBOARD_CONFIG` names.
 It never contacts or starts a server. It prints the resolved document path, then
 one line per setting with its key, owner (`Server` or `Dashboard`), source
@@ -98,6 +98,39 @@ with findings.
 `--json` prints one object: `path`, `read_unix_ms`, `settings` (every effective
 value, typed), `rows` (`key`, `owner`, `value`, `source`, `off_state`) and
 `findings` (`key`, null for the whole document; `message`; `line`, nullable).
+
+```sh
+ovrcr settings set PATH VALUE
+ovrcr settings reset PATH
+```
+
+`set` changes one setting and `reset` removes it from the document so it returns
+to its default. PATH is a setting path: a key such as `ready_sound` or
+`quota.codex.command`, a list element such as `picker_roots[2]` or
+`agents[1].argv`, or a launch choice such as `launch_choices.myproj` or
+`launch_choices.myproj.kind`; quote a project name that holds a dot,
+`launch_choices."my.project"`. Index len of a list appends. Quote a path or value
+with brackets, quotes or spaces for the shell, for example
+`ovrcr settings set 'picker_roots[0]' '~/Code'`. VALUE is TOML value
+text: `true`, `"kh/"`, `["claude", "--verbose"]`, or an inline table such as
+`{ name = "claude", argv = ["claude"] }` for an `agents` element and
+`{ kind = "Agent", preset = "claude" }` for a launch choice. A bare word that is
+not TOML is taken as is only for a string or path setting (`branch_prefix`,
+`title_model`, `automatic_local_terminals`, `picker_roots[N]`, `quota.*.command`
+and `home`, a launch choice's `kind` and `preset`), so
+`ovrcr settings set title_model pi/gpt-5-mini` needs no quotes.
+
+When a Server is reachable the edit goes through it: the Server checks the
+value, saves, re-reads and sends the attached Dashboard its new reading, and the
+command prints `Set PATH through the Server`. With no Server running the command
+edits the resolved document itself with the same writer, starts no Server, and
+prints `Set PATH in /path/to/dashboard.toml (no Server running)`; a Server
+started later loads that value. Either way the edit keeps comments, unrelated
+keys and formatting. A path that names no setting, a value of the wrong type
+(the message names the expected type, such as `expected a boolean`), a missing
+list element, and a document that is not valid TOML are rejected with a
+non-zero exit and the document unchanged. `--json` prints `ok`, `path`, and
+`document` (null when the Server saved it).
 
 ## Workspace removal
 

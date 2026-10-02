@@ -2557,26 +2557,25 @@ impl Dashboard {
                 self.error = None;
                 if let Response::CreatedSession(session) = response {
                     self.select_session(session.id);
-                    if let Some((project, choice)) = preference {
-                        self.settings
-                            .launch_choices
-                            .insert(project.clone(), choice.clone());
-                        if let Some(path) = &self.settings_path
-                            && let Err(error) =
-                                super::settings::save_launch_choice(path, &project, &choice)
-                        {
-                            self.set_error(format!(
-                                "Session started; could not remember launch choice: {error}"
-                            ));
-                        }
-                    }
+                    // The new pane's view goes first: the save waits on a
+                    // synced write, and input waits on the view.
                     let request_id = self.next_request_id();
-                    let outgoing = self
+                    let mut outgoing: Vec<ClientMessage> = self
                         .view_request(self.outer_area, request_id)
                         .ok()
                         .flatten()
                         .into_iter()
                         .collect();
+                    if let Some((project, choice)) = preference {
+                        // The Server saves it; remembered here at once so the
+                        // next launch offers it before the reading arrives.
+                        let request = super::settings::launch_choice_request(&project, &choice);
+                        self.settings.launch_choices.insert(project, choice);
+                        outgoing.push(ClientMessage {
+                            request_id: self.error_owning_request_id(),
+                            request,
+                        });
+                    }
                     self.mode = InputMode::Terminal;
                     return Some(outgoing);
                 }
@@ -3794,27 +3793,28 @@ mod launch_tests {
             );
         }
     }
-    // Exercise the real alert key handler or successful launch response, never the writer directly.
-    fn save_preference(d: &mut Dashboard, action: &str) {
-        match action {
-            "N" | "S" => {
-                d.key(KeyCode::Char(action.chars().next().unwrap()));
-            }
-            _ => {
-                d.open_create_terminal();
-                set(d, "Start", action);
-                if action == "Agent" {
-                    set(d, "Agent", "fixture-agent");
-                }
-                let m = request(d);
-                let mut session = summary(1);
-                session.project = d.hierarchy.projects[0].name.clone();
-                d.handle_server_message(ServerMessage::Response {
-                    request_id: m.request_id,
-                    response: Response::CreatedSession(Box::new(session)),
-                });
-            }
+    /// Launch from the palette and answer with a created session; returns
+    /// what the Dashboard sends next.
+    fn launch(d: &mut Dashboard, start: &str) -> Vec<ClientMessage> {
+        d.open_create_terminal();
+        set(d, "Start", start);
+        if start == "Agent" {
+            set(d, "Agent", "fixture-agent");
         }
+        let m = request(d);
+        let mut session = summary(1);
+        session.project = d.hierarchy.projects[0].name.clone();
+        d.handle_server_message(ServerMessage::Response {
+            request_id: m.request_id,
+            response: Response::CreatedSession(Box::new(session)),
+        })
+    }
+
+    /// Split the Dashboard's requests into settings saves and the rest.
+    fn saves(messages: Vec<ClientMessage>) -> (Vec<ClientMessage>, Vec<ClientMessage>) {
+        messages
+            .into_iter()
+            .partition(|m| matches!(m.request, Request::SetSetting { .. }))
     }
 
     fn rendered_settings_notice(d: &Dashboard) -> String {
@@ -3832,332 +3832,60 @@ mod launch_tests {
             .collect()
     }
 
-    #[test]
-    fn settings_edits_reject_invalid_documents_without_changing_bytes() {
-        for action in ["N", "S", "Agent", "Terminal"] {
-            // Only a document that is not TOML, or a launch_choices that is
-            // not a table to write into, is refused.
-            let refused: &[&str] = if matches!(action, "N" | "S") {
-                &["invalid = ["]
-            } else {
-                &["invalid = [", "launch_choices = []\n"]
-            };
-            for &original in refused {
-                let root = tempfile::tempdir().unwrap();
-                let path = root.path().join("dashboard.toml");
-                std::fs::write(&path, original).unwrap();
-                let mut d = dashboard();
-                d.settings_path = Some(path.clone());
-                let before = d.settings.clone();
-                save_preference(&mut d, action);
-                assert_eq!(
-                    std::fs::read_to_string(&path).unwrap(),
-                    original,
-                    "{action}"
-                );
-                assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
-                if matches!(action, "N" | "S") {
-                    assert_eq!(d.settings, before);
-                    assert!(rendered_settings_notice(&d).contains("Could not save"));
-                } else {
-                    assert!(d.palette.is_none());
-                    assert_eq!(d.focused_session(), Some(SessionId(1)));
-                    assert_eq!(d.mode, InputMode::Terminal);
-                    assert_eq!(
-                        d.settings.launch_choices.get("demo"),
-                        Some(&if action == "Agent" {
-                            LaunchChoice::Agent("fixture-agent".into())
-                        } else {
-                            LaunchChoice::Terminal
-                        })
-                    );
-                    assert!(
-                        rendered_settings_notice(&d)
-                            .contains("Session started; could not remember launch choice")
-                    );
-                    assert!(
-                        d.drain_outbox()
-                            .iter()
-                            .all(|message| !matches!(message.request, Request::CreateSession(_)))
-                    );
-                }
-            }
-        }
+    fn refuse(d: &mut Dashboard, save: &ClientMessage, message: &str) -> Vec<ClientMessage> {
+        d.handle_server_message(ServerMessage::Response {
+            request_id: save.request_id,
+            response: Response::Error {
+                code: ErrorCode::InvalidRequest,
+                message: message.into(),
+            },
+        })
     }
 
-    /// A wrongly typed value is the Server's finding to report. An edit keeps
-    /// it byte for byte, or replaces it when it is the value being edited.
+    /// The Dashboard writes no file: the Server merges the remembered choice
+    /// into the project's own entry (see `ovrcr-runtime`'s writer tests).
     #[test]
-    fn settings_edits_keep_or_replace_wrongly_typed_values() {
-        for action in ["N", "S", "Agent", "Terminal"] {
-            for original in [
-                "ready_sound = 'yes'\n",
-                "branch_prefix = 42\n",
-                "launch_choices = []\n",
-            ] {
-                if original.starts_with("launch_choices") && !matches!(action, "N" | "S") {
-                    continue;
-                }
-                let root = tempfile::tempdir().unwrap();
-                let path = root.path().join("dashboard.toml");
-                std::fs::write(&path, original).unwrap();
-                let mut d = dashboard();
-                d.settings_path = Some(path.clone());
-                save_preference(&mut d, action);
-                let saved = std::fs::read_to_string(&path).unwrap();
-                if action == "S" && original.starts_with("ready_sound") {
-                    assert_eq!(saved, "ready_sound = true\n", "{action}");
-                } else {
-                    assert!(saved.starts_with(original), "{action}: {saved}");
-                }
-                assert!(
-                    !rendered_settings_notice(&d).contains("Could not save")
-                        && !rendered_settings_notice(&d).contains("could not remember"),
-                    "{action}: {original}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn settings_edits_reject_dangling_links_and_read_only_targets() {
-        use std::os::unix::fs::{PermissionsExt, symlink};
-        for action in ["N", "S", "Agent", "Terminal"] {
-            for read_only in [false, true] {
-                let root = tempfile::tempdir().unwrap();
-                let path = root.path().join("dashboard.toml");
-                let target = root.path().join("actual.toml");
-                symlink("actual.toml", &path).unwrap();
-                if read_only {
-                    std::fs::write(&target, "# keep\nready_sound = false\n").unwrap();
-                    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o444))
-                        .unwrap();
-                }
-                let mut d = dashboard();
-                d.settings_path = Some(path.clone());
-                save_preference(&mut d, action);
-                assert_eq!(
-                    std::fs::read_link(&path).unwrap(),
-                    std::path::Path::new("actual.toml")
-                );
-                let notice = rendered_settings_notice(&d);
-                assert!(
-                    notice.contains(if matches!(action, "N" | "S") {
-                        "Could not save"
-                    } else {
-                        "Session started; could not remember launch choice"
-                    }),
-                    "{action}: {notice}"
-                );
-                assert!(!d.settings.ready_sound);
-                assert!(!d.settings.desktop_notifications);
-                if read_only {
-                    assert_eq!(
-                        std::fs::read_to_string(&target).unwrap(),
-                        "# keep\nready_sound = false\n"
-                    );
-                    assert_eq!(
-                        std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
-                        0o444
-                    );
-                } else {
-                    assert!(!target.exists());
-                }
-                assert_eq!(
-                    std::fs::read_dir(root.path()).unwrap().count(),
-                    if read_only { 2 } else { 1 }
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn settings_publication_failure_preserves_target_and_leaves_no_temporary_files() {
-        use std::os::unix::fs::{PermissionsExt, symlink};
-        for action in ["N", "S", "Agent", "Terminal"] {
-            let root = tempfile::tempdir().unwrap();
-            let directory = root.path().join("locked");
-            std::fs::create_dir(&directory).unwrap();
-            let target = directory.join("actual.toml");
-            let path = root.path().join("dashboard.toml");
-            let original = "# preserved\nready_sound = false\n";
-            std::fs::write(&target, original).unwrap();
-            symlink(&target, &path).unwrap();
+    fn successful_launch_asks_the_server_to_remember_the_choice() {
+        for start in ["Terminal", "Agent"] {
             let mut d = dashboard();
-            d.settings_path = Some(path.clone());
-            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o555)).unwrap();
-            // Real filesystem failure at temporary-file creation (run as an unprivileged user).
-            save_preference(&mut d, action);
-            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o755)).unwrap();
-            assert_eq!(std::fs::read_to_string(&target).unwrap(), original);
-            assert_eq!(std::fs::read_link(&path).unwrap(), target);
-            assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
-            let notice = rendered_settings_notice(&d);
-            assert!(
-                notice.contains("create temporary dashboard settings"),
-                "{action}: {notice}"
-            );
-            if matches!(action, "N" | "S") {
-                assert!(!d.settings.ready_sound);
-                assert!(!d.settings.desktop_notifications);
-            } else {
-                assert_eq!(d.focused_session(), Some(SessionId(1)));
-                assert!(d.palette.is_none());
-                assert_eq!(d.mode, InputMode::Terminal);
-                assert!(d.settings.launch_choices.contains_key("demo"));
-            }
-        }
-    }
-
-    #[test]
-    fn settings_edits_create_private_files_and_missing_directories() {
-        use std::os::unix::fs::PermissionsExt;
-        for action in ["N", "S", "Agent", "Terminal"] {
-            let root = tempfile::tempdir().unwrap();
-            let path = root.path().join("missing/nested/dashboard.toml");
-            let mut d = dashboard();
-            d.settings_path = Some(path.clone());
-            save_preference(&mut d, action);
-            let raw = super::super::settings::written(&path);
-            assert_eq!(
-                raw.get("desktop_notifications").and_then(|v| v.as_bool()),
-                (action == "N").then_some(true)
-            );
-            assert_eq!(
-                raw.get("ready_sound").and_then(|v| v.as_bool()),
-                (action == "S").then_some(true)
-            );
-            assert_eq!(
-                super::super::settings::written_choice(&path, "demo").as_ref(),
-                d.settings.launch_choices.get("demo")
-            );
-            assert_eq!(
-                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-                0o600
-            );
-            assert_eq!(
-                std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
-                1
-            );
-            assert!(d.error.is_none());
-        }
-    }
-
-    #[test]
-    fn settings_edits_preserve_prior_external_changes_and_exact_project_keys() {
-        for action in ["N", "S", "Agent", "Terminal"] {
-            let root = tempfile::tempdir().unwrap();
-            let path = root.path().join("dashboard.toml");
-            std::fs::write(&path, "# before\n").unwrap();
-            let mut d = dashboard();
-            d.settings_path = Some(path.clone());
             let project = "project.with-dots_and-punctuation";
             d.hierarchy.projects[0].name = project.into();
             d.hierarchy.projects[0].workspaces[0].project = project.into();
-            let external = "# external edit\nbranch_prefix = 'fix/' # keep\npicker_roots = ['/tmp']\n[future]\nvalue = 42 # unknown\n[launch_choices.'other.project']\nkind = 'Agent'\npreset = 'other'\n";
-            std::fs::write(&path, external).unwrap();
-            save_preference(&mut d, action);
-            let saved = std::fs::read_to_string(&path).unwrap();
-            for line in external.lines() {
-                assert!(saved.contains(line), "{action}: missing {line}");
-            }
-            let raw = super::super::settings::written(&path);
-            assert_eq!(raw["branch_prefix"].as_str(), Some("fix/"));
-            assert_eq!(
-                super::super::settings::written_choice(&path, "other.project"),
-                Some(LaunchChoice::Agent("other".into()))
-            );
-            if matches!(action, "N" | "S") {
-                let key = if action == "N" {
-                    "desktop_notifications"
-                } else {
-                    "ready_sound"
-                };
-                assert_eq!(raw[key].as_bool(), Some(true));
-            } else {
-                assert_eq!(
-                    super::super::settings::written_choice(&path, project),
-                    Some(if action == "Agent" {
-                        LaunchChoice::Agent("fixture-agent".into())
-                    } else {
-                        LaunchChoice::Terminal
-                    })
-                );
-                assert_eq!(raw["launch_choices"].as_table().unwrap().len(), 2);
-            }
-            assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
-        }
-    }
-
-    #[test]
-    fn successful_launch_preserves_symlinked_commented_settings() {
-        use std::os::unix::fs::{PermissionsExt, symlink};
-        for start in ["Terminal", "Agent"] {
-            let root = tempfile::tempdir().unwrap();
-            let path = root.path().join("dashboard.toml");
-            let target = root.path().join("actual.toml");
-            let original = "# My settings\nready_sound = true # keep\nbranch_prefix = 'fix/'\n[future]\nvalue = 42 # unknown\n[launch_choices.'other.project']\nkind = 'Agent'\npreset = 'other'\n";
-            std::fs::write(&target, original).unwrap();
-            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).unwrap();
-            symlink("actual.toml", &path).unwrap();
-            let mut d = dashboard();
-            d.settings_path = Some(path.clone());
-            d.open_create_terminal();
-            set(&mut d, "Start", start);
-            if start == "Agent" {
-                set(&mut d, "Agent", "fixture-agent");
-            }
-            let m = request(&mut d);
-            d.handle_server_message(ServerMessage::Response {
-                request_id: m.request_id,
-                response: Response::CreatedSession(Box::new(summary(1))),
-            });
+            let other = LaunchChoice::Agent("other".into());
+            d.settings
+                .launch_choices
+                .insert("other.project".into(), other.clone());
+            let sent = launch(&mut d, start);
             assert!(
-                std::fs::symlink_metadata(&path)
-                    .unwrap()
-                    .file_type()
-                    .is_symlink()
+                matches!(
+                    sent.first().map(|m| &m.request),
+                    Some(Request::SetView { .. })
+                ),
+                "the new pane's view goes before the save: {sent:?}"
             );
-            assert!(
-                std::fs::read_to_string(&target)
-                    .unwrap()
-                    .starts_with(original)
-            );
-            assert_eq!(
-                std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
-                0o640
-            );
-            assert_eq!(
-                super::super::settings::written(&path)["ready_sound"].as_bool(),
-                Some(true)
-            );
-            assert_eq!(
-                super::super::settings::written_choice(&path, "other.project"),
-                Some(LaunchChoice::Agent("other".into()))
-            );
+            let (saves, _) = saves(sent);
             let expected = if start == "Agent" {
                 LaunchChoice::Agent("fixture-agent".into())
             } else {
                 LaunchChoice::Terminal
             };
+            assert_eq!(saves.len(), 1, "{start}");
             assert_eq!(
-                super::super::settings::written_choice(&path, "demo").as_ref(),
-                Some(&expected)
+                saves[0].request,
+                super::super::settings::launch_choice_request(project, &expected)
             );
-            assert_eq!(d.settings.launch_choices.get("demo"), Some(&expected));
+            assert_eq!(d.settings.launch_choices.get(project), Some(&expected));
+            assert_eq!(d.settings.launch_choices["other.project"], other);
             assert_eq!(d.focused_session(), Some(SessionId(1)));
+            assert!(d.palette.is_none());
+            assert_eq!(d.mode, InputMode::Terminal);
             assert!(d.error.is_none());
-            assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 2);
         }
     }
 
     #[test]
     fn optional_name_custom_command_and_success_only_persistence() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("dashboard.toml");
-        std::fs::write(&path, "ready_sound = true\n").unwrap();
         let mut d = dashboard();
-        d.settings_path = Some(path.clone());
         d.open_create_terminal();
         set(&mut d, "Command", "printf secret-one-off");
         let m = request(&mut d);
@@ -4173,54 +3901,38 @@ mod launch_tests {
                 "printf secret-one-off".into()
             ]
         );
-        d.handle_server_message(ServerMessage::Response {
+        let (saves_after_failure, _) = saves(d.handle_server_message(ServerMessage::Response {
             request_id: m.request_id,
             response: Response::Error {
                 code: ErrorCode::Internal,
                 message: "launch failed".into(),
             },
-        });
+        }));
         assert!(d.settings.launch_choices.is_empty());
-        assert!(
-            !std::fs::read_to_string(&path)
-                .unwrap()
-                .contains("launch_choices")
-        );
+        assert!(saves_after_failure.is_empty());
         let m = request(&mut d);
-        d.handle_server_message(ServerMessage::Response {
+        let (saves, _) = saves(d.handle_server_message(ServerMessage::Response {
             request_id: m.request_id,
             response: Response::CreatedSession(Box::new(summary(1))),
-        });
+        }));
+        assert_eq!(saves.len(), 1);
         assert_eq!(
-            super::super::settings::written(&path)["ready_sound"].as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            super::super::settings::written_choice(&path, "demo"),
-            Some(LaunchChoice::Terminal)
-        );
-        assert!(
-            !std::fs::read_to_string(path)
-                .unwrap()
-                .contains("secret-one-off")
+            saves[0].request,
+            Request::SetSetting {
+                path: "launch_choices.demo".into(),
+                value: Some("{ kind = \"Terminal\" }".into()),
+            }
         );
     }
     #[test]
     fn successful_agent_choice_survives_restart_and_empty_workspace_leaves_it_intact() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("dashboard.toml");
         let mut d = dashboard();
-        d.settings_path = Some(path.clone());
-        d.open_create_terminal();
-        set(&mut d, "Start", "Agent");
-        set(&mut d, "Agent", "fixture-agent");
-        let m = request(&mut d);
-        d.handle_server_message(ServerMessage::Response {
-            request_id: m.request_id,
-            response: Response::CreatedSession(Box::new(summary(1))),
-        });
-        let saved = super::super::settings::written_choice(&path, "demo").unwrap();
-        assert_eq!(saved, LaunchChoice::Agent("fixture-agent".into()));
+        let (saves, _) = saves(launch(&mut d, "Agent"));
+        let saved = LaunchChoice::Agent("fixture-agent".into());
+        assert_eq!(
+            saves[0].request,
+            super::super::settings::launch_choice_request("demo", &saved)
+        );
         // A restarted Dashboard learns the choice from the Server's reading.
         let mut restarted = dashboard();
         restarted
@@ -4280,14 +3992,12 @@ mod launch_tests {
         assert!(requests.is_empty(), "view acknowledgement must converge");
     }
 
+    const REFUSED: &str = "could not save launch_choices.demo: settings document /x is read-only";
+
     #[test]
     fn launch_save_warning_survives_selection_ack_and_session_accepts_input() {
         for coalesced in [false, true] {
-            let root = tempfile::tempdir().unwrap();
-            let path = root.path().join("dashboard.toml");
-            std::fs::write(&path, "ready_sound = [\n").unwrap();
             let mut d = dashboard();
-            d.settings_path = Some(path);
             let mut hierarchy = d.hierarchy.clone();
             hierarchy.projects[0].workspaces[0]
                 .sessions
@@ -4315,18 +4025,15 @@ mod launch_tests {
                 ServerEvent::HierarchyChanged(hierarchy),
             ));
             assert!(refresh.is_empty());
-            let selected = d.handle_server_message(ServerMessage::Response {
+            let (saves, selected) = saves(d.handle_server_message(ServerMessage::Response {
                 request_id: launch.request_id,
                 response: Response::CreatedSession(Box::new(summary(1))),
-            });
-            assert!(
-                rendered_settings_notice(&d)
-                    .contains("Session started; could not remember launch choice")
-            );
+            }));
+            assert!(refuse(&mut d, &saves[0], REFUSED).is_empty());
+            assert!(rendered_settings_notice(&d).contains(REFUSED));
             acknowledge_settings_views(&mut d, pending.into_iter().chain(selected).collect());
             assert!(
-                rendered_settings_notice(&d)
-                    .contains("Session started; could not remember launch choice"),
+                rendered_settings_notice(&d).contains(REFUSED),
                 "coalesced={coalesced}"
             );
             assert_eq!(d.focused_session(), Some(SessionId(1)));
@@ -4339,28 +4046,64 @@ mod launch_tests {
     }
 
     #[test]
+    fn saved_launch_choice_leaves_the_new_session_accepting_input() {
+        for save_first in [false, true] {
+            let mut d = dashboard();
+            d.open_create_terminal();
+            let launch = request(&mut d);
+            let mut hierarchy = d.hierarchy.clone();
+            hierarchy.projects[0].workspaces[0]
+                .sessions
+                .push(summary(1));
+            d.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                hierarchy,
+            )));
+            let (saves, views) = saves(d.handle_server_message(ServerMessage::Response {
+                request_id: launch.request_id,
+                response: Response::CreatedSession(Box::new(summary(1))),
+            }));
+            let ok = |d: &mut Dashboard| {
+                d.handle_server_message(ServerMessage::Response {
+                    request_id: saves[0].request_id,
+                    response: Response::Ok,
+                })
+            };
+            let mut views = views;
+            if save_first {
+                views.extend(ok(&mut d));
+            }
+            acknowledge_settings_views(&mut d, views);
+            if !save_first {
+                let after = ok(&mut d);
+                acknowledge_settings_views(&mut d, after);
+            }
+            assert_eq!(d.focused_session(), Some(SessionId(1)));
+            assert_eq!(
+                d.key(KeyCode::Char('x')),
+                DashboardAction::PtyBytes(b"x".to_vec()),
+                "save_first={save_first}"
+            );
+        }
+    }
+
+    #[test]
     fn settings_save_failure_does_not_reopen_launch_or_lose_created_session() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("dashboard.toml");
-        std::fs::write(&path, "invalid = [").unwrap();
         let mut d = dashboard();
-        d.settings_path = Some(path.clone());
-        d.open_create_terminal();
-        let m = request(&mut d);
-        d.handle_server_message(ServerMessage::Response {
-            request_id: m.request_id,
-            response: Response::CreatedSession(Box::new(summary(1))),
-        });
+        let (saves, _) = saves(launch(&mut d, "Terminal"));
+        refuse(&mut d, &saves[0], REFUSED);
         assert!(d.palette.is_none());
         assert_eq!(d.focused_session(), Some(SessionId(1)));
+        assert_eq!(d.mode, InputMode::Terminal);
         assert!(
             d.error
-                .as_ref()
-                .is_some_and(|e| e.contains("Session started; could not remember")),
-            "{:?}",
-            d.error
+                .as_deref()
+                .is_some_and(|error| error.ends_with(REFUSED))
         );
-        assert_eq!(std::fs::read_to_string(path).unwrap(), "invalid = [");
+        assert!(
+            d.drain_outbox()
+                .iter()
+                .all(|message| !matches!(message.request, Request::CreateSession(_)))
+        );
     }
 
     #[test]

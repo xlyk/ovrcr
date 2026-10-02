@@ -169,7 +169,16 @@ fn run(cli: Cli) -> AppResult<()> {
             command: SessionCommand::Remove { id },
         } => resources::remove_terminal(id, json_output),
         Command::Report { command } => run_report(command),
-        Command::Settings => {
+        Command::Settings {
+            command: Some(command),
+        } => {
+            let (path, value) = match command {
+                SettingsCommand::Set { path, value } => (path, Some(value)),
+                SettingsCommand::Reset { path } => (path, None),
+            };
+            edit_setting(path, value, json_output)
+        }
+        Command::Settings { command: None } => {
             let RegistryPath(config) = RegistryPath::resolve().map_err(RuntimeError::internal)?;
             let report = ovrcr::settings::load(&config);
             if json_output {
@@ -180,6 +189,40 @@ fn run(cli: Cli) -> AppResult<()> {
             }
         }
     }
+}
+
+/// Through the Server when one is reachable, so it validates, saves and
+/// republishes; otherwise the same writer edits the resolved document here.
+fn edit_setting(path: String, value: Option<String>, json_output: bool) -> AppResult<()> {
+    let verb = if value.is_some() { "Set" } else { "Reset" };
+    let paths = ServerPaths::resolve().map_err(RuntimeError::internal)?;
+    let document = if let Some(mut stream) =
+        connect_if_running(&paths).map_err(RuntimeError::internal)?
+    {
+        let request = Request::SetSetting {
+            path: path.clone(),
+            value,
+        };
+        response_or_error(send_request(&mut stream, request).map_err(RuntimeError::internal)?)?;
+        None
+    } else {
+        let RegistryPath(config) = RegistryPath::resolve().map_err(RuntimeError::internal)?;
+        let document = ovrcr::settings::document_path(&config);
+        ovrcr::settings::set(&document, &path, value.as_deref())
+            .map_err(|error| RuntimeError::new(ErrorCode::InvalidRequest, format!("{error:#}")))?;
+        Some(document)
+    };
+    if json_output {
+        return print_json(&json!({ "ok": true, "path": path, "document": document }));
+    }
+    match document {
+        Some(document) => println!(
+            "{verb} {path} in {} (no Server running)",
+            document.display()
+        ),
+        None => println!("{verb} {path} through the Server"),
+    }
+    Ok(())
 }
 
 fn settings_text(report: &ovrcr::protocol::SettingsReport) -> String {
