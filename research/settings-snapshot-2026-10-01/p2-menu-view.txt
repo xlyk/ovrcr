@@ -1,0 +1,61 @@
+󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ────────────────────────────│pid: 78154  elapsed: 3m  agent unknown  local (#1)
+  󰘬 main                          root │local (#1)
+▌    $ local                           │consigint ›
+  󰘬 gui-consigint-auth-handoff         │
+     $ local                           │
+     - review auth handoff    grok:4.6 │
+  󰘬 gui-consigint-worktree-lifecycle   │
+     $ local                           │
+     - implement lif…  claude:sonnet-4 │
+     - review websocke…  codex:gpt-5.4 │
+     - plan snapshot res…  pi:grok-4.6 │
+                                       │
+ SPACELIFT-AGENT ──────────────────────│
+  󰘬 main                          root │
+     $ local                           │
+  󰘬 gui-spacelift-agent-pipeline-progr…│
+     $ local                           │
+     - build pipeline …  claude:opus-4 │
+  󰘬 gui-spacelift-agent-scope-quality  │
+     $ local                           │
+     - review scope qu…  codex:gpt-5.4 │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │                                                                                      ┌ Which key · Space v ───────────────┐
+                                       │                                                                                      │View                                │
+                                       │                                                                                      │s  Agents                           │
+                                       │                                                                                      │u  Quota details                    │
+                                       │                                                                                      │t/Ctrl-t  Tasks                     │
+                                       │                                                                                      │:  Search                           │
+                                       │                                                                                      │v  Split                            │
+                                       │                                                                                      │j/Down  Next row                    │
+                                       │                                                                                      │k/Up  Previous row                  │
+                                       │                                                                                      │b  Hide sidebar                     │
+                                       │                                                                                      │,  Settings                         │
+                                       │                                                                                      │                                    │
+                                       │                                                                                      │Other running agents: Waiting Input │
+                                       │                                                                                      │first, then Unread; excludes current│
+                                       │                                                                                      │Agent. Candidates/order captured on │
+                                       │                                                                                      │open; reopen to refresh. Enter      │
+                                       │                                                                                      │switches; typing waits for          │
+Quota left                             │                                                                                      │acknowledged screens. Loading input │
+Claude — waiting for report            │                                                                                      │is discarded; Ctrl-g/Esc cancels.   │
+Codex — unavailable                    │                                                                                      └ [Close] [Back] ────────────────────┘
+Grok — unavailable                     │
+BROWSE  Space Menu  : Search  ? Help

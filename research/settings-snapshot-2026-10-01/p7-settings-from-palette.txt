@@ -1,0 +1,61 @@
+󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ────────────────────────────│pid: 78154  elapsed: 4m  agent unknown  local (#1)
+  󰘬 main                          root │local (#1)
+▌    $ local                           │consigint ›
+  󰘬 gui-consigint-auth-handoff         │
+     $ local                           │
+     - review auth handoff    grok:4.6 │
+  󰘬 gui-consigint-worktree-lifecycle   │
+     $ local                           │
+     - implement lif…  claude:sonnet-4 │
+     - review websocke…  codex:gpt-5.4 │
+     - plan snapshot res…  pi:grok-4.6 │
+                                       │
+ SPACELIFT-AGENT ──────────────────────│
+  󰘬 main                          root │
+     $ local                           │  ┌Settings · read-only · Esc close · ↑↓ scroll────────────────────────────────────┐
+  󰘬 gui-spacelift-agent-pipeline-progr…│  │Document:                                                                       │
+     $ local                           │  │/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-KejCpx/dashboard.toml│
+     - build pipeline …  claude:opus-4 │  │Read by the Server 236s ago                                                     │
+  󰘬 gui-spacelift-agent-scope-quality  │  │                                                                                │
+     $ local                           │  │Findings: 2                                                                     │
+     - review scope qu…  codex:gpt-5.4 │  │  line 3, ready_sound: invalid type: string "yes", expected a boolean           │
+                                       │  │  line 4, mystery: unknown setting; ignored                                     │
+                                       │  │                                                                                │
+                                       │  │desktop_notifications = false  (Dashboard, default)                             │
+                                       │  │  Desktop alerts off: set `desktop_notifications = true` in dashboard.toml      │
+                                       │  │(needs OS notification permission)                                              │
+                                       │  │ready_sound = false  (Dashboard, default)                                       │
+                                       │  │automatic_local_terminals = on  (Server, document)                              │
+                                       │  │title_model = unset  (Server, default)                                          │
+                                       │  │  Automatic titles off: set `title_model = "provider/model"` in dashboard.toml  │
+                                       │  │branch_prefix = feature/  (Dashboard, default)                                  │
+                                       │  │picker_roots = ["/Users/xlyk/Code", "/Users/xlyk"]  (Dashboard, default)        │
+                                       │  │agents = []  (Dashboard, default)                                               │
+                                       │  │launch_choices = {}  (Dashboard, default)                                       │
+                                       │  │quota.enabled = false  (Server, default)                                        │
+                                       │  │  Codex/Grok usage off: set `quota.enabled = true` in dashboard.toml            │
+                                       │  │quota.codex.command = codex  (Server, default)                                  │
+                                       │  │quota.codex.home = unset  (Server, default)                                     │
+                                       │  │quota.grok.command = grok  (Server, default)                                    │
+                                       │  │quota.grok.home = unset  (Server, default)                                      │
+                                       │  │                                                                                │
+                                       │  │                                                                                │
+                                       │  │                                                                                │
+                                       │  └────────────────────────────────────────────────────────────────────────────────┘
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+Quota left                             │
+Claude — waiting for report            │
+Codex — unavailable                    │
+Grok — unavailable                     │
+BROWSE  Space Menu  : Search  ? Help
