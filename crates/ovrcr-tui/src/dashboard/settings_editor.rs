@@ -375,6 +375,24 @@ fn items(report: &SettingsReport, presets: &[String]) -> Vec<Row> {
     items
 }
 
+/// Greedy word wrap to `room` cells; a word longer than `room` stays whole.
+fn wrap(text: &str, room: usize) -> Vec<String> {
+    use unicode_width::UnicodeWidthStr;
+    let mut lines = vec![String::new()];
+    for word in text.split(' ') {
+        let line = lines.last_mut().expect("never empty");
+        if !line.is_empty() && line.width() + 1 + word.width() > room {
+            lines.push(word.to_string());
+        } else {
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+        }
+    }
+    lines
+}
+
 /// The palette's word filter: every word appears in the row's text.
 fn matches(row: &Row, filter: &str) -> bool {
     let haystack = format!("{} {} {} {}", row.group, row.label, row.id, row.value).to_lowercase();
@@ -894,6 +912,14 @@ impl Dashboard {
             lines.push(line);
             let detail =
                 |text: String, color| Line::styled(format!("      {indent}{text}"), style(color));
+            // Refusals, findings and descriptions wrap rather than clip.
+            let room = width.saturating_sub(6 + indent.len());
+            let wrapped = |text: String, color| {
+                wrap(&text, room)
+                    .into_iter()
+                    .map(move |line| detail(line, color))
+                    .collect::<Vec<_>>()
+            };
             if let Some(edit) = editing {
                 if let Some(list) = &edit.pick {
                     if !list.query.is_empty() {
@@ -930,13 +956,13 @@ impl Dashboard {
                 ));
             }
             if let Some(refused) = editor.refused.get(&row.id) {
-                lines.push(detail(format!("refused: {refused}"), RED));
+                lines.extend(wrapped(format!("refused: {refused}"), RED));
             }
             if let Some(finding) = &row.finding {
-                lines.push(detail(format!("! {finding}"), YELLOW));
+                lines.extend(wrapped(format!("! {finding}"), YELLOW));
             }
             for about in &row.about {
-                lines.push(detail(about.clone(), SUBTEXT));
+                lines.extend(wrapped(about.clone(), SUBTEXT));
             }
             if chosen && !row.child && !row.path.is_empty() {
                 lines.push(detail(format!("key: {}", row.path), MUTED));
@@ -1040,6 +1066,13 @@ mod tests {
         assert_eq!(second.path, "picker_roots[1]");
         assert_eq!(second.reset, Some(("picker_roots[1]".into(), None)));
         assert_eq!(row(&set, "picker_roots+").path, "picker_roots[2]");
+    }
+
+    #[test]
+    fn long_details_wrap_at_word_boundaries() {
+        assert_eq!(wrap("refused: a bc def", 8), ["refused:", "a bc def"]);
+        assert_eq!(wrap("short", 80), ["short"]);
+        assert_eq!(wrap("toolongword x", 4), ["toolongword", "x"]);
     }
 
     #[test]
