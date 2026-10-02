@@ -37,6 +37,20 @@ Keep your permissions, trust policy, unrelated hooks, and renderer settings.
 Avoid loading the same merged configuration twice through different settings
 sources, which can duplicate existing hooks.
 
+The generated status line carries `"refreshInterval": 60`. Claude Code re-runs
+the status line on that timer while the session is idle, so an idle managed
+session keeps its `rate_limits` (the Quota left block) current. Setup keeps a
+`refreshInterval` you already set, and running setup on its own output changes
+nothing:
+
+```json
+"statusLine": {
+  "type": "command",
+  "command": ": ovrcr-managed-claude-v1; '/path/to/ovrcr' report claude-statusline --stdin-json",
+  "refreshInterval": 60
+}
+```
+
 Generated OVRCR command hooks are synchronous. Check any project, plugin, or
 managed settings that can add or override hooks: inspecting one file does not
 prove Claude's effective configuration. Setup preserves an external status-line

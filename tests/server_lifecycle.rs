@@ -8411,6 +8411,24 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         waiting.reason.as_deref(),
         Some(ovrcr::protocol::CLAUDE_WAITING)
     );
+    // Signed out, the waiting row says so; the session's report below still wins.
+    fixture.claude.set(false, "none", None);
+    assert_eq!(
+        fixture.request(Request::SetSetting {
+            path: "quota.codex.command".into(),
+            value: Some("\"codex-precedence\"".into()),
+        }),
+        Response::Ok
+    );
+    loop {
+        let message = read_frame::<ServerMessage>(&mut stream).unwrap();
+        let signed_out = matches!(&message, ServerMessage::Event(ServerEvent::QuotaChanged(snapshot))
+            if snapshot.claude.state == ovrcr::protocol::QuotaState::NotSignedIn);
+        dashboard.handle_server_message(message);
+        if signed_out {
+            break;
+        }
+    }
     assert_eq!(
         fixture.request(Request::SendTerminal {
             session: summary.id,

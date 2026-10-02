@@ -940,3 +940,91 @@ fn set_setting_quota_enabled_off_publishes_disabled_rows() {
         Some(ovrcr::settings::QUOTA_OFF)
     );
 }
+
+/// `claude auth status --json` sets the Claude row until a managed session
+/// reports. The Server asks at start and again on each `quota.*` or Claude
+/// executable change, so the row follows the fixture without a restart.
+#[test]
+fn claude_auth_status_sets_the_claude_row_and_keeps_no_identifier() {
+    let fixture = live::Live::idle().bounded();
+    fixture.claude.set(false, "none", None);
+    let server_log = fixture.root.path().join("server.log");
+    fixture.start_binary_logged(&[], &server_log);
+    let mut socket = attach(&fixture);
+    let mut seen = Vec::new();
+    let mut claude_until = |what: &str, state: QuotaState, reason: &str| {
+        let snapshot = quota_until(&mut socket, what, |q| {
+            seen.push(format!("{q:?}"));
+            q.claude.state == state
+        });
+        assert_eq!(snapshot.claude.reason.as_deref(), Some(reason), "{what}");
+        assert_eq!(snapshot.claude.source, None);
+    };
+    let mut change = 0;
+    let set = |path: &str, value: String| {
+        assert_eq!(
+            fixture.request(Request::SetSetting {
+                path: path.into(),
+                value: Some(value),
+            }),
+            Response::Ok
+        );
+    };
+    let mut bump = || {
+        change += 1;
+        set("quota.codex.command", format!("\"codex-{change}\""));
+    };
+
+    claude_until(
+        "not signed in at start",
+        QuotaState::NotSignedIn,
+        "run claude auth login",
+    );
+    fixture.claude.set(true, "claude.ai", Some("max"));
+    bump();
+    claude_until("signed in", QuotaState::Checking, CLAUDE_WAITING);
+    fixture.claude.set(true, "api_key", None);
+    bump();
+    claude_until(
+        "API-key login",
+        QuotaState::Unsupported,
+        "API-key logins have no subscription allowance",
+    );
+    fixture.claude.set(false, "none", None);
+    bump();
+    claude_until(
+        "signed out again",
+        QuotaState::NotSignedIn,
+        "run claude auth login",
+    );
+
+    // The executable the settings name wins over PATH; a missing or failing
+    // one is Unavailable with OVRCR's own reason.
+    let agents = |argv0: &str| {
+        format!(
+            "[{{ name = \"claude\", argv = [{}] }}]",
+            toml::Value::String(argv0.into())
+        )
+    };
+    let missing = fixture.root.path().join("no-such-claude");
+    set("agents", agents(&missing.display().to_string()));
+    claude_until(
+        "missing claude",
+        QuotaState::Unavailable,
+        "claude not found at the configured path",
+    );
+    set("agents", agents("/usr/bin/false"));
+    claude_until(
+        "failing claude",
+        QuotaState::Unavailable,
+        "claude auth status unreadable",
+    );
+
+    let log = std::fs::read_to_string(&server_log).unwrap();
+    for text in seen.iter().chain([&log]) {
+        assert!(
+            !text.contains("example.invalid") && !text.contains("firstParty"),
+            "the auth status output leaked: {text}"
+        );
+    }
+}

@@ -138,6 +138,25 @@ fn setup_migrates_only_exact_legacy_statusline_and_marks_hooks() {
     assert!(notes.contains("Manual migration required"));
 }
 #[test]
+fn setup_adds_status_line_refresh_interval_and_keeps_the_users() {
+    let _env_lock = env_lock();
+    let root = tempfile::tempdir().unwrap();
+    let (fresh, notes) = setup(&root, &json!({}));
+    assert_eq!(fresh["statusLine"]["refreshInterval"], 60);
+    assert!(notes.contains("refreshInterval"));
+    let (repeated, _) = setup(&root, &fresh);
+    assert_eq!(repeated, fresh);
+    let (rendered, _) = setup(
+        &root,
+        &json!({"statusLine":{"type":"command", "command":"printf hi"}}),
+    );
+    assert_eq!(rendered["statusLine"]["refreshInterval"], 60);
+    let mut custom = fresh.clone();
+    custom["statusLine"]["refreshInterval"] = json!(15);
+    let (kept, _) = setup(&root, &custom);
+    assert_eq!(kept, custom);
+}
+#[test]
 fn setup_quotes_actual_executable_path() {
     let _env_lock = env_lock();
     let root = tempfile::tempdir().unwrap();

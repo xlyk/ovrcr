@@ -6113,6 +6113,12 @@ fn accept_loop_survives_thread_spawn_failure() {
     let socket = root.path().join("server.sock");
     let registry = root.path().join("config.toml");
     save_registry_atomic(&Registry::default(), &registry).unwrap();
+    // Not the developer's `claude`: `claude auth status` finds nothing here.
+    std::fs::write(
+        root.path().join("dashboard.toml"),
+        "agents = [{ name = \"claude\", argv = [\"/nonexistent/claude\"] }]\n",
+    )
+    .unwrap();
     let paths = ServerPaths {
         socket: socket.clone(),
     };

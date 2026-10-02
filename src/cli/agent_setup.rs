@@ -277,6 +277,18 @@ fn supported_statusline(command: &str, executable: &str) -> bool {
         .is_some_and(|inner| !inner.replace("'\"'\"'", "").contains('\''))
 }
 
+/// Claude Code re-runs the status line on this timer while idle, so an idle
+/// managed session keeps `rate_limits` current. A value the user already set
+/// is theirs.
+fn refresh_interval(value: &mut Value) -> anyhow::Result<()> {
+    value["statusLine"]
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("statusLine must be an object"))?
+        .entry("refreshInterval")
+        .or_insert(json!(60));
+    Ok(())
+}
+
 pub(super) fn setup(path: Option<&Path>) -> AppResult<()> {
     let result = (|| -> anyhow::Result<Value> {
         let mut value = settings(path)?;
@@ -324,7 +336,9 @@ pub(super) fn setup(path: Option<&Path>) -> AppResult<()> {
             quote(&executable)
         );
         match renderer {
-            Some(ref renderer) if renderer.starts_with(MARKER) => {}
+            Some(ref renderer) if renderer.starts_with(MARKER) => {
+                refresh_interval(&mut value)?;
+            }
             Some(ref renderer)
                 if renderer.contains("claude-context")
                     && !exact(renderer, &executable, "claude-context") =>
@@ -353,6 +367,7 @@ pub(super) fn setup(path: Option<&Path>) -> AppResult<()> {
                     .ok_or_else(|| anyhow::anyhow!("statusLine must be an object"))?;
                 status.insert("type".into(), json!("command"));
                 status.insert("command".into(), json!(composed));
+                refresh_interval(&mut value)?;
             }
         }
         eprintln!(
@@ -361,7 +376,7 @@ pub(super) fn setup(path: Option<&Path>) -> AppResult<()> {
             quote(&executable)
         );
         eprintln!(
-            "Removal: remove only hook handlers whose command starts with `{MARKER}`; preserve other handlers. Restore your previous statusLine command from the supplied input (the --render-command argument), or remove the marked default statusLine. Keep all permission/trust settings unchanged. Arbitrary render commands are preserved as one quoted argument."
+            "Removal: remove only hook handlers whose command starts with `{MARKER}`; preserve other handlers. Restore your previous statusLine command from the supplied input (the --render-command argument), or remove the marked default statusLine. Keep all permission/trust settings unchanged. Arbitrary render commands are preserved as one quoted argument. statusLine.refreshInterval 60 re-runs the status line while Claude is idle so quota stays current; an existing refreshInterval is kept."
         );
         Ok(value)
     })();
