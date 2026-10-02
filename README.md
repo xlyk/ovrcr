@@ -350,7 +350,7 @@ findings.
 | --- | --- |
 | `OVRCR_CONFIG` | Registry path; selects an isolated instance |
 | `OVRCR_SOCKET` | Server socket path; selects an isolated server |
-| `OVRCR_DASHBOARD_CONFIG` | Settings document path; chooses a file only. The installed service receives only `OVRCR_CONFIG` and `OVRCR_SOCKET`, so it reads `dashboard.toml` beside `config.toml` |
+| `OVRCR_DASHBOARD_CONFIG` | Settings document path; chooses a file only. The installed service receives only `OVRCR_CONFIG` and `OVRCR_SOCKET`, so it reads `dashboard.toml` beside `config.toml`. The Dashboard uses the Server's document, not its own environment |
 
 Set `OVRCR_CONFIG` and `OVRCR_SOCKET` together for a test fixture or a second
 instance. OVRCR creates a missing socket directory with mode 700 and refuses to

@@ -56,6 +56,7 @@ enum Command {
     Switch(SessionId),
     SwitchAgent(SessionId, SessionRunId),
     Hint(Action),
+    Settings,
 }
 
 struct Entry {
@@ -1269,6 +1270,10 @@ impl Dashboard {
             label: "Remove project".into(),
             command: Command::RemoveProject,
         });
+        entries.push(Entry {
+            label: "Settings".into(),
+            command: Command::Settings,
+        });
         for project in &self.hierarchy.projects {
             for workspace in &project.workspaces {
                 for session in &workspace.sessions {
@@ -1721,6 +1726,12 @@ impl Dashboard {
                                 }
                                 self.select_session(id);
                                 return self.request_selected();
+                            }
+                            Command::Settings => {
+                                if let Some(request_id) = palette.suggestions.inspect {
+                                    self.ignored_responses.insert(request_id);
+                                }
+                                return self.open_details(super::quota::Details::Settings);
                             }
                             Command::Hint(action) => {
                                 if self
@@ -3824,12 +3835,14 @@ mod launch_tests {
     #[test]
     fn settings_edits_reject_invalid_documents_without_changing_bytes() {
         for action in ["N", "S", "Agent", "Terminal"] {
-            for original in [
-                "invalid = [",
-                "ready_sound = 'yes'\n",
-                "branch_prefix = 42\n",
-                "launch_choices = []\n",
-            ] {
+            // Only a document that is not TOML, or a launch_choices that is
+            // not a table to write into, is refused.
+            let refused: &[&str] = if matches!(action, "N" | "S") {
+                &["invalid = ["]
+            } else {
+                &["invalid = [", "launch_choices = []\n"]
+            };
+            for &original in refused {
                 let root = tempfile::tempdir().unwrap();
                 let path = root.path().join("dashboard.toml");
                 std::fs::write(&path, original).unwrap();
@@ -3868,6 +3881,40 @@ mod launch_tests {
                             .all(|message| !matches!(message.request, Request::CreateSession(_)))
                     );
                 }
+            }
+        }
+    }
+
+    /// A wrongly typed value is the Server's finding to report. An edit keeps
+    /// it byte for byte, or replaces it when it is the value being edited.
+    #[test]
+    fn settings_edits_keep_or_replace_wrongly_typed_values() {
+        for action in ["N", "S", "Agent", "Terminal"] {
+            for original in [
+                "ready_sound = 'yes'\n",
+                "branch_prefix = 42\n",
+                "launch_choices = []\n",
+            ] {
+                if original.starts_with("launch_choices") && !matches!(action, "N" | "S") {
+                    continue;
+                }
+                let root = tempfile::tempdir().unwrap();
+                let path = root.path().join("dashboard.toml");
+                std::fs::write(&path, original).unwrap();
+                let mut d = dashboard();
+                d.settings_path = Some(path.clone());
+                save_preference(&mut d, action);
+                let saved = std::fs::read_to_string(&path).unwrap();
+                if action == "S" && original.starts_with("ready_sound") {
+                    assert_eq!(saved, "ready_sound = true\n", "{action}");
+                } else {
+                    assert!(saved.starts_with(original), "{action}: {saved}");
+                }
+                assert!(
+                    !rendered_settings_notice(&d).contains("Could not save")
+                        && !rendered_settings_notice(&d).contains("could not remember"),
+                    "{action}: {original}"
+                );
             }
         }
     }
@@ -3971,12 +4018,17 @@ mod launch_tests {
             let mut d = dashboard();
             d.settings_path = Some(path.clone());
             save_preference(&mut d, action);
-            let (loaded, error) = super::super::settings::load_dashboard_settings(&path);
-            assert_eq!(error, None);
-            assert_eq!(loaded.desktop_notifications, action == "N");
-            assert_eq!(loaded.ready_sound, action == "S");
+            let raw = super::super::settings::written(&path);
             assert_eq!(
-                loaded.launch_choices.get("demo"),
+                raw.get("desktop_notifications").and_then(|v| v.as_bool()),
+                (action == "N").then_some(true)
+            );
+            assert_eq!(
+                raw.get("ready_sound").and_then(|v| v.as_bool()),
+                (action == "S").then_some(true)
+            );
+            assert_eq!(
+                super::super::settings::written_choice(&path, "demo").as_ref(),
                 d.settings.launch_choices.get("demo")
             );
             assert_eq!(
@@ -4009,25 +4061,29 @@ mod launch_tests {
             for line in external.lines() {
                 assert!(saved.contains(line), "{action}: missing {line}");
             }
-            let (loaded, error) = super::super::settings::load_dashboard_settings(&path);
-            assert_eq!(error, None);
-            assert_eq!(loaded.branch_prefix, "fix/");
+            let raw = super::super::settings::written(&path);
+            assert_eq!(raw["branch_prefix"].as_str(), Some("fix/"));
             assert_eq!(
-                loaded.launch_choices.get("other.project"),
-                Some(&LaunchChoice::Agent("other".into()))
+                super::super::settings::written_choice(&path, "other.project"),
+                Some(LaunchChoice::Agent("other".into()))
             );
             if matches!(action, "N" | "S") {
-                assert_eq!(d.settings, loaded);
+                let key = if action == "N" {
+                    "desktop_notifications"
+                } else {
+                    "ready_sound"
+                };
+                assert_eq!(raw[key].as_bool(), Some(true));
             } else {
                 assert_eq!(
-                    loaded.launch_choices.get(project),
-                    Some(&if action == "Agent" {
+                    super::super::settings::written_choice(&path, project),
+                    Some(if action == "Agent" {
                         LaunchChoice::Agent("fixture-agent".into())
                     } else {
                         LaunchChoice::Terminal
                     })
                 );
-                assert_eq!(loaded.launch_choices.len(), 2);
+                assert_eq!(raw["launch_choices"].as_table().unwrap().len(), 2);
             }
             assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
         }
@@ -4071,19 +4127,23 @@ mod launch_tests {
                 std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
                 0o640
             );
-            let (loaded, error) = super::super::settings::load_dashboard_settings(&path);
-            assert_eq!(error, None);
-            assert!(loaded.ready_sound);
             assert_eq!(
-                loaded.launch_choices.get("other.project"),
-                Some(&LaunchChoice::Agent("other".into()))
+                super::super::settings::written(&path)["ready_sound"].as_bool(),
+                Some(true)
+            );
+            assert_eq!(
+                super::super::settings::written_choice(&path, "other.project"),
+                Some(LaunchChoice::Agent("other".into()))
             );
             let expected = if start == "Agent" {
                 LaunchChoice::Agent("fixture-agent".into())
             } else {
                 LaunchChoice::Terminal
             };
-            assert_eq!(loaded.launch_choices.get("demo"), Some(&expected));
+            assert_eq!(
+                super::super::settings::written_choice(&path, "demo").as_ref(),
+                Some(&expected)
+            );
             assert_eq!(d.settings.launch_choices.get("demo"), Some(&expected));
             assert_eq!(d.focused_session(), Some(SessionId(1)));
             assert!(d.error.is_none());
@@ -4131,12 +4191,13 @@ mod launch_tests {
             request_id: m.request_id,
             response: Response::CreatedSession(Box::new(summary(1))),
         });
-        let (settings, error) = super::super::settings::load_dashboard_settings(&path);
-        assert!(error.is_none());
-        assert!(settings.ready_sound);
         assert_eq!(
-            settings.launch_choices.get("demo"),
-            Some(&LaunchChoice::Terminal)
+            super::super::settings::written(&path)["ready_sound"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            super::super::settings::written_choice(&path, "demo"),
+            Some(LaunchChoice::Terminal)
         );
         assert!(
             !std::fs::read_to_string(path)
@@ -4158,14 +4219,14 @@ mod launch_tests {
             request_id: m.request_id,
             response: Response::CreatedSession(Box::new(summary(1))),
         });
-        let (loaded, error) = super::super::settings::load_dashboard_settings(&path);
-        assert!(error.is_none());
-        assert_eq!(
-            loaded.launch_choices.get("demo"),
-            Some(&LaunchChoice::Agent("fixture-agent".into()))
-        );
+        let saved = super::super::settings::written_choice(&path, "demo").unwrap();
+        assert_eq!(saved, LaunchChoice::Agent("fixture-agent".into()));
+        // A restarted Dashboard learns the choice from the Server's reading.
         let mut restarted = dashboard();
-        restarted.settings.launch_choices = loaded.launch_choices;
+        restarted
+            .settings
+            .launch_choices
+            .insert("demo".into(), saved);
         restarted.open_create_terminal();
         let Page::Form { fields, .. } = &restarted.palette.as_ref().unwrap().page else {
             panic!()
@@ -4224,7 +4285,7 @@ mod launch_tests {
         for coalesced in [false, true] {
             let root = tempfile::tempdir().unwrap();
             let path = root.path().join("dashboard.toml");
-            std::fs::write(&path, "ready_sound = 'invalid'\n").unwrap();
+            std::fs::write(&path, "ready_sound = [\n").unwrap();
             let mut d = dashboard();
             d.settings_path = Some(path);
             let mut hierarchy = d.hierarchy.clone();

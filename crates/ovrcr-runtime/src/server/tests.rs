@@ -2062,6 +2062,7 @@ fn partial_resize_connection_delivers_error_before_owner_close() {
             response: Response::Hierarchy(_),
         }
     ));
+    expect_settings_reading(&mut client_stream);
     write_frame(
         &mut client_stream,
         &ClientMessage {
@@ -2171,6 +2172,7 @@ fn partial_resize_blocked_writer_times_out_and_closes_owner() {
             response: Response::Hierarchy(_),
         }
     ));
+    expect_settings_reading(&mut client_stream);
     let sink = state
         .dashboard
         .slot_for_test()
@@ -2297,6 +2299,7 @@ fn terminal_frame_survives_a_concurrent_lifecycle_event() {
             response: Response::Hierarchy(_),
         }
     ));
+    expect_settings_reading(&mut client_stream);
     let sink = state
         .dashboard
         .slot_for_test()
@@ -3194,6 +3197,7 @@ fn history_owner_and_token_isolation() {
                     response: Response::Hierarchy(_),
                 }
             ));
+            expect_settings_reading(&mut client);
             write_frame(
                 &mut client,
                 &ClientMessage {
@@ -3240,6 +3244,7 @@ fn history_owner_and_token_isolation() {
             response: Response::Hierarchy(_),
         }
     ));
+    expect_settings_reading(&mut replacement_client);
     let old_identity = replacement_state
         .dashboard
         .slot_for_test()
@@ -3768,6 +3773,7 @@ fn late_response_does_not_reach_a_replacement_dashboard() {
             response: Response::Hierarchy(_),
         }
     ));
+    expect_settings_reading(&mut first_client);
     let first_snapshot = state.dashboard.snapshot().expect("first dashboard slot");
     // The report handler blocks until the dispatcher answers, and this test is
     // the dispatcher, so the response cannot be written before the slot changes.
@@ -3814,6 +3820,7 @@ fn late_response_does_not_reach_a_replacement_dashboard() {
             response: Response::Hierarchy(_),
         }
     ));
+    expect_settings_reading(&mut second_client);
     report_completion.send(Response::Ok).unwrap();
     assert!(join_test_thread_bounded(
         first_handler,
@@ -3868,6 +3875,7 @@ fn stale_geometry_does_not_overwrite_replacement_size() {
             response: Response::Hierarchy(_),
         }
     ));
+    expect_settings_reading(&mut first_client);
     // Hold the mutation lock so the geometry request cannot be applied until
     // the slot already belongs to the replacement.
     let mutation = state.mutation_lock.lock().unwrap();
@@ -3912,6 +3920,7 @@ fn stale_geometry_does_not_overwrite_replacement_size() {
             response: Response::Hierarchy(_),
         }
     ));
+    expect_settings_reading(&mut second_client);
     let second_identity = state
         .dashboard
         .slot_for_test()
@@ -4173,6 +4182,7 @@ fn dashboard_shutdown_completes_when_response_sink_is_closed() {
             response: Response::Hierarchy(_)
         }
     ));
+    expect_settings_reading(&mut client);
     // Force response delivery to fail, independently of writer scheduling.
     state
         .dashboard
@@ -4253,6 +4263,7 @@ fn dashboard_shutdown_waits_for_stalled_writer_completion() {
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
     let _ = read_frame::<ServerMessage>(&mut client_stream).unwrap();
+    expect_settings_reading(&mut client_stream);
     assert!(matches!(
         read_frame::<ServerMessage>(&mut client_stream).unwrap(),
         ServerMessage::Response {
@@ -8071,4 +8082,17 @@ fn changing_automatic_local_policy_leaves_existing_terminals() {
         .unwrap_err();
     assert_eq!(live_local_sessions(&state, "fixture", &root_id), 1);
     assert_eq!(state.session_summaries().len(), before);
+}
+
+/// Every Dashboard hello is answered with the hierarchy and then the Server's
+/// reading of the settings document.
+fn expect_settings_reading(stream: &mut UnixStream) {
+    let message = read_frame::<ServerMessage>(stream).unwrap();
+    assert!(
+        matches!(
+            message,
+            ServerMessage::Event(ServerEvent::SettingsChanged(_))
+        ),
+        "expected the settings reading after hello: {message:?}"
+    );
 }

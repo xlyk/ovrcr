@@ -408,6 +408,10 @@ pub enum ServerEvent {
     },
     SessionChanged(Box<SessionSummary>),
     QuotaChanged(Box<crate::QuotaSnapshot>),
+    /// The Server's reading of the settings document, sent after the hello
+    /// response and whenever that reading changes. The Dashboard has no other
+    /// source of settings.
+    SettingsChanged(Box<crate::SettingsReport>),
 }
 
 #[cfg(test)]
@@ -440,6 +444,61 @@ mod wire_snapshot {
             turn: Some("turn".into()),
             activity_revision: 2,
         }
+    }
+
+    fn settings_report() -> crate::SettingsReport {
+        let mut settings = crate::Settings {
+            title_model: Some("pi/m".into()),
+            picker_roots: vec!["/c".into()],
+            agents: vec![crate::AgentOverride {
+                name: "a".into(),
+                argv: vec!["b".into()],
+            }],
+            ..Default::default()
+        };
+        settings
+            .launch_choices
+            .insert("p".into(), crate::LaunchChoice::Agent("a".into()));
+        settings
+            .launch_choices
+            .insert("q".into(), crate::LaunchChoice::Terminal);
+        settings.quota.codex.home = Some("/h".into());
+        crate::SettingsReport {
+            path: "/d.toml".into(),
+            read_unix_ms: 5,
+            settings,
+            rows: vec![crate::SettingRow {
+                key: "quota.enabled".into(),
+                owner: crate::SettingOwner::Server,
+                value: Some("false".into()),
+                source: crate::SettingSource::Default,
+                off_state: Some("off".into()),
+            }],
+            findings: vec![crate::SettingsFinding {
+                key: Some("k".into()),
+                message: "m".into(),
+                line: Some(3),
+            }],
+        }
+    }
+
+    /// bincode has no self-describing format, so a serde shape that needs
+    /// `deserialize_any` (an internally tagged enum, for one) would encode
+    /// and then fail to decode. The adjacently tagged `LaunchChoice` must not.
+    #[test]
+    fn settings_report_round_trips() {
+        let report = settings_report();
+        let bytes = bincode::serde::encode_to_vec(
+            ServerMessage::Event(ServerEvent::SettingsChanged(Box::new(report.clone()))),
+            bincode::config::standard(),
+        )
+        .unwrap();
+        let (decoded, _): (ServerMessage, _) =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+        assert!(matches!(
+            decoded,
+            ServerMessage::Event(ServerEvent::SettingsChanged(decoded)) if *decoded == report
+        ));
     }
 
     fn summary() -> SessionSummary {
@@ -857,6 +916,10 @@ mod wire_snapshot {
                 ServerEvent::SessionChanged(Box::new(summary())),
             ),
             ("QuotaChanged", ServerEvent::QuotaChanged(Box::default())),
+            (
+                "SettingsChanged",
+                ServerEvent::SettingsChanged(Box::new(settings_report())),
+            ),
         ]
     }
 
@@ -1132,6 +1195,10 @@ mod wire_snapshot {
         (
             "ServerEvent::QuotaChanged",
             "04000000000000010000000002020000000002",
+        ),
+        (
+            "ServerEvent::SettingsChanged",
+            "05072f642e746f6d6c05000002010470692f6d08666561747572652f01022f630101610101620201700101610171000005636f64657801022f680467726f6b00010d71756f74612e656e61626c656400010566616c73650001036f66660101016b016d0103",
         ),
         ("QuotaState::Waiting", "00"),
         ("QuotaState::Current", "01"),

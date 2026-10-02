@@ -3111,26 +3111,44 @@ fn automatic_local_terminal_binding_persists_cycle_and_keeps_setting_on_failure(
     ] {
         dashboard.key(KeyCode::Char('L'));
         assert_eq!(dashboard.settings.automatic_local_terminals, expected);
-        let (loaded, error) = super::settings::load_dashboard_settings(&path);
-        assert_eq!(error, None);
-        assert_eq!(loaded.automatic_local_terminals, expected);
-        assert_eq!(loaded.branch_prefix, "fix/");
-        let saved: toml::Table = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let saved = super::settings::written(&path);
+        assert_eq!(
+            saved[AutomaticLocalTerminals::KEY].as_str(),
+            Some(expected.as_str())
+        );
+        assert_eq!(saved["branch_prefix"].as_str(), Some("fix/"));
         assert_eq!(saved["extra"].as_str(), Some("keep"));
+        // A restarted Dashboard learns the saved value from the Server's reading.
         let mut restarted = Dashboard::new(TerminalSize {
             rows: 24,
             cols: 120,
         });
         restarted.settings_path = Some(path.clone());
-        restarted.settings = loaded;
+        restarted.settings.automatic_local_terminals = expected;
         dashboard = restarted;
     }
-    let invalid = "automatic_local_terminals = 42\n";
+    // A wrongly typed value is a Server finding, not a reason to refuse: the
+    // edit replaces it and keeps every other line.
+    std::fs::write(
+        &path,
+        "automatic_local_terminals = 42\nbranch_prefix = 'fix/'\n",
+    )
+    .unwrap();
+    dashboard.key(KeyCode::Char('L'));
+    assert_eq!(
+        dashboard.settings.automatic_local_terminals,
+        AutomaticLocalTerminals::On
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "automatic_local_terminals = \"on\"\nbranch_prefix = 'fix/'\n"
+    );
+    let invalid = "automatic_local_terminals = [\n";
     std::fs::write(&path, invalid).unwrap();
     dashboard.key(KeyCode::Char('L'));
     assert_eq!(
         dashboard.settings.automatic_local_terminals,
-        AutomaticLocalTerminals::DefaultBranchOnly
+        AutomaticLocalTerminals::On
     );
     assert!(
         dashboard
@@ -3152,40 +3170,43 @@ fn alert_toggles_persist_across_dashboard_restart() {
         rows: 24,
         cols: 120,
     });
-    dashboard.settings = super::settings::load_dashboard_settings(&path).0;
     dashboard.settings_path = Some(path.clone());
     dashboard.key(KeyCode::Char('N'));
     dashboard.key(KeyCode::Char('S'));
-    let (loaded, error) = super::settings::load_dashboard_settings(&path);
-    assert_eq!(error, None);
-    assert!(
-        loaded.desktop_notifications,
+    let raw = super::settings::written(&path);
+    assert_eq!(
+        raw["desktop_notifications"].as_bool(),
+        Some(true),
         "notification toggle must survive restart"
     );
-    assert!(loaded.ready_sound, "sound toggle must survive restart");
-    assert_eq!(loaded.branch_prefix, "fix/");
-    assert_eq!(loaded.agents[0].argv, ["/bin/sh"]);
-    let raw: toml::Table = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(
+        raw["ready_sound"].as_bool(),
+        Some(true),
+        "sound toggle must survive restart"
+    );
+    assert_eq!(raw["branch_prefix"].as_str(), Some("fix/"));
+    assert_eq!(raw["agents"][0]["argv"][0].as_str(), Some("/bin/sh"));
     assert_eq!(raw["extra"].as_str(), Some("keep"));
+    // A restarted Dashboard learns the saved values from the Server's reading.
     let mut restarted = Dashboard::new(TerminalSize {
         rows: 24,
         cols: 120,
     });
-    restarted.settings = loaded;
+    restarted.settings.desktop_notifications = true;
+    restarted.settings.ready_sound = true;
     restarted.settings_path = Some(path.clone());
     restarted.key(KeyCode::Char('N'));
     restarted.key(KeyCode::Char('S'));
-    let (loaded, error) = super::settings::load_dashboard_settings(&path);
-    assert_eq!(error, None);
-    assert!(!loaded.desktop_notifications);
-    assert!(!loaded.ready_sound);
+    let raw = super::settings::written(&path);
+    assert_eq!(raw["desktop_notifications"].as_bool(), Some(false));
+    assert_eq!(raw["ready_sound"].as_bool(), Some(false));
 }
 
 #[test]
 fn alert_toggle_save_failure_leaves_setting_and_file_unchanged() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("dashboard.toml");
-    let invalid = "desktop_notifications = 'invalid'\n";
+    let invalid = "desktop_notifications = [\n";
     std::fs::write(&path, invalid).unwrap();
     let mut dashboard = Dashboard::new(TerminalSize {
         rows: 24,
@@ -3228,7 +3249,10 @@ fn alert_toggle_preserves_comments_and_other_preference_edits() {
             "desktop_notifications = true"
         )
     );
-    assert!(dashboard.settings.ready_sound);
+    assert!(
+        !dashboard.settings.ready_sound,
+        "the Dashboard learns other settings only from the Server's reading"
+    );
 }
 
 #[test]

@@ -1,123 +1,65 @@
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+//! The Dashboard's settings writer. Reading belongs to the Server, which
+//! publishes its reading as a `SettingsReport`; the Dashboard has no parser.
+//! Until edits move through the Server, the writer edits the document path
+//! that report names.
+pub use ovrcr_protocol::{AgentOverride, AutomaticLocalTerminals, LaunchChoice, Settings};
+use ovrcr_protocol::{SettingOwner, SettingSource, SettingsReport};
+use std::path::Path;
 
-/// When OVRCR automatically creates a terminal named `local` for new workspaces.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum AutomaticLocalTerminals {
-    On,
-    Off,
-    #[default]
-    DefaultBranchOnly,
-}
-
-impl AutomaticLocalTerminals {
-    pub const KEY: &'static str = "automatic_local_terminals";
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::On => "on",
-            Self::Off => "off",
-            Self::DefaultBranchOnly => "default_branch_only",
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::On => "on",
-            Self::Off => "off",
-            Self::DefaultBranchOnly => "default branch only",
-        }
-    }
-
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw.trim() {
-            "on" => Some(Self::On),
-            "off" => Some(Self::Off),
-            "default_branch_only" | "default branch only" => Some(Self::DefaultBranchOnly),
-            _ => None,
-        }
-    }
-
-    pub fn next(self) -> Self {
-        match self {
-            Self::DefaultBranchOnly => Self::On,
-            Self::On => Self::Off,
-            Self::Off => Self::DefaultBranchOnly,
-        }
+/// The footer line for a reading with `count` findings.
+pub(super) fn findings_notice(count: usize) -> String {
+    match count {
+        0 => "No settings findings".into(),
+        1 => "1 settings finding; see Settings".into(),
+        count => format!("{count} settings findings; see Settings"),
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DashboardSettings {
-    /// Desktop alerts for new background agent responses and Input requests. Off by default.
-    pub desktop_notifications: bool,
-    /// A sound for the same two alert kinds, independent of the desktop channel. Off by default.
-    pub ready_sound: bool,
-    /// Automatic `local` terminal creation policy. Default branch only when unset.
-    pub automatic_local_terminals: AutomaticLocalTerminals,
-    pub agents: Vec<AgentOverride>,
-    pub picker_roots: Vec<PathBuf>,
-    pub branch_prefix: String,
-    pub launch_choices: BTreeMap<String, LaunchChoice>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-pub struct AgentOverride {
-    pub name: String,
-    pub argv: Vec<String>,
-}
-
-impl Default for DashboardSettings {
-    fn default() -> Self {
-        Self {
-            desktop_notifications: false,
-            ready_sound: false,
-            automatic_local_terminals: AutomaticLocalTerminals::default(),
-            agents: Vec::new(),
-            picker_roots: default_picker_roots(),
-            branch_prefix: "feature/".into(),
-            launch_choices: BTreeMap::new(),
+/// The Settings popup: the document and when the Server read it, findings
+/// first, then every setting in the order the Server published.
+pub(super) fn report_lines(report: Option<&SettingsReport>, now: u64) -> Vec<String> {
+    let Some(report) = report else {
+        return vec!["Waiting for the Server's settings reading.".into()];
+    };
+    let read = ovrcr_protocol::freshness::age_ms(report.read_unix_ms, now)
+        .map(|age| format!("{}s ago", age / 1_000))
+        .unwrap_or_else(|| "at an unverifiable time".into());
+    let mut lines = vec![
+        format!("Document: {}", report.path.display()),
+        format!("Read by the Server {read}"),
+        String::new(),
+        format!("Findings: {}", report.findings.len()),
+    ];
+    for finding in &report.findings {
+        let line = finding
+            .line
+            .map(|line| format!("line {line}, "))
+            .unwrap_or_default();
+        let key = finding.key.as_deref().unwrap_or("document");
+        lines.push(format!("  {line}{key}: {}", finding.message));
+    }
+    lines.push(String::new());
+    for row in &report.rows {
+        let owner = match row.owner {
+            SettingOwner::Server => "Server",
+            SettingOwner::Dashboard => "Dashboard",
+        };
+        let source = match row.source {
+            SettingSource::Default => "default",
+            SettingSource::Document => "document",
+        };
+        let value = row.value.as_deref().unwrap_or("unset");
+        lines.push(format!("{} = {value}  ({owner}, {source})", row.key));
+        if let Some(off) = &row.off_state {
+            lines.push(format!("  {off}"));
         }
     }
-}
-
-#[derive(Deserialize, Default)]
-struct RawSettings {
-    #[serde(default)]
-    desktop_notifications: bool,
-    #[serde(default)]
-    ready_sound: bool,
-    #[serde(default)]
-    automatic_local_terminals: Option<String>,
-    #[serde(default)]
-    agents: Vec<AgentOverride>,
-    picker_roots: Option<Vec<String>>,
-    branch_prefix: Option<String>,
-    #[serde(default)]
-    launch_choices: BTreeMap<String, LaunchChoice>,
-}
-
-pub fn load_dashboard_settings(path: &Path) -> (DashboardSettings, Option<String>) {
-    match std::fs::read_to_string(path) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            (DashboardSettings::default(), None)
-        }
-        Err(error) => (DashboardSettings::default(), Some(error.to_string())),
-        Ok(contents) => match toml::from_str::<RawSettings>(&contents) {
-            Ok(raw) => (raw.into_settings(), None),
-            Err(error) => (DashboardSettings::default(), Some(error.to_string())),
-        },
-    }
+    lines
 }
 
 /// Update only the selected preference, keeping other configuration values.
 /// Publish with one rename so readers never see a partially written document.
-pub(super) fn save_alert_setting(
-    path: &Path,
-    key: &str,
-    enabled: bool,
-) -> anyhow::Result<DashboardSettings> {
+pub(super) fn save_alert_setting(path: &Path, key: &str, enabled: bool) -> anyhow::Result<()> {
     save_settings(path, |document| {
         set_value(&mut document[key], enabled.into());
         Ok(())
@@ -127,7 +69,7 @@ pub(super) fn save_alert_setting(
 pub(super) fn save_automatic_local_terminals(
     path: &Path,
     policy: AutomaticLocalTerminals,
-) -> anyhow::Result<DashboardSettings> {
+) -> anyhow::Result<()> {
     save_settings(path, |document| {
         set_value(
             &mut document[AutomaticLocalTerminals::KEY],
@@ -144,11 +86,13 @@ fn set_value(item: &mut toml_edit::Item, mut value: toml_edit::Value) {
     *item = toml_edit::Item::Value(value);
 }
 
-/// Both edits read and validate the latest document before changing it.
+/// Every edit reads the latest document before changing it. A document that is
+/// not TOML is refused; a wrongly typed value elsewhere is the Server's finding
+/// to report, and the edit keeps it byte for byte.
 fn save_settings(
     path: &Path,
     edit: impl FnOnce(&mut toml_edit::DocumentMut) -> anyhow::Result<()>,
-) -> anyhow::Result<DashboardSettings> {
+) -> anyhow::Result<()> {
     use anyhow::{Context, bail};
     use std::io::Write;
 
@@ -182,12 +126,10 @@ fn save_settings(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(error) => return Err(error).context("read dashboard settings"),
     };
-    // Refuse to overwrite invalid settings, including incorrectly typed values.
-    toml::from_str::<RawSettings>(&contents).context("parse dashboard settings")?;
-    let mut document: toml_edit::DocumentMut = contents.parse()?;
+    let mut document: toml_edit::DocumentMut =
+        contents.parse().context("parse dashboard settings")?;
     edit(&mut document)?;
     let contents = document.to_string();
-    let settings = toml::from_str::<RawSettings>(&contents)?.into_settings();
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -213,198 +155,7 @@ fn save_settings(
         // PersistError owns the temporary file; discard it even if the caller retains the error.
         .map_err(|error| error.error)
         .context("replace dashboard settings")?;
-    Ok(settings)
-}
-
-impl RawSettings {
-    fn into_settings(self) -> DashboardSettings {
-        DashboardSettings {
-            desktop_notifications: self.desktop_notifications,
-            ready_sound: self.ready_sound,
-            automatic_local_terminals: self
-                .automatic_local_terminals
-                .as_deref()
-                .and_then(AutomaticLocalTerminals::parse)
-                .unwrap_or_default(),
-            agents: self.agents,
-            picker_roots: self
-                .picker_roots
-                .map(|roots| roots.into_iter().map(|root| expand_tilde(&root)).collect())
-                .unwrap_or_else(default_picker_roots),
-            branch_prefix: self.branch_prefix.unwrap_or_else(|| "feature/".into()),
-            launch_choices: self.launch_choices,
-        }
-    }
-}
-
-fn default_picker_roots() -> Vec<PathBuf> {
-    ["~/Code", "~/src", "~"]
-        .into_iter()
-        .map(expand_tilde)
-        .filter(|path| path.exists())
-        .collect()
-}
-
-fn expand_tilde(path: &str) -> PathBuf {
-    if path == "~" {
-        home_dir()
-    } else if let Some(rest) = path.strip_prefix("~/") {
-        home_dir().join(rest)
-    } else {
-        PathBuf::from(path)
-    }
-}
-
-fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"))
-}
-
-#[cfg(test)]
-pub(crate) static HOME_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Write;
-
-    #[test]
-    fn desktop_notifications_default_off_and_explicit_config_opt_in() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("dashboard.toml");
-        assert!(!load_dashboard_settings(&path).0.desktop_notifications);
-        std::fs::write(&path, "desktop_notifications = true\n").unwrap();
-        let (settings, error) = load_dashboard_settings(&path);
-        assert!(settings.desktop_notifications);
-        assert!(error.is_none());
-        std::fs::write(&path, "desktop_notifications = false\n").unwrap();
-        assert!(!load_dashboard_settings(&path).0.desktop_notifications);
-        std::fs::write(&path, "desktop_notifications = \"yes\"\n").unwrap();
-        let (settings, error) = load_dashboard_settings(&path);
-        assert!(!settings.desktop_notifications);
-        assert!(error.is_some());
-    }
-
-    #[test]
-    fn ready_sound_default_off_and_independent_of_desktop_notifications() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("dashboard.toml");
-        assert!(!load_dashboard_settings(&path).0.ready_sound);
-        std::fs::write(&path, "ready_sound = true\n").unwrap();
-        let (settings, error) = load_dashboard_settings(&path);
-        assert!(settings.ready_sound);
-        assert!(!settings.desktop_notifications);
-        assert!(error.is_none());
-        std::fs::write(&path, "desktop_notifications = true\n").unwrap();
-        let settings = load_dashboard_settings(&path).0;
-        assert!(settings.desktop_notifications);
-        assert!(!settings.ready_sound);
-        std::fs::write(&path, "ready_sound = \"yes\"\n").unwrap();
-        let (settings, error) = load_dashboard_settings(&path);
-        assert!(!settings.ready_sound);
-        assert!(error.is_some());
-    }
-
-    #[test]
-    fn automatic_local_terminals_defaults_and_parses() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("dashboard.toml");
-        assert_eq!(
-            load_dashboard_settings(&path).0.automatic_local_terminals,
-            AutomaticLocalTerminals::DefaultBranchOnly
-        );
-        std::fs::write(&path, "automatic_local_terminals = \"on\"\n").unwrap();
-        assert_eq!(
-            load_dashboard_settings(&path).0.automatic_local_terminals,
-            AutomaticLocalTerminals::On
-        );
-        save_automatic_local_terminals(&path, AutomaticLocalTerminals::Off).unwrap();
-        let (settings, error) = load_dashboard_settings(&path);
-        assert!(error.is_none());
-        assert_eq!(
-            settings.automatic_local_terminals,
-            AutomaticLocalTerminals::Off
-        );
-        std::fs::write(&path, "automatic_local_terminals = \"nope\"\n").unwrap();
-        let (settings, error) = load_dashboard_settings(&path);
-        assert!(
-            error.is_none(),
-            "unknown spelling falls back without parse failure"
-        );
-        assert_eq!(
-            settings.automatic_local_terminals,
-            AutomaticLocalTerminals::DefaultBranchOnly
-        );
-    }
-
-    #[test]
-    fn loads_overrides_and_expands_picker_roots() {
-        let _guard = HOME_ENV_LOCK.lock().unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let home = dir.path().join("home");
-        std::fs::create_dir(&home).unwrap();
-        let previous_home = std::env::var_os("HOME");
-        unsafe { std::env::set_var("HOME", &home) };
-
-        let path = dir.path().join("dashboard.toml");
-        let mut file = std::fs::File::create(&path).unwrap();
-        writeln!(
-            file,
-            "picker_roots = [\"~/Code\"]\n[[agents]]\nname = \"claude\"\nargv = [\"claude\", \"--verbose\"]"
-        )
-        .unwrap();
-
-        let (settings, error) = load_dashboard_settings(&path);
-        if let Some(home) = previous_home {
-            unsafe { std::env::set_var("HOME", home) };
-        } else {
-            unsafe { std::env::remove_var("HOME") };
-        }
-
-        assert_eq!(error, None);
-        assert_eq!(
-            settings.agents,
-            vec![AgentOverride {
-                name: "claude".into(),
-                argv: vec!["claude".into(), "--verbose".into()],
-            }]
-        );
-        assert_eq!(settings.picker_roots, vec![home.join("Code")]);
-        assert_eq!(settings.branch_prefix, "feature/");
-    }
-
-    #[test]
-    fn invalid_file_yields_defaults_and_error() {
-        let _guard = HOME_ENV_LOCK.lock().unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let home = dir.path().join("home");
-        std::fs::create_dir(&home).unwrap();
-        std::fs::create_dir(home.join("Code")).unwrap();
-        let previous_home = std::env::var_os("HOME");
-        unsafe { std::env::set_var("HOME", &home) };
-
-        let path = dir.path().join("dashboard.toml");
-        std::fs::write(&path, "not = toml {").unwrap();
-        let (settings, error) = load_dashboard_settings(&path);
-        if let Some(home) = previous_home {
-            unsafe { std::env::set_var("HOME", home) };
-        } else {
-            unsafe { std::env::remove_var("HOME") };
-        }
-
-        assert!(error.is_some());
-        assert_eq!(settings.agents, Vec::<AgentOverride>::new());
-        assert_eq!(settings.picker_roots, vec![home.join("Code"), home]);
-        assert_eq!(settings.branch_prefix, "feature/");
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(tag = "kind", content = "preset")]
-pub enum LaunchChoice {
-    Terminal,
-    Agent(String),
+    Ok(())
 }
 
 pub(super) fn save_launch_choice(
@@ -443,8 +194,27 @@ pub(super) fn save_launch_choice(
         );
         Ok(())
     })
-    .map(|_| ())
     .map_err(|error| format!("{error:#}"))
+}
+
+/// The document as written, for tests that check what a save produced. The
+/// Server's loader owns the meaning of these values; this only reads them back.
+#[cfg(test)]
+pub(super) fn written(path: &Path) -> toml::Table {
+    toml::from_str(&std::fs::read_to_string(path).unwrap_or_default()).unwrap()
+}
+
+#[cfg(test)]
+pub(super) fn written_choice(path: &Path, project: &str) -> Option<LaunchChoice> {
+    let document = written(path);
+    let entry = document.get("launch_choices")?.get(project)?;
+    match entry.get("kind")?.as_str()? {
+        "Terminal" => Some(LaunchChoice::Terminal),
+        "Agent" => Some(LaunchChoice::Agent(
+            entry.get("preset")?.as_str()?.to_owned(),
+        )),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -494,12 +264,7 @@ mod persistence_tests {
                 } else {
                     assert!(!saved.contains("preset"));
                 }
-                let (loaded, error) = load_dashboard_settings(&path);
-                assert_eq!(error, None);
-                assert_eq!(
-                    loaded.launch_choices.get("project.with.dots"),
-                    Some(&choice)
-                );
+                assert_eq!(written_choice(&path, "project.with.dots"), Some(choice));
             }
         }
     }
@@ -521,12 +286,10 @@ mod persistence_tests {
             toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(document["future"]["value"].as_integer(), Some(42));
         assert_eq!(std::fs::read_to_string(occupied).unwrap(), "unrelated");
-        let (loaded, error) = load_dashboard_settings(&path);
-        assert!(error.is_none());
-        assert!(loaded.ready_sound);
+        assert_eq!(document["ready_sound"].as_bool(), Some(true));
         assert_eq!(
-            loaded.launch_choices.get("project.with.dots"),
-            Some(&LaunchChoice::Agent("fixture".into()))
+            written_choice(&path, "project.with.dots"),
+            Some(LaunchChoice::Agent("fixture".into()))
         );
         assert_eq!(
             std::fs::read_dir(root.path()).unwrap().count(),

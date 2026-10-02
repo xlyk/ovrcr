@@ -31,6 +31,7 @@ mod copy_history;
 mod mouse;
 mod palette;
 mod quota;
+mod settings;
 mod sidebar;
 mod split;
 mod unread;

@@ -424,7 +424,7 @@ runs still block. The repository-root workspace cannot be removed. Remove every
 other workspace first, stop or acknowledge remaining sessions, then unregister
 the project; repository files stay on disk. Archived context is kept. `Space w n`
 creates a terminal, `Space p n` creates a workspace, `Space v t` opens tasks,
-and `Space v b` hides or shows the sidebar.
+`Space v b` hides or shows the sidebar, and `Space v ,` opens Settings.
 Terminal actions include Enter to focus, `p` to pause or `r` to resume, `c` for
 Copy, and `h` for History. Pause/Resume follow the session's current state.
 The Terminal group is hidden while a project or workspace is selected; bare
@@ -674,6 +674,29 @@ that is not valid TOML falls back to every default, with one document-level
 finding. Run `ovrcr settings` to see the document path, each setting's owner,
 effective value and source (default or document), and the findings.
 
+The Server is the only reader. The Dashboard parses no settings file: at every
+attach the Server reads the document and sends its reading, and the Dashboard
+takes every setting from it. Set `OVRCR_DASHBOARD_CONFIG` where the Server runs;
+the installed service does not see a shell export, and the Dashboard follows the
+Server's document whatever its own environment says.
+
+### Settings view
+
+Open **Settings** from the menu (`Space v ,`) or search the command palette for
+**settings**; it has no Browse key of its own. The read-only popup shows the
+document path and how long ago the Server read it, then the findings, each with
+its line when known and its key (or `document`), then every setting in the order
+of the block below: `key = value  (owner, source)`, with `unset` for an empty
+optional value. A consent setting that is off adds the line that says how to turn
+it on, for example **Automatic titles off: set `title_model = "provider/model"`
+in dashboard.toml**. Escape, Enter
+or `Ctrl-g` close it; arrows, `j`/`k`, Page Up/Down and the wheel scroll.
+
+At attach the footer shows one line when the reading has findings, for example
+**2 settings findings; see Settings**, and nothing when it has none. When a later
+reading changes the number of findings the footer says so again, or **No settings
+findings** once they are gone. The next key clears the line.
+
 ```toml
 desktop_notifications = false        # opt in to background Ready and input-needed alerts
 ready_sound = false                  # opt in to a sound for the same two alert kinds
@@ -727,8 +750,11 @@ unknown keys and tables, other preferences, and other projects' choices. Existin
 symlinks are followed without replacing the link, and target permissions are
 retained. A missing ordinary file and its parent directories are created; new
 settings files are private (mode `0600`). Dangling links, read-only targets,
-malformed TOML, and incorrectly typed known settings are rejected without
-changing the document.
+and a document that is not valid TOML are rejected without changing the
+document. A wrongly typed value is the Server's finding, not the writer's: a save
+keeps it byte for byte, and a toggle of that same key replaces it. The writer
+saves to the document path the Server's reading names, never to one the
+Dashboard resolves itself.
 
 Saves write and synchronize a temporary file beside the resolved target, then
 replace the target atomically. A failed save leaves the original document intact
@@ -746,9 +772,9 @@ choice”. The Dashboard does not retry creation or reopen the launch form.
 Desktop notifications are off by default. Set `desktop_notifications = true` in
 `dashboard.toml` to enable them when attaching. In browse mode, press uppercase
 `N`, or search the command palette for **desktop notifications**, to enable or
-disable them. Each toggle saves to `dashboard.toml` (or the path selected by
-`OVRCR_DASHBOARD_CONFIG`) and takes effect immediately. The next dashboard
-loads those saved settings. A missing file is created; a save error is shown
+disable them. Each toggle saves to the document the Server read (normally
+`dashboard.toml`) and takes effect immediately; the Server's reading at the next
+attach confirms it. A missing file is created; a save error is shown
 without changing the active preference. Other configuration values and comments are retained. Manual file edits are
 loaded on the next attach. In terminal mode `N` remains ordinary terminal input; use Ctrl-g first.
 

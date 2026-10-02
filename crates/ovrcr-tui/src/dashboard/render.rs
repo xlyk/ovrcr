@@ -409,7 +409,7 @@ impl Dashboard {
         if self.tasks.is_none()
             && self.palette.is_none()
             && self.whichkey.is_none()
-            && self.quota_details.is_none()
+            && self.details.is_none()
         {
             self.unread
                 .commit_presented(self.action_session().and_then(|session| {
@@ -741,7 +741,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     dashboard.draw_start_screen(frame);
     dashboard.draw_palette(frame);
     dashboard.draw_whichkey(frame);
-    dashboard.draw_quota_details(frame, now_unix_ms);
+    dashboard.draw_details(frame, now_unix_ms);
 }
 
 impl Dashboard {

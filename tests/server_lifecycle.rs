@@ -9,7 +9,7 @@ use ovrcr::protocol::{
     AgentReport, AgentUpdate, BranchRequest, ClientMessage, CreateSessionRequest, DashboardView,
     ErrorCode, HISTORY_ROWS, HistoryOpened, HistoryRow, HistorySnapshotId, MAX_FRAME_BYTES,
     PAGE_BYTES, PAGE_COLS, PAGE_ROWS, PaneTarget, Request, Response, ServerEvent, ServerMessage,
-    client, connect_server, read_frame, write_frame,
+    SettingSource, SettingsReport, client, connect_server, read_frame, write_frame,
 };
 use ovrcr::server::{ServerPaths, connect_if_running, connect_or_start, run_server};
 use ovrcr::session::{SessionId, SessionPhase};
@@ -5417,6 +5417,7 @@ fn duplicate_dashboard_hello_uses_the_sole_writer() {
             ..
         }
     ));
+    expect_settings_reading(&mut dashboard);
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -5488,6 +5489,7 @@ fn dashboard_geometry_sizes_connected_empty_and_detached_sessions() {
     )
     .unwrap();
     let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+    expect_settings_reading(&mut dashboard);
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -5554,6 +5556,7 @@ fn dashboard_receives_concrete_ordinary_request_errors() {
     )
     .unwrap();
     let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+    expect_settings_reading(&mut dashboard);
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -6352,6 +6355,7 @@ fn dashboard_shutdown_acknowledges_through_writer_before_teardown() {
     )
     .unwrap();
     let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+    expect_settings_reading(&mut dashboard);
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -15979,4 +15983,111 @@ fn installed_pi_managed_launch_binds_the_real_session_and_stays_idle() {
         !sessions.iter().any(|session| session.id == summary.id),
         "supervised native Pi session remains after termination"
     );
+}
+
+/// Every Dashboard hello is answered with the hierarchy and then the Server's
+/// reading of the settings document.
+fn expect_settings_reading(stream: &mut UnixStream) {
+    let message = read_frame::<ServerMessage>(stream).unwrap();
+    assert!(
+        matches!(
+            message,
+            ServerMessage::Event(ServerEvent::SettingsChanged(_))
+        ),
+        "expected the settings reading after hello: {message:?}"
+    );
+}
+
+/// Hello on a fresh Dashboard connection and return the settings reading the
+/// Server sends with it. A previous Dashboard's release can trail its close,
+/// so a conflict is retried until the deadline.
+fn hello_settings(fixture: &Live) -> SettingsReport {
+    let deadline = Instant::now() + wait_deadline();
+    loop {
+        assert!(Instant::now() < deadline, "no settings reading at hello");
+        let mut stream = connect_server(&fixture.socket).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        write_frame(
+            &mut stream,
+            &ClientMessage {
+                request_id: 1,
+                request: Request::DashboardHello,
+            },
+        )
+        .unwrap();
+        loop {
+            match read_frame::<ServerMessage>(&mut stream).unwrap() {
+                ServerMessage::Event(ServerEvent::SettingsChanged(report)) => return *report,
+                ServerMessage::Response {
+                    response: Response::Error { .. },
+                    ..
+                } => {
+                    thread::sleep(Duration::from_millis(50));
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// The Dashboard's settings are the Server's reading of a document that only
+/// the Server's environment names; a Dashboard toggle saves to that document
+/// and the next hello confirms it.
+#[test]
+fn dashboard_hello_carries_the_servers_settings_and_confirms_a_toggle() {
+    let fixture = Live::idle();
+    let document = fixture
+        .root
+        .path()
+        .join("server-only")
+        .join("elsewhere.toml");
+    std::fs::create_dir(document.parent().unwrap()).unwrap();
+    std::fs::write(
+        &document,
+        "branch_prefix = \"kh/\"\nready_sound = \"yes\"\n",
+    )
+    .unwrap();
+    fixture.start_binary_env(&[("OVRCR_DASHBOARD_CONFIG", document.as_os_str())]);
+
+    let first = hello_settings(&fixture);
+    let expected = ovrcr::settings::load_document(&fixture.config, &document);
+    assert_eq!(first.path, document);
+    assert_eq!(first.settings, expected.settings);
+    assert_eq!(first.rows, expected.rows);
+    assert_eq!(first.findings, expected.findings);
+    assert_eq!(first.settings.branch_prefix, "kh/");
+    assert!(!first.settings.ready_sound);
+    assert_eq!(first.findings.len(), 1, "{:?}", first.findings);
+    assert_eq!(first.findings[0].key.as_deref(), Some("ready_sound"));
+    assert_eq!(first.findings[0].line, Some(2));
+    assert!(
+        !fixture.config.with_file_name("dashboard.toml").exists(),
+        "the client's default document path is not the one in use"
+    );
+
+    let mut dashboard =
+        ovrcr::tui::Dashboard::new(ovrcr::session::TerminalSize { rows: 24, cols: 80 });
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SettingsChanged(
+        Box::new(first),
+    )));
+    dashboard.key(crossterm::event::KeyCode::Char('S'));
+    assert_eq!(
+        std::fs::read_to_string(&document).unwrap(),
+        "branch_prefix = \"kh/\"\nready_sound = true\n"
+    );
+
+    let second = hello_settings(&fixture);
+    assert_eq!(second.path, document);
+    assert!(second.settings.ready_sound);
+    assert_eq!(second.settings.branch_prefix, "kh/");
+    assert!(second.findings.is_empty(), "{:?}", second.findings);
+    let row = second
+        .rows
+        .iter()
+        .find(|row| row.key == "ready_sound")
+        .unwrap();
+    assert_eq!(row.source, SettingSource::Document);
 }

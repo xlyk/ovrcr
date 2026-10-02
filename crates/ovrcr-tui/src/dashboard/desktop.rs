@@ -103,19 +103,16 @@ impl Dashboard {
 
     pub(super) fn cycle_automatic_local_terminals(&mut self) -> DashboardAction {
         let next = self.settings.automatic_local_terminals.next();
-        if let Some(path) = &self.settings_path {
-            match super::settings::save_automatic_local_terminals(path, next) {
-                Ok(settings) => self.settings = settings,
-                Err(error) => {
-                    self.desktop.notice = Some(format!(
-                        "Could not save automatic local terminals: {error:#}"
-                    ));
-                    return DashboardAction::Redraw;
-                }
-            }
-        } else {
-            self.settings.automatic_local_terminals = next;
+        if let Some(path) = &self.settings_path
+            && let Err(error) = super::settings::save_automatic_local_terminals(path, next)
+        {
+            self.desktop.notice = Some(format!(
+                "Could not save automatic local terminals: {error:#}"
+            ));
+            return DashboardAction::Redraw;
         }
+        // Applies at once; the Server's next reading confirms it.
+        self.settings.automatic_local_terminals = next;
         self.desktop.notice = Some(format!(
             "Automatic local terminals: {}",
             self.settings.automatic_local_terminals.label()
@@ -124,26 +121,24 @@ impl Dashboard {
     }
 
     fn toggle_alert_setting(&mut self, key: &str, name: &str, enabled: bool) -> DashboardAction {
-        if let Some(path) = &self.settings_path {
-            match super::settings::save_alert_setting(path, key, enabled) {
-                Ok(settings) => self.settings = settings,
-                Err(error) => {
-                    self.desktop.notice = Some(format!("Could not save {name}: {error:#}"));
-                    return DashboardAction::Redraw;
-                }
-            }
-        } else {
-            // Embedded dashboards constructed without a file remain in-memory.
-            match key {
-                "desktop_notifications" => self.settings.desktop_notifications = enabled,
-                "ready_sound" => self.settings.ready_sound = enabled,
-                _ => unreachable!(),
-            }
+        // Embedded dashboards constructed without a published path stay in memory.
+        if let Some(path) = &self.settings_path
+            && let Err(error) = super::settings::save_alert_setting(path, key, enabled)
+        {
+            self.desktop.notice = Some(format!("Could not save {name}: {error:#}"));
+            return DashboardAction::Redraw;
+        }
+        // Applies at once; the Server's next reading confirms it.
+        match key {
+            "desktop_notifications" => self.settings.desktop_notifications = enabled,
+            "ready_sound" => self.settings.ready_sound = enabled,
+            _ => unreachable!(),
         }
         self.alerts_changed(name, enabled)
     }
 
-    fn alerts_changed(&mut self, name: &str, enabled: bool) -> DashboardAction {
+    /// Hand the current alert preferences to a running host.
+    pub(super) fn apply_alert_channels(&mut self) {
         let channels = self.alert_channels();
         if channels == 0 {
             self.desktop.pending.clear();
@@ -151,6 +146,10 @@ impl Dashboard {
         if let Some(host) = &mut self.desktop.host {
             host.set_channels(channels);
         }
+    }
+
+    fn alerts_changed(&mut self, name: &str, enabled: bool) -> DashboardAction {
+        self.apply_alert_channels();
         self.desktop.notice = Some(format!("{name}: {}", if enabled { "on" } else { "off" }));
         DashboardAction::Redraw
     }

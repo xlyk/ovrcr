@@ -305,6 +305,16 @@ impl ServerState {
             ))));
     }
 
+    /// Send the Server's current reading of the settings document. It is
+    /// read here rather than cached, so a hello always sees the saved file.
+    fn publish_settings(&self) {
+        let report = crate::settings::load(&self.registry_path);
+        self.dashboard
+            .try_send(ServerMessage::Event(ServerEvent::SettingsChanged(
+                Box::new(report),
+            )));
+    }
+
     pub fn hierarchy(&self) -> HierarchySnapshot {
         self.observe_checkouts();
         snapshot_from_state(self)
