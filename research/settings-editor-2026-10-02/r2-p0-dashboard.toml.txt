@@ -1,0 +1,4 @@
+automatic_local_terminals = "on"
+
+title_model = "anthropic/claude-haiku"
+

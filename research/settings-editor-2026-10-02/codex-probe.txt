@@ -1,0 +1,38 @@
+$ env -u OVRCR_AGENT_SOCKET -u OVRCR_AGENT_TOKEN codex exec -m gpt-6.1-sol --skip-git-repo-check "Reply with the single word READY."
+Reading additional input from stdin...
+OpenAI Codex v0.155.1
+--------
+workdir: /Users/xlyk/Code/ovrcr-workspaces/ec0f5f4e0e6fd44b1e8178e6232df187
+model: gpt-6.1-sol
+provider: openai
+approval: on-request
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: max
+reasoning summaries: none
+session id: 01a0fe57-2f30-7750-b2a1-cb5b9f37e039
+--------
+user
+Reply with the single word READY.
+warning: loading hooks from both /Users/xlyk/.codex/hooks.json and /Users/xlyk/.codex/config.toml; prefer a single representation for this layer
+warning: Model metadata for `gpt-6.1-sol` not found. Defaulting to fallback metadata; this can degrade performance and cause issues.
+warning: Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.
+hook: SessionStart
+hook: SessionStart
+hook: SessionStart
+hook: SessionStart Completed
+hook: SessionStart Completed
+hook: SessionStart Completed
+hook: UserPromptSubmit
+hook: UserPromptSubmit
+hook: UserPromptSubmit
+hook: UserPromptSubmit Completed
+hook: UserPromptSubmit Completed
+hook: UserPromptSubmit Completed
+ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account."}}
+ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account."}}
+exit 1
+
+$ codex login status
+Logged in using ChatGPT
+codex-cli 0.155.1
+CODEX_HOME=<unset>

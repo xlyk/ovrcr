@@ -1,0 +1,9 @@
+automatic_local_terminals = "on"
+
+branch_prefix = "kh/"
+ready_sound = true
+
+[[agents]]
+name = "claude"
+argv = ["claude"]
+

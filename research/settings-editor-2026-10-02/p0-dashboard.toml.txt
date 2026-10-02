@@ -1,0 +1,8 @@
+automatic_local_terminals = "on"
+
+branch_prefix = "kh/"
+
+[[agents]]
+name = "claude"
+argv = ["claude"]
+

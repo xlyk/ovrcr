@@ -1,0 +1,61 @@
+󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ──────────────────────┌Settings · Enter edit · r reset · x remove · / filter · Esc close─────────────────────────────────┐
+  󰘬 main                         │Document: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-P0XYNG/dashboard.toml · read │
+▌    $ local                     │                                                                                                  │
+  󰘬 gui-consigint-auth-handoff   │Alerts                                                                                            │
+     $ local                     │› Desktop notifications      off  default                                                         │
+     - review auth handoff    gro│      Desktop alerts off: set `desktop_notifications = true` in dashboard.toml (needs OS notificat│
+  󰘬 gui-consigint-worktree-lifecy│      Turning this on may show an OS notification permission prompt.                              │
+     $ local                     │      key: desktop_notifications                                                                  │
+     - implement lif…  claude:son│  Ready sound                off  default                                                         │
+     - review websocke…  codex:gp│                                                                                                  │
+     - plan snapshot res…  pi:gro│Workspaces                                                                                        │
+                                 │  Automatic local terminals  on  set  (default: default_branch_only)                              │
+ SPACELIFT-AGENT ────────────────│  Branch prefix              kh/  set  (default: feature/)                                        │
+  󰘬 main                         │  Picker roots               2 entries  default                                                   │
+     $ local                     │      /Users/xlyk/Code                                                                            │
+  󰘬 gui-spacelift-agent-pipeline-│      /Users/xlyk                                                                                 │
+     $ local                     │      + Add root                                                                                  │
+     - build pipeline …  claude:o│                                                                                                  │
+  󰘬 gui-spacelift-agent-scope-qua│Titles                                                                                            │
+     $ local                     │  Title model                unset  default                                                       │
+     - review scope qu…  codex:gp│      Automatic titles off: set `title_model = "provider/model"` in dashboard.toml                │
+                                 │      Setting a model makes paid calls to title sessions.                                         │
+                                 │                                                                                                  │
+                                 │Usage                                                                                             │
+                                 │  Codex and Grok usage       off  default                                                         │
+                                 │      Codex/Grok usage off: set `quota.enabled = true` in dashboard.toml                          │
+                                 │      Turning this on runs the native CLIs, which may refresh their own auth and write logs.      │
+                                 │  Codex command              codex  default                                                       │
+                                 │  Codex home                 unset  default                                                       │
+                                 │  Grok command               grok  default                                                        │
+                                 │  Grok home                  unset  default                                                       │
+                                 │                                                                                                  │
+                                 │Agents                                                                                            │
+                                 │  Agent overrides            1 entry  set                                                         │
+                                 │      claude  ["claude"]                                                                          │
+                                 │      + Add agent (name)                                                                          │
+                                 │                                                                                                  │
+                                 │Remembered launches                                                                               │
+                                 │  Remembered launches        0 entries  default                                                   │
+                                 │      + Add project                                                                               │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+Quota left                       │                                                                                                  │
+Claude — checking                │                                                                                                  │
+Codex — off                      │                                                                                                  │
+Grok — off                       └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+BROWSE  Space Menu  : Search  ? Help

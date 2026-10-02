@@ -1,0 +1,5 @@
+branch_prefix = "kh/"
+
+[[agents]]
+name = "claude"
+argv = ["claude"]

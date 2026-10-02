@@ -1,0 +1,3 @@
+rtk proxy sh scripts/gui.sh
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.25s
+exit 0
