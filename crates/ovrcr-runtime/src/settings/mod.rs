@@ -87,7 +87,9 @@ pub fn parse(path: &Path, text: &str) -> SettingsReport {
         set: HashSet::new(),
     };
     let mut settings = defaults();
-    match toml::from_str::<toml::Table>(text) {
+    let parsed = toml::from_str::<toml::Table>(text);
+    let unparseable = parsed.is_err();
+    match parsed {
         Ok(mut table) => {
             loader.spans = toml_edit::Document::parse(text).ok();
             loader.read(&mut table, &mut settings);
@@ -111,6 +113,7 @@ pub fn parse(path: &Path, text: &str) -> SettingsReport {
         settings,
         rows,
         findings: loader.findings,
+        unparseable,
     }
 }
 
@@ -474,7 +477,16 @@ fn rows(settings: &Settings, set: &HashSet<String>) -> Vec<SettingRow> {
             None,
         ),
     ];
-    for row in &mut rows {
+    let defaults = if set.is_empty() {
+        None
+    } else {
+        Some(self::rows(&defaults(), &HashSet::new()))
+    };
+    for (index, row) in rows.iter_mut().enumerate() {
+        row.default = match &defaults {
+            Some(defaults) => defaults[index].value.clone(),
+            None => row.value.clone(),
+        };
         if set.contains(&row.key) {
             row.source = SettingSource::Document;
         }
@@ -493,6 +505,7 @@ fn row(
         owner,
         value,
         source: SettingSource::Default,
+        default: None,
         off_state: off_state.map(str::to_owned),
     }
 }
@@ -773,6 +786,47 @@ command = "/opt/grok"
         assert_eq!(finding.key, None);
         assert_eq!(finding.line, Some(2));
         assert!(finding.message.contains("not valid TOML"), "{finding:?}");
+        assert!(report.unparseable);
+        assert!(!read("ready_sound = true\n").unparseable);
+    }
+
+    /// The editor shows the default beside an overridden value.
+    #[test]
+    fn every_row_carries_its_default_whatever_the_document_sets() {
+        let report = read(
+            "branch_prefix = \"kh/\"\nautomatic_local_terminals = \"on\"\n[quota.codex]\nhome = \"/h\"\n",
+        );
+        let pairs = |key| {
+            let row = row(&report, key);
+            (row.value.as_deref(), row.default.as_deref(), row.source)
+        };
+        assert_eq!(
+            pairs("branch_prefix"),
+            (Some("kh/"), Some("feature/"), SettingSource::Document)
+        );
+        assert_eq!(
+            pairs("automatic_local_terminals"),
+            (
+                Some("on"),
+                Some("default_branch_only"),
+                SettingSource::Document
+            )
+        );
+        assert_eq!(
+            pairs("quota.codex.home"),
+            (Some("/h"), None, SettingSource::Document)
+        );
+        assert_eq!(
+            pairs("ready_sound"),
+            (Some("false"), Some("false"), SettingSource::Default)
+        );
+        assert_eq!(read("").rows, {
+            let mut rows = read("").rows;
+            for row in &mut rows {
+                row.default = row.value.clone();
+            }
+            rows
+        });
     }
 
     #[test]

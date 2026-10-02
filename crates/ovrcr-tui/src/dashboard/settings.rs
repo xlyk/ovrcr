@@ -2,8 +2,8 @@
 //! change it. Reading and writing belong to the Server, which publishes its
 //! reading as a `SettingsReport`; the Dashboard has no parser and touches no
 //! file.
+use ovrcr_protocol::Request;
 pub use ovrcr_protocol::{AgentOverride, AutomaticLocalTerminals, LaunchChoice, Settings};
-use ovrcr_protocol::{Request, SettingOwner, SettingSource, SettingsReport};
 
 /// The footer line for a reading with `count` findings.
 pub(super) fn findings_notice(count: usize) -> String {
@@ -12,48 +12,6 @@ pub(super) fn findings_notice(count: usize) -> String {
         1 => "1 settings finding; see Settings".into(),
         count => format!("{count} settings findings; see Settings"),
     }
-}
-
-/// The Settings popup: the document and when the Server read it, findings
-/// first, then every setting in the order the Server published.
-pub(super) fn report_lines(report: Option<&SettingsReport>, now: u64) -> Vec<String> {
-    let Some(report) = report else {
-        return vec!["Waiting for the Server's settings reading.".into()];
-    };
-    let read = ovrcr_protocol::freshness::age_ms(report.read_unix_ms, now)
-        .map(|age| format!("{}s ago", age / 1_000))
-        .unwrap_or_else(|| "at an unverifiable time".into());
-    let mut lines = vec![
-        format!("Document: {}", report.path.display()),
-        format!("Read by the Server {read}"),
-        String::new(),
-        format!("Findings: {}", report.findings.len()),
-    ];
-    for finding in &report.findings {
-        let line = finding
-            .line
-            .map(|line| format!("line {line}, "))
-            .unwrap_or_default();
-        let key = finding.key.as_deref().unwrap_or("document");
-        lines.push(format!("  {line}{key}: {}", finding.message));
-    }
-    lines.push(String::new());
-    for row in &report.rows {
-        let owner = match row.owner {
-            SettingOwner::Server => "Server",
-            SettingOwner::Dashboard => "Dashboard",
-        };
-        let source = match row.source {
-            SettingSource::Default => "default",
-            SettingSource::Document => "document",
-        };
-        let value = row.value.as_deref().unwrap_or("unset");
-        lines.push(format!("{} = {value}  ({owner}, {source})", row.key));
-        if let Some(off) = &row.off_state {
-            lines.push(format!("  {off}"));
-        }
-    }
-    lines
 }
 
 /// The `SetSetting` request that remembers `choice` for `project`. The

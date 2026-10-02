@@ -704,14 +704,50 @@ Server's document whatever its own environment says.
 ### Settings view
 
 Open **Settings** from the menu (`Space v ,`) or search the command palette for
-**settings**; it has no Browse key of its own. The read-only popup shows the
-document path and how long ago the Server read it, then the findings, each with
-its line when known and its key (or `document`), then every setting in the order
-of the block below: `key = value  (owner, source)`, with `unset` for an empty
-optional value. A consent setting that is off adds the line that says how to turn
-it on, for example **Automatic titles off: set `title_model = "provider/model"`
-in dashboard.toml**. Escape, Enter
-or `Ctrl-g` close it; arrows, `j`/`k`, Page Up/Down and the wheel scroll.
+**settings**; it has no Browse key of its own. The view is the settings editor.
+It shows the document path and when the Server read it, then findings that belong
+to no setting (unknown keys and document-level problems, each with its line), then
+every setting in one scrolling list under the group headers **Alerts**
+(`desktop_notifications`, `ready_sound`), **Workspaces**
+(`automatic_local_terminals`, `branch_prefix`, `picker_roots`), **Titles**
+(`title_model`), **Usage** (`quota.*`), **Agents** (`[[agents]]`) and
+**Remembered launches** (`launch_choices`, one row per project).
+
+Each row shows its label, effective value (`unset` for an empty optional value)
+and source badge, `default` or `set`; a value the document sets also shows the
+default beside it, for example `kh/  set  (default: feature/)`. A setting's
+finding shows under its row. A consent setting carries its one-sentence side
+effect and, while off, the line that says how to turn it on: turning it on asks
+for no confirmation.
+
+| Key | Action |
+| --- | --- |
+| `↑`/`↓`, `j`/`k`, Page Up/Down, Home/End, wheel | Move the selection |
+| `Enter` | Edit the selected row in place |
+| `r` | Reset: remove the key so the source returns to `default` (only for a `set` row) |
+| `x` / Delete | Remove the selected element of a collection |
+| `/` | Filter rows across groups with the palette's word filter; Enter keeps it, Escape clears it |
+| `Escape` | Cancel the current edit, else clear the filter, else close |
+
+Enter edits with the palette's field kinds: a boolean saves the other value at
+once; `automatic_local_terminals` and a remembered launch open a pick list
+(Terminal or a detected agent); strings open a text field; paths open a text
+field whose Tab completes directories. Enter saves that one row and Escape cancels
+only that edit. An emptied top-level value resets it. Every save is one
+`SetSetting` request: the row shows `saving…` and changes only when the Server's
+new reading arrives. A value the Server refuses shows under its row as
+**refused: …** and the document is unchanged.
+
+`picker_roots`, `[[agents]]` and `launch_choices` expand into one child row per
+element or entry plus an **Add** row; there is no reordering. An agent row edits
+its `argv` as a TOML array literal such as `["claude", "--verbose"]`; Add asks for
+the agent's name and starts its argv as that name. Add under Remembered launches
+asks for a project name and remembers Terminal. While `picker_roots` is its
+default, an edit or Add writes the whole default list with the change.
+
+While the document is not valid TOML, every row shows its default, the top
+finding names the line, and **Editing is off until dashboard.toml is fixed by
+hand.**; Enter, `r` and `x` change nothing.
 
 At attach the footer shows one line when the reading has findings, for example
 **2 settings findings; see Settings**, and nothing when it has none. When a later

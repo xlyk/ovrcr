@@ -490,6 +490,7 @@ mod wire_snapshot {
                 owner: crate::SettingOwner::Server,
                 value: Some("false".into()),
                 source: crate::SettingSource::Default,
+                default: Some("false".into()),
                 off_state: Some("off".into()),
             }],
             findings: vec![crate::SettingsFinding {
@@ -497,6 +498,7 @@ mod wire_snapshot {
                 message: "m".into(),
                 line: Some(3),
             }],
+            unparseable: false,
         }
     }
 
@@ -1252,7 +1254,7 @@ mod wire_snapshot {
         ),
         (
             "ServerEvent::SettingsChanged",
-            "05072f642e746f6d6c05000002010470692f6d08666561747572652f01022f630101610101620201700101610171000005636f64657801022f680467726f6b00010d71756f74612e656e61626c656400010566616c73650001036f66660101016b016d0103",
+            "05072f642e746f6d6c05000002010470692f6d08666561747572652f01022f630101610101620201700101610171000005636f64657801022f680467726f6b00010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
         ),
         ("QuotaState::Waiting", "00"),
         ("QuotaState::Current", "01"),

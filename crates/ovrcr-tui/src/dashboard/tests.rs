@@ -3111,6 +3111,7 @@ pub(super) fn settings_reading(settings: super::settings::Settings) -> ServerMes
             settings,
             rows: Vec::new(),
             findings: Vec::new(),
+            unparseable: false,
         },
     )))
 }

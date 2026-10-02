@@ -570,6 +570,7 @@ impl Dashboard {
             quotas: Some(QuotaSnapshot::default()),
             details: None,
             settings_report: None,
+            settings_editor: Default::default(),
             hierarchy: HierarchySnapshot {
                 projects: Vec::new(),
             },
@@ -2093,6 +2094,13 @@ impl Dashboard {
             return DashboardAction::Redraw;
         }
         match event {
+            Event::Paste(text)
+                if self
+                    .details
+                    .is_some_and(|(d, _)| d == super::quota::Details::Settings) =>
+            {
+                self.settings_editor_paste(&text)
+            }
             Event::Paste(_) if self.details.is_some() => DashboardAction::None,
             Event::Paste(_) if self.whichkey.is_some() => DashboardAction::None,
             Event::Paste(text) if self.palette.is_some() => self.palette_paste(&text),
@@ -2981,6 +2989,14 @@ impl Dashboard {
     }
 
     pub fn handle_server_message(&mut self, message: ServerMessage) -> Vec<ClientMessage> {
+        if let ServerMessage::Response {
+            request_id,
+            response,
+        } = &message
+            && self.settings_editor_response(*request_id, response)
+        {
+            return self.drain_outbox();
+        }
         if let ServerMessage::Response { request_id, .. } = &message
             && self.ignored_responses.remove(request_id)
         {
