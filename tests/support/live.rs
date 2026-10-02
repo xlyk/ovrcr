@@ -41,6 +41,12 @@ use std::sync::Mutex;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+/// Where the default config path sits under HOME (`directories::ProjectDirs`).
+#[cfg(target_os = "macos")]
+pub const DEFAULT_CONFIG_DIR: &str = "Library/Application Support/ovrcr";
+#[cfg(not(target_os = "macos"))]
+pub const DEFAULT_CONFIG_DIR: &str = ".config/ovrcr";
+
 /// The project [`Live::ready`] registers.
 pub const PROJECT: &str = "fixture";
 /// The workspace [`Live::ready`] creates in [`PROJECT`].
@@ -80,6 +86,8 @@ pub struct Live {
     pub config: PathBuf,
     pub socket: PathBuf,
     pub executable: PathBuf,
+    /// The private HOME of an [`isolated_home`](Self::isolated_home) fixture.
+    pub home: Option<PathBuf>,
     host: Mutex<Host>,
     pgids: Mutex<Vec<libc::pid_t>>,
     ready: Mutex<Option<String>>,
@@ -113,6 +121,7 @@ impl Live {
             config,
             root,
             executable: PathBuf::from(env!("CARGO_BIN_EXE_ovrcr")),
+            home: None,
             host: Mutex::new(Host::Idle),
             pgids: Mutex::new(Vec::new()),
             ready: Mutex::new(None),
@@ -120,6 +129,47 @@ impl Live {
             #[cfg(feature = "acceptance-diagnostics")]
             diagnostics: ServerQueueDiagnostics::default(),
         }
+    }
+
+    /// A fresh install: like [`idle`](Self::idle), but every process of this
+    /// instance runs with an empty private HOME and no `OVRCR_CONFIG`, so the
+    /// default config path is the one under test. Nothing is written there;
+    /// `config` is where the instance identity will live.
+    pub fn isolated_home() -> Self {
+        let mut live = Self::idle();
+        std::fs::remove_file(&live.config).unwrap();
+        let home = live.root.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+        let home = home.canonicalize().unwrap();
+        live.config = home.join(DEFAULT_CONFIG_DIR).join("config.toml");
+        live.home = Some(home);
+        live
+    }
+
+    /// An `ovrcr` command with this instance's environment.
+    pub fn command(&self) -> Command {
+        let mut command = Command::new(&self.executable);
+        command
+            .env("OVRCR_SOCKET", &self.socket)
+            // The settings document is the one beside `config`, never the developer's.
+            .env_remove("OVRCR_DASHBOARD_CONFIG")
+            // The sessions a workspace opens run this shell. The developer's
+            // own login shell and its rc files are not the test's subject.
+            .env("SHELL", "/bin/sh");
+        match &self.home {
+            None => command.env("OVRCR_CONFIG", &self.config),
+            Some(home) => command
+                .env("HOME", home)
+                .env_remove("OVRCR_CONFIG")
+                .env_remove("XDG_CONFIG_HOME")
+                .env_remove("XDG_DATA_HOME")
+                .env_remove("XDG_STATE_HOME")
+                .env_remove("XDG_CACHE_HOME")
+                .env_remove("CODEX_HOME")
+                .env_remove("GROK_HOME")
+                .env_remove("CLAUDE_CONFIG_DIR"),
+        };
+        command
     }
 
     /// Adapter: the server runs on a thread of this test process.
@@ -157,15 +207,9 @@ impl Live {
 
     fn spawn_server(&self, environment: &[(&str, &std::ffi::OsStr)], stderr: Stdio) {
         assert!(!self.hosted(), "fixture already owns a running server");
-        let child = Command::new(&self.executable)
+        let child = self
+            .command()
             .arg("server")
-            .env("OVRCR_SOCKET", &self.socket)
-            .env("OVRCR_CONFIG", &self.config)
-            // The settings document is the one beside `config`, never the developer's.
-            .env_remove("OVRCR_DASHBOARD_CONFIG")
-            // The sessions a workspace opens run this shell. The developer's
-            // own login shell and its rc files are not the test's subject.
-            .env("SHELL", "/bin/sh")
             .envs(environment.iter().copied())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -178,6 +222,10 @@ impl Live {
 
     /// Start the thread adapter under an [`idle`](Self::idle) fixture.
     pub fn start(&self) {
+        assert!(
+            self.home.is_none(),
+            "a private HOME needs a real process: use start_binary"
+        );
         let paths = self.paths();
         let config = self.config.clone();
         #[cfg(feature = "acceptance-diagnostics")]
