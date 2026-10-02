@@ -167,3 +167,23 @@ _Avoid_: feature flag, default-off as a synonym, "Unavailable" for a setting tha
 **Settings snapshot**:
 The Server's one published reading of the settings document: every effective value with its source, the findings, the document path and the read time. Sent to the Dashboard at hello and again whenever the reading changes.
 _Avoid_: the Dashboard's own parse of the document, a per-setting notification
+
+**Setting path**:
+The dotted address of one setting, one element of a list setting, or one entry of a table setting, such as `quota.codex.command`, `picker_roots[2]` or `launch_choices.myproj.kind`. The editor, the CLI and the Server's write request all name a value this way.
+_Avoid_: a TOML key on its own, a row index in the popup
+
+**Allowance**:
+What a provider's subscription still permits in a window, shown in the Quota left block as the remainder of a percentage. It is never a session's token count, context occupancy or API spend.
+_Avoid_: usage, tokens, cost, quota as a synonym for spend
+
+**Quota reason**:
+OVRCR's own one-line classification of why a provider's allowance is not current, such as the executable not being found or a read timing out. It never carries a response body, an account value or a credential.
+_Avoid_: the raw error, a provider message copied through, a log line
+
+**Next check**:
+The time the Server will next ask a native provider for its allowance, after the regular cadence, a backoff or a provider's Retry-After. Shown so a failed row says when it will try again.
+_Avoid_: the stale boundary, the last check, a countdown that resets on redraw
+
+**Quota probe**:
+A short, hidden run of the unmodified Claude Code binary that the Server starts, with the user's consent, only to receive one status-line report of the account's allowance when no managed Claude session has reported recently. It sends one minimal prompt, spends a little allowance, is never a Session, and never touches a credential.
+_Avoid_: a managed session, a background agent, an OAuth read, polling
