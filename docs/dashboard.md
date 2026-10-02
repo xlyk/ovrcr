@@ -29,10 +29,22 @@ or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts
 The sidebar's **Quota left** block shows remaining Claude, Codex and Grok account
 allowance. See [provider allowance](provider-quota.md) for native sources,
 collection settings, freshness and reset behavior.
-Providers remain visible before the first report, with waiting or unavailable
-states. Narrow sidebars put window values and full state text on a second row
-before sacrificing labels or percentages. The tree scrolls above the reserved
-quota rows; sidebar and pane dividers remain draggable over their full height.
+Providers remain visible before the first report: **Codex usage off** and
+**Grok usage off** while `quota.enabled` is off, **checking** until an enabled
+provider's first result. A stale value shows its age (`37% left  stale 12m`),
+and a failed row shows when the Server tries again (`unavailable  retry 3m`).
+Narrow sidebars put window values and full state text on a second row
+before sacrificing labels or percentages. A short sidebar keeps at least three
+tree lines and shrinks the block in steps: one line per provider, then a single
+`Quota: u` pointer line, and only below that hides it. The tree scrolls above
+the reserved quota rows; sidebar and pane dividers remain draggable over their
+full height.
+
+The palette offers **Refresh quota**, which asks the Server to read Codex and
+Grok now (a refusal inside the Server's 30-second cooldown shows the remaining
+seconds in the footer), and, while collection is off, **Enable Codex and Grok
+usage**, which asks the Server to set `quota.enabled = true`. The Dashboard
+changes nothing itself; the rows change when the Server republishes.
 
 | Key | Action |
 | --- | --- |

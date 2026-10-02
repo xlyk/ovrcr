@@ -57,6 +57,8 @@ enum Command {
     SwitchAgent(SessionId, SessionRunId),
     Hint(Action),
     Settings,
+    RefreshQuota,
+    EnableQuota,
 }
 
 struct Entry {
@@ -1274,6 +1276,20 @@ impl Dashboard {
             label: "Settings".into(),
             command: Command::Settings,
         });
+        entries.push(Entry {
+            label: "Refresh quota".into(),
+            command: Command::RefreshQuota,
+        });
+        if self.quotas.as_ref().is_some_and(|quota| {
+            [&quota.codex, &quota.grok]
+                .iter()
+                .any(|provider| provider.state == crate::protocol::QuotaState::Disabled)
+        }) {
+            entries.push(Entry {
+                label: "Enable Codex and Grok usage".into(),
+                command: Command::EnableQuota,
+            });
+        }
         for project in &self.hierarchy.projects {
             for workspace in &project.workspaces {
                 for session in &workspace.sessions {
@@ -1732,6 +1748,20 @@ impl Dashboard {
                                     self.ignored_responses.insert(request_id);
                                 }
                                 return self.open_details(super::quota::Details::Settings);
+                            }
+                            command @ (Command::RefreshQuota | Command::EnableQuota) => {
+                                if let Some(request_id) = palette.suggestions.inspect {
+                                    self.ignored_responses.insert(request_id);
+                                }
+                                return self.quota_request(match command {
+                                    Command::RefreshQuota => {
+                                        Request::RefreshQuota { provider: None }
+                                    }
+                                    _ => Request::SetSetting {
+                                        path: "quota.enabled".into(),
+                                        value: Some("true".into()),
+                                    },
+                                });
                             }
                             Command::Hint(action) => {
                                 if self

@@ -3032,8 +3032,11 @@ impl Dashboard {
                 request_id,
                 response,
             } => match response {
-                // The Dashboard sends no RefreshQuota yet; its command is the display PR.
-                Response::AgentOperation(_) | Response::QuotaCooldown { .. } => {}
+                Response::AgentOperation(_) => {}
+                Response::QuotaCooldown { remaining_ms } => self.set_error(format!(
+                    "Quota refresh cooling down: {}s left",
+                    remaining_ms.div_ceil(1_000)
+                )),
                 Response::Hierarchy(hierarchy) => {
                     for request in self.update_hierarchy(hierarchy) {
                         self.push_request(request);
