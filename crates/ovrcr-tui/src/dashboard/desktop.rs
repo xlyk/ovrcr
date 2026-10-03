@@ -107,6 +107,7 @@ struct BridgePermission {
     authorization_requested: bool,
     poll_until: Option<Instant>,
     next_poll: Option<Instant>,
+    check_after_settings: bool,
 }
 
 #[cfg(target_os = "macos")]
@@ -212,6 +213,7 @@ impl Dashboard {
                 bridge.authorization_requested = false;
                 bridge.poll_until = None;
                 bridge.next_poll = None;
+                bridge.check_after_settings = false;
                 if let Some(control) = bridge.in_flight.take() {
                     control.state.store(DELIVERY_CANCELLED, Ordering::Release);
                 }
@@ -220,24 +222,61 @@ impl Dashboard {
     }
 
     #[cfg(target_os = "macos")]
-    pub(super) fn open_notification_settings(&mut self) -> DashboardAction {
-        if !self.notification_settings_available() {
+    pub(super) fn recover_notification_permission(&mut self) -> DashboardAction {
+        if !self.notification_recovery_available() {
             return DashboardAction::None;
         }
-        self.desktop.bridge.pending = Some(BridgeOperation::Settings);
-        self.desktop.bridge.poll_until = None;
-        self.desktop.notice = Some("Open System Settings, then Notifications → OVRCR".into());
+        if self.notification_permission_unconfirmed() {
+            self.desktop.bridge.pending = Some(BridgeOperation::Status);
+            // An explicit check never opens a new authorization attempt.
+            self.desktop.bridge.authorization_requested = true;
+            // Keep this one user check from starting another automatic poll budget.
+            self.desktop
+                .bridge
+                .poll_until
+                .get_or_insert_with(Instant::now);
+            self.desktop.bridge.next_poll = None;
+            self.desktop.notice = Some("Checking OVRCR notification permission".into());
+        } else {
+            self.desktop.bridge.pending = Some(BridgeOperation::Settings);
+            self.desktop.bridge.poll_until = None;
+            self.desktop.notice = Some("Open System Settings, then Notifications → OVRCR".into());
+        }
         DashboardAction::Redraw
     }
 
     #[cfg(target_os = "macos")]
-    pub(super) fn notification_settings_available(&self) -> bool {
-        self.desktop.bridge.status == Some(BridgeStatus::Denied)
+    pub(super) fn notification_permission_unconfirmed(&self) -> bool {
+        let bridge = &self.desktop.bridge;
+        if bridge.check_after_settings {
+            return true;
+        }
+        match bridge.status {
+            Some(BridgeStatus::PermissionPending) => bridge
+                .poll_until
+                .is_some_and(|until| Instant::now() >= until),
+            Some(BridgeStatus::NotDetermined) => {
+                bridge.authorization_requested
+                    && bridge.pending.is_none()
+                    && bridge.in_flight.is_none()
+            }
+            _ => false,
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn notification_recovery_available(&self) -> bool {
+        self.settings.desktop_notifications
+            && (self.desktop.bridge.status == Some(BridgeStatus::Denied)
+                || self.notification_permission_unconfirmed())
     }
 
     pub(super) fn desktop_status_notice(&self) -> Option<&'static str> {
         #[cfg(target_os = "macos")]
         if self.settings.desktop_notifications {
+            if self.notification_permission_unconfirmed() {
+                return Some("OVRCR notification permission unconfirmed; O: check permission");
+            }
             return match self.desktop.bridge.status {
                 Some(BridgeStatus::Denied) => {
                     Some("OVRCR notifications denied; O: System Settings → Notifications → OVRCR")
@@ -246,7 +285,7 @@ impl Dashboard {
                     Some("OVRCR notification permission pending; respond to the macOS prompt")
                 }
                 Some(BridgeStatus::NotDetermined) => {
-                    Some("OVRCR notification permission needed; enable notifications to request it")
+                    Some("OVRCR notification permission needed; checking authorization")
                 }
                 Some(BridgeStatus::Incompatible) => Some(
                     "OVRCR Bridge needs updating; run scripts/install-bridge.sh from this checkout",
@@ -284,17 +323,24 @@ impl Dashboard {
             }
             changed = true;
             let bridge = &mut self.desktop.bridge;
+            if update.operation == BridgeOperation::Status
+                && self.desktop.notice.as_deref() == Some("Checking OVRCR notification permission")
+            {
+                self.desktop.notice = None;
+            }
             if update.operation == BridgeOperation::Settings {
+                bridge.check_after_settings = true;
                 self.desktop.notice = Some(
                     if update.status == BridgeStatus::SettingsOpened {
-                        "System Settings opened; choose Notifications → OVRCR"
+                        "System Settings opened; choose Notifications → OVRCR, then Browse O checks permission"
                     } else {
-                        "Open System Settings manually, then Notifications → OVRCR"
+                        "Open System Settings manually: Notifications → OVRCR; then Browse O checks permission"
                     }
                     .into(),
                 );
                 continue;
             }
+            bridge.check_after_settings = false;
             bridge.status = Some(if update.status == BridgeStatus::Submitted {
                 BridgeStatus::Available
             } else {
@@ -2193,7 +2239,7 @@ input=$(cat)
 printf '%s\n' "$input" >> "$0.requests"
 status=$(cat "$0.status")
 case "$input" in
-  *'"type":"authorize"'*) status=available; printf '%s' "$status" > "$0.status" ;;
+  *'"type":"authorize"'*) status=$(cat "$0.authorize"); printf '%s' "$status" > "$0.status" ;;
   *'"type":"settings"'*) status=$(cat "$0.settings") ;;
   *'"type":"deliver"'*) [ "$status" != available ] || status=submitted ;;
 esac
@@ -2206,6 +2252,7 @@ printf '{{"schema":1,"server_wire":{},"status":"%s"}}\n' "$status"
         std::fs::set_permissions(&client, std::fs::Permissions::from_mode(0o755)).unwrap();
         std::fs::write(client.with_extension("status"), status).unwrap();
         std::fs::write(client.with_extension("settings"), "settings_opened").unwrap();
+        std::fs::write(client.with_extension("authorize"), "available").unwrap();
         (root, client)
     }
 
@@ -2459,20 +2506,62 @@ printf '{{"schema":1,"server_wire":{},"status":"%s"}}\n' "$status"
         assert!(d.settings.desktop_notifications);
         wait_bridge(&mut d, |d| {
             d.desktop.notice.as_deref()
-                == Some("System Settings opened; choose Notifications → OVRCR")
+                == Some(
+                    "System Settings opened; choose Notifications → OVRCR, then Browse O checks permission",
+                )
         });
         assert_eq!(
             bridge_requests(&client).last().unwrap().op,
             BridgeOperation::Settings
         );
-        assert!(d.notification_settings_available());
+        assert!(d.notification_recovery_available());
+        assert!(d.notification_permission_unconfirmed());
+        assert_eq!(d.key(KeyCode::Char('O')), DashboardAction::Redraw);
+        wait_bridge(&mut d, |d| {
+            !d.desktop.bridge.check_after_settings && d.desktop.bridge.in_flight.is_none()
+        });
+        assert_eq!(
+            bridge_requests(&client)
+                .iter()
+                .map(|r| &r.op)
+                .collect::<Vec<_>>(),
+            [
+                &BridgeOperation::Status,
+                &BridgeOperation::Settings,
+                &BridgeOperation::Status
+            ]
+        );
         std::fs::write(client.with_extension("settings"), "failed").unwrap();
         assert_eq!(d.key(KeyCode::Char('O')), DashboardAction::Redraw);
         wait_bridge(&mut d, |d| {
             d.desktop.notice.as_deref()
-                == Some("Open System Settings manually, then Notifications → OVRCR")
+                == Some(
+                    "Open System Settings manually: Notifications → OVRCR; then Browse O checks permission",
+                )
         });
-        assert_eq!(bridge_requests(&client).len(), 3);
+        assert_eq!(bridge_requests(&client).len(), 4);
+        assert!(d.notification_permission_unconfirmed());
+        std::fs::write(client.with_extension("status"), "available").unwrap();
+        assert_eq!(d.key(KeyCode::Char('O')), DashboardAction::Redraw);
+        wait_bridge(&mut d, |d| {
+            d.desktop.bridge.status == Some(BridgeStatus::Available)
+                && d.desktop.bridge.in_flight.is_none()
+        });
+        assert!(d.desktop_status_notice().is_none());
+        assert!(d.desktop.notice.is_none());
+        assert_eq!(
+            bridge_requests(&client)
+                .iter()
+                .map(|r| &r.op)
+                .collect::<Vec<_>>(),
+            [
+                &BridgeOperation::Status,
+                &BridgeOperation::Settings,
+                &BridgeOperation::Status,
+                &BridgeOperation::Settings,
+                &BridgeOperation::Status
+            ]
+        );
     }
 
     #[cfg(target_os = "macos")]
@@ -2500,7 +2589,228 @@ printf '{{"schema":1,"server_wire":{},"status":"%s"}}\n' "$status"
                 .collect::<Vec<_>>(),
             [&BridgeOperation::Status, &BridgeOperation::Status]
         );
+        std::fs::write(client.with_extension("status"), "not_determined").unwrap();
+        assert_eq!(d.key(KeyCode::Char('O')), DashboardAction::Redraw);
+        wait_bridge(&mut d, |d| {
+            d.desktop.bridge.status == Some(BridgeStatus::NotDetermined)
+                && d.desktop.bridge.in_flight.is_none()
+        });
+        assert_eq!(
+            bridge_requests(&client)
+                .iter()
+                .map(|r| &r.op)
+                .collect::<Vec<_>>(),
+            [
+                &BridgeOperation::Status,
+                &BridgeOperation::Status,
+                &BridgeOperation::Status
+            ]
+        );
+        assert!(d.notification_permission_unconfirmed());
         assert_eq!(d.key(KeyCode::Char('q')), DashboardAction::Detach);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bridge_expired_permission_recovers_only_through_an_explicit_status_check() {
+        use crossterm::event::{KeyEvent, KeyModifiers};
+        for (reply, status) in [
+            ("available", BridgeStatus::Available),
+            ("denied", BridgeStatus::Denied),
+            ("not_determined", BridgeStatus::NotDetermined),
+            ("permission_pending", BridgeStatus::PermissionPending),
+        ] {
+            let (_root, client) = fake_bridge("not_determined");
+            std::fs::write(client.with_extension("authorize"), "permission_pending").unwrap();
+            let mut d = dashboard();
+            install_fake_bridge(&mut d, client.clone());
+            wait_bridge(&mut d, |d| {
+                d.desktop.bridge.status == Some(BridgeStatus::PermissionPending)
+                    && d.desktop.bridge.in_flight.is_none()
+            });
+            assert_eq!(
+                bridge_requests(&client)
+                    .iter()
+                    .map(|r| &r.op)
+                    .collect::<Vec<_>>(),
+                [&BridgeOperation::Status, &BridgeOperation::Authorize]
+            );
+            d.desktop.bridge.poll_until = Some(Instant::now() - Duration::from_secs(1));
+            d.desktop.bridge.next_poll = Some(Instant::now() - Duration::from_secs(1));
+            for _ in 0..5 {
+                d.emit_desktop_notifications();
+            }
+            assert_eq!(
+                bridge_requests(&client).len(),
+                2,
+                "expiration cannot schedule another operation"
+            );
+            assert_eq!(
+                d.desktop_status_notice(),
+                Some("OVRCR notification permission unconfirmed; O: check permission")
+            );
+            let binding = d
+                .key_binding_for(KeyEvent::new(KeyCode::Char('O'), KeyModifiers::NONE))
+                .unwrap();
+            assert!(binding.enabled());
+            assert_eq!(binding.name, "Check notification permission");
+            d.key(KeyCode::Char(':'));
+            d.palette_paste("Check notification permission");
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+            terminal
+                .draw(|frame| super::super::render::draw_dashboard_at(frame, &d, 0))
+                .unwrap();
+            let text = (0..40)
+                .map(|row| {
+                    (0..120)
+                        .map(|column| terminal.backend().buffer()[(column, row)].symbol())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                text.contains("Check notification permission"),
+                "the palette must name the actual O action"
+            );
+            d.key(KeyCode::Esc);
+            std::fs::write(client.with_extension("status"), reply).unwrap();
+            assert_eq!(d.key(KeyCode::Char('O')), DashboardAction::Redraw);
+            assert_eq!(
+                d.desktop.notice.as_deref(),
+                Some("Checking OVRCR notification permission")
+            );
+            wait_bridge(&mut d, |d| {
+                d.desktop.bridge.status == Some(status) && d.desktop.bridge.in_flight.is_none()
+            });
+            assert_eq!(
+                bridge_requests(&client)
+                    .iter()
+                    .map(|r| &r.op)
+                    .collect::<Vec<_>>(),
+                [
+                    &BridgeOperation::Status,
+                    &BridgeOperation::Authorize,
+                    &BridgeOperation::Status
+                ]
+            );
+            assert!(
+                d.desktop.notice.is_none(),
+                "a completed check cannot leave its checking notice"
+            );
+            let binding = d
+                .key_binding_for(KeyEvent::new(KeyCode::Char('O'), KeyModifiers::NONE))
+                .unwrap();
+            match status {
+                BridgeStatus::Available => {
+                    assert!(d.desktop_status_notice().is_none());
+                    assert!(!binding.enabled());
+                }
+                BridgeStatus::Denied => {
+                    assert_eq!(binding.name, "Open notification settings");
+                    assert!(binding.enabled());
+                    d.key(KeyCode::Char(':'));
+                    d.palette_paste("Open notification settings");
+                    terminal
+                        .draw(|frame| super::super::render::draw_dashboard_at(frame, &d, 0))
+                        .unwrap();
+                    let text = (0..40)
+                        .map(|row| {
+                            (0..120)
+                                .map(|column| terminal.backend().buffer()[(column, row)].symbol())
+                                .collect::<String>()
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    assert!(text.contains("Open notification settings"));
+                    d.key(KeyCode::Esc);
+                    assert_eq!(d.key(KeyCode::Char('O')), DashboardAction::Redraw);
+                    wait_bridge(&mut d, |d| {
+                        d.desktop.bridge.in_flight.is_none() && d.desktop.bridge.pending.is_none()
+                    });
+                    assert_eq!(
+                        bridge_requests(&client).last().unwrap().op,
+                        BridgeOperation::Settings
+                    );
+                    assert_eq!(bridge_requests(&client).len(), 4);
+                    assert!(d.notification_permission_unconfirmed());
+                    std::fs::write(client.with_extension("status"), "permission_pending").unwrap();
+                    assert_eq!(d.key(KeyCode::Char('O')), DashboardAction::Redraw);
+                    wait_bridge(&mut d, |d| {
+                        d.desktop.bridge.status == Some(BridgeStatus::PermissionPending)
+                            && d.desktop.bridge.in_flight.is_none()
+                    });
+                    assert!(d.notification_permission_unconfirmed());
+                    for _ in 0..5 {
+                        d.emit_desktop_notifications();
+                    }
+                    assert_eq!(
+                        bridge_requests(&client).len(),
+                        5,
+                        "checking after Settings must not begin automatic polling"
+                    );
+                    std::fs::write(client.with_extension("status"), "available").unwrap();
+                    assert_eq!(d.key(KeyCode::Char('O')), DashboardAction::Redraw);
+                    wait_bridge(&mut d, |d| {
+                        d.desktop.bridge.status == Some(BridgeStatus::Available)
+                            && d.desktop.bridge.in_flight.is_none()
+                    });
+                    assert!(d.desktop_status_notice().is_none());
+                    assert!(d.desktop.notice.is_none());
+                    assert_eq!(
+                        bridge_requests(&client)
+                            .iter()
+                            .map(|r| &r.op)
+                            .collect::<Vec<_>>(),
+                        [
+                            &BridgeOperation::Status,
+                            &BridgeOperation::Authorize,
+                            &BridgeOperation::Status,
+                            &BridgeOperation::Settings,
+                            &BridgeOperation::Status,
+                            &BridgeOperation::Status
+                        ]
+                    );
+                }
+                _ => {
+                    assert_eq!(binding.name, "Check notification permission");
+                    assert!(binding.enabled());
+                    assert_eq!(
+                        d.desktop_status_notice(),
+                        Some("OVRCR notification permission unconfirmed; O: check permission")
+                    );
+                    for _ in 0..5 {
+                        d.emit_desktop_notifications();
+                    }
+                    assert_eq!(
+                        bridge_requests(&client).len(),
+                        3,
+                        "a check never restarts polling or authorization"
+                    );
+                }
+            }
+            let before = bridge_requests(&client).len();
+            let mut settings = d.settings.clone();
+            settings.desktop_notifications = false;
+            d.handle_server_message(super::super::tests::settings_reading(settings));
+            assert_eq!(d.key(KeyCode::Char('O')), DashboardAction::None);
+            for _ in 0..5 {
+                d.emit_desktop_notifications();
+            }
+            assert_eq!(
+                bridge_requests(&client).len(),
+                before,
+                "N off permits no recovery controls"
+            );
+            assert_eq!(
+                bridge_requests(&client)
+                    .iter()
+                    .filter(|r| r.op == BridgeOperation::Authorize)
+                    .count(),
+                1
+            );
+            assert!(d.desktop.pending.is_empty());
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -2540,8 +2850,8 @@ printf '{{"schema":1,"server_wire":{},"status":"%s"}}\n' "$status"
             let notice = d.desktop_status_notice().unwrap();
             assert!(notice.contains("install-bridge.sh"));
             assert!(!notice.contains("PRIVATE_HOST_ERROR"));
-            assert!(!d.notification_settings_available());
-            assert_eq!(d.open_notification_settings(), DashboardAction::None);
+            assert!(!d.notification_recovery_available());
+            assert_eq!(d.recover_notification_permission(), DashboardAction::None);
         }
         let root = tempfile::tempdir().unwrap();
         let mut d = dashboard();

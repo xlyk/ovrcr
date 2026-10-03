@@ -204,7 +204,7 @@ fn items(report: &SettingsReport, presets: &[String]) -> Vec<Row> {
             &[
                 "Turning this on may show an OS notification permission prompt.",
                 #[cfg(target_os = "macos")]
-                "macOS uses the installed OVRCR Bridge app. In Browse, O opens System Settings; choose Notifications → OVRCR.",
+                "macOS uses the installed OVRCR Bridge app. In Browse, O checks unconfirmed permission or opens System Settings when denied; choose Notifications → OVRCR.",
             ],
         ),
         top(
