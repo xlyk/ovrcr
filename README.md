@@ -225,11 +225,13 @@ behaviour, history and clipboard bounds, the palette's forms and path pickers, a
 [dashboard reference](docs/dashboard.md).
 
 Optional [desktop notifications](docs/dashboard.md#desktop-notifications) alert
-when a background managed Codex response becomes Ready. They default off; press
-`N` in browse mode to toggle them for the current dashboard. Alerts identify the
-terminal without including conversation content and require an active dashboard.
+when a supported managed response becomes Ready or opens an Input request. They
+default off; press `N` in Browse to save the setting through the Server. Alerts
+identify the terminal without including conversation content and require an active
+Dashboard. On macOS the separately installed [OVRCR Bridge](native/bridge/README.md)
+holds the sender identity and notification permission; Linux uses `notify-send`.
 An independent [ready sound](docs/dashboard.md#ready-sound), toggled with `S`,
-follows the same responses and also defaults off.
+follows the same alerts and also defaults off.
 
 Managed Codex terminals also show an [unread indicator](docs/dashboard.md#unread-responses)
 for their latest unreviewed Ready response. Press `R` in Browse mode or choose

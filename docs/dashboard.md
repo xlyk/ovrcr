@@ -70,11 +70,12 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `:` | Open the command palette |
 | `Space` | Show contextual groups, then choose an action |
 | `?` | Browse the same popup with arrows and `Enter` |
-| `N` | Toggle desktop notifications for this dashboard |
-| `S` | Toggle the ready sound for this dashboard |
+| `N` | Toggle the Server-saved desktop notification setting |
+| `O` | Check unresolved macOS notification permission or open Settings when denied |
+| `S` | Toggle the Server-saved ready sound setting |
 | `q` | Detach; the server and every session keep running |
 
-`N`, `S`, `R`, `b` and `[` act on a key press; a key repeat or release does nothing.
+`N`, `O`, `S`, `R`, `b` and `[` act on a key press; a key repeat or release does nothing.
 `Alt` and `Super` do not change which action a key runs: `Alt-x` closes the pane
 that `x` closes. `Ctrl` reaches Browse only as `Ctrl-t`, whatever else is held
 with it; every other `Ctrl`-modified key is ignored. `Esc` and `Ctrl-g` cancel a
@@ -876,9 +877,11 @@ quality, and Confirmed activity without unread does not notify.
 [input request](#input-requests); delivery keys on the request identity, at most
 one alert per logical request, and answering it is not a review. The two lanes are
 independent: a Ready and an open request on the same cycle each get their alert and
-neither suppresses the other. Only project, workspace and terminal identity appear
-in either alert. Prompt and response text, prompt titles and answers are never
-included. The accepted Codex reporting setup is still
+neither suppresses the other. On macOS the subtitle is the manual title, otherwise
+the original session name; the body carries project, workspace, original terminal
+identity and session ID. Generated conversation subjects, prompt and response text,
+prompt titles and answers are never included. Display labels are bounded and strip
+control characters. The accepted Codex reporting setup is still
 required; see [Codex setup](codex-reporting-setup.md). Pi and Oh My Pi need no setup
 beyond the managed launch.
 
@@ -895,21 +898,43 @@ input request cancels its own. Mark-reviewed does not.
 No active dashboard means no delivery.
 
 Host submission runs outside the input loop with bounded queues and a two-second
-subprocess deadline. Disabling the last enabled alert channel (notifications or the
+client deadline. Disabling the last enabled alert channel (notifications or the
 [ready sound](#ready-sound)) or detaching cancels pending work.
+On macOS disabling notifications also cancels the running banner client when the
+independent sound remains enabled.
 Delivery is best effort, with no retries. Host failures do not change reporting,
-native approvals, input or process state. A host command error displays
-**Desktop notifications unavailable** in the footer.
+native approvals, input or process state. A failed host command displays an
+unavailable footer; macOS Bridge failures include installation or update guidance.
 
-macOS uses `osascript`; the system chooses its sender identity and notification
-preferences. Linux uses `notify-send` from the desktop session. OVRCR requests no
-notification sound; the [ready sound](#ready-sound) is a separate option. Neither
-a successful host command nor an unchanged footer proves that the
-desktop displayed the alert: OS permission, Focus/Do Not Disturb and desktop
-policy can suppress it. OVRCR does not change those settings. Native acceptance
-and platform limits are recorded in the [issue 59 evidence](../research/issue-59-desktop-alerts/README.md).
-Actual desktop delivery is verified on macOS. Linux has automated coverage; native
-Linux desktop delivery remains unverified.
+On macOS install the separately built and signed
+[OVRCR Bridge](../native/bridge/README.md) at `~/Applications/OVRCR Bridge.app`.
+The Dashboard starts it when notifications need it and leaves it running after
+detach. Ordinary CLI rebuilds do not replace that installation. A missing Bridge
+shows installation guidance; an incompatible one shows update guidance. There is
+no Script Editor fallback or automatic Server restart.
+
+When saved notifications are enabled at startup, or a successful Server reading
+enables them later, the Dashboard checks permission before waiting for an alert.
+An undetermined state requests permission once; a pending choice remains pending
+and is not treated as denial or retried. Status checks stop after thirty seconds.
+If the result remains unconfirmed, use **Check notification permission** (`O`) for
+a fresh bounded read; this does not repeat the authorization request.
+Denied permission shows recovery guidance.
+In Browse use **Open notification settings** (`O`) to open System Settings, then
+navigate manually to **Notifications → OVRCR**. This opens the app, not a particular
+pane or application row. OVRCR does not change a toggle or open Settings
+automatically. After returning, use `O` again to check the current permission;
+this also works after opening Settings manually if the launch failed.
+Both-off and sound-only startup do not start the Bridge.
+
+Linux uses `notify-send` from the desktop session. Banners request no notification
+sound; the [ready sound](#ready-sound) is a separate option. A successful submission
+or an unchanged footer does not prove visible delivery: permission, Focus/Do Not Disturb
+and desktop policy can suppress it. OVRCR does not change those settings or retry.
+The [earlier issue 59 evidence](../research/issue-59-desktop-alerts/README.md)
+measured the previous macOS host, not this new Bridge. Native production-Bridge
+acceptance is still pending; Linux has automated coverage and native Linux desktop
+delivery remains unverified.
 
 ## Ready sound
 

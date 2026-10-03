@@ -122,7 +122,7 @@ Optional [desktop notifications](dashboard.md#desktop-notifications) can alert
 from an active dashboard when a new root Ready response arrives, including for
 terminals that are selected or shown in visible panes. They default off. Set
 `desktop_notifications = true` in `dashboard.toml`, or press uppercase `N` in
-dashboard browse mode for a session-only toggle. Alerts contain
+dashboard browse mode to save the setting through the Server. Alerts contain
 terminal/project/workspace identity only. Attaching, reconnecting or enabling
 alerts does not replay existing Ready observations. An alert retains the same
 Observed meaning as the indicator. An independent `ready_sound` setting, or
