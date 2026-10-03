@@ -82,7 +82,9 @@ fn palette_creates_switches_and_closes_a_real_terminal() -> Result<()> {
     let root = demo.root().to_owned();
     let mut pgids = demo_session_groups(&root)?;
     let mut terminal = demo.dashboard(40, 120, Default::default())?;
-    wait_screen(&terminal, "claude:sonnet-4")?;
+    // The complete Demo inventory is established above, but the initial frame
+    // arrives in PTY chunks. Wait for the last required sidebar label.
+    wait_screen(&terminal, "claude:opus-4")?;
     let initial = terminal.screen().contents();
     let sidebar = initial
         .lines()
