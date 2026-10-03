@@ -80,9 +80,16 @@ impl ServerState {
         if same_reading(&watched.report, &report) {
             return false;
         }
+        let findings = report.findings.len();
         watched.report = report;
         drop(watched);
         quota::sync_consent(self);
+        self.record_event(ovrcr_protocol::EventComponent::Settings, None, "reloaded");
+        self.record_event(
+            ovrcr_protocol::EventComponent::Settings,
+            None,
+            format!("findings: {findings}"),
+        );
         true
     }
 
@@ -113,12 +120,25 @@ impl ServerState {
     pub(super) fn set_setting(&self, path: &str, value: Option<&str>) -> anyhow::Result<()> {
         {
             let _writing = self.settings.lock().unwrap();
-            crate::settings::set(
+            if let Err(error) = crate::settings::set(
                 &crate::settings::document_path(&self.registry_path),
                 path,
                 value,
-            )?;
+            ) {
+                drop(_writing);
+                self.record_event(
+                    ovrcr_protocol::EventComponent::Settings,
+                    Some(path.to_owned()),
+                    "refused",
+                );
+                return Err(error);
+            }
         }
+        self.record_event(
+            ovrcr_protocol::EventComponent::Settings,
+            Some(path.to_owned()),
+            "wrote",
+        );
         self.reload_and_publish(true);
         Ok(())
     }
@@ -282,5 +302,65 @@ mod tests {
         state.shutdown.store(true, Ordering::Release);
         thread.thread().unpark();
         thread.join().unwrap();
+    }
+
+    #[test]
+    fn settings_events_record_a_reload_with_findings_and_a_refusal() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = super::super::tests::test_state(None, None);
+        Arc::get_mut(&mut state).unwrap().registry_path = dir.path().join("config.toml");
+        let document = dir.path().join("dashboard.toml");
+        let secret = "SECRET_VALUE_9f3a";
+        std::fs::write(
+            &document,
+            "not_a_setting = true
+",
+        )
+        .unwrap();
+        assert!(state.poll_settings());
+        let set = super::super::connections::handle_request_with_id(
+            &state,
+            &mut ClientRole::Control,
+            Request::SetSetting {
+                path: "ready_sound".into(),
+                value: Some(format!("\"{secret}\"")),
+            },
+            1,
+            None,
+        );
+        assert!(matches!(set, Response::Error { .. }));
+        assert_eq!(
+            super::super::connections::handle_request_with_id(
+                &state,
+                &mut ClientRole::Control,
+                Request::SetSetting {
+                    path: "ready_sound".into(),
+                    value: Some("true".into()),
+                },
+                2,
+                None,
+            ),
+            Response::Ok
+        );
+        let events = state.event_snapshot();
+        let messages: Vec<_> = events.iter().map(|event| event.message.clone()).collect();
+        assert!(
+            messages.iter().any(|message| message == "reloaded"),
+            "{messages:?}"
+        );
+        assert!(
+            messages.iter().any(|message| message == "findings: 1"),
+            "{messages:?}"
+        );
+        assert!(
+            messages.iter().any(|message| message == "refused"),
+            "{messages:?}"
+        );
+        assert!(
+            messages.iter().any(|message| message == "wrote"),
+            "{messages:?}"
+        );
+        let rendered = format!("{events:?}");
+        assert!(!rendered.contains(secret));
     }
 }

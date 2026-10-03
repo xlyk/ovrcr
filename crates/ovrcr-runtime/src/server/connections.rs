@@ -208,6 +208,15 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
             state.publish_quotas();
             continue;
         }
+        if matches!(message.request, Request::Events { follow: true })
+            && matches!(role, ClientRole::Control)
+        {
+            let (events, follower) = state.subscribe_events();
+            if send_direct(&mut stream, message.request_id, Response::Events(events)).is_ok() {
+                follow_events(&state, &mut stream, follower);
+            }
+            break;
+        }
         let shutdown = matches!(message.request, Request::Shutdown { .. });
         let deferred_view = matches!(
             message.request,
@@ -819,6 +828,7 @@ pub(super) fn handle_request_with_id(
             }
             await_view_completion(receiver)
         }
+        Request::Events { .. } => Response::Events(state.event_snapshot()),
     }
 }
 
@@ -1005,4 +1015,52 @@ pub(super) fn response_message(request_id: u64, response: Response) -> ServerMes
 }
 fn send_direct(stream: &mut UnixStream, request_id: u64, response: Response) -> Result<()> {
     write_frame(stream, &response_message(request_id, response))
+}
+
+fn follow_events(
+    state: &ServerState,
+    stream: &mut UnixStream,
+    follower: mpsc::Receiver<ovrcr_protocol::Event>,
+) {
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+    loop {
+        if state.shutdown.load(Ordering::Acquire) || peer_closed(stream) {
+            break;
+        }
+        match follower.recv_timeout(Duration::from_millis(200)) {
+            Ok(event) => {
+                if write_frame(stream, &ServerMessage::Event(ServerEvent::Recorded(event))).is_err()
+                {
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+}
+
+fn peer_closed(stream: &UnixStream) -> bool {
+    let fd = stream.as_raw_fd();
+    let mut pollfd = libc::pollfd {
+        fd,
+        events: libc::POLLIN | libc::POLLHUP,
+        revents: 0,
+    };
+    if unsafe { libc::poll(&mut pollfd, 1, 0) } <= 0 {
+        return false;
+    }
+    if pollfd.revents & libc::POLLIN != 0 {
+        let mut byte = [0u8; 1];
+        let read = unsafe {
+            libc::recv(
+                fd,
+                byte.as_mut_ptr().cast(),
+                1,
+                libc::MSG_PEEK | libc::MSG_DONTWAIT,
+            )
+        };
+        return read == 0;
+    }
+    pollfd.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0
 }

@@ -29,3 +29,14 @@ termination result is not a controlled stop. Only a verified stop of the current
 owned run may certify that control outcome; failed discovery, races and partial
 termination retain uncertainty. Explicit acknowledgement is fenced to its
 captured session and run.
+
+The Server records its own decisions as Events (ADR 0009). Each event is a
+component (`titles`, `settings`, or `quota`), a time, the session or provider
+concerned, and one line that follows the Quota reason rule: no prompt, transcript,
+credential, account identifier, or native body. The in-memory ring holds 2000
+events and drops the oldest. Every new event is also appended to `events.jsonl`
+beside the instance identity, mode 0600, one JSON object per line. At 5 MB the
+file rotates once, to `events.jsonl.1`; the rotation renames the whole file, so
+a line is never split, and older lines are not rewritten. stderr is unchanged.
+`ovrcr events` reads the ring through a Server request. The Dashboard popup that
+shows the same ring is a separate change and is not implemented here.

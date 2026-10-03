@@ -3187,6 +3187,9 @@ impl Dashboard {
                 Response::Inventory { .. } | Response::TerminalText { .. } | Response::Task(_) => {
                     self.dismiss_error_banner()
                 }
+                // The Events popup is a later PR. A snapshot asked by something
+                // else is not drawn here.
+                Response::Events(_) => {}
                 Response::HistoryOpened(opened) => {
                     self.accept_history_opened(request_id, opened);
                 }
@@ -3355,6 +3358,9 @@ impl Dashboard {
                     self.ensure_selection_visible(&self.visible_rows());
                 }
                 ServerEvent::SettingsChanged(report) => self.install_settings_report(*report),
+                // Live events are on the wire so a later popup can append them.
+                // This PR does not open that popup.
+                ServerEvent::Recorded(_) => {}
                 ServerEvent::SessionChanged(summary) => {
                     if find_session(self, summary.id)
                         .is_some_and(|current| current.run.0 > summary.run.0)

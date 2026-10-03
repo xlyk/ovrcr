@@ -182,6 +182,7 @@ fn run_server_inner(
         );
     }
     let (events, event_receiver) = event_channel(event_monitor.as_ref());
+    let event_log = event_log::Log::open(event_log::events_path(&registry_path));
     let (dispatch, dispatch_receiver) = dispatch_channel(dispatch_monitor.as_ref());
     let state = Arc::new(ServerState {
         tasks: Some(Arc::clone(&task_manager)),
@@ -200,6 +201,7 @@ fn run_server_inner(
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
         events: Mutex::new(Some(events)),
+        event_log: Mutex::new(event_log),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         #[cfg(test)]

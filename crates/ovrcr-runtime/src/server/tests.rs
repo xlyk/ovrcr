@@ -2618,6 +2618,7 @@ fn test_state_with_dispatch(
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
             events: Mutex::new(Some(events)),
+            event_log: Mutex::new(event_log::Log::memory()),
             #[cfg(test)]
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
@@ -2663,6 +2664,7 @@ fn test_state_with_socket(
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
             events: Mutex::new(Some(events)),
+            event_log: Mutex::new(event_log::Log::memory()),
             #[cfg(test)]
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
@@ -5306,6 +5308,7 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
         events: Mutex::new(Some(events)),
+        event_log: Mutex::new(event_log::Log::memory()),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),
@@ -5521,6 +5524,7 @@ fn session_output_flows_while_another_session_spawns() {
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
         events: Mutex::new(Some(events)),
+        event_log: Mutex::new(event_log::Log::memory()),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),
@@ -7668,6 +7672,7 @@ fn failed_root_shell_keeps_setup_pending_and_does_not_duplicate_launch() {
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
         events: Mutex::new(Some(events)),
+        event_log: Mutex::new(event_log::Log::memory()),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),
@@ -7959,6 +7964,7 @@ fn automatic_local_terminals_default_branch_only_skips_feature_workspaces() {
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
         events: Mutex::new(Some(events)),
+        event_log: Mutex::new(event_log::Log::memory()),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),
@@ -8052,6 +8058,7 @@ fn automatic_local_terminals_on_and_off_cover_root_and_feature() {
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
             events: Mutex::new(Some(events)),
+            event_log: Mutex::new(event_log::Log::memory()),
             #[cfg(test)]
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
@@ -8150,6 +8157,7 @@ fn changing_automatic_local_policy_leaves_existing_terminals() {
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
         events: Mutex::new(Some(events)),
+        event_log: Mutex::new(event_log::Log::memory()),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),

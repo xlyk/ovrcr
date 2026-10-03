@@ -111,6 +111,13 @@ pub(super) enum Command {
         #[command(subcommand)]
         command: Option<SettingsCommand>,
     },
+    /// Print the running Server's event ring, oldest first. Does not start a
+    /// Server and does not read `events.jsonl`.
+    Events {
+        /// Keep the connection open and print events recorded after the snapshot.
+        #[arg(long)]
+        follow: bool,
+    },
     /// Stop a session's process group and keep its final screen.
     Kill { id: u64 },
     /// Stop a running session with SIGSTOP.
