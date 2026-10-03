@@ -18,8 +18,9 @@ const KNOWN_AGENTS: [&str; 12] = [
     "hermes",
 ];
 /// Detected agents OVRCR launches through `agent run <name> --` so managed reporting
-/// (Grok retains history for titles; Hermes has process supervision only). Explicit custom
-/// overrides keep their argv unchanged; a raw shell command is never adopted silently.
+/// (Grok retains history for titles; Hermes has process supervision only). Claude, Codex,
+/// Pi, and Oh My Pi defaults also carry that provider's auto-trust flag. Explicit custom
+/// overrides keep their stored argv unchanged; a raw shell command is never adopted silently.
 pub const MANAGED_AGENTS: [&str; 7] = [
     "claude",
     "codex",
@@ -54,14 +55,20 @@ pub fn detect_agents(
     for name in KNOWN_AGENTS {
         if let Some(found) = dirs.iter().find_map(|dir| executable_in(dir, name)) {
             let argv = match launcher {
-                Some(launcher) if MANAGED_AGENTS.contains(&name) => vec![
-                    launcher.as_os_str().to_owned(),
-                    "agent".into(),
-                    "run".into(),
-                    name.into(),
-                    "--".into(),
-                    found.into(),
-                ],
+                Some(launcher) if MANAGED_AGENTS.contains(&name) => {
+                    let mut native = vec![OsString::from(found)];
+                    // Native argv only: the wrapper's `--` is not a prompt separator.
+                    ovrcr_protocol::apply_default_auto_trust(name, &mut native);
+                    let mut argv = vec![
+                        launcher.as_os_str().to_owned(),
+                        "agent".into(),
+                        "run".into(),
+                        name.into(),
+                        "--".into(),
+                    ];
+                    argv.extend(native);
+                    argv
+                }
                 _ => vec![found.into()],
             };
             entries.push(AgentEntry {
@@ -300,19 +307,26 @@ mod tests {
                 .argv
                 .clone()
         };
+        let trust = |name: &str| match name {
+            "claude" => Some("--dangerously-skip-permissions"),
+            "codex" => Some("--full-auto"),
+            "pi" => Some("--approve"),
+            "omp" => Some("--auto-approve"),
+            _ => None,
+        };
         for name in MANAGED_AGENTS {
-            assert_eq!(
-                argv(name),
-                vec![
-                    OsString::from(launcher),
-                    "agent".into(),
-                    "run".into(),
-                    name.into(),
-                    "--".into(),
-                    dir.path().join(name).into_os_string(),
-                ],
-                "{name}"
-            );
+            let mut expected = vec![
+                OsString::from(launcher),
+                "agent".into(),
+                "run".into(),
+                name.into(),
+                "--".into(),
+                dir.path().join(name).into_os_string(),
+            ];
+            if let Some(flag) = trust(name) {
+                expected.push(flag.into());
+            }
+            assert_eq!(argv(name), expected, "{name}");
         }
         // Unmanaged detected agents stay bare even when a launcher is present.
         assert_eq!(

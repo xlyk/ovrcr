@@ -29,7 +29,7 @@ pub fn launch_options(argv: &[OsString]) -> Result<Vec<String>> {
         let arg = arg.to_str().context("non-UTF8 Codex option")?;
         match arg {
             "--" => break,
-            "--no-alt-screen" => options.push(arg.into()),
+            "--no-alt-screen" | "--full-auto" => options.push(arg.into()),
             "--model" | "-m" | "--profile" | "-p" | "--sandbox" | "-s" | "--ask-for-approval"
             | "-a" | "--cd" | "-C" => {
                 let value = args
@@ -277,6 +277,7 @@ mod tests {
                 "-a",
                 "on-request",
                 "--no-alt-screen",
+                "--full-auto",
                 "PRIVATE_PROMPT"
             ]))
             .unwrap(),
@@ -289,7 +290,8 @@ mod tests {
                 "read-only",
                 "-a",
                 "on-request",
-                "--no-alt-screen"
+                "--no-alt-screen",
+                "--full-auto"
             ]
         );
         assert!(
@@ -302,7 +304,6 @@ mod tests {
             "--remote",
             "--last",
             "--dangerously-bypass-hook-trust",
-            "--full-auto",
         ] {
             assert!(
                 launch_options(&args(&["codex", option])).is_err(),
