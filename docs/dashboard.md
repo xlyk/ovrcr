@@ -690,7 +690,9 @@ only. Remembered launch choices stay in this file. Do not put settings in
 database (`config.toml.sqlite3`) and scheduled-task storage (`config.tasks`); a
 `[quota]` table there configures nothing and is reported as a finding.
 
-A missing file uses defaults. A wrong-typed value keeps its own default, and an
+A missing file uses defaults. A symlink at that path whose target does not
+exist is not a missing file: it is one document-level finding naming the path.
+A wrong-typed value keeps its own default, and an
 unknown key or an unknown spelling such as `automatic_local_terminals = "always"`
 is ignored; each is reported as a finding with its key and line. Only a document
 that is not valid TOML falls back to every default, with one document-level
