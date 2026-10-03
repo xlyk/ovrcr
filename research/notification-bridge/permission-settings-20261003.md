@@ -1,0 +1,78 @@
+# First-use notification permission and explicit Settings recovery
+
+**Ticket:** [#221](https://github.com/xlyk/ovrcr/issues/221), verification only.
+
+**Checked:** 2026-10-03 against checkout `7b37a99312831bb3b3aa9a446f05736bf93abdf5`, current Apple sources, the live issue/discussion, and retained fixture source/events. #221 is OPEN; the latest issue checkpoint still records unresolved gates. This additive report does not change the existing native report or ADR 0006.
+
+**Result:** NO-GO remains. The retained first request reached the OS permission-alert pipeline and the app continued running, but visible permission delivery, a witnessed first-use choice, and that request's completion remain unproved. The tested Settings URI reached Notifications on one host; its supported third-party stability remains unestablished.
+
+No native fixture/helper executable was launched, compiled, signed, installed or probed for this report. No permission request, notification submission, Settings opening, OS policy change, production change or publication occurred. Current public-source and issue reads do not renew the earlier session-specific probe approvals.
+
+## Primary-source contracts checked now
+
+- Apple describes a first authorization request that asks the person and stores the choice; later requests reuse the stored result without another prompt. It recommends requesting in context and inspecting current settings before delivery. A retry on an already denied or authorized identity cannot supply missing first-use evidence. [Permission guidance](https://developer.apple.com/documentation/usernotifications/asking-permission-to-use-notifications)
+- `requestAuthorization` completes asynchronously and may call its completion on a background thread. `granted=true` means at least one requested option is authorized; `false` can mean denial **or undetermined authorization**. Neither Boolean substitutes for a fresh authorization/feature-settings read. The reference specifies no maximum completion time and no main-thread invocation requirement. A diagnostic deadline must therefore be recorded as an observation timeout, not an OS denial or API guarantee. [Request API](https://developer.apple.com/documentation/usernotifications/unusernotificationcenter/requestauthorization(options:completionhandler:))
+- `getNotificationSettings` retrieves this application's authorization and individual capability settings. Users can change them independently. An enabled alert or sound setting does not establish overall authorization. [Settings API](https://developer.apple.com/documentation/usernotifications/unusernotificationcenter/getnotificationsettings(completionhandler:))
+- `LSUIElement` describes background agent behavior and Dock visibility. It does not document exclusion from notification authorization. [Agent metadata](https://developer.apple.com/documentation/bundleresources/information-property-list/lsuielement)
+- `userNotificationCenter(_:openSettingsFor:)` asks the application to show its **own** notification settings. It is not a system-settings launcher. The local Apple SDK header also places it on the delegate and describes the reverse, user-initiated callback. [Settings delegate](https://developer.apple.com/documentation/usernotifications/unusernotificationcenterdelegate/usernotificationcenter(_:opensettingsfor:))
+- Apple's macOS Tahoe guide documents Apple menu → System Settings → Notifications and per-app Allow Notifications. It does not establish the candidate URI as a stable third-party API. Use the versioned guide when assessing the retained Tahoe result: Apple's unversioned guide now presents a different macOS version. [Tahoe Notifications guide](https://support.apple.com/guide/mac-help/notifications-settings-mh40583/26/mac/26)
+- `NSWorkspace.openApplication` is a documented app-launch operation with an asynchronous application/error result; `open(URL)` reports whether the location opened. These APIs do not promise a Notifications pane or a selected application row for an undocumented URI. [App opening](https://developer.apple.com/documentation/appkit/nsworkspace/openapplication(at:configuration:completionhandler:)), [URL opening](https://developer.apple.com/documentation/appkit/nsworkspace/open(_:))
+
+The inspected local `UNUserNotificationCenter.h` exposes authorization, settings, notification operations and the in-app-settings delegate callback; it exposes no system notification-settings opener. This is a bounded inventory of that SDK/header and the linked primary references, not proof that no such mechanism could exist elsewhere or in a future SDK.
+
+## Retained native observations
+
+These are September 30 measurements on macOS 26.5.2 from `/tmp/ovrcr-native-contract-ZwWUQp/`, not new native results. The fresh fixture used a unique bundle identity, `LSUIElement=true`, Developer ID/hardened signing without timestamp/notarization, and accessory activation. Its original permission records were not reset.
+
+| UTC time / evidence | Recorded observation | Limit |
+| --- | --- | --- |
+| 16:00:29.827, `permission-baseline-1.json` | Status-only launch read authorization/alerts/sound `0/0/0`. Strict verification had succeeded. | No request or user choice occurred in this baseline. |
+| 16:01:00.740, `permission-denial-first-request.json` | PID 47481 read `0/0/0` immediately before the source's first authorization call. | The source has no separate request-start event; the scoped OS request log independently confirms the call. |
+| 16:01:00.739–.858, `permission-own-system-log-1.json` | `usernoted` recognized the owned bundle/path, sent a permission request, scheduled its permission record, and logged delivery/presentation as an alert. | Internal pipeline statements do not prove visible pixels, a human choice or callback completion. |
+| 16:01:30.741–16:17:00.743, `permission-denial-first-request.json` | 32 periodic settings callbacks read `1/2/2` over 960.003 seconds after the initial settings event. No authorization completion or submission was recorded. | Authorization `1` is denied; capability `2` is enabled. Their coexistence is not permission to notify or proof of a human denial. |
+| 16:17:11.800–.801, `permission-denied-retry-1.json` | Relaunch of the same identity started denied; completion returned false with “Notifications are not allowed for this application” after 1 ms. | This is a stored-denial result, not a fresh prompt or a diagnosis of the earlier pending request. |
+| 16:35:11.809, `permission-recovery-status-2.json` | After instructions for the owner to enable only this fixture, the still-running retry process read `2/2/2`. The owner later acknowledged completion. | This establishes settings recovery on this host; the agent did not change the toggle. It does not establish the original first-use choice. |
+
+The current issue and [existing report](native-contract-sources.md) separately preserve the owner's first-use observations: no prompt seen and permission not yet changed. These observations must not be relabeled as a denial.
+
+The retained permission log contains an intermediate `requestIneligibleForUserNotification(ignoresDND)` line followed by scheduling and alert-delivery lines for the same record. Reading only the intermediate line as final rejection would contradict the following entries. Neither that token nor the later “not intelligentlyBrokethrough” entry establishes a Focus cause. The permission record's `hasSound=false` explains the recorded absence of its sound; silence does not establish absent visual delivery.
+
+### What this narrows, and what it leaves unknown
+
+**Supported inference:** the fresh signed fixture was recognized as the owned application and reached the OS permission-alert pipeline. Continued periodic callbacks and durable event writes rule out a completely dead application loop or a 20-minute source deadline expiring during these 16 minutes. They do not rule out a narrower authorization callback or OS/UI failure. The earlier short-lived ad-hoc control does not explain this later run.
+
+**Unknown:** why the owner saw no permission notice; whether it appeared somewhere not observed; whether any input reached it; why settings became denied without a witnessed choice; and why the initial completion was absent. No cause is assigned to Dock-less metadata, signing, Focus, observation tooling, window placement or a particular OS bug.
+
+**Source hazard for the next action:** the authorization path at retained `NotificationProbe.swift` lines 65–103 couples authorization to notification submission under `--submit`. Grant immediately constructs content and calls `center.add`; there is no permission-only request mode. `--status-only` requests nothing, while an ordinary launch requests nothing. Reusing `--submit` under permission-only approval would exceed that scope. The source sets the application and notification delegates before `application.run()` and keeps a 1,200-second lifetime; changing thread/launch timing alone is not a proved repair.
+
+## Explicit Settings recovery: evidence and contract decision
+
+Retained `settings-url-handlers-1.txt` records no handler for Apple's Help-context `x-help-action://openPrefPane?bundleId=com.apple.Notifications-Settings.extension`. The candidate `x-apple.systempreferences:com.apple.Notifications-Settings.extension` resolved to System Settings. `settings-destination-3.txt` later recorded an `AXWindow` titled `Notifications`; `permission-settings-row-1.txt` found the exact fixture row. These are stronger than an `open` exit status, but remain one-host observations without a documented URI stability contract or other supported-version results.
+
+ADR 0006 requires an explicit Dashboard action to open notification settings after denial. Opening System Settings through its documented application-launch API and showing the Apple-documented manual route is a possible supported fallback. It does **not** prove automatic arrival at Notifications and must not silently replace that agreed action. The owner must accept that scope if it changes the expected destination. Otherwise direct-pane support/stability remains a #221 blocker; native success for the current URI cannot resolve it by itself.
+
+For either agreed mechanism, later acceptance must distinguish opening the app, reaching Notifications, locating the correct app identity, and owner-changed permission read-back. Failed launch/destination results stay unavailable with guidance. Do not automatically open Settings from an alert/click, switch a toggle, repeatedly request permission after denial, or add a Script Editor fallback.
+
+## Minimum next native verification and current authorization boundary
+
+Prepare and review a disposable **permission-only** source first. It must have explicit status-only and request-permission-only modes, no notification content/submission/sound, no Server/Dashboard/session operation, and no Settings or permission-reset operation. Preserve application identity, Dock-less/accessory behavior and delegate lifetime. Record launch, initial settings, request-start, request completion, fresh completion settings and a bounded 120-second observation deadline to a unique owned JSONL file. Record `NSError` domain/code separately from its description. Make status queries and deadlines independent of request completion. Calling once on the main queue after launch simplifies the diagnostic; it is not an Apple-required fix.
+
+During this pass, the coordinator reported fresh authorization for the exact one-shot permission-only probe, then forwarded Kyle's explicit instruction, **“Use cua to accept the permissions.”** That authorizes native CUA acceptance of **only the new fixture's notification prompt**; owner-at-computer readiness is no longer the prerequisite for this bounded case. It authorizes no other permission control or Settings change. No new native result is claimed here; the coordinator will record the actual run separately after independent review.
+
+The bounded case is:
+
+1. Build and sign that reviewed fixture using the existing signing identity without interaction or credential/Keychain changes; install one uniquely named task-owned app with a new bundle ID in a unique Applications directory. If signing needs a new prompt or access change, stop. Check a status-only `notDetermined` baseline; if the identity already has a record, stop rather than resetting it.
+2. Launch once in request-permission-only mode and request only `.alert` and `.sound` once. Immediately inspect the exact fixture's permission notice through native CUA and retain only its scoped accessibility/pixel evidence. CUA may press **Allow** only when fresh UI state attributes that control to this new fixture. Record the actual input, authorization completion, and fresh authorization/feature settings separately. An unseen or unattributable notice, missing input evidence or deadline remains unresolved; do not click a different permission control or retry with a new identity under the same approval.
+3. Stop only path-verified task-owned processes, unregister/remove only the unique installation, retain source/signature/evidence and leave the OS-managed permission record intact. No permission reset, TCC/database edit, shared Focus/volume/screen-sharing change, unrelated capture, signing-policy change or production operation is included.
+
+This action targets the missing first-use **Allow** display/completion evidence without repeating the authorized banner/callback work. The run must identify the reviewed source revision, new identity/display name and exact installation/evidence paths. Existing approval forms remain historical evidence; the new instruction supplies the current authorization.
+
+A new denial-then-Settings-recovery experiment is **outside this approval**. If needed, seek separate bounded approval for a fresh identity's denial, the agreed explicit Settings destination, and enabling Allow Notifications for only that identity. Keep the actual Notifications destination/fixture selection and fresh authorized status read-back distinct. Submit no alert to prove recovery. Retained denial-state and owner-only Settings recovery already supply useful historical measurements; they do not need a live-state query merely to restate them.
+
+## Evidence preservation and remaining gates
+
+The existing native CUA warm/cold callbacks remain valid retained evidence: `cua-click-20260930/warm-result.json` records the exact default-action payload on PID 87748; `cold-result.json` records the new owned PID 92589, expected callback and zero cold resubmissions. Their cleanup receipt records no owned processes or pending/delivered requests. Nothing here repeats, weakens or replaces those checks.
+
+Task-private additions are in `/tmp/ovrcr-permission-contract-20261003/`: fetched Apple originals, live `issue-221.json`, `retained-summary.json`, and `manifest.json` containing source/retained-input SHA-256 hashes. Public sources were retrieved with TLS verification; successful contents were inspected. These temporary paths are local recovery evidence, not durable public attachments. Hashes preserve the read-only relationship; the retained fixture/source/logs were not modified.
+
+This document received source/chronology self-review and whitespace/link checks. No native acceptance check, production test, full Rust suite or independent Standards/Spec review is claimed. First-use visibility/completion, supported explicit Settings behavior and the separate applicable Glass-use interpretation remain blocking. #221 and dependent #222–#226 remain open; this report authorizes no production implementation or publication.
