@@ -2494,6 +2494,7 @@ printf '{{"schema":1,"server_wire":{},"status":"%s"}}\n' "$status"
         d.dismiss_error_banner();
         d.key(KeyCode::Char('?'));
         assert_eq!(d.desktop.notice.as_deref(), Some(guidance));
+        d.key(KeyCode::Esc);
 
         std::fs::write(client.with_extension("status"), "available").unwrap();
         assert_eq!(d.key(KeyCode::Char('O')), DashboardAction::Redraw);
