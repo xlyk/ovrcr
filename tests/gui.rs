@@ -568,6 +568,12 @@ fn real_dashboard_initial_selection_survives_quota_events_before_startup_respons
                         &ServerMessage::Event(ServerEvent::QuotaChanged(Box::new(quota))),
                     )?;
                 }
+                // Live quota publishes (claude auth, native workers) replace the
+                // injected Invalid row before the screen can show it. The events
+                // under test are the ones injected above, ahead of startup replies.
+                if matches!(message, ServerMessage::Event(ServerEvent::QuotaChanged(_))) {
+                    continue;
+                }
                 if ovrcr::protocol::write_frame(&mut front, &message).is_err() {
                     break;
                 }
