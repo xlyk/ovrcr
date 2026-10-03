@@ -1227,7 +1227,8 @@ fn assert_claude_recovery(initial_resume: bool) {
             actual,
             format!(
                 "{arguments}{}",
-                format!("--resume\n{conversation}\n--dangerously-skip-permissions\n").repeat(attempt)
+                format!("--resume\n{conversation}\n--dangerously-skip-permissions\n")
+                    .repeat(attempt)
             )
         );
         // No new callback or prompt: the second restart must still be eligible.
@@ -2569,7 +2570,9 @@ fn exact_resume_preserves_long_arguments_before_shell_startup() {
     wait_output(&live, &id.to_string(), "RETAINED_CLAUDE_READY");
     let argv = std::fs::read_to_string(live.root.path().join("argv")).unwrap();
     assert!(
-        argv.ends_with(&format!("--model\n{long}\n--dangerously-skip-permissions\n")),
+        argv.ends_with(&format!(
+            "--model\n{long}\n--dangerously-skip-permissions\n"
+        )),
         "long resume argument changed"
     );
 }
