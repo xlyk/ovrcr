@@ -17,6 +17,12 @@ pub enum DispatchMessage {
     NativeQuota(Box<super::quota::NativeQuotaUpdate>),
     /// `claude auth status` gave a new answer; the Claude row follows it.
     ClaudeAuth,
+    /// A hidden Claude probe finished. Not a Session event.
+    ClaudeProbe {
+        report: ovrcr_protocol::QuotaReport,
+        reason: Option<String>,
+        probed_unix_ms: u64,
+    },
     SetView {
         owner: Arc<()>,
         request_id: u64,
@@ -87,6 +93,18 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: ReportingReceiver<Dispa
             DispatchMessage::RefreshHierarchy => dispatch_refresh_hierarchy(&state),
             DispatchMessage::NativeQuota(update) => super::quota::apply(&state, *update),
             DispatchMessage::ClaudeAuth => state.refresh_claude_quota(),
+            DispatchMessage::ClaudeProbe {
+                report,
+                reason,
+                probed_unix_ms,
+            } => super::quota_probe::apply(
+                &state,
+                super::quota_probe::ProbeUpdate {
+                    report,
+                    reason,
+                    probed_unix_ms,
+                },
+            ),
             DispatchMessage::SetView {
                 owner,
                 request_id,

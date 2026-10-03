@@ -4,7 +4,7 @@ The bottom-left **Quota left** block shows account allowance remaining, not a te
 
 ## Sources
 
-- **Claude:** managed Claude Code status-line callbacks. Only native `five_hour` and `seven_day` reports become 5h/7d windows. Claude may not report quota until its first API response; the status line `ovrcr agent setup claude` generates re-runs every 60 seconds (`refreshInterval`), so an idle managed session stays current. Before any managed session reports, the Server asks `claude auth status --json` whether an allowance can exist at all (below). OVRCR does not issue prompts to obtain quota or read Claude OAuth credentials.
+- **Claude:** managed Claude Code status-line callbacks, or a consented hidden probe (below) when none has reported recently. Only native `five_hour` and `seven_day` reports become 5h/7d windows. Claude may not report quota until its first API response; the status line `ovrcr agent setup claude` generates re-runs every 60 seconds (`refreshInterval`), so an idle managed session stays current. Before any managed session reports, the Server asks `claude auth status --json` whether an allowance can exist at all (below). OVRCR does not read Claude OAuth credentials. It issues a prompt to obtain quota only for the consented probe.
 - **Codex:** a task-owned `codex app-server`, using native account and rate-limit reads. Window durations come from the response; primary and secondary are not assumed to mean 5h and 7d. Model-specific buckets remain in details, not general sidebar bars. The reviewed version is **0.155.1**.
 - **Grok:** a task-owned standalone ACP client, using native auth metadata and typed billing. The native weekly or monthly period determines its label. Prepaid credits, on-demand spend, session tokens and cost are not general allowance. Team/non-user contexts are unsupported. The reviewed version is **1.0.40**.
 
@@ -21,7 +21,25 @@ The Server runs `claude auth status --json` (the executable named by the `agents
 | signed in through `claude.ai` | checking, waiting for a managed session's first response |
 | `claude` missing, failing or unreadable | unavailable, with the reason (for example "claude not found on PATH" or "claude auth status unreadable") |
 
-This state applies only while the row would otherwise be checking. A managed Claude session that reports `rate_limits` wins over it.
+This state applies only while the row would otherwise be checking. A managed Claude session that reports `rate_limits` wins over it, and over a probe.
+
+### Claude quota probe
+
+`quota.claude.probe` is off by default. Turning it on lets the Server run the unmodified `claude` binary (the same executable as `claude auth status`: the `agents` entry named `claude`, else `claude` on PATH) in a PTY when no managed Claude session has reported inside the stale boundary. The probe is a Server-internal process, never a Session. It spends one small prompt and leaves a conversation in Claude's history; the setting says so.
+
+The run uses `--model haiku`, `--tools ""`, `--permission-mode dontAsk`, and `--settings` that carry only OVRCR's status-line command. The prompt is `Reply with OK.`. The working directory is an OVRCR-owned empty directory under the instance directory, recreated empty if it is missing. The user's own settings files are not loaded. The reporter environment carries a probe identity so the status-line callback reaches the Server and is not admitted as a Session. If that PTY shows Claude's folder-trust dialog for the probe directory, the Server answers it once, and for no other directory. The process ends when the callback includes `rate_limits`, or after 60 seconds.
+
+A probe runs on Dashboard attach when the Claude reading is stale, on manual refresh (the same 30-second cooldown as Codex and Grok), and every 30 minutes while a Dashboard stays attached and no managed Claude session has reported inside the stale boundary. It never runs while no Dashboard is attached, and never two at a time. It also waits until `claude auth status` has said an allowance can exist: not signed in, an API-key login, or a missing `claude` stays on that row and does not spend a prompt.
+
+Details for a probe reading say `source: probe; last probe <time> (<age>)`. A live managed Claude session's report keeps precedence over it. `quota.enabled` does not gate the probe; that switch is still only Codex and Grok.
+
+| Probe outcome | Claude row |
+| --- | --- |
+| status line with `rate_limits` | current, source probe |
+| status line without `rate_limits` (not a Pro or Max login) | unsupported, "not a Pro or Max login" |
+| no callback within 60 seconds | unavailable, "probe timed out" |
+| process ended with no callback | unavailable, "probe exited before reporting" |
+| `claude` missing | unavailable, "claude not found on PATH" or "claude not found at the configured path" |
 
 ## Enable native collection
 
@@ -30,6 +48,9 @@ Claude callbacks do not need an additional switch. Codex and Grok collection is 
 ```toml
 [quota]
 enabled = true
+
+[quota.claude]
+probe = false                     # opt in: a hidden Claude run may spend allowance
 
 [quota.codex]
 command = "codex"
@@ -55,7 +76,7 @@ Each provider row carries a state, a **Quota reason** and a **Next check**, all 
 | State | Meaning |
 | --- | --- |
 | off | `quota.enabled` is off. The reason is the off-state sentence naming the setting. |
-| checking | Enabled, and the first read is in flight. Claude stays here, with the reason "waiting for a managed Claude session's first response", until a managed session reports, unless `claude auth status` rules an allowance out. |
+| checking | Enabled, and the first read is in flight. Claude stays here, with the reason "waiting for a managed Claude session's first response", until a managed session or a consented probe reports, unless `claude auth status` rules an allowance out. |
 | current | The last read succeeded. The next check is five minutes later. |
 | unavailable, not signed in, unsupported, invalid, source conflict | The last read failed. The reason says why. |
 
@@ -76,7 +97,7 @@ A success resets the ladder. Changing any `quota.*` setting also resets it and r
 - One read per provider is in flight at a time; a refresh asked for during a read is answered by that read.
 - Accepted refreshes are at least 30 seconds apart. A refresh inside the cooldown is refused with `Response::QuotaCooldown { remaining_ms }`.
 - A refresh skips a failure backoff but never a provider's Retry-After.
-- Claude is not refreshable, and a refresh while `quota.enabled` is off is refused with the off-state sentence.
+- With `quota.claude.probe` off, Claude is not refreshable. With it on, a refresh runs one probe under the same cooldown, including when `provider` is Claude or omitted. A refresh while `quota.enabled` is off is still refused for Codex and Grok; an omitted provider with the probe on still runs the probe and does not start the native workers.
 
 In the Dashboard, the palette's **Refresh quota** sends this request for both native providers and shows a cooldown refusal's remaining seconds in the footer. **Enable Codex and Grok usage**, listed while collection is off, sends `SetSetting { path: "quota.enabled", value: "true" }`; the Server validates, writes and republishes, and the Dashboard applies nothing until it does.
 

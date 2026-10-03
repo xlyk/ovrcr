@@ -189,6 +189,14 @@ impl Loader<'_> {
         }
         if let Some(mut quota) = self.take::<toml::Table>(table, "quota") {
             self.value(&mut quota, "quota.enabled", &mut settings.quota.enabled);
+            if let Some(mut claude) = self.take::<toml::Table>(&mut quota, "quota.claude") {
+                self.value(
+                    &mut claude,
+                    "quota.claude.probe",
+                    &mut settings.quota.claude_probe,
+                );
+                self.unknown(claude, "quota.claude.");
+            }
             self.native(&mut quota, "quota.codex", &mut settings.quota.codex);
             self.native(&mut quota, "quota.grok", &mut settings.quota.grok);
             self.unknown(quota, "quota.");
@@ -453,6 +461,12 @@ fn rows(settings: &Settings, set: &HashSet<String>) -> Vec<SettingRow> {
             (!quota.enabled).then_some(QUOTA_OFF),
         ),
         row(
+            "quota.claude.probe",
+            Server,
+            display(&quota.claude_probe),
+            (!quota.claude_probe).then_some(ovrcr_protocol::CLAUDE_PROBE_DESCRIPTION),
+        ),
+        row(
             "quota.codex.command",
             Server,
             path(&quota.codex.command),
@@ -557,6 +571,9 @@ kind = "Terminal"
 [quota]
 enabled = true
 
+[quota.claude]
+probe = true
+
 [quota.codex]
 command = "/opt/codex"
 home = "/tmp/codex-home"
@@ -592,6 +609,7 @@ command = "/opt/grok"
         );
         assert_eq!(settings.launch_choices["notes"], LaunchChoice::Terminal);
         assert!(settings.quota.enabled);
+        assert!(settings.quota.claude_probe);
         assert_eq!(settings.quota.codex.command, PathBuf::from("/opt/codex"));
         assert_eq!(
             settings.quota.codex.home,
@@ -642,6 +660,10 @@ command = "/opt/grok"
                 ("desktop_notifications", DESKTOP_NOTIFICATIONS_OFF),
                 ("title_model", TITLES_OFF),
                 ("quota.enabled", QUOTA_OFF),
+                (
+                    "quota.claude.probe",
+                    ovrcr_protocol::CLAUDE_PROBE_DESCRIPTION
+                ),
             ]
         );
         let keys: Vec<_> = report.rows.iter().map(|row| row.key.as_str()).collect();
@@ -657,6 +679,7 @@ command = "/opt/grok"
                 "agents",
                 "launch_choices",
                 "quota.enabled",
+                "quota.claude.probe",
                 "quota.codex.command",
                 "quota.codex.home",
                 "quota.grok.command",
@@ -686,7 +709,7 @@ command = "/opt/grok"
         let text = FULL.replace("command = \"/opt/codex\"", "command = 7");
         let report = read(&text);
         assert_eq!(report.findings.len(), 1, "{:?}", report.findings);
-        finding("quota.codex.command", 20, "expected path", &report);
+        finding("quota.codex.command", 23, "expected path", &report);
         assert_eq!(report.settings.quota.codex.command, PathBuf::from("codex"));
         assert_eq!(
             report.settings.quota.codex.home,

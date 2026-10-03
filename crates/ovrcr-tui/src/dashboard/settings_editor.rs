@@ -143,7 +143,12 @@ fn items(report: &SettingsReport, presets: &[String]) -> Vec<Row> {
             .and_then(|row| row.off_state.clone())
             .into_iter()
             .collect();
-        lines.extend(about.iter().map(|s| s.to_string()));
+        for line in about {
+            let line = line.to_string();
+            if !lines.contains(&line) {
+                lines.push(line);
+            }
+        }
         let value = row.and_then(|row| row.value.clone());
         Row {
             id: key.into(),
@@ -299,6 +304,13 @@ fn items(report: &SettingsReport, presets: &[String]) -> Vec<Row> {
                 "Codex and Grok usage",
                 Kind::Toggle(quota.enabled),
                 &["Turning this on runs the native CLIs, which may refresh their own auth and write logs."],
+            ),
+            top(
+                "Usage",
+                "quota.claude.probe",
+                "Claude allowance probe",
+                Kind::Toggle(quota.claude_probe),
+                &[ovrcr_protocol::CLAUDE_PROBE_DESCRIPTION],
             ),
             top("Usage", "quota.codex.command", "Codex command", Kind::Path, &[]),
             top("Usage", "quota.codex.home", "Codex home", Kind::Path, &[]),
@@ -1069,6 +1081,22 @@ mod tests {
         assert_eq!(second.path, "picker_roots[1]");
         assert_eq!(second.reset, Some(("picker_roots[1]".into(), None)));
         assert_eq!(row(&set, "picker_roots+").path, "picker_roots[2]");
+    }
+
+    #[test]
+    fn claude_probe_row_names_the_consent_sentence() {
+        let row = row(
+            &items(&report(Settings::default(), Vec::new()), &[]),
+            "quota.claude.probe",
+        );
+        assert_eq!(row.value, "off");
+        assert!(
+            row.about
+                .iter()
+                .any(|line| line == ovrcr_protocol::CLAUDE_PROBE_DESCRIPTION),
+            "{:?}",
+            row.about
+        );
     }
 
     #[test]

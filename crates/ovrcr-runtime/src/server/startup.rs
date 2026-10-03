@@ -230,6 +230,10 @@ fn run_server_inner(
     let claude_auth_thread = thread::Builder::new()
         .name("ovrcr-claude-auth".into())
         .spawn(move || quota::run_claude_auth(claude_state))?;
+    let probe_state = Arc::clone(&state);
+    let claude_probe_thread = thread::Builder::new()
+        .name("ovrcr-claude-probe".into())
+        .spawn(move || super::quota_probe::run(probe_state))?;
     state.ensure_protected_roots();
     let refresh_state = Arc::clone(&state);
     let refresh = thread::Builder::new()
@@ -318,6 +322,7 @@ fn run_server_inner(
     quota_thread.thread().unpark();
     grok_quota_thread.thread().unpark();
     claude_auth_thread.thread().unpark();
+    claude_probe_thread.thread().unpark();
     signal_handle.close();
     let _ = signal_thread.join();
     let task_shutdown = task_manager.stop();
@@ -327,6 +332,7 @@ fn run_server_inner(
     let _ = quota_thread.join();
     let _ = grok_quota_thread.join();
     let _ = claude_auth_thread.join();
+    let _ = claude_probe_thread.join();
     let _ = dispatch.send(DispatchMessage::Stop);
     dispatcher
         .join()

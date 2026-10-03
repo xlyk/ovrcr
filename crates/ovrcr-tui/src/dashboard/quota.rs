@@ -155,6 +155,9 @@ impl Dashboard {
                     profile,
                     generation,
                 }) => format!("source: {profile}; generation {generation}"),
+                Some(QuotaSource::Probe { probed_unix_ms }) => {
+                    format!("source: probe; last probe {}", seen(*probed_unix_ms))
+                }
                 None => "source: no native source selected".into(),
             });
             lines.push(format!(
