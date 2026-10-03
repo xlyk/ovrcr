@@ -106,6 +106,7 @@ fn mutations_do_not_start_a_server() {
         &["terminal", "remove", "99"],
         &["terminal", "unarchive", "99"],
         &["project", "remove", "missing"],
+        &["events"],
     ];
     for args in cases {
         let mut command = isolated_command(&root);
@@ -3154,4 +3155,48 @@ fn settings_command_reports_document_rows_and_findings_and_json_round_trips() {
     ] {
         assert!(text.contains(expected), "missing {expected:?} in:\n{text}");
     }
+}
+
+#[test]
+fn events_json_round_trips_the_server_ring() {
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("server.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let event = ovrcr::protocol::Event {
+        time_unix_ms: 1_700_000_000_000,
+        component: ovrcr::protocol::EventComponent::Titles,
+        subject: Some("7".into()),
+        message: "title applied".into(),
+    };
+    let sent = event.clone();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = accept_with_deadline(&listener);
+        ovrcr::protocol::exchange_preamble(&mut stream).unwrap();
+        let message = read_frame::<ClientMessage>(&mut stream).unwrap();
+        assert!(
+            matches!(message.request, Request::Events { follow: false }),
+            "{:?}",
+            message.request
+        );
+        write_frame(
+            &mut stream,
+            &ServerMessage::Response {
+                request_id: message.request_id,
+                response: Response::Events(vec![sent]),
+            },
+        )
+        .unwrap();
+    });
+    let mut command = isolated_command(&root);
+    command.args(["events", "--json"]);
+    let output = run_cli_bounded(command).unwrap();
+    server.join().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: Vec<ovrcr::protocol::Event> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(parsed, vec![event]);
 }

@@ -79,12 +79,19 @@ pub(super) fn request_refresh(state: &ServerState, provider: Option<QuotaProvide
     if let Some(last) = refresh.last_ms {
         let elapsed = now.saturating_sub(last);
         if elapsed < COOLDOWN_MS {
+            drop(refresh);
+            state.record_event(
+                ovrcr_protocol::EventComponent::Quota,
+                provider.map(|provider| provider.name().to_owned()),
+                "cooldown refusal",
+            );
             return Response::QuotaCooldown {
                 remaining_ms: COOLDOWN_MS - elapsed,
             };
         }
     }
     refresh.last_ms = Some(now);
+    let refresh_subject = provider.map(|provider| provider.name().to_owned());
     if probe && provider.is_none_or(|provider| provider == QuotaProvider::Claude) {
         refresh.claude_probe_due = true;
     }
@@ -98,6 +105,12 @@ pub(super) fn request_refresh(state: &ServerState, provider: Option<QuotaProvide
             }
         }
     }
+    drop(refresh);
+    state.record_event(
+        ovrcr_protocol::EventComponent::Quota,
+        refresh_subject,
+        "refresh",
+    );
     Response::Ok
 }
 
@@ -124,14 +137,37 @@ pub(super) fn initial(enabled: bool) -> QuotaSnapshot {
 /// Follow `quota.enabled` in the Server's stored reading. Returns whether a row changed.
 pub(super) fn sync_consent(state: &ServerState) -> bool {
     let enabled = state.quota_settings().enabled;
-    let mut snapshots = state.quotas.lock().unwrap();
-    let snapshots = &mut *snapshots;
     let mut changed = false;
-    for row in [&mut snapshots.codex, &mut snapshots.grok] {
-        if enabled == (row.state == QuotaState::Disabled) {
-            *row = consent_row(row.provider, enabled);
-            changed = true;
+    let transitions = {
+        let mut guard = state.quotas.lock().unwrap();
+        let snapshots = &mut *guard;
+        let mut transitions = Vec::new();
+        for row in [&mut snapshots.codex, &mut snapshots.grok] {
+            if enabled == (row.state == QuotaState::Disabled) {
+                let before_state = row.state;
+                let before_reason = row.reason.clone();
+                *row = consent_row(row.provider, enabled);
+                transitions.push((
+                    row.provider,
+                    before_state,
+                    before_reason,
+                    row.state,
+                    row.reason.clone(),
+                ));
+                changed = true;
+            }
         }
+        transitions
+    };
+    for (provider, before_state, before_reason, after_state, after_reason) in transitions {
+        note_transition(
+            state,
+            provider,
+            before_state,
+            before_reason.as_deref(),
+            after_state,
+            after_reason.as_deref(),
+        );
     }
     changed
 }
@@ -247,6 +283,29 @@ fn backoff(failures: u32, deterministic: bool, retry_after: Option<Duration>) ->
     })
 }
 
+pub(super) fn note_transition(
+    state: &ServerState,
+    provider: QuotaProvider,
+    before_state: QuotaState,
+    before_reason: Option<&str>,
+    after_state: QuotaState,
+    after_reason: Option<&str>,
+) {
+    if before_state == after_state && before_reason == after_reason {
+        return;
+    }
+    let mut message = format!("{before_state:?} -> {after_state:?}");
+    if let Some(reason) = after_reason.filter(|reason| !reason.is_empty()) {
+        message.push_str(": ");
+        message.push_str(reason);
+    }
+    state.record_event(
+        ovrcr_protocol::EventComponent::Quota,
+        Some(provider.name().to_owned()),
+        message,
+    );
+}
+
 pub(super) fn apply(state: &ServerState, update: NativeQuotaUpdate) {
     // A read that finished after `quota.enabled` went off keeps the row Disabled.
     if update.generation == 0
@@ -261,6 +320,8 @@ pub(super) fn apply(state: &ServerState, update: NativeQuotaUpdate) {
         QuotaProvider::Grok => &mut snapshots.grok,
         QuotaProvider::Claude => return,
     };
+    let before_state = target.state;
+    let before_reason = target.reason.clone();
     let old_generation = match &target.source {
         Some(QuotaSource::NativeProfile { generation, .. }) => *generation,
         _ => 0,
@@ -287,8 +348,19 @@ pub(super) fn apply(state: &ServerState, update: NativeQuotaUpdate) {
     if update.checked {
         target.checked_unix_ms = Some(now_ms());
     }
+    let after_state = target.state;
+    let after_reason = target.reason.clone();
+    let provider = update.provider;
     drop(snapshots);
     state.publish_quotas();
+    note_transition(
+        state,
+        provider,
+        before_state,
+        before_reason.as_deref(),
+        after_state,
+        after_reason.as_deref(),
+    );
 }
 
 fn wall_ms() -> u64 {
@@ -1700,6 +1772,54 @@ mod tests {
         assert!(
             started.elapsed() < Duration::from_millis(500),
             "native stdin write waited for the watchdog instead of its request deadline"
+        );
+    }
+
+    #[test]
+    fn quota_events_record_a_transition_a_refresh_and_a_cooldown_refusal() {
+        let secret = "secret-body account@example.invalid";
+        let state = enabled_state(true);
+        *state.quotas.lock().unwrap() = initial(true);
+        apply(
+            &state,
+            NativeQuotaUpdate {
+                provider: QuotaProvider::Codex,
+                generation: 1,
+                report: QuotaReport {
+                    windows: None,
+                    state: QuotaState::Unavailable,
+                },
+                checked: true,
+                reason: Some("HTTP 503".into()),
+                next_check_unix_ms: None,
+            },
+        );
+        assert_eq!(
+            request_refresh(&state, Some(QuotaProvider::Codex)),
+            Response::Ok
+        );
+        assert!(matches!(
+            request_refresh(&state, Some(QuotaProvider::Codex)),
+            Response::QuotaCooldown { .. }
+        ));
+        let events = state.event_snapshot();
+        let messages: Vec<_> = events.iter().map(|event| event.message.as_str()).collect();
+        assert!(
+            messages.contains(&"Checking -> Unavailable: HTTP 503"),
+            "{messages:?}"
+        );
+        assert!(messages.contains(&"refresh"));
+        assert!(messages.contains(&"cooldown refusal"));
+        let rendered = messages.join(
+            "
+",
+        );
+        assert!(!rendered.contains(secret));
+        assert!(!rendered.contains('@'));
+        assert!(
+            events
+                .iter()
+                .all(|event| event.component == ovrcr_protocol::EventComponent::Quota)
         );
     }
 }

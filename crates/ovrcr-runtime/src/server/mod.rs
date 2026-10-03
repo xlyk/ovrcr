@@ -30,6 +30,7 @@ use std::time::{Duration, Instant};
 mod connections;
 mod dashboard;
 mod dispatch;
+mod event_log;
 mod outbound;
 mod quota;
 mod quota_probe;
@@ -212,6 +213,7 @@ pub struct ServerState {
     pub shutdown: AtomicBool,
     pub stopping: AtomicBool,
     pub events: Mutex<Option<ReportingSender<SessionEvent>>>,
+    event_log: Mutex<event_log::Log>,
     #[cfg(test)]
     pub(super) resize_hook: Mutex<Option<ResizeHook>>,
     #[cfg(test)]
@@ -340,6 +342,10 @@ impl ServerState {
             }
         }
         if next != old {
+            let before_state = old.state;
+            let before_reason = old.reason.clone();
+            let after_state = next.state;
+            let after_reason = next.reason.clone();
             let mut quotas = self.quotas.lock().unwrap();
             quotas.claude = next;
             // Sent even when it is the default: leaving a not-signed-in
@@ -347,6 +353,14 @@ impl ServerState {
             let snapshot = quotas.clone();
             drop(quotas);
             self.send_quotas(snapshot);
+            quota::note_transition(
+                self,
+                ovrcr_protocol::QuotaProvider::Claude,
+                before_state,
+                before_reason.as_deref(),
+                after_state,
+                after_reason.as_deref(),
+            );
         }
     }
 
@@ -1370,6 +1384,7 @@ impl ServerState {
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
             events: Mutex::new(Some(events)),
+            event_log: Mutex::new(event_log::Log::memory()),
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
             before_dashboard_write_hook: Mutex::new(None),
