@@ -22,6 +22,40 @@ fn wait_screen(terminal: &Terminal, needle: &str) -> Result<()> {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn isolate_desktop_alerts(command: &mut portable_pty::CommandBuilder, root: &Path) -> Result<()> {
+    use ovrcr::protocol::{BRIDGE_SCHEMA_VERSION, BridgeReply, BridgeStatus, PROTOCOL_VERSION};
+    use std::os::unix::fs::PermissionsExt;
+    let home = root.join("home");
+    let client = home.join("Applications/OVRCR Bridge.app/Contents/MacOS/OVRCRBridge");
+    std::fs::create_dir_all(client.parent().unwrap())?;
+    let reply = serde_json::to_string(&BridgeReply {
+        schema: BRIDGE_SCHEMA_VERSION,
+        server_wire: PROTOCOL_VERSION,
+        status: BridgeStatus::Available,
+    })?;
+    std::fs::write(
+        &client,
+        format!(
+            "#!/bin/sh\n[ \"$1\" = --client ] && [ \"$#\" = 1 ] || exit 99\ncat > \"$0.request\"\nprintf '%s\\n' '{reply}'\n"
+        ),
+    )?;
+    std::fs::set_permissions(&client, std::fs::Permissions::from_mode(0o755))?;
+    let bin = home.join("bin");
+    std::fs::create_dir_all(&bin)?;
+    let player = bin.join("afplay");
+    std::fs::write(&player, "#!/bin/sh\nexit 0\n")?;
+    std::fs::set_permissions(&player, std::fs::Permissions::from_mode(0o755))?;
+    command.env("HOME", &home);
+    command.env(
+        "PATH",
+        std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        )))?,
+    );
+    Ok(())
+}
+
 #[test]
 fn command_k_is_not_forwarded_to_terminal() {
     let parser = vt100::Parser::new(24, 80, 0);
@@ -597,6 +631,8 @@ fn real_dashboard_initial_selection_survives_quota_events_before_startup_respons
     let mut command = portable_pty::CommandBuilder::new(env!("CARGO_BIN_EXE_ovrcr"));
     command.env("OVRCR_CONFIG", root.join("config.toml"));
     command.env("OVRCR_SOCKET", &socket);
+    #[cfg(target_os = "macos")]
+    isolate_desktop_alerts(&mut command, &root)?;
     command.env("TERM", "xterm-256color");
     let mut terminal = Terminal::start(command, 40, 160, Default::default())?;
     // The actual first session's child output proves selection, not just rows.
@@ -807,6 +843,8 @@ fn real_dashboard_saves_alert_preferences_and_reloads_config() -> Result<()> {
         command.env("OVRCR_CONFIG", root.join("config.toml"));
         command.env("OVRCR_SOCKET", root.join("server.sock"));
         command.env("OVRCR_DASHBOARD_CONFIG", &client_only);
+        #[cfg(target_os = "macos")]
+        isolate_desktop_alerts(&mut command, &root)?;
         command.env("TERM", "xterm-256color");
         Terminal::start(command, 40, 160, Default::default())
     };
