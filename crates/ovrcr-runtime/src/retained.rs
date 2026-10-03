@@ -1184,6 +1184,72 @@ mod tests {
     }
 
     #[test]
+    fn manual_title_provenance_survives_restart_and_offline_inventory() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("config.toml");
+        let mut store = SessionStore::open(&config).unwrap();
+        let record = agent_record(&mut store, "original");
+        let run = store.begin_run(record.id, record.run).unwrap().run;
+        store
+            .retain_conversation(record.id, run, Some(&pi_reference("conv-a")))
+            .unwrap();
+        assert!(
+            store
+                .save_conversation_subject(record.id, run, "conv-a", "Private subject".into())
+                .unwrap()
+        );
+        store
+            .update_titles(record.id, run, 1, None, Some("Application title".into()))
+            .unwrap();
+        drop(store);
+
+        let generated = load_session_summaries(&config).unwrap().pop().unwrap();
+        assert_eq!(generated.title.as_deref(), Some("Private subject"));
+        assert_eq!(generated.manual_title, None);
+        assert_eq!(generated.name, "original");
+        let mut store = SessionStore::open(&config).unwrap();
+        assert_eq!(
+            store.get(record.id).unwrap().summary(store.boot_id()),
+            generated
+        );
+        store
+            .update_titles(record.id, run, 2, Some("Manual title".into()), None)
+            .unwrap();
+        drop(store);
+
+        let manual = load_session_summaries(&config).unwrap().pop().unwrap();
+        assert_eq!(manual.title.as_deref(), Some("Manual title"));
+        assert_eq!(manual.manual_title.as_deref(), Some("Manual title"));
+        let mut store = SessionStore::open(&config).unwrap();
+        assert_eq!(
+            store.get(record.id).unwrap().summary(store.boot_id()),
+            manual
+        );
+        store.update_titles(record.id, run, 3, None, None).unwrap();
+        store
+            .dismiss_conversation_subject(record.id, run, "conv-a")
+            .unwrap();
+        drop(store);
+
+        let cleared = load_session_summaries(&config).unwrap().pop().unwrap();
+        assert_eq!(cleared.title, None);
+        assert_eq!(cleared.manual_title, None);
+        assert_eq!(cleared.display_name(), "original");
+        let store = SessionStore::open(&config).unwrap();
+        assert_eq!(
+            store.get(record.id).unwrap().summary(store.boot_id()),
+            cleared
+        );
+        assert_eq!(
+            store.get(record.id).unwrap().subjects["conv-a"]
+                .topic
+                .as_deref(),
+            Some("Private subject")
+        );
+        assert!(store.get(record.id).unwrap().subjects["conv-a"].dismissed);
+    }
+
+    #[test]
     fn rename_hides_subject_and_late_save_is_dropped_without_changing_identity() {
         let mut store = SessionStore::in_memory();
         let record = agent_record(&mut store, "original");
