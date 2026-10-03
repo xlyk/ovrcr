@@ -139,7 +139,7 @@ fn codex_reopen_uses_exact_identity_without_prompt_across_two_restarts() {
                 );
                 assert_eq!(
                     std::fs::read_to_string(live.root.path().join("argv")).unwrap(),
-                    "PRIVATE_CODEX_PROMPT_118\n"
+                    "PRIVATE_CODEX_PROMPT_118\n--full-auto\n"
                 );
             }
         }
@@ -178,8 +178,8 @@ fn codex_reopen_uses_exact_identity_without_prompt_across_two_restarts() {
         assert_eq!(
             std::fs::read_to_string(live.root.path().join("argv")).unwrap(),
             format!(
-                "PRIVATE_CODEX_PROMPT_118\n{}",
-                format!("resume\n{conversation}\n").repeat(attempt)
+                "PRIVATE_CODEX_PROMPT_118\n--full-auto\n{}",
+                format!("resume\n{conversation}\n--full-auto\n").repeat(attempt)
             )
         );
         // Repeated restart before another provider callback must keep the reference.
@@ -291,8 +291,8 @@ fn codex_reopen_uses_exact_identity_without_prompt_across_two_restarts() {
     assert_eq!(
         std::fs::read_to_string(live.root.path().join("argv")).unwrap(),
         format!(
-            "PRIVATE_CODEX_PROMPT_118\n{}",
-            format!("resume\n{conversation}\n").repeat(4)
+            "PRIVATE_CODEX_PROMPT_118\n--full-auto\n{}",
+            format!("resume\n{conversation}\n--full-auto\n").repeat(4)
         )
     );
     assert_eq!(
@@ -1227,7 +1227,7 @@ fn assert_claude_recovery(initial_resume: bool) {
             actual,
             format!(
                 "{arguments}{}",
-                format!("--resume\n{conversation}\n").repeat(attempt)
+                format!("--resume\n{conversation}\n--dangerously-skip-permissions\n").repeat(attempt)
             )
         );
         // No new callback or prompt: the second restart must still be eligible.
@@ -1273,7 +1273,7 @@ fn assert_claude_recovery(initial_resume: bool) {
         actual,
         format!(
             "{arguments}{}",
-            format!("--resume\n{conversation}\n").repeat(2)
+            format!("--resume\n{conversation}\n--dangerously-skip-permissions\n").repeat(2)
         )
     );
 }
@@ -1451,7 +1451,7 @@ fn displayed_interrupted_claude_recovers_through_real_dashboard_and_coalesces_du
     wait_output(&live, &id.to_string(), "RETAINED_CLAUDE_READY");
     assert_eq!(
         std::fs::read_to_string(live.root.path().join("argv")).unwrap(),
-        format!("{initial_args}--resume\n{conversation}\n")
+        format!("{initial_args}--resume\n{conversation}\n--dangerously-skip-permissions\n")
     );
     // Force delayed duplicates after publication, including an explicit request from another client.
     for request in [
@@ -2569,7 +2569,7 @@ fn exact_resume_preserves_long_arguments_before_shell_startup() {
     wait_output(&live, &id.to_string(), "RETAINED_CLAUDE_READY");
     let argv = std::fs::read_to_string(live.root.path().join("argv")).unwrap();
     assert!(
-        argv.ends_with(&format!("--model\n{long}\n")),
+        argv.ends_with(&format!("--model\n{long}\n--dangerously-skip-permissions\n")),
         "long resume argument changed"
     );
 }

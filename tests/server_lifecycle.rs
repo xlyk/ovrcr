@@ -7529,7 +7529,7 @@ fn agent_run_owns_native_group_and_restores_terminal_after_forwarded_term() {
     let probe = fixture.root.path().join("native-probe");
     let summary = fixture.create_session_summary("agent-run", vec![
         "sh".into(), "-c".into(),
-        r#"stty -echo; printf '%s\n%s\n%s\n' "$OVRCR_HOOK_SOCKET" "$OVRCR_SESSION_ID" "$OVRCR_HOOK_TOKEN" > "$3.identity"; stty -g > "$3.before"; export OVRCR_NATIVE_PROBE="$3"; "$1" agent run --provider claude -- "$2" --ignored --exact agent_run_native_helper --nocapture; code=$?; stty -g > "$3.after"; printf 'WRAPPER_FINISHED=%s\n' "$code"; IFS= read -r done; printf SHELL_RESTORED; exit "$code""#.into(),
+        r#"stty -echo; printf '%s\n%s\n%s\n' "$OVRCR_HOOK_SOCKET" "$OVRCR_SESSION_ID" "$OVRCR_HOOK_TOKEN" > "$3.identity"; stty -g > "$3.before"; export OVRCR_NATIVE_PROBE="$3"; "$1" agent run --provider claude -- /bin/sh -c 'exec "$0" --ignored --exact agent_run_native_helper --nocapture' "$2"; code=$?; stty -g > "$3.after"; printf 'WRAPPER_FINISHED=%s\n' "$code"; IFS= read -r done; printf SHELL_RESTORED; exit "$code""#.into(),
         "agent-run-fixture".into(), env!("CARGO_BIN_EXE_ovrcr").into(), std::env::current_exe().unwrap().into_os_string(), probe.clone().into_os_string(),
     ]);
     fixture.record_process_group(&summary);
@@ -7729,7 +7729,7 @@ fn agent_run_runtime_kill_reaches_owned_native_group() {
     fixture.create_hook_child("setup", "agent-kill-setup");
     let probe = fixture.root.path().join("kill-probe");
     let summary=fixture.create_session_summary("agent-kill",vec![
-        "sh".into(),"-c".into(),r#"export OVRCR_NATIVE_PROBE="$3"; exec "$1" agent run --provider claude -- "$2" --ignored --exact agent_run_native_helper --nocapture"#.into(),
+        "sh".into(),"-c".into(),r#"export OVRCR_NATIVE_PROBE="$3"; exec "$1" agent run --provider claude -- /bin/sh -c 'exec "$0" --ignored --exact agent_run_native_helper --nocapture' "$2""#.into(),
         "agent-kill-fixture".into(),env!("CARGO_BIN_EXE_ovrcr").into(),std::env::current_exe().unwrap().into_os_string(),probe.clone().into_os_string(),
     ]);
     fixture.record_process_group(&summary);
@@ -8608,7 +8608,7 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
     assert_eq!(
         std::fs::read_to_string(probe.with_extension("argv")).unwrap(),
         format!(
-            "{resume_flag}\n{expected}\n--agent\nfixture-root\n--setting-sources\n\n--settings\npath with spaces\n--strict-mcp-config\n"
+            "{resume_flag}\n{expected}\n--agent\nfixture-root\n--setting-sources\n\n--settings\npath with spaces\n--strict-mcp-config\n--dangerously-skip-permissions\n"
         )
     );
     assert_eq!(std::fs::read_to_string(&probe).unwrap(), expected);
@@ -8860,7 +8860,7 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
     assert_eq!(
         argv,
         format!(
-            "--session-id\n{expected}\n--agent\nfixture-root\n--setting-sources\n\n--settings\npath with spaces\n--strict-mcp-config\n"
+            "--session-id\n{expected}\n--agent\nfixture-root\n--setting-sources\n\n--settings\npath with spaces\n--strict-mcp-config\n--dangerously-skip-permissions\n"
         )
     );
     assert_eq!(fixture.session_summary(summary.id).agent_epoch, 1);
@@ -9163,7 +9163,7 @@ exit 19
         );
         assert_eq!(
             std::fs::read_to_string(probe.with_extension("argv")).unwrap(),
-            format!("{argument}\n"),
+            format!("{argument}\n--dangerously-skip-permissions\n"),
             "case {index}"
         );
         assert!(fixture.session_summary(summary.id).agent.is_none());
