@@ -27,7 +27,7 @@ def validate(bundle, expected=True, *identity):
 validate(source)
 with tempfile.TemporaryDirectory(prefix="ovrcr-bridge-packaging-") as temporary:
     root = Path(temporary)
-    for case in ["schema", "wire", "display", "executable", "license", "hash", "missing", "symlink", "extra"]:
+    for case in ["schema", "wire", "schema_bool", "wire_float", "display", "executable", "license", "hash", "missing", "symlink", "extra"]:
         bundle = root / f"{case}.app"
         shutil.copytree(source, bundle)
         info_path = bundle / "Contents/Info.plist"
@@ -37,6 +37,9 @@ with tempfile.TemporaryDirectory(prefix="ovrcr-bridge-packaging-") as temporary:
             field = {"schema": "OVRCRBridgeSchema", "wire": "OVRCRServerWire",
                      "display": "CFBundleDisplayName", "executable": "CFBundleExecutable"}[case]
             info[field] = info[field] + 1 if isinstance(info[field], int) else "unexpected"
+            info_path.write_bytes(plistlib.dumps(info))
+        elif case in ("schema_bool", "wire_float"):
+            info["OVRCRBridgeSchema" if case == "schema_bool" else "OVRCRServerWire"] = True if case == "schema_bool" else float(info["OVRCRServerWire"])
             info_path.write_bytes(plistlib.dumps(info))
         elif case == "license":
             (resources / "NotificationSounds-LICENSE").write_bytes(b"changed")

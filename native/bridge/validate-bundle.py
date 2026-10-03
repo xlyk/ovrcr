@@ -25,7 +25,8 @@ assert info["CFBundleIdentifier"] == expected_id
 assert info["CFBundleExecutable"] == "OVRCRBridge"
 assert info["CFBundleDisplayName"] == expected_display and info["LSUIElement"] is True
 assert info["CFBundlePackageType"] == "APPL"
-assert info["OVRCRBridgeSchema"] == schema and info["OVRCRServerWire"] == wire
+assert type(info["OVRCRBridgeSchema"]) is int and info["OVRCRBridgeSchema"] == schema
+assert type(info["OVRCRServerWire"]) is int and info["OVRCRServerWire"] == wire
 assert info["CFBundleVersion"] == f"{schema}.{wire}"
 assert (bundle / "Contents/MacOS/OVRCRBridge").is_file()
 assert (bundle / "Contents/MacOS/OVRCRBridge").stat().st_mode & 0o111
