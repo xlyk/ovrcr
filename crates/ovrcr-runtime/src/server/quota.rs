@@ -17,8 +17,7 @@ const POLL: Duration = Duration::from_secs(300);
 const REQUEST: Duration = Duration::from_secs(20);
 const MAX_RESPONSE: usize = 2 * 1024 * 1024;
 /// Least time between accepted manual refreshes.
-const COOLDOWN: Duration = Duration::from_secs(30);
-
+const COOLDOWN_MS: u64 = 30_000;
 pub struct NativeQuotaUpdate {
     pub(super) provider: QuotaProvider,
     pub(super) generation: u64,
@@ -31,11 +30,16 @@ pub struct NativeQuotaUpdate {
 /// Refresh state shared by the Server and its quota workers.
 #[derive(Default)]
 pub(super) struct Refresh {
-    last: Option<Instant>,
+    /// Unix milliseconds of the last accepted manual refresh, on [`clock_ms`].
+    last_ms: Option<u64>,
     due: [bool; 2],
     /// The Claude row's state and reason while `claude auth status` rules an
     /// allowance out; `None` while signed in through claude.ai.
     pub(super) claude_auth: Option<(QuotaState, String)>,
+    /// Set once `claude auth status` has answered since this process started.
+    pub(super) auth_checked: bool,
+    /// A manual refresh asked for a Claude probe.
+    pub(super) claude_probe_due: bool,
 }
 
 fn slot(provider: QuotaProvider) -> Option<usize> {
@@ -47,37 +51,48 @@ fn slot(provider: QuotaProvider) -> Option<usize> {
 }
 
 /// `Request::RefreshQuota`: mark the workers due now, once per cooldown.
+///
+/// Claude is included only while `quota.claude.probe` is on. The cooldown is
+/// the same one the native providers use, read from [`clock_ms`] so a test
+/// can advance it.
 pub(super) fn request_refresh(state: &ServerState, provider: Option<QuotaProvider>) -> Response {
-    if provider == Some(QuotaProvider::Claude) {
+    let settings = state.quota_settings();
+    let probe = settings.claude_probe;
+    if provider == Some(QuotaProvider::Claude) && !probe {
         return Response::Error {
             code: ErrorCode::InvalidRequest,
             message: format!("Claude quota is not refreshable: {CLAUDE_WAITING}"),
         };
     }
-    if !state.quota_settings().enabled {
+    let wants_native = provider.is_none_or(|provider| provider != QuotaProvider::Claude);
+    if wants_native && !settings.enabled && !(provider.is_none() && probe) {
         return Response::Error {
             code: ErrorCode::InvalidRequest,
             message: crate::settings::QUOTA_OFF.into(),
         };
     }
     let mut refresh = state.quota_refresh.lock().unwrap();
-    let now = Instant::now();
-    if let Some(left) = refresh
-        .last
-        .map(|last| COOLDOWN.saturating_sub(now - last))
-        .filter(|left| !left.is_zero())
-    {
-        return Response::QuotaCooldown {
-            remaining_ms: left.as_millis() as u64,
-        };
+    let now = clock_ms();
+    if let Some(last) = refresh.last_ms {
+        let elapsed = now.saturating_sub(last);
+        if elapsed < COOLDOWN_MS {
+            return Response::QuotaCooldown {
+                remaining_ms: COOLDOWN_MS - elapsed,
+            };
+        }
     }
-    refresh.last = Some(now);
-    for (index, native) in [QuotaProvider::Codex, QuotaProvider::Grok]
-        .into_iter()
-        .enumerate()
-    {
-        if provider.is_none_or(|provider| provider == native) {
-            refresh.due[index] = true;
+    refresh.last_ms = Some(now);
+    if probe && provider.is_none_or(|provider| provider == QuotaProvider::Claude) {
+        refresh.claude_probe_due = true;
+    }
+    if settings.enabled {
+        for (index, native) in [QuotaProvider::Codex, QuotaProvider::Grok]
+            .into_iter()
+            .enumerate()
+        {
+            if provider.is_none_or(|provider| provider == native) {
+                refresh.due[index] = true;
+            }
         }
     }
     Response::Ok
@@ -120,7 +135,7 @@ pub(super) fn sync_consent(state: &ServerState) -> bool {
 
 /// The `claude` the settings name (the `agents` override called "claude"),
 /// else the one on PATH.
-fn claude_command(settings: &ovrcr_protocol::Settings) -> PathBuf {
+pub(super) fn claude_command(settings: &ovrcr_protocol::Settings) -> PathBuf {
     settings
         .agents
         .iter()
@@ -146,7 +161,10 @@ pub(super) fn run_claude_auth(state: Arc<ServerState>) {
             if state.shutdown.load(Ordering::Acquire) || state.stopping.load(Ordering::Acquire) {
                 break;
             }
-            state.quota_refresh.lock().unwrap().claude_auth = auth;
+            let mut refresh = state.quota_refresh.lock().unwrap();
+            refresh.claude_auth = auth;
+            refresh.auth_checked = true;
+            drop(refresh);
             last = Some(key);
             pending = true;
         }
@@ -270,11 +288,28 @@ pub(super) fn apply(state: &ServerState, update: NativeQuotaUpdate) {
     state.publish_quotas();
 }
 
-fn now_ms() -> u64 {
+fn wall_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+/// Unix milliseconds. `OVRCR_QUOTA_CLOCK`, when set, is a file containing that
+/// integer: a test seam for the probe cadence and the refresh cooldown, not a
+/// setting. Absent or unreadable, this is the wall clock.
+pub(super) fn clock_ms() -> u64 {
+    let Some(path) = std::env::var_os("OVRCR_QUOTA_CLOCK") else {
+        return wall_ms();
+    };
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| text.trim().parse().ok())
+        .unwrap_or_else(wall_ms)
+}
+
+fn now_ms() -> u64 {
+    clock_ms()
 }
 
 pub(super) fn run(state: Arc<ServerState>, provider: QuotaProvider) {
@@ -1125,7 +1160,7 @@ mod tests {
             request_refresh(&off, None),
             Response::Error { message, .. } if message == crate::settings::QUOTA_OFF
         ));
-        assert!(off.quota_refresh.lock().unwrap().last.is_none());
+        assert!(off.quota_refresh.lock().unwrap().last_ms.is_none());
         let state = enabled_state(true);
         assert!(matches!(
             request_refresh(&state, Some(QuotaProvider::Claude)),
@@ -1146,7 +1181,7 @@ mod tests {
             other => panic!("refresh inside the cooldown accepted: {other:?}"),
         }
         assert_eq!(state.quota_refresh.lock().unwrap().due, [false, true]);
-        state.quota_refresh.lock().unwrap().last = Some(Instant::now() - COOLDOWN);
+        state.quota_refresh.lock().unwrap().last_ms = Some(clock_ms().saturating_sub(COOLDOWN_MS));
         assert_eq!(request_refresh(&state, None), Response::Ok);
         assert_eq!(state.quota_refresh.lock().unwrap().due, [true, true]);
     }

@@ -32,6 +32,7 @@ mod dashboard;
 mod dispatch;
 mod outbound;
 mod quota;
+mod quota_probe;
 mod reporting_queue;
 mod startup;
 mod title;
@@ -295,10 +296,33 @@ impl ServerState {
             }
             None => ovrcr_protocol::QuotaSnapshot::default().claude,
         };
+        // A hidden probe is not a Session. Turning it off returns the row to
+        // the auth/waiting state instead of "not reporting".
+        if matches!(old.source, Some(QuotaSource::Probe { .. }))
+            && !self.quota_settings().claude_probe
+        {
+            next = ovrcr_protocol::QuotaSnapshot::default().claude;
+        }
+        let now = quota::clock_ms();
+        let auth = self.quota_refresh.lock().unwrap().claude_auth.clone();
+        let fresh_session = matches!(next.source, Some(QuotaSource::Session { .. }))
+            && next.state == QuotaState::Current
+            && !next.stale(now);
         // Until a managed session reports, `claude auth status` may rule the
         // allowance out: not signed in, not a claude.ai login, or no answer.
-        if next.state == QuotaState::Checking
-            && let Some((state, reason)) = self.quota_refresh.lock().unwrap().claude_auth.clone()
+        // A probe reading stays until a fresh managed report or that ruling.
+        if matches!(old.source, Some(QuotaSource::Probe { .. }))
+            && self.quota_settings().claude_probe
+            && !fresh_session
+        {
+            if let Some((state, reason)) = auth {
+                next = ProviderQuota::unknown(QuotaProvider::Claude, state);
+                next.reason = Some(reason);
+            } else {
+                next = old.clone();
+            }
+        } else if next.state == QuotaState::Checking
+            && let Some((state, reason)) = auth
         {
             next.state = state;
             next.reason = Some(reason);

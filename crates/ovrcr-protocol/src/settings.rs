@@ -101,6 +101,8 @@ pub struct NativeCommand {
 pub struct QuotaSettings {
     /// Consent setting: native clients may refresh their own auth and write logs.
     pub enabled: bool,
+    /// Consent setting: a hidden Claude probe may spend allowance to read it.
+    pub claude_probe: bool,
     pub codex: NativeCommand,
     pub grok: NativeCommand,
 }
@@ -109,6 +111,7 @@ impl Default for QuotaSettings {
     fn default() -> Self {
         Self {
             enabled: false,
+            claude_probe: false,
             codex: NativeCommand {
                 command: "codex".into(),
                 home: None,

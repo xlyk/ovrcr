@@ -1,6 +1,6 @@
 # Claude allowance comes from a consented probe, not from an OAuth read
 
-Decided 2026-10-01, from the usage-defaults grilling (item 4).
+Decided 2026-10-01, from the usage-defaults grilling (item 4). The probe shipped as `quota.claude.probe` (off by default) with `QuotaSource::Probe`; the decision is unchanged.
 
 Claude Code publishes subscription allowance only through its status line, and only after a session's first API response, so a fresh OVRCR launch showed nothing for Claude. Other tools (oh-my-pi, Superset, CodexBar, claudebar) read the Claude Code OAuth token from the Keychain or `~/.claude/.credentials.json` and call the undocumented `api.anthropic.com/api/oauth/usage` endpoint. OVRCR does not. Anthropic's published guidance (code.claude.com, "Authentication and credential use", read 2026-10-01) says OAuth is intended exclusively for ordinary use of Claude Code and native Anthropic applications, that developers may not collect, store or intermediate Claude.ai credentials or session tokens, and that enforcement may come without notice. The endpoint is undocumented and informational. Neither fact makes the read certainly prohibited for a local tool on the user's own machine, and neither makes it approved; OVRCR declines to build on that uncertainty while a documented route exists.
 

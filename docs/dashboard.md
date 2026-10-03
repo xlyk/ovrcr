@@ -41,10 +41,12 @@ the reserved quota rows; sidebar and pane dividers remain draggable over their
 full height.
 
 The palette offers **Refresh quota**, which asks the Server to read Codex and
-Grok now (a refusal inside the Server's 30-second cooldown shows the remaining
-seconds in the footer), and, while collection is off, **Enable Codex and Grok
-usage**, which asks the Server to set `quota.enabled = true`. The Dashboard
-changes nothing itself; the rows change when the Server republishes.
+Grok now, and Claude too while `quota.claude.probe` is on (a refusal inside the
+Server's 30-second cooldown shows the remaining seconds in the footer), and,
+while collection is off, **Enable Codex and Grok usage**, which asks the Server
+to set `quota.enabled = true`. The Dashboard changes nothing itself; the rows
+change when the Server republishes. The Claude probe is a separate consent,
+`quota.claude.probe`, off until set; see [provider allowance](provider-quota.md).
 
 | Key | Action |
 | --- | --- |
@@ -770,8 +772,11 @@ picker_roots = ["~/Code", "~/src", "~"]
 # name = "claude"
 # argv = ["claude", "--verbose"]
 
-[quota]                              # Codex and Grok account quota; see provider-quota.md
+[quota]                              # account quota; see provider-quota.md
 enabled = false                      # opt in: native clients may refresh their own auth and logs
+
+[quota.claude]
+probe = false                        # opt in: a hidden Claude run may spend allowance
 
 [quota.codex]
 command = "codex"

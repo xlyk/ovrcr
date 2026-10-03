@@ -318,6 +318,7 @@ fn matrix_covers_every_declared_setting() {
             "agents",
             "launch_choices",
             "quota.enabled",
+            "quota.claude.probe",
             "quota.codex.command",
             "quota.codex.home",
             "quota.grok.command",
@@ -329,7 +330,7 @@ fn matrix_covers_every_declared_setting() {
     assert_eq!(
         kinds,
         [
-            Bool, Bool, Str, Str, Str, Array, Array, Table, Bool, Str, Str, Str, Str
+            Bool, Bool, Str, Str, Str, Array, Array, Table, Bool, Bool, Str, Str, Str, Str
         ]
     );
     // Every test-side table names a declared setting, so none goes stale.

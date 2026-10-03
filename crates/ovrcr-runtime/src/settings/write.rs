@@ -97,6 +97,7 @@ fn declared(path: &str) -> Option<(Vec<Segment>, Kind)> {
         [Some("agents")] => Typed("an array of { name, argv } tables"),
         [Some("launch_choices")] => Typed("a table of { kind, preset } tables"),
         [Some("quota"), Some("enabled")] => Typed("a boolean"),
+        [Some("quota"), Some("claude"), Some("probe")] => Typed("a boolean"),
         [
             Some("quota"),
             Some("codex" | "grok"),
@@ -610,6 +611,9 @@ mod tests {
             }),
             ("quota.enabled", "true", "quota.enabled", |s| {
                 s.quota.enabled
+            }),
+            ("quota.claude.probe", "true", "quota.claude.probe", |s| {
+                s.quota.claude_probe
             }),
             (
                 "quota.codex.command",

@@ -1029,6 +1029,12 @@ mod wire_snapshot {
             }),
         ));
         all.push((
+            "QuotaSource::Probe".into(),
+            encode(&crate::QuotaSource::Probe {
+                probed_unix_ms: 1_000,
+            }),
+        ));
+        all.push((
             "QuotaSource::Session".into(),
             encode(&crate::QuotaSource::Session {
                 session: SessionId(1),
@@ -1254,7 +1260,7 @@ mod wire_snapshot {
         ),
         (
             "ServerEvent::SettingsChanged",
-            "05072f642e746f6d6c05000002010470692f6d08666561747572652f01022f630101610101620201700101610171000005636f64657801022f680467726f6b00010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
+            "05072f642e746f6d6c05000002010470692f6d08666561747572652f01022f63010161010162020170010161017100000005636f64657801022f680467726f6b00010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
         ),
         ("QuotaState::Waiting", "00"),
         ("QuotaState::Current", "01"),
@@ -1270,6 +1276,7 @@ mod wire_snapshot {
             "0e6e61746976652f7072696d6172790235680101fb68100001fc40420f00",
         ),
         ("QuotaSource::NativeProfile", "01066e617469766502"),
+        ("QuotaSource::Probe", "02fbe803"),
         ("QuotaSource::Session", "0001040003696e7604636f6e7602"),
         ("ProviderQuota", "0100000000020108485454502035303301fb60ea"),
         (

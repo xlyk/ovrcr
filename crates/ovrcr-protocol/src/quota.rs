@@ -96,6 +96,10 @@ pub enum QuotaSource {
         profile: String,
         generation: u64,
     },
+    /// A hidden quota probe, not a Session. `probed_unix_ms` is when it ran.
+    Probe {
+        probed_unix_ms: u64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,6 +149,18 @@ pub const QUOTA_OFF: &str = "Codex/Grok usage off: set `quota.enabled = true` in
 
 /// Claude's row while Checking: it is not refreshable and has no native reader.
 pub const CLAUDE_WAITING: &str = "waiting for a managed Claude session's first response";
+
+/// Consent text for `quota.claude.probe`. The setting stays off until this is accepted.
+pub const CLAUDE_PROBE_DESCRIPTION: &str = "Starts a hidden Claude Code run with a one-word prompt and reads its status line when no managed Claude session has reported recently; each probe spends a small amount of your allowance and leaves a conversation in Claude's history; OVRCR trusts its own empty probe directory for this.";
+
+/// The probe process produced no status line before the deadline.
+pub const PROBE_TIMED_OUT: &str = "probe timed out";
+
+/// The probe process ended without a status-line callback.
+pub const PROBE_EXITED: &str = "probe exited before reporting";
+
+/// A status-line callback with no `rate_limits` (not a Pro or Max login).
+pub const PROBE_NOT_SUBSCRIPTION: &str = "not a Pro or Max login";
 
 impl ProviderQuota {
     pub fn unknown(provider: QuotaProvider, state: QuotaState) -> Self {
