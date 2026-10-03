@@ -1903,6 +1903,76 @@ fn agent_run_preserves_native_argv_stdio_and_exit_without_server() {
 }
 
 #[test]
+fn agent_run_adds_default_auto_trust_only_when_the_permission_family_is_absent() {
+    let root = tempfile::tempdir().unwrap();
+    let executable = root.path().join("native");
+    std::fs::write(
+        &executable,
+        "#!/bin/sh\nfor arg in \"$@\"; do\n  printf '%s\\n' \"$arg\"\ndone\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let run = |provider: &str, extra: &[&str]| -> Vec<String> {
+        let mut command = isolated_command(&root);
+        command
+            .args(["agent", "run", provider, "--"])
+            .arg(&executable);
+        for arg in extra {
+            command.arg(arg);
+        }
+        command
+            .env_remove("OVRCR_HOOK_SOCKET")
+            .env_remove("OVRCR_SESSION_ID")
+            .env_remove("OVRCR_HOOK_TOKEN")
+            .stdin(Stdio::null());
+        let output = run_cli_bounded(command).unwrap();
+        assert!(
+            output.status.success(),
+            "{provider} {extra:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    };
+    let expect =
+        |args: &[&str]| -> Vec<String> { args.iter().map(|arg| (*arg).to_owned()).collect() };
+    assert_eq!(
+        run("claude", &[]),
+        expect(&["--dangerously-skip-permissions"])
+    );
+    assert_eq!(
+        run("claude", &["--permission-mode", "dontAsk"]),
+        expect(&["--permission-mode", "dontAsk"])
+    );
+    assert_eq!(
+        run("claude", &["--", "ship it"]),
+        expect(&["--dangerously-skip-permissions", "--", "ship it"])
+    );
+    assert_eq!(run("codex", &[]), expect(&["--full-auto"]));
+    assert_eq!(
+        run("codex", &["-a", "on-request"]),
+        expect(&["-a", "on-request"])
+    );
+    assert_eq!(
+        run("codex", &["--dangerously-bypass-hook-trust"]),
+        expect(&["--dangerously-bypass-hook-trust"])
+    );
+    assert_eq!(run("pi", &[]), expect(&["--approve"]));
+    assert_eq!(run("pi", &["--no-approve"]), expect(&["--no-approve"]));
+    assert_eq!(run("omp", &[]), expect(&["--auto-approve"]));
+    assert_eq!(run("omp", &["--yolo"]), expect(&["--yolo"]));
+    assert_eq!(
+        run("grok", &["--model", "grok-4"]),
+        expect(&["--model", "grok-4"])
+    );
+    assert_eq!(run("hermes", &[]), expect(&[]));
+    assert_eq!(run("cursor-agent", &[]), expect(&[]));
+}
+
+#[test]
 fn claude_doctor_reports_exact_version_and_version_specific_resume_forms() {
     let root = tempfile::tempdir().unwrap();
     let executable = root.path().join("claude");

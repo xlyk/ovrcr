@@ -1,5 +1,7 @@
 pub mod agent;
+pub mod auto_trust;
 pub use agent::*;
+pub use auto_trust::{apply_default_auto_trust, default_auto_trust_flag};
 pub mod client;
 mod codec;
 pub mod context;

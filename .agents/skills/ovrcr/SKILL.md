@@ -65,14 +65,23 @@ ovrcr new --project NAME --workspace BRANCH --name LABEL --json -- \
 
 `PROVIDER` is `claude`, `codex`, `pi`, or `omp`. `BIN` is that provider's executable. Pass the absolute binaries from `command -v`; the server runs this argv.
 
-For Claude Code this launch was exercised end to end, including a prompt sent after the composer appeared:
+Managed Claude, Codex, Pi, and Oh My Pi launches auto-trust by default. When the argv has no permission-mode, approve, auto-approve, full-auto, or dangerously-* flag, `ovrcr agent run` adds one:
+
+- Claude: `--dangerously-skip-permissions` (not `--permission-mode dontAsk`)
+- Codex: `--full-auto`
+- Pi: `--approve`
+- Oh My Pi: `--auto-approve`
+
+A flag already in that family wins: it is not appended to or replaced. There is no global switch. Grok, Hermes, and Cursor are not given one. Omit the trust flag in the command below; the managed launch adds Claude's.
+
+A Claude Code launch through this route was exercised end to end, including a prompt sent after the composer appeared. Omit permission flags so the managed launch adds `--dangerously-skip-permissions`:
 
 ```sh
 ovrcr new --project NAME --workspace BRANCH --name LABEL --json -- \
-  "$(command -v ovrcr)" agent run claude -- "$(command -v claude)" --permission-mode dontAsk
+  "$(command -v ovrcr)" agent run claude -- "$(command -v claude)"
 ```
 
-Flags that keep a fresh Claude launch eligible for reporting: `--model`, `--permission-mode`, `--agent`, `--agents`, `--settings`, `--setting-sources`, `--system-prompt`, `--append-system-prompt`, `--name` / `-n`, `--strict-mcp-config`, `--verbose`, and permission-bypass flags. A fresh launch may take one prompt after a second `--`.
+Flags that keep a fresh Claude launch eligible for reporting: `--model`, `--permission-mode`, `--agent`, `--agents`, `--settings`, `--setting-sources`, `--system-prompt`, `--append-system-prompt`, `--name` / `-n`, `--strict-mcp-config`, `--verbose`, and permission-bypass flags, including the default `--dangerously-skip-permissions`. A fresh launch may take one prompt after a second `--`.
 
 `--print` / `-p` is the one-shot mode. It prints, exits, and the screen reports `agent admission unavailable`. An interactive session stays at the composer.
 

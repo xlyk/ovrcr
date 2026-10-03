@@ -14,7 +14,7 @@ ovrcr agent run codex -- codex
 
 A direct `codex` launch is untracked; the managed wrapper is required even when the hooks are configured and doctor reports a supported version. Running the wrapper in a terminal outside OVRCR also leaves reporting unavailable. Managed launches restart any CODEX_HOME-owned `app-server --managed-daemon` so Codex 0.158+ hook subprocesses inherit the current private channel (that daemon otherwise keeps a stale `OVRCR_AGENT_SOCKET` across TUI relaunches). Keep `CODEX_HOME` as a real absolute path (not a `/tmp` symlink) — Codex rejects helper PATH aliases when it resolves under `/tmp`. Reporter attribution trusts strict descendants in the native process tree, including nested daemon-spawned helpers. The wrapper preserves ordinary native behavior when reporting cannot be admitted. Doctor reports Ready as available and Approval Input requests as available from verified root `PermissionRequest` hooks (`approval:{turn_id}`); questions remain unavailable until a distinct question open/close surface is verified. One working capability does not certify the other.
 
-The legacy `agent run --provider codex -- codex` form also works. Native argv remains unchanged. The executable basename must be `codex`. Supported optional arguments are `--no-alt-screen`, `--full-auto`, `--dangerously-bypass-hook-trust`, and separate-token `--model/-m`, `--profile/-p`, `--sandbox/-s`, `--ask-for-approval/-a`, `--cd/-C` with a nonempty value that does not start with `-`. At most one initial prompt is supported; use `--` before a prompt matching a native subcommand. Trust hooks before submitting the first tracked prompt: an initial prompt supplied while Codex displays hook review may run untracked.
+The legacy `agent run --provider codex -- codex` form also works. A managed launch appends `--full-auto` when argv has no approve, full-auto, or dangerously-* flag; an existing flag in that family is left untouched. The executable basename must be `codex`. Supported optional arguments are `--no-alt-screen`, `--full-auto`, `--dangerously-bypass-hook-trust`, and separate-token `--model/-m`, `--profile/-p`, `--sandbox/-s`, `--ask-for-approval/-a`, `--cd/-C` with a nonempty value that does not start with `-`. At most one initial prompt is supported; use `--` before a prompt matching a native subcommand. Trust hooks before submitting the first tracked prompt: an initial prompt supplied while Codex displays hook review may run untracked.
 
 ## Print and review configuration
 
@@ -163,14 +163,17 @@ file prevents launching and retains a retryable row. Native resume failure also
 retains the row; Retry never starts fresh. Start new conversation is separate.
 
 Saved options are separate-token `--model/-m`, `--profile/-p`, `--sandbox/-s`,
-`--ask-for-approval/-a`, absolute `--cd/-C`, and `--no-alt-screen`. Task prompts
-are discarded. Other options, including `--full-auto`, inline configuration and
-relative `--cd`, leave recovery unavailable without changing existing reporting.
+`--ask-for-approval/-a`, absolute `--cd/-C`, `--no-alt-screen`, and `--full-auto`.
+Task prompts are discarded. Other options, including `--dangerously-bypass-hook-trust`,
+inline configuration and relative `--cd`, leave recovery unavailable without changing
+existing reporting. Reopen keeps a saved `--full-auto` instead of rejecting it.
 CODEX_HOME (default `$HOME/.codex`) must be absolute and match on reopen; explicit
 profiles must still exist at `$CODEX_HOME/<profile>.config.toml`. Configuration
 contents and credentials are not copied or fingerprinted. The operator must keep
 the referenced configuration/account and native history stable during recovery.
-Native hook trust and approval settings are never bypassed.
+Native hook trust is not bypassed (`--dangerously-bypass-hook-trust` is not injected
+or retained). A saved `--full-auto` or `--ask-for-approval` is kept on reopen and is
+not replaced.
 
 **Exact resume reporting requires certified attachment.** Managed Reopen launches
 `codex resume UUID` through the existing reporting path. The Dashboard shows

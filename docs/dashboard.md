@@ -506,7 +506,16 @@ for a stable workspace-based name, or enter your own name. After creation, typin
 session immediately. `n` and other new launches are unavailable when the selected
 root workspace shows a warning. Detected `claude`, `codex`, `pi`, `omp`, `grok`, `hermes` and `cursor-agent`
 entries launch through the managed `agent run` route; an
-`agents` override replaces the command entirely. Claude, Codex, Pi and Oh My Pi
+`agents` override replaces the command entirely. Detected Claude, Codex, Pi, and Oh My Pi
+launches auto-trust by default: the argv gains `--dangerously-skip-permissions`,
+`--full-auto`, `--approve`, or `--auto-approve` when it does not already contain a
+permission-mode, approve, auto-approve, full-auto, or dangerously-* flag. A flag already
+in that family is left as written; nothing is appended or replaced, and there is no
+global switch. `ovrcr agent run` does the same when its native argv is bare, including
+a `[[agents]]` preset that is itself a bare `agent run`. A preset that already names one
+of those flags is stored and launched as written; a raw command that does not go through
+`agent run` is not rewritten. Grok, Hermes, and Cursor are not given a flag. This
+replaces the earlier non-goal that managed launches would not add a trust bypass. Claude, Codex, Pi and Oh My Pi
 deliver Ready/Unread on their supported readiness paths (Claude Ready is Observed,
 never Confirmed settling). Claude/Codex Input-request support remains unavailable
 until their dependent tickets. Missing hook configuration shows
