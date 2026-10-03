@@ -729,10 +729,7 @@ impl DesktopHost {
                                 unreachable!("Bridge delivery handled above")
                             }
                         };
-                        if !run_host(command, timeout, || {
-                            cancelled() || worker_channels.load(Ordering::Acquire) & channel == 0
-                        }) && !cancelled()
-                        {
+                        if !run_host(command, timeout, cancelled) && !cancelled() {
                             let _ = failure.try_send((ticket, channel));
                         }
                     }
