@@ -220,6 +220,15 @@ const CLOSE_CONFIRM_LABEL: &str = "[Enter Close]";
 const CLOSE_CONSEQUENCE: &str = "Stops its currently owned processes and archives its record.";
 const CLOSE_TITLE: &str = "Close terminal?";
 
+fn close_terminal_identity(name: &str, id: u64) -> String {
+    let marked = format!("(#{id})");
+    if name.contains(&marked) {
+        name.to_string()
+    } else {
+        format!("{name} {marked}")
+    }
+}
+
 fn close_confirm_action_line() -> String {
     let gap = " ".repeat(usize::from(CLOSE_CONFIRM_ACTION_GAP));
     format!("{CLOSE_CANCEL_LABEL}{gap}{CLOSE_CONFIRM_LABEL}")
@@ -3200,7 +3209,7 @@ impl Dashboard {
         };
         let Some(found) = find_session(self, *session) else {
             return CloseConfirmText {
-                identity: format!("Terminal #{}", session.0),
+                identity: close_terminal_identity("Terminal", session.0),
                 place: target.clone(),
                 project: "unavailable".into(),
                 workspace: "unavailable".into(),
@@ -3211,9 +3220,10 @@ impl Dashboard {
         let workspace = find_workspace(self, &found.project, &found.workspace)
             .map(|workspace| workspace_label(self, workspace))
             .unwrap_or_else(|| found.workspace.clone());
+        let name = found.display_name();
         CloseConfirmText {
-            identity: format!("Terminal #{}", found.id.0),
-            place: self.session_display_name(found),
+            identity: close_terminal_identity(name, found.id.0),
+            place: format!("{} / {name}", session_workspace_heading(self, found)),
             project: found.project.clone(),
             workspace,
             error: palette.error.clone(),
@@ -5444,8 +5454,8 @@ mod close_confirm_tests {
             .collect();
         for needle in [
             "Close terminal?",
-            "Terminal #1",
-            "root-1",
+            "root-1 (#1)",
+            "demo / root / root-1",
             "Project: demo",
             "Workspace: root",
             CLOSE_CONSEQUENCE,
@@ -5460,7 +5470,7 @@ mod close_confirm_tests {
         assert_eq!(cancel_at, layout.cancel.x);
         assert_eq!(close_at, layout.confirm.x);
         let identity_y = (0..buffer.area.height)
-            .find(|y| row_text(&buffer, *y).contains("Terminal #1"))
+            .find(|y| row_text(&buffer, *y).contains("root-1 (#1)"))
             .unwrap();
         assert!(
             buffer[(layout.text.x, identity_y)]
