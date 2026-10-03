@@ -535,22 +535,24 @@ fn palette_enable_usage_asks_the_server_and_applies_nothing() {
 #[test]
 fn quota_details_name_a_probe_source_with_its_time_and_age() {
     let mut dashboard = dashboard_fixture();
-    let mut snapshot = QuotaSnapshot::default();
-    snapshot.claude = ProviderQuota {
-        source: Some(QuotaSource::Probe {
-            probed_unix_ms: NOW - 60_000,
-        }),
-        observed_unix_ms: Some(NOW - 60_000),
-        state: QuotaState::Current,
-        windows: vec![QuotaWindow {
-            id: "five_hour".into(),
-            label: "5h".into(),
-            general: true,
-            used_basis_points: Some(1_200),
-            over_limit: false,
-            resets_unix_ms: Some(NOW + 3_600_000),
-        }],
-        ..ProviderQuota::unknown(QuotaProvider::Claude, QuotaState::Current)
+    let snapshot = QuotaSnapshot {
+        claude: ProviderQuota {
+            source: Some(QuotaSource::Probe {
+                probed_unix_ms: NOW - 60_000,
+            }),
+            observed_unix_ms: Some(NOW - 60_000),
+            state: QuotaState::Current,
+            windows: vec![QuotaWindow {
+                id: "five_hour".into(),
+                label: "5h".into(),
+                general: true,
+                used_basis_points: Some(1_200),
+                over_limit: false,
+                resets_unix_ms: Some(NOW + 3_600_000),
+            }],
+            ..ProviderQuota::unknown(QuotaProvider::Claude, QuotaState::Current)
+        },
+        ..QuotaSnapshot::default()
     };
     publish_quota(&mut dashboard, snapshot);
     dashboard.key(KeyCode::Char('u'));

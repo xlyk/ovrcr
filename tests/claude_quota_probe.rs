@@ -43,10 +43,9 @@ fn quota_until(
         assert!(std::time::Instant::now() < deadline, "{what}");
         if let ServerMessage::Event(ServerEvent::QuotaChanged(snapshot)) =
             read_frame::<ServerMessage>(socket).unwrap()
+            && done(&snapshot)
         {
-            if done(&snapshot) {
-                return *snapshot;
-            }
+            return *snapshot;
         }
     }
 }
@@ -119,7 +118,7 @@ fn last_probe_pid(log: &std::path::Path) -> u32 {
     probe_lines(log)
         .iter()
         .filter_map(|line| line.strip_prefix("pid="))
-        .last()
+        .next_back()
         .unwrap()
         .parse()
         .unwrap()
