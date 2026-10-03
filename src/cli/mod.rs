@@ -182,7 +182,13 @@ fn run(cli: Cli) -> AppResult<()> {
             let RegistryPath(config) = RegistryPath::resolve().map_err(RuntimeError::internal)?;
             let report = ovrcr::settings::load(&config);
             if json_output {
-                print_json(&serde_json::to_value(&report).map_err(RuntimeError::internal)?)
+                // Same serializer the Dashboard snapshot uses, so the two
+                // readings compare byte for byte (apart from the clock).
+                println!(
+                    "{}",
+                    serde_json::to_string(&report).map_err(RuntimeError::internal)?
+                );
+                Ok(())
             } else {
                 print!("{}", settings_text(&report));
                 Ok(())

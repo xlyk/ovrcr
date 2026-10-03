@@ -549,6 +549,13 @@ fn real_dashboard_initial_selection_survives_quota_events_before_startup_respons
         });
         let result = (|| -> Result<()> {
             while let Ok(message) = ovrcr::protocol::read_frame::<ServerMessage>(&mut back) {
+                // The Server publishes its own quota snapshot (Claude auth
+                // status is not the silent default). This test injects the
+                // events it asserts on; forwarding the real ones replaces
+                // "invalid report" before the screen can show it.
+                if matches!(message, ServerMessage::Event(ServerEvent::QuotaChanged(_))) {
+                    continue;
+                }
                 let count = match &message {
                     ServerMessage::Response {
                         request_id: 1,
