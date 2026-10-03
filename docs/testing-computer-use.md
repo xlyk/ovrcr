@@ -22,17 +22,6 @@ Read the returned tool documentation before continuing. Then inspect the window:
 await app.getAXStateAndScreenshot();
 ```
 
-Codex single-shot uses the configured model: `codex exec -m gpt-6.1-sol`. As of
-2026-10-02 that model is refused for a ChatGPT-account login ("The 'gpt-6.1-sol'
-model is not supported when using Codex with a ChatGPT account"). When it is,
-record the exact command, `codex login status`, `CODEX_HOME` and any `OVRCR_*`
-differences, then use the scripted System Events harness instead: `drive.py`,
-`winid.swift` and `run-step.sh` in `research/settings-editor-2026-10-02` send real
-key events to the `ovrcr-gui` pid only while it is frontmost, wait for another
-worktree's driver to go idle, and save a `screencapture -l` window shot, the
-helper's accessibility text and the settings document after each step. Run them
-with `GUI_PID`, `GUI_WIN` (from `swift winid.swift <pid>`) and `DOC` set.
-
 Use fresh accessibility indices or coordinates from the current screenshot. Sidebar row accessibility bounds can span the terminal: click within the visible sidebar or use `j`/`k`. Request the needed execution permission if local socket, PTY, or GUI access is sandbox-blocked; record a blocked check if access remains unavailable.
 
 ### Driving the window
@@ -54,7 +43,10 @@ the scripted System Events harness in `research/quota-display-2026-10-02`:
 `drive.py` sends real key events to the helper process by PID and checks focus in
 the same AppleScript call as each key, so a key never lands in another
 fixture's window; `winid.swift` finds the window for `screencapture -l`, and
-the helper's accessibility static text is saved beside each screenshot. The
+the helper's accessibility static text is saved beside each screenshot. When
+another worktree drives its own fixture at the same time, run each step only
+after its driver has gone idle (`research/settings-editor-2026-10-02/run-step.sh`),
+so neither run steals focus mid-step. The
 helper's window cannot be shorter than 22 rows. To check layouts shorter than
 that, run a second isolated `ovrcr` Dashboard in a fixture shell after
 `stty rows N` (`nested-ladder.sh`).
