@@ -586,6 +586,32 @@ fn symlinked_document_is_followed() {
 }
 
 #[test]
+fn dangling_symlink_is_a_document_finding_not_a_fresh_install() {
+    let root = tempfile::tempdir().unwrap();
+    let config = root.path().join("config.toml");
+    let document = root.path().join("dashboard.toml");
+    std::os::unix::fs::symlink("missing.toml", &document).unwrap();
+
+    let report = settings::load_document(&config, &document);
+
+    // A missing file is a fresh install: defaults and no finding. A link whose
+    // target does not exist is not that, even though reading it is NotFound.
+    assert_eq!(report.rows, default_rows());
+    assert!(!report.unparseable);
+    assert_eq!(report.findings.len(), 1, "{:?}", report.findings);
+    let finding = &report.findings[0];
+    assert_eq!(finding.key, None);
+    assert_eq!(finding.line, None);
+    assert_eq!(
+        finding.message,
+        format!(
+            "settings document {} is a dangling symlink",
+            document.display()
+        )
+    );
+}
+
+#[test]
 fn read_only_document_is_still_read() {
     use std::os::unix::fs::PermissionsExt;
     let root = tempfile::tempdir().unwrap();

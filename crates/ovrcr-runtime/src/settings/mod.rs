@@ -52,7 +52,19 @@ pub fn load_document(registry_path: &Path, document: &Path) -> SettingsReport {
         Ok(text) => parse(document, &text),
         Err(error) => {
             let mut report = parse(document, "");
-            if error.kind() != std::io::ErrorKind::NotFound {
+            // A missing file is a fresh install. Reading a symlink whose
+            // target does not exist is NotFound too, but that path is a
+            // document the user pointed at, so it is a finding rather than silence.
+            if error.kind() == std::io::ErrorKind::NotFound && is_symlink(document) {
+                report.findings.push(SettingsFinding {
+                    key: None,
+                    message: format!(
+                        "settings document {} is a dangling symlink",
+                        document.display()
+                    ),
+                    line: None,
+                });
+            } else if error.kind() != std::io::ErrorKind::NotFound {
                 report.findings.push(SettingsFinding {
                     key: None,
                     message: format!("cannot read settings document: {error}"),
@@ -76,6 +88,10 @@ pub fn load_document(registry_path: &Path, document: &Path) -> SettingsReport {
         });
     }
     report
+}
+
+fn is_symlink(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
 }
 
 /// Parse document text. `path` is recorded in the report only.
