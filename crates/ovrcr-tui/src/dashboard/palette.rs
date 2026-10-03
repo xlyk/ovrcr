@@ -5337,16 +5337,15 @@ mod close_confirm_tests {
     }
 
     fn find_label(buffer: &Buffer, y: u16, label: &str) -> u16 {
+        let chars: Vec<char> = label.chars().collect();
         (0..buffer.area.width)
             .find(|x| {
-                let mut col = *x;
-                for ch in label.chars() {
-                    if col >= buffer.area.width || buffer[(col, y)].symbol() != ch.to_string() {
+                chars.iter().enumerate().all(|(offset, ch)| {
+                    let Some(col) = x.checked_add(u16::try_from(offset).unwrap_or(u16::MAX)) else {
                         return false;
-                    }
-                    col += 1;
-                }
-                true
+                    };
+                    col < buffer.area.width && buffer[(col, y)].symbol() == ch.to_string()
+                })
             })
             .unwrap_or_else(|| panic!("missing {label} on row {y}"))
     }
