@@ -187,3 +187,7 @@ _Avoid_: the stale boundary, the last check, a countdown that resets on redraw
 **Quota probe**:
 A short, hidden run of the unmodified Claude Code binary that the Server starts, with the user's consent, only to receive one status-line report of the account's allowance when no managed Claude session has reported recently. It sends one minimal prompt, spends a little allowance, is never a Session, and never touches a credential.
 _Avoid_: a managed session, a background agent, an OAuth read, polling
+
+**Event**:
+One dated, OVRCR-written line about a decision the Server made or a state it changed: which component (titles, settings, quota, provisioning), the session or provider concerned, and a one-line message under the same rule as a Quota reason. Never a prompt, a transcript, a credential, an account identifier or a native body.
+_Avoid_: a log line copied from stderr, a Ready or Unread, an alert, a wire message
