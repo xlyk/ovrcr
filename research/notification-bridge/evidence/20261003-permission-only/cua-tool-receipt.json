@@ -1,0 +1,80 @@
+{
+  "provenance": {
+    "threadId": "01a10008-d6ea-7549-9a5e-a1edc3bad030",
+    "turnId": "01a10008-de7e-715c-a0f1-66f3741c712f",
+    "method": "Exact mcpToolCall entries exported using Codex read_thread; output text below is transcribed verbatim from the corresponding CUA tool results",
+    "outputsIncludedByThreadReader": false
+  },
+  "calls": [
+    {
+      "type": "mcpToolCall",
+      "id": "call_WlcxmeO68FFMo605Oju8SVKU",
+      "server": "cua_repl",
+      "tool": "js",
+      "arguments": {
+        "code": "var notificationCenter = await cua.getApp(\"com.apple.notificationcenterui\");",
+        "title": "Bind native Notification Center for the authorized fixture-only prompt"
+      },
+      "status": "failed",
+      "durationMs": 14570
+    },
+    {
+      "type": "mcpToolCall",
+      "id": "call_46m6PaHy60gs9gnSHzRzfKl8",
+      "server": "cua_repl",
+      "tool": "js",
+      "arguments": {
+        "code": "var notificationCenter = await cua.getApp(\"/System/Library/CoreServices/NotificationCenter.app\");",
+        "timeout_ms": 20000,
+        "title": "Resolve Notification Center by its verified system application path"
+      },
+      "status": "failed",
+      "durationMs": 9319
+    },
+    {
+      "type": "mcpToolCall",
+      "id": "call_nOgDw5wkmZ3f3FSOLz7Hamlv",
+      "server": "cua_repl",
+      "tool": "js",
+      "arguments": {
+        "code": "var notificationCenter = await cua.getApp(\"com.apple.notificationcenterui\");",
+        "timeout_ms": 20000,
+        "title": "Observe the exact new fixture’s first-use notification permission prompt"
+      },
+      "status": "completed",
+      "durationMs": 9251
+    },
+    {
+      "type": "mcpToolCall",
+      "id": "call_g0aukrhvCSaiQwPiOoMicdq1",
+      "server": "cua_repl",
+      "tool": "js",
+      "arguments": {
+        "code": "var permissionBefore = await notificationCenter.getAXStateAndScreenshot({ disableDiffing: true });",
+        "timeout_ms": 20000,
+        "title": "Capture the identity-matched notification permission prompt before acceptance"
+      },
+      "status": "completed",
+      "durationMs": 14566
+    },
+    {
+      "type": "mcpToolCall",
+      "id": "call_K3uvIwMjNtquRwcTF7Ar4iSi",
+      "server": "cua_repl",
+      "tool": "js",
+      "arguments": {
+        "code": "await notificationCenter.performSecondaryAction(3, \"Allow\"); var permissionAfter = await notificationCenter.getAXState({ disableDiffing: true });",
+        "timeout_ms": 20000,
+        "title": "Accept only OVRCR Permission Probe 40a8531a’s notification permission and verify the prompt disappears"
+      },
+      "status": "failed",
+      "durationMs": 5836
+    }
+  ],
+  "returnedErrors": {
+    "call_WlcxmeO68FFMo605Oju8SVKU": "Computer Use server error -10005: timeoutReached",
+    "call_46m6PaHy60gs9gnSHzRzfKl8": "Computer Use server error -10005: timeoutReached",
+    "call_K3uvIwMjNtquRwcTF7Ar4iSi": "Computer Use server error -10005: noWindowsAvailable"
+  },
+  "limits": "The combined Allow/AX invocation is recorded failed. There is no separate exported per-statement success marker. Attribution uses the actual invocation, exact pre-call prompt/AX, independent same-PID granted callback/final settings and clean process exit; do not claim the combined tool call passed."
+}

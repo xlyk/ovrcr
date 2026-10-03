@@ -53,8 +53,9 @@ alert/sound authorization request, and submitted no notification.
 
 Native CUA exposed the new fixture's exact name and an `Allow` secondary action.
 The saved screenshot shows only that permission notice, on a blank backdrop.
-CUA invoked `Allow` once on that freshly observed container. The following AX
-read returned `noWindowsAvailable`; the prompt had disappeared. Independently,
+CUA invoked `Allow` once on that freshly observed container. The combined Allow/AX
+call returned `noWindowsAvailable` and its exported tool status is **failed**;
+there is no separate per-statement success marker. Independently,
 the same owned PID recorded `authorization-completion` with `granted=true`, then
 final authorization/alerts/sound `2/2/2`, and exited zero after **48.864 seconds**.
 Four preceding polls reported `1/2/2` while completion was pending. Those reads
@@ -65,12 +66,13 @@ Local, scoped artifacts:
 
 - [Before-Allow screenshot](evidence/20261003-permission-only/permission-before-allow.jpg)
 - [Before-Allow AX](evidence/20261003-permission-only/permission-before-allow-ax.txt)
+- [Actual CUA invocation and error receipt](evidence/20261003-permission-only/cua-tool-receipt.json)
 - [Fresh baseline events](evidence/20261003-permission-only/status-events.jsonl)
 - [Request and completion events](evidence/20261003-permission-only/request-events.jsonl)
 - [Hashes and cleanup receipt](evidence/20261003-permission-only/result.json)
 
 Two pre-request CUA attempts to bind Notification Center timed out while it had no
-prompt. The request-time binding and screenshot succeeded. The post-action AX
+prompt. The request-time binding and screenshot succeeded. The combined action/AX
 error is retained as an observation limitation, not a failed callback assertion.
 No new banner, audio, click navigation, Server/session operation, Settings change,
 permission reset, automatic retry or unrelated prompt acceptance occurred.
