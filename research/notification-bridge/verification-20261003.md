@@ -1,10 +1,14 @@
 # Bridge verification continuation, 2026-10-03 UTC
 
 **Baseline:** remote `main` at `7b37a99312831bb3b3aa9a446f05736bf93abdf5`.
-**Decision:** first-use Allow evidence passed on this host. #221 remains NO-GO
-under its current contract; Settings support and applicable Glass use remain open.
-No production Bridge implementation, issue/ADR edit, branch publication, merge,
-deployment, or new sound/banner test occurred.
+**Decision:** first-use Allow evidence passed on this host. Kyle subsequently
+approved original bundled custom tones plus system default, retaining the sound
+selector and removing dependence on Apple Glass. This direction is prepared
+locally; Kyle also approved documented System Settings opening plus manual
+Notifications → Bridge instructions. The revised enabling assessment supports
+local GO once exact asset/contract review is complete, without claiming new-tone
+audibility or downstream production acceptance. The live issues are still OPEN;
+no tracker edit, publication, merge, deployment or new sound/banner test occurred.
 
 ## Current tracker and scope
 
@@ -17,7 +21,7 @@ All listed issues remain OPEN. Labels do not waive dependency or approval gates.
 | [#221](https://github.com/xlyk/ovrcr/issues/221) | Native identity, permission/Settings, compatible peers and applicable sound resource use | None; verification only |
 | [#222](https://github.com/xlyk/ovrcr/issues/222) | Signed private banners, bounded delivery, permission/install/update recovery | #221 |
 | [#223](https://github.com/xlyk/ovrcr/issues/223) | Callback → Server → active Dashboard, run/lifetime/owner fences and immediate Browse navigation | #222 |
-| [#224](https://github.com/xlyk/ovrcr/issues/224) | Banner sound, saved opt-in preservation and persisted Glass/default choice | #222 and sound facts |
+| [#224](https://github.com/xlyk/ovrcr/issues/224) | Banner sound, saved opt-in preservation and persisted choice; current issue still names Glass/default | #222 and sound facts |
 | [#225](https://github.com/xlyk/ovrcr/issues/225) | Explicitly authorized existing-iTerm focus and parent-app fallback | #223 |
 | [#226](https://github.com/xlyk/ovrcr/issues/226) | Integrated signed release and cross-platform acceptance | #224 + #225 |
 
@@ -120,32 +124,96 @@ and [Glass source report](glass-resource-contract-20261003.md) are integrated
 without rewriting historical evidence. Their pre-run statements remain dated
 checkpoints; this section records the later actual run.
 
-## Pending owner decisions
+## Approved replacement sound direction
 
-The parent asked Kyle about two scope changes; neither is treated as approved here:
+Kyle asked whether custom notification sounds could be used and agreed to a few
+original or properly licensed bundled short tones alongside system default, with
+the selector retained. This supersedes the earlier pending default-only proposal.
+The new local preparation uses original mathematical synthesis, without samples,
+Apple sound bytes, installed-system links or a third-party generation dependency.
+The historical [Glass investigation](glass-resource-contract-20261003.md) remains
+unchanged evidence for the earlier direction; no Glass license clearance is claimed.
 
-1. Replace the unsupported direct Notifications-pane URI contract with a documented
-   action opening System Settings and instructions for Notifications → Bridge.
-   A successful System Settings launch must not be reported as direct pane navigation.
-2. Use standard system notification sound and defer Glass. Apple's current
-   [`UNNotificationSound.default`](https://developer.apple.com/documentation/usernotifications/unnotificationsound/default)
-   is available on macOS from 10.14, and the retained human A/B observation already
-   heard it. This removes the Glass-specific resource/use question if approved;
-   native policy and future release audio acceptance remain applicable.
+The candidate assets, generator and measured file manifest are in
+[sounds/](sounds/README.md). The [proposed sound contract](proposed-sound-contract-20261003.md)
+defines stable choices, provenance, missing-resource handling, exact tracker/ADR
+reconciliation scope and the bounded native verification still needed. File
+inspection and reproducible synthesis do not prove that a notification played a
+tone, that the owner heard it or that the candidates sound pleasing.
 
-If approved, update #220's sound-choice story/decision, #221's Settings and sound
-verification requirements, #224's persisted-choice/native matrix requirements,
-#226's final audio matrix, and ADR 0006 together. Preserve both saved flags, the
-macOS both-flags-required rule and Linux's independent behavior. Standard sound
-needs no new selector or persisted enum. Publication/tracker writes need their
-separate established authorization. No GO follows before these decisions and
-independent review of the reconciled evidence.
+| Candidate | Duration | Encoding | Read-only validation |
+| --- | --- | --- | --- |
+| Tap | 0.22 s | Mono 48 kHz PCM16 WAV | Hash/header/numeric checks, two byte-identical generations, `afinfo` and `ffprobe` passed |
+| Chime | 0.84 s | Mono 48 kHz PCM16 WAV | Same checks passed |
+| Rise | 0.64 s | Mono 48 kHz PCM16 WAV | Same checks passed |
+
+The manifest measures quantized peak `0.179992676` full scale, zero clipping and
+zero endpoint samples/steps for each. It records complete SHA-256 hashes and
+provenance. Reproducibility was measured on CPython 3.13.7/macOS arm64, without
+claiming cross-platform transcendental-function byte identity.
+
+The existing app stores only `desktop_notifications` and `ready_sound`; no persisted
+sound selector has shipped. The planned selector must use the existing Server-owned
+settings authority, preserving both saved flags and explicit future choices.
+macOS still requires both flags for the intended banner sound; Linux retains its
+independent behavior. System default as the missing-setting default is a proposed
+implementation choice, not an existing stored preference. No production setting,
+loader, Dashboard or native bundle has been changed here.
+
+## Revised enabling gate and downstream acceptance
+
+Both product choices are approved. The Settings action now opens System Settings
+through a documented application-launch API with instructions for Notifications
+→ Bridge. A successful app launch must not be reported as direct pane navigation.
+The production action and its visible outcomes belong to #222 acceptance.
+
+The exact live #221 body was re-read after these decisions. Its sound criterion is
+to establish lawful availability and native playback **requirements**, not to
+hear each new asset. Independent criterion review found no new feasibility fact
+unique to plain original bundled PCM WAV files: Apple explicitly supports this
+format under 30 seconds, and retained signed-fixture owner listening already
+demonstrated the same named/default delivery API. Original bytes remove the
+Glass-specific installed-OS use/lookup uncertainty. A fresh listening probe solely
+because these bytes changed would add an enabling gate absent from the criterion.
+
+| Revised #221 enabling fact | Evidence / precise boundary |
+| --- | --- |
+| Stable signed Dock-less identity; install/update and ordinary CLI rebuild continuity | Retained signed native report; local signing, not timestamp/notarization or installed-release acceptance |
+| First-use permission request/visible Allow and completion; denied-state recovery | Fresh scoped prompt/native grant receipt above plus retained denial/recovery; no invented human denial |
+| Supported explicit Settings mechanism | Documented app opening and Apple manual route, now accepted by Kyle; automatic pane selection removed from the contract |
+| Native banner and warm/cold callback | Retained unchanged signed-agent pixels/AX and exact callbacks; production Server routing remains #223 |
+| CLI/Server–Bridge compatible contract | Exact-version admission experiment and current wire-32 Rust baselines; future feature wire changes remain normal protocol work |
+| Original resource provenance and native sound requirements | Original generator/manifest/MIT notice, PCM WAV/duration validation, owning Apple sources and reused same-API named/default native evidence; new assets unheard |
+
+Exact committed artifact/contract review is the final local check before starting
+authorized #222 implementation. It must confirm all asset hashes, reproducibility,
+format/provenance, the approved contract, retained evidence boundaries and no new
+native operation. This local enabling assessment is not production or release GO.
+
+The sound-design approval does not authorize an audible test, a new permission
+request, an unrelated prompt acceptance or any notification-policy change. A later
+native test needs a reviewed exact fixture, resource hashes, recipient identity,
+request/count/deadline bounds and explicit approval while the owner can listen.
+Submission success alone cannot pass audibility; suppressed or inconclusive
+delivery requires reporting the result and stopping without a retry. The detailed
+matrix and cleanup requirements are in the proposed sound contract, owned by
+#224/#226. New signing/install/permission operations keep their specific approval
+boundary; ordinary source preparation and headless implementation checks proceed
+within the authorized local scope.
+
+The [local issue-body drafts](drafts/README.md) reconcile #220, #221, #224 and #226;
+the local ADR 0006 diff records both approved decisions and current evidence.
+These changes are prepared for review only. Live issues remain unchanged and
+unchecked; publishing or closing them requires its separate authorization. Full
+production selector, save/preservation, sound/policy and packaged-release checks
+stay with #224/#226, rather than becoming new prerequisites for #221.
 
 ## Ready implementation ownership after the gate
 
-No downstream code is started. Use new worktrees pinned to the approved integration
-base and give each file one owner. The existing config/default planners and discarded
-Pi sessions stay canceled.
+No downstream code was started during the verification preparation. After exact
+gate review, use new worktrees pinned to its integration base and give each file
+one owner. The existing config/default planners and discarded Pi sessions stay
+canceled.
 
 | Stage | Independent worker ownership | Integration dependencies |
 | --- | --- | --- |
@@ -154,7 +222,7 @@ Pi sessions stay canceled.
 | #222 privacy and shared payload | Owning protocol session summary/payload fields and runtime summary builders | Explicit manual-title provenance; all shared constructor/caller/wire updates owned here, then integrated before host use |
 | #222 application tests | Existing `DesktopAlertDashboard` real-Server/real-PTY fixture in `tests/server_lifecycle.rs` and supporting owned fixture boundary | One fixture/test owner; privacy sentinels, baseline, cancellation, save and slow/missing/denied paths |
 | #223 navigation, after #222 | Single runtime/protocol worker for Server routing/owner/run/lifetime admission; single TUI worker for pane/mode/retarget cleanup | Serialize overlapping protocol and test edits; suppress `view_request` auto-recovery on clicks; clean same-target transient modes |
-| #224 sound, after #222 | Existing settings authority if still needed, desktop host payload and sound help | Serialize with #222 desktop owner; preserve opt-ins/save failures; default-only removes chooser if approved |
+| #224 sound, after #222 | Existing Server-owned settings authority and selector, desktop host payload, bundled original assets and sound help | Serialize with #222 desktop owner; preserve opt-ins/save failures; custom/default chooser retained under the approved direction |
 | #225 then #226 | Separate verified iTerm adapter and pinned native acceptance owner | #223 fences first; no surprise terminal-control prompt; final platform/ownership/capacity gates |
 
 The coordinator owns integration order, interface review, docs reconciliation and
