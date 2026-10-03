@@ -263,6 +263,10 @@ fn run_server_inner(
                 }
             }
         })?;
+    let watch_state = Arc::clone(&state);
+    let settings_thread = thread::Builder::new()
+        .name("ovrcr-settings-watch".into())
+        .spawn(move || watch::run(watch_state))?;
     let title_state = Arc::clone(&state);
     let title_thread = thread::Builder::new()
         .name("ovrcr-title-worker".into())
@@ -318,6 +322,7 @@ fn run_server_inner(
     }
     // Wake parked workers before joining them; shutdown must not wait for the next poll.
     refresh.thread().unpark();
+    settings_thread.thread().unpark();
     title_thread.thread().unpark();
     quota_thread.thread().unpark();
     grok_quota_thread.thread().unpark();
@@ -338,6 +343,7 @@ fn run_server_inner(
         .join()
         .map_err(|_| anyhow::anyhow!("server dispatcher panicked"))?;
     let _ = refresh.join();
+    let _ = settings_thread.join();
     let _ = title_thread.join();
     state.events.lock().unwrap().take();
     drop(state);
