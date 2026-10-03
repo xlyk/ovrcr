@@ -23,6 +23,8 @@
 // of it, so what one suite never calls is not dead.
 #![allow(dead_code)]
 
+#[path = "claude_auth.rs"]
+pub mod claude_auth;
 #[path = "deadline.rs"]
 mod deadline;
 
@@ -88,6 +90,10 @@ pub struct Live {
     pub executable: PathBuf,
     /// The private HOME of an [`isolated_home`](Self::isolated_home) fixture.
     pub home: Option<PathBuf>,
+    /// The `claude` this instance's Server asks for `claude auth status`,
+    /// never the developer's: first on the binary adapter's PATH, and named by
+    /// the thread adapter's settings document.
+    pub claude: claude_auth::ClaudeAuth,
     host: Mutex<Host>,
     pgids: Mutex<Vec<libc::pid_t>>,
     ready: Mutex<Option<String>>,
@@ -112,6 +118,9 @@ impl Live {
         init_repo(&repo);
         let config = root.path().join("config.toml");
         std::fs::write(&config, "projects = []\n").unwrap();
+        let bin = root.path().join("claude-auth-fixture");
+        std::fs::create_dir(&bin).unwrap();
+        let claude = claude_auth::ClaudeAuth::install(&bin);
         Self {
             repo: repo.canonicalize().unwrap(),
             workspace_root: workspace_root.canonicalize().unwrap(),
@@ -122,6 +131,7 @@ impl Live {
             root,
             executable: PathBuf::from(env!("CARGO_BIN_EXE_ovrcr")),
             home: None,
+            claude,
             host: Mutex::new(Host::Idle),
             pgids: Mutex::new(Vec::new()),
             ready: Mutex::new(None),
@@ -155,7 +165,8 @@ impl Live {
             .env_remove("OVRCR_DASHBOARD_CONFIG")
             // The sessions a workspace opens run this shell. The developer's
             // own login shell and its rc files are not the test's subject.
-            .env("SHELL", "/bin/sh");
+            .env("SHELL", "/bin/sh")
+            .env("PATH", self.path());
         match &self.home {
             None => command.env("OVRCR_CONFIG", &self.config),
             Some(home) => command
@@ -170,6 +181,15 @@ impl Live {
                 .env_remove("CLAUDE_CONFIG_DIR"),
         };
         command
+    }
+
+    /// PATH with the fixture's `claude` first.
+    pub fn path(&self) -> std::ffi::OsString {
+        let mut paths = vec![self.claude.command.parent().unwrap().to_path_buf()];
+        paths.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
+        std::env::join_paths(paths).unwrap()
     }
 
     /// Adapter: the server runs on a thread of this test process.
@@ -226,6 +246,19 @@ impl Live {
             self.home.is_none(),
             "a private HOME needs a real process: use start_binary"
         );
+        // The thread shares the test's PATH, so name the fixture `claude`
+        // unless the test wrote its own settings.
+        let document = self.config.with_file_name("dashboard.toml");
+        if !document.exists() {
+            std::fs::write(
+                &document,
+                format!(
+                    "agents = [{{ name = \"claude\", argv = [{}] }}]\n",
+                    toml::Value::String(self.claude.command.display().to_string())
+                ),
+            )
+            .unwrap();
+        }
         let paths = self.paths();
         let config = self.config.clone();
         #[cfg(feature = "acceptance-diagnostics")]

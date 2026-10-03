@@ -4,11 +4,24 @@ The bottom-left **Quota left** block shows account allowance remaining, not a te
 
 ## Sources
 
-- **Claude:** managed Claude Code status-line callbacks. Only native `five_hour` and `seven_day` reports become 5h/7d windows. Claude may not report quota until its first API response. OVRCR does not issue prompts to obtain it or read Claude OAuth credentials.
+- **Claude:** managed Claude Code status-line callbacks. Only native `five_hour` and `seven_day` reports become 5h/7d windows. Claude may not report quota until its first API response; the status line `ovrcr agent setup claude` generates re-runs every 60 seconds (`refreshInterval`), so an idle managed session stays current. Before any managed session reports, the Server asks `claude auth status --json` whether an allowance can exist at all (below). OVRCR does not issue prompts to obtain quota or read Claude OAuth credentials.
 - **Codex:** a task-owned `codex app-server`, using native account and rate-limit reads. Window durations come from the response; primary and secondary are not assumed to mean 5h and 7d. Model-specific buckets remain in details, not general sidebar bars. The reviewed version is **0.155.1**.
 - **Grok:** a task-owned standalone ACP client, using native auth metadata and typed billing. The native weekly or monthly period determines its label. Prepaid credits, on-demand spend, session tokens and cost are not general allowance. Team/non-user contexts are unsupported. The reviewed version is **1.0.40**.
 
 Claude's selected source follows the focused managed Claude session and is retained when focus moves elsewhere. A connected source keeps **waiting for report** until native quota arrives; ordinary metrics and resizing do not make it unavailable. Details identify its Session, run and Reporting generation. Native collectors use the configured native profile; account metadata stays private and never appears on the Dashboard wire.
+
+### Claude sign-in state
+
+The Server runs `claude auth status --json` (the executable named by the `agents` entry called `claude` in the settings document, else `claude` on PATH) once at start and again whenever a `quota.*` setting or that executable changes. There is no timer: after you sign in or out, the row follows on the next such change or Server start. A reply is bounded to twenty seconds and 2 MiB. Only `loggedIn` and `authMethod` are read; the email, organization and every other identifier are dropped and never stored, logged, put in a reason or sent to the Dashboard.
+
+| `claude auth status` | Claude row |
+| --- | --- |
+| `loggedIn` false | not signed in, "run claude auth login" |
+| signed in, `authMethod` other than `claude.ai` | unsupported, "API-key logins have no subscription allowance" |
+| signed in through `claude.ai` | checking, waiting for a managed session's first response |
+| `claude` missing, failing or unreadable | unavailable, with the reason (for example "claude not found on PATH" or "claude auth status unreadable") |
+
+This state applies only while the row would otherwise be checking. A managed Claude session that reports `rate_limits` wins over it.
 
 ## Enable native collection
 
@@ -42,7 +55,7 @@ Each provider row carries a state, a **Quota reason** and a **Next check**, all 
 | State | Meaning |
 | --- | --- |
 | off | `quota.enabled` is off. The reason is the off-state sentence naming the setting. |
-| checking | Enabled, and the first read is in flight. Claude stays here, with the reason "waiting for a managed Claude session's first response", until a managed session reports. |
+| checking | Enabled, and the first read is in flight. Claude stays here, with the reason "waiting for a managed Claude session's first response", until a managed session reports, unless `claude auth status` rules an allowance out. |
 | current | The last read succeeded. The next check is five minutes later. |
 | unavailable, not signed in, unsupported, invalid, source conflict | The last read failed. The reason says why. |
 

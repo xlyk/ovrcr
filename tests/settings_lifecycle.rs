@@ -2,10 +2,10 @@
 //! plan). For now this holds the proofs of the fixtures the lifecycle cases
 //! stand on: a fresh install's private HOME, and a stand-in `claude`.
 
-#[path = "support/claude_auth.rs"]
-mod claude_auth;
 #[path = "support/live.rs"]
 mod live;
+
+use live::claude_auth;
 
 use serde_json::Value;
 

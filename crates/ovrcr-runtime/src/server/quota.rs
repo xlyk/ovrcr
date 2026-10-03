@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, atomic::Ordering, mpsc::TrySendError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -28,11 +28,14 @@ pub struct NativeQuotaUpdate {
     pub(super) next_check_unix_ms: Option<u64>,
 }
 
-/// Manual refresh state shared by the Server and the native workers.
+/// Refresh state shared by the Server and its quota workers.
 #[derive(Default)]
 pub(super) struct Refresh {
     last: Option<Instant>,
     due: [bool; 2],
+    /// The Claude row's state and reason while `claude auth status` rules an
+    /// allowance out; `None` while signed in through claude.ai.
+    pub(super) claude_auth: Option<(QuotaState, String)>,
 }
 
 fn slot(provider: QuotaProvider) -> Option<usize> {
@@ -113,6 +116,99 @@ pub(super) fn sync_consent(state: &ServerState) -> bool {
         }
     }
     changed
+}
+
+/// The `claude` the settings name (the `agents` override called "claude"),
+/// else the one on PATH.
+fn claude_command(settings: &ovrcr_protocol::Settings) -> PathBuf {
+    settings
+        .agents
+        .iter()
+        .find(|agent| agent.name == "claude")
+        .and_then(|agent| agent.argv.first())
+        .map_or_else(|| "claude".into(), PathBuf::from)
+}
+
+/// Ask `claude auth status --json` at Server start and again whenever a
+/// `quota.*` setting or the Claude executable changes, then let the
+/// dispatcher recompute the Claude row.
+pub(super) fn run_claude_auth(state: Arc<ServerState>) {
+    let mut last = None;
+    let mut pending = false;
+    while !state.shutdown.load(Ordering::Acquire) && !state.stopping.load(Ordering::Acquire) {
+        let settings = state.settings.lock().unwrap().report.settings.clone();
+        let key = (settings.quota.clone(), claude_command(&settings));
+        if last.as_ref() != Some(&key) {
+            let auth = claude_auth(&state, &key.1)
+                .err()
+                .map(|failure| (failure.state, failure.reason));
+            // A check cut short by Server stop is no answer; publish nothing.
+            if state.shutdown.load(Ordering::Acquire) || state.stopping.load(Ordering::Acquire) {
+                break;
+            }
+            state.quota_refresh.lock().unwrap().claude_auth = auth;
+            last = Some(key);
+            pending = true;
+        }
+        if pending {
+            match state.dispatch.try_send(DispatchMessage::ClaudeAuth) {
+                Ok(()) => pending = false,
+                Err(TrySendError::Full(_)) => {}
+                Err(_) => break,
+            }
+        }
+        std::thread::park_timeout(Duration::from_millis(100));
+    }
+}
+
+/// Ok while signed in through claude.ai. Only `loggedIn` and `authMethod`
+/// are read; the email, org ids and every other field are dropped unread.
+fn claude_auth(state: &ServerState, command: &Path) -> Result<()> {
+    let workspace = tempfile::tempdir()
+        .map_err(|_| Failure::unavailable("could not create a native workspace"))?;
+    let program = NativeCommand {
+        command: command.into(),
+        home: None,
+    };
+    let mut rpc = Rpc::spawn(
+        QuotaProvider::Claude,
+        &program,
+        &["auth", "status", "--json"],
+        workspace.path(),
+    )?;
+    let deadline = Instant::now() + REQUEST;
+    loop {
+        if state.stopping.load(Ordering::Acquire) || state.shutdown.load(Ordering::Acquire) {
+            return Err(interrupted());
+        }
+        if Instant::now() >= deadline {
+            return Err(timed_out());
+        }
+        let mut chunk = [0u8; 16_384];
+        match rpc.output.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(count) if rpc.buffer.len() + count > MAX_RESPONSE => {
+                return Err(Failure::new(QuotaState::Invalid).because("reply too large"));
+            }
+            Ok(count) => rpc.buffer.extend_from_slice(&chunk[..count]),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::park_timeout(Duration::from_millis(10));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => return Err(Failure::unavailable("native output failed")),
+        }
+    }
+    let unreadable = || Failure::unavailable("claude auth status unreadable");
+    let status = serde_json::from_slice::<Value>(&rpc.buffer).map_err(|_| unreadable())?;
+    match (status["loggedIn"].as_bool(), status["authMethod"].as_str()) {
+        (Some(false), _) => {
+            Err(Failure::new(QuotaState::NotSignedIn).because("run claude auth login"))
+        }
+        (Some(true), Some("claude.ai")) => Ok(()),
+        (Some(true), _) => Err(Failure::new(QuotaState::Unsupported)
+            .because("API-key logins have no subscription allowance")),
+        (None, _) => Err(unreadable()),
+    }
 }
 
 /// Minutes before retrying after the `failures`th consecutive failure.

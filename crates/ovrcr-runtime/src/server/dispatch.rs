@@ -15,6 +15,8 @@ pub enum DispatchMessage {
     },
     RefreshHierarchy,
     NativeQuota(Box<super::quota::NativeQuotaUpdate>),
+    /// `claude auth status` gave a new answer; the Claude row follows it.
+    ClaudeAuth,
     SetView {
         owner: Arc<()>,
         request_id: u64,
@@ -84,6 +86,7 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: ReportingReceiver<Dispa
             }
             DispatchMessage::RefreshHierarchy => dispatch_refresh_hierarchy(&state),
             DispatchMessage::NativeQuota(update) => super::quota::apply(&state, *update),
+            DispatchMessage::ClaudeAuth => state.refresh_claude_quota(),
             DispatchMessage::SetView {
                 owner,
                 request_id,

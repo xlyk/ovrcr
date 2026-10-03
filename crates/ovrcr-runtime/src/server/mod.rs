@@ -249,7 +249,7 @@ impl ServerState {
                 }
                 _ => None,
             });
-        let next = match selected {
+        let mut next = match selected {
             Some(session) => {
                 let summary = session.summary();
                 if let Some(quota) = session.quota_snapshot() {
@@ -293,11 +293,24 @@ impl ServerState {
                 quota.reason = Some(NOT_REPORTING.into());
                 quota
             }
-            None => old.clone(),
+            None => ovrcr_protocol::QuotaSnapshot::default().claude,
         };
+        // Until a managed session reports, `claude auth status` may rule the
+        // allowance out: not signed in, not a claude.ai login, or no answer.
+        if next.state == QuotaState::Checking
+            && let Some((state, reason)) = self.quota_refresh.lock().unwrap().claude_auth.clone()
+        {
+            next.state = state;
+            next.reason = Some(reason);
+        }
         if next != old {
-            self.quotas.lock().unwrap().claude = next;
-            self.publish_quotas();
+            let mut quotas = self.quotas.lock().unwrap();
+            quotas.claude = next;
+            // Sent even when it is the default: leaving a not-signed-in
+            // state returns the row to it.
+            let snapshot = quotas.clone();
+            drop(quotas);
+            self.send_quotas(snapshot);
         }
     }
 
