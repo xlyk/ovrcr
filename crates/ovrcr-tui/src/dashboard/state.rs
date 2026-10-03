@@ -3927,6 +3927,7 @@ mod tests {
                         workspace: "root".into(),
                         name: format!("root-{id}"),
                         title: None,
+                        manual_title: None,
                         label: "shell".into(),
                         pid: None,
                         started_unix_ms: Some(0),

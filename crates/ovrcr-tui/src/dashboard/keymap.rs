@@ -39,6 +39,8 @@ pub(super) enum Action {
     NextSession,
     PreviousSession,
     ToggleNotifications,
+    #[cfg(target_os = "macos")]
+    NotificationSettings,
     ToggleSound,
     CycleLocalTerminals,
     ToggleSidebar,
@@ -335,6 +337,8 @@ impl Dashboard {
                 }
             }
             Action::ToggleNotifications => self.toggle_desktop_notifications(),
+            #[cfg(target_os = "macos")]
+            Action::NotificationSettings => self.open_notification_settings(),
             Action::ToggleSound => self.toggle_ready_sound(),
             Action::CycleLocalTerminals => self.cycle_automatic_local_terminals(),
             Action::ToggleSidebar => self.toggle_sidebar(),
@@ -805,7 +809,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             Action::Focus,
         )
     };
-    vec![
+    let groups = vec![
         KeyGroup { title: "Create".into(), keys: vec![
             key_binding("n", "Create terminal", format!("Choose an agent or shell to start in {workspace_target}; opens a form"), Char('n'), Action::CreateTerminal).unless(launch_blocked.or(no_workspace)).group('w', "n"),
             key_binding("w", "Create workspace", format!("Create a worktree and branch under {project_target} and choose its first Agent or Terminal; opens a form"), Char('w'), Action::CreateWorkspace).unless(dashboard.hierarchy.projects.is_empty().then_some("no project registered")).group('p', "n"),
@@ -827,7 +831,29 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             key_binding("L", "Automatic local terminals", format!("Cycle automatic local terminal creation (currently {}); applies to newly provisioned workspaces only", dashboard.settings.automatic_local_terminals.label()), Char('L'), Action::CycleLocalTerminals).once(),
             key_binding("q", "Detach", "Detach this dashboard; the server and every session keep running".into(), Char('q'), Action::Detach),
         ] },
-    ]
+    ];
+    #[cfg(target_os = "macos")]
+    let groups = {
+        let mut groups = groups;
+        groups.last_mut().unwrap().keys.insert(
+            1,
+            key_binding(
+                "O",
+                "Open notification settings",
+                "Open System Settings, then choose Notifications → OVRCR to allow banners".into(),
+                Char('O'),
+                Action::NotificationSettings,
+            )
+            .once()
+            .bare()
+            .unless(
+                (!dashboard.notification_settings_available())
+                    .then_some("notification permission is not denied"),
+            ),
+        );
+        groups
+    };
+    groups
 }
 
 #[cfg(test)]

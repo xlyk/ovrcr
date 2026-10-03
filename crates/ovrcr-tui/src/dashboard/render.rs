@@ -684,6 +684,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 .copy_notice
                 .as_deref()
                 .or(dashboard.desktop.notice.as_deref())
+                .or_else(|| dashboard.desktop_status_notice())
             {
                 if split_hidden {
                     return Line::from(Span::styled(
@@ -1553,6 +1554,7 @@ mod harness_agent_label_tests {
             unread: None,
             context_usage: None,
             title: None,
+            manual_title: None,
         }
     }
 

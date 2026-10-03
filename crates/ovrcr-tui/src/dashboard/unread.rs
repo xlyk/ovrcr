@@ -118,6 +118,7 @@ mod tests {
             workspace: "w".into(),
             name: "s".into(),
             title: None,
+            manual_title: None,
             label: "l".into(),
             pid: Some(1),
             started_unix_ms: Some(0),

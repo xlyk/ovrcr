@@ -849,6 +849,7 @@ mod unread_review_tests {
             workspace: "work".into(),
             name: "codex".into(),
             title: None,
+            manual_title: None,
             label: "codex".into(),
             pid: Some(1),
             started_unix_ms: Some(0),
