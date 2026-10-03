@@ -125,7 +125,14 @@ fn last_probe_pid(log: &std::path::Path) -> u32 {
 }
 
 fn pid_alive(pid: u32) -> bool {
-    std::path::Path::new(&format!("/proc/{pid}")).exists()
+    // `/proc` is Linux-only. `kill(pid, 0)` is the same check on the macOS CI runner.
+    let Ok(pid) = i32::try_from(pid) else {
+        return false;
+    };
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
 fn wait_probes(log: &std::path::Path, count: usize) {
@@ -138,6 +145,9 @@ fn wait_probes(log: &std::path::Path, count: usize) {
         );
         std::thread::park_timeout(Duration::from_millis(20));
     }
+    // The runner treats a refresh that arrives while a probe is exiting as
+    // already answered. Wait until that clear has happened.
+    std::thread::park_timeout(Duration::from_millis(100));
 }
 
 #[test]
