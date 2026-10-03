@@ -57,6 +57,7 @@ enum Command {
     SwitchAgent(SessionId, SessionRunId),
     Hint(Action),
     Settings,
+    Events,
     RefreshQuota,
     EnableQuota,
 }
@@ -1562,6 +1563,10 @@ impl Dashboard {
             command: Command::Settings,
         });
         entries.push(Entry {
+            label: "Events".into(),
+            command: Command::Events,
+        });
+        entries.push(Entry {
             label: "Refresh quota".into(),
             command: Command::RefreshQuota,
         });
@@ -2040,6 +2045,12 @@ impl Dashboard {
                                     self.ignored_responses.insert(request_id);
                                 }
                                 return self.open_details(super::quota::Details::Settings);
+                            }
+                            Command::Events => {
+                                if let Some(request_id) = palette.suggestions.inspect {
+                                    self.ignored_responses.insert(request_id);
+                                }
+                                return self.open_events();
                             }
                             command @ (Command::RefreshQuota | Command::EnableQuota) => {
                                 if let Some(request_id) = palette.suggestions.inspect {

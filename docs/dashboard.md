@@ -862,6 +862,32 @@ the choice stays remembered in the current Dashboard, and the footer shows
 **could not save launch_choices.…** with the reason. The Dashboard does not
 retry creation or reopen the launch form.
 
+## Events
+
+Open **Events** from the menu (`Space v e`) or search the command palette for
+**events**. It has no Browse key of its own. The popup is the same bordered
+panel as Quota details. It lists the Server's event ring, oldest first and
+newest last. Opening it asks the Server for that ring. The Dashboard does not
+read `events.jsonl`, and this view does not change the file.
+
+Each line is the local time, the component (`titles`, `settings`, or `quota`),
+the subject when there is one, and the message. While the popup is open, an
+event the Server records is appended. Events recorded while it is closed appear
+the next time it opens. The list opens on the newest line and stays there until
+you scroll up.
+
+| Key | Action |
+| --- | --- |
+| `/` | Word filter, the same rule as Settings: every word is a case-insensitive substring of the component, the subject, and the message. The time is not searched. Enter keeps the filter. |
+| `Tab` / `Shift-Tab` | Component filter: all, then titles, settings, and quota, and back. It applies together with the word filter. |
+| `↑`/`↓`, `j`/`k`, Page Up/Down, Home/End, wheel | Scroll. Home shows the oldest match. End returns to the newest. |
+| `Escape` | Clear the word filter, or close when the filter is empty |
+| `Ctrl-g` | Close |
+
+Enter leaves the word filter and does not close the popup. `j` and `k` scroll
+rather than moving a selection, because a row has nothing to activate. Tab
+changes the component only when the word filter is not being typed.
+
 ## Desktop notifications
 
 Desktop notifications are off by default. Set `desktop_notifications = true` in
