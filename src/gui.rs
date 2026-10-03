@@ -13,6 +13,23 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+/// Settings the GUI demo's `dashboard.toml` may set differently from
+/// production defaults: automatic local terminals on, and the quota fragment
+/// from `OVRCR_GUI_QUOTA_CONFIG` when that variable is set.
+pub const DEMO_SETTINGS_ALLOWLIST: &[&str] = &["automatic_local_terminals", "quota"];
+
+/// The demo settings document: the allowlisted local-terminals line, then
+/// `quota_fragment` when the caller has one.
+pub fn demo_dashboard_document(quota_fragment: Option<&str>) -> String {
+    let mut document = String::from("automatic_local_terminals = \"on\"\n");
+    if let Some(fragment) = quota_fragment {
+        document.push('\n');
+        document.push_str(fragment);
+        document.push('\n');
+    }
+    document
+}
+
 pub struct Demo {
     root: PathBuf,
     executable: PathBuf,
@@ -60,17 +77,14 @@ impl Demo {
         )?;
         // Demo workspaces intentionally keep automatic local shells on every
         // worktree so the GUI helper exercises a full sidebar of terminals.
+        let fragment = match std::env::var_os("OVRCR_GUI_QUOTA_CONFIG") {
+            Some(path) => Some(fs::read_to_string(path).context("read GUI quota config fragment")?),
+            None => None,
+        };
         fs::write(
             self.root.join("dashboard.toml"),
-            "automatic_local_terminals = \"on\"\n",
+            demo_dashboard_document(fragment.as_deref()),
         )?;
-        if let Some(path) = std::env::var_os("OVRCR_GUI_QUOTA_CONFIG") {
-            let fragment = fs::read_to_string(path).context("read GUI quota config fragment")?;
-            let mut settings = fs::OpenOptions::new()
-                .append(true)
-                .open(self.root.join("dashboard.toml"))?;
-            writeln!(settings, "\n{fragment}")?;
-        }
         self.create_project_fixture(&repositories, &workspaces, "consigint")?;
         self.create_project_fixture(&repositories, &workspaces, "spacelift-agent")?;
         let lifecycle = self.create_workspace_fixture("consigint", "worktree-lifecycle")?;

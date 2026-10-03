@@ -754,17 +754,21 @@ At attach the footer shows one line when the reading has findings, for example
 reading changes the number of findings the footer says so again, or **No settings
 findings** once they are gone. The next key clears the line.
 
+The block is the production default document. A missing file loads these values
+(`picker_roots` keeps only the paths that exist). Commented lines show optional
+keys that are unset by default.
+
 ```toml
 desktop_notifications = false        # opt in to background Ready and input-needed alerts
 ready_sound = false                  # opt in to a sound for the same two alert kinds
 automatic_local_terminals = "default_branch_only"  # on | off | default_branch_only
-title_model = "pi/gpt-5-mini"        # optional model for agent conversation subjects
+# title_model = "provider/model"     # optional; unset leaves automatic titles off
 branch_prefix = "feature/"            # prefix for new workspace branches
 picker_roots = ["~/Code", "~/src", "~"]
 
-[[agents]]
-name = "claude"
-argv = ["claude", "--verbose"]
+# [[agents]]                         # optional; a row replaces a detected agent's argv
+# name = "claude"
+# argv = ["claude", "--verbose"]
 
 [quota]                              # Codex and Grok account quota; see provider-quota.md
 enabled = false                      # opt in: native clients may refresh their own auth and logs
