@@ -1241,8 +1241,10 @@ fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
         } => {}
         response => panic!("unexpected dashboard hello response: {response:?}"),
     }
-    // The Server's settings reading follows every hello.
-    match read_frame::<ServerMessage>(&mut stream).unwrap() {
+    // The Server's settings reading follows every hello. A quota snapshot
+    // may follow it (the Claude row when `claude auth status` rules an
+    // allowance out), so quota events are skipped from here on.
+    match next_skipping_quota(&mut stream) {
         ServerMessage::Event(ovrcr::protocol::ServerEvent::SettingsChanged(_)) => {}
         message => panic!("expected the settings reading after hello: {message:?}"),
     }
@@ -1257,7 +1259,7 @@ fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
         },
     )
     .unwrap();
-    match read_frame::<ServerMessage>(&mut stream).unwrap() {
+    match next_skipping_quota(&mut stream) {
         ServerMessage::Response {
             request_id: 2,
             response: Response::Screen {
@@ -1266,7 +1268,7 @@ fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
         } => assert_eq!(selected, session),
         response => panic!("unexpected select response: {response:?}"),
     }
-    match read_frame::<ServerMessage>(&mut stream).unwrap() {
+    match next_skipping_quota(&mut stream) {
         ServerMessage::Response {
             request_id: 2,
             response: Response::Ok,
@@ -1274,6 +1276,15 @@ fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
         response => panic!("unexpected select acknowledgement: {response:?}"),
     }
     stream
+}
+
+fn next_skipping_quota(stream: &mut UnixStream) -> ServerMessage {
+    loop {
+        match read_frame::<ServerMessage>(stream).unwrap() {
+            ServerMessage::Event(ovrcr::protocol::ServerEvent::QuotaChanged(_)) => {}
+            message => return message,
+        }
+    }
 }
 
 fn dashboard_request(stream: &mut UnixStream, request: Request) -> Result<Response, String> {

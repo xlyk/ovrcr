@@ -1028,3 +1028,53 @@ fn claude_auth_status_sets_the_claude_row_and_keeps_no_identifier() {
         );
     }
 }
+
+/// With no `claude` anywhere, the Claude row says so from the first snapshot
+/// a Dashboard gets: the frame at hello is expected, not an accident.
+#[test]
+fn no_claude_on_path_is_unavailable_with_its_reason() {
+    let fixture = live::Live::idle().bounded();
+    fixture.start_binary_env(&[("PATH", std::ffi::OsStr::new("/usr/bin:/bin"))]);
+    let mut socket = attach(&fixture);
+    let snapshot = quota_until(&mut socket, "no Claude row at hello", |_| true);
+    assert_eq!(snapshot.claude.state, QuotaState::Unavailable);
+    assert_eq!(
+        snapshot.claude.reason.as_deref(),
+        Some("claude not found on PATH")
+    );
+}
+
+/// A check still running when the Server stops is no answer: the Dashboard
+/// never sees "read interrupted" as the Claude row.
+#[test]
+fn claude_auth_cut_short_by_shutdown_publishes_nothing() {
+    let fixture = live::Live::idle().bounded();
+    let bin = fixture.root.path().join("hanging-claude");
+    std::fs::create_dir(&bin).unwrap();
+    let claude = bin.join("claude");
+    std::fs::write(&claude, "#!/bin/sh\nexec sleep 30\n").unwrap();
+    std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let path = format!("{}:/usr/bin:/bin", bin.display());
+    fixture.start_binary_env(&[("PATH", std::ffi::OsStr::new(&path))]);
+    let mut socket = attach(&fixture);
+    write_frame(
+        &mut socket,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::Shutdown { kill: false },
+        },
+    )
+    .unwrap();
+    let mut acknowledged = false;
+    while let Ok(message) = read_frame::<ServerMessage>(&mut socket) {
+        if let ServerMessage::Event(ServerEvent::QuotaChanged(snapshot)) = &message {
+            panic!("a stopping Server published the Claude row: {snapshot:?}");
+        }
+        acknowledged |= message
+            == ServerMessage::Response {
+                request_id: 2,
+                response: Response::Ok,
+            };
+    }
+    assert!(acknowledged, "shutdown was not acknowledged");
+}

@@ -142,6 +142,10 @@ pub(super) fn run_claude_auth(state: Arc<ServerState>) {
             let auth = claude_auth(&state, &key.1)
                 .err()
                 .map(|failure| (failure.state, failure.reason));
+            // A check cut short by Server stop is no answer; publish nothing.
+            if state.shutdown.load(Ordering::Acquire) || state.stopping.load(Ordering::Acquire) {
+                break;
+            }
             state.quota_refresh.lock().unwrap().claude_auth = auth;
             last = Some(key);
             pending = true;
