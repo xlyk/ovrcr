@@ -327,14 +327,22 @@ impl Dashboard {
             }
             changed = true;
             let bridge = &mut self.desktop.bridge;
-            if update.operation == BridgeOperation::Status
-                && self.desktop.notice.as_deref() == Some("Checking OVRCR notification permission")
-            {
-                self.desktop.notice = None;
-            }
             if update.operation == BridgeOperation::Status {
-                self.notice_queue
-                    .retain(|notice| notice != "Checking OVRCR notification permission");
+                // A fresh check retires the completed recovery action, including
+                // guidance that waited behind an error banner. Keep other notices.
+                let recovery_notice = |notice: &str| {
+                    matches!(
+                        notice,
+                        "Checking OVRCR notification permission"
+                            | "Open System Settings, then Notifications → OVRCR"
+                            | "System Settings opened; choose Notifications → OVRCR, then Browse O checks permission"
+                            | "Open System Settings manually: Notifications → OVRCR; then Browse O checks permission"
+                    )
+                };
+                if self.desktop.notice.as_deref().is_some_and(recovery_notice) {
+                    self.desktop.notice = None;
+                }
+                self.notice_queue.retain(|notice| !recovery_notice(notice));
             }
             if update.operation == BridgeOperation::Settings {
                 bridge.check_after_settings = true;
@@ -2483,6 +2491,7 @@ printf '{{"schema":1,"server_wire":{},"status":"%s"}}\n' "$status"
         });
         assert_eq!(d.key(KeyCode::Char('O')), DashboardAction::Redraw);
         d.set_error("Fixture startup error");
+        d.show_notice("Unrelated fixture notice");
         wait_bridge(&mut d, |d| {
             d.desktop.bridge.check_after_settings && d.desktop.bridge.in_flight.is_none()
         });
@@ -2492,9 +2501,10 @@ printf '{{"schema":1,"server_wire":{},"status":"%s"}}\n' "$status"
         assert!(d.desktop.notice.is_none());
         assert!(d.notice_queue.iter().any(|notice| notice == guidance));
         d.dismiss_error_banner();
-        d.key(KeyCode::Char('?'));
-        assert_eq!(d.desktop.notice.as_deref(), Some(guidance));
-        d.key(KeyCode::Esc);
+        assert_eq!(
+            d.desktop.notice.as_deref(),
+            Some("Open System Settings, then Notifications → OVRCR")
+        );
 
         std::fs::write(client.with_extension("status"), "available").unwrap();
         assert_eq!(d.key(KeyCode::Char('O')), DashboardAction::Redraw);
@@ -2510,7 +2520,14 @@ printf '{{"schema":1,"server_wire":{},"status":"%s"}}\n' "$status"
                 .all(|notice| notice != "Checking OVRCR notification permission")
         );
         d.dismiss_error_banner();
+        assert_eq!(
+            d.desktop.notice.as_deref(),
+            Some("Unrelated fixture notice")
+        );
+        d.key(KeyCode::Char('?'));
         assert!(d.desktop.notice.is_none());
+        assert!(d.desktop_status_notice().is_none());
+        assert!(!d.notification_recovery_available());
     }
 
     #[cfg(target_os = "macos")]
