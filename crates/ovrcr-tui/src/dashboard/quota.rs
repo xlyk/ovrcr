@@ -10,7 +10,7 @@ use ratatui::{
     widgets::{Block, Clear, Paragraph, Wrap},
 };
 
-/// A read-only popup over the dashboard. Both share scrolling and closing.
+/// A popup over the dashboard. Settings is the editable one; see `settings_editor`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Details {
     Quota,
@@ -28,12 +28,19 @@ impl Dashboard {
         self.palette = None;
         self.whichkey = None;
         self.details = Some((details, 0));
+        self.settings_editor = Default::default();
         DashboardAction::Redraw
     }
 
     pub(super) fn details_key(&mut self, key: KeyEvent) -> DashboardAction {
         if key.kind == KeyEventKind::Release {
             return DashboardAction::None;
+        }
+        if self
+            .details
+            .is_some_and(|(details, _)| details == Details::Settings)
+        {
+            return self.settings_editor_key(key);
         }
         if matches!(key.code, KeyCode::Esc | KeyCode::Enter) || super::input::is_browse_key(key) {
             self.details = None;
@@ -51,6 +58,17 @@ impl Dashboard {
     }
 
     pub(super) fn details_mouse(&mut self, mouse: MouseEvent) -> DashboardAction {
+        if self
+            .details
+            .is_some_and(|(details, _)| details == Details::Settings)
+        {
+            let code = match mouse.kind {
+                MouseEventKind::ScrollDown => KeyCode::Down,
+                MouseEventKind::ScrollUp => KeyCode::Up,
+                _ => return DashboardAction::None,
+            };
+            return self.settings_editor_key(KeyEvent::from(code));
+        }
         if let Some((_, scroll)) = &mut self.details {
             match mouse.kind {
                 MouseEventKind::ScrollDown => *scroll = scroll.saturating_add(1),
@@ -65,6 +83,9 @@ impl Dashboard {
         let Some((details, scroll)) = self.details else {
             return;
         };
+        if details == Details::Settings {
+            return self.draw_settings_editor(frame, now);
+        }
         let outer = frame.area();
         let width = outer.width.saturating_sub(4).min(82);
         let height = outer.height.saturating_sub(2).min(30);
@@ -79,10 +100,7 @@ impl Dashboard {
                 "Quota details · Esc close · ↑↓ scroll",
                 self.quota_lines(now),
             ),
-            Details::Settings => (
-                "Settings · read-only · Esc close · ↑↓ scroll",
-                super::settings::report_lines(self.settings_report.as_deref(), now),
-            ),
+            Details::Settings => unreachable!("drawn by settings_editor"),
         };
         let block = Block::bordered().title(title).style(
             Style::default()

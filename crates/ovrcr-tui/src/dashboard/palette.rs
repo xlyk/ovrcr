@@ -2376,7 +2376,7 @@ impl Dashboard {
         action
     }
 
-    fn detected_agents(&self) -> Vec<super::agents::AgentEntry> {
+    pub(super) fn detected_agents(&self) -> Vec<super::agents::AgentEntry> {
         let path = std::env::var_os("PATH").unwrap_or_default();
         let shell = std::env::var_os("SHELL");
         let launcher = std::env::current_exe().ok();

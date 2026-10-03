@@ -175,6 +175,8 @@ pub struct SettingRow {
     /// Display text; `None` means unset.
     pub value: Option<String>,
     pub source: SettingSource,
+    /// Display text of the default; `None` means unset by default.
+    pub default: Option<String>,
     /// For a consent setting that is off: what to set to turn it on.
     pub off_state: Option<String>,
 }
@@ -195,6 +197,9 @@ pub struct SettingsReport {
     pub settings: Settings,
     pub rows: Vec<SettingRow>,
     pub findings: Vec<SettingsFinding>,
+    /// The document is not valid TOML: every setting is its default and the
+    /// Server refuses edits until the file is fixed by hand.
+    pub unparseable: bool,
 }
 
 #[cfg(test)]

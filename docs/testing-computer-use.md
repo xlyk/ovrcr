@@ -43,7 +43,10 @@ the scripted System Events harness in `research/quota-display-2026-10-02`:
 `drive.py` sends real key events to the helper process by PID and checks focus in
 the same AppleScript call as each key, so a key never lands in another
 fixture's window; `winid.swift` finds the window for `screencapture -l`, and
-the helper's accessibility static text is saved beside each screenshot. The
+the helper's accessibility static text is saved beside each screenshot. When
+another worktree drives its own fixture at the same time, run each step only
+after its driver has gone idle (`research/settings-editor-2026-10-02/run-step.sh`),
+so neither run steals focus mid-step. The
 helper's window cannot be shorter than 22 rows. To check layouts shorter than
 that, run a second isolated `ovrcr` Dashboard in a fixture shell after
 `stty rows N` (`nested-ladder.sh`).

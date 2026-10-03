@@ -1,0 +1,7 @@
+automatic_local_terminals = "off"
+ready_sound = true
+
+[[agents]]
+name = "claude"
+argv = ["claude", "--verbose"]
+

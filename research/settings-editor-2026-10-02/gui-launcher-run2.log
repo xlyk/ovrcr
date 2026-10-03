@@ -1,0 +1,5 @@
+rtk proxy sh scripts/gui.sh
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/ec0f5f4e0e6fd44b1e8178e6232df187/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/ec0f5f4e0e6fd44b1e8178e6232df187)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.64s
+exit 0

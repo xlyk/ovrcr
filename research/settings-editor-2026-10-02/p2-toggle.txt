@@ -1,0 +1,61 @@
+󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ──────────────────────┌Settings · Enter edit · r reset · x remove · / filter · Esc close─────────────────────────────────┐
+  󰘬 main                         │Document: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-P0XYNG/dashboard.toml · read │
+▌    $ local                     │Filter: ready                                                                                     │
+  󰘬 gui-consigint-auth-handoff   │                                                                                                  │
+     $ local                     │Alerts                                                                                            │
+     - review auth handoff    gro│› Ready sound                on  set  (default: off)                                              │
+  󰘬 gui-consigint-worktree-lifecy│      key: ready_sound                                                                            │
+     $ local                     │                                                                                                  │
+     - implement lif…  claude:son│                                                                                                  │
+     - review websocke…  codex:gp│                                                                                                  │
+     - plan snapshot res…  pi:gro│                                                                                                  │
+                                 │                                                                                                  │
+ SPACELIFT-AGENT ────────────────│                                                                                                  │
+  󰘬 main                         │                                                                                                  │
+     $ local                     │                                                                                                  │
+  󰘬 gui-spacelift-agent-pipeline-│                                                                                                  │
+     $ local                     │                                                                                                  │
+     - build pipeline …  claude:o│                                                                                                  │
+  󰘬 gui-spacelift-agent-scope-qua│                                                                                                  │
+     $ local                     │                                                                                                  │
+     - review scope qu…  codex:gp│                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+                                 │                                                                                                  │
+Quota left                       │                                                                                                  │
+Claude — checking                │                                                                                                  │
+Codex — off                      │                                                                                                  │
+Grok — off                       └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+Ready sound: on

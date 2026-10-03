@@ -1,0 +1,9 @@
+automatic_local_terminals = "off"
+
+branch_prefix = "fx/"
+ready_sound = true
+
+[[agents]]
+name = "claude"
+argv = ["claude"]
+

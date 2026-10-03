@@ -43,7 +43,7 @@ pub(super) enum Action {
     CycleLocalTerminals,
     ToggleSidebar,
     QuotaDetails,
-    /// The read-only Settings popup. Reached from the menu and the palette
+    /// The Settings editor. Reached from the menu and the palette
     /// only; it has no Browse key of its own.
     Settings,
     Leader,

@@ -125,6 +125,7 @@ fn question_mark_popup_lists_ready_sound_beside_desktop_notifications() {
             },
             rows: Vec::new(),
             findings: Vec::new(),
+            unparseable: false,
         }),
     )));
     dashboard.key(KeyCode::Char('?'));
