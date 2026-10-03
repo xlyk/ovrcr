@@ -182,6 +182,7 @@ fn run_server_inner(
         );
     }
     let (events, event_receiver) = event_channel(event_monitor.as_ref());
+    let event_log = event_log::Log::open(event_log::events_path(&registry_path));
     let (dispatch, dispatch_receiver) = dispatch_channel(dispatch_monitor.as_ref());
     let state = Arc::new(ServerState {
         tasks: Some(Arc::clone(&task_manager)),
@@ -200,6 +201,7 @@ fn run_server_inner(
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
         events: Mutex::new(Some(events)),
+        event_log: Mutex::new(event_log),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         #[cfg(test)]
@@ -230,6 +232,10 @@ fn run_server_inner(
     let claude_auth_thread = thread::Builder::new()
         .name("ovrcr-claude-auth".into())
         .spawn(move || quota::run_claude_auth(claude_state))?;
+    let claude_account_state = Arc::clone(&state);
+    let claude_account_thread = thread::Builder::new()
+        .name("ovrcr-claude-quota".into())
+        .spawn(move || quota::run_claude_account(claude_account_state))?;
     let probe_state = Arc::clone(&state);
     let claude_probe_thread = thread::Builder::new()
         .name("ovrcr-claude-probe".into())
@@ -263,6 +269,10 @@ fn run_server_inner(
                 }
             }
         })?;
+    let watch_state = Arc::clone(&state);
+    let settings_thread = thread::Builder::new()
+        .name("ovrcr-settings-watch".into())
+        .spawn(move || watch::run(watch_state))?;
     let title_state = Arc::clone(&state);
     let title_thread = thread::Builder::new()
         .name("ovrcr-title-worker".into())
@@ -318,10 +328,12 @@ fn run_server_inner(
     }
     // Wake parked workers before joining them; shutdown must not wait for the next poll.
     refresh.thread().unpark();
+    settings_thread.thread().unpark();
     title_thread.thread().unpark();
     quota_thread.thread().unpark();
     grok_quota_thread.thread().unpark();
     claude_auth_thread.thread().unpark();
+    claude_account_thread.thread().unpark();
     claude_probe_thread.thread().unpark();
     signal_handle.close();
     let _ = signal_thread.join();
@@ -332,12 +344,14 @@ fn run_server_inner(
     let _ = quota_thread.join();
     let _ = grok_quota_thread.join();
     let _ = claude_auth_thread.join();
+    let _ = claude_account_thread.join();
     let _ = claude_probe_thread.join();
     let _ = dispatch.send(DispatchMessage::Stop);
     dispatcher
         .join()
         .map_err(|_| anyhow::anyhow!("server dispatcher panicked"))?;
     let _ = refresh.join();
+    let _ = settings_thread.join();
     let _ = title_thread.join();
     state.events.lock().unwrap().take();
     drop(state);

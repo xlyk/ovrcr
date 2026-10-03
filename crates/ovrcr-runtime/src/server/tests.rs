@@ -2618,6 +2618,7 @@ fn test_state_with_dispatch(
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
             events: Mutex::new(Some(events)),
+            event_log: Mutex::new(event_log::Log::memory()),
             #[cfg(test)]
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
@@ -2663,6 +2664,7 @@ fn test_state_with_socket(
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
             events: Mutex::new(Some(events)),
+            event_log: Mutex::new(event_log::Log::memory()),
             #[cfg(test)]
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
@@ -5306,6 +5308,7 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
         events: Mutex::new(Some(events)),
+        event_log: Mutex::new(event_log::Log::memory()),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),
@@ -5521,6 +5524,7 @@ fn session_output_flows_while_another_session_spawns() {
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
         events: Mutex::new(Some(events)),
+        event_log: Mutex::new(event_log::Log::memory()),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),
@@ -7517,6 +7521,91 @@ fn remove_test_session(state: &ServerState, id: &SessionId) -> Option<Arc<Sessio
 }
 
 #[test]
+fn retained_summary_does_not_hold_the_store_across_the_session_read() {
+    let id = SessionId(41);
+    let (_cwd, session, receiver) = spawn_live_test_session(id);
+    let events = apply_test_session_events(Arc::clone(&session), receiver);
+    let (state, _dispatch) = test_state_with_dispatch(None, None);
+    register_test_session(&state, id, Arc::clone(&session));
+
+    for read in [read_one_summary, read_every_summary] {
+        let (entered_sender, entered) = mpsc::sync_channel(1);
+        let (release_sender, release) = mpsc::sync_channel(1);
+        let release = Arc::new(std::sync::Mutex::new(release));
+        session.set_summary_entry_hook(Some(Arc::new(move || {
+            let _ = entered_sender.send(());
+            let _ = release.lock().unwrap().recv_timeout(Duration::from_secs(2));
+        })));
+        let _release_on_drop = ReleaseSender(release_sender);
+
+        let (terminal_held_sender, terminal_held) = mpsc::sync_channel(1);
+        let (terminal_release_sender, terminal_release) = mpsc::sync_channel(1);
+        let holder_session = Arc::clone(&session);
+        let holder = thread::spawn(move || {
+            holder_session.with_terminal_lock_for_test(|| {
+                let _ = terminal_held_sender.send(());
+                let _ = terminal_release.recv_timeout(Duration::from_secs(2));
+            });
+        });
+        let _terminal_release_on_drop = ReleaseSender(terminal_release_sender);
+        terminal_held
+            .recv_timeout(Duration::from_secs(2))
+            .expect("terminal lock was not acquired");
+
+        let reader_state = Arc::clone(&state);
+        let reader = thread::spawn(move || read(&reader_state, id));
+        entered
+            .recv_timeout(Duration::from_secs(2))
+            .expect("summary did not read the live session");
+        assert!(
+            state
+                .retained
+                .try_lock_for(Duration::from_millis(200))
+                .is_some(),
+            "retained store held while reading the session"
+        );
+        drop(_release_on_drop);
+        assert!(
+            state
+                .retained
+                .try_lock_for(Duration::from_millis(200))
+                .is_some(),
+            "retained store held while the session read waits on the terminal"
+        );
+        assert!(
+            !reader.is_finished(),
+            "session read finished while the terminal lock was still held"
+        );
+        drop(_terminal_release_on_drop);
+        reader.join().expect("session read panicked");
+        holder.join().expect("terminal holder panicked");
+    }
+
+    session.set_summary_entry_hook(None);
+    cleanup_test_session(&session, events).unwrap();
+
+    fn read_one_summary(state: &ServerState, id: SessionId) {
+        assert!(state.session_summary(id).is_some());
+    }
+
+    fn read_every_summary(state: &ServerState, id: SessionId) {
+        assert!(
+            state
+                .session_summaries()
+                .iter()
+                .any(|summary| summary.id == id)
+        );
+    }
+
+    struct ReleaseSender(mpsc::SyncSender<()>);
+    impl Drop for ReleaseSender {
+        fn drop(&mut self) {
+            let _ = self.0.send(());
+        }
+    }
+}
+
+#[test]
 fn failed_root_shell_keeps_setup_pending_and_does_not_duplicate_launch() {
     use super::connections::error_for_lifecycle;
     use crate::retained::SessionMetadata;
@@ -7583,6 +7672,7 @@ fn failed_root_shell_keeps_setup_pending_and_does_not_duplicate_launch() {
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
         events: Mutex::new(Some(events)),
+        event_log: Mutex::new(event_log::Log::memory()),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),
@@ -8002,6 +8092,7 @@ fn automatic_local_terminals_default_branch_only_skips_feature_workspaces() {
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
         events: Mutex::new(Some(events)),
+        event_log: Mutex::new(event_log::Log::memory()),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),
@@ -8095,6 +8186,7 @@ fn automatic_local_terminals_on_and_off_cover_root_and_feature() {
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
             events: Mutex::new(Some(events)),
+            event_log: Mutex::new(event_log::Log::memory()),
             #[cfg(test)]
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
@@ -8193,6 +8285,7 @@ fn changing_automatic_local_policy_leaves_existing_terminals() {
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
         events: Mutex::new(Some(events)),
+        event_log: Mutex::new(event_log::Log::memory()),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),

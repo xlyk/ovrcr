@@ -30,6 +30,7 @@ use std::time::{Duration, Instant};
 mod connections;
 mod dashboard;
 mod dispatch;
+mod event_log;
 mod outbound;
 mod quota;
 mod quota_probe;
@@ -212,6 +213,7 @@ pub struct ServerState {
     pub shutdown: AtomicBool,
     pub stopping: AtomicBool,
     pub events: Mutex<Option<ReportingSender<SessionEvent>>>,
+    event_log: Mutex<event_log::Log>,
     #[cfg(test)]
     pub(super) resize_hook: Mutex<Option<ResizeHook>>,
     #[cfg(test)]
@@ -327,7 +329,23 @@ impl ServerState {
             next.state = state;
             next.reason = Some(reason);
         }
+        // The account read is the credentials-file usage call. A status-line
+        // sample with windows stays as the in-session extra when the account
+        // read has not produced windows. Waiting for a session does not hide
+        // an account reading, and does not invent a bar.
+        if let Some(account) = self.quota_refresh.lock().unwrap().claude_account.clone() {
+            let session_windows = next.state == QuotaState::Current && !next.windows.is_empty();
+            let account_windows =
+                account.state == QuotaState::Current && !account.windows.is_empty();
+            if account_windows || !session_windows && next.state == QuotaState::Checking {
+                next = account;
+            }
+        }
         if next != old {
+            let before_state = old.state;
+            let before_reason = old.reason.clone();
+            let after_state = next.state;
+            let after_reason = next.reason.clone();
             let mut quotas = self.quotas.lock().unwrap();
             quotas.claude = next;
             // Sent even when it is the default: leaving a not-signed-in
@@ -335,6 +353,14 @@ impl ServerState {
             let snapshot = quotas.clone();
             drop(quotas);
             self.send_quotas(snapshot);
+            quota::note_transition(
+                self,
+                ovrcr_protocol::QuotaProvider::Claude,
+                before_state,
+                before_reason.as_deref(),
+                after_state,
+                after_reason.as_deref(),
+            );
         }
     }
 
@@ -374,6 +400,9 @@ impl ServerState {
         session: Option<&Arc<Session>>,
         boot_id: Option<&str>,
     ) -> SessionSummary {
+        // The caller has dropped `retained`. Reading the session takes its
+        // terminal lock; doing that while holding the store stalls every
+        // retained_sessions update behind the parser.
         if let Some(session) = session.filter(|session| session.run() == record.run) {
             let mut summary = session.summary();
             summary.title = record.effective_title();
@@ -399,23 +428,34 @@ impl ServerState {
     }
 
     pub(crate) fn session_summary(&self, id: SessionId) -> Option<SessionSummary> {
-        let retained = self.retained.lock();
-        let record = retained.get(id)?;
-        let sessions = self.sessions.lock().unwrap();
+        let (record, session, boot_id) = {
+            let retained = self.retained.lock();
+            let record = retained.get(id)?.clone();
+            let session = self.sessions.lock().unwrap().get(&id).cloned();
+            let boot_id = retained.boot_id().map(str::to_owned);
+            (record, session, boot_id)
+        };
         Some(Self::summary_for_record(
-            record,
-            sessions.get(&id),
-            retained.boot_id(),
+            &record,
+            session.as_ref(),
+            boot_id.as_deref(),
         ))
     }
 
     pub(crate) fn session_summaries(&self) -> Vec<SessionSummary> {
-        let retained = self.retained.lock();
-        let sessions = self.sessions.lock().unwrap();
-        retained
-            .records()
-            .map(|record| {
-                Self::summary_for_record(record, sessions.get(&record.id), retained.boot_id())
+        let (rows, boot_id) = {
+            let retained = self.retained.lock();
+            let sessions = self.sessions.lock().unwrap();
+            let rows = retained
+                .records()
+                .map(|record| (record.clone(), sessions.get(&record.id).cloned()))
+                .collect::<Vec<_>>();
+            let boot_id = retained.boot_id().map(str::to_owned);
+            (rows, boot_id)
+        };
+        rows.into_iter()
+            .map(|(record, session)| {
+                Self::summary_for_record(&record, session.as_ref(), boot_id.as_deref())
             })
             .collect()
     }
@@ -1345,6 +1385,7 @@ impl ServerState {
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
             events: Mutex::new(Some(events)),
+            event_log: Mutex::new(event_log::Log::memory()),
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
             before_dashboard_write_hook: Mutex::new(None),

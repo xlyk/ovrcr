@@ -1,8 +1,9 @@
 //! The one settings loader (ADR 0007).
 //!
 //! Reads the settings document and returns every effective value, its source,
-//! and the findings. A bad value defaults only its own setting; an unknown key
-//! or spelling is a finding; only an unparseable document falls back to all
+//! and the findings. A bad value defaults only its own setting; a wrong-typed
+//! element of a list or table drops only that element; an unknown key or
+//! spelling is a finding; only an unparseable document falls back to all
 //! defaults. Nothing here fails: a settings mistake never stops the Server.
 
 use ovrcr_protocol::{
@@ -52,7 +53,19 @@ pub fn load_document(registry_path: &Path, document: &Path) -> SettingsReport {
         Ok(text) => parse(document, &text),
         Err(error) => {
             let mut report = parse(document, "");
-            if error.kind() != std::io::ErrorKind::NotFound {
+            // A missing file is a fresh install. Reading a symlink whose
+            // target does not exist is NotFound too, but that path is a
+            // document the user pointed at, so it is a finding rather than silence.
+            if error.kind() == std::io::ErrorKind::NotFound && is_symlink(document) {
+                report.findings.push(SettingsFinding {
+                    key: None,
+                    message: format!(
+                        "settings document {} is a dangling symlink",
+                        document.display()
+                    ),
+                    line: None,
+                });
+            } else if error.kind() != std::io::ErrorKind::NotFound {
                 report.findings.push(SettingsFinding {
                     key: None,
                     message: format!("cannot read settings document: {error}"),
@@ -76,6 +89,10 @@ pub fn load_document(registry_path: &Path, document: &Path) -> SettingsReport {
         });
     }
     report
+}
+
+fn is_symlink(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
 }
 
 /// Parse document text. `path` is recorded in the report only.
@@ -171,16 +188,22 @@ impl Loader<'_> {
             }
         }
         self.value(table, "branch_prefix", &mut settings.branch_prefix);
-        if let Some(roots) = self.take::<Vec<String>>(table, "picker_roots") {
+        if let Some(roots) = self.take_array::<String>(table, "picker_roots", "a string") {
             let roots = roots.iter().map(|root| expand_tilde(root)).collect();
             self.accept("picker_roots", &mut settings.picker_roots, roots);
         }
         self.drop_unknown_fields(table, "agents", &["name", "argv"]);
-        self.value::<Vec<AgentOverride>>(table, "agents", &mut settings.agents);
-        self.drop_unknown_fields(table, "launch_choices", &["kind", "preset"]);
-        if let Some(choices) =
-            self.take::<BTreeMap<String, DocumentLaunchChoice>>(table, "launch_choices")
+        if let Some(agents) =
+            self.take_array::<AgentOverride>(table, "agents", "a table { name, argv }")
         {
+            self.accept("agents", &mut settings.agents, agents);
+        }
+        self.drop_unknown_fields(table, "launch_choices", &["kind", "preset"]);
+        if let Some(choices) = self.take_table::<DocumentLaunchChoice>(
+            table,
+            "launch_choices",
+            "a table { kind, preset }",
+        ) {
             let choices = choices
                 .into_iter()
                 .map(|(project, choice)| (project, choice.into()))
@@ -240,9 +263,126 @@ impl Loader<'_> {
         }
     }
 
-    /// Remove fields an element of list or table setting `key` does not
+    /// Read array setting `key` element by element. A wrong-typed element is
+    /// dropped with a finding naming `key[index]`; siblings stay. Any other
+    /// element error still rejects the whole collection, one finding on `key`.
+    fn take_array<T: DeserializeOwned>(
+        &mut self,
+        table: &mut toml::Table,
+        key: &str,
+        expected: &str,
+    ) -> Option<Vec<T>> {
+        let value = remove(table, key)?;
+        let toml::Value::Array(items) = value.clone() else {
+            self.finding(key, deserialize_message::<Vec<T>>(value));
+            return None;
+        };
+        self.collect_array(key, value, items, expected)
+    }
+
+    /// Read table setting `key` entry by entry. A wrong-typed entry is dropped
+    /// with a finding naming `key.name`; siblings stay. Any other entry error
+    /// still rejects the whole table, one finding on `key`.
+    fn take_table<T: DeserializeOwned>(
+        &mut self,
+        table: &mut toml::Table,
+        key: &str,
+        expected: &str,
+    ) -> Option<BTreeMap<String, T>> {
+        let value = remove(table, key)?;
+        let toml::Value::Table(entries) = value.clone() else {
+            self.finding(key, deserialize_message::<BTreeMap<String, T>>(value));
+            return None;
+        };
+        self.collect_table(key, value, entries, expected)
+    }
+
+    fn collect_array<T: DeserializeOwned>(
+        &mut self,
+        key: &str,
+        original: toml::Value,
+        items: Vec<toml::Value>,
+        expected: &str,
+    ) -> Option<Vec<T>> {
+        let mut kept = Vec::new();
+        let mut wrong = Vec::new();
+        for (index, item) in items.iter().enumerate() {
+            match item.clone().try_into::<T>() {
+                Ok(value) => kept.push(value),
+                Err(error) => {
+                    let message = de_message(error);
+                    if is_wrong_type(&message) {
+                        wrong.push((index, element_message(message, expected)));
+                    } else {
+                        self.finding(key, deserialize_message::<Vec<T>>(original));
+                        return None;
+                    }
+                }
+            }
+        }
+        for (index, message) in wrong {
+            self.finding_at(
+                format!("{key}[{index}]"),
+                self.line_at_index(key, index),
+                message,
+            );
+        }
+        (!kept.is_empty() || items.is_empty()).then_some(kept)
+    }
+
+    fn collect_table<T: DeserializeOwned>(
+        &mut self,
+        key: &str,
+        original: toml::Value,
+        entries: toml::Table,
+        expected: &str,
+    ) -> Option<BTreeMap<String, T>> {
+        let mut kept = BTreeMap::new();
+        let mut wrong = Vec::new();
+        for (name, item) in &entries {
+            match item.clone().try_into::<T>() {
+                Ok(value) => {
+                    kept.insert(name.clone(), value);
+                }
+                Err(error) => {
+                    let message = de_message(error);
+                    if is_wrong_type(&message) {
+                        wrong.push((name.clone(), element_message(message, expected)));
+                    } else {
+                        self.finding(key, deserialize_message::<BTreeMap<String, T>>(original));
+                        return None;
+                    }
+                }
+            }
+        }
+        for (name, message) in &wrong {
+            let display = format!("{key}.{name}");
+            let line = self.line(&display);
+            self.finding_at(display, line, message.clone());
+        }
+        (!kept.is_empty() || entries.is_empty()).then_some(kept)
+    }
+
+    fn finding_at(&mut self, key: String, line: Option<u32>, message: String) {
+        self.findings.push(SettingsFinding {
+            key: Some(key),
+            message,
+            line,
+        });
+    }
+
+    fn line_at_index(&self, key: &str, index: usize) -> Option<u32> {
+        let mut path: Vec<_> = key
+            .split('.')
+            .map(|name| Segment::Key(name.into()))
+            .collect();
+        path.push(Segment::Index(index));
+        self.line_path(&path)
+    }
+
+    /// Remove fields an element of a list or table setting `key` does not
     /// define, each as its own finding, so one unknown field never resets the
-    /// whole collection. A wrong-typed element still does.
+    /// whole collection.
     fn drop_unknown_fields(&mut self, table: &mut toml::Table, key: &str, known: &[&str]) {
         let mut elements: Vec<(String, Segment, &mut toml::Table)> = Vec::new();
         match table.get_mut(key) {
@@ -325,7 +465,7 @@ impl Loader<'_> {
         let mut table: &dyn toml_edit::TableLike = self.spans.as_ref()?.as_table();
         let mut item: Option<&toml_edit::Item> = None;
         let mut span = None;
-        for segment in path {
+        for (at, segment) in path.iter().enumerate() {
             match segment {
                 Segment::Key(name) => {
                     if let Some(item) = item {
@@ -337,10 +477,19 @@ impl Loader<'_> {
                 }
                 Segment::Index(index) => {
                     let array = item.take()?;
-                    table = match array.as_array_of_tables() {
-                        Some(tables) => tables.get(*index)? as &dyn toml_edit::TableLike,
-                        None => array.as_array()?.get(*index)?.as_inline_table()?,
-                    };
+                    if let Some(tables) = array.as_array_of_tables() {
+                        let element = tables.get(*index)?;
+                        span = element.span().or(span);
+                        table = element as &dyn toml_edit::TableLike;
+                    } else {
+                        let element = array.as_array()?.get(*index)?;
+                        span = element.span().or(span);
+                        if let Some(inline) = element.as_inline_table() {
+                            table = inline;
+                        } else if at + 1 != path.len() {
+                            return None;
+                        }
+                    }
                 }
             }
         }
@@ -378,6 +527,39 @@ impl From<&LaunchChoice> for DocumentLaunchChoice {
             LaunchChoice::Agent(preset) => Self::Agent(preset.clone()),
         }
     }
+}
+
+fn remove(table: &mut toml::Table, key: &str) -> Option<toml::Value> {
+    let name = key.rsplit('.').next().unwrap_or(key);
+    table.remove(name)
+}
+
+fn de_message(error: toml::de::Error) -> String {
+    error.message().to_owned()
+}
+
+fn deserialize_message<T: DeserializeOwned>(value: toml::Value) -> String {
+    match value.try_into::<T>() {
+        Ok(_) => "invalid value".into(),
+        Err(error) => de_message(error),
+    }
+}
+
+/// Serde's type-mismatch wording, as opposed to a missing field or an unknown
+/// spelling, which still reject the whole collection.
+fn is_wrong_type(message: &str) -> bool {
+    message.starts_with("invalid type:")
+}
+
+/// Serde names the Rust type (`struct AgentOverride`, `enum DocumentLaunchChoice`).
+/// The finding should name the document shape instead.
+fn element_message(message: String, expected: &str) -> String {
+    if (message.contains("struct ") || message.contains("enum "))
+        && let Some((head, _)) = message.split_once(", expected ")
+    {
+        return format!("{head}, expected {expected}");
+    }
+    message
 }
 
 fn line_at(text: &str, offset: usize) -> u32 {
@@ -771,6 +953,74 @@ command = "/opt/grok"
         assert_eq!(report.findings.len(), 1, "{:?}", report.findings);
         finding("agents[0].extra", 1, "unknown setting; ignored", &report);
         assert_eq!(report.settings.agents.len(), 1);
+    }
+
+    /// A wrong-typed element is not the collection and not a silent skip.
+    #[test]
+    fn wrong_typed_element_drops_only_that_element_with_a_finding_naming_it() {
+        let report = read(
+            "\
+ready_sound = true
+picker_roots = [\"/tmp/kept\", 7, \"/tmp/also\"]
+agents = [{ name = \"kept\", argv = [\"kept\"] }, \"nope\", { name = \"also\", argv = [\"also\"] }]
+launch_choices = { kept = { kind = \"Terminal\" }, bad = \"nope\" }
+",
+        );
+
+        assert!(report.settings.ready_sound);
+        assert_eq!(
+            report.settings.picker_roots,
+            vec![PathBuf::from("/tmp/kept"), PathBuf::from("/tmp/also")]
+        );
+        let names: Vec<_> = report
+            .settings
+            .agents
+            .iter()
+            .map(|agent| agent.name.as_str())
+            .collect();
+        assert_eq!(names, ["kept", "also"]);
+        assert_eq!(
+            report.settings.launch_choices,
+            [("kept".to_owned(), LaunchChoice::Terminal)]
+                .into_iter()
+                .collect()
+        );
+        assert_eq!(row(&report, "picker_roots").source, SettingSource::Document);
+        assert_eq!(row(&report, "agents").source, SettingSource::Document);
+        assert_eq!(
+            row(&report, "launch_choices").source,
+            SettingSource::Document
+        );
+
+        assert_eq!(report.findings.len(), 3, "{:?}", report.findings);
+        finding(
+            "picker_roots[1]",
+            2,
+            "invalid type: integer `7`, expected a string",
+            &report,
+        );
+        finding(
+            "agents[1]",
+            3,
+            r#"invalid type: string "nope", expected a table { name, argv }"#,
+            &report,
+        );
+        finding(
+            "launch_choices.bad",
+            4,
+            r#"invalid type: string "nope", expected a table { kind, preset }"#,
+            &report,
+        );
+        assert!(
+            report.findings.iter().all(|found| {
+                !matches!(
+                    found.key.as_deref(),
+                    Some("picker_roots" | "agents" | "launch_choices")
+                )
+            }),
+            "a wrong-typed element must not wipe its collection: {:?}",
+            report.findings
+        );
     }
 
     #[test]

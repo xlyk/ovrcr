@@ -113,7 +113,7 @@ fn codex_native_read_reaches_remaining_bars_through_real_server_and_socket() {
         .unwrap()
         .to_string_lossy()
         .replace('\'', "'\\''");
-    std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-cli 0.155.1'; exit 0; fi\nexec '{executable}' --ignored --exact native_quota_rpc_fixture --nocapture --quiet\n")).unwrap();
+    std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-cli 0.155.1'; exit 0; fi\nprintf '%s\\n' \"$*\" >> '{argv}'\nexec '{executable}' --ignored --exact native_quota_rpc_fixture --nocapture --quiet\n", argv = native.with_extension("argv").display())).unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
     let config = serde_json::to_string(&native.to_string_lossy()).unwrap();
     std::fs::write(settings_document(&fixture), format!("[quota]\nenabled = true\n[quota.codex]\ncommand = {config}\n[quota.grok]\ncommand = '/not-a-native-fixture'\n")).unwrap();
@@ -199,22 +199,114 @@ fn codex_native_read_reaches_remaining_bars_through_real_server_and_socket() {
         !methods.contains("thread/start") && !methods.contains("turn/start"),
         "quota must not create conversations/prompts"
     );
+    let argv = std::fs::read_to_string(native.with_extension("argv")).unwrap();
+    assert!(
+        argv.lines()
+            .any(|line| line == "-s read-only -a never app-server"),
+        "codex must keep its own token: {argv}"
+    );
+    assert!(!argv.contains("wham/usage"), "{argv}");
+}
+
+#[test]
+fn claude_oauth_usage_reaches_separate_five_hour_and_seven_day_rows() {
+    let fixture = live::Live::idle().bounded();
+    let dir = fixture.root.path().join("claude-config");
+    std::fs::create_dir(&dir).unwrap();
+    let creds = dir.join(".credentials.json");
+    let body = br#"{"claudeAiOauth":{"accessToken":"fixture-claude-token"}}"#;
+    std::fs::write(&creds, body).unwrap();
+    let origin = quota_http(&fixture);
+    let origin = origin.to_string_lossy();
+    let usage = format!("{origin}/api/oauth/usage");
+    std::fs::write(settings_document(&fixture), "[quota]\nenabled = false\n").unwrap();
+    let server_log = fixture.root.path().join("server.log");
+    fixture.start_binary_logged(
+        &[
+            ("CLAUDE_CONFIG_DIR", dir.as_os_str()),
+            ("OVRCR_QUOTA_CLAUDE_USAGE_URL", std::ffi::OsStr::new(&usage)),
+        ],
+        &server_log,
+    );
+    let mut socket = attach(&fixture);
+    let mut dashboard = ovrcr::tui::Dashboard::new(TerminalSize {
+        rows: 32,
+        cols: 100,
+    });
+    dashboard.install_area(ratatui::layout::Rect::new(0, 0, 100, 32));
+    let deadline = std::time::Instant::now() + Duration::from_secs(8);
+    loop {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "claude usage was not published"
+        );
+        let message: ServerMessage = read_frame(&mut socket).unwrap();
+        let done = matches!(&message, ServerMessage::Event(ServerEvent::QuotaChanged(snapshot)) if snapshot.claude.windows.iter().any(|w| w.label == "5h") && snapshot.claude.windows.iter().any(|w| w.label == "7d"));
+        dashboard.handle_server_message(message);
+        if done {
+            break;
+        }
+    }
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 32)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard(frame, &dashboard))
+        .unwrap();
+    let screen = (0..32)
+        .map(|y| {
+            (0..100)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(screen.contains("Quota left"), "{screen}");
+    assert!(
+        screen
+            .lines()
+            .any(|line| line.contains("5h") && line.contains("58%")),
+        "{screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .any(|line| line.contains("7d") && line.contains("82%")),
+        "{screen}"
+    );
+    assert!(
+        !screen
+            .lines()
+            .any(|line| line.contains("Grok") && (line.contains("5h") || line.contains("7d")))
+    );
+    let http = std::fs::read_to_string(fixture.root.path().join("http-quota")).unwrap();
+    assert!(
+        http.lines().any(|line| line.contains("/api/oauth/usage")
+            && line.contains("beta=true")
+            && line.contains("auth=true")),
+        "{http}"
+    );
+    assert!(!http.contains("fixture-claude-token"));
+    assert_eq!(std::fs::read(&creds).unwrap(), body);
+    let log = std::fs::read_to_string(&server_log).unwrap_or_default();
+    assert!(!log.contains("fixture-claude-token"));
 }
 
 #[test]
 fn grok_native_billing_reaches_actual_monthly_remaining_bar() {
     let fixture = live::Live::idle().bounded();
-    let native = fixture.root.path().join("grok");
-    let executable = std::env::current_exe()
-        .unwrap()
-        .to_string_lossy()
-        .replace('\'', "'\\''");
-    std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then echo '1.0.40 (fixture) [stable]'; exit 0; fi\nexec '{executable}' --ignored --exact native_quota_rpc_fixture --nocapture --quiet\n")).unwrap();
-    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let config = serde_json::to_string(&native.to_string_lossy()).unwrap();
-    std::fs::write(settings_document(&fixture), format!("[quota]\nenabled = true\n[quota.codex]\ncommand = '/not-a-native-fixture'\n[quota.grok]\ncommand = {config}\n")).unwrap();
-    let log = fixture.root.path().join("native-methods");
-    fixture.start_binary_env(&[("OVRCR_QUOTA_FIXTURE_LOG", log.as_os_str())]);
+    let home = grok_home(&fixture);
+    let auth = std::fs::read(home.join("auth.json")).unwrap();
+    let billing = format!(
+        "{}/v1/billing?format=credits",
+        quota_http(&fixture).to_string_lossy()
+    );
+    std::fs::write(settings_document(&fixture), "[quota]\nenabled = true\n[quota.codex]\ncommand = '/not-a-native-fixture'\n[quota.grok]\ncommand = '/not-a-native-fixture'\n").unwrap();
+    fixture.start_binary_env(&[
+        ("GROK_HOME", home.as_os_str()),
+        (
+            "OVRCR_QUOTA_GROK_BILLING_URL",
+            std::ffi::OsStr::new(&billing),
+        ),
+    ]);
     let mut socket = connect_server(&fixture.socket).unwrap();
     socket
         .set_read_timeout(Some(Duration::from_secs(5)))
@@ -278,19 +370,23 @@ fn grok_native_billing_reaches_actual_monthly_remaining_bar() {
             .any(|line| line.contains("Grok") && line.contains("mo") && line.contains("76%")),
         "monthly quota missing: {screen}"
     );
-    let methods = std::fs::read_to_string(log).unwrap();
-    assert_eq!(
-        methods
-            .lines()
-            .filter(|line| *line == "_x.ai/billing")
-            .count(),
-        1
+    let http = std::fs::read_to_string(fixture.root.path().join("http-quota")).unwrap();
+    assert!(
+        http.lines()
+            .any(|line| line.contains("/v1/billing?format=credits")
+                && line.contains("xai=true")
+                && line.contains("auth=true")),
+        "{http}"
     );
     assert!(
-        methods
-            .lines()
-            .all(|method| matches!(method, "initialize" | "_x.ai/auth/info" | "_x.ai/billing")),
-        "no prompts, credential exports or mutating billing requests"
+        !http.contains("fixture-grok-key"),
+        "token leaked into the fixture log"
+    );
+    assert!(!http.contains("_x.ai/billing") && !http.contains("wham/usage"));
+    assert_eq!(
+        std::fs::read(home.join("auth.json")).unwrap(),
+        auth,
+        "auth.json was rewritten"
     );
 }
 
@@ -305,7 +401,7 @@ fn native_executable(fixture: &live::Live, name: &str, version: &str) -> std::pa
         .to_string_lossy()
         .replace('\'', "'\\''");
     let native = fixture.root.path().join(name);
-    std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then echo '{version}'; exit 0; fi\nexec '{executable}' --ignored --exact native_quota_rpc_fixture --nocapture --quiet\n")).unwrap();
+    std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then echo '{version}'; exit 0; fi\nprintf '%s\\n' \"$*\" >> '{argv}'\nexec '{executable}' --ignored --exact native_quota_rpc_fixture --nocapture --quiet\n", argv = native.with_extension("argv").display())).unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
     native
 }
@@ -358,6 +454,76 @@ fn quota_table_in_instance_identity_is_a_finding_and_starts_no_worker() {
     );
 }
 
+fn grok_auth_bytes() -> Vec<u8> {
+    br#"{"https://auth.x.ai::fixture":{"key":"fixture-grok-key","expires_at":"2099-01-01T00:00:00Z"}}"#
+        .to_vec()
+}
+
+fn grok_home(fixture: &live::Live) -> std::path::PathBuf {
+    let home = fixture.root.path().join("grok-home");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(home.join("auth.json"), grok_auth_bytes()).unwrap();
+    home
+}
+
+/// Loopback stand-in for the provider HTTP routes. The log records the path and
+/// which headers were present, never the bearer value.
+fn quota_http(fixture: &live::Live) -> std::ffi::OsString {
+    use std::io::{Read, Write};
+    let log = fixture.root.path().join("http-quota");
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+            let mut buf = [0u8; 8192];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            let text = String::from_utf8_lossy(&buf[..n]);
+            let path = text
+                .lines()
+                .next()
+                .unwrap_or("")
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or("");
+            let lower = text.to_ascii_lowercase();
+            let line = format!(
+                "{path} auth={} beta={} xai={}\n",
+                lower.contains("authorization:"),
+                text.contains("anthropic-beta: oauth-2025-04-20"),
+                lower.contains("x-xai-token-auth: xai-grok-cli")
+            );
+            let _ = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log)
+                .and_then(|mut file| file.write_all(line.as_bytes()));
+            let body = if path.contains("/v1/billing") {
+                r#"{"config":{"creditUsagePercent":24,"currentPeriod":{"type":"USAGE_PERIOD_TYPE_MONTHLY","start":"2026-01-01T00:00:00Z","end":"2099-01-01T00:00:00Z"},"prepaidBalance":{"val":1},"onDemandUsed":{"val":1}}}"#
+            } else if path.contains("/api/oauth/usage") {
+                r#"{"five_hour":{"utilization":42,"resets_at":"2099-01-01T00:00:00Z"},"seven_day":{"utilization":18,"resets_at":"2099-01-02T00:00:00Z"}}"#
+            } else {
+                "{}"
+            };
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(resp.as_bytes());
+        }
+    });
+    format!("http://127.0.0.1:{port}").into()
+}
+
+fn http_reads(fixture: &live::Live, path: &str) -> usize {
+    std::fs::read_to_string(fixture.root.path().join("http-quota"))
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| line.contains(path))
+        .count()
+}
+
 fn native_fixture(mode: &str) -> live::Live {
     let fixture = live::Live::idle().bounded();
     let mut config = "[quota]\nenabled = true\n".to_string();
@@ -373,9 +539,19 @@ fn native_fixture(mode: &str) -> live::Live {
     }
     std::fs::write(settings_document(&fixture), config).unwrap();
     let log = fixture.root.path().join("native-methods");
+    let home = grok_home(&fixture);
+    let billing = format!(
+        "{}/v1/billing?format=credits",
+        quota_http(&fixture).to_string_lossy()
+    );
     fixture.start_binary_env(&[
         ("OVRCR_QUOTA_FIXTURE_LOG", log.as_os_str()),
         ("OVRCR_QUOTA_FIXTURE_MODE", std::ffi::OsStr::new(mode)),
+        ("GROK_HOME", home.as_os_str()),
+        (
+            "OVRCR_QUOTA_GROK_BILLING_URL",
+            std::ffi::OsStr::new(&billing),
+        ),
     ]);
     fixture
 }
@@ -556,13 +732,8 @@ fn native_collection_pauses_without_dashboard_and_deduplicates_fifty_sessions() 
             .count(),
         1
     );
-    assert_eq!(
-        methods
-            .lines()
-            .filter(|line| *line == "_x.ai/billing")
-            .count(),
-        1
-    );
+    assert_eq!(http_reads(&fixture, "/v1/billing?format=credits"), 1);
+    let http_log = std::fs::read_to_string(fixture.root.path().join("http-quota")).unwrap();
     drop(socket);
     let mut reattached = attach(&fixture);
     loop {
@@ -578,6 +749,11 @@ fn native_collection_pauses_without_dashboard_and_deduplicates_fifty_sessions() 
         std::fs::read_to_string(&log).unwrap(),
         methods,
         "reattachment duplicated account reads"
+    );
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.path().join("http-quota")).unwrap(),
+        http_log,
+        "reattachment duplicated the Grok billing read"
     );
 }
 
@@ -683,7 +859,7 @@ fn quota_enabled_flips_live_without_restart() {
         .unwrap()
         .to_string_lossy()
         .replace('\'', "'\\''");
-    std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-cli 0.155.1'; exit 0; fi\nexec '{executable}' --ignored --exact native_quota_rpc_fixture --nocapture --quiet\n")).unwrap();
+    std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-cli 0.155.1'; exit 0; fi\nprintf '%s\\n' \"$*\" >> '{argv}'\nexec '{executable}' --ignored --exact native_quota_rpc_fixture --nocapture --quiet\n", argv = native.with_extension("argv").display())).unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
     let settings = fixture.root.path().join("dashboard.toml");
     let quota = |enabled: bool| {
@@ -801,7 +977,17 @@ fn enabled_attach_shows_checking_then_current_within_one_read() {
         q.codex.state == QuotaState::Current && q.grok.state == QuotaState::Current
     });
     assert_eq!(reads(&fixture, "account/rateLimits/read"), 1);
-    assert_eq!(reads(&fixture, "_x.ai/billing"), 1);
+    assert_eq!(http_reads(&fixture, "/v1/billing?format=credits"), 1);
+    assert!(
+        !std::fs::read_to_string(fixture.root.path().join("native-methods"))
+            .unwrap_or_default()
+            .contains("_x.ai/billing")
+    );
+    assert_eq!(
+        std::fs::read(fixture.root.path().join("grok-home/auth.json")).unwrap(),
+        grok_auth_bytes()
+    );
+
     assert_eq!(current.codex.reason, None);
     assert_next_check(&current.codex, 300);
     // Claude has no native reader: it keeps waiting for a managed session.
@@ -853,16 +1039,13 @@ fn missing_executable_is_not_found_with_next_check_at_the_cap() {
     fixture.start_binary_env(&[]);
     let mut socket = attach(&fixture);
     let snapshot = quota_until(&mut socket, "missing executables were not reported", |q| {
-        q.codex.state == QuotaState::Unavailable && q.grok.state == QuotaState::Unavailable
+        q.codex.state == QuotaState::Unavailable && q.grok.state == QuotaState::NotSignedIn
     });
     assert_eq!(
         snapshot.codex.reason.as_deref(),
         Some("codex not found on PATH")
     );
-    assert_eq!(
-        snapshot.grok.reason.as_deref(),
-        Some("grok not found at the configured path")
-    );
+    assert_eq!(snapshot.grok.reason.as_deref(), Some("not signed in"));
     assert_next_check(&snapshot.codex, 600);
     assert_next_check(&snapshot.grok, 600);
 }

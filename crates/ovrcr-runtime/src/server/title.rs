@@ -1,7 +1,7 @@
 use super::*;
 use ovrcr_protocol::{AgentProvider, ConversationReference};
 use serde_json::{Value, json};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{Seek, SeekFrom, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
@@ -48,6 +48,16 @@ pub(super) struct TitleWorker {
     /// The model whose Pi executable was missing; a different model retries.
     missing_pi: Option<TitleModel>,
     serial: u64,
+    /// Reasons already recorded for a quiet stretch, so a 2s tick does not
+    /// append the same line again until the file or the model changes.
+    unchanged_noted: HashSet<SessionId>,
+    dismissed_noted: HashSet<SessionId>,
+    noted_no_model: bool,
+    noted_missing_pi: bool,
+    #[cfg(test)]
+    live_override: Option<HashMap<SessionId, SessionRunId>>,
+    #[cfg(test)]
+    pi_executable: Option<PathBuf>,
 }
 
 impl TitleWorker {
@@ -58,6 +68,14 @@ impl TitleWorker {
             due: HashSet::new(),
             missing_pi: None,
             serial: 0,
+            unchanged_noted: HashSet::new(),
+            dismissed_noted: HashSet::new(),
+            noted_no_model: false,
+            noted_missing_pi: false,
+            #[cfg(test)]
+            live_override: None,
+            #[cfg(test)]
+            pi_executable: None,
         }
     }
 
@@ -70,8 +88,6 @@ impl TitleWorker {
             }
             if last.elapsed() >= POLL_INTERVAL {
                 last = Instant::now();
-                // This poll is the Server's settings watcher tick (decision 3).
-                state.poll_settings();
                 if state.dashboard.is_claimed() {
                     self.tick(&state);
                 }
@@ -79,13 +95,73 @@ impl TitleWorker {
         }
     }
 
+    fn emit(&self, state: &ServerState, session: Option<SessionId>, message: &str) {
+        state.record_event(
+            ovrcr_protocol::EventComponent::Titles,
+            session.map(|session| session.0.to_string()),
+            message,
+        );
+    }
+
+    fn session_ready(&self, state: &ServerState, id: SessionId, run: SessionRunId) -> bool {
+        #[cfg(test)]
+        if let Some(live) = &self.live_override {
+            return live.get(&id).copied() == Some(run);
+        }
+        let Some(session) = state.sessions.lock().unwrap().get(&id).cloned() else {
+            return false;
+        };
+        session.run() == run && session.is_live()
+    }
+
+    fn note_closed_window(
+        &mut self,
+        state: &ServerState,
+        record: &crate::retained::RetainedSession,
+        conversation: &str,
+    ) {
+        self.due.remove(&record.id);
+        let dismissed = record
+            .subjects
+            .get(conversation)
+            .is_some_and(|subject| subject.dismissed);
+        if dismissed && self.dismissed_noted.insert(record.id) {
+            self.emit(state, Some(record.id), "title dismissed");
+        }
+        if !dismissed {
+            self.dismissed_noted.remove(&record.id);
+        }
+    }
+
     fn tick(&mut self, state: &Arc<ServerState>) {
         let Some(model) = state.title_model() else {
+            if !self.noted_no_model {
+                self.noted_no_model = true;
+                let ids: Vec<SessionId> = state
+                    .retained
+                    .lock()
+                    .records()
+                    .map(|record| record.id)
+                    .collect();
+                if ids.is_empty() {
+                    self.emit(state, None, "no title_model");
+                } else {
+                    for id in ids {
+                        self.emit(state, Some(id), "no title_model");
+                    }
+                }
+            }
             return;
         };
+        self.noted_no_model = false;
         if self.missing_pi.as_ref() == Some(&model) {
+            if !self.noted_missing_pi {
+                self.noted_missing_pi = true;
+                self.emit(state, None, "Pi missing for this model");
+            }
             return;
         }
+        self.noted_missing_pi = false;
         let records: Vec<_> = {
             let retained = state.retained.lock();
             retained.records().cloned().collect()
@@ -108,14 +184,11 @@ impl TitleWorker {
                     .get(&candidate.conversation)
                     .is_some_and(|subject| !subject.title_window_open())
             {
-                self.due.remove(&record.id);
+                self.note_closed_window(state, record, &candidate.conversation);
                 continue;
             }
-            let Some(session) = state.sessions.lock().unwrap().get(&record.id).cloned() else {
-                self.due.remove(&record.id);
-                continue;
-            };
-            if session.run() != record.run || !session.is_live() {
+            self.dismissed_noted.remove(&record.id);
+            if !self.session_ready(state, record.id, record.run) {
                 self.due.remove(&record.id);
                 continue;
             }
@@ -133,8 +206,12 @@ impl TitleWorker {
             if self.seen.get(&record.id).is_some_and(|seen| {
                 seen.path == current.path && seen.len == current.len && seen.mtime == current.mtime
             }) {
+                if self.unchanged_noted.insert(record.id) {
+                    self.emit(state, Some(record.id), "history unchanged");
+                }
                 continue;
             }
+            self.unchanged_noted.remove(&record.id);
             let path_changed = self
                 .seen
                 .get(&record.id)
@@ -173,14 +250,10 @@ impl TitleWorker {
                     .get(&candidate.conversation)
                     .is_some_and(|subject| !subject.title_window_open())
             {
-                self.due.remove(&record.id);
+                self.note_closed_window(state, &record, &candidate.conversation);
                 continue;
             }
-            let Some(session) = state.sessions.lock().unwrap().get(&record.id).cloned() else {
-                self.due.remove(&record.id);
-                continue;
-            };
-            if session.run() != record.run || !session.is_live() {
+            if !self.session_ready(state, record.id, record.run) {
                 self.due.remove(&record.id);
                 continue;
             }
@@ -189,6 +262,7 @@ impl TitleWorker {
                 continue;
             };
             self.due.remove(&record.id);
+            self.emit(state, Some(record.id), "call sent");
             match self.call(&model, &excerpt, state) {
                 CallResult::Title(topic) => {
                     let changed = {
@@ -212,10 +286,23 @@ impl TitleWorker {
                     };
                     if changed {
                         super::dispatch::publish_session_changed(state, record.id);
+                        self.emit(state, Some(record.id), "title applied");
+                    } else if state.retained.lock().get(record.id).is_some_and(|saved| {
+                        saved
+                            .subjects
+                            .get(&candidate.conversation)
+                            .is_some_and(|subject| subject.dismissed)
+                    }) {
+                        self.emit(state, Some(record.id), "title dismissed");
                     }
                 }
-                CallResult::MissingPi => self.missing_pi = Some(model.clone()),
+                CallResult::MissingPi => {
+                    self.missing_pi = Some(model.clone());
+                    self.noted_missing_pi = true;
+                    self.emit(state, Some(record.id), "Pi missing for this model");
+                }
                 CallResult::Failed => {
+                    self.emit(state, Some(record.id), "call failed or timed out");
                     let _ = state.retained.lock().record_subject_attempt(
                         record.id,
                         record.run,
@@ -247,9 +334,22 @@ impl TitleWorker {
         dir: &Path,
         state: &ServerState,
     ) -> CallResult {
-        let executable = std::env::var_os("OVRCR_PI_EXECUTABLE")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("pi"));
+        let executable = {
+            #[cfg(test)]
+            if let Some(executable) = &self.pi_executable {
+                executable.clone()
+            } else {
+                std::env::var_os("OVRCR_PI_EXECUTABLE")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("pi"))
+            }
+            #[cfg(not(test))]
+            {
+                std::env::var_os("OVRCR_PI_EXECUTABLE")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("pi"))
+            }
+        };
         let mut child = match Command::new(&executable)
             .current_dir(dir)
             .args([
@@ -758,5 +858,112 @@ mod tests {
             record.metadata.kind = SessionKind::Terminal;
             assert!(Candidate::from_record(&record).is_none());
         }
+    }
+
+    #[test]
+    fn title_decisions_are_events_and_omit_the_excerpt() {
+        let root = tempfile::tempdir().unwrap();
+        let state = super::super::tests::test_state(None, None);
+        let history = root.path().join("pi.jsonl");
+        let secret = "EXCERPT_SECRET_9f3a secret-body account@example.invalid";
+        let write_history = |extra: &str| {
+            fs::write(
+                &history,
+                format!(
+                    "{{\"type\":\"session\",\"id\":\"c\"}}\n{{\"role\":\"user\",\"content\":\"{secret}\"}}\n{{\"role\":\"assistant\",\"content\":\"tail reply{extra}\"}}\n"
+                ),
+            )
+            .unwrap();
+        };
+        write_history("");
+        let reference = ConversationReference::Pi(ExtensionConversation {
+            conversation: "c".into(),
+            executable: "pi".into(),
+            history: Some(history.clone()),
+            config_dir: root.path().to_path_buf(),
+            options: vec![],
+        });
+        let record = {
+            let mut retained = state.retained.lock();
+            let created = retained
+                .create(SessionMetadata {
+                    project: "p".into(),
+                    workspace: "w".into(),
+                    name: "n".into(),
+                    label: "l".into(),
+                    cwd: root.path().into(),
+                    kind: SessionKind::Agent { name: "pi".into() },
+                    pinned_title: None,
+                    application_title: None,
+                })
+                .unwrap();
+            let record = retained.begin_run(created.id, created.run).unwrap();
+            retained
+                .retain_conversation(record.id, record.run, Some(&reference))
+                .unwrap();
+            record
+        };
+        let mut worker = TitleWorker::new(root.path().join("titles"));
+        worker.live_override = Some(HashMap::from([(record.id, record.run)]));
+        worker.tick(&state);
+        let messages = || {
+            state
+                .event_snapshot()
+                .into_iter()
+                .map(|event| event.message)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(messages(), ["no title_model"]);
+        assert_eq!(
+            state.event_snapshot()[0].subject.as_deref(),
+            Some(record.id.0.to_string()).as_deref()
+        );
+
+        state.settings.lock().unwrap().report.settings.title_model = Some("pi/missing".into());
+        worker.pi_executable = Some(root.path().join("no-such-pi"));
+        worker.tick(&state);
+        assert!(messages().contains(&"call sent".into()));
+        assert!(messages().contains(&"Pi missing for this model".into()));
+
+        let failing = root.path().join("fail-pi");
+        fs::write(&failing, "#!/bin/sh\nexit 2\n").unwrap();
+        fs::set_permissions(&failing, fs::Permissions::from_mode(0o700)).unwrap();
+        state.settings.lock().unwrap().report.settings.title_model = Some("pi/fail".into());
+        worker.pi_executable = Some(failing);
+        write_history(" v2");
+        worker.tick(&state);
+        assert!(messages().contains(&"call failed or timed out".into()));
+
+        worker.tick(&state);
+        assert!(messages().contains(&"history unchanged".into()));
+
+        let ok = root.path().join("ok-pi");
+        fs::write(
+            &ok,
+            "#!/bin/sh\nwhile IFS= read -r line; do printf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Logged Topic\"}]}}'; exit 0; done\n",
+        )
+        .unwrap();
+        fs::set_permissions(&ok, fs::Permissions::from_mode(0o700)).unwrap();
+        state.settings.lock().unwrap().report.settings.title_model = Some("pi/ok".into());
+        worker.pi_executable = Some(ok);
+        write_history(" v3");
+        worker.tick(&state);
+        assert!(messages().contains(&"title applied".into()));
+
+        state
+            .retained
+            .lock()
+            .dismiss_conversation_subject(record.id, record.run, "c")
+            .unwrap();
+        write_history(" v4");
+        worker.tick(&state);
+        assert!(messages().contains(&"title dismissed".into()));
+
+        let rendered = messages().join("\n");
+        assert!(!rendered.contains(secret));
+        assert!(!rendered.contains("EXCERPT_SECRET_9f3a"));
+        assert!(!rendered.contains("account@example.invalid"));
+        assert!(!rendered.contains("Name this conversation"));
+        assert!(!rendered.contains("Logged Topic"));
     }
 }

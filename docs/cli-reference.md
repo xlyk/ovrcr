@@ -18,6 +18,7 @@ contract scripts can rely on. Every command accepts `--help`.
 | `session` | Inspect or remove a session record |
 | `server` | Run the server in the foreground |
 | `settings` | Show the settings document, effective values and findings; `set` and `reset` change one setting |
+| `events` | Print the running Server's event ring. Does not start a Server and does not read `events.jsonl` |
 
 `project create` aliases `project add`. `project delete` and `workspace delete`
 alias their guarded `remove` commands. The legacy top-level `new`, `list`,
@@ -45,6 +46,9 @@ never start a server. With none running they fail with `OVRCR server is not
 running`: only the server mutates retained records or controls processes.
 `workspace remove --force` acknowledges ownership-uncertain stopped sessions and
 discards uncommitted changes; live sessions and active task runs still block it.
+`ovrcr events` also never starts a Server. With none running it fails with
+`OVRCR server is not running`. It asks the Server for the in-memory ring and
+does not read `events.jsonl`.
 
 ## Request timeouts
 
@@ -131,6 +135,30 @@ keys and formatting. A path that names no setting, a value of the wrong type
 list element, and a document that is not valid TOML are rejected with a
 non-zero exit and the document unchanged. `--json` prints `ok`, `path`, and
 `document` (null when the Server saved it).
+
+## Events
+
+```sh
+ovrcr events
+ovrcr events --json
+ovrcr events --follow
+```
+
+`events` prints the running Server's event ring, oldest first and newest last.
+Each line is the time in UTC, the component (`titles`, `settings`, or `quota`),
+the session id or provider name when the line is about one, and the one-line
+message. `--json` prints that same list as one JSON array (`time_unix_ms`,
+`component`, `subject`, `message`) which parses back to the ring. `--follow`
+prints the ring and then each event recorded afterwards until the Server
+closes the connection; with `--json`, events after the array are one JSON
+object per line.
+
+The command needs a running Server. It does not start one, and it does not
+read `events.jsonl`. That file, beside `config.toml`, is for people and other
+tools. An event message never includes a prompt, a transcript, a credential,
+an account identifier, or a native body.
+
+The Dashboard Events popup is not part of this command.
 
 ## Workspace removal
 

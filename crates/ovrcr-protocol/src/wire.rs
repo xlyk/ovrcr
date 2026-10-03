@@ -336,6 +336,12 @@ pub enum Request {
     RefreshQuota {
         provider: Option<crate::QuotaProvider>,
     },
+    /// The in-memory ring, oldest first. `follow` keeps a control connection
+    /// open and delivers later lines as `ServerEvent::Recorded`. The file is
+    /// not read.
+    Events {
+        follow: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -408,6 +414,8 @@ pub enum Response {
     QuotaCooldown {
         remaining_ms: u64,
     },
+    /// The Server's event ring, oldest first, newest last.
+    Events(Vec<crate::Event>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -430,6 +438,8 @@ pub enum ServerEvent {
     /// response and whenever that reading changes. The Dashboard has no other
     /// source of settings.
     SettingsChanged(Box<crate::SettingsReport>),
+    /// One newly recorded event. The Dashboard does not show these yet.
+    Recorded(crate::Event),
 }
 
 #[cfg(test)]
@@ -862,6 +872,7 @@ mod wire_snapshot {
                     provider: Some(crate::QuotaProvider::Grok),
                 },
             ),
+            ("Events", Request::Events { follow: true }),
         ]
     }
 
@@ -949,6 +960,15 @@ mod wire_snapshot {
                 "QuotaCooldown",
                 Response::QuotaCooldown { remaining_ms: 300 },
             ),
+            (
+                "Events",
+                Response::Events(vec![crate::Event {
+                    time_unix_ms: 1,
+                    component: crate::EventComponent::Titles,
+                    subject: Some("7".into()),
+                    message: "title applied".into(),
+                }]),
+            ),
         ]
     }
 
@@ -985,6 +1005,15 @@ mod wire_snapshot {
             (
                 "SettingsChanged",
                 ServerEvent::SettingsChanged(Box::new(settings_report())),
+            ),
+            (
+                "Recorded",
+                ServerEvent::Recorded(crate::Event {
+                    time_unix_ms: 1,
+                    component: crate::EventComponent::Quota,
+                    subject: Some("Codex".into()),
+                    message: "Checking -> Unavailable: HTTP 503".into(),
+                }),
             ),
         ]
     }
@@ -1252,6 +1281,7 @@ mod wire_snapshot {
         ),
         ("Request::AcknowledgeSessionStopped", "240104"),
         ("Request::RefreshQuota", "280102"),
+        ("Request::Events", "2901"),
         (
             "Request::MarkReviewed",
             "1e010103696e7604636f6e760101047475726e02",
@@ -1276,6 +1306,10 @@ mod wire_snapshot {
             "090102030401010101780100020102030000",
         ),
         ("Response::QuotaCooldown", "0bfb2c01"),
+        (
+            "Response::Events",
+            "0c0101000101370d7469746c65206170706c696564",
+        ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
         ("ServerEvent::ScreenDirty", "02010403"),
@@ -1290,6 +1324,10 @@ mod wire_snapshot {
         (
             "ServerEvent::SettingsChanged",
             "05072f642e746f6d6c05000002010470692f6d08666561747572652f01022f63010161010162020170010161017100000005636f64657801022f680467726f6b00010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
+        ),
+        (
+            "ServerEvent::Recorded",
+            "0601020105436f64657821436865636b696e67202d3e20556e617661696c61626c653a204854545020353033",
         ),
         ("QuotaState::Waiting", "00"),
         ("QuotaState::Current", "01"),

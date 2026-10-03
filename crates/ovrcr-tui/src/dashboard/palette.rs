@@ -2876,7 +2876,7 @@ impl Dashboard {
                     return Some(Vec::new());
                 }
                 let preference = palette.launch_preference.take();
-                self.error = None;
+                self.dismiss_error_banner();
                 if let Response::CreatedSession(session) = response {
                     self.select_session(session.id);
                     // The new pane's view goes first: the save waits on a
@@ -2943,7 +2943,7 @@ impl Dashboard {
                 id: workspace.id.clone(),
             };
             self.palette = None;
-            self.error = None;
+            self.dismiss_error_banner();
             self.select_container(row);
             let request_id = self.next_request_id();
             return self
@@ -2963,7 +2963,7 @@ impl Dashboard {
         // The workspace is in the hierarchy, so creation finished; the palette
         // must not stay on "Working…" just because its shell already exited.
         self.palette = None;
-        self.error = None;
+        self.dismiss_error_banner();
         let Some(session) = session else {
             return Vec::new();
         };

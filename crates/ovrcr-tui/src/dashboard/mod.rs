@@ -38,7 +38,7 @@ use crossterm::event::MouseEvent;
 use ovrcr_protocol::{ClientMessage, HierarchySnapshot, SessionId, TerminalSize};
 use ovrcr_terminal::vt100;
 use ratatui::layout::Rect;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 pub const DASHBOARD_READER_QUEUE_CAPACITY: usize = 64;
 
@@ -251,6 +251,10 @@ pub struct Dashboard {
     collapsed_projects: HashSet<String>,
     collapsed_workspaces: HashSet<(String, String)>,
     error: Option<String>,
+    /// Notices waiting out the error banner. The footer has one line and the banner owns it, so a
+    /// notice that is already showing when the banner appears, or one posted while it is up, waits
+    /// here instead of being overwritten. Dismissing the banner shows the next one.
+    notice_queue: VecDeque<String>,
     /// Whether the banner in `error` was written by a refused view, which is the only writer a
     /// successful view completion is allowed to clear. `set_error` releases it.
     error_owned_by_view: bool,

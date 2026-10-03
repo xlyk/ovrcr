@@ -340,6 +340,7 @@ service installation, scheduling rules, and retained-work cleanup.
 | Scheduled tasks | `config.tasks` beside `config.toml` |
 | Server socket | `$XDG_RUNTIME_DIR/ovrcr/server.sock` on Linux, `$TMPDIR/ovrcr-UID/ovrcr/server.sock` on macOS and wherever `XDG_RUNTIME_DIR` is unset |
 | Server log | `server.log` beside the socket |
+| Event log | `events.jsonl` beside `config.toml` (one rotation to `events.jsonl.1`). The Server appends it; `ovrcr events` reads the in-memory ring through the Server, not the file |
 
 `OVRCR_CONFIG` still names the `config.toml` path. The settings document and
 scheduled-task storage are derived from that path as before. After the first

@@ -176,21 +176,25 @@ impl Dashboard {
     /// reading changed, whether by a toggle here or an edit elsewhere.
     pub(super) fn settings_changed_notice(&mut self, before: &Settings) {
         let on_off = |enabled: bool| if enabled { "on" } else { "off" };
-        let settings = &self.settings;
-        if before.automatic_local_terminals != settings.automatic_local_terminals {
-            self.desktop.notice = Some(format!(
-                "Automatic local terminals: {}",
-                settings.automatic_local_terminals.label()
-            ));
-        }
-        if before.ready_sound != settings.ready_sound {
-            self.desktop.notice = Some(format!("Ready sound: {}", on_off(settings.ready_sound)));
-        }
-        if before.desktop_notifications != settings.desktop_notifications {
-            self.desktop.notice = Some(format!(
-                "Desktop notifications: {}",
-                on_off(settings.desktop_notifications)
-            ));
+        let automatic = (before.automatic_local_terminals
+            != self.settings.automatic_local_terminals)
+            .then(|| {
+                format!(
+                    "Automatic local terminals: {}",
+                    self.settings.automatic_local_terminals.label()
+                )
+            });
+        let sound = (before.ready_sound != self.settings.ready_sound)
+            .then(|| format!("Ready sound: {}", on_off(self.settings.ready_sound)));
+        let desktop =
+            (before.desktop_notifications != self.settings.desktop_notifications).then(|| {
+                format!(
+                    "Desktop notifications: {}",
+                    on_off(self.settings.desktop_notifications)
+                )
+            });
+        for notice in [automatic, sound, desktop].into_iter().flatten() {
+            self.show_notice(notice);
         }
     }
 
@@ -236,11 +240,11 @@ impl Dashboard {
                 .poll_until
                 .get_or_insert_with(Instant::now);
             self.desktop.bridge.next_poll = None;
-            self.desktop.notice = Some("Checking OVRCR notification permission".into());
+            self.show_notice("Checking OVRCR notification permission");
         } else {
             self.desktop.bridge.pending = Some(BridgeOperation::Settings);
             self.desktop.bridge.poll_until = None;
-            self.desktop.notice = Some("Open System Settings, then Notifications → OVRCR".into());
+            self.show_notice("Open System Settings, then Notifications → OVRCR");
         }
         DashboardAction::Redraw
     }
@@ -328,15 +332,18 @@ impl Dashboard {
             {
                 self.desktop.notice = None;
             }
+            if update.operation == BridgeOperation::Status {
+                self.notice_queue
+                    .retain(|notice| notice != "Checking OVRCR notification permission");
+            }
             if update.operation == BridgeOperation::Settings {
                 bridge.check_after_settings = true;
-                self.desktop.notice = Some(
+                self.show_notice(
                     if update.status == BridgeStatus::SettingsOpened {
                         "System Settings opened; choose Notifications → OVRCR, then Browse O checks permission"
                     } else {
                         "Open System Settings manually: Notifications → OVRCR; then Browse O checks permission"
                     }
-                    .into(),
                 );
                 continue;
             }
@@ -559,7 +566,7 @@ impl Dashboard {
                 }
             }
             if failed != 0 {
-                self.desktop.notice = Some(unavailable_notice(failed).into());
+                self.show_notice(unavailable_notice(failed));
                 changed = true;
             }
         }
@@ -580,7 +587,7 @@ impl Dashboard {
                 false
             }
             Err(_) => {
-                self.desktop.notice = Some(unavailable_notice(self.alert_channels()).into());
+                self.show_notice(unavailable_notice(self.alert_channels()));
                 #[cfg(target_os = "macos")]
                 {
                     self.desktop.bridge.pending = None;
@@ -2463,6 +2470,46 @@ printf '{{"schema":1,"server_wire":{},"status":"%s"}}\n' "$status"
                 .unwrap()
                 .contains("PRIVATE_REQUEST")
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bridge_recovery_notices_wait_for_errors_and_completed_checks_do_not_linger() {
+        let (_root, client) = fake_bridge("denied");
+        let mut d = dashboard();
+        install_fake_bridge(&mut d, client.clone());
+        wait_bridge(&mut d, |d| {
+            d.desktop.bridge.status == Some(BridgeStatus::Denied)
+        });
+        assert_eq!(d.key(KeyCode::Char('O')), DashboardAction::Redraw);
+        d.set_error("Fixture startup error");
+        wait_bridge(&mut d, |d| {
+            d.desktop.bridge.check_after_settings && d.desktop.bridge.in_flight.is_none()
+        });
+        let guidance =
+            "System Settings opened; choose Notifications → OVRCR, then Browse O checks permission";
+        assert_eq!(d.error.as_deref(), Some("Fixture startup error"));
+        assert!(d.desktop.notice.is_none());
+        assert!(d.notice_queue.iter().any(|notice| notice == guidance));
+        d.dismiss_error_banner();
+        d.key(KeyCode::Char('?'));
+        assert_eq!(d.desktop.notice.as_deref(), Some(guidance));
+
+        std::fs::write(client.with_extension("status"), "available").unwrap();
+        assert_eq!(d.key(KeyCode::Char('O')), DashboardAction::Redraw);
+        d.set_error("Fixture check error");
+        wait_bridge(&mut d, |d| {
+            d.desktop.bridge.status == Some(BridgeStatus::Available)
+                && d.desktop.bridge.in_flight.is_none()
+        });
+        assert_eq!(d.error.as_deref(), Some("Fixture check error"));
+        assert!(
+            d.notice_queue
+                .iter()
+                .all(|notice| notice != "Checking OVRCR notification permission")
+        );
+        d.dismiss_error_banner();
+        assert!(d.desktop.notice.is_none());
     }
 
     #[cfg(target_os = "macos")]

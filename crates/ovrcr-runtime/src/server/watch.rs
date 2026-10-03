@@ -1,9 +1,9 @@
 //! The Server's settings watcher: a 2-second stat and change-only republish.
 //!
-//! The title worker's poll drives [`ServerState::poll_settings`]. It reloads
-//! only when the document's (or the instance identity's) length or mtime
-//! changed, and replaces and republishes the stored reading only when the
-//! effective reading or the findings changed.
+//! [`run`] is its own thread. It reloads only when the document's (or the
+//! instance identity's) length or mtime changed, and replaces and republishes
+//! the stored reading only when the effective reading or the findings changed.
+//! The title worker does not tick it.
 use super::*;
 use ovrcr_protocol::SettingsReport;
 use std::time::SystemTime;
@@ -80,9 +80,16 @@ impl ServerState {
         if same_reading(&watched.report, &report) {
             return false;
         }
+        let findings = report.findings.len();
         watched.report = report;
         drop(watched);
         quota::sync_consent(self);
+        self.record_event(ovrcr_protocol::EventComponent::Settings, None, "reloaded");
+        self.record_event(
+            ovrcr_protocol::EventComponent::Settings,
+            None,
+            format!("findings: {findings}"),
+        );
         true
     }
 
@@ -113,12 +120,25 @@ impl ServerState {
     pub(super) fn set_setting(&self, path: &str, value: Option<&str>) -> anyhow::Result<()> {
         {
             let _writing = self.settings.lock().unwrap();
-            crate::settings::set(
+            if let Err(error) = crate::settings::set(
                 &crate::settings::document_path(&self.registry_path),
                 path,
                 value,
-            )?;
+            ) {
+                drop(_writing);
+                self.record_event(
+                    ovrcr_protocol::EventComponent::Settings,
+                    Some(path.to_owned()),
+                    "refused",
+                );
+                return Err(error);
+            }
         }
+        self.record_event(
+            ovrcr_protocol::EventComponent::Settings,
+            Some(path.to_owned()),
+            "wrote",
+        );
         self.reload_and_publish(true);
         Ok(())
     }
@@ -136,6 +156,24 @@ impl ServerState {
 
     pub(super) fn quota_settings(&self) -> ovrcr_protocol::QuotaSettings {
         self.settings.lock().unwrap().report.settings.quota.clone()
+    }
+}
+
+const POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Stat and reload on a dedicated thread, every two seconds. A title call
+/// must not delay this; the title worker does not call it.
+pub(super) fn run(state: Arc<ServerState>) {
+    let mut last = Instant::now() - POLL_INTERVAL;
+    while !state.shutdown.load(Ordering::Acquire) {
+        thread::park_timeout(Duration::from_millis(200));
+        if state.shutdown.load(Ordering::Acquire) {
+            break;
+        }
+        if last.elapsed() >= POLL_INTERVAL {
+            last = Instant::now();
+            state.poll_settings();
+        }
     }
 }
 
@@ -233,5 +271,96 @@ mod tests {
         assert_eq!(set("branch_prefix", None), Response::Ok);
         assert_eq!(std::fs::read_to_string(&document).unwrap(), "# mine\n");
         assert_eq!(reading(&state).settings.branch_prefix, "feature/");
+    }
+
+    #[test]
+    fn settings_reload_on_its_own_thread_without_the_title_worker() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = super::super::tests::test_state(None, None);
+        Arc::get_mut(&mut state).unwrap().registry_path = dir.path().join("config.toml");
+        let document = dir.path().join("dashboard.toml");
+        std::fs::write(&document, "title_model = 'pi/own-thread'\n").unwrap();
+        assert_eq!(state.title_model(), None);
+
+        // No title worker is started. A reload that only happens inside that
+        // worker's poll never observes this document.
+        let worker = Arc::clone(&state);
+        let thread = thread::Builder::new()
+            .name("ovrcr-settings-watch".into())
+            .spawn(move || run(worker))
+            .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while state.title_model() != title::TitleModel::parse("pi/own-thread") {
+            assert!(
+                Instant::now() < deadline,
+                "settings did not reload without the title worker"
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+
+        state.shutdown.store(true, Ordering::Release);
+        thread.thread().unpark();
+        thread.join().unwrap();
+    }
+
+    #[test]
+    fn settings_events_record_a_reload_with_findings_and_a_refusal() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = super::super::tests::test_state(None, None);
+        Arc::get_mut(&mut state).unwrap().registry_path = dir.path().join("config.toml");
+        let document = dir.path().join("dashboard.toml");
+        let secret = "SECRET_VALUE_9f3a";
+        std::fs::write(
+            &document,
+            "not_a_setting = true
+",
+        )
+        .unwrap();
+        assert!(state.poll_settings());
+        let set = super::super::connections::handle_request_with_id(
+            &state,
+            &mut ClientRole::Control,
+            Request::SetSetting {
+                path: "ready_sound".into(),
+                value: Some(format!("\"{secret}\"")),
+            },
+            1,
+            None,
+        );
+        assert!(matches!(set, Response::Error { .. }));
+        assert_eq!(
+            super::super::connections::handle_request_with_id(
+                &state,
+                &mut ClientRole::Control,
+                Request::SetSetting {
+                    path: "ready_sound".into(),
+                    value: Some("true".into()),
+                },
+                2,
+                None,
+            ),
+            Response::Ok
+        );
+        let events = state.event_snapshot();
+        let messages: Vec<_> = events.iter().map(|event| event.message.clone()).collect();
+        assert!(
+            messages.iter().any(|message| message == "reloaded"),
+            "{messages:?}"
+        );
+        assert!(
+            messages.iter().any(|message| message == "findings: 1"),
+            "{messages:?}"
+        );
+        assert!(
+            messages.iter().any(|message| message == "refused"),
+            "{messages:?}"
+        );
+        assert!(
+            messages.iter().any(|message| message == "wrote"),
+            "{messages:?}"
+        );
+        let rendered = format!("{events:?}");
+        assert!(!rendered.contains(secret));
     }
 }

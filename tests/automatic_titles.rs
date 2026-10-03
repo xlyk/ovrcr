@@ -530,30 +530,16 @@ fn emit(live: &Live, session: SessionId, title: &str) {
 }
 
 fn dashboard(live: &Live) -> UnixStream {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let mut stream = connect_server(&live.socket).unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
-        stream
-            .set_write_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
-        match client::request(&mut stream, 1, Request::DashboardHello).unwrap() {
-            Response::Hierarchy(_) => return stream,
-            Response::Error {
-                code: ErrorCode::Conflict,
-                message,
-            } if message == "another dashboard is already connected" => {
-                // Closing a client releases server ownership asynchronously.
-                assert!(
-                    Instant::now() < deadline,
-                    "dashboard ownership was not released"
-                );
-                std::thread::yield_now();
-            }
-            other => panic!("dashboard attach failed: {other:?}"),
-        }
+    let mut stream = connect_server(&live.socket).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    match client::request(&mut stream, 1, Request::DashboardHello).unwrap() {
+        Response::Hierarchy(_) => stream,
+        other => panic!("dashboard attach failed: {other:?}"),
     }
 }
 

@@ -262,7 +262,7 @@ impl Dashboard {
         if !matches!(action, Action::RemoveWorkspace | Action::RemoveProject) {
             self.desktop.notice = None;
         }
-        match action {
+        let action = match action {
             Action::Palette => self.open_palette(),
             Action::Agents => self.open_agent_search(),
             Action::CreateTerminal => self.open_create_terminal(),
@@ -351,7 +351,9 @@ impl Dashboard {
                 self.capture_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL))
             }
             Action::Group(group) => self.open_group(group),
-        }
+        };
+        self.reveal_queued_notice();
+        action
     }
 
     /// Hand a Copy or History key to the dispatcher that owns that capture.

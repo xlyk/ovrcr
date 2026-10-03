@@ -691,7 +691,11 @@ only. Remembered launch choices stay in this file. Do not put settings in
 database (`config.toml.sqlite3`) and scheduled-task storage (`config.tasks`); a
 `[quota]` table there configures nothing and is reported as a finding.
 
-A missing file uses defaults. A wrong-typed value keeps its own default, and an
+A missing file uses defaults. A symlink at that path whose target does not
+exist is not a missing file: it is one document-level finding naming the path.
+A wrong-typed value keeps its own default. A wrong-typed element of a list or
+table (`picker_roots[1]`, `agents[1]`, `launch_choices.demo`) is dropped on its
+own, with a finding naming that element; sibling elements stay. An
 unknown key or an unknown spelling such as `automatic_local_terminals = "always"`
 is ignored; each is reported as a finding with its key and line. Only a document
 that is not valid TOML falls back to every default, with one document-level
@@ -755,7 +759,10 @@ hand.**; Enter, `r` and `x` change nothing.
 At attach the footer shows one line when the reading has findings, for example
 **2 settings findings; see Settings**, and nothing when it has none. When a later
 reading changes the number of findings the footer says so again, or **No settings
-findings** once they are gone. The next key clears the line.
+findings** once they are gone. The next key clears the line. A startup error
+banner owns that line first: the findings notice waits behind it, a key while the
+banner is up does not drop the notice, and the notice shows when the banner is
+dismissed.
 
 The block is the production default document. A missing file loads these values
 (`picker_roots` keeps only the paths that exist). Commented lines show optional

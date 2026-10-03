@@ -178,6 +178,7 @@ fn run(cli: Cli) -> AppResult<()> {
             };
             edit_setting(path, value, json_output)
         }
+        Command::Events { follow } => run_events(follow, json_output),
         Command::Settings { command: None } => {
             let RegistryPath(config) = RegistryPath::resolve().map_err(RuntimeError::internal)?;
             let report = ovrcr::settings::load(&config);
@@ -195,6 +196,92 @@ fn run(cli: Cli) -> AppResult<()> {
             }
         }
     }
+}
+
+fn run_events(follow: bool, json_output: bool) -> AppResult<()> {
+    use ovrcr::protocol::{ClientMessage, ServerEvent, ServerMessage, read_frame, write_frame};
+    let paths = ServerPaths::resolve().map_err(RuntimeError::internal)?;
+    let Some(mut stream) = connect_if_running(&paths).map_err(RuntimeError::internal)? else {
+        return Err(RuntimeError::new(
+            ErrorCode::NotFound,
+            "OVRCR server is not running",
+        ));
+    };
+    let request = Request::Events { follow };
+    let timeout = request_timeout(&request);
+    stream
+        .set_read_timeout(Some(timeout))
+        .map_err(RuntimeError::internal)?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .map_err(RuntimeError::internal)?;
+    write_frame(
+        &mut stream,
+        &ClientMessage {
+            request_id: 1,
+            request,
+        },
+    )
+    .map_err(RuntimeError::internal)?;
+    let events = loop {
+        match read_frame::<ServerMessage>(&mut stream).map_err(RuntimeError::internal)? {
+            ServerMessage::Response {
+                request_id: 1,
+                response,
+            } => match response {
+                Response::Events(events) => break events,
+                Response::Error { code, message } => return Err(RuntimeError::new(code, message)),
+                other => return Err(unexpected_response(other)),
+            },
+            ServerMessage::Response { .. } | ServerMessage::Event(_) => {}
+        }
+    };
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string(&events).map_err(RuntimeError::internal)?
+        );
+    } else {
+        for event in &events {
+            println!("{}", format_event(event));
+        }
+    }
+    if !follow {
+        return Ok(());
+    }
+    stream
+        .set_read_timeout(None)
+        .map_err(RuntimeError::internal)?;
+    loop {
+        match read_frame::<ServerMessage>(&mut stream) {
+            Ok(ServerMessage::Event(ServerEvent::Recorded(event))) => {
+                if json_output {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&event).map_err(RuntimeError::internal)?
+                    );
+                } else {
+                    println!("{}", format_event(&event));
+                }
+            }
+            Ok(ServerMessage::Event(_) | ServerMessage::Response { .. }) => {}
+            Err(_) => break,
+        }
+    }
+    Ok(())
+}
+
+fn format_event(event: &ovrcr::protocol::Event) -> String {
+    let time = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(event.time_unix_ms as i64)
+        .map(|time| time.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+        .unwrap_or_else(|| event.time_unix_ms.to_string());
+    let component = match event.component {
+        ovrcr::protocol::EventComponent::Titles => "titles",
+        ovrcr::protocol::EventComponent::Settings => "settings",
+        ovrcr::protocol::EventComponent::Quota => "quota",
+    };
+    let subject = event.subject.as_deref().unwrap_or("-");
+    format!("{time}  {component:<8}  {subject:<8}  {}", event.message)
 }
 
 /// Through the Server when one is reachable, so it validates, saves and

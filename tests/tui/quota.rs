@@ -567,3 +567,63 @@ fn quota_details_name_a_probe_source_with_its_time_and_age() {
         "{text}"
     );
 }
+
+#[test]
+fn quota_rows_keep_reported_windows_and_dash_missing_allowance() {
+    let mut dashboard = dashboard_fixture();
+    let mut snapshot = QuotaSnapshot::default();
+    snapshot.claude.state = QuotaState::Current;
+    snapshot.claude.observed_unix_ms = Some(NOW);
+    snapshot.claude.windows = vec![
+        QuotaWindow {
+            id: "five_hour".into(),
+            label: "5h".into(),
+            general: true,
+            used_basis_points: Some(4_200),
+            over_limit: false,
+            resets_unix_ms: Some(NOW + 3_600_000),
+        },
+        QuotaWindow {
+            id: "seven_day".into(),
+            label: "7d".into(),
+            general: true,
+            used_basis_points: None,
+            over_limit: false,
+            resets_unix_ms: Some(NOW + 3_600_000),
+        },
+    ];
+    snapshot.grok.state = QuotaState::Current;
+    snapshot.grok.windows = vec![QuotaWindow {
+        id: "grok/week".into(),
+        label: "wk".into(),
+        general: true,
+        used_basis_points: Some(2_400),
+        over_limit: false,
+        resets_unix_ms: Some(NOW + 3_600_000),
+    }];
+    publish_quota(&mut dashboard, snapshot);
+    let rows = sidebar_rows(&dashboard, 39, NOW);
+    let joined = rows.join("\n");
+    assert!(joined.contains("Quota left"), "{rows:?}");
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("Claude") && row.contains("5h") && row.contains("58%")),
+        "{rows:?}"
+    );
+    let seven = rows
+        .iter()
+        .find(|row| row.contains("7d"))
+        .expect("seven-day row");
+    assert!(seven.contains('—') || seven.contains("—"), "{seven}");
+    assert!(
+        !seven.contains('█') && !seven.contains('░'),
+        "missing allowance drew a bar: {seven}"
+    );
+    assert!(
+        rows.iter().any(|row| row.contains("Grok")
+            && row.contains("wk")
+            && !row.contains("5h")
+            && !row.contains("7d")),
+        "{rows:?}"
+    );
+}

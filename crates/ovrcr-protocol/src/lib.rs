@@ -7,6 +7,8 @@ pub use bridge::{
     BRIDGE_SCHEMA_VERSION, BridgeOperation, BridgeReply, BridgeRequest, BridgeStatus,
 };
 pub mod client;
+pub mod event;
+pub use event::{Event, EventComponent};
 mod codec;
 pub mod context;
 pub mod freshness;

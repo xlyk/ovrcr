@@ -584,6 +584,7 @@ impl Dashboard {
             collapsed_projects: HashSet::new(),
             collapsed_workspaces: HashSet::new(),
             error: None,
+            notice_queue: VecDeque::new(),
             error_owned_by_view: false,
             copy: None,
             copy_notice: None,
@@ -649,7 +650,7 @@ impl Dashboard {
             self.settings_changed_notice(&before);
         }
         if previous.map_or(count > 0, |previous| previous != count) {
-            self.desktop.notice = Some(super::settings::findings_notice(count));
+            self.show_notice(super::settings::findings_notice(count));
         }
         self.apply_alert_channels();
         self.settings_report = Some(Box::new(report));
@@ -739,12 +740,45 @@ impl Dashboard {
 
     /// Shows `message` in the error banner. A refused view is the only writer whose banner a
     /// later view completion clears, so every other writer comes through here and releases it.
+    /// A notice already in the footer waits behind the banner instead of being covered and lost.
     pub(super) fn set_error(&mut self, message: impl Into<String>) {
+        if let Some(notice) = self.desktop.notice.take() {
+            self.notice_queue.push_front(notice);
+        }
         self.error = Some(message.into());
         self.error_owned_by_view = false;
         // Requests and coalesced selections predating this error cannot dismiss it.
         self.error_owning_requests.clear();
         self.handshake.note_error();
+    }
+
+    /// Footer notice. The error banner owns the footer line, so a notice posted while it is
+    /// showing waits until the banner is dismissed rather than being written where the next key
+    /// would drop it unseen.
+    pub(super) fn show_notice(&mut self, notice: impl Into<String>) {
+        let notice = notice.into();
+        if self.error.is_some() {
+            self.notice_queue.push_back(notice);
+        } else {
+            self.desktop.notice = Some(notice);
+        }
+    }
+
+    /// Drops the error banner and shows the notice that was waiting behind it, if the footer
+    /// is not already saying something else.
+    pub(super) fn dismiss_error_banner(&mut self) {
+        if self.error.take().is_some() {
+            self.reveal_queued_notice();
+        }
+    }
+
+    pub(super) fn reveal_queued_notice(&mut self) {
+        if self.error.is_none()
+            && self.desktop.notice.is_none()
+            && let Some(notice) = self.notice_queue.pop_front()
+        {
+            self.desktop.notice = Some(notice);
+        }
     }
 
     pub fn view_revision(&self) -> u64 {
@@ -1362,6 +1396,14 @@ impl Dashboard {
     }
 
     pub fn key_action(&mut self, key: KeyEvent) -> DashboardAction {
+        let action = self.dispatch_key(key);
+        // A key clears the visible notice. One that was only queued behind the banner
+        // stays queued until the banner is gone, then the next key reveals it.
+        self.reveal_queued_notice();
+        action
+    }
+
+    fn dispatch_key(&mut self, key: KeyEvent) -> DashboardAction {
         if key.kind == KeyEventKind::Press {
             self.desktop.notice = None;
         }
@@ -1452,7 +1494,7 @@ impl Dashboard {
             self.set_error("Waiting for terminal screen");
             return DashboardAction::Redraw;
         }
-        self.error = None;
+        self.dismiss_error_banner();
         self.copy_notice = None;
         let screen = self
             .focused_pane()
@@ -1590,7 +1632,7 @@ impl Dashboard {
             return DashboardAction::Redraw;
         }
         self.history_page_error = false;
-        self.error = None;
+        self.dismiss_error_banner();
         let request_id = self.error_owning_request_id();
         self.history_begin_request = Some(PendingHistoryBegin {
             request_id,
@@ -1633,26 +1675,31 @@ impl Dashboard {
         if key.kind == KeyEventKind::Repeat && !history_motion_key(key.code) {
             return DashboardAction::None;
         }
-        let Some(view) = self.history.as_ref() else {
-            return DashboardAction::None;
+        let (busy, anchored, unresolved_target) = {
+            let Some(view) = self.history.as_ref() else {
+                return DashboardAction::None;
+            };
+            (
+                view.copy_job.is_some() || view.copy_completion.is_some(),
+                view.anchor.is_some(),
+                view.cursor_target.is_some(),
+            )
         };
-        if view.copy_job.is_some() || view.copy_completion.is_some() {
+        if busy {
             return DashboardAction::None;
         }
-        let anchored = self.history.as_ref().and_then(|view| view.anchor).is_some();
-        let unresolved_target = view.cursor_target.is_some();
         if !anchored
             && unresolved_target
             && key.kind == KeyEventKind::Press
             && history_retry_key(key.code)
         {
             self.history_page_error = false;
-            self.error = None;
+            self.dismiss_error_banner();
         }
-        if anchored && view.cursor_target.is_some() {
+        if anchored && unresolved_target {
             if key.kind == KeyEventKind::Press && history_retry_key(key.code) {
                 self.history_page_error = false;
-                self.error = None;
+                self.dismiss_error_banner();
                 self.copy_notice = Some("Waiting for history cell".into());
                 return self
                     .history_request_if_needed()
@@ -1662,65 +1709,72 @@ impl Dashboard {
         }
         let size = history_view_size(self.focused_size());
         if !anchored {
-            let Some(view) = self.history.as_mut() else {
-                return DashboardAction::None;
-            };
-            let max_top = view.opened.total_rows.saturating_sub(u32::from(size.rows));
-            let max_left = u32::from(u16::MAX)
-                .saturating_sub(u32::from(size.cols))
-                .min(u32::from(u16::MAX));
-            let changed = match key.code {
-                KeyCode::Up | KeyCode::Char('k') => {
-                    view.top = view.top.saturating_sub(1).min(max_top);
-                    true
+            let changed = {
+                let Some(view) = self.history.as_mut() else {
+                    return DashboardAction::None;
+                };
+                let max_top = view.opened.total_rows.saturating_sub(u32::from(size.rows));
+                let max_left = u32::from(u16::MAX)
+                    .saturating_sub(u32::from(size.cols))
+                    .min(u32::from(u16::MAX));
+                let changed = match key.code {
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        view.top = view.top.saturating_sub(1).min(max_top);
+                        true
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        view.top = view.top.saturating_add(1).min(max_top);
+                        true
+                    }
+                    KeyCode::PageUp => {
+                        view.top = view.top.saturating_sub(u32::from(size.rows)).min(max_top);
+                        true
+                    }
+                    KeyCode::PageDown => {
+                        view.top = view.top.saturating_add(u32::from(size.rows)).min(max_top);
+                        true
+                    }
+                    KeyCode::Home => {
+                        view.top = 0;
+                        true
+                    }
+                    KeyCode::End => {
+                        view.top = max_top;
+                        true
+                    }
+                    KeyCode::Left | KeyCode::Char('h') => {
+                        view.left = view.left.saturating_sub(1);
+                        true
+                    }
+                    KeyCode::Right | KeyCode::Char('l') => {
+                        view.left = view
+                            .left
+                            .saturating_add(1)
+                            .min(u16::try_from(max_left).unwrap_or(u16::MAX));
+                        true
+                    }
+                    KeyCode::Char('v') => return self.anchor_history_cursor(),
+                    KeyCode::Char('y') => return self.start_history_copy(),
+                    KeyCode::Enter => false,
+                    _ => false,
+                };
+                if !changed {
+                    return DashboardAction::None;
                 }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    view.top = view.top.saturating_add(1).min(max_top);
-                    true
-                }
-                KeyCode::PageUp => {
-                    view.top = view.top.saturating_sub(u32::from(size.rows)).min(max_top);
-                    true
-                }
-                KeyCode::PageDown => {
-                    view.top = view.top.saturating_add(u32::from(size.rows)).min(max_top);
-                    true
-                }
-                KeyCode::Home => {
-                    view.top = 0;
-                    true
-                }
-                KeyCode::End => {
-                    view.top = max_top;
-                    true
-                }
-                KeyCode::Left | KeyCode::Char('h') => {
-                    view.left = view.left.saturating_sub(1);
-                    true
-                }
-                KeyCode::Right | KeyCode::Char('l') => {
-                    view.left = view
-                        .left
-                        .saturating_add(1)
-                        .min(u16::try_from(max_left).unwrap_or(u16::MAX));
-                    true
-                }
-                KeyCode::Char('v') => return self.anchor_history_cursor(),
-                KeyCode::Char('y') => return self.start_history_copy(),
-                KeyCode::Enter => false,
-                _ => false,
+                view.cursor_target = (view.opened.total_rows > 0).then_some(
+                    HistoryCursorTarget::At(HistoryCopyPoint {
+                        row: view.top,
+                        col: view.left,
+                    }),
+                );
+                view.cursor_reveal = false;
+                changed
             };
             if !changed {
                 return DashboardAction::None;
             }
-            view.cursor_target =
-                (view.opened.total_rows > 0).then_some(HistoryCursorTarget::At(HistoryCopyPoint {
-                    row: view.top,
-                    col: view.left,
-                }));
-            view.cursor_reveal = false;
             self.history_page_error = false;
-            self.error = None;
+            self.dismiss_error_banner();
             self.copy_notice = None;
             return self
                 .history_request_if_needed()
@@ -1753,7 +1807,7 @@ impl Dashboard {
             view.anchor = Some(cursor.point);
         }
         self.history_page_error = false;
-        self.error = None;
+        self.dismiss_error_banner();
         self.copy_notice = None;
         DashboardAction::Redraw
     }
@@ -1777,7 +1831,7 @@ impl Dashboard {
             view.copy_job = Some(HistoryCopyJob::new(job_id, range));
         }
         self.history_page_error = false;
-        self.error = None;
+        self.dismiss_error_banner();
         self.copy_notice = None;
         self.history_request_if_needed()
             .map_or(DashboardAction::Redraw, DashboardAction::Request)
@@ -1837,7 +1891,7 @@ impl Dashboard {
             view.cursor_reveal = false;
         }
         self.history_page_error = false;
-        self.error = None;
+        self.dismiss_error_banner();
         self.copy_notice = None;
         self.history_request_if_needed()
             .map_or(DashboardAction::Redraw, DashboardAction::Request)
@@ -2835,7 +2889,7 @@ impl Dashboard {
             }
         }
         self.history_page_error = false;
-        self.error = None;
+        self.dismiss_error_banner();
         self.copy_notice = None;
         self.history_request_if_needed()
             .map_or(DashboardAction::Redraw, DashboardAction::Request)
@@ -2894,7 +2948,7 @@ impl Dashboard {
             }));
         view.cursor_reveal = false;
         self.history_page_error = false;
-        self.error = None;
+        self.dismiss_error_banner();
         self.copy_notice = None;
         self.history_request_if_needed()
             .map_or(DashboardAction::Redraw, DashboardAction::Request)
@@ -3085,7 +3139,7 @@ impl Dashboard {
                             // when this view is the one the user's own selection, split, focus, or
                             // pane close asked for.
                             if self.error_owned_by_view || owns_error {
-                                self.error = None;
+                                self.dismiss_error_banner();
                                 self.error_owned_by_view = false;
                             }
                             if let Some(request) = self.take_deferred_history_request() {
@@ -3119,7 +3173,7 @@ impl Dashboard {
                             // geometry handshake, and a synthetic mouse release leave a fresh
                             // error in place.
                             if owns_error && !self.history_page_error {
-                                self.error = None;
+                                self.dismiss_error_banner();
                                 self.error_owned_by_view = false;
                             }
                         }
@@ -3127,12 +3181,15 @@ impl Dashboard {
                 }
                 Response::CreatedSession(session) => {
                     if !self.stale_created_session(&session) {
-                        self.error = None;
+                        self.dismiss_error_banner();
                     }
                 }
                 Response::Inventory { .. } | Response::TerminalText { .. } | Response::Task(_) => {
-                    self.error = None
+                    self.dismiss_error_banner()
                 }
+                // The Events popup is a later PR. A snapshot asked by something
+                // else is not drawn here.
+                Response::Events(_) => {}
                 Response::HistoryOpened(opened) => {
                     self.accept_history_opened(request_id, opened);
                 }
@@ -3301,6 +3358,9 @@ impl Dashboard {
                     self.ensure_selection_visible(&self.visible_rows());
                 }
                 ServerEvent::SettingsChanged(report) => self.install_settings_report(*report),
+                // Live events are on the wire so a later popup can append them.
+                // This PR does not open that popup.
+                ServerEvent::Recorded(_) => {}
                 ServerEvent::SessionChanged(summary) => {
                     if find_session(self, summary.id)
                         .is_some_and(|current| current.run.0 > summary.run.0)
