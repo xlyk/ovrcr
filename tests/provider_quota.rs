@@ -1356,7 +1356,9 @@ fn no_claude_on_path_is_unavailable_with_its_reason() {
     let fixture = live::Live::idle().bounded();
     fixture.start_binary_env(&[("PATH", std::ffi::OsStr::new("/usr/bin:/bin"))]);
     let mut socket = attach(&fixture);
-    let snapshot = quota_until(&mut socket, "no Claude row at hello", |_| true);
+    let snapshot = quota_until(&mut socket, "no Claude row at hello", |snapshot| {
+        snapshot.claude.state == QuotaState::Unavailable
+    });
     assert_eq!(snapshot.claude.state, QuotaState::Unavailable);
     assert_eq!(
         snapshot.claude.reason.as_deref(),
