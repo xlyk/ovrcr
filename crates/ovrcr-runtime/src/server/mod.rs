@@ -386,6 +386,9 @@ impl ServerState {
         session: Option<&Arc<Session>>,
         boot_id: Option<&str>,
     ) -> SessionSummary {
+        // The caller has dropped `retained`. Reading the session takes its
+        // terminal lock; doing that while holding the store stalls every
+        // retained_sessions update behind the parser.
         if let Some(session) = session.filter(|session| session.run() == record.run) {
             let mut summary = session.summary();
             summary.title = record.effective_title();
@@ -410,23 +413,34 @@ impl ServerState {
     }
 
     pub(crate) fn session_summary(&self, id: SessionId) -> Option<SessionSummary> {
-        let retained = self.retained.lock();
-        let record = retained.get(id)?;
-        let sessions = self.sessions.lock().unwrap();
+        let (record, session, boot_id) = {
+            let retained = self.retained.lock();
+            let record = retained.get(id)?.clone();
+            let session = self.sessions.lock().unwrap().get(&id).cloned();
+            let boot_id = retained.boot_id().map(str::to_owned);
+            (record, session, boot_id)
+        };
         Some(Self::summary_for_record(
-            record,
-            sessions.get(&id),
-            retained.boot_id(),
+            &record,
+            session.as_ref(),
+            boot_id.as_deref(),
         ))
     }
 
     pub(crate) fn session_summaries(&self) -> Vec<SessionSummary> {
-        let retained = self.retained.lock();
-        let sessions = self.sessions.lock().unwrap();
-        retained
-            .records()
-            .map(|record| {
-                Self::summary_for_record(record, sessions.get(&record.id), retained.boot_id())
+        let (rows, boot_id) = {
+            let retained = self.retained.lock();
+            let sessions = self.sessions.lock().unwrap();
+            let rows = retained
+                .records()
+                .map(|record| (record.clone(), sessions.get(&record.id).cloned()))
+                .collect::<Vec<_>>();
+            let boot_id = retained.boot_id().map(str::to_owned);
+            (rows, boot_id)
+        };
+        rows.into_iter()
+            .map(|(record, session)| {
+                Self::summary_for_record(&record, session.as_ref(), boot_id.as_deref())
             })
             .collect()
     }
