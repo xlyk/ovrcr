@@ -1,4 +1,5 @@
-//! Server-owned native account collection. No credentials or native bodies cross this boundary.
+//! Server-owned account collection. Credential bytes and provider bodies stay in
+//! this worker: snapshots carry windows and sanitized reasons only.
 use super::{DispatchMessage, ServerState};
 use ovrcr_protocol::{CLAUDE_WAITING, ErrorCode, NativeCommand, Response};
 use ovrcr_protocol::{
@@ -40,6 +41,8 @@ pub(super) struct Refresh {
     pub(super) auth_checked: bool,
     /// A manual refresh asked for a Claude probe.
     pub(super) claude_probe_due: bool,
+    /// Latest Claude account read (`GET /api/oauth/usage`). Not a status-line sample.
+    pub(super) claude_account: Option<ProviderQuota>,
 }
 
 fn slot(provider: QuotaProvider) -> Option<usize> {
@@ -377,6 +380,16 @@ pub(super) fn run(state: Arc<ServerState>, provider: QuotaProvider) {
             checked = true;
             (|| {
                 let deadline = Instant::now() + REQUEST;
+                if provider == QuotaProvider::Grok {
+                    // x.ai/billing is method-not-found on current Grok CLIs.
+                    // Read the typed credits JSON with the existing login key.
+                    let (ident, windows) = read_grok_allowance(&config.grok)?;
+                    if identity.as_ref() != Some(&ident) {
+                        generation += 1;
+                        identity = Some(ident);
+                    }
+                    return Ok(windows);
+                }
                 if client.is_none() {
                     let program = match provider {
                         QuotaProvider::Codex => &config.codex,
@@ -817,7 +830,8 @@ fn native_client(
             .because(format!("{name} version unsupported (needs {supported})")));
     }
     let args: &[&str] = if provider == QuotaProvider::Codex {
-        &["app-server"]
+        // Codex keeps the token. Do not read or write auth.json from here.
+        &["-s", "read-only", "-a", "never", "app-server"]
     } else {
         &["--no-auto-update", "agent", "--no-leader", "stdio"]
     };
@@ -1041,6 +1055,365 @@ fn native_windows(provider: QuotaProvider, value: &Value) -> Result<Vec<QuotaWin
     .validate()
     .map_err(|_| Failure::new(QuotaState::Invalid))?;
     Ok(windows)
+}
+
+/// Claude account allowance from the Claude Code credential file.
+/// A missing file is not an error: the status line and `claude auth status`
+/// still explain a session that has not reported. This read does not refresh
+/// or rewrite the file.
+pub(super) fn run_claude_account(state: Arc<ServerState>) {
+    let mut due = Instant::now();
+    let mut failures = 0u32;
+    let mut generation = 1u64;
+    let mut fingerprint = None;
+    let mut pending: Option<ClaudeAccountUpdate> = None;
+    while !state.shutdown.load(Ordering::Acquire) && !state.stopping.load(Ordering::Acquire) {
+        if let Some(update) = pending.take() {
+            match state
+                .dispatch
+                .try_send(DispatchMessage::ClaudeAccount(Box::new(update)))
+            {
+                Ok(()) => {}
+                Err(TrySendError::Full(DispatchMessage::ClaudeAccount(update))) => {
+                    pending = Some(*update)
+                }
+                Err(_) => break,
+            }
+        }
+        if !state.dashboard.is_claimed() {
+            std::thread::park_timeout(Duration::from_millis(100));
+            continue;
+        }
+        if Instant::now() < due {
+            std::thread::park_timeout(Duration::from_millis(100));
+            continue;
+        }
+        let checked = true;
+        let result = read_claude_allowance();
+        let (report, successful, reason) = match result {
+            Ok(None) => {
+                failures = 0;
+                due = Instant::now() + POLL;
+                fingerprint = None;
+                continue;
+            }
+            Ok(Some((ident, windows))) => {
+                failures = 0;
+                due = Instant::now() + POLL;
+                if fingerprint.as_ref() != Some(&ident) {
+                    generation = generation.saturating_add(1);
+                    fingerprint = Some(ident);
+                }
+                (
+                    QuotaReport {
+                        windows: Some(windows),
+                        state: QuotaState::Current,
+                    },
+                    true,
+                    None,
+                )
+            }
+            Err(error) => {
+                failures = failures.saturating_add(1);
+                due = Instant::now() + backoff(failures, error.deterministic, error.retry_after);
+                (
+                    QuotaReport {
+                        windows: None,
+                        state: error.state,
+                    },
+                    false,
+                    Some(error.reason),
+                )
+            }
+        };
+        let next_check = due.saturating_duration_since(Instant::now()).as_millis() as u64;
+        pending = Some(ClaudeAccountUpdate {
+            generation,
+            report,
+            checked: checked && successful,
+            reason,
+            next_check_unix_ms: Some(now_ms() + next_check),
+        });
+    }
+}
+
+pub struct ClaudeAccountUpdate {
+    pub(super) generation: u64,
+    pub(super) report: QuotaReport,
+    pub(super) checked: bool,
+    pub(super) reason: Option<String>,
+    pub(super) next_check_unix_ms: Option<u64>,
+}
+
+/// Publish a Claude account read. A current status-line sample is left in
+/// place: it is an in-session extra, not a replacement for this read, and not
+/// required before the account row can show allowance.
+pub(super) fn store_claude_account(state: &ServerState, update: ClaudeAccountUpdate) {
+    if update.generation == 0 || update.report.validate().is_err() {
+        return;
+    }
+    let mut row = ProviderQuota::unknown(QuotaProvider::Claude, update.report.state);
+    row.reason = update.reason;
+    row.next_check_unix_ms = update.next_check_unix_ms;
+    row.source = Some(QuotaSource::NativeProfile {
+        profile: "claude credentials".into(),
+        generation: update.generation,
+    });
+    if let Some(windows) = update.report.windows {
+        if !windows.is_empty() {
+            row.observed_unix_ms = Some(now_ms());
+        }
+        row.windows = windows;
+    }
+    if update.checked {
+        row.checked_unix_ms = Some(now_ms());
+    }
+    state.quota_refresh.lock().unwrap().claude_account = Some(row);
+}
+
+fn read_claude_allowance() -> Result<Option<(String, Vec<QuotaWindow>)>> {
+    let Some((ident, token)) = claude_token()? else {
+        return Ok(None);
+    };
+    let url = loopback_or(
+        "OVRCR_QUOTA_CLAUDE_USAGE_URL",
+        "https://api.anthropic.com/api/oauth/usage",
+    );
+    let body = http_get(
+        &url,
+        &[
+            ("Authorization", &format!("Bearer {token}")),
+            ("anthropic-beta", "oauth-2025-04-20"),
+            ("Accept", "application/json"),
+        ],
+    )?;
+    drop(token);
+    let value: Value =
+        serde_json::from_str(&body).map_err(|_| Failure::new(QuotaState::Invalid))?;
+    let windows = claude_usage_windows(&value)?;
+    if windows.is_empty() {
+        return Err(Failure::new(QuotaState::Unsupported).because("no subscription windows"));
+    }
+    Ok(Some((ident, windows)))
+}
+
+fn claude_token() -> Result<Option<(String, String)>> {
+    let path = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(|dir| PathBuf::from(dir).join(".credentials.json"))
+        .unwrap_or_else(|| home_dir().join(".claude").join(".credentials.json"));
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(Failure::unavailable("claude credentials unreadable")),
+    };
+    if bytes.len() > 65_536 {
+        return Err(Failure::unavailable("claude credentials unreadable"));
+    }
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|_| Failure::unavailable("claude credentials unreadable"))?;
+    let token = value["claudeAiOauth"]["accessToken"]
+        .as_str()
+        .filter(|token| !token.is_empty() && token.len() <= 8192)
+        .map(str::to_owned);
+    let Some(token) = token else {
+        return Ok(None);
+    };
+    let ident = fingerprint(&token);
+    Ok(Some((ident, token)))
+}
+
+fn read_grok_allowance(program: &NativeCommand) -> Result<(String, Vec<QuotaWindow>)> {
+    let (ident, token) = grok_token(program)?;
+    let url = loopback_or(
+        "OVRCR_QUOTA_GROK_BILLING_URL",
+        "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
+    );
+    let body = http_get(
+        &url,
+        &[
+            ("Authorization", &format!("Bearer {token}")),
+            ("x-xai-token-auth", "xai-grok-cli"),
+            ("Accept", "application/json"),
+        ],
+    )?;
+    drop(token);
+    let value: Value =
+        serde_json::from_str(&body).map_err(|_| Failure::new(QuotaState::Invalid))?;
+    Ok((ident, native_windows(QuotaProvider::Grok, &value)?))
+}
+
+fn grok_token(program: &NativeCommand) -> Result<(String, String)> {
+    let path = program
+        .home
+        .clone()
+        .or_else(|| std::env::var_os("GROK_HOME").map(PathBuf::from))
+        .unwrap_or_else(|| home_dir().join(".grok"))
+        .join("auth.json");
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(Failure::new(QuotaState::NotSignedIn));
+        }
+        Err(_) => return Err(Failure::unavailable("grok credentials unreadable")),
+    };
+    if bytes.len() > 65_536 {
+        return Err(Failure::unavailable("grok credentials unreadable"));
+    }
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|_| Failure::unavailable("grok credentials unreadable"))?;
+    let entries = value
+        .as_object()
+        .ok_or_else(|| Failure::unavailable("grok credentials unreadable"))?;
+    let entry = entries
+        .iter()
+        .find(|(scope, _)| scope.starts_with("https://auth.x.ai::"))
+        .or_else(|| entries.iter().find(|(scope, _)| scope.contains("sign-in")))
+        .map(|(_, entry)| entry)
+        .ok_or_else(|| Failure::new(QuotaState::NotSignedIn))?;
+    if entry["team_id"].as_str().is_some_and(|id| !id.is_empty())
+        || entry["teamId"].as_str().is_some_and(|id| !id.is_empty())
+    {
+        return Err(
+            Failure::new(QuotaState::Unsupported).because("team or non-user context unsupported")
+        );
+    }
+    if let Some(expires) = entry["expires_at"].as_str() {
+        let expired = chrono::DateTime::parse_from_rfc3339(expires)
+            .map(|stamp| stamp.timestamp_millis() <= i64::try_from(now_ms()).unwrap_or(i64::MAX))
+            .unwrap_or(false);
+        if expired {
+            return Err(Failure::new(QuotaState::NotSignedIn).because("login expired"));
+        }
+    }
+    let token = entry["key"]
+        .as_str()
+        .filter(|token| !token.is_empty() && token.len() <= 8192)
+        .ok_or_else(|| Failure::new(QuotaState::NotSignedIn))?;
+    Ok((fingerprint(token), token.to_owned()))
+}
+
+fn claude_usage_windows(value: &Value) -> Result<Vec<QuotaWindow>> {
+    if !value.is_object() {
+        return Err(Failure::new(QuotaState::Invalid));
+    }
+    let mut windows = Vec::new();
+    for (key, label) in [("five_hour", "5h"), ("seven_day", "7d")] {
+        let window = &value[key];
+        if !window.is_object() {
+            continue;
+        }
+        let (used_basis_points, over_limit) = percent(window.get("utilization"))?;
+        if used_basis_points.is_none() && !over_limit {
+            continue;
+        }
+        let resets_unix_ms = reset_ms(window.get("resets_at"))?;
+        windows.push(QuotaWindow {
+            id: format!("claude/{key}"),
+            label: label.into(),
+            general: true,
+            used_basis_points,
+            over_limit,
+            resets_unix_ms,
+        });
+    }
+    QuotaReport {
+        windows: Some(windows.clone()),
+        state: QuotaState::Current,
+    }
+    .validate()
+    .map_err(|_| Failure::new(QuotaState::Invalid))?;
+    Ok(windows)
+}
+
+fn reset_ms(value: Option<&Value>) -> Result<Option<u64>> {
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(None);
+    };
+    if let Some(text) = value.as_str() {
+        let stamp = chrono::DateTime::parse_from_rfc3339(text)
+            .map_err(|_| Failure::new(QuotaState::Invalid))?;
+        return u64::try_from(stamp.timestamp_millis())
+            .map(Some)
+            .map_err(|_| Failure::new(QuotaState::Invalid));
+    }
+    if let Some(seconds) = value.as_u64() {
+        return seconds
+            .checked_mul(1000)
+            .map(Some)
+            .ok_or_else(|| Failure::new(QuotaState::Invalid));
+    }
+    Err(Failure::new(QuotaState::Invalid))
+}
+
+fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default()
+}
+
+fn fingerprint(token: &str) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in token.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// Test override must be loopback HTTP. Anything else keeps the real URL, so a
+/// credential cannot be sent to an arbitrary host by setting the variable.
+fn loopback_or(var: &str, default: &str) -> String {
+    match std::env::var(var) {
+        Ok(value)
+            if value.starts_with("http://127.0.0.1:") || value.starts_with("http://localhost:") =>
+        {
+            value
+        }
+        _ => default.to_owned(),
+    }
+}
+
+fn http_get(url: &str, headers: &[(&str, &str)]) -> Result<String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(10))
+        .timeout_read(REQUEST)
+        .redirects(0)
+        .build();
+    let mut request = agent.get(url);
+    for (name, value) in headers {
+        request = request.set(name, value);
+    }
+    let response = match request.call() {
+        Ok(response) => response,
+        Err(ureq::Error::Status(status, response)) => {
+            let retry = response
+                .header("retry-after")
+                .and_then(|value| value.parse::<u64>().ok())
+                .map(|seconds| Duration::from_secs(seconds.clamp(60, 86_400)));
+            let _ = std::io::copy(
+                &mut response.into_reader().take(MAX_RESPONSE as u64),
+                &mut std::io::sink(),
+            );
+            let failure = match status {
+                401 | 403 => Failure::new(QuotaState::NotSignedIn),
+                429 => Failure::unavailable("HTTP 429"),
+                100..=599 => Failure::unavailable(format!("HTTP {status}")),
+                _ => Failure::unavailable("request failed"),
+            };
+            return Err(Failure {
+                retry_after: retry,
+                ..failure
+            });
+        }
+        Err(_) => return Err(Failure::unavailable("request failed")),
+    };
+    let mut body = String::new();
+    response
+        .into_reader()
+        .take(MAX_RESPONSE as u64)
+        .read_to_string(&mut body)
+        .map_err(|_| Failure::unavailable("reply unreadable"))?;
+    Ok(body)
 }
 
 #[cfg(test)]
