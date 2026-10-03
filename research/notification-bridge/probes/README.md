@@ -28,11 +28,18 @@ Developer-ID identity without any credential, Keychain, certificate or permissio
 configuration change. Stop if signing needs interaction. No secure timestamp,
 notarization or production distribution claim follows from local signing.
 
+Kyle approved this one-shot diagnostic on 2026-10-03 and subsequently explicitly
+authorized native CUA to accept its notification permission. CUA may click Allow
+only after the new fixture's exact name is visible in that permission prompt;
+unrelated permission or signing dialogs are outside the approval. This supersedes
+waiting for the owner at the computer. It does not change the historical evidence
+that the earlier owner saw no prompt or establish a result for this new test.
+
 Register that owned bundle and first run status-only. Proceed only if its recorded
 authorization is `notDetermined`. Run permission-only once while the owner is ready
-to observe and choose Allow or Don't Allow. Save native CUA evidence scoped to this
-fixture's permission UI and collect the owner's observation independently. Never
-select an OS permission choice for the owner. A missing prompt, absent callback,
+to observe, or under the explicit CUA approval above. Save native CUA evidence scoped
+to this fixture's permission UI; attribute a CUA choice separately from an owner's
+observation. A missing prompt, absent callback,
 unexpected state or deadline remains unresolved; do not reset permissions or retry
 automatically. Capture the resulting settings without changing them. Then verify
 the owned process exited, unregister and remove only the unique installation, and
