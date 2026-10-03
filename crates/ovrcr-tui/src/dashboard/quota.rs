@@ -1,6 +1,8 @@
 use super::{Dashboard, DashboardAction, InputMode, render::sidebar_area};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
-use ovrcr_protocol::{ProviderQuota, QuotaSnapshot, QuotaSource, QuotaState, QuotaWindow};
+use ovrcr_protocol::{
+    ClientMessage, ProviderQuota, QuotaSnapshot, QuotaSource, QuotaState, QuotaWindow, Request,
+};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -102,11 +104,10 @@ impl Dashboard {
 
     fn quota_lines(&self, now: u64) -> Vec<String> {
         let quota = self.quotas.clone().unwrap_or_default();
-        let mut lines = Vec::new();
-        let age = |stamp| {
-            ovrcr_protocol::freshness::age_ms(stamp, now)
-                .map(|age| format!("{}s ago", age / 1_000))
-                .unwrap_or_else(|| "unverifiable".into())
+        let mut lines = vec!["Subscription allowance only.".into(), String::new()];
+        let seen = |stamp| match ovrcr_protocol::freshness::age_ms(stamp, now) {
+            Some(age) => format!("{} ({} ago)", local_time(stamp), span(age / 60_000)),
+            None => format!("{} (unverifiable age)", local_time(stamp)),
         };
         for provider in [&quota.claude, &quota.codex, &quota.grok] {
             lines.push(format!(
@@ -118,6 +119,11 @@ impl Dashboard {
                     provider.state.label()
                 }
             ));
+            match (&provider.reason, provider.state) {
+                (Some(sentence), QuotaState::Disabled) => lines.push(sentence.clone()),
+                (Some(reason), _) => lines.push(format!("reason: {reason}")),
+                (None, _) => {}
+            }
             lines.push(match &provider.source {
                 Some(QuotaSource::Session {
                     session,
@@ -137,14 +143,21 @@ impl Dashboard {
                 "last observation: {}",
                 provider
                     .observed_unix_ms
-                    .map(age)
+                    .map(seen)
                     .unwrap_or_else(|| "not reported".into())
             ));
             lines.push(format!(
                 "last account check: {}",
-                provider.checked_unix_ms.map(age).unwrap_or_else(|| {
+                provider.checked_unix_ms.map(seen).unwrap_or_else(|| {
                     "not reported (native callback is not a backend check)".into()
                 })
+            ));
+            lines.push(format!(
+                "next check: {}",
+                provider
+                    .next_check_unix_ms
+                    .map(|stamp| format!("{} ({})", local_time(stamp), until(stamp, now)))
+                    .unwrap_or_else(|| "not scheduled".into())
             ));
             for window in &provider.windows {
                 let reset = window
@@ -165,6 +178,16 @@ impl Dashboard {
         lines
     }
 
+    /// Sends a quota request the user asked for from the palette; the Server
+    /// validates and republishes, so nothing is applied here.
+    pub(super) fn quota_request(&mut self, request: Request) -> DashboardAction {
+        self.palette = None;
+        DashboardAction::Request(ClientMessage {
+            request_id: self.error_owning_request_id(),
+            request,
+        })
+    }
+
     /// Rendering and every tree interaction share this reduced rectangle.
     pub(super) fn sidebar_rects(&self, area: Rect) -> (Rect, Rect) {
         let sidebar = sidebar_area(area, self.sidebar_preference());
@@ -178,12 +201,16 @@ impl Dashboard {
                     .sum()
             }
         });
-        let height = if sidebar.width < 8 || sidebar.height <= 3 {
+        // The ladder keeps three tree lines: every row, one line per
+        // provider, the pointer line, then nothing.
+        let height = if desired == 0 || sidebar.height < 4 {
             0
-        } else if sidebar.height < desired + 3 {
-            u16::from(desired > 0)
-        } else {
+        } else if sidebar.height >= desired + 3 {
             desired
+        } else if sidebar.height >= 6 {
+            3
+        } else {
+            1
         };
         (
             Rect::new(sidebar.x, sidebar.y, sidebar.width, sidebar.height - height),
@@ -197,13 +224,17 @@ impl Dashboard {
         if area.is_empty() {
             return;
         }
-        if area.height == 1 {
-            frame.render_widget(
-                Paragraph::new("Quota left: details")
-                    .style(Style::default().fg(super::render::TEXT)),
-                area,
-            );
-            return;
+        let style = Style::default().fg(super::render::TEXT);
+        // Every full block is taller than three lines, so these are the ladder.
+        match area.height {
+            1 => return frame.render_widget(Paragraph::new("Quota: u").style(style), area),
+            3 => {
+                let lines = [&quota.claude, &quota.codex, &quota.grok]
+                    .map(|provider| compact_line(provider, now))
+                    .join("\n");
+                return frame.render_widget(Paragraph::new(lines).style(style), area);
+            }
+            _ => {}
         }
         let mut offset = 0;
         for (text, height) in sidebar_quota_rows(quota, area.width, now) {
@@ -228,15 +259,15 @@ fn sidebar_quota_rows(quota: &QuotaSnapshot, width: u16, now: u64) -> Vec<(Strin
     let mut rows = vec![("Quota left".into(), height("Quota left"))];
     for provider in [&quota.claude, &quota.codex, &quota.grok] {
         if !provider.windows.iter().any(|window| window.general) {
-            let text = format!("{} — {}", provider.provider.name(), provider.state.label());
-            if ratatui::text::Line::raw(&text).width() > usize::from(width) {
-                rows.push((provider.provider.name().into(), 1));
-                rows.push((
-                    provider.state.label().into(),
-                    height(provider.state.label()),
-                ));
+            let (state, widest) = state_text(provider, now);
+            let name = provider.provider.name();
+            let gap = separator(provider);
+            if ratatui::text::Line::raw(format!("{name}{gap}{widest}")).width() > usize::from(width)
+            {
+                rows.push((name.into(), 1));
+                rows.push((state, height(&widest)));
             } else {
-                rows.push((text, 1));
+                rows.push((format!("{name}{gap}{state}"), 1));
             }
         } else {
             for (index, window) in provider
@@ -253,7 +284,7 @@ fn sidebar_quota_rows(quota: &QuotaSnapshot, width: u16, now: u64) -> Vec<(Strin
                 };
                 let prefix = format!("{name:6} {:2}", window.label);
                 let suffix = window_text(provider, window, now);
-                let longest_state = "0% exhausted stale";
+                let longest_state = "0% exhausted  stale 59m";
                 if ratatui::text::Line::raw(format!("{prefix} {longest_state}")).width()
                     > usize::from(width)
                 {
@@ -302,9 +333,108 @@ pub(super) fn window_text(provider: &ProviderQuota, window: &QuotaWindow, now: u
             None => "—".into(),
         }
     };
-    if provider.stale(now) && !provider.windows.is_empty() {
-        format!("{value} stale")
-    } else {
-        value
+    if !provider.stale(now) || provider.windows.is_empty() {
+        return value;
     }
+    let left = if !window.over_limit && window.remaining_basis_points().is_some_and(|l| l > 0) {
+        " left"
+    } else {
+        ""
+    };
+    match provider
+        .checked_unix_ms
+        .max(provider.observed_unix_ms)
+        .and_then(|stamp| ovrcr_protocol::freshness::age_ms(stamp, now))
+    {
+        Some(age) => format!("{value}{left}  stale {}", span(age / 60_000)),
+        None => format!("{value}{left}  stale"),
+    }
+}
+
+/// The words after a provider's name when it has no general window, and the
+/// widest form they take, so the clock never changes the rows reserved.
+fn state_text(provider: &ProviderQuota, now: u64) -> (String, String) {
+    let label = provider.state.label();
+    if provider.state == QuotaState::Disabled {
+        return ("usage off".into(), "usage off".into());
+    }
+    match provider
+        .next_check_unix_ms
+        .filter(|_| failed(provider.state))
+    {
+        Some(next) => (
+            format!("{label}  retry {}", until_short(next, now)),
+            format!("{label}  retry 59m"),
+        ),
+        None => (label.into(), label.into()),
+    }
+}
+
+fn separator(provider: &ProviderQuota) -> &'static str {
+    if provider.state == QuotaState::Disabled {
+        " "
+    } else {
+        " — "
+    }
+}
+
+fn failed(state: QuotaState) -> bool {
+    !matches!(
+        state,
+        QuotaState::Current | QuotaState::Checking | QuotaState::Disabled | QuotaState::Waiting
+    )
+}
+
+/// The compact ladder's one line per provider: its first general window, or its state.
+fn compact_line(provider: &ProviderQuota, now: u64) -> String {
+    let name = provider.provider.name();
+    match provider.windows.iter().find(|window| window.general) {
+        Some(window) => format!(
+            "{name} {} {}",
+            window.label,
+            window_text(provider, window, now)
+        ),
+        None => format!(
+            "{name}{}{}",
+            separator(provider),
+            state_text(provider, now).0
+        ),
+    }
+}
+
+/// Whole minutes as the largest unit that keeps them short: 12m, 5h, 3d.
+fn span(minutes: u64) -> String {
+    match minutes {
+        0 => "<1m".into(),
+        1..60 => format!("{minutes}m"),
+        60..2_880 => format!("{}h", minutes / 60),
+        _ => format!("{}d", minutes / 1_440),
+    }
+}
+
+fn until_short(stamp: u64, now: u64) -> String {
+    match stamp.saturating_sub(now) {
+        0 => "now".into(),
+        left => span(left.div_ceil(60_000)),
+    }
+}
+
+fn until(stamp: u64, now: u64) -> String {
+    match stamp.saturating_sub(now) {
+        0 => "due now".into(),
+        _ => format!("in {}", until_short(stamp, now)),
+    }
+}
+
+fn local_time(stamp: u64) -> String {
+    i64::try_from(stamp)
+        .ok()
+        .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
+        .map(|stamp| {
+            stamp
+                .with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+        })
+        .unwrap_or_else(|| "unverifiable".into())
 }

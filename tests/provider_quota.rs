@@ -452,8 +452,8 @@ fn providers_remain_visible_before_any_native_quota_source_reports() {
     for expected in [
         "Quota left",
         "Claude — checking",
-        "Codex — off",
-        "Grok — off",
+        "Codex usage off",
+        "Grok usage off",
     ] {
         assert!(screen.contains(expected), "missing {expected}: {screen}");
     }

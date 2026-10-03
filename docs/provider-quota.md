@@ -31,9 +31,9 @@ Omit `home` to use the native client's existing profile. OVRCR does not provide 
 
 ## Interpret the display
 
-A bar represents `100 − consumed`; `—` is unknown, not zero or full. Exhausted and over-limit reports are distinct. Passed reset times show **reset due**; OVRCR never refills allowance locally. Unavailable or stale sources retain last-good values with a stale marker. Before any source reports, Claude shows checking and each native provider shows checking when `quota.enabled` is on, or off when it is not. Narrow sidebars place the window's full state below its identity; use details when the window is too short to show all quota rows.
+A bar represents `100 − consumed`; `—` is unknown, not zero or full. Exhausted and over-limit reports are distinct. Passed reset times show **reset due**; OVRCR never refills allowance locally. Unavailable or stale sources retain last-good values with a stale marker and their age since the last observation or account check, such as `37% left  stale 12m`. Before any source reports, Claude shows checking and each native provider shows checking when `quota.enabled` is on, or **Codex usage off** / **Grok usage off** when it is not. A failed row without values shows its next check, such as `unavailable  retry 3m`. Narrow sidebars place the window's full state below its identity. A short sidebar shows one line per provider, then a single `Quota: u` line, and hides the block only below that; details stay on `u`.
 
-Details distinguish the last changed observation from the last successful native account check. Repeated Claude callbacks cannot claim a backend check. Account changes invalidate older native generations, including A→B→A notifications received during a read. Quota snapshots are bounded, in-memory Server state and are not persisted as account history.
+Details open with "Subscription allowance only": the block and details never show tokens or spend. For each provider they give the state, the off-state sentence with its setting path or the quota reason, the source, the last observation and last account check as local time with age, and the next check as local time. Details distinguish the last changed observation from the last successful native account check. Repeated Claude callbacks cannot claim a backend check. Account changes invalidate older native generations, including A→B→A notifications received during a read. Quota snapshots are bounded, in-memory Server state and are not persisted as account history.
 
 ## States, reasons and next check
 
@@ -64,4 +64,6 @@ A success resets the ladder. Changing any `quota.*` setting also resets it and r
 - Accepted refreshes are at least 30 seconds apart. A refresh inside the cooldown is refused with `Response::QuotaCooldown { remaining_ms }`.
 - A refresh skips a failure backoff but never a provider's Retry-After.
 - Claude is not refreshable, and a refresh while `quota.enabled` is off is refused with the off-state sentence.
+
+In the Dashboard, the palette's **Refresh quota** sends this request for both native providers and shows a cooldown refusal's remaining seconds in the footer. **Enable Codex and Grok usage**, listed while collection is off, sends `SetSetting { path: "quota.enabled", value: "true" }`; the Server validates, writes and republishes, and the Dashboard applies nothing until it does.
 

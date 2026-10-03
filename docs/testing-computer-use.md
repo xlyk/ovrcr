@@ -24,6 +24,30 @@ await app.getAXStateAndScreenshot();
 
 Use fresh accessibility indices or coordinates from the current screenshot. Sidebar row accessibility bounds can span the terminal: click within the visible sidebar or use `j`/`k`. Request the needed execution permission if local socket, PTY, or GUI access is sandbox-blocked; record a blocked check if access remains unavailable.
 
+### Driving the window
+
+Use Codex single-shot with the model configured in `~/.codex/config.toml`;
+do not pass `-m`:
+
+```sh
+env -u OVRCR_AGENT_SOCKET -u OVRCR_AGENT_TOKEN codex exec -s workspace-write --skip-git-repo-check - < prompt.md
+```
+
+On 2026-10-02 (codex-cli 0.155.1, `codex login status`: "Logged in using
+ChatGPT", `CODEX_HOME` unset, model `gpt-6.1-sol`) every call failed with
+"The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT
+account", with or without the `OVRCR_*` variables
+(`research/quota-display-2026-10-02/codex-cua-attempt.txt`). No working Codex
+invocation is recorded yet. Until one is, record that failure and fall back to
+the scripted System Events harness in `research/quota-display-2026-10-02`:
+`drive.py` sends real key events to the helper process by PID and checks focus in
+the same AppleScript call as each key, so a key never lands in another
+fixture's window; `winid.swift` finds the window for `screencapture -l`, and
+the helper's accessibility static text is saved beside each screenshot. The
+helper's window cannot be shorter than 22 rows. To check layouts shorter than
+that, run a second isolated `ovrcr` Dashboard in a fixture shell after
+`stty rows N` (`nested-ladder.sh`).
+
 ## 2. Prove real input and rendering
 
 Select `consigint / gui-consigint-auth-handoff / local`, then press Return to enter terminal mode. Paste this command through the GUI and press Return:
