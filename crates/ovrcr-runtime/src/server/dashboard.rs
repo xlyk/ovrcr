@@ -1,6 +1,7 @@
 //! The server's one active dashboard: who holds it, what may be sent to it,
 //! and the view it has acknowledged. Every owner check and every teardown is here.
 use super::*;
+use std::os::fd::AsRawFd;
 
 pub(super) struct DashboardSlot {
     pub(super) sink: Arc<DashboardSink>,
@@ -32,8 +33,25 @@ impl ActiveDashboard {
     pub(super) fn claim(&self, sink: Arc<DashboardSink>, stream: UnixStream) -> Option<Arc<()>> {
         let identity = Arc::new(());
         let mut slot = self.slot.lock().unwrap();
-        if slot.is_some() {
-            return None;
+        if let Some(current) = slot.as_ref() {
+            // A relaunched GUI connects before the previous handler observes
+            // EOF. The peer is already gone; keeping the slot refuses the
+            // only dashboard that still exists.
+            if !peer_has_closed(&current.stream) {
+                return None;
+            }
+            let stale = Arc::clone(&current.identity);
+            if let Some(current) = slot.take() {
+                current.sink.close();
+            }
+            *self.view.lock().unwrap() = None;
+            let mut geometry = self.geometry.lock().unwrap();
+            if geometry
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(&current.owner, &stale))
+            {
+                *geometry = None;
+            }
         }
         *slot = Some(DashboardSlot {
             sink,
@@ -401,6 +419,22 @@ impl ActiveDashboard {
     }
 }
 
+/// `true` only when a read would already return EOF. Unread bytes still belong
+/// to the handler that is about to drain them.
+fn peer_has_closed(stream: &UnixStream) -> bool {
+    let mut buf = [0u8; 1];
+    // SAFETY: `stream` is a live Unix socket and the peek does not consume bytes.
+    let n = unsafe {
+        libc::recv(
+            stream.as_raw_fd(),
+            buf.as_mut_ptr().cast(),
+            1,
+            libc::MSG_PEEK | libc::MSG_DONTWAIT,
+        )
+    };
+    n == 0
+}
+
 /// The dashboard writer thread: pops deliveries, writes frames, and disconnects
 /// on the first failed or terminal write.
 pub(super) fn spawn_writer(
@@ -492,6 +526,49 @@ mod tests {
         dashboard.release(&owner);
         assert!(!dashboard.is_claimed());
         assert!(!dashboard.owns(&owner));
+    }
+
+    #[test]
+    fn claim_replaces_a_dashboard_whose_peer_has_closed() {
+        let dashboard = ActiveDashboard::default();
+        let (client, server) = pair();
+        let old = dashboard
+            .claim(DashboardSink::new(), server)
+            .expect("first claim");
+        dashboard.install_view_for_test(Some(DashboardView {
+            revision: 4,
+            panes: vec![PaneTarget {
+                session: SessionId(1),
+                run: SessionRunId(1),
+                size: TerminalSize { rows: 2, cols: 3 },
+            }],
+            focused: Some(SessionId(1)),
+        }));
+        dashboard.set_geometry(&old, TerminalSize { rows: 2, cols: 3 });
+        // The GUI process has exited. The handler thread has not dropped
+        // ownership yet, so the slot is still occupied and the peer is gone.
+        client.shutdown(std::net::Shutdown::Both).unwrap();
+        let (mut replacement_client, replacement) = pair();
+        let new = dashboard
+            .claim(DashboardSink::new(), replacement)
+            .expect("a closed dashboard must not keep the slot");
+        assert!(!Arc::ptr_eq(&old, &new));
+        assert!(dashboard.owns(&new));
+        assert!(!dashboard.owns(&old));
+        assert!(
+            dashboard.view().is_none(),
+            "the dead dashboard's view must not survive"
+        );
+        assert!(dashboard.geometry().is_none());
+        use std::io::Write;
+        replacement_client.write_all(&[1]).unwrap();
+        let (_queued, queued_server) = pair();
+        assert!(
+            dashboard
+                .claim(DashboardSink::new(), queued_server)
+                .is_none(),
+            "unread bytes still belong to the connected dashboard"
+        );
     }
 
     #[test]
