@@ -213,6 +213,7 @@ impl RetainedSession {
             unread: None,
             context_usage: None,
             title: self.effective_title(),
+            manual_title: self.metadata.pinned_title.clone(),
         }
     }
 }

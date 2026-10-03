@@ -58,6 +58,7 @@ fn task_hierarchy() -> HierarchySnapshot {
                     archived: false,
                     cwd: "/work".into(),
                     title: None,
+                    manual_title: None,
                     id: SessionId(1),
                     run: ovrcr_protocol::SessionRunId(1),
                     kind: ovrcr_protocol::SessionKind::Terminal,

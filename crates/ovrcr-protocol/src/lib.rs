@@ -1,7 +1,11 @@
 pub mod agent;
 pub mod auto_trust;
+pub mod bridge;
 pub use agent::*;
 pub use auto_trust::{apply_default_auto_trust, default_auto_trust_flag};
+pub use bridge::{
+    BRIDGE_SCHEMA_VERSION, BridgeOperation, BridgeReply, BridgeRequest, BridgeStatus,
+};
 pub mod client;
 mod codec;
 pub mod context;

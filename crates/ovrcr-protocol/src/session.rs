@@ -83,6 +83,10 @@ pub struct SessionSummary {
     pub context_usage: Option<ContextUsageSnapshot>,
     /// Effective display title; the stable `name` remains the command identity.
     pub title: Option<String>,
+    /// Explicit user title, including a named terminal's initial title. Generated
+    /// conversation subjects and application titles are never manual titles.
+    #[serde(default)]
+    pub manual_title: Option<String>,
 }
 
 impl SessionSummary {
