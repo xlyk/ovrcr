@@ -667,7 +667,7 @@ fn uppercase_x_confirms_session_close_without_closing_pane() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char('X'));
     let text = palette_text(&dashboard);
-    assert!(text.contains("Confirm action"));
+    assert!(text.contains("Close terminal?"));
     assert!(text.contains("review (#1)"));
     assert_eq!(dashboard.pane_rects(Rect::new(0, 0, 88, 38)).len(), 1);
     let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
@@ -773,6 +773,7 @@ fn palette_switches_by_search_and_confirms_exact_close_target() {
     dashboard.ctrl('g');
     palette_search(&mut dashboard, "close terminal");
     assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert!(palette_text(&dashboard).contains("Close terminal?"));
     assert!(palette_text(&dashboard).contains("spacelift-agent / progress / local"));
     dashboard.key(KeyCode::Esc);
     palette_search(&mut dashboard, "close terminal");
@@ -1779,7 +1780,12 @@ fn nested_whichkey_removal_confirms_the_selected_target_and_can_cancel() {
                 assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
             }
             let text = palette_text(&dashboard);
-            assert!(text.contains("Confirm action"), "{group}: {text}");
+            let title = if group == 't' {
+                "Close terminal?"
+            } else {
+                "Confirm action"
+            };
+            assert!(text.contains(title), "{group}: {text}");
             assert!(text.contains("consigint"));
             if group == 'w' {
                 assert!(text.contains("Archive stopped sessions"), "{text}");
@@ -1792,7 +1798,9 @@ fn nested_whichkey_removal_confirms_the_selected_target_and_can_cancel() {
                 assert_eq!(message.request, expected);
             } else {
                 assert_eq!(dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
-                assert!(!palette_text(&dashboard).contains("Confirm action"));
+                let dismissed = palette_text(&dashboard);
+                assert!(!dismissed.contains("Confirm action"));
+                assert!(!dismissed.contains("Close terminal?"));
                 assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
             }
         }
@@ -2900,7 +2908,7 @@ fn close_confirms_live_work_but_archives_exited_work_immediately() {
     let mut dashboard = dashboard_fixture();
     let action = dashboard.key(KeyCode::Char('X'));
     assert!(!matches!(action, ovrcr::tui::DashboardAction::Request(_)));
-    assert!(palette_text(&dashboard).contains("archive its record"));
+    assert!(palette_text(&dashboard).contains("archives its record"));
     let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
         panic!("confirm must close");
     };

@@ -2048,13 +2048,16 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     dashboard.send(b" tx")?;
     dashboard.wait_for_screen(
         |screen| {
-            screen.contains("Confirm action")
+            screen.contains("Close terminal?")
                 && screen.contains(&format!("waiting (#{})", waiting_id.0))
         },
         wait_deadline(),
     )?;
     dashboard.send(b"\x1b")?;
-    dashboard.wait_for_screen(|screen| !screen.contains("Confirm action"), wait_deadline())?;
+    dashboard.wait_for_screen(
+        |screen| !screen.contains("Close terminal?"),
+        wait_deadline(),
+    )?;
     assert_eq!(
         fixture.read_terminal(waiting_id)?,
         waiting_screen,
