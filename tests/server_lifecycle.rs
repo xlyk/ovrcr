@@ -6,10 +6,11 @@ use ovrcr::config::{Registry, load_registry, save_registry_atomic};
 use ovrcr::context::{ContextSource, ContextUsageReport};
 use ovrcr::freshness;
 use ovrcr::protocol::{
-    AgentReport, AgentUpdate, BranchRequest, ClientMessage, CreateSessionRequest, DashboardView,
-    ErrorCode, HISTORY_ROWS, HistoryOpened, HistoryRow, HistorySnapshotId, MAX_FRAME_BYTES,
-    PAGE_BYTES, PAGE_COLS, PAGE_ROWS, PaneTarget, Request, Response, ServerEvent, ServerMessage,
-    SettingSource, SettingsReport, client, connect_server, read_frame, write_frame,
+    AgentReport, AgentUpdate, BRIDGE_SCHEMA_VERSION, BranchRequest, ClientMessage,
+    CreateSessionRequest, DashboardView, ErrorCode, HISTORY_ROWS, HistoryOpened, HistoryRow,
+    HistorySnapshotId, MAX_FRAME_BYTES, PAGE_BYTES, PAGE_COLS, PAGE_ROWS, PROTOCOL_VERSION,
+    PaneTarget, Request, Response, ServerEvent, ServerMessage, SettingSource, SettingsReport,
+    client, connect_server, read_frame, write_frame,
 };
 use ovrcr::server::{ServerPaths, connect_if_running, connect_or_start, run_server};
 use ovrcr::session::{SessionId, SessionPhase};
@@ -11086,12 +11087,16 @@ case "$request" in
     fi ;;
   *) exit 17 ;;
 esac
-wire=33
-if [ "$status" = wire_mismatch ]; then wire=32; status=available; fi
-printf '{"schema":1,"server_wire":%s,"status":"%s"}\n' "$wire" "$status"
+wire=@SERVER_WIRE@
+if [ "$status" = wire_mismatch ]; then wire=@STALE_SERVER_WIRE@; status=available; fi
+printf '{"schema":@BRIDGE_SCHEMA@,"server_wire":%s,"status":"%s"}\n' "$wire" "$status"
 "#
+                .replace("@SERVER_WIRE@", &PROTOCOL_VERSION.to_string())
+                .replace("@STALE_SERVER_WIRE@", &(PROTOCOL_VERSION - 1).to_string())
+                .replace("@BRIDGE_SCHEMA@", &BRIDGE_SCHEMA_VERSION.to_string())
             } else {
                 "#!/bin/sh\nif [ -f \"$OVRCR_TEST_DESKTOP_RECORD.mode\" ]; then\n  IFS= read -r mode < \"$OVRCR_TEST_DESKTOP_RECORD.mode\"\n  case \"$mode\" in\n    fail) printf 'PRIVATE_HOST_ERROR' >&2; exit 17 ;;\n    block) printf '%s\\n' \"$$\" > \"$OVRCR_TEST_DESKTOP_RECORD.pid\"; exec /bin/sleep 30 ;;\n  esac\nfi\n{ printf 'BEGIN\\n'; printf '%s\\n' \"$@\"; printf 'END\\n'; } >> \"$OVRCR_TEST_DESKTOP_RECORD\"\n"
+                    .to_owned()
             };
             std::fs::write(&executable, script).unwrap();
             std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -11258,8 +11263,8 @@ printf '{"schema":1,"server_wire":%s,"status":"%s"}\n' "$wire" "$status"
             if cfg!(target_os = "macos") {
                 let request: serde_json::Value =
                     serde_json::from_str(call.strip_prefix("BEGIN\n").unwrap().trim()).unwrap();
-                assert_eq!(request["schema"], 1);
-                assert_eq!(request["server_wire"], 33);
+                assert_eq!(request["schema"], BRIDGE_SCHEMA_VERSION);
+                assert_eq!(request["server_wire"], PROTOCOL_VERSION);
                 assert_eq!(request["op"]["type"], "deliver");
                 assert_eq!(request["op"]["subtitle"], name);
                 assert_eq!(request["op"]["body"], body);
@@ -11331,8 +11336,8 @@ printf '{"schema":1,"server_wire":%s,"status":"%s"}\n' "$wire" "$status"
             .map(|line| {
                 let request: serde_json::Value = serde_json::from_str(line).unwrap();
                 serde_json::from_value::<ovrcr::protocol::BridgeRequest>(request.clone()).unwrap();
-                assert_eq!(request["schema"], 1);
-                assert_eq!(request["server_wire"], 33);
+                assert_eq!(request["schema"], BRIDGE_SCHEMA_VERSION);
+                assert_eq!(request["server_wire"], PROTOCOL_VERSION);
                 assert_eq!(request.as_object().unwrap().len(), 3, "{request}");
                 let op = request["op"].as_object().unwrap();
                 assert_eq!(
@@ -17192,7 +17197,30 @@ fn dashboard_hello_carries_the_servers_settings_and_toggles_save_through_the_req
     fixture.start_binary_env(&[("OVRCR_DASHBOARD_CONFIG", document.as_os_str())]);
 
     let first = hello_settings(&fixture);
-    let expected = ovrcr::settings::load_document(&fixture.config, &document);
+    let mut expected = ovrcr::settings::load_document(&fixture.config, &document);
+    // The loader above runs in this test process; the Server expands defaults
+    // under Live's private child HOME, which is a different process boundary.
+    let child_home = fixture.home.as_deref().unwrap_or(fixture.root.path());
+    expected.settings.picker_roots = [
+        child_home.join("Code"),
+        child_home.join("src"),
+        child_home.to_path_buf(),
+    ]
+    .into_iter()
+    .filter(|path| path.exists())
+    .collect();
+    let picker_roots = Some(
+        toml::Value::try_from(&expected.settings.picker_roots)
+            .unwrap()
+            .to_string(),
+    );
+    let row = expected
+        .rows
+        .iter_mut()
+        .find(|row| row.key == "picker_roots")
+        .unwrap();
+    row.value = picker_roots.clone();
+    row.default = picker_roots;
     assert_eq!(first.path, document);
     assert_eq!(first.settings, expected.settings);
     assert_eq!(first.rows, expected.rows);
