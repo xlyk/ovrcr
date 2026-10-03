@@ -70,8 +70,6 @@ impl TitleWorker {
             }
             if last.elapsed() >= POLL_INTERVAL {
                 last = Instant::now();
-                // This poll is the Server's settings watcher tick (decision 3).
-                state.poll_settings();
                 if state.dashboard.is_claimed() {
                     self.tick(&state);
                 }
