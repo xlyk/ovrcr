@@ -1014,13 +1014,13 @@ fn narrow_session_row_keeps_its_model_on_a_second_line() {
     // The mark itself is only on the first line; its column on the label line selects.
     dashboard.install_focus(SessionId(5));
     dashboard.mouse_action(click(27, 5), area);
-    assert!(!palette_text(&dashboard).contains("Confirm action"));
+    assert!(!palette_text(&dashboard).contains("Close terminal?"));
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
     assert!(matches!(
         dashboard.mouse_action(click(27, 4), area),
         DashboardAction::Redraw
     ));
-    assert!(palette_text(&dashboard).contains("Confirm action"));
+    assert!(palette_text(&dashboard).contains("Close terminal?"));
 }
 
 #[test]
@@ -2187,7 +2187,7 @@ fn clicking_the_close_mark_confirms_archive_of_the_highlighted_session() {
     assert_eq!(action, DashboardAction::Redraw);
     let text = palette_text(&dashboard);
     assert!(
-        text.contains("Confirm action") && text.contains("review (#1)"),
+        text.contains("Close terminal?") && text.contains("review (#1)"),
         "close mark must open the existing confirm, got {text}"
     );
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
@@ -2219,7 +2219,7 @@ fn dismissing_the_close_mark_confirm_archives_nothing() {
         area,
     );
     assert_eq!(dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
-    assert!(!palette_text(&dashboard).contains("Confirm action"));
+    assert!(!palette_text(&dashboard).contains("Close terminal?"));
     assert!(sidebar_contains_close_mark(&dashboard));
 }
 
@@ -2550,7 +2550,7 @@ fn clicking_the_close_mark_confirms_a_paused_session() {
     );
     let text = palette_text(&dashboard);
     assert!(
-        text.contains("Confirm action") && text.contains("review (#1)"),
+        text.contains("Close terminal?") && text.contains("review (#1)"),
         "{text}"
     );
 }
@@ -2605,7 +2605,7 @@ fn clicking_beside_the_close_mark_still_opens_the_session() {
         "title click must open the session, got {action:?}"
     );
     assert!(
-        !palette_text(&dashboard).contains("Confirm action"),
+        !palette_text(&dashboard).contains("Close terminal?"),
         "title click must not archive"
     );
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
@@ -2628,7 +2628,7 @@ fn close_mark_is_absent_until_hover_and_inert_without_mouse_capture() {
         ),
         DashboardAction::None
     );
-    assert!(!palette_text(&dashboard).contains("Confirm action"));
+    assert!(!palette_text(&dashboard).contains("Close terminal?"));
 }
 
 #[test]

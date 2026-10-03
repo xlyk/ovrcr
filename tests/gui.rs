@@ -112,12 +112,12 @@ fn palette_creates_switches_and_closes_a_real_terminal() -> Result<()> {
     terminal.send(b"\x07:switch terminal palette-check\r")?;
     wait_screen(&terminal, "PALETTE_LIVE")?;
     terminal.send(b":close terminal\r")?;
-    wait_screen(&terminal, "Confirm action")?;
+    wait_screen(&terminal, "Close terminal?")?;
     terminal.send(b"\r")?;
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let text = terminal.screen().contents();
-        if !text.contains("┌ Confirm action") && !text.contains("palette-check") {
+        if !text.contains("Close terminal?") && !text.contains("palette-check") {
             break;
         }
         assert!(Instant::now() < deadline, "close never completed: {text}");
