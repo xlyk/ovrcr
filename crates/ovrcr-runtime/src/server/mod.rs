@@ -327,6 +327,18 @@ impl ServerState {
             next.state = state;
             next.reason = Some(reason);
         }
+        // The account read is the credentials-file usage call. A status-line
+        // sample with windows stays as the in-session extra when the account
+        // read has not produced windows. Waiting for a session does not hide
+        // an account reading, and does not invent a bar.
+        if let Some(account) = self.quota_refresh.lock().unwrap().claude_account.clone() {
+            let session_windows = next.state == QuotaState::Current && !next.windows.is_empty();
+            let account_windows =
+                account.state == QuotaState::Current && !account.windows.is_empty();
+            if account_windows || !session_windows && next.state == QuotaState::Checking {
+                next = account;
+            }
+        }
         if next != old {
             let mut quotas = self.quotas.lock().unwrap();
             quotas.claude = next;
