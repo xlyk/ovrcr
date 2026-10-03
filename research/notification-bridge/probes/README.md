@@ -2,7 +2,10 @@
 
 This is a prepared disposable diagnostic, not a production Bridge. It separates
 permission from banner submission in the earlier retained `NotificationProbe.swift`.
-It has not been installed, signed, launched, or used to request permission.
+The [2026-10-03 result](../verification-20261003.md) records one independently
+reviewed, authorized, signed first-use run. Its permission request returned granted
+after CUA accepted only its exact prompt. That approval is consumed; this source
+does not authorize another installation, request, or retry.
 
 `--status-only NEW_ABSOLUTE_EVENT_FILE` reads settings and exits with a ten-second
 deadline. `--request-permission-only NEW_ABSOLUTE_EVENT_FILE` requests alert/sound
@@ -18,11 +21,11 @@ established fix for the prior failure. The intended bundle retains `LSUIElement=
 and accessory activation. Do not add a diagnostic window or activation behavior
 without identifying that experiment separately.
 
-## Exact approval scope for the next run
+## Scope of the authorized run
 
 Issue #221 requires explicit approval for executable native probes. The earlier
-session's silent-notification approvals do not authorize this run. After fresh
-owner approval, use one new random bundle ID/name and one unique task installation
+session's silent-notification approvals did not authorize this run. The approved
+scope was one new random bundle ID/name and one unique task installation
 under the owner's Applications directory; compile and sign with the existing
 Developer-ID identity without any credential, Keychain, certificate or permission
 configuration change. Stop if signing needs interaction. No secure timestamp,
@@ -57,3 +60,6 @@ swiftc -swift-version 5 -typecheck -module-cache-path /tmp/ovrcr-permission-type
 
 Only the real fresh-identity run and attributed owner/CUA evidence can resolve the
 first-use gate. A compiler pass and synthetically generated logs cannot do so.
+The actual run completed in 48.9 seconds, so expiry of the 120-second deadline was
+not behaviorally tested. The source timeout and external owned-process guard were
+both present; an expired or incomplete run would remain unresolved.
