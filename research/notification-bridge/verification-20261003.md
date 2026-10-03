@@ -5,10 +5,12 @@
 approved original bundled custom tones plus system default, retaining the sound
 selector and removing dependence on Apple Glass. This direction is prepared
 locally; Kyle also approved documented System Settings opening plus manual
-Notifications → Bridge instructions. The revised enabling assessment supports
-local GO once exact asset/contract review is complete, without claiming new-tone
-audibility or downstream production acceptance. The live issues are still OPEN;
-no tracker edit, publication, merge, deployment or new sound/banner test occurred.
+Notifications → Bridge instructions. Exact asset/contract review passed at
+`e6d2602362a237a054c30676becdb8a4964d8b4e`: **revised local #221 GO supports
+authorized #222 source implementation**. This claims no new-tone audibility or
+downstream production acceptance. Live issues are still OPEN; no tracker edit,
+publication, merge, deployment or new sound/banner test occurred in this
+verification continuation.
 
 ## Current tracker and scope
 
@@ -185,10 +187,21 @@ because these bytes changed would add an enabling gate absent from the criterion
 | CLI/Server–Bridge compatible contract | Exact-version admission experiment and current wire-32 Rust baselines; future feature wire changes remain normal protocol work |
 | Original resource provenance and native sound requirements | Original generator/manifest/MIT notice, PCM WAV/duration validation, owning Apple sources and reused same-API named/default native evidence; new assets unheard |
 
-Exact committed artifact/contract review is the final local check before starting
-authorized #222 implementation. It must confirm all asset hashes, reproducibility,
-format/provenance, the approved contract, retained evidence boundaries and no new
-native operation. This local enabling assessment is not production or release GO.
+Exact committed artifact/contract review passed at
+`e6d2602362a237a054c30676becdb8a4964d8b4e` against `4b6a5a5`, with no blocking
+findings. The independent reviewer regenerated twice in fresh directories, both
+exit zero, and verified byte-identical WAVs **and manifests**, all PCM/header/
+numeric/hash facts, MIT notice, decoder/source receipts, four narrow issue-body
+drafts, 27 relative links and unchanged historical/probe/production inputs. The
+[independent receipt](evidence/20261003-original-tones/independent-review.json)
+preserves that exact revision and measured assets. The reviewer ran no playback,
+notification, signing, installation or permission operation.
+
+This completes revised local #221 enabling verification and permits the authorized
+#222 source implementation. It is not production or release GO. Native #222
+acceptance, custom sound/selector acceptance and later child dependencies remain
+open with their owning tickets; the live #221 checklist has not been edited or
+closed by this local finding.
 
 The sound-design approval does not authorize an audible test, a new permission
 request, an unrelated prompt acceptance or any notification-policy change. A later
@@ -210,10 +223,12 @@ stay with #224/#226, rather than becoming new prerequisites for #221.
 
 ## Ready implementation ownership after the gate
 
-No downstream code was started during the verification preparation. After exact
-gate review, use new worktrees pinned to its integration base and give each file
-one owner. The existing config/default planners and discarded Pi sessions stay
-canceled.
+No downstream code was started during the verification preparation. After the
+passing exact gate review, four implementation workers were assigned fresh
+worktrees pinned to `e6d2602`, with native bundle/tooling, TUI delivery/status,
+shared manual-title provenance/protocol and application tests under separate
+ownership. The coordinator integrates on `work/bridge-notifications-20261003`.
+Existing config/default planners and discarded Pi sessions stay canceled.
 
 | Stage | Independent worker ownership | Integration dependencies |
 | --- | --- | --- |
