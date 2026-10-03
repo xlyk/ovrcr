@@ -266,7 +266,9 @@ fn service_document_is_the_servers_and_never_the_clients() {
     .unwrap_or_else(|error| panic!("service manager unavailable: {error:#}"));
     assert!(
         live::wait_for_socket(&live.socket, Duration::from_secs(5)),
-        "service did not start the Server: {}",
+        "service did not start the Server\nmanager:\n{}\ndefinition:\n{}\nserver:\n{}",
+        std::fs::read_to_string(&manager_log).unwrap_or_default(),
+        std::fs::read_to_string(&definition).unwrap_or_default(),
         std::fs::read_to_string(&server_log).unwrap_or_default()
     );
     let definition_text = std::fs::read_to_string(&definition).unwrap();
@@ -900,11 +902,67 @@ fn write_service_manager(
     log: &Path,
     err: &Path,
 ) {
+    let launcher = path.with_file_name("service-launcher.py");
+    // The shell stand-in only accepts launchctl/systemctl verbs. Python
+    // parses the definition and starts the Server in its own session:
+    // macOS bash 3.2 has no `mapfile`, and a child left in this script's
+    // process group dies with the script before it can bind.
+    std::fs::write(
+        &launcher,
+        r#"import re, subprocess, sys, time
+
+definition, executable, pidfile, err = sys.argv[1:5]
+text = open(definition, encoding="utf-8").read()
+env = {}
+if "<plist" in text:
+    def unescape(value):
+        return (
+            value.replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", '"')
+            .replace("&apos;", "'")
+            .replace("&amp;", "&")
+        )
+
+    for key, value in re.findall(r"<key>([^<]+)</key>\s*<string>([^<]*)</string>", text):
+        if key == "Label" or key.startswith("Standard"):
+            continue
+        env[key] = unescape(value)
+else:
+    for line in text.splitlines():
+        if line.startswith('Environment="') and line.endswith('"'):
+            key, value = line[len('Environment="') : -1].split("=", 1)
+            env[key] = value
+log = open(err, "ab", buffering=0)
+if not env:
+    log.write(b"service definition has no environment\n")
+    sys.exit(1)
+try:
+    proc = subprocess.Popen(
+        [executable, "server"],
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+except OSError as error:
+    log.write(f"failed to start server: {error}\n".encode())
+    sys.exit(1)
+open(pidfile, "w", encoding="utf-8").write(str(proc.pid))
+time.sleep(0.1)
+code = proc.poll()
+if code is not None:
+    log.write(f"server exited {code}\n".encode())
+"#,
+    )
+    .unwrap();
     let script = format!(
         r#"#!/bin/bash
 set -u
 printf '%s\n' "$*" >> '{log}'
 pidfile='{pidfile}'
+launcher='{launcher}'
 definition='{definition}'
 executable='{executable}'
 err='{err}'
@@ -918,35 +976,9 @@ stop_server() {{
   fi
   rm -f "$pidfile"
 }}
-parse_env() {{
-  if grep -q '^Environment="' "$definition"; then
-    sed -n 's/^Environment="\(.*\)"$/\1/p' "$definition"
-  else
-    awk '
-      /<key>/ {{
-        key = $0
-        sub(/.*<key>/, "", key)
-        sub(/<\/key>.*/, "", key)
-        if (getline <= 0) exit
-        if ($0 ~ /<string>/) {{
-          val = $0
-          sub(/.*<string>/, "", val)
-          sub(/<\/string>.*/, "", val)
-          if (key != "Label" && key !~ /^Standard/) print key "=" val
-        }}
-      }}
-    ' "$definition"
-  fi
-}}
 start_server() {{
   if alive; then return 0; fi
-  mapfile -t env_pairs < <(parse_env)
-  if [ ${{#env_pairs[@]}} -eq 0 ]; then
-    echo "service definition has no environment" >> "$err"
-    exit 1
-  fi
-  nohup env -i "${{env_pairs[@]}}" "$executable" server >>"$err" 2>&1 < /dev/null &
-  echo $! > "$pidfile"
+  python3 "$launcher" "$definition" "$executable" "$pidfile" "$err" || exit 1
 }}
 if [ "$1" = print ]; then
   alive || exit 1
@@ -968,6 +1000,7 @@ exit 0
 "#,
         log = log.display(),
         pidfile = pidfile.display(),
+        launcher = launcher.display(),
         definition = definition.display(),
         executable = executable.display(),
         err = err.display(),
