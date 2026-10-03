@@ -16,9 +16,9 @@ use crate::protocol::{
 use crate::session::SessionId;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Frame;
-use ratatui::layout::{Position, Rect};
-use ratatui::style::Style;
-use ratatui::text::Line;
+use ratatui::layout::{Alignment, Position, Rect};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -195,6 +195,286 @@ fn button_text(page: &Page, width: u16) -> &'static str {
         Page::Search { .. } => "[Open] [Cancel]",
         Page::Confirm { .. } => "[Confirm] [Cancel]",
         Page::Form { .. } => "[Submit] [Cancel]",
+    }
+}
+
+fn close_terminal_id(page: &Page) -> Option<SessionId> {
+    match page {
+        Page::Confirm {
+            request: Some(Request::CloseTerminal { session, .. }),
+            ..
+        } => Some(*session),
+        _ => None,
+    }
+}
+
+/// Direction D accent-rail card, terminal-close confirms only.
+/// `d-confirmation-72.svg` uses a 9px cell: the peach rail is the rect at
+/// x=9, width=18 (`#fab387`, two cells) and body glyphs start at x=36
+/// (column 4). directions.md: the rail scales with measured card height.
+const CLOSE_CONFIRM_RAIL_WIDTH: u16 = 2;
+const CLOSE_CONFIRM_TEXT_COLUMN: u16 = 4;
+const CLOSE_CONFIRM_ACTION_GAP: u16 = 2;
+const CLOSE_CANCEL_LABEL: &str = "[Esc Cancel]";
+const CLOSE_CONFIRM_LABEL: &str = "[Enter Close]";
+const CLOSE_CONSEQUENCE: &str = "Stops its currently owned processes and archives its record.";
+const CLOSE_TITLE: &str = "Close terminal?";
+
+fn close_confirm_action_line() -> String {
+    let gap = " ".repeat(usize::from(CLOSE_CONFIRM_ACTION_GAP));
+    format!("{CLOSE_CANCEL_LABEL}{gap}{CLOSE_CONFIRM_LABEL}")
+}
+
+struct CloseConfirmText {
+    identity: String,
+    place: String,
+    project: String,
+    workspace: String,
+    error: Option<String>,
+    pending: bool,
+}
+
+#[derive(Clone, Copy)]
+enum CloseConfirmRole {
+    Blank,
+    Identity,
+    Place,
+    Meta,
+    Consequence,
+}
+
+struct CloseConfirmLayout {
+    dialog: Rect,
+    rail: Rect,
+    text: Rect,
+    cancel: Rect,
+    confirm: Rect,
+    body_rows: u16,
+}
+
+fn close_confirm_dialog_width(screen_width: u16) -> u16 {
+    let labels = CLOSE_CANCEL_LABEL.len() as u16
+        + CLOSE_CONFIRM_ACTION_GAP
+        + CLOSE_CONFIRM_LABEL.len() as u16;
+    let min_width = CLOSE_CONFIRM_TEXT_COLUMN.saturating_mul(2) + labels;
+    if screen_width <= min_width {
+        screen_width
+    } else {
+        // Same horizontal cap as the other palette cards.
+        screen_width.min(82)
+    }
+}
+
+fn close_confirm_content_width(dialog_width: u16) -> u16 {
+    let edge = CLOSE_CONFIRM_TEXT_COLUMN.min(dialog_width / 2);
+    dialog_width.saturating_sub(edge.saturating_mul(2))
+}
+
+fn close_confirm_layout(screen: Rect, body_rows: u16) -> CloseConfirmLayout {
+    let width = close_confirm_dialog_width(screen.width).min(screen.width);
+    let mut height = body_rows.saturating_add(3); // action row + two border rows
+    if screen.height > 0 {
+        height = height.min(screen.height);
+    }
+    if screen.height >= 3 {
+        height = height.max(3);
+    }
+    let dialog = Rect::new(
+        screen.x + screen.width.saturating_sub(width) / 2,
+        screen.y + screen.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    let rail = Rect::new(
+        dialog.x.saturating_add(1),
+        dialog.y.saturating_add(1),
+        CLOSE_CONFIRM_RAIL_WIDTH.min(dialog.width.saturating_sub(2)),
+        dialog.height.saturating_sub(2),
+    );
+    let edge = CLOSE_CONFIRM_TEXT_COLUMN.min(dialog.width / 2);
+    let text = Rect::new(
+        dialog.x.saturating_add(edge),
+        dialog.y.saturating_add(1),
+        close_confirm_content_width(dialog.width),
+        dialog.height.saturating_sub(3),
+    );
+    let action_y = dialog.y + dialog.height.saturating_sub(2);
+    let action_h = u16::from(dialog.height >= 2);
+    let confirm_w = CLOSE_CONFIRM_LABEL.len() as u16;
+    let cancel_w = CLOSE_CANCEL_LABEL.len() as u16;
+    let content_right = text.x.saturating_add(text.width);
+    let confirm_x = content_right.saturating_sub(confirm_w);
+    let cancel_x = confirm_x.saturating_sub(CLOSE_CONFIRM_ACTION_GAP + cancel_w);
+    CloseConfirmLayout {
+        dialog,
+        rail,
+        text,
+        cancel: Rect::new(cancel_x, action_y, cancel_w, action_h),
+        confirm: Rect::new(confirm_x, action_y, confirm_w, action_h),
+        body_rows,
+    }
+}
+
+fn measure_close_confirm(screen: Rect, text: &CloseConfirmText) -> CloseConfirmLayout {
+    let width = close_confirm_dialog_width(screen.width).min(screen.width);
+    let rows = close_confirm_line_count(text, close_confirm_content_width(width));
+    close_confirm_layout(screen, rows)
+}
+
+fn close_confirm_segments(text: &CloseConfirmText) -> Vec<(String, CloseConfirmRole)> {
+    let mut lines = vec![
+        (String::new(), CloseConfirmRole::Blank),
+        (text.identity.clone(), CloseConfirmRole::Identity),
+        (text.place.clone(), CloseConfirmRole::Place),
+        (format!("Project: {}", text.project), CloseConfirmRole::Meta),
+        (
+            format!("Workspace: {}", text.workspace),
+            CloseConfirmRole::Meta,
+        ),
+        (String::new(), CloseConfirmRole::Blank),
+        (CLOSE_CONSEQUENCE.to_string(), CloseConfirmRole::Consequence),
+    ];
+    if let Some(error) = &text.error
+        && !error.is_empty()
+    {
+        lines.push((error.clone(), CloseConfirmRole::Consequence));
+    }
+    if text.pending {
+        lines.push(("Working…".to_string(), CloseConfirmRole::Meta));
+    }
+    lines.push((String::new(), CloseConfirmRole::Blank));
+    lines
+}
+
+fn close_confirm_lines(text: &CloseConfirmText, width: u16) -> Vec<Line<'static>> {
+    close_confirm_segments(text)
+        .into_iter()
+        .flat_map(|(line, role)| {
+            wrap_plain(&line, usize::from(width))
+                .into_iter()
+                .map(move |wrapped| Line::from(Span::styled(wrapped, close_confirm_style(role))))
+        })
+        .collect()
+}
+
+fn close_confirm_line_count(text: &CloseConfirmText, width: u16) -> u16 {
+    u16::try_from(close_confirm_lines(text, width).len()).unwrap_or(u16::MAX)
+}
+
+fn close_confirm_style(role: CloseConfirmRole) -> Style {
+    match role {
+        CloseConfirmRole::Blank | CloseConfirmRole::Place => Style::default().fg(TEXT),
+        CloseConfirmRole::Identity => Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+        CloseConfirmRole::Meta => Style::default().fg(SUBTEXT),
+        CloseConfirmRole::Consequence => Style::default().fg(PEACH),
+    }
+}
+
+fn wrap_plain(text: &str, width: usize) -> Vec<String> {
+    if text.is_empty() || width == 0 {
+        return vec![String::new()];
+    }
+    let mut rows = Vec::new();
+    let mut line = String::new();
+    let mut line_width = 0usize;
+    for word in text.split_whitespace() {
+        let mut rest = word;
+        while !rest.is_empty() {
+            let rest_width = UnicodeWidthStr::width(rest);
+            if line_width == 0 {
+                if rest_width <= width {
+                    line.push_str(rest);
+                    line_width = rest_width;
+                    break;
+                }
+                let (head, tail) = split_at_width(rest, width);
+                if head.is_empty() {
+                    let mut chars = rest.chars();
+                    let ch = chars.next().expect("rest is not empty");
+                    rows.push(ch.to_string());
+                    rest = chars.as_str();
+                } else {
+                    rows.push(head.to_string());
+                    rest = tail;
+                }
+                continue;
+            }
+            if line_width + 1 + rest_width <= width {
+                line.push(' ');
+                line.push_str(rest);
+                line_width += 1 + rest_width;
+                break;
+            }
+            rows.push(std::mem::take(&mut line));
+            line_width = 0;
+        }
+    }
+    if !line.is_empty() {
+        rows.push(line);
+    }
+    if rows.is_empty() {
+        rows.push(String::new());
+    }
+    rows
+}
+
+fn split_at_width(text: &str, width: usize) -> (&str, &str) {
+    let mut used = 0usize;
+    for (index, ch) in text.char_indices() {
+        let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if ch_width > width.saturating_sub(used) {
+            if used == 0 {
+                return ("", text);
+            }
+            return text.split_at(index);
+        }
+        used += ch_width;
+        if used == width {
+            return text.split_at(index + ch.len_utf8());
+        }
+    }
+    (text, "")
+}
+
+fn paint_rect(frame: &mut Frame<'_>, area: Rect, style: Style) {
+    let buffer = frame.buffer_mut();
+    for y in area.y..area.bottom() {
+        for x in area.x..area.right() {
+            if let Some(cell) = buffer.cell_mut((x, y)) {
+                cell.set_symbol(" ");
+                cell.set_style(style);
+            }
+        }
+    }
+}
+
+fn paint_close_confirm_title(frame: &mut Frame<'_>, dialog: Rect) {
+    let start = dialog.x.saturating_add(CLOSE_CONFIRM_TEXT_COLUMN);
+    let end = dialog.x.saturating_add(dialog.width).saturating_sub(1);
+    if start >= end || dialog.height == 0 {
+        return;
+    }
+    let room = usize::from(end.saturating_sub(start));
+    let notch = CLOSE_TITLE.len().saturating_add(2).min(room);
+    let y = dialog.y;
+    let buffer = frame.buffer_mut();
+    for offset in 0..notch {
+        if let Some(cell) = buffer.cell_mut((start + u16::try_from(offset).unwrap_or(0), y)) {
+            cell.set_symbol(" ");
+            cell.set_style(Style::default().bg(CRUST).fg(MAUVE));
+        }
+    }
+    for (offset, ch) in CLOSE_TITLE.chars().enumerate().take(room) {
+        let symbol = ch.to_string();
+        if let Some(cell) = buffer.cell_mut((start + u16::try_from(offset).unwrap_or(0), y)) {
+            cell.set_symbol(&symbol);
+            cell.set_style(
+                Style::default()
+                    .bg(CRUST)
+                    .fg(MAUVE)
+                    .add_modifier(Modifier::BOLD),
+            );
+        }
     }
 }
 
@@ -715,13 +995,9 @@ impl Dashboard {
     }
 
     pub(super) fn close_confirm_session(&self) -> Option<SessionId> {
-        match self.palette.as_ref().map(|palette| &palette.page) {
-            Some(Page::Confirm {
-                request: Some(Request::CloseTerminal { session, .. }),
-                ..
-            }) => Some(*session),
-            _ => None,
-        }
+        self.palette
+            .as_ref()
+            .and_then(|palette| close_terminal_id(&palette.page))
     }
 
     pub(super) fn open_close_terminal(&mut self) -> DashboardAction {
@@ -1322,6 +1598,13 @@ impl Dashboard {
     }
 
     pub(super) fn palette_mouse(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
+        if self
+            .palette
+            .as_ref()
+            .is_some_and(|palette| close_terminal_id(&palette.page).is_some())
+        {
+            return self.close_confirm_mouse(mouse, area);
+        }
         let (_, _, body, buttons) = palette_geometry(area);
         let point = Position::new(mouse.column, mouse.row);
         let palette = self.palette.as_ref().unwrap();
@@ -2894,10 +3177,126 @@ impl Dashboard {
         (lines, targets, scroll)
     }
 
+    fn close_confirm_text(&self, palette: &Palette) -> CloseConfirmText {
+        let Page::Confirm { request, target } = &palette.page else {
+            return CloseConfirmText {
+                identity: CLOSE_TITLE.to_string(),
+                place: String::new(),
+                project: String::new(),
+                workspace: String::new(),
+                error: palette.error.clone(),
+                pending: palette.pending.is_some(),
+            };
+        };
+        let Some(Request::CloseTerminal { session, .. }) = request else {
+            return CloseConfirmText {
+                identity: CLOSE_TITLE.to_string(),
+                place: target.clone(),
+                project: String::new(),
+                workspace: String::new(),
+                error: palette.error.clone(),
+                pending: palette.pending.is_some(),
+            };
+        };
+        let Some(found) = find_session(self, *session) else {
+            return CloseConfirmText {
+                identity: format!("Terminal #{}", session.0),
+                place: target.clone(),
+                project: "unavailable".into(),
+                workspace: "unavailable".into(),
+                error: palette.error.clone(),
+                pending: palette.pending.is_some(),
+            };
+        };
+        let workspace = find_workspace(self, &found.project, &found.workspace)
+            .map(|workspace| workspace_label(self, workspace))
+            .unwrap_or_else(|| found.workspace.clone());
+        CloseConfirmText {
+            identity: format!("Terminal #{}", found.id.0),
+            place: self.session_display_name(found),
+            project: found.project.clone(),
+            workspace,
+            error: palette.error.clone(),
+            pending: palette.pending.is_some(),
+        }
+    }
+
+    fn close_confirm_mouse(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
+        let text = self.close_confirm_text(self.palette.as_ref().expect("close confirm is open"));
+        let layout = measure_close_confirm(area, &text);
+        let point = Position::new(mouse.column, mouse.row);
+        if matches!(
+            mouse.kind,
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+        ) && layout.dialog.contains(point)
+        {
+            let max = usize::from(layout.body_rows).saturating_sub(usize::from(layout.text.height));
+            let delta = if mouse.kind == MouseEventKind::ScrollUp {
+                -1
+            } else {
+                1
+            };
+            let palette = self.palette.as_mut().expect("close confirm is open");
+            let current = palette.scroll.unwrap_or(0);
+            palette.scroll = Some(current.saturating_add_signed(delta).min(max));
+            return DashboardAction::Redraw;
+        }
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) && layout.cancel.contains(point) {
+            return self.palette_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        }
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) && layout.confirm.contains(point) {
+            return self
+                .palette_key_with_submit(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), true);
+        }
+        // Outside clicks and chrome clicks stay on the overlay. They do not
+        // reach the dashboard underneath, and they do not confirm.
+        DashboardAction::None
+    }
+
+    fn draw_close_confirm(&self, frame: &mut Frame<'_>, palette: &Palette) {
+        let text = self.close_confirm_text(palette);
+        let layout = measure_close_confirm(frame.area(), &text);
+        frame.render_widget(Clear, layout.dialog);
+        frame.render_widget(
+            Block::bordered()
+                .border_style(Style::default().fg(MAUVE))
+                .style(Style::default().bg(CRUST).fg(TEXT)),
+            layout.dialog,
+        );
+        paint_rect(frame, layout.rail, Style::default().bg(PEACH).fg(PEACH));
+        paint_close_confirm_title(frame, layout.dialog);
+        let lines = close_confirm_lines(&text, layout.text.width);
+        let max_scroll = lines.len().saturating_sub(usize::from(layout.text.height));
+        let scroll = palette.scroll.unwrap_or(0).min(max_scroll);
+        if layout.text.width > 0 && layout.text.height > 0 {
+            frame.render_widget(
+                Paragraph::new(lines).scroll((u16::try_from(scroll).unwrap_or(u16::MAX), 0)),
+                layout.text,
+            );
+        }
+        if layout.text.width > 0 && layout.cancel.height > 0 {
+            frame.render_widget(
+                Paragraph::new(close_confirm_action_line())
+                    .alignment(Alignment::Right)
+                    .style(Style::default().fg(MAUVE).add_modifier(Modifier::BOLD)),
+                Rect::new(
+                    layout.text.x,
+                    layout.cancel.y,
+                    layout.text.width,
+                    layout.cancel.height,
+                ),
+            );
+        }
+    }
+
     pub(super) fn draw_palette(&self, frame: &mut Frame<'_>) {
         let Some(palette) = &self.palette else {
             return;
         };
+        if close_terminal_id(&palette.page).is_some() {
+            self.draw_close_confirm(frame, palette);
+            return;
+        }
         let (area, inner, body, buttons) = palette_geometry(frame.area());
         frame.render_widget(Clear, area);
         let title = match &palette.page {
@@ -4863,5 +5262,280 @@ mod launch_tests {
                 expected_run: crate::protocol::SessionRunId(4),
             })
         );
+    }
+}
+
+#[cfg(test)]
+mod close_confirm_tests {
+    use super::*;
+    use crate::protocol::{
+        AgentActivity, ProjectSummary, SessionId, SessionKind, SessionPhase, SessionSummary,
+        WorkspaceSummary,
+    };
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
+    use ratatui::style::Color;
+
+    fn dashboard() -> Dashboard {
+        let mut d = Dashboard::new(crate::session::TerminalSize {
+            rows: 30,
+            cols: 100,
+        });
+        d.hierarchy.projects.push(ProjectSummary {
+            name: "demo".into(),
+            workspaces: vec![WorkspaceSummary {
+                project: "demo".into(),
+                name: "root".into(),
+                id: "root".into(),
+                root: false,
+                warning: None,
+                path: "/tmp/unused".into(),
+                sessions: vec![SessionSummary {
+                    archived: false,
+                    cwd: "/work".into(),
+                    id: SessionId(1),
+                    run: crate::protocol::SessionRunId(1),
+                    kind: SessionKind::Terminal,
+                    recovery: None,
+                    project: "demo".into(),
+                    workspace: "root".into(),
+                    name: "root-1".into(),
+                    title: None,
+                    label: "shell".into(),
+                    pid: None,
+                    started_unix_ms: Some(0),
+                    phase: SessionPhase::Running,
+                    activity: AgentActivity::Unknown,
+                    context_usage: None,
+                    agent: None,
+                    agent_epoch: 0,
+                    unread: None,
+                }],
+            }],
+        });
+        d
+    }
+
+    fn screen() -> Rect {
+        Rect::new(0, 0, 100, 30)
+    }
+
+    fn render(d: &Dashboard) -> Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal
+            .draw(|frame| super::super::render::draw_dashboard_at(frame, d, 0))
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn row_text(buffer: &Buffer, y: u16) -> String {
+        (0..buffer.area.width)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect()
+    }
+
+    fn find_label(buffer: &Buffer, y: u16, label: &str) -> u16 {
+        (0..buffer.area.width)
+            .find(|x| {
+                let mut col = *x;
+                for ch in label.chars() {
+                    if col >= buffer.area.width || buffer[(col, y)].symbol() != ch.to_string() {
+                        return false;
+                    }
+                    col += 1;
+                }
+                true
+            })
+            .unwrap_or_else(|| panic!("missing {label} on row {y}"))
+    }
+
+    fn peach_rows(buffer: &Buffer) -> Vec<u16> {
+        (0..buffer.area.height)
+            .filter(|y| {
+                (0..buffer.area.width).any(|x| buffer[(x, *y)].bg == Color::Rgb(250, 179, 135))
+            })
+            .collect()
+    }
+
+    fn click(d: &mut Dashboard, column: u16, row: u16) -> DashboardAction {
+        d.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            },
+            screen(),
+        )
+    }
+
+    #[test]
+    fn rail_height_tracks_measured_dialog_height() {
+        let screen = Rect::new(2, 1, 100, 40);
+        let short = close_confirm_layout(screen, 8);
+        let tall = close_confirm_layout(screen, 12);
+        // 8 body rows + action + top and bottom border.
+        assert_eq!(short.dialog.height, 11);
+        assert_eq!(short.rail.height, 9);
+        assert_eq!(short.rail.width, CLOSE_CONFIRM_RAIL_WIDTH);
+        assert_eq!(short.rail.x, short.dialog.x + 1);
+        assert_eq!(short.rail.y, short.dialog.y + 1);
+        // 12 body rows + action + borders.
+        assert_eq!(tall.dialog.height, 15);
+        assert_eq!(tall.rail.height, 13);
+        assert_eq!(
+            tall.rail.height - short.rail.height,
+            tall.dialog.height - short.dialog.height
+        );
+        let clamped = close_confirm_layout(Rect::new(0, 0, 100, 10), 30);
+        assert_eq!(clamped.dialog.height, 10);
+        assert_eq!(clamped.rail.height, 8);
+    }
+
+    #[test]
+    fn actions_are_right_aligned_cancel_then_close() {
+        let layout = close_confirm_layout(Rect::new(0, 0, 100, 30), 8);
+        assert_eq!(layout.cancel.width, CLOSE_CANCEL_LABEL.len() as u16);
+        assert_eq!(layout.confirm.width, CLOSE_CONFIRM_LABEL.len() as u16);
+        assert_eq!(layout.cancel.y, layout.confirm.y);
+        assert_eq!(
+            layout.cancel.x + layout.cancel.width + CLOSE_CONFIRM_ACTION_GAP,
+            layout.confirm.x
+        );
+        assert_eq!(layout.confirm.right(), layout.text.right());
+        assert!(layout.cancel.x >= layout.text.x);
+        assert_eq!(close_confirm_action_line(), "[Esc Cancel]  [Enter Close]");
+    }
+
+    #[test]
+    fn draw_and_hit_test_share_measured_geometry() {
+        let mut d = dashboard();
+        d.open_close_terminal_for(SessionId(1));
+        let text = d.close_confirm_text(d.palette.as_ref().unwrap());
+        let layout = measure_close_confirm(screen(), &text);
+        let buffer = render(&d);
+        let painted = peach_rows(&buffer);
+        // Blank, identity, place, project, workspace, blank, consequence, blank, action.
+        assert_eq!(painted.len(), 9);
+        assert_eq!(layout.rail.height, 9);
+        assert_eq!(painted[0], layout.rail.y);
+        assert_eq!(*painted.last().unwrap(), layout.rail.bottom() - 1);
+        for y in painted {
+            let mut run = 0u16;
+            for x in layout.rail.x..layout.rail.right() {
+                assert_eq!(
+                    buffer[(x, y)].bg,
+                    Color::Rgb(250, 179, 135),
+                    "rail cell {x},{y}"
+                );
+                run += 1;
+            }
+            assert_eq!(run, 2);
+            assert_ne!(buffer[(layout.dialog.x, y)].bg, Color::Rgb(250, 179, 135));
+        }
+        assert_ne!(
+            buffer[(layout.rail.x, layout.dialog.y)].bg,
+            Color::Rgb(250, 179, 135),
+            "the title border is not part of the rail"
+        );
+        let flat: String = (0..buffer.area.height)
+            .map(|y| row_text(&buffer, y))
+            .collect();
+        for needle in [
+            "Close terminal?",
+            "Terminal #1",
+            "root-1",
+            "Project: demo",
+            "Workspace: root",
+            CLOSE_CONSEQUENCE,
+            "[Esc Cancel]",
+            "[Enter Close]",
+        ] {
+            assert!(flat.contains(needle), "missing {needle}");
+        }
+        let cancel_at = find_label(&buffer, layout.cancel.y, "[Esc Cancel]");
+        let close_at = find_label(&buffer, layout.confirm.y, "[Enter Close]");
+        assert!(cancel_at < close_at);
+        assert_eq!(cancel_at, layout.cancel.x);
+        assert_eq!(close_at, layout.confirm.x);
+        let identity_y = (0..buffer.area.height)
+            .find(|y| row_text(&buffer, *y).contains("Terminal #1"))
+            .unwrap();
+        assert!(
+            buffer[(layout.text.x, identity_y)]
+                .modifier
+                .contains(ratatui::style::Modifier::BOLD)
+        );
+        let consequence_y = (0..buffer.area.height)
+            .find(|y| row_text(&buffer, *y).contains(CLOSE_CONSEQUENCE))
+            .unwrap();
+        assert_eq!(
+            buffer[(layout.text.x, consequence_y)].fg,
+            Color::Rgb(250, 179, 135)
+        );
+
+        assert!(
+            matches!(click(&mut d, 0, 0), DashboardAction::None),
+            "outside clicks stay shielded"
+        );
+        assert!(d.palette.is_some());
+        let action = click(&mut d, layout.confirm.x, layout.confirm.y);
+        let DashboardAction::Request(message) = action else {
+            panic!("confirm hit target must submit, got {action:?}");
+        };
+        assert_eq!(
+            message.request,
+            Request::CloseTerminal {
+                session: SessionId(1),
+                expected_run: crate::protocol::SessionRunId(1),
+            }
+        );
+
+        let mut d = dashboard();
+        d.open_close_terminal_for(SessionId(1));
+        let layout =
+            measure_close_confirm(screen(), &d.close_confirm_text(d.palette.as_ref().unwrap()));
+        assert!(matches!(
+            click(&mut d, layout.cancel.x, layout.cancel.y),
+            DashboardAction::Redraw
+        ));
+        assert!(d.palette.is_none(), "cancel hit target dismisses");
+
+        let mut d = dashboard();
+        d.open_close_terminal_for(SessionId(1));
+        d.palette_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(d.palette.is_none());
+        d.open_close_terminal_for(SessionId(1));
+        let action = d.palette_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(
+            action,
+            DashboardAction::Request(crate::protocol::ClientMessage {
+                request: Request::CloseTerminal { .. },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn other_confirms_do_not_use_the_accent_rail() {
+        let mut d = dashboard();
+        let mut stopped = d.hierarchy.projects[0].workspaces[0].sessions[0].clone();
+        stopped.phase = SessionPhase::Stopped;
+        d.hierarchy.projects[0].workspaces[0].sessions[0] = stopped;
+        d.palette = Some(Palette {
+            page: d.command_page(Command::ReopenTerminal(SessionId(1))),
+            ..Palette::new()
+        });
+        let buffer = render(&d);
+        assert!(peach_rows(&buffer).is_empty());
+        let flat: String = (0..buffer.area.height)
+            .map(|y| row_text(&buffer, y))
+            .collect();
+        assert!(flat.contains("[Confirm]"));
+        assert!(flat.contains("[Cancel]"));
+        assert!(!flat.contains("[Enter Close]"));
+        assert!(!flat.contains("Close terminal?"));
     }
 }
