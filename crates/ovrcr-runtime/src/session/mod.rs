@@ -303,6 +303,8 @@ pub struct Session {
     #[cfg(test)]
     history_capture_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     #[cfg(test)]
+    summary_entry_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    #[cfg(test)]
     listing_error_hook: Mutex<Option<ListingErrorHook>>,
     #[cfg(test)]
     term_result_hook: Mutex<Option<TermResultHook>>,
@@ -557,6 +559,8 @@ impl Session {
             #[cfg(test)]
             history_capture_hook: Mutex::new(None),
             #[cfg(test)]
+            summary_entry_hook: Mutex::new(None),
+            #[cfg(test)]
             listing_error_hook: Mutex::new(None),
             #[cfg(test)]
             term_result_hook: Mutex::new(None),
@@ -638,6 +642,13 @@ impl Session {
     }
 
     pub fn summary(&self) -> SessionSummary {
+        #[cfg(test)]
+        {
+            let hook = self.summary_entry_hook.lock().unwrap().clone();
+            if let Some(hook) = hook {
+                hook();
+            }
+        }
         let mut summary = self.summary.clone();
         summary.title = self.effective_title();
         summary.recovery = None;
@@ -866,6 +877,11 @@ impl Session {
     #[cfg(test)]
     pub(crate) fn set_history_capture_hook(&self, hook: Option<Arc<dyn Fn() + Send + Sync>>) {
         *self.history_capture_hook.lock().unwrap() = hook;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_summary_entry_hook(&self, hook: Option<Arc<dyn Fn() + Send + Sync>>) {
+        *self.summary_entry_hook.lock().unwrap() = hook;
     }
 
     #[cfg(test)]
