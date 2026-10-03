@@ -19,6 +19,10 @@ workspace root, registry file and socket its server is given; the wait for the
 socket, control requests through `ovrcr_protocol::client`, "project and
 workspace ready", the process groups the fixture owns and the cleanup that runs
 from `Drop` all live there, so a suite writes none of it again. `Live::request`
+Each binary fixture uses its own root as HOME and clears inherited provider/XDG
+profile paths; explicit child overrides can point to task-owned provider fixtures.
+The thread adapter shares the test process environment, so local regression runs
+also require a private process HOME and provider profiles.
 blocks until the server answers; `Live::bounded` — which `Live::binary` applies
 to itself — gives every request a deadline instead, so a test fails rather than
 hangs when its server stops answering. `Live::ready` creates the fixture

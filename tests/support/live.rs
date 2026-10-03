@@ -160,6 +160,16 @@ impl Live {
     pub fn command(&self) -> Command {
         let mut command = Command::new(&self.executable);
         command
+            // Account readers must never inherit the developer's profiles.
+            // Explicit per-test child overrides are applied after this builder.
+            .env("HOME", self.home.as_deref().unwrap_or(self.root.path()))
+            .env_remove("XDG_CONFIG_HOME")
+            .env_remove("XDG_DATA_HOME")
+            .env_remove("XDG_STATE_HOME")
+            .env_remove("XDG_CACHE_HOME")
+            .env_remove("CODEX_HOME")
+            .env_remove("GROK_HOME")
+            .env_remove("CLAUDE_CONFIG_DIR")
             .env("OVRCR_SOCKET", &self.socket)
             // The settings document is the one beside `config`, never the developer's.
             .env_remove("OVRCR_DASHBOARD_CONFIG")
@@ -169,16 +179,7 @@ impl Live {
             .env("PATH", self.path());
         match &self.home {
             None => command.env("OVRCR_CONFIG", &self.config),
-            Some(home) => command
-                .env("HOME", home)
-                .env_remove("OVRCR_CONFIG")
-                .env_remove("XDG_CONFIG_HOME")
-                .env_remove("XDG_DATA_HOME")
-                .env_remove("XDG_STATE_HOME")
-                .env_remove("XDG_CACHE_HOME")
-                .env_remove("CODEX_HOME")
-                .env_remove("GROK_HOME")
-                .env_remove("CLAUDE_CONFIG_DIR"),
+            Some(_) => command.env_remove("OVRCR_CONFIG"),
         };
         command
     }
