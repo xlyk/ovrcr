@@ -23,7 +23,7 @@ fn wait_screen(terminal: &Terminal, needle: &str) -> Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-fn isolate_desktop_alerts(command: &mut portable_pty::CommandBuilder, root: &Path) -> Result<()> {
+fn desktop_alert_environment(root: &Path) -> Result<(std::path::PathBuf, std::ffi::OsString)> {
     use ovrcr::protocol::{BRIDGE_SCHEMA_VERSION, BridgeReply, BridgeStatus, PROTOCOL_VERSION};
     use std::os::unix::fs::PermissionsExt;
     let home = root.join("home");
@@ -46,14 +46,10 @@ fn isolate_desktop_alerts(command: &mut portable_pty::CommandBuilder, root: &Pat
     let player = bin.join("afplay");
     std::fs::write(&player, "#!/bin/sh\nexit 0\n")?;
     std::fs::set_permissions(&player, std::fs::Permissions::from_mode(0o755))?;
-    command.env("HOME", &home);
-    command.env(
-        "PATH",
-        std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(
-            &std::env::var_os("PATH").unwrap_or_default(),
-        )))?,
-    );
-    Ok(())
+    let path = std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    )))?;
+    Ok((home, path))
 }
 
 #[test]
@@ -632,7 +628,11 @@ fn real_dashboard_initial_selection_survives_quota_events_before_startup_respons
     command.env("OVRCR_CONFIG", root.join("config.toml"));
     command.env("OVRCR_SOCKET", &socket);
     #[cfg(target_os = "macos")]
-    isolate_desktop_alerts(&mut command, &root)?;
+    {
+        let (home, path) = desktop_alert_environment(&root)?;
+        command.env("HOME", home);
+        command.env("PATH", path);
+    }
     command.env("TERM", "xterm-256color");
     let mut terminal = Terminal::start(command, 40, 160, Default::default())?;
     // The actual first session's child output proves selection, not just rows.
@@ -838,13 +838,18 @@ fn real_dashboard_saves_alert_preferences_and_reloads_config() -> Result<()> {
     // the one beside config.toml. Toggles must follow the Server's reading.
     let client_only = root.join("preferences/custom.toml");
     let settings = root.join("dashboard.toml");
+    #[cfg(target_os = "macos")]
+    let (home, path) = desktop_alert_environment(&root)?;
     let launch = || -> Result<Terminal> {
         let mut command = portable_pty::CommandBuilder::new(env!("CARGO_BIN_EXE_ovrcr"));
         command.env("OVRCR_CONFIG", root.join("config.toml"));
         command.env("OVRCR_SOCKET", root.join("server.sock"));
         command.env("OVRCR_DASHBOARD_CONFIG", &client_only);
         #[cfg(target_os = "macos")]
-        isolate_desktop_alerts(&mut command, &root)?;
+        {
+            command.env("HOME", &home);
+            command.env("PATH", &path);
+        }
         command.env("TERM", "xterm-256color");
         Terminal::start(command, 40, 160, Default::default())
     };
