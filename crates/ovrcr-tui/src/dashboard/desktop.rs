@@ -66,7 +66,7 @@ struct Notification {
 const DELIVERY_ACTIVE: u8 = 0;
 const DELIVERY_CANCELLED: u8 = 1;
 const DELIVERY_FINISHED: u8 = 2;
-const DELIVERY_CANCELLED_FINISHED: u8 = 3;
+const DELIVERY_CANCELLED_FINISHED: u8 = DELIVERY_CANCELLED | DELIVERY_FINISHED;
 
 #[derive(Clone)]
 struct Delivery {
@@ -794,16 +794,8 @@ impl DesktopHost {
                             let _ = failure.try_send((ticket, channel));
                         }
                     }
-                    let _ =
-                        delivery
-                            .state
-                            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |state| {
-                                Some(if state == DELIVERY_CANCELLED {
-                                    DELIVERY_CANCELLED_FINISHED
-                                } else {
-                                    DELIVERY_FINISHED
-                                })
-                            });
+                    // Set the finished bit without clearing cancellation.
+                    let _ = delivery.state.fetch_or(DELIVERY_FINISHED, Ordering::AcqRel);
                     if let Some(wake) = &mut wake {
                         super::event_loop::notify_dashboard_wake(wake);
                     }
