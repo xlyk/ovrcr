@@ -124,6 +124,62 @@ fn settings_footer_reports_findings_at_attach_and_when_the_count_changes() {
     assert!(rendered_footer(&dashboard, 120).contains("No settings findings"));
 }
 
+/// A startup warning is applied after hello's settings reading and takes the
+/// footer. The findings line must wait behind that banner, including across a
+/// key press, and show once the banner is dismissed.
+#[test]
+fn startup_error_banner_does_not_hide_the_settings_findings_notice() {
+    let root = tempfile::tempdir().unwrap();
+    let document = root.path().join("dashboard.toml");
+    std::fs::write(&document, "unknown_0 = 1\nunknown_1 = 1\n").unwrap();
+    let mut dashboard = dashboard_fixture();
+    publish(&mut dashboard, &document);
+    assert!(
+        rendered_footer(&dashboard, 120).contains("2 settings findings; see Settings"),
+        "{}",
+        rendered_footer(&dashboard, 120)
+    );
+
+    // Same banner `run_dashboard` writes for a startup warning: `set_error`.
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 9_000,
+        response: Response::Error {
+            code: ErrorCode::Internal,
+            message: "startup warning".into(),
+        },
+    });
+    let banner = rendered_footer(&dashboard, 120);
+    assert!(
+        banner.starts_with("ERROR:"),
+        "startup warning must own the footer, got {banner:?}"
+    );
+    assert!(
+        !banner.contains("settings finding"),
+        "the banner covers the findings line, got {banner:?}"
+    );
+
+    // A key while the banner is up used to drop the notice the user never saw.
+    assert_eq!(dashboard.key(KeyCode::F(12)), DashboardAction::None);
+    assert!(
+        rendered_footer(&dashboard, 120).starts_with("ERROR:"),
+        "the banner stays until it is dismissed"
+    );
+
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 9_001,
+        response: Response::TerminalText {
+            session: SessionId(1),
+            size: TerminalSize { rows: 1, cols: 1 },
+            text: String::new(),
+        },
+    });
+    let footer = rendered_footer(&dashboard, 120);
+    assert!(
+        footer.contains("2 settings findings; see Settings"),
+        "queued findings notice must show once the banner is dismissed, got {footer:?}"
+    );
+}
+
 #[test]
 fn settings_opens_from_the_menu_and_has_no_browse_key() {
     let mut dashboard = dashboard_fixture();

@@ -130,21 +130,25 @@ impl Dashboard {
     /// reading changed, whether by a toggle here or an edit elsewhere.
     pub(super) fn settings_changed_notice(&mut self, before: &Settings) {
         let on_off = |enabled: bool| if enabled { "on" } else { "off" };
-        let settings = &self.settings;
-        if before.automatic_local_terminals != settings.automatic_local_terminals {
-            self.desktop.notice = Some(format!(
-                "Automatic local terminals: {}",
-                settings.automatic_local_terminals.label()
-            ));
-        }
-        if before.ready_sound != settings.ready_sound {
-            self.desktop.notice = Some(format!("Ready sound: {}", on_off(settings.ready_sound)));
-        }
-        if before.desktop_notifications != settings.desktop_notifications {
-            self.desktop.notice = Some(format!(
-                "Desktop notifications: {}",
-                on_off(settings.desktop_notifications)
-            ));
+        let automatic = (before.automatic_local_terminals
+            != self.settings.automatic_local_terminals)
+            .then(|| {
+                format!(
+                    "Automatic local terminals: {}",
+                    self.settings.automatic_local_terminals.label()
+                )
+            });
+        let sound = (before.ready_sound != self.settings.ready_sound)
+            .then(|| format!("Ready sound: {}", on_off(self.settings.ready_sound)));
+        let desktop =
+            (before.desktop_notifications != self.settings.desktop_notifications).then(|| {
+                format!(
+                    "Desktop notifications: {}",
+                    on_off(self.settings.desktop_notifications)
+                )
+            });
+        for notice in [automatic, sound, desktop].into_iter().flatten() {
+            self.show_notice(notice);
         }
     }
 
@@ -282,8 +286,7 @@ impl Dashboard {
                 match host {
                     Ok(host) => self.desktop.host = Some(host),
                     Err(_) => {
-                        self.desktop.notice =
-                            Some(unavailable_notice(self.alert_channels()).into());
+                        self.show_notice(unavailable_notice(self.alert_channels()));
                         changed = true;
                         continue;
                     }
@@ -309,7 +312,7 @@ impl Dashboard {
                 }
             }
             if failed != 0 {
-                self.desktop.notice = Some(unavailable_notice(failed).into());
+                self.show_notice(unavailable_notice(failed));
                 changed = true;
             }
         }

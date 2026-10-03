@@ -758,7 +758,10 @@ hand.**; Enter, `r` and `x` change nothing.
 At attach the footer shows one line when the reading has findings, for example
 **2 settings findings; see Settings**, and nothing when it has none. When a later
 reading changes the number of findings the footer says so again, or **No settings
-findings** once they are gone. The next key clears the line.
+findings** once they are gone. The next key clears the line. A startup error
+banner owns that line first: the findings notice waits behind it, a key while the
+banner is up does not drop the notice, and the notice shows when the banner is
+dismissed.
 
 The block is the production default document. A missing file loads these values
 (`picker_roots` keeps only the paths that exist). Commented lines show optional
