@@ -841,7 +841,6 @@ command = "/opt/grok"
             vec![
                 ("desktop_notifications", DESKTOP_NOTIFICATIONS_OFF),
                 ("title_model", TITLES_OFF),
-                ("quota.enabled", QUOTA_OFF),
                 (
                     "quota.claude.probe",
                     ovrcr_protocol::CLAUDE_PROBE_DESCRIPTION
@@ -1108,7 +1107,10 @@ launch_choices = { kept = { kind = \"Terminal\" }, bad = \"nope\" }
         let config = root.path().join("config.toml");
         std::fs::write(&config, "projects = []\n\n[quota]\nenabled = true\n").unwrap();
         let report = load_document(&config, &root.path().join("dashboard.toml"));
-        assert!(!report.settings.quota.enabled);
+        // A [quota] table in config.toml is ignored. Collection stays at the
+        // default, which is on unless dashboard.toml sets quota.enabled = false.
+        assert_eq!(report.settings.quota, defaults().quota);
+        assert!(report.settings.quota.enabled);
         assert_eq!(report.findings.len(), 1, "{:?}", report.findings);
         finding(
             "quota",

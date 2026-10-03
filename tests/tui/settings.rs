@@ -237,7 +237,7 @@ fn rows_show_value_source_default_and_findings_with_unknown_keys_first() {
     // Consent settings carry their side effect; turning one on asks nothing.
     assert!(text.contains("Setting a model makes paid calls to title sessions."));
     assert!(text.contains("may show an OS notification permission prompt."));
-    assert!(text.contains("may refresh their own auth and write logs."));
+    assert!(text.contains("On by default while a Dashboard is attached."));
     // Collections expand into child rows with an Add row.
     assert!(line_with(&dashboard, "claude  [").contains("[\"claude\", \"--verbose\"]"));
     assert!(text.contains("+ Add agent"));

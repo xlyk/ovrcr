@@ -99,7 +99,9 @@ pub struct NativeCommand {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuotaSettings {
-    /// Consent setting: native clients may refresh their own auth and write logs.
+    /// Codex and Grok account collection. On by default while a Dashboard is
+    /// attached. `false` is the explicit off switch. The readers do not rewrite
+    /// auth files.
     pub enabled: bool,
     /// Consent setting: a hidden Claude probe may spend allowance to read it.
     pub claude_probe: bool,
@@ -110,7 +112,7 @@ pub struct QuotaSettings {
 impl Default for QuotaSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             claude_probe: false,
             codex: NativeCommand {
                 command: "codex".into(),

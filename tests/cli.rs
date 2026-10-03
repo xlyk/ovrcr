@@ -3145,8 +3145,7 @@ fn settings_command_reports_document_rows_and_findings_and_json_round_trips() {
     for expected in [
         "Settings document: ",
         "branch_prefix              Dashboard document kh/",
-        "quota.enabled              Server    default  false",
-        "Codex/Grok usage off: set `quota.enabled = true` in dashboard.toml",
+        "quota.enabled              Server    default  true",
         "Findings (4):",
         "ready_sound (line 1): ",
         "automatic_local_terminals (line 2): unknown value \"always\"",

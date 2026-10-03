@@ -390,6 +390,143 @@ fn grok_native_billing_reaches_actual_monthly_remaining_bar() {
     );
 }
 
+/// Default settings publish account allowance. No `quota.enabled = true` is
+/// written. An explicit `quota.enabled = false` still publishes the off state.
+#[test]
+fn default_settings_publish_current_allowance_without_opt_in() {
+    let fixture = live::Live::idle().bounded();
+    let native = native_executable(&fixture, "codex", "codex-cli 0.155.1");
+    let command = serde_json::to_string(&native.to_string_lossy()).unwrap();
+    let document = settings_document(&fixture);
+    // Commands only. The consent switch is absent, so the default applies.
+    std::fs::write(
+        &document,
+        format!(
+            "[quota.codex]\ncommand = {command}\n[quota.grok]\ncommand = '/not-a-native-fixture'\n"
+        ),
+    )
+    .unwrap();
+    let written = std::fs::read_to_string(&document).unwrap();
+    assert!(
+        !written.contains("enabled"),
+        "the default must not be opted in by the document: {written}"
+    );
+    let claude_dir = fixture.root.path().join("claude-config");
+    std::fs::create_dir(&claude_dir).unwrap();
+    let creds = claude_dir.join(".credentials.json");
+    let cred_body = br#"{"claudeAiOauth":{"accessToken":"fixture-claude-token"}}"#;
+    std::fs::write(&creds, cred_body).unwrap();
+    let home = grok_home(&fixture);
+    let auth = std::fs::read(home.join("auth.json")).unwrap();
+    let origin = quota_http(&fixture).to_string_lossy().into_owned();
+    let log = fixture.root.path().join("native-methods");
+    fixture.start_binary_env(&[
+        ("OVRCR_QUOTA_FIXTURE_LOG", log.as_os_str()),
+        ("CLAUDE_CONFIG_DIR", claude_dir.as_os_str()),
+        (
+            "OVRCR_QUOTA_CLAUDE_USAGE_URL",
+            std::ffi::OsStr::new(&format!("{origin}/api/oauth/usage")),
+        ),
+        ("GROK_HOME", home.as_os_str()),
+        (
+            "OVRCR_QUOTA_GROK_BILLING_URL",
+            std::ffi::OsStr::new(&format!("{origin}/v1/billing?format=credits")),
+        ),
+    ]);
+    let mut socket = attach(&fixture);
+    let mut dashboard = ovrcr::tui::Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 100,
+    });
+    dashboard.install_area(ratatui::layout::Rect::new(0, 0, 100, 40));
+    let current = quota_until(
+        &mut socket,
+        "default settings did not publish current account allowance",
+        |quota| {
+            quota.codex.state == QuotaState::Current
+                && quota.grok.state == QuotaState::Current
+                && quota.claude.state == QuotaState::Current
+        },
+    );
+    // Fixture literals, not a recomputation of the collector: Codex primary
+    // used 67% of a 300-minute window and secondary 31% of a 7-day window,
+    // Grok creditUsagePercent 24 on a monthly period, Claude five_hour 42 and
+    // seven_day 18.
+    assert_eq!(remaining(&current.codex, "5h"), 3_300);
+    assert_eq!(remaining(&current.codex, "7d"), 6_900);
+    assert_eq!(remaining(&current.grok, "mo"), 7_600);
+    assert_eq!(remaining(&current.claude, "5h"), 5_800);
+    assert_eq!(remaining(&current.claude, "7d"), 8_200);
+    for row in [&current.codex, &current.grok, &current.claude] {
+        assert!(row.checked_unix_ms.is_some(), "{:?}", row.provider);
+        assert!(row.reason.is_none(), "{:?}", row.provider);
+    }
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::QuotaChanged(Box::new(
+        current.clone(),
+    ))));
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard(frame, &dashboard))
+        .unwrap();
+    let screen = (0..40)
+        .map(|y| {
+            (0..100)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(screen.contains("Quota left"), "{screen}");
+    assert!(
+        screen
+            .lines()
+            .any(|line| line.contains("Codex") && line.contains("5h") && line.contains("33%")),
+        "{screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .any(|line| line.contains("Grok") && line.contains("mo") && line.contains("76%")),
+        "{screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .any(|line| line.contains("Claude") && line.contains("5h") && line.contains("58%")),
+        "{screen}"
+    );
+    assert_eq!(reads(&fixture, "account/rateLimits/read"), 1);
+    assert_eq!(http_reads(&fixture, "/v1/billing?format=credits"), 1);
+    assert_eq!(http_reads(&fixture, "/api/oauth/usage"), 1);
+    assert_eq!(std::fs::read(&creds).unwrap(), cred_body);
+    assert_eq!(std::fs::read(home.join("auth.json")).unwrap(), auth);
+
+    std::fs::write(&document, "[quota]\nenabled = false\n").unwrap();
+    let off = quota_until(
+        &mut socket,
+        "explicit quota.enabled = false was not published",
+        |quota| {
+            quota.codex.state == QuotaState::Disabled && quota.grok.state == QuotaState::Disabled
+        },
+    );
+    for row in [&off.codex, &off.grok] {
+        assert_eq!(row.reason.as_deref(), Some(ovrcr::settings::QUOTA_OFF));
+        assert!(row.windows.is_empty());
+    }
+    // The off switch is Codex and Grok. Claude's account row stays the usage read.
+    assert_eq!(off.claude.state, QuotaState::Current);
+    assert_eq!(remaining(&off.claude, "5h"), 5_800);
+}
+
+fn remaining(row: &ProviderQuota, label: &str) -> u16 {
+    row.windows
+        .iter()
+        .find(|window| window.general && window.label == label)
+        .unwrap_or_else(|| panic!("no {label} window on {:?}", row.provider))
+        .remaining_basis_points()
+        .unwrap_or_else(|| panic!("{label} remaining unknown"))
+}
+
 /// The settings document beside the fixture's instance identity.
 fn settings_document(fixture: &live::Live) -> std::path::PathBuf {
     fixture.config.with_file_name("dashboard.toml")
@@ -1251,7 +1388,15 @@ fn claude_auth_cut_short_by_shutdown_publishes_nothing() {
     let mut acknowledged = false;
     while let Ok(message) = read_frame::<ServerMessage>(&mut socket) {
         if let ServerMessage::Event(ServerEvent::QuotaChanged(snapshot)) = &message {
-            panic!("a stopping Server published the Claude row: {snapshot:?}");
+            // Collection is on by default, so attach may publish Checking.
+            // A claude auth check cut short by shutdown is still not an answer.
+            assert_eq!(
+                snapshot.claude.state,
+                QuotaState::Checking,
+                "a stopping Server published the Claude row: {snapshot:?}"
+            );
+            assert_eq!(snapshot.claude.reason.as_deref(), Some(CLAUDE_WAITING));
+            assert!(snapshot.claude.windows.is_empty());
         }
         acknowledged |= message
             == ServerMessage::Response {
