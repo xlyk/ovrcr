@@ -11191,6 +11191,15 @@ printf '{"schema":1,"server_wire":%s,"status":"%s"}\n' "$wire" "$status"
         }
     }
 
+    fn wait_unavailable_notice(&mut self) {
+        let notice = if cfg!(target_os = "macos") {
+            "OVRCR Bridge unavailable; install with scripts/install-bridge.sh from this checkout"
+        } else {
+            "Desktop notifications unavailable"
+        };
+        self.wait_screen(|screen| screen.contains(notice));
+    }
+
     fn select(&mut self, name: &str, terminal_marker: &str) {
         let screen = self.parser.screen().contents();
         let row = screen
@@ -15769,7 +15778,7 @@ fn desktop_notifications_host_failure_and_blocking_never_block_input_or_detach()
     for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
         desktop_codex_callback(&fixture, summary.id, &mut index, command);
     }
-    dashboard.wait_screen(|screen| screen.contains("Desktop notifications unavailable"));
+    dashboard.wait_unavailable_notice();
     assert!(
         !dashboard
             .parser
@@ -15822,7 +15831,7 @@ fn desktop_notifications_host_failure_and_blocking_never_block_input_or_detach()
         "host exited before the input check"
     );
     dashboard.send(b"\x07");
-    dashboard.wait_screen(|screen| screen.contains("Desktop notifications unavailable"));
+    dashboard.wait_unavailable_notice();
     assert!(live::wait_group_absent(blocked_pid, Duration::from_secs(2)));
 
     std::fs::remove_file(&host_pid).unwrap();
@@ -15912,7 +15921,7 @@ fn desktop_notifications_missing_host_tool_preserves_response_and_dashboard_cont
     for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
         desktop_codex_callback(&fixture, summary.id, &mut index, command);
     }
-    dashboard.wait_screen(|screen| screen.contains("Desktop notifications unavailable"));
+    dashboard.wait_unavailable_notice();
     assert!(
         !dashboard.record.exists(),
         "missing host cannot record delivery"
