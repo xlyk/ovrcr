@@ -10987,8 +10987,8 @@ fn codex_managed_native_death_never_synthesizes_ready_and_removes_socket() {
     }
 }
 
-/// Runs the shipped dashboard and substitutes only the final OS notification
-/// executable. Provider callbacks, admission, broadcasts, pane geometry and input
+/// Runs the shipped dashboard and substitutes only the final native notification
+/// boundary. Provider callbacks, admission, broadcasts, pane geometry and input
 /// all still cross their real process/PTY/socket boundaries.
 struct DesktopAlertDashboard {
     master: Option<Box<dyn portable_pty::MasterPty + Send>>,
@@ -11000,6 +11000,9 @@ struct DesktopAlertDashboard {
     reader: Option<thread::JoinHandle<()>>,
     parser: vt100::Parser,
     record: PathBuf,
+    executable: PathBuf,
+    #[cfg(target_os = "macos")]
+    persistent_host: Option<Child>,
 }
 
 impl DesktopAlertDashboard {
@@ -11008,9 +11011,20 @@ impl DesktopAlertDashboard {
     }
 
     fn start_for(fixture: &ControlFixture, settings: Option<&str>, sidebar: &str) -> Self {
+        Self::start_for_with_host_status(fixture, settings, sidebar, "available")
+    }
+
+    fn start_for_with_host_status(
+        fixture: &ControlFixture,
+        settings: Option<&str>,
+        sidebar: &str,
+        host_status: &str,
+    ) -> Self {
         let directory = fixture.root.path().join("desktop-host");
         std::fs::create_dir_all(&directory).unwrap();
         let record = directory.join("calls");
+        let home = fixture.root.path().join("desktop-home");
+        std::fs::create_dir_all(&home).unwrap();
         let player = directory.join(if cfg!(target_os = "macos") {
             "afplay"
         } else {
@@ -11022,20 +11036,87 @@ impl DesktopAlertDashboard {
         )
         .unwrap();
         std::fs::set_permissions(&player, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let executable = directory.join(if cfg!(target_os = "macos") {
-            "osascript"
+        let executable = if cfg!(target_os = "macos") {
+            home.join("Applications/OVRCR Bridge.app/Contents/MacOS/OVRCRBridge")
         } else {
-            "notify-send"
-        });
-        std::fs::write(
-            &executable,
-            "#!/bin/sh\nif [ -f \"$OVRCR_TEST_DESKTOP_RECORD.mode\" ]; then\n  IFS= read -r mode < \"$OVRCR_TEST_DESKTOP_RECORD.mode\"\n  case \"$mode\" in\n    fail) printf 'PRIVATE_HOST_ERROR' >&2; exit 17 ;;\n    block) printf '%s\\n' \"$$\" > \"$OVRCR_TEST_DESKTOP_RECORD.pid\"; exec /bin/sleep 30 ;;\n  esac\nfi\n{ printf 'BEGIN\\n'; printf '%s\\n' \"$@\"; printf 'END\\n'; } >> \"$OVRCR_TEST_DESKTOP_RECORD\"\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+            directory.join("notify-send")
+        };
+        if host_status != "missing" {
+            std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+            let script = if cfg!(target_os = "macos") {
+                r#"#!/bin/sh
+[ "$#" = 1 ] && [ "$1" = --client ] || exit 17
+IFS= read -r request || [ -n "$request" ] || exit 17
+printf '%s\n' "$request" >> "$OVRCR_TEST_DESKTOP_RECORD.requests"
+if [ -f "$OVRCR_TEST_DESKTOP_RECORD.persistent.pid" ]; then
+  IFS= read -r persistent < "$OVRCR_TEST_DESKTOP_RECORD.persistent.pid"
+  kill -0 "$persistent" || exit 17
+fi
+status=available
+if [ -f "$OVRCR_TEST_DESKTOP_RECORD.permission" ]; then
+  IFS= read -r status < "$OVRCR_TEST_DESKTOP_RECORD.permission"
+fi
+case "$request" in
+  *'"type":"status"'*) ;;
+  *'"type":"authorize"'*)
+    if [ "$status" = not_determined ]; then
+      status=available
+      if [ -f "$OVRCR_TEST_DESKTOP_RECORD.authorize.status" ]; then
+        IFS= read -r status < "$OVRCR_TEST_DESKTOP_RECORD.authorize.status"
+      fi
+      printf '%s\n' "$status" > "$OVRCR_TEST_DESKTOP_RECORD.permission"
+    fi ;;
+  *'"type":"settings"'*)
+    status=settings_opened
+    if [ -f "$OVRCR_TEST_DESKTOP_RECORD.settings.mode" ]; then status=failed; fi ;;
+  *'"type":"deliver"'*)
+    if [ "$status" = available ]; then
+      if [ -f "$OVRCR_TEST_DESKTOP_RECORD.mode" ]; then
+        IFS= read -r mode < "$OVRCR_TEST_DESKTOP_RECORD.mode"
+        case "$mode" in
+          fail) printf PRIVATE_HOST_ERROR >&2; exit 17 ;;
+          block) printf '%s\n' "$$" > "$OVRCR_TEST_DESKTOP_RECORD.pid"; exec /bin/sleep 30 ;;
+          gate)
+            printf '%s\n' "$$" > "$OVRCR_TEST_DESKTOP_RECORD.pid"
+            while [ ! -f "$OVRCR_TEST_DESKTOP_RECORD.release" ]; do /bin/sleep 0.01; done ;;
+        esac
+      fi
+      printf 'BEGIN\n%s\nEND\n' "$request" >> "$OVRCR_TEST_DESKTOP_RECORD"
+      status=submitted
+    fi ;;
+  *) exit 17 ;;
+esac
+wire=33
+if [ "$status" = wire_mismatch ]; then wire=32; status=available; fi
+printf '{"schema":1,"server_wire":%s,"status":"%s"}\n' "$wire" "$status"
+"#
+            } else {
+                "#!/bin/sh\nif [ -f \"$OVRCR_TEST_DESKTOP_RECORD.mode\" ]; then\n  IFS= read -r mode < \"$OVRCR_TEST_DESKTOP_RECORD.mode\"\n  case \"$mode\" in\n    fail) printf 'PRIVATE_HOST_ERROR' >&2; exit 17 ;;\n    block) printf '%s\\n' \"$$\" > \"$OVRCR_TEST_DESKTOP_RECORD.pid\"; exec /bin/sleep 30 ;;\n  esac\nfi\n{ printf 'BEGIN\\n'; printf '%s\\n' \"$@\"; printf 'END\\n'; } >> \"$OVRCR_TEST_DESKTOP_RECORD\"\n"
+            };
+            std::fs::write(&executable, script).unwrap();
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        if cfg!(target_os = "macos") {
+            std::fs::write(record.with_extension("permission"), host_status).unwrap();
+            let fallback = directory.join("osascript");
+            std::fs::write(
+                &fallback,
+                "#!/bin/sh\nprintf FALLBACK >> \"$OVRCR_TEST_DESKTOP_RECORD.fallback\"; exit 17\n",
+            )
+            .unwrap();
+            std::fs::set_permissions(&fallback, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
         let settings_path = fixture.root.path().join("dashboard.toml");
         if let Some(settings) = settings {
-            std::fs::write(&settings_path, settings).unwrap();
+            // Keep every Server reload on Live's stand-in auth executable.
+            std::fs::write(
+                &settings_path,
+                format!(
+                    "{settings}agents = [{{ name = \"claude\", argv = [{}] }}]\n",
+                    toml::Value::String(fixture.claude.command.display().to_string())
+                ),
+            )
+            .unwrap();
         }
         let size = portable_pty::PtySize {
             rows: 32,
@@ -11049,6 +11130,7 @@ impl DesktopAlertDashboard {
         command.env("OVRCR_CONFIG", fixture.root.path().join("config.toml"));
         command.env("OVRCR_DASHBOARD_CONFIG", settings_path);
         command.env("OVRCR_TEST_DESKTOP_RECORD", &record);
+        command.env("HOME", &home);
         // Never fall back to the user's real desktop tool if this fixture's
         // executable is deliberately removed for the unavailable-host test.
         command.env("PATH", directory);
@@ -11078,6 +11160,9 @@ impl DesktopAlertDashboard {
             reader: Some(reader),
             parser: vt100::Parser::new(size.rows, size.cols, 0),
             record,
+            executable,
+            #[cfg(target_os = "macos")]
+            persistent_host: None,
         };
         dashboard.wait_screen(|screen| screen.contains(sidebar));
         dashboard
@@ -11088,6 +11173,7 @@ impl DesktopAlertDashboard {
         self.writer.flush().unwrap();
     }
 
+    #[track_caller]
     fn wait_screen(&mut self, predicate: impl Fn(&str) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -11160,6 +11246,15 @@ impl DesktopAlertDashboard {
         let body = format!("fixture / work / {name} (#{})", session.0);
         let record = self.record.clone();
         self.wait_record(&record, expected, |call| {
+            if cfg!(target_os = "macos") {
+                let request: serde_json::Value =
+                    serde_json::from_str(call.strip_prefix("BEGIN\n").unwrap().trim()).unwrap();
+                assert_eq!(request["schema"], 1);
+                assert_eq!(request["server_wire"], 33);
+                assert_eq!(request["op"]["type"], "deliver");
+                assert_eq!(request["op"]["subtitle"], name);
+                assert_eq!(request["op"]["body"], body);
+            }
             assert!(call.contains(&body), "identity missing: {call}");
             assert!(
                 call.contains("OVRCR · response ready"),
@@ -11190,6 +11285,9 @@ impl DesktopAlertDashboard {
                 "title missing: {call}"
             );
             for secret in [
+                "GENERATED_SUBJECT_SECRET",
+                "PROMPT_SECRET",
+                "RESPONSE_SECRET",
                 "PROMPT_TITLE_SECRET",
                 "APPROVAL_REASON_SECRET",
                 "QUESTION_TEXT_SECRET",
@@ -11214,6 +11312,126 @@ impl DesktopAlertDashboard {
                     .to_string()
             })
             .collect()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn bridge_requests(&self) -> Vec<serde_json::Value> {
+        std::fs::read_to_string(self.record.with_extension("requests"))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| {
+                let request: serde_json::Value = serde_json::from_str(line).unwrap();
+                serde_json::from_value::<ovrcr::protocol::BridgeRequest>(request.clone()).unwrap();
+                assert_eq!(request["schema"], 1);
+                assert_eq!(request["server_wire"], 33);
+                assert_eq!(request.as_object().unwrap().len(), 3, "{request}");
+                let op = request["op"].as_object().unwrap();
+                assert_eq!(
+                    op.len(),
+                    if op["type"] == "deliver" { 4 } else { 1 },
+                    "{request}"
+                );
+                request
+            })
+            .collect()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn wait_bridge_controls(&mut self, expected: &[&str]) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let requests = self.bridge_requests();
+            let controls: Vec<_> = requests
+                .iter()
+                .map(|request| request["op"]["type"].as_str().unwrap())
+                .filter(|operation| *operation != "deliver")
+                .collect();
+            assert!(controls.len() <= expected.len(), "{requests:?}");
+            if controls.len() == expected.len() {
+                assert_eq!(controls, expected);
+                assert!(!self.record.with_extension("fallback").exists());
+                return;
+            }
+            assert!(Instant::now() < deadline, "{requests:?}");
+            if let Ok(bytes) = self.received.recv_timeout(Duration::from_millis(10)) {
+                self.parser.process(&bytes);
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn wait_bridge_delivery(&mut self, expected: usize) -> Vec<serde_json::Value> {
+        let record = self.record.clone();
+        self.wait_record(&record, expected, |_| {});
+        self.wait_bridge_attempts(expected)
+    }
+
+    #[cfg(target_os = "macos")]
+    #[track_caller]
+    fn wait_bridge_attempts(&mut self, expected: usize) -> Vec<serde_json::Value> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let requests: Vec<_> = self
+                .bridge_requests()
+                .into_iter()
+                .filter(|request| request["op"]["type"] == "deliver")
+                .collect();
+            assert!(
+                requests.len() <= expected,
+                "unexpected delivery attempts: {requests:?}"
+            );
+            if requests.len() == expected {
+                return requests;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "missing delivery attempts: {requests:?}"
+            );
+            if let Ok(bytes) = self.received.recv_timeout(Duration::from_millis(10)) {
+                self.parser.process(&bytes);
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn wait_host_pid(&mut self) -> libc::pid_t {
+        let path = self.record.with_extension("pid");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            if let Ok(text) = std::fs::read_to_string(&path)
+                && let Ok(pid) = text.trim().parse::<libc::pid_t>()
+            {
+                self.host_process_groups.push(pid);
+                assert_eq!(unsafe { libc::getpgid(pid) }, pid);
+                return pid;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "host did not enter blocking mode"
+            );
+            if let Ok(bytes) = self.received.recv_timeout(Duration::from_millis(10)) {
+                self.parser.process(&bytes);
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn start_persistent_host(&mut self) -> libc::pid_t {
+        use std::os::unix::process::CommandExt;
+        let child = Command::new("/bin/sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let pid = child.id() as libc::pid_t;
+        assert_eq!(unsafe { libc::getpgid(pid) }, pid);
+        std::fs::write(
+            self.record.with_extension("persistent.pid"),
+            pid.to_string(),
+        )
+        .unwrap();
+        self.persistent_host = Some(child);
+        pid
     }
 
     fn wait_sound_calls(&mut self, expected: usize) {
@@ -11250,6 +11468,15 @@ impl DesktopAlertDashboard {
 
 impl Drop for DesktopAlertDashboard {
     fn drop(&mut self) {
+        #[cfg(target_os = "macos")]
+        if let Some(mut child) = self.persistent_host.take() {
+            unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
+            child.wait().unwrap();
+            assert!(live::wait_group_absent(
+                child.id() as libc::pid_t,
+                Duration::from_secs(2)
+            ));
+        }
         for &group in &self.host_process_groups {
             if group_exists(group) {
                 unsafe { libc::kill(-group, libc::SIGKILL) };
@@ -15492,6 +15719,8 @@ fn desktop_notifications_default_off_and_disabled_events_do_not_replay_on_enable
     // completion before enabling, without a timing-only negative assertion.
     dashboard.select("codex-hooks", "CODEX_CALLBACK=1");
     dashboard.select("setup", "HOOK_READY");
+    #[cfg(target_os = "macos")]
+    dashboard.wait_bridge_controls(&[]);
     dashboard.send(b"N");
     dashboard.wait_screen(|screen| screen.contains("Desktop notifications: on"));
     for command in ["UserPromptSubmit:root:b", "Stop:root:b"] {
@@ -15678,18 +15907,7 @@ fn desktop_notifications_missing_host_tool_preserves_response_and_dashboard_cont
     let mut dashboard =
         DesktopAlertDashboard::start(&fixture, Some("desktop_notifications = true\n"));
     dashboard.select("setup", "HOOK_READY");
-    std::fs::remove_file(
-        dashboard
-            .record
-            .parent()
-            .unwrap()
-            .join(if cfg!(target_os = "macos") {
-                "osascript"
-            } else {
-                "notify-send"
-            }),
-    )
-    .unwrap();
+    std::fs::remove_file(&dashboard.executable).unwrap();
     let mut index = 0;
     for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
         desktop_codex_callback(&fixture, summary.id, &mut index, command);
@@ -15713,6 +15931,888 @@ fn desktop_notifications_missing_host_tool_preserves_response_and_dashboard_cont
     dashboard.wait_screen(|screen| screen.contains("Desktop notifications: off"));
     dashboard.send(b"N");
     dashboard.wait_screen(|screen| screen.contains("Desktop notifications: on"));
+    dashboard.detach();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_notifications_bridge_authorizes_enabled_startup_before_any_alert() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    assert_eq!(
+        fixture.request(Request::SetSetting {
+            path: "desktop_notifications".into(),
+            value: Some("true".into()),
+        }),
+        Response::Ok
+    );
+    let mut dashboard = DesktopAlertDashboard::start_for_with_host_status(
+        &fixture,
+        Some("desktop_notifications = true\n"),
+        "codex-hooks",
+        "not_determined",
+    );
+    dashboard.wait_bridge_controls(&["status", "authorize"]);
+    assert!(!dashboard.record.exists(), "startup is not an alert");
+    assert_eq!(dashboard.bridge_requests().len(), 2);
+    dashboard.select("setup", "HOOK_READY");
+    let mut index = 0;
+    for command in [
+        "UserPromptSubmit:root:a",
+        "PermissionRequest:root:a",
+        "PermissionRequest:root:a",
+        "PermissionRequest:root:stale",
+    ] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    assert_eq!(
+        dashboard.wait_alert_titles(1, summary.id, "codex-hooks"),
+        ["OVRCR · input needed"]
+    );
+    for command in ["PostToolUse:root:a", "Stop:root:a", "Stop:root:a"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    assert_eq!(
+        dashboard.wait_alert_titles(2, summary.id, "codex-hooks"),
+        ["OVRCR · input needed", "OVRCR · response ready"]
+    );
+    let operations: Vec<_> = dashboard
+        .bridge_requests()
+        .into_iter()
+        .map(|request| request["op"]["type"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(operations, ["status", "authorize", "deliver", "deliver"]);
+    dashboard.detach();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_notifications_bridge_settings_sources_authorize_and_failed_saves_preserve_opt_ins() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let saved = "desktop_notifications = false\nready_sound = true\n";
+    let mut dashboard = DesktopAlertDashboard::start_for_with_host_status(
+        &fixture,
+        Some(saved),
+        "codex-hooks",
+        "not_determined",
+    );
+    dashboard.select("setup", "HOOK_READY");
+    dashboard.wait_bridge_controls(&[]);
+    let document = fixture.root.path().join("dashboard.toml");
+    let saved_document = std::fs::read_to_string(&document).unwrap();
+    let enabled_document = saved_document.replace(
+        "desktop_notifications = false",
+        "desktop_notifications = true",
+    );
+    std::fs::set_permissions(&document, std::fs::Permissions::from_mode(0o400)).unwrap();
+    dashboard.send(b"N");
+    dashboard.wait_screen(|screen| screen.contains("could not save desktop_notifications"));
+    assert_eq!(std::fs::read_to_string(&document).unwrap(), saved_document);
+    dashboard.wait_bridge_controls(&[]);
+    // The refused opt-in still allows the separately saved sound-only lane.
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_sound_calls(1);
+    assert!(!dashboard.record.exists());
+    dashboard.wait_bridge_controls(&[]);
+    std::fs::set_permissions(&document, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let local = fixture.only_session_id();
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: local,
+            text: "printf 'SETTINGS_%s\\n' SHELL_READY".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(local, "SETTINGS_SHELL_READY");
+    dashboard.select("local", "SETTINGS_SHELL_READY");
+    dashboard.send(b"\rprintf 'SETTINGS_INPUT_%s\\n' READY\r");
+    dashboard.wait_screen(|screen| {
+        screen.contains("SETTINGS_INPUT_READY") && !screen.contains("could not save")
+    });
+    dashboard.send(b"\x07");
+
+    // Enable through the actual Settings editor and accepted Server snapshot.
+    dashboard.send(b" v,");
+    dashboard.wait_screen(|screen| {
+        screen.contains("Settings · Enter edit") && screen.contains("› Desktop notifications")
+    });
+    dashboard.send(b"\r");
+    dashboard.wait_bridge_controls(&["status", "authorize"]);
+    dashboard.send(b"\x1b");
+    let reading = ovrcr::settings::load_document(&fixture.config, &document);
+    assert!(reading.settings.desktop_notifications);
+    assert!(reading.settings.ready_sound);
+    assert!(!dashboard.record.exists(), "enabling does not replay Ready");
+
+    // A direct Server settings edit uses the same permission path, without an alert.
+    assert_eq!(
+        fixture.request(Request::SetSetting {
+            path: "desktop_notifications".into(),
+            value: Some("false".into()),
+        }),
+        Response::Ok
+    );
+    dashboard.wait_screen(|screen| screen.contains("Desktop notifications: off"));
+    std::fs::write(
+        dashboard.record.with_extension("permission"),
+        "not_determined",
+    )
+    .unwrap();
+    assert_eq!(
+        fixture.request(Request::SetSetting {
+            path: "desktop_notifications".into(),
+            value: Some("true".into()),
+        }),
+        Response::Ok
+    );
+    dashboard.wait_bridge_controls(&["status", "authorize", "status", "authorize"]);
+
+    // External document reload likewise requests permission before a later event.
+    std::fs::write(&document, &saved_document).unwrap();
+    dashboard.wait_screen(|screen| screen.contains("Desktop notifications: off"));
+    std::fs::write(
+        dashboard.record.with_extension("permission"),
+        "not_determined",
+    )
+    .unwrap();
+    std::fs::write(&document, &enabled_document).unwrap();
+    dashboard.wait_bridge_controls(&[
+        "status",
+        "authorize",
+        "status",
+        "authorize",
+        "status",
+        "authorize",
+    ]);
+    assert!(!dashboard.record.exists());
+
+    // A failed opt-out preserves both saved opt-ins and their next real delivery.
+    std::fs::set_permissions(&document, std::fs::Permissions::from_mode(0o400)).unwrap();
+    dashboard.send(b"N");
+    dashboard.wait_screen(|screen| screen.contains("could not save desktop_notifications"));
+    let reading = ovrcr::settings::load_document(&fixture.config, &document);
+    assert!(reading.settings.desktop_notifications);
+    assert!(reading.settings.ready_sound);
+    for command in ["UserPromptSubmit:root:b", "Stop:root:b"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_calls(1, summary.id);
+    dashboard.wait_sound_calls(2);
+    dashboard.wait_bridge_controls(&[
+        "status",
+        "authorize",
+        "status",
+        "authorize",
+        "status",
+        "authorize",
+    ]);
+    dashboard.detach();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_notifications_bridge_denied_settings_are_explicit_and_never_modal_or_automatic() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let mut dashboard = DesktopAlertDashboard::start_for_with_host_status(
+        &fixture,
+        Some("desktop_notifications = true\n"),
+        "codex-hooks",
+        "denied",
+    );
+    dashboard.wait_screen(|screen| {
+        screen.contains("notifications denied") && screen.contains("Notifications")
+    });
+    dashboard.wait_bridge_controls(&["status"]);
+    assert!(!dashboard.record.exists());
+    let local = fixture.only_session_id();
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: local,
+            text: "printf 'PERMISSION_%s\\n' SHELL_READY".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(local, "PERMISSION_SHELL_READY");
+    dashboard.select("local", "PERMISSION_SHELL_READY");
+    dashboard.send(b"\rprintf 'PERMISSION_INPUT_%s\\n' READY\r");
+    dashboard.wait_screen(|screen| screen.contains("PERMISSION_INPUT_READY"));
+    dashboard.send(b"\x07");
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:a", "PermissionRequest:root:a"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    assert_eq!(
+        dashboard.wait_bridge_attempts(1)[0]["op"]["title"],
+        "OVRCR · input needed"
+    );
+    desktop_codex_callback(&fixture, summary.id, &mut index, "Stop:root:a");
+    let attempts = dashboard.wait_bridge_attempts(2);
+    assert_eq!(attempts[1]["op"]["title"], "OVRCR · response ready");
+    dashboard.select("codex-hooks", "CODEX_CALLBACK=2");
+    dashboard.select("local", "PERMISSION_INPUT_READY");
+    dashboard.wait_bridge_controls(&["status"]);
+    assert!(!dashboard.record.exists());
+    assert!(fixture.session_summary(summary.id).unread.is_some());
+    assert!(
+        std::fs::read_to_string(fixture.config.with_file_name("dashboard.toml"))
+            .unwrap()
+            .contains("desktop_notifications = true")
+    );
+
+    // The actual Browse recovery key is the sole Settings launch request.
+    dashboard.send(b"O");
+    dashboard.wait_bridge_controls(&["status", "settings"]);
+    dashboard.wait_screen(|screen| {
+        screen.contains("System Settings opened") && screen.contains("Notifications")
+    });
+    assert!(!dashboard.parser.screen().contents().contains("Confirm"));
+
+    // Returning from Settings explicitly checks current permission before
+    // offering another Settings launch if the user still has not allowed it.
+    dashboard.send(b"O");
+    dashboard.wait_bridge_controls(&["status", "settings", "status"]);
+    dashboard.wait_screen(|screen| screen.contains("notifications denied"));
+    std::fs::write(dashboard.record.with_extension("settings.mode"), "fail").unwrap();
+    dashboard.send(b"O");
+    dashboard.wait_bridge_controls(&["status", "settings", "status", "settings"]);
+    dashboard
+        .wait_screen(|screen| screen.contains("System Settings") && screen.contains("manually"));
+    assert!(!dashboard.record.with_extension("fallback").exists());
+
+    std::fs::write(dashboard.record.with_extension("permission"), "available").unwrap();
+    dashboard.send(b"O");
+    dashboard.wait_bridge_controls(&["status", "settings", "status", "settings", "status"]);
+    dashboard.wait_screen(|screen| {
+        !screen.contains("System Settings")
+            && !screen.contains("permission")
+            && !screen.contains("notifications denied")
+    });
+    assert!(!dashboard.record.exists());
+    dashboard.detach();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_notifications_bridge_installation_failures_are_actionable_without_settings_or_fallback()
+{
+    let _guard = env_lock();
+    for status in ["missing", "incompatible", "wire_mismatch"] {
+        let fixture = ControlFixture::new_bounded();
+        let (summary, _) = codex_session(&fixture, &fixture.socket);
+        let mut dashboard = DesktopAlertDashboard::start_for_with_host_status(
+            &fixture,
+            Some("desktop_notifications = true\n"),
+            "codex-hooks",
+            status,
+        );
+        dashboard.wait_screen(|screen| screen.contains("Bridge") && screen.contains("install"));
+        let expected = if status == "missing" {
+            &[][..]
+        } else {
+            &["status"][..]
+        };
+        dashboard.wait_bridge_controls(expected);
+        dashboard.send(b"O");
+        let mut index = 0;
+        for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
+            desktop_codex_callback(&fixture, summary.id, &mut index, command);
+        }
+        dashboard.select("codex-hooks", "CODEX_CALLBACK=1");
+        dashboard.select("setup", "HOOK_READY");
+        assert!(!dashboard.record.exists());
+        assert!(!dashboard.record.with_extension("fallback").exists());
+        dashboard.wait_bridge_controls(expected);
+        assert!(fixture.session_summary(summary.id).unread.is_some());
+        dashboard.detach();
+    }
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_notifications_bridge_pending_permission_does_not_repeat_or_block_input() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let host = fixture.root.path().join("desktop-host");
+    std::fs::create_dir_all(&host).unwrap();
+    std::fs::write(host.join("calls.authorize.status"), "permission_pending").unwrap();
+    let mut dashboard = DesktopAlertDashboard::start_for_with_host_status(
+        &fixture,
+        Some("desktop_notifications = true\n"),
+        "codex-hooks",
+        "not_determined",
+    );
+    dashboard.wait_bridge_controls(&["status", "authorize"]);
+    dashboard.wait_screen(|screen| screen.contains("permission pending"));
+    let local = fixture.only_session_id();
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: local,
+            text: "printf 'PENDING_%s\\n' SHELL_READY".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(local, "PENDING_SHELL_READY");
+    dashboard.select("local", "PENDING_SHELL_READY");
+    dashboard.send(b"\rprintf 'PENDING_INPUT_%s\\n' READY\r");
+    dashboard.wait_screen(|screen| screen.contains("PENDING_INPUT_READY"));
+    dashboard.send(b"\x07");
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:a", "PermissionRequest:root:a"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    assert_eq!(
+        dashboard.wait_bridge_attempts(1)[0]["op"]["title"],
+        "OVRCR · input needed"
+    );
+    desktop_codex_callback(&fixture, summary.id, &mut index, "Stop:root:a");
+    let attempts = dashboard.wait_bridge_attempts(2);
+    assert_eq!(attempts[1]["op"]["title"], "OVRCR · response ready");
+    dashboard.select("codex-hooks", "CODEX_CALLBACK=2");
+    dashboard.select("setup", "HOOK_READY");
+    assert!(!dashboard.record.exists());
+    let requests: Vec<_> = dashboard
+        .bridge_requests()
+        .into_iter()
+        .filter(|request| request["op"]["type"] != "deliver")
+        .collect();
+    assert_eq!(requests[0]["op"]["type"], "status");
+    assert_eq!(requests[1]["op"]["type"], "authorize");
+    assert!(
+        requests[2..]
+            .iter()
+            .all(|request| request["op"]["type"] == "status")
+    );
+    assert!(
+        requests.len() <= 32,
+        "pending status polling must be bounded: {requests:?}"
+    );
+    dashboard.detach();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_notifications_bridge_expired_permission_check_recovers_without_reauthorization() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (_summary, _) = codex_session(&fixture, &fixture.socket);
+    let host = fixture.root.path().join("desktop-host");
+    std::fs::create_dir_all(&host).unwrap();
+    std::fs::write(host.join("calls.authorize.status"), "permission_pending").unwrap();
+    let started = Instant::now();
+    let mut dashboard = DesktopAlertDashboard::start_for_with_host_status(
+        &fixture,
+        Some("desktop_notifications = true\n"),
+        "codex-hooks",
+        "not_determined",
+    );
+    dashboard.select("setup", "HOOK_READY");
+    dashboard.wait_bridge_controls(&["status", "authorize"]);
+    dashboard.wait_screen(|screen| screen.contains("permission pending"));
+
+    // Let the production event loop exhaust its real 30-second polling budget.
+    // No alert or settings transition is needed to expose explicit recovery.
+    let deadline = started + Duration::from_secs(36);
+    loop {
+        let screen = dashboard.parser.screen().contents();
+        if screen.contains("permission unconfirmed") && screen.contains("O: check permission") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "permission recovery deadline: {screen}"
+        );
+        if let Ok(bytes) = dashboard.received.recv_timeout(Duration::from_millis(20)) {
+            dashboard.parser.process(&bytes);
+        }
+    }
+    assert!(started.elapsed() >= Duration::from_secs(30));
+    let requests = dashboard.bridge_requests();
+    let mut controls: Vec<_> = requests
+        .iter()
+        .map(|request| request["op"]["type"].as_str().unwrap())
+        .collect();
+    assert_eq!(&controls[..2], ["status", "authorize"]);
+    assert!(controls[2..].iter().all(|operation| *operation == "status"));
+    assert!(controls.len() <= 32, "{requests:?}");
+    assert!(!dashboard.record.exists());
+
+    // Expiration stops automatic polling instead of repeatedly asking permission.
+    let quiet_until = Instant::now() + Duration::from_millis(1200);
+    while Instant::now() < quiet_until {
+        if let Ok(bytes) = dashboard.received.recv_timeout(Duration::from_millis(20)) {
+            dashboard.parser.process(&bytes);
+        }
+    }
+    assert_eq!(dashboard.bridge_requests(), requests);
+
+    // A late Deny is learned through one explicit Status, then a second explicit
+    // recovery action opens Settings. Neither action reauthorizes or replays.
+    std::fs::write(dashboard.record.with_extension("permission"), "denied").unwrap();
+    dashboard.send(b"O");
+    controls.push("status");
+    dashboard.wait_bridge_controls(&controls);
+    dashboard.wait_screen(|screen| {
+        screen.contains("notifications denied") && screen.contains("Notifications")
+    });
+    assert!(!dashboard.record.exists());
+    dashboard.send(b"O");
+    controls.push("settings");
+    dashboard.wait_bridge_controls(&controls);
+    dashboard.wait_screen(|screen| {
+        screen.contains("System Settings opened") && screen.contains("Notifications")
+    });
+    assert!(!dashboard.parser.screen().contents().contains("Confirm"));
+    assert!(!dashboard.record.exists());
+    assert!(!dashboard.record.with_extension("fallback").exists());
+
+    // Returning from Settings also exposes an explicit check for a later Allow.
+    std::fs::write(dashboard.record.with_extension("permission"), "available").unwrap();
+    dashboard.send(b"O");
+    controls.push("status");
+    dashboard.wait_bridge_controls(&controls);
+    dashboard.wait_screen(|screen| {
+        !screen.contains("System Settings")
+            && !screen.contains("permission")
+            && !screen.contains("notifications denied")
+    });
+    assert!(!dashboard.record.exists());
+    dashboard.detach();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_notifications_bridge_cancels_queued_ready_and_input_without_replay() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (first, _) = codex_session(&fixture, &fixture.socket);
+    let (queued, _) = codex_session_named(&fixture, &fixture.socket, "codex-queued");
+    let mut dashboard =
+        DesktopAlertDashboard::start(&fixture, Some("desktop_notifications = true\n"));
+    dashboard.wait_bridge_controls(&["status"]);
+    dashboard.select("setup", "HOOK_READY");
+    std::fs::write(dashboard.record.with_extension("mode"), "gate").unwrap();
+    let mut first_index = 0;
+    for command in ["UserPromptSubmit:root:first", "Stop:root:first"] {
+        desktop_codex_callback(&fixture, first.id, &mut first_index, command);
+    }
+    let blocked = dashboard.wait_host_pid();
+    std::fs::remove_file(dashboard.record.with_extension("mode")).unwrap();
+    let mut queued_index = 0;
+    for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
+        desktop_codex_callback(&fixture, queued.id, &mut queued_index, command);
+    }
+    dashboard.select("codex-queued", "CODEX_CALLBACK=1");
+    dashboard.wait_screen(|screen| screen.contains("ready"));
+    desktop_codex_callback(
+        &fixture,
+        queued.id,
+        &mut queued_index,
+        "UserPromptSubmit:root:b",
+    );
+    dashboard.wait_screen(|screen| screen.contains("busy"));
+    desktop_codex_callback(
+        &fixture,
+        queued.id,
+        &mut queued_index,
+        "PermissionRequest:root:b",
+    );
+    dashboard.wait_screen(|screen| screen.contains("input"));
+    desktop_codex_callback(&fixture, queued.id, &mut queued_index, "PostToolUse:root:b");
+    dashboard.wait_screen(|screen| screen.contains("busy"));
+    assert!(group_exists(blocked), "the delivery barrier released early");
+    std::fs::write(dashboard.record.with_extension("release"), "release").unwrap();
+    dashboard.wait_named_calls(1, first.id, "codex-hooks");
+    assert!(live::wait_group_absent(blocked, Duration::from_secs(2)));
+
+    // A later accepted Input and Ready are the barrier for both canceled candidates.
+    desktop_codex_callback(
+        &fixture,
+        queued.id,
+        &mut queued_index,
+        "PermissionRequest:root:b",
+    );
+    assert_eq!(dashboard.wait_bridge_delivery(2).len(), 2);
+    for command in ["PostToolUse:root:b", "Stop:root:b"] {
+        desktop_codex_callback(&fixture, queued.id, &mut queued_index, command);
+    }
+    let requests = dashboard.wait_bridge_delivery(3);
+    assert_eq!(
+        requests.len(),
+        3,
+        "canceled work reached the Bridge: {requests:?}"
+    );
+    assert_eq!(requests[0]["op"]["title"], "OVRCR · response ready");
+    assert_eq!(requests[1]["op"]["title"], "OVRCR · input needed");
+    assert_eq!(requests[2]["op"]["title"], "OVRCR · response ready");
+    assert!(
+        requests[0]["op"]["body"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("(#{})", first.id.0))
+    );
+    for request in &requests[1..] {
+        assert!(
+            request["op"]["body"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("(#{})", queued.id.0))
+        );
+    }
+    dashboard.wait_bridge_controls(&["status"]);
+    dashboard.detach();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_notifications_bridge_cancels_each_in_flight_lane_and_preserves_the_persistent_host() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let mut dashboard =
+        DesktopAlertDashboard::start(&fixture, Some("desktop_notifications = true\n"));
+    dashboard.wait_bridge_controls(&["status"]);
+    let persistent = dashboard.start_persistent_host();
+    dashboard.select("setup", "HOOK_READY");
+    let mut index = 0;
+    std::fs::write(dashboard.record.with_extension("mode"), "block").unwrap();
+    for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let ready_client = dashboard.wait_host_pid();
+    assert_ne!(ready_client, persistent);
+    desktop_codex_callback(&fixture, summary.id, &mut index, "UserPromptSubmit:root:b");
+    assert!(live::wait_group_absent(
+        ready_client,
+        Duration::from_secs(2)
+    ));
+    assert!(group_exists(persistent));
+    assert!(!dashboard.record.exists());
+    std::fs::remove_file(dashboard.record.with_extension("pid")).unwrap();
+    desktop_codex_callback(&fixture, summary.id, &mut index, "PermissionRequest:root:b");
+    let input_client = dashboard.wait_host_pid();
+    desktop_codex_callback(&fixture, summary.id, &mut index, "PostToolUse:root:b");
+    assert!(live::wait_group_absent(
+        input_client,
+        Duration::from_secs(2)
+    ));
+    assert!(group_exists(persistent));
+    assert!(!dashboard.record.exists());
+    std::fs::remove_file(dashboard.record.with_extension("pid")).unwrap();
+
+    // With another Input client hung, real shell input, render and detach remain live.
+    let local = fixture.only_session_id();
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: local,
+            text: "printf 'BRIDGE_%s\\n' SHELL_READY".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(local, "BRIDGE_SHELL_READY");
+    dashboard.select("local", "BRIDGE_SHELL_READY");
+    desktop_codex_callback(&fixture, summary.id, &mut index, "PermissionRequest:root:b");
+    let detached_client = dashboard.wait_host_pid();
+    dashboard.send(b"\rprintf 'BRIDGE_INPUT_%s\\n' READY\r");
+    dashboard.wait_screen(|screen| screen.contains("BRIDGE_INPUT_READY"));
+    assert!(group_exists(detached_client));
+    dashboard.send(b"\x07");
+    dashboard.detach();
+    assert!(live::wait_group_absent(
+        detached_client,
+        Duration::from_secs(2)
+    ));
+    assert!(
+        group_exists(persistent),
+        "Dashboard teardown killed the separate app fixture"
+    );
+    assert_eq!(fixture.session_phase(summary.id), SessionPhase::Running);
+    assert_eq!(fixture.session_phase(local), SessionPhase::Running);
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_notifications_bridge_manual_subtitle_clear_and_identity_bounds_use_server_provenance() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "identity-setup");
+    let original = format!("codex-identity\x1b\u{202e}\n{}", "界".repeat(100));
+    let identity = format!("codex-identity{}", "界".repeat(66));
+    let (summary, _) = codex_session_named(&fixture, &fixture.socket, &original);
+    let mut dashboard = DesktopAlertDashboard::start_for(
+        &fixture,
+        Some("desktop_notifications = true\n"),
+        "codex-identity",
+    );
+    dashboard.wait_bridge_controls(&["status"]);
+    dashboard.select("setup", "HOOK_READY");
+    let manual = format!("\x1bManual\u{202e}\n{}", "界".repeat(100));
+    assert_eq!(
+        fixture.request(Request::SetSessionTitle {
+            session: summary.id,
+            title: Some(manual)
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.session_summary(summary.id).manual_title.unwrap(),
+        format!("Manual{}", "界".repeat(100))
+    );
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:a", "PermissionRequest:root:a"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    assert_eq!(dashboard.wait_bridge_delivery(1).len(), 1);
+    for command in ["PostToolUse:root:a", "Stop:root:a"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let requests = dashboard.wait_bridge_delivery(2);
+    assert_eq!(requests.len(), 2);
+    for request in requests {
+        let op = &request["op"];
+        let subtitle = op["subtitle"].as_str().unwrap();
+        assert_eq!(subtitle, format!("Manual{}", "界".repeat(74)));
+        assert!(subtitle.chars().count() <= 80);
+        assert!(!subtitle.chars().any(char::is_control));
+        assert!(!subtitle.contains('\u{202e}'));
+        let body = op["body"].as_str().unwrap();
+        assert_eq!(
+            body,
+            format!("fixture / work / {identity} (#{})", summary.id.0)
+        );
+        assert!(!body.chars().any(char::is_control));
+        assert!(!body.contains('\u{202e}'));
+    }
+    assert_eq!(
+        fixture.request(Request::SetSessionTitle {
+            session: summary.id,
+            title: None
+        }),
+        Response::Ok
+    );
+    assert_eq!(fixture.session_summary(summary.id).manual_title, None);
+    for command in ["UserPromptSubmit:root:b", "Stop:root:b"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let requests = dashboard.wait_bridge_delivery(3);
+    assert_eq!(requests[2]["op"]["subtitle"], identity);
+    dashboard.detach();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_notifications_bridge_generated_subject_and_private_history_never_leave_the_application()
+{
+    let _guard = env_lock();
+    use ovrcr::protocol::{
+        ActivitySample, AgentCommand, AgentObservation, AgentOperationResult, AgentProvider,
+        AgentSecret, CodexConversation, ConversationReference, InputKind, InputRequest,
+        ProviderReport, ReserveAgent, SampleQuality, SupervisorAuth, SupervisorRequest,
+    };
+    let fixture = ControlFixture(Live::idle().bounded());
+    let title_program = fixture.root.path().join("title-pi");
+    let title_prompt = fixture.root.path().join("title-prompt");
+    std::fs::write(
+        &title_program,
+        r#"#!/bin/sh
+IFS= read -r request
+printf '%s\n' "$request" > "$OVRCR_TEST_TITLE_PROMPT"
+printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"GENERATED_SUBJECT_SECRET"}],"stopReason":"stop"}}'
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&title_program, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let settings = "desktop_notifications = true\ntitle_model = 'pi/test'\n";
+    std::fs::write(fixture.config.with_file_name("dashboard.toml"), settings).unwrap();
+    fixture.start_binary_env(&[
+        ("OVRCR_PI_EXECUTABLE", title_program.as_os_str()),
+        ("OVRCR_TEST_TITLE_PROMPT", title_prompt.as_os_str()),
+    ]);
+    fixture.create_hook_child("setup", "private-title-setup");
+    let token = fixture.root.path().join("private-title.capability");
+    let summary = fixture.create_codex_session_summary(
+        "private-origin",
+        vec![
+            "/bin/sh".into(), "-c".into(),
+            r#"stty -echo; printf '%s\n' "$OVRCR_HOOK_TOKEN" > "$1"; printf 'PRIVATE_AGENT_READY\n'; while IFS= read -r line; do :; done"#.into(),
+            "private-title-agent".into(), token.clone().into_os_string(),
+        ],
+    );
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains(summary.id, "PRIVATE_AGENT_READY");
+    let capability = parse_hook_capability(std::fs::read_to_string(token).unwrap().trim()).unwrap();
+    // Keep the real supervisor watch open: closing it releases its lease.
+    let mut reporting = connect_server(&fixture.socket).unwrap();
+    reporting
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    reporting
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let reservation = client::request(
+        &mut reporting,
+        10,
+        Request::ReserveAgent(ReserveAgent {
+            session: summary.id,
+            capability: AgentSecret(capability),
+            operation: "private-reserve".into(),
+            expected_epoch: 0,
+            invocation: "private-invocation".into(),
+            provider: AgentProvider::Codex,
+        }),
+    )
+    .unwrap();
+    let Response::AgentOperation(AgentOperationResult::Reserved(reservation)) = reservation else {
+        panic!("private agent was not reserved: {reservation:?}");
+    };
+    let auth = SupervisorAuth {
+        session: summary.id,
+        lease: reservation.lease,
+    };
+    let conversation = "00000000-0000-4000-8000-000000000222";
+    let binding = client::request(
+        &mut reporting,
+        11,
+        Request::Supervisor(SupervisorRequest {
+            auth: auth.clone(),
+            operation: "private-bind".into(),
+            command: AgentCommand::Bind {
+                expected_binding: None,
+                conversation: conversation.into(),
+            },
+        }),
+    )
+    .unwrap();
+    let Response::AgentOperation(AgentOperationResult::Bound(binding)) = binding else {
+        panic!("private agent was not bound: {binding:?}");
+    };
+    let mut dashboard =
+        DesktopAlertDashboard::start_for(&fixture, Some(settings), "private-origin");
+    dashboard.wait_bridge_controls(&["status"]);
+    dashboard.select("setup", "HOOK_READY");
+    let history = fixture.root.path().join("private-history.jsonl");
+    std::fs::write(
+        &history,
+        format!(
+            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{conversation}\"}}}}\n{{\"role\":\"user\",\"content\":\"PROMPT_SECRET\"}}\n{{\"role\":\"assistant\",\"content\":\"RESPONSE_SECRET ANSWER_SECRET\"}}\n"
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        client::request(
+            &mut reporting,
+            12,
+            Request::Supervisor(SupervisorRequest {
+                auth,
+                operation: "private-retain".into(),
+                command: AgentCommand::RetainConversation {
+                    binding: binding.clone(),
+                    reference: Box::new(ConversationReference::Codex(CodexConversation {
+                        conversation: conversation.into(),
+                        executable: title_program,
+                        history: Some(history),
+                        config_dir: fixture.root.path().into(),
+                        options: Vec::new(),
+                    })),
+                },
+            })
+        )
+        .unwrap(),
+        Response::AgentOperation(AgentOperationResult::ConversationRetained)
+    );
+    dashboard.wait_screen(|screen| screen.contains("GENERATED_SUBJECT_SECRET"));
+    let subject = fixture.session_summary(summary.id);
+    assert_eq!(subject.title.as_deref(), Some("GENERATED_SUBJECT_SECRET"));
+    assert_eq!(subject.manual_title, None);
+    let prompt = std::fs::read_to_string(title_prompt).unwrap();
+    for secret in ["PROMPT_SECRET", "RESPONSE_SECRET", "ANSWER_SECRET"] {
+        assert!(
+            prompt.contains(secret),
+            "history sentinel was not available to the title worker"
+        );
+    }
+    for (revision, observation) in [
+        (
+            1,
+            AgentObservation::Activity(ActivitySample {
+                state: ovrcr::protocol::AgentActivity::Busy,
+                quality: SampleQuality::Observed,
+                turn: Some("private-turn".into()),
+            }),
+        ),
+        (
+            1,
+            AgentObservation::Input(vec![InputRequest {
+                id: "approval:private".into(),
+                kind: InputKind::Approval,
+            }]),
+        ),
+        (2, AgentObservation::Input(Vec::new())),
+        (
+            2,
+            AgentObservation::Activity(ActivitySample {
+                state: ovrcr::protocol::AgentActivity::ResponseReady,
+                quality: SampleQuality::Observed,
+                turn: Some("private-turn".into()),
+            }),
+        ),
+    ] {
+        assert_eq!(
+            fixture.request(Request::AgentReport(AgentReport {
+                session: summary.id,
+                capability,
+                sequence: None,
+                update: AgentUpdate::Provider(ProviderReport {
+                    binding: binding.clone(),
+                    revision,
+                    observation
+                }),
+            })),
+            Response::Ok
+        );
+        if fixture.session_activity(summary.id) == ovrcr::protocol::AgentActivity::WaitingInput {
+            assert_eq!(
+                dashboard.wait_alert_titles(1, summary.id, "private-origin"),
+                ["OVRCR · input needed"]
+            );
+        }
+    }
+    assert_eq!(
+        dashboard.wait_alert_titles(2, summary.id, "private-origin"),
+        ["OVRCR · input needed", "OVRCR · response ready"]
+    );
+    for request in dashboard.wait_bridge_delivery(2) {
+        assert_eq!(request["op"]["subtitle"], "private-origin");
+        assert_eq!(
+            request["op"]["body"],
+            format!("fixture / work / private-origin (#{})", summary.id.0)
+        );
+    }
+    let native_boundary =
+        std::fs::read_to_string(dashboard.record.with_extension("requests")).unwrap();
+    for secret in [
+        "GENERATED_SUBJECT_SECRET",
+        "PROMPT_SECRET",
+        "RESPONSE_SECRET",
+        "ANSWER_SECRET",
+    ] {
+        assert!(
+            !native_boundary.contains(secret),
+            "{secret} reached the native boundary"
+        );
+    }
     dashboard.detach();
 }
 
@@ -15746,6 +16846,8 @@ fn ready_sound_is_independent_of_desktop_notifications_on_the_managed_path() {
         !dashboard.record.exists(),
         "sound only never calls the desktop host"
     );
+    #[cfg(target_os = "macos")]
+    dashboard.wait_bridge_controls(&[]);
 
     dashboard.send(b"N");
     dashboard.wait_screen(|screen| screen.contains("Desktop notifications: on"));
