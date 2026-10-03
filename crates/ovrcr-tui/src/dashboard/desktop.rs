@@ -911,6 +911,7 @@ fn run_bridge(
     else {
         return BridgeStatus::Failed;
     };
+    let mut reaped = false;
     let result = (|| -> std::io::Result<BridgeStatus> {
         let mut stdin = child.stdin.take();
         let mut stdout = child.stdout.take().unwrap();
@@ -958,6 +959,7 @@ fn run_bridge(
                 }
             }
             if let Some(status) = child.try_wait()? {
+                reaped = true;
                 if !status.success() {
                     return Err(std::io::ErrorKind::Other.into());
                 }
@@ -981,10 +983,13 @@ fn run_bridge(
     match result {
         Ok(status) => status,
         Err(_) => {
-            unsafe {
-                libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+            // Reaping ends ownership of the client's PID and process group.
+            if !reaped {
+                unsafe {
+                    libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+                }
+                let _ = child.wait();
             }
-            let _ = child.wait();
             BridgeStatus::Failed
         }
     }
@@ -2917,6 +2922,126 @@ printf '{{"schema":1,"server_wire":{},"status":"%s"}}\n' "$status"
             d.desktop.bridge.status == Some(BridgeStatus::Failed)
         });
         assert!(d.desktop_status_notice().unwrap().contains("install with"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bridge_reaped_client_failures_do_not_signal_its_former_process_group() {
+        use std::os::unix::{fs::PermissionsExt, process::ExitStatusExt};
+        let mut outcomes = Vec::new();
+        for (case, reply, exit) in [
+            ("invalid JSON", "not JSON".into(), "0"),
+            (
+                "nonzero exit",
+                format!(
+                    r#"{{"schema":{},"server_wire":{},"status":"available"}}"#,
+                    BRIDGE_SCHEMA_VERSION, PROTOCOL_VERSION
+                ),
+                "17",
+            ),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let client = root.path().join("client");
+            let witness_script = root.path().join("witness");
+            std::fs::write(
+                &client,
+                r#"#!/bin/sh
+set -eu
+cat > "$0.request"
+printf '%s' "$$" > "$0.pid.tmp"
+/bin/mv "$0.pid.tmp" "$0.pid"
+count=0
+while [ ! -f "$0.ready" ] && [ "$count" -lt 200 ]; do
+  /bin/sleep 0.01
+  count=$((count + 1))
+done
+[ -f "$0.ready" ] || exit 99
+cat "$0.reply"
+exit "$(cat "$0.exit")"
+"#,
+            )
+            .unwrap();
+            std::fs::write(
+                &witness_script,
+                r#"#!/bin/sh
+set -eu
+printf 'ready' > "$1.ready"
+count=0
+while [ ! -f "$1.release" ] && [ "$count" -lt 500 ]; do
+  /bin/sleep 0.01
+  count=$((count + 1))
+done
+[ -f "$1.release" ] || exit 98
+printf 'survived' > "$1.survived"
+"#,
+            )
+            .unwrap();
+            for script in [&client, &witness_script] {
+                std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            std::fs::write(client.with_extension("reply"), reply).unwrap();
+            std::fs::write(client.with_extension("exit"), exit).unwrap();
+            let (reply, status, survived) = thread::scope(|scope| {
+                let call =
+                    scope.spawn(|| run_bridge(Some(&client), &BridgeOperation::Status, || false));
+                let until = Instant::now() + HOST_TIMEOUT;
+                while !client.with_extension("pid").exists() {
+                    assert!(
+                        Instant::now() < until,
+                        "{case}: client never reached its gate"
+                    );
+                    thread::park_timeout(HOST_POLL);
+                }
+                let group: i32 = std::fs::read_to_string(client.with_extension("pid"))
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                // This child is directly owned and reaped by the test. The gate
+                // keeps the client alive until its group has the ready witness.
+                let mut witness = Command::new(&witness_script)
+                    .arg(&client)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .process_group(group)
+                    .spawn()
+                    .unwrap();
+                let reply = call.join();
+                let release = std::fs::write(client.with_extension("release"), b"release");
+                let until = Instant::now() + HOST_TIMEOUT;
+                let status = loop {
+                    match witness.try_wait() {
+                        Ok(Some(status)) => break status,
+                        Ok(None) if Instant::now() < until => thread::park_timeout(HOST_POLL),
+                        _ => {
+                            // Only the still-owned witness needs cleanup on an
+                            // unexpected fixture failure; never signal a reaped PID.
+                            let _ = witness.kill();
+                            break witness.wait().unwrap();
+                        }
+                    }
+                };
+                release.unwrap();
+                let survived = client.with_extension("survived").exists();
+                eprintln!(
+                    "{case}: client PG {group}, witness PID {}, witness status {status}, survived={survived}",
+                    witness.id()
+                );
+                (reply.unwrap(), status, survived)
+            });
+            outcomes.push((case, reply, status.code(), status.signal(), survived));
+        }
+        assert_eq!(
+            outcomes,
+            ["invalid JSON", "nonzero exit"].map(|case| (
+                case,
+                BridgeStatus::Failed,
+                Some(0),
+                None,
+                true
+            )),
+            "a rejected, already-reaped client must not signal the owned witness in its former group"
+        );
     }
 
     #[cfg(target_os = "macos")]
