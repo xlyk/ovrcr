@@ -156,7 +156,18 @@ fn claude_probe_off_spawns_nothing_and_waits_for_a_managed_session() {
     assert_eq!(waiting.state, QuotaState::Checking);
     assert_eq!(waiting.reason.as_deref(), Some(CLAUDE_WAITING));
     let fixture = live::Live::idle().bounded();
-    fixture.start_binary_env(&[]);
+    install_probe_claude(&fixture);
+    let log = fixture.root.path().join("probe.log");
+    // No credentials in the private HOME: the independent account reader has
+    // nothing to read, so the signed-in auth fixture keeps the waiting row.
+    assert!(
+        !fixture
+            .root
+            .path()
+            .join(".claude/.credentials.json")
+            .exists()
+    );
+    fixture.start_binary_env(&[("OVRCR_CLAUDE_FIXTURE_LOG", log.as_os_str())]);
     let mut socket = attach(&fixture);
     socket
         .set_read_timeout(Some(Duration::from_millis(400)))
@@ -167,6 +178,13 @@ fn claude_probe_off_spawns_nothing_and_waits_for_a_managed_session() {
             assert_eq!(snapshot.claude.reason.as_deref(), Some(CLAUDE_WAITING));
         }
     }
+    assert!(matches!(
+        fixture.request(Request::RefreshQuota {
+            provider: Some(QuotaProvider::Claude),
+        }),
+        Response::Error { code: ErrorCode::InvalidRequest, message } if message.contains(CLAUDE_WAITING)
+    ));
+    assert_eq!(probe_count(&log), 0, "probe ran without consent");
     assert!(
         !fixture
             .socket
@@ -378,6 +396,124 @@ fn claude_probe_cadence_and_refresh_cooldown_follow_the_fake_clock() {
 
 const CREDENTIAL: &str = "ovrcr-fixture-credential-9f3a7c";
 
+/// One bounded, task-owned HTTP request. Only the fake credential reaches it;
+/// the fixture neither logs the bearer nor opens a real provider connection.
+fn claude_usage_fixture(body: &'static str) -> (String, std::thread::JoinHandle<()>) {
+    use std::io::{BufRead, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let url = format!("http://{}/api/oauth/usage", listener.local_addr().unwrap());
+    let request = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + Duration::from_secs(8);
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "no Claude account read"
+                    );
+                    std::thread::park_timeout(Duration::from_millis(10));
+                }
+                Err(error) => panic!("loopback accept failed: {error}"),
+            }
+        };
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut reader = std::io::BufReader::new(&stream);
+        let mut headers = String::new();
+        loop {
+            let mut line = String::new();
+            assert!(
+                reader.read_line(&mut line).unwrap() > 0,
+                "incomplete HTTP headers"
+            );
+            headers.push_str(&line);
+            assert!(headers.len() <= 8192, "HTTP headers too large");
+            if line == "\r\n" {
+                break;
+            }
+        }
+        let headers = headers.to_ascii_lowercase();
+        assert!(headers.starts_with("get /api/oauth/usage http/1.1\r\n"));
+        assert!(
+            headers
+                .lines()
+                .any(|line| { line == format!("authorization: bearer {CREDENTIAL}") }),
+            "fixture bearer header absent"
+        );
+        assert!(
+            headers
+                .lines()
+                .any(|line| line == "anthropic-beta: oauth-2025-04-20")
+        );
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(reply.as_bytes()).unwrap();
+    });
+    (url, request)
+}
+
+#[test]
+fn claude_probe_off_allows_an_account_read_without_spawning_a_probe() {
+    let fixture = live::Live::idle().bounded();
+    install_probe_claude(&fixture);
+    let credentials = fixture.root.path().join("claude-config");
+    std::fs::create_dir(&credentials).unwrap();
+    let path = credentials.join(".credentials.json");
+    let bytes = format!("{{\"claudeAiOauth\":{{\"accessToken\":\"{CREDENTIAL}\"}}}}\n");
+    std::fs::write(&path, &bytes).unwrap();
+    let (usage, request) = claude_usage_fixture(
+        r#"{"five_hour":{"utilization":42,"resets_at":"2099-01-01T00:00:00Z"},"seven_day":{"utilization":18,"resets_at":"2099-01-02T00:00:00Z"}}"#,
+    );
+    let log = fixture.root.path().join("probe.log");
+    fixture.start_binary_env(&[
+        ("CLAUDE_CONFIG_DIR", credentials.as_os_str()),
+        ("OVRCR_QUOTA_CLAUDE_USAGE_URL", std::ffi::OsStr::new(&usage)),
+        ("OVRCR_CLAUDE_FIXTURE_LOG", log.as_os_str()),
+    ]);
+    let mut socket = attach(&fixture);
+    let snapshot = quota_until(&mut socket, "account allowance did not publish", |quota| {
+        quota.claude.state == QuotaState::Current
+    });
+    request.join().expect("loopback account fixture completed");
+    assert!(matches!(
+        snapshot.claude.source,
+        Some(QuotaSource::NativeProfile { .. })
+    ));
+    assert_eq!(snapshot.claude.reason, None);
+    assert!(snapshot.claude.checked_unix_ms.is_some());
+    assert_eq!(snapshot.claude.windows.len(), 2);
+    for (label, used) in [("5h", 4200), ("7d", 1800)] {
+        assert!(
+            snapshot
+                .claude
+                .windows
+                .iter()
+                .any(|window| { window.label == label && window.used_basis_points == Some(used) })
+        );
+    }
+    assert_eq!(std::fs::read_to_string(path).unwrap(), bytes);
+    assert!(!format!("{snapshot:?}").contains(CREDENTIAL));
+    assert_eq!(probe_count(&log), 0, "account read started a hidden probe");
+    assert!(
+        !fixture
+            .socket
+            .parent()
+            .unwrap()
+            .join("claude-quota-probe")
+            .exists()
+    );
+    assert_eq!(snapshot.codex.state, QuotaState::Disabled);
+    assert_eq!(snapshot.grok.state, QuotaState::Disabled);
+}
+
 #[test]
 fn claude_probe_output_does_not_contain_a_fixture_credential() {
     let fixture = live::Live::isolated_home().bounded();
@@ -395,6 +531,7 @@ fn claude_probe_output_does_not_contain_a_fixture_credential() {
     .unwrap();
     let log = fixture.root.path().join("probe.log");
     let server_log = fixture.root.path().join("server.log");
+    let (usage, request) = claude_usage_fixture("{}");
     fixture.start_binary_logged(
         &[
             ("OVRCR_CLAUDE_FIXTURE_LOG", log.as_os_str()),
@@ -402,6 +539,7 @@ fn claude_probe_output_does_not_contain_a_fixture_credential() {
                 "OVRCR_CLAUDE_FIXTURE_MODE",
                 std::ffi::OsStr::new("callback"),
             ),
+            ("OVRCR_QUOTA_CLAUDE_USAGE_URL", std::ffi::OsStr::new(&usage)),
         ],
         &server_log,
     );
@@ -410,7 +548,9 @@ fn claude_probe_output_does_not_contain_a_fixture_credential() {
     let snapshot = quota_until(&mut socket, "probe did not publish", |quota| {
         seen.push_str(&format!("{quota:?}\n"));
         quota.claude.state == QuotaState::Current
+            && matches!(quota.claude.source, Some(QuotaSource::Probe { .. }))
     });
+    request.join().expect("loopback account fixture completed");
     let server = std::fs::read_to_string(&server_log).unwrap_or_default();
     assert!(
         !format!("{seen}{server}{snapshot:?}").contains(CREDENTIAL),
