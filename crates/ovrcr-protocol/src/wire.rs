@@ -438,7 +438,8 @@ pub enum ServerEvent {
     /// response and whenever that reading changes. The Dashboard has no other
     /// source of settings.
     SettingsChanged(Box<crate::SettingsReport>),
-    /// One newly recorded event. The Dashboard does not show these yet.
+    /// One newly recorded event. The attached Dashboard appends it while
+    /// its Events popup is open.
     Recorded(crate::Event),
 }
 

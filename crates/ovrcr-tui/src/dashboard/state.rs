@@ -571,6 +571,7 @@ impl Dashboard {
             details: None,
             settings_report: None,
             settings_editor: Default::default(),
+            events: Default::default(),
             hierarchy: HierarchySnapshot {
                 projects: Vec::new(),
             },
@@ -2155,6 +2156,13 @@ impl Dashboard {
             {
                 self.settings_editor_paste(&text)
             }
+            Event::Paste(text)
+                if self
+                    .details
+                    .is_some_and(|(d, _)| d == super::quota::Details::Events) =>
+            {
+                self.events_paste(&text)
+            }
             Event::Paste(_) if self.details.is_some() => DashboardAction::None,
             Event::Paste(_) if self.whichkey.is_some() => DashboardAction::None,
             Event::Paste(text) if self.palette.is_some() => self.palette_paste(&text),
@@ -3051,6 +3059,14 @@ impl Dashboard {
         {
             return self.drain_outbox();
         }
+        if let ServerMessage::Response {
+            request_id,
+            response,
+        } = &message
+            && self.events_response(*request_id, response)
+        {
+            return self.drain_outbox();
+        }
         if let ServerMessage::Response { request_id, .. } = &message
             && self.ignored_responses.remove(request_id)
         {
@@ -3187,8 +3203,8 @@ impl Dashboard {
                 Response::Inventory { .. } | Response::TerminalText { .. } | Response::Task(_) => {
                     self.dismiss_error_banner()
                 }
-                // The Events popup is a later PR. A snapshot asked by something
-                // else is not drawn here.
+                // A snapshot this popup did not ask for. The one it did ask
+                // for was claimed above.
                 Response::Events(_) => {}
                 Response::HistoryOpened(opened) => {
                     self.accept_history_opened(request_id, opened);
@@ -3358,9 +3374,7 @@ impl Dashboard {
                     self.ensure_selection_visible(&self.visible_rows());
                 }
                 ServerEvent::SettingsChanged(report) => self.install_settings_report(*report),
-                // Live events are on the wire so a later popup can append them.
-                // This PR does not open that popup.
-                ServerEvent::Recorded(_) => {}
+                ServerEvent::Recorded(event) => self.events_recorded(event),
                 ServerEvent::SessionChanged(summary) => {
                     if find_session(self, summary.id)
                         .is_some_and(|current| current.run.0 > summary.run.0)

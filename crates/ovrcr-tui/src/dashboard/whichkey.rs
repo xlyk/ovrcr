@@ -196,29 +196,37 @@ impl Dashboard {
                     if root {
                         binding = binding.unless(Some(super::keymap::ROOT_PROTECTED));
                     }
-                    Some(binding)
+                    vec![binding]
                 }
-                'p' => Some(key_binding(
+                'p' => vec![key_binding(
                     "x",
                     "Remove project",
                     format!("Unregister {project}; asks for confirmation. Keeps the repository."),
                     KeyCode::Char('x'),
                     Action::RemoveProject,
-                )),
-                // Menu-only, like removal: Settings has no Browse key.
-                'v' => Some(key_binding(
-                    ",",
-                    "Settings",
-                    "Show the settings the Server read from dashboard.toml, findings first; read-only"
-                        .into(),
-                    KeyCode::Char(','),
-                    Action::Settings,
-                )),
-                _ => None,
+                )],
+                // Menu-only, like removal: neither has a Browse key.
+                'v' => vec![
+                    key_binding(
+                        ",",
+                        "Settings",
+                        "Show the settings the Server read from dashboard.toml, findings first; read-only"
+                            .into(),
+                        KeyCode::Char(','),
+                        Action::Settings,
+                    ),
+                    key_binding(
+                        "e",
+                        "Events",
+                        "Server event ring, newest last. / filters words; Tab filters the component"
+                            .into(),
+                        KeyCode::Char('e'),
+                        Action::Events,
+                    ),
+                ],
+                _ => Vec::new(),
             };
-            if let Some(binding) = menu_only {
-                hints.push(binding);
-            }
+            hints.extend(menu_only);
             return vec![KeyGroup { title, keys: hints }];
         }
         for (key, name, target, available) in [

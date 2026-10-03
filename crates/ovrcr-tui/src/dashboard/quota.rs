@@ -15,6 +15,7 @@ use ratatui::{
 pub(super) enum Details {
     Quota,
     Settings,
+    Events,
 }
 
 impl Dashboard {
@@ -41,6 +42,12 @@ impl Dashboard {
             .is_some_and(|(details, _)| details == Details::Settings)
         {
             return self.settings_editor_key(key);
+        }
+        if self
+            .details
+            .is_some_and(|(details, _)| details == Details::Events)
+        {
+            return self.events_key(key);
         }
         if matches!(key.code, KeyCode::Esc | KeyCode::Enter) || super::input::is_browse_key(key) {
             self.details = None;
@@ -69,6 +76,12 @@ impl Dashboard {
             };
             return self.settings_editor_key(KeyEvent::from(code));
         }
+        if self
+            .details
+            .is_some_and(|(details, _)| details == Details::Events)
+        {
+            return self.events_mouse(mouse);
+        }
         if let Some((_, scroll)) = &mut self.details {
             match mouse.kind {
                 MouseEventKind::ScrollDown => *scroll = scroll.saturating_add(1),
@@ -86,6 +99,9 @@ impl Dashboard {
         if details == Details::Settings {
             return self.draw_settings_editor(frame, now);
         }
+        if details == Details::Events {
+            return self.draw_events(frame);
+        }
         let outer = frame.area();
         let width = outer.width.saturating_sub(4).min(82);
         let height = outer.height.saturating_sub(2).min(30);
@@ -101,6 +117,7 @@ impl Dashboard {
                 self.quota_lines(now),
             ),
             Details::Settings => unreachable!("drawn by settings_editor"),
+            Details::Events => unreachable!("drawn by events"),
         };
         let block = Block::bordered().title(title).style(
             Style::default()
@@ -447,7 +464,7 @@ fn until(stamp: u64, now: u64) -> String {
     }
 }
 
-fn local_time(stamp: u64) -> String {
+pub(super) fn local_time(stamp: u64) -> String {
     i64::try_from(stamp)
         .ok()
         .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
