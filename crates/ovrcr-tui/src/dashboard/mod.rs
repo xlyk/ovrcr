@@ -2,6 +2,7 @@ mod agents;
 mod copy;
 mod desktop;
 mod event_loop;
+mod events;
 mod git_hints;
 mod hints;
 mod input;
@@ -235,6 +236,7 @@ pub struct Dashboard {
     /// The Server's latest settings reading; `settings` is its typed half.
     settings_report: Option<Box<crate::protocol::SettingsReport>>,
     settings_editor: settings_editor::Editor,
+    events: events::View,
     // Review names Presented, not a newer Unread that arrived before the next draw.
     unread: unread::Unread,
     mode: InputMode,
