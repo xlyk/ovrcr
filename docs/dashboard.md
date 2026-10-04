@@ -29,9 +29,9 @@ or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts
 The sidebar's **Quota left** block shows remaining Claude, Codex and Grok account
 allowance. See [provider allowance](provider-quota.md) for native sources,
 collection settings, freshness and reset behavior.
-Providers remain visible before the first report: **Codex usage off** and
-**Grok usage off** while `quota.enabled` is off, **checking** until an enabled
-provider's first result. A stale value shows its age (`37% left  stale 12m`),
+Providers remain visible before the first report: **checking** until the
+account read returns. **Codex usage off** and **Grok usage off** only while
+`quota.enabled` is explicitly false. A stale value shows its age (`37% left  stale 12m`),
 and a failed row shows when the Server tries again (`unavailable  retry 3m`).
 Narrow sidebars put window values and full state text on a second row
 before sacrificing labels or percentages. A short sidebar keeps at least three
@@ -780,7 +780,7 @@ picker_roots = ["~/Code", "~/src", "~"]
 # argv = ["claude", "--verbose"]
 
 [quota]                              # account quota; see provider-quota.md
-enabled = false                      # opt in: native clients may refresh their own auth and logs
+# enabled = false                    # explicit off; omit to collect while a Dashboard is attached
 
 [quota.claude]
 probe = false                        # opt in: a hidden Claude run may spend allowance

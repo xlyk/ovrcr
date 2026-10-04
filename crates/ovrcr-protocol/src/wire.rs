@@ -491,6 +491,9 @@ mod wire_snapshot {
         settings
             .launch_choices
             .insert("q".into(), crate::LaunchChoice::Terminal);
+        // Keep the wire fixture's settings values explicit; quota collection
+        // is enabled by default for real settings documents.
+        settings.quota.enabled = false;
         settings.quota.codex.home = Some("/h".into());
         crate::SettingsReport {
             path: "/d.toml".into(),

@@ -253,7 +253,7 @@ impl Live {
             std::fs::write(
                 &document,
                 format!(
-                    "agents = [{{ name = \"claude\", argv = [{}] }}]\n",
+                    "agents = [{{ name = \"claude\", argv = [{}] }}]\n[quota]\nenabled = false\n",
                     toml::Value::String(self.claude.command.display().to_string())
                 ),
             )

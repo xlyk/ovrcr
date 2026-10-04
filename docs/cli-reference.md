@@ -93,8 +93,8 @@ ovrcr settings --json
 It never contacts or starts a server. It prints the resolved document path, then
 one line per setting with its key, owner (`Server` or `Dashboard`), source
 (`default` or `document`) and effective value (`unset` when there is none). An
-off consent setting (`desktop_notifications`, `title_model`, `quota.enabled`, `quota.claude.probe`) is
-followed by what to set to turn it on. Findings come last: wrong types, unknown
+off consent setting (`desktop_notifications`, `title_model`, `quota.claude.probe`, and `quota.enabled` when it is false) is
+followed by what to set to turn it on. `quota.enabled` defaults to true: Codex and Grok collection runs while a Dashboard is attached unless the document sets it false. Findings come last: wrong types, unknown
 keys, unknown spellings, an unparseable document, and a `[quota]` table left in
 `config.toml`, each with its key and line when known. The command exits 0 even
 with findings.

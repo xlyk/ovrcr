@@ -18,10 +18,10 @@ The Server runs `claude auth status --json` (the executable named by the `agents
 | --- | --- |
 | `loggedIn` false | not signed in, "run claude auth login" |
 | signed in, `authMethod` other than `claude.ai` | unsupported, "API-key logins have no subscription allowance" |
-| signed in through `claude.ai` | checking, waiting for a managed session's first response |
+| signed in through `claude.ai` | checking until the oauth usage read; with no credential file, waiting for a managed session's first response |
 | `claude` missing, failing or unreadable | unavailable, with the reason (for example "claude not found on PATH" or "claude auth status unreadable") |
 
-This state applies only while the row would otherwise be checking. A managed Claude session that reports `rate_limits` wins over it, and over a probe.
+This state applies only while the row would otherwise be checking. An oauth usage reading with windows is the account row and does not wait for a managed session. A status-line `rate_limits` sample remains an in-session extra when that read has not produced windows. Waiting, unsupported, and not signed in stay when the read has not succeeded or cannot. This is not a native acceptance pass.
 
 ### Claude quota probe
 
@@ -41,13 +41,13 @@ Details for a probe reading say `source: probe; last probe <time> (<age>)`. A li
 | process ended with no callback | unavailable, "probe exited before reporting" |
 | `claude` missing | unavailable, "claude not found on PATH" or "claude not found at the configured path" |
 
-## Enable native collection
+## Collection
 
-Claude callbacks do not need an additional switch. Codex and Grok collection is opt-in because native clients may refresh their own authentication and write their own logs. Add this to the settings document, `dashboard.toml` beside the OVRCR `config.toml` (a `[quota]` table in `config.toml` configures nothing and `ovrcr settings` reports it as a finding), then restart the Server after stopping or preserving your sessions through the normal lifecycle:
+Claude's account row comes from the oauth usage reader and does not need `quota.enabled`. Codex and Grok collection is on by default while a Dashboard is attached. The readers are read-only: they do not refresh or rewrite auth files, which is why the old opt-in default is no longer required. Set `quota.enabled = false` in the settings document to turn Codex and Grok collection off. The setting remains; only the default changed. `dashboard.toml` sits beside the OVRCR `config.toml` (a `[quota]` table in `config.toml` configures nothing and `ovrcr settings` reports it as a finding). A change applies on the next settings check; a restart is not required.
 
 ```toml
 [quota]
-enabled = true
+# enabled = false                 # explicit off; omit to collect while a Dashboard is attached
 
 [quota.claude]
 probe = false                     # opt in: a hidden Claude run may spend allowance
@@ -61,11 +61,11 @@ command = "grok"
 # home = "/absolute/path/to/grok-profile" # native GROK_HOME
 ```
 
-Omit `home` to use the native client's existing profile. OVRCR does not provide login, extract tokens, copy credentials, or attach to a shared native client. Unsupported versions fail closed. Native collection runs only while a Dashboard is attached, with one worker per provider, a five-minute cadence, bounded replies and a twenty-second request deadline, and failure backoff (below). The deadline covers native writes and incoming notifications as well as replies. Fifty Sessions do not create fifty account readers. Every `quota.*` setting is live: a change restarts the native client and reads at once.
+Omit `home` to use the native client's existing profile. OVRCR does not provide login, extract tokens, copy credentials, or attach to a shared native client. Unsupported versions fail closed. Native collection runs only while a Dashboard is attached, with one worker per provider, a five-minute cadence, bounded replies and a twenty-second request deadline, and failure backoff (below). The deadline covers native writes and incoming notifications as well as replies. Fifty Sessions do not create fifty account readers. Every `quota.*` setting is live: a change restarts the native client and reads at once. This document does not claim a native acceptance pass against the installed CLIs.
 
 ## Interpret the display
 
-A bar represents `100 − consumed`; `—` is unknown, not zero or full. Exhausted and over-limit reports are distinct. Passed reset times show **reset due**; OVRCR never refills allowance locally. Unavailable or stale sources retain last-good values with a stale marker and their age since the last observation or account check, such as `37% left  stale 12m`. Before any source reports, Claude shows checking and each native provider shows checking when `quota.enabled` is on, or **Codex usage off** / **Grok usage off** when it is not. A failed row without values shows its next check, such as `unavailable  retry 3m`. Narrow sidebars place the window's full state below its identity. A short sidebar shows one line per provider, then a single `Quota: u` line, and hides the block only below that; details stay on `u`.
+A bar represents `100 − consumed`; `—` is unknown, not zero or full. Exhausted and over-limit reports are distinct. Passed reset times show **reset due**; OVRCR never refills allowance locally. Unavailable or stale sources retain last-good values with a stale marker and their age since the last observation or account check, such as `37% left  stale 12m`. Before any source reports, Claude shows checking and Codex and Grok show checking (collection is on unless `quota.enabled` is false). **Codex usage off** / **Grok usage off** is the explicit off state. A failed row without values shows its next check, such as `unavailable  retry 3m`. Narrow sidebars place the window's full state below its identity. A short sidebar shows one line per provider, then a single `Quota: u` line, and hides the block only below that; details stay on `u`.
 
 Details open with "Subscription allowance only": the block and details never show tokens or spend. For each provider they give the state, the off-state sentence with its setting path or the quota reason, the source, the last observation and last account check as local time with age, and the next check as local time. Details distinguish the last changed observation from the last successful native account check. Repeated Claude callbacks cannot claim a backend check. Account changes invalidate older native generations, including A→B→A notifications received during a read. Quota snapshots are bounded, in-memory Server state and are not persisted as account history.
 
@@ -75,8 +75,8 @@ Each provider row carries a state, a **Quota reason** and a **Next check**, all 
 
 | State | Meaning |
 | --- | --- |
-| off | `quota.enabled` is off. The reason is the off-state sentence naming the setting. |
-| checking | Enabled, and the first read is in flight. Claude stays here, with the reason "waiting for a managed Claude session's first response", until a managed session or a consented probe reports, unless `claude auth status` rules an allowance out. |
+| off | `quota.enabled` is explicitly false. The reason is the off-state sentence naming the setting. The default is on. |
+| checking | The first read is in flight. Codex and Grok stay here until their account read returns, unless `quota.enabled` is false. Claude stays here, with the reason "waiting for a managed Claude session's first response", until the oauth usage read, a managed session, or a consented probe reports, unless `claude auth status` rules an allowance out. Waiting, unsupported, and not signed in stay as they are when that read has not succeeded or cannot. |
 | current | The last read succeeded. The next check is five minutes later. |
 | unavailable, not signed in, unsupported, invalid, source conflict | The last read failed. The reason says why. |
 

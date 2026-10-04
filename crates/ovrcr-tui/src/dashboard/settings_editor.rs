@@ -303,7 +303,7 @@ fn items(report: &SettingsReport, presets: &[String]) -> Vec<Row> {
                 "quota.enabled",
                 "Codex and Grok usage",
                 Kind::Toggle(quota.enabled),
-                &["Turning this on runs the native CLIs, which may refresh their own auth and write logs."],
+                &["On by default while a Dashboard is attached. The readers do not rewrite auth files. Set false to turn Codex and Grok collection off."],
             ),
             top(
                 "Usage",

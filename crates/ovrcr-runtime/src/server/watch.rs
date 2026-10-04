@@ -206,7 +206,7 @@ mod tests {
         std::fs::write(dir.path().join("config.toml"), "[quota]\nenabled = true\n").unwrap();
         assert!(state.poll_settings());
         assert_eq!(state.settings.lock().unwrap().report.findings.len(), 1);
-        assert!(!state.quota_settings().enabled);
+        assert!(state.quota_settings().enabled);
 
         std::fs::remove_file(&document).unwrap();
         assert!(state.poll_settings());
@@ -267,7 +267,7 @@ mod tests {
         }
 
         assert_eq!(set("quota.enabled", None), Response::Ok);
-        assert!(!state.quota_settings().enabled);
+        assert!(state.quota_settings().enabled);
         assert_eq!(set("branch_prefix", None), Response::Ok);
         assert_eq!(std::fs::read_to_string(&document).unwrap(), "# mine\n");
         assert_eq!(reading(&state).settings.branch_prefix, "feature/");

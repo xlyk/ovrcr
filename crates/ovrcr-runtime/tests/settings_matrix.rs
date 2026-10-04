@@ -128,17 +128,22 @@ impl Setting {
     }
 
     /// The row this setting reports for a non-default value written as
-    /// `text`. Only consent settings carry an off-state, and off is their
-    /// default, so a non-default value turns its explanation off.
+    /// `text`. A consent setting explains how to turn it on only while it is
+    /// off. Most of those default to off, so a non-default value drops the
+    /// explanation. `quota.enabled` defaults to on, so the explanation is on
+    /// the explicit false value instead.
     fn row_for(&self, text: &str) -> SettingRow {
         let written = toml_value(text).unwrap();
+        let value = match (self.kind, written) {
+            (Kind::Str, toml::Value::String(text)) => text,
+            (_, written) => written.to_string(),
+        };
+        let off_state = (self.key == "quota.enabled" && value == "false")
+            .then(|| ovrcr_runtime::settings::QUOTA_OFF.to_owned());
         SettingRow {
-            value: Some(match (self.kind, written) {
-                (Kind::Str, toml::Value::String(text)) => text,
-                (_, written) => written.to_string(),
-            }),
+            value: Some(value),
             source: SettingSource::Document,
-            off_state: None,
+            off_state,
             ..self.default.clone()
         }
     }
