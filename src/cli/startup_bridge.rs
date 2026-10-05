@@ -22,7 +22,10 @@ pub(super) fn run(confirm: &mut impl FnMut(&str) -> Result<bool>) -> Result<()> 
         .filter(|p| p.join("scripts/install-bridge.sh").is_file())
         .unwrap_or_else(|| directory.join("ovrcr-startup"));
     if !payload.join("scripts/install-bridge.sh").is_file() {
-        eprintln!("Bridge install assets missing; `just run` packages them with the CLI.");
+        super::startup::notice(
+            "Bridge install assets missing; `just run` packages them with the CLI.",
+            false,
+        );
         return Ok(());
     }
     let home = PathBuf::from(std::env::var_os("HOME").context("locate Bridge destination")?);
@@ -60,7 +63,7 @@ pub(super) fn run(confirm: &mut impl FnMut(&str) -> Result<bool>) -> Result<()> 
         "Install"
     };
     if !confirm(&format!(
-        "{repair} OVRCR Bridge at {}? This installs the app; notification permission is requested separately.",
+        "{repair} OVRCR Bridge\nLocation: {}\n\nInstalls the app from the packaged startup assets.\nNotification permission is requested separately.",
         destination.display()
     ))? {
         return Ok(());
@@ -104,9 +107,12 @@ pub(super) fn run(confirm: &mut impl FnMut(&str) -> Result<bool>) -> Result<()> 
         result.status.success(),
         "Bridge installer refused or failed; native installation needs inspection"
     );
-    eprintln!(
-        "Installed OVRCR Bridge at {}. An already running Bridge keeps its process until you quit that selected app.",
-        destination.display()
+    super::startup::notice(
+        &format!(
+            "Installed OVRCR Bridge at {}. An already running Bridge keeps its process until you quit that selected app.",
+            destination.display()
+        ),
+        true,
     );
     Ok(())
 }

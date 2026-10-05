@@ -212,7 +212,7 @@ pub fn connect_dashboard(
         "an unknown build (legacy or invalid identity)"
     };
     if !confirm(&format!(
-        "OVRCR server at {} is running {reason}. Restart it with {}? All running sessions will stop.",
+        "Restart OVRCR server\nSocket: {}\nRunning build: {reason}\nReplacement: {}\n\nAll running sessions will stop.",
         paths.socket.display(),
         executable.display()
     ))? {

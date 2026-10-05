@@ -66,21 +66,7 @@ struct DashboardLayout {
 }
 
 pub(super) const METADATA_HEIGHT: u16 = 2;
-pub(super) const BASE: Color = Color::Rgb(30, 30, 46);
-pub(super) const CRUST: Color = Color::Rgb(17, 17, 27);
-pub(super) const TEXT: Color = Color::Rgb(205, 214, 244);
-pub(super) const SUBTEXT: Color = Color::Rgb(166, 173, 200);
-pub(super) const MUTED: Color = Color::Rgb(108, 112, 134);
-pub(super) const MAUVE: Color = Color::Rgb(203, 166, 247);
-pub(super) const PEACH: Color = Color::Rgb(250, 179, 135);
-pub(super) const GREEN: Color = Color::Rgb(166, 227, 161);
-pub(super) const TEAL: Color = Color::Rgb(148, 226, 213);
-pub(super) const BLUE: Color = Color::Rgb(137, 180, 250);
-pub(super) const SKY: Color = Color::Rgb(137, 220, 235);
-pub(super) const YELLOW: Color = Color::Rgb(249, 226, 175);
-pub(super) const RED: Color = Color::Rgb(243, 139, 168);
-pub(super) const SURFACE0: Color = Color::Rgb(49, 50, 68);
-pub(super) const SURFACE2: Color = Color::Rgb(88, 91, 112);
+pub(super) use crate::theme::*;
 
 pub fn render_terminal(frame: &mut Frame<'_>, area: Rect, screen: &vt100::Screen, focused: bool) {
     let (rows, cols) = screen.size();

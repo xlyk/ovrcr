@@ -56,6 +56,7 @@ fn launch(fixture: &live::Live) -> Result<Terminal> {
     ])?;
     command.env("PATH", path);
     command.env("TERM", "xterm-256color");
+    command.env_remove("NO_COLOR");
     command.env("SHELL", "/bin/sh");
     Terminal::start(command, 40, 160, Default::default())
 }
@@ -69,8 +70,23 @@ fn dashboard_startup_offers_missing_hooks_and_decline_preserves_profiles() -> Re
     let before = (fs::read(&claude)?, fs::read(&codex)?);
     let mut terminal = launch(&fixture)?;
     let result = (|| -> Result<()> {
+        wait(&terminal, "OVRCR · startup")?;
         wait(&terminal, "Claude")?;
         wait(&terminal, "[y/n]")?;
+        let screen = terminal.screen();
+        let heading = screen
+            .contents()
+            .lines()
+            .position(|line| line.contains("OVRCR · startup"))
+            .unwrap();
+        assert_eq!(
+            screen.cell(heading as u16, 1).unwrap().bgcolor(),
+            ovrcr_terminal::vt100::Color::Rgb(203, 166, 247)
+        );
+        assert_eq!(
+            screen.cell(heading as u16, 1).unwrap().fgcolor(),
+            ovrcr_terminal::vt100::Color::Rgb(30, 30, 46)
+        );
         terminal.send(b"n\r")?;
         wait(&terminal, "Codex")?;
         terminal.send(b"n\r")?;

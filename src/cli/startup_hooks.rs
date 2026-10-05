@@ -31,8 +31,11 @@ pub(super) fn run(confirm: &mut impl FnMut(&str) -> anyhow::Result<bool>) -> any
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(directory)));
         let Some(profile) = profile else {
-            eprintln!(
-                "{provider} reporting hooks unavailable: set HOME or {variable} to select the native profile"
+            super::startup::notice(
+                &format!(
+                    "{provider} reporting hooks unavailable: set HOME or {variable} to select the native profile"
+                ),
+                false,
             );
             continue;
         };
@@ -40,9 +43,12 @@ pub(super) fn run(confirm: &mut impl FnMut(&str) -> anyhow::Result<bool>) -> any
         if let Err(error) = offer(provider, &path, &executable, confirm) {
             // Only the outer, controlled reason is shown. Native parser errors
             // and source text can contain private configuration or credentials.
-            eprintln!(
-                "{provider} reporting hooks in {} were not changed: {error}; fix the native file and rerun OVRCR",
-                path.display()
+            super::startup::notice(
+                &format!(
+                    "{provider} reporting hooks in {} were not changed: {error}; fix the native file and rerun OVRCR",
+                    path.display()
+                ),
+                false,
             );
         }
     }
@@ -73,21 +79,23 @@ fn offer(
         return Ok(());
     }
     let effect = if provider == "Claude" {
-        "updates OVRCR reporting hooks and composes the status line while preserving its renderer"
+        "Shows Claude activity and usage in OVRCR.\nKeeps your existing status-line renderer."
     } else {
-        "updates OVRCR reporting hooks; review and trust them in native Codex before tracking"
+        "Shows Codex activity and usage in OVRCR.\nReview and trust hooks in native Codex before tracking."
     };
     let prompt = format!(
-        "Install or repair {provider} reporting hooks in {}? This {effect}. Native approval and trust settings are preserved; configuration does not prove hook trust or delivery.",
+        "{provider} reporting hooks\nInstall or repair hooks in:\n{}\n\n{effect}\nNative approvals and trust are preserved.\nReview native hook trust and delivery before relying on tracking.",
         path.display()
     );
     if !confirm(&prompt)? {
         return Ok(());
     }
     snapshot.write(&next)?;
-    eprintln!(
-        "Installed or repaired {provider} reporting hooks in {}; native trust and delivery remain unverified",
-        path.display()
+    super::startup::notice(
+        &format!(
+            "{provider} reporting hooks updated. Native trust and delivery remain unverified."
+        ),
+        true,
     );
     Ok(())
 }

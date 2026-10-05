@@ -580,3 +580,5 @@ unavailable; native provider acceptance is open. See the
 
 OVRCR is released under the MIT license. See [`LICENSE`](LICENSE) for the full
 text.
+
+Startup offers use the Dashboard palette and compact y/n hints. Press Enter to skip; `NO_COLOR` or `TERM=dumb` keeps the same prompts without styling.
