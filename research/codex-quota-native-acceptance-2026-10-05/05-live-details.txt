@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ────────────────────────────│pid: 59198  elapsed: 4m  agent unknown  local (#1)
+  󰘬 main                          root │local (#1)
+▌    $ lo
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable)  CONSIGINT ────────────────────────────│pid: 59198  elapsed: 4m  agent unknown  local (#1)
+		5 text (settable)   󰘬 main                          root │local (#1)
+		6 text (settable) ▌    $ local                           │consigint ›
+		7 text (settable)   󰘬 gui-consigint-auth-handoff         │
+		8 text (settable)      $ local                           │
+		9 text (settable)      - review auth handoff    grok:4.6 │
+		10 text (settable)   󰘬 gui-consigint-worktree-lifecycle   │
+		11 text (settable)      $ local                           │
+		12 text (settable)      - implement lif…  claude:sonnet-4 │
+		13 text (settable)      - review websocke…  codex:gpt-5.4 │
+		14 text (settable)      - plan snapshot res…  pi:grok-4.6 │
+		15 text (settable)                                        │
+		16 text (settable)  SPACELIFT-AGENT ──────────────────────│
+		17 text (settable)   󰘬 main                          root │
+		18 text (settable)      $ local                           │  ┌Quota details · Esc close · ↑↓ scroll───────────────────────────────────────────┐
+		19 text (settable)   󰘬 gui-spacelift-agent-pipeline-progr…│  │Subscription allowance only.                                                    │
+		20 text (settable)      $ local                           │  │                                                                                │
+		21 text (settable)      - build pipeline …  claude:opus-4 │  │Claude — not signed in                                                          │
+		22 text (settable)   󰘬 gui-spacelift-agent-scope-quality  │  │reason: run claude auth login                                                   │
+		23 text (settable)      $ local                           │  │source: no native source selected                                               │
+		24 text (settable)      - review scope qu…  codex:gpt-5.4 │  │last observation: not reported                                                  │
+		25 text (settable)                                        │  │last account check: not reported (native callback is not a backend check)       │
+		26 text (settable)                                        │  │next check: not scheduled                                                       │
+		27 text (settable)                                        │  │                                                                                │
+		28 text (settable)                                        │  │Codex — reported                                                                │
+		29 text (settable)                                        │  │source: Codex selected native profile; generation 2                             │
+		30 text (settable)                                        │  │last observation: 2026-10-05 00:23:56 (4m ago)                                  │
+		31 text (settable)                                        │  │last account check: 2026-10-05 00:23:56 (4m ago)                                │
+		32 text (settable)                                        │  │next check: 2026-10-05 00:28:56 (in 1m)                                         │
+		33 text (settable)                                        │  │7d [codex/primary]: 80% · reset: 2026-10-10T04:26:52Z                           │
+		34 text (settable)                                        │  │                                                                                │
+		35 text (settable)                                        │  │Grok — not signed in                                                            │
+		36 text (settable)                                        │  │reason: not signed in                                                           │
+		37 text (settable)                                        │  │source: Grok selected native profile; generation 1                              │
+		38 text (settable)                                        │  │last observation: not reported                                                  │
+		39 text (settable)                                        │  │last account check: not reported (native callback is not a backend check)       │
+		40 text (settable)                                        │  │next check: 2026-10-05 00:33:55 (in 6m)                                         │
+		41 text (settable)                                        │  │                                                                                │
+		42 text (settable)                                        │  │                                                                                │
+		43 text (settable)                                        │  │                                                                                │
+		44 text (settable)                                        │  │                                                                                │
+		45 text (settable)                                        │  │                                                                                │
+		46 text (settable)                                        │  │                                                                                │
+		47 text (settable)                                        │  └────────────────────────────────────────────────────────────────────────────────┘
+		48 text (settable)                                        │
+		49 text (settable)                                        │
+		50 text (settable)                                        │
+		51 text (settable)                                        │
+		52 text (settable)                                        │
+		53 text (settable)                                        │
+		54 text (settable)                                        │
+		55 text (settable)                                        │
+		56 text (settable)                                        │
+		57 text (settable)                                        │
+		58 text (settable)                                        │
+		59 text (settable) Quota left                             │
+		60 text (settable) Claude — not signed in                 │
+		61 text (settable) Codex  7d [████████░░] 80%             │
+		62 text (settable) Grok — not signed in  retry 6m         │
+		63 text (settable) BROWSE  Space Menu  : Search  ? Help
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ────────────────────────────│pid: 59198  elapsed: 4m  agent unknown  local (#1)
+  󰘬 main                          root │local (#1)
+▌    $ lo

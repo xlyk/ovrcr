@@ -1,0 +1,37 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.44s
+     Running tests/provider_quota.rs (target/debug/deps/provider_quota-c02f91223b634194)
+
+running 21 tests
+test account_a_to_b_to_a_during_native_read_cannot_publish_old_allowance ... ok
+test claude_auth_cut_short_by_shutdown_publishes_nothing ... ok
+test claude_auth_status_sets_the_claude_row_and_keeps_no_identifier ... ok
+test claude_oauth_usage_reaches_separate_five_hour_and_seven_day_rows ... ok
+test codex_native_read_reaches_remaining_bars_through_real_server_and_socket ... ok
+test default_settings_publish_current_allowance_without_opt_in ... ok
+test disabled_quota_snapshot_carries_the_off_state_reason ... ok
+test enabled_attach_shows_checking_then_current_within_one_read ... ok
+test grok_native_billing_reaches_actual_monthly_remaining_bar ... ok
+test manual_refresh_skips_failure_backoff_once_per_cooldown ... ok
+test missing_executable_is_not_found_with_next_check_at_the_cap ... ok
+test model_specific_bucket_is_not_a_general_sidebar_allowance ... ok
+test native_collection_pauses_without_dashboard_and_deduplicates_fifty_sessions ... ok
+test native_quota_rpc_fixture ... ignored, task-owned native RPC fixture process
+test no_claude_on_path_is_unavailable_with_its_reason ... ok
+test providers_remain_visible_before_any_native_quota_source_reports ... ok
+test quota_enabled_flips_live_without_restart ... ok
+test quota_table_in_instance_identity_is_a_finding_and_starts_no_worker ... ok
+test retry_after_overrides_the_ladder_and_a_manual_refresh ... ok
+test set_setting_quota_enabled_off_publishes_disabled_rows ... ok
+test unrelated_native_messages_cannot_extend_the_account_request_deadline ... ok
+
+test result: ok. 20 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 58.55s
+
+     Running tests/quota_schema.rs (target/debug/deps/quota_schema-ade977784e752a61)
+
+running 4 tests
+test authoritative_native_observation_after_account_check_is_not_stale ... ok
+test codex_keeps_actual_windows_and_distinguishes_unknown_exhausted_and_overlimit ... ok
+test grok_preserves_weekly_monthly_periods_and_ignores_extra_balances ... ok
+test quota_wire_boundary_rejects_duplicate_windows_and_invalid_percentages ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

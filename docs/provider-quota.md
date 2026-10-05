@@ -61,7 +61,7 @@ command = "grok"
 # home = "/absolute/path/to/grok-profile" # native GROK_HOME
 ```
 
-Omit `home` to use the native client's existing profile. OVRCR does not provide login, extract tokens, copy credentials, or attach to a shared native client. Unsupported versions fail closed. Native collection runs only while a Dashboard is attached, with one worker per provider, a five-minute cadence, bounded replies and a twenty-second request deadline, and failure backoff (below). The deadline covers native writes and incoming notifications as well as replies. Fifty Sessions do not create fifty account readers. Every `quota.*` setting is live: a change restarts the native client and reads at once. This document does not claim a native acceptance pass against the installed CLIs.
+Omit `home` to use the native client's existing profile. OVRCR does not provide login, extract tokens, copy credentials, or attach to a shared native client. Unsupported versions fail closed. Native collection runs only while a Dashboard is attached, with one worker per provider, a five-minute cadence, bounded replies and a twenty-second request deadline, and failure backoff (below). The deadline covers native writes and incoming notifications as well as replies. Fifty Sessions do not create fifty account readers. Every `quota.*` setting is live: a change restarts the native client and reads at once. [Native Codex read/UI acceptance](../research/codex-quota-native-acceptance-2026-10-05/README.md) verified the installed 0.155.1 CLI with an existing ChatGPT login on `05adc3d0`. The record keeps unobserved native notifications/profile switching and the combined three-provider lifecycle gate (#231) explicit.
 
 ## Interpret the display
 

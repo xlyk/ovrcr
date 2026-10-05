@@ -1,0 +1,50 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                             [Actions] [Menu]
+ C┌Quota details · Esc close · ↑↓ scroll────────────────────────────────────────┐oc
+  │Subscription allowance only.                                                 │
+▌ │                                                                             │s\
+  │Claude — not signed in                                                       │
+  │reason: run claude auth login                                                │
+  │sour
+		3 text (settable) 󰚩 OVRCR  agent runtime                                             [Actions] [Menu]
+		4 text (settable)  C┌Quota details · Esc close · ↑↓ scroll────────────────────────────────────────┐oc
+		5 text (settable)   │Subscription allowance only.                                                 │
+		6 text (settable) ▌ │                                                                             │s\
+		7 text (settable)   │Claude — not signed in                                                       │
+		8 text (settable)   │reason: run claude auth login                                                │
+		9 text (settable)   │source: no native source selected                                            │
+		10 text (settable)   │last observation: not reported                                               │
+		11 text (settable)   │last account check: not reported (native callback is not a backend check)    │
+		12 text (settable)   │next check: not scheduled                                                    │
+		13 text (settable)   │                                                                             │
+		14 text (settable)   │Codex — unavailable                                                          │
+		15 text (settable)   │reason: read interrupted                                                     │
+		16 text (settable)  S│source: Codex selected native profile; generation 2                          │
+		17 text (settable)   │last observation: 2026-10-05 00:23:56 (9m ago)                               │
+		18 text (settable)   │last account check: 2026-10-05 00:30:23 (2m ago)                             │
+		19 text (settable)   │next check: 2026-10-05 00:33:51 (in 1m)                                      │
+		20 text (settable)   │7d [codex/primary]: 80% left  stale 2m · reset: 2026-10-10T04:26:52Z         │
+		21 text (settable)   │                                                                             │
+		22 text (settable)   │Grok — not signed in                                                         │
+		23 text (settable)   │reason: not signed in                                                        │
+		24 text (settable) Qu│source: Grok selected native profile; generation 1                           │
+		25 text (settable) Cl│last observation: not reported                                               │
+		26 text (settable) Co│last account check: not reported (native callback is not a backend check)    │
+		27 text (settable) Gr└─────────────────────────────────────────────────────────────────────────────┘
+		28 text (settable) BROWSE  Space Menu  : Search  ? Help
+	29 close button
+	30 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	31 minimize button
+	32 text OVRCR GUI
+33 menu bar
+	34 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                             [Actions] [Menu]
+ C┌Quota details · Esc close · ↑↓ scroll────────────────────────────────────────┐oc
+  │Subscription allowance only.                                                 │
+▌ │                                                                             │s\
+  │Claude — not signed in                                                       │
+  │reason: run claude auth login                                                │
+  │sour

@@ -1,0 +1,29 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+pid: 92074  elapsed: 5m  agent unknown  local (#1)
+local (#1)
+󰚩 OVRCR
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable) pid: 92074  elapsed: 5m  agent unknown  local (#1)
+		5 text (settable) local (#1)
+		6 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		7 text (settable)                                        │no session selected
+		8 text (settable)                                        │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		9 text (settable)                                        │Welcome to OVRCR
+		10 text (settable)                                        │
+		11 text (settable) Quota: u                               │a  Register project
+		12 text (settable) ERROR: Claude reporting hooks missing in /private/tmp/ovrcr-codex-229-20261005/claude/settings.json: run `ovrcr agent setup claude --print --settings /private/tmp/ovr
+		13 text (settable) Terminal mode  Ctrl-g browse  then s Agents
+	14 close button
+	15 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	16 minimize button
+	17 text OVRCR GUI
+18 menu bar
+	19 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+pid: 92074  elapsed: 5m  agent unknown  local (#1)
+local (#1)
+󰚩 OVRCR

@@ -1,0 +1,49 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                             [Actions] [Menu]
+ CONSIGINT ────────────────────────────│pid: 59198  elapsed: 10m  agent unknown  lo
+  󰘬 main                          root │local (#1)
+▌    $ local                           │consigint › rtk proxy printf 'CUA_CODEX_%s\
+  󰘬 gui-consigint-auth-handoff         │CUA_CODEX_LIVE_OK
+     $ local                           │consigint ›
+
+		3 text (settable) 󰚩 OVRCR  agent runtime                                             [Actions] [Menu]
+		4 text (settable)  CONSIGINT ────────────────────────────│pid: 59198  elapsed: 10m  agent unknown  lo
+		5 text (settable)   󰘬 main                          root │local (#1)
+		6 text (settable) ▌    $ local                           │consigint › rtk proxy printf 'CUA_CODEX_%s\
+		7 text (settable)   󰘬 gui-consigint-auth-handoff         │CUA_CODEX_LIVE_OK
+		8 text (settable)      $ local                           │consigint ›
+		9 text (settable)      - review auth handoff    grok:4.6 │
+		10 text (settable)   󰘬 gui-consigint-worktree-lifecycle   │
+		11 text (settable)      $ local                           │
+		12 text (settable)      - implement lif…  claude:sonnet-4 │
+		13 text (settable)      - review websocke…  codex:gpt-5.4 │
+		14 text (settable)      - plan snapshot res…  pi:grok-4.6 │
+		15 text (settable)                                        │
+		16 text (settable)  SPACELIFT-AGENT ──────────────────────│
+		17 text (settable)   󰘬 main                          root │
+		18 text (settable)      $ local                           │
+		19 text (settable)   󰘬 gui-spacelift-agent-pipeline-progr…│
+		20 text (settable)      $ local                           │
+		21 text (settable)      - build pipeline …  claude:opus-4 │
+		22 text (settable)   󰘬 gui-spacelift-agent-scope-quality  │
+		23 text (settable)      $ local                           │
+		24 text (settable) Quota left                             │
+		25 text (settable) Claude — not signed in                 │
+		26 text (settable) Codex  7d [████████░░] 80%             │
+		27 text (settable) Grok — not signed in  retry 10m        │
+		28 text (settable) ERROR: Quota refresh cooling down: 30s left
+	29 close button
+	30 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	31 minimize button
+	32 text OVRCR GUI
+33 menu bar
+	34 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                             [Actions] [Menu]
+ CONSIGINT ────────────────────────────│pid: 59198  elapsed: 10m  agent unknown  lo
+  󰘬 main                          root │local (#1)
+▌    $ local                           │consigint › rtk proxy printf 'CUA_CODEX_%s\
+  󰘬 gui-consigint-auth-handoff         │CUA_CODEX_LIVE_OK
+     $ local                           │consigint ›

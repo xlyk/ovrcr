@@ -1,0 +1,29 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+pid: 92074  elapsed: 6m  agent unknown  local (#1)
+local (#1)
+󰚩 OVRCR
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable) pid: 92074  elapsed: 6m  agent unknown  local (#1)
+		5 text (settable) local (#1)
+		6 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		7 text (settable)                                        │no┌Quota details · Esc close · ↑↓ scroll───────────────────────────────────────────┐
+		8 text (settable)                                        │──│5h [codex/primary]: 33% left  stale 2m · reset: 2026-10-05T08:43:31Z            │──────────────────────────────────────────
+		9 text (settable)                                        │We│7d [codex/secondary]: 69% left  stale 2m · reset: 2026-10-06T08:43:31Z          │
+		10 text (settable)                                        │  │                                                                                │
+		11 text (settable) Quota: u                               │a └────────────────────────────────────────────────────────────────────────────────┘
+		12 text (settable) ERROR: Claude reporting hooks missing in /private/tmp/ovrcr-codex-229-20261005/claude/settings.json: run `ovrcr agent setup claude --print --settings /private/tmp/ovr
+		13 text (settable) Terminal mode  Ctrl-g browse  then s Agents
+	14 close button
+	15 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	16 minimize button
+	17 text OVRCR GUI
+18 menu bar
+	19 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+pid: 92074  elapsed: 6m  agent unknown  local (#1)
+local (#1)
+󰚩 OVRCR

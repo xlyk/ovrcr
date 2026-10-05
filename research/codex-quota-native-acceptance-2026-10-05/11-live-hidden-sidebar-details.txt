@@ -1,0 +1,55 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+pid: 59198  elapsed: 7m  agent unknown  local (#1)
+local (#1)
+consigint
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable) pid: 59198  elapsed: 7m  agent unknown  local (#1)
+		5 text (settable) local (#1)
+		6 text (settable) consigint › rtk proxy printf 'CUA_CODEX_%s\n' LIVE_OK
+		7 text (settable) CUA_CODEX_LIVE_OK
+		8 text (settable) consigint ›
+		9 text (settable)                                           ┌Quota details · Esc close · ↑↓ scroll───────────────────────────────────────────┐
+		10 text (settable)                                           │Subscription allowance only.                                                    │
+		11 text (settable)                                           │                                                                                │
+		12 text (settable)                                           │Claude — not signed in                                                          │
+		13 text (settable)                                           │reason: run claude auth login                                                   │
+		14 text (settable)                                           │source: no native source selected                                               │
+		15 text (settable)                                           │last observation: not reported                                                  │
+		16 text (settable)                                           │last account check: not reported (native callback is not a backend check)       │
+		17 text (settable)                                           │next check: not scheduled                                                       │
+		18 text (settable)                                           │                                                                                │
+		19 text (settable)                                           │Codex — reported                                                                │
+		20 text (settable)                                           │source: Codex selected native profile; generation 2                             │
+		21 text (settable)                                           │last observation: 2026-10-05 00:23:56 (7m ago)                                  │
+		22 text (settable)                                           │last account check: 2026-10-05 00:30:23 (<1m ago)                               │
+		23 text (settable)                                           │next check: 2026-10-05 00:35:23 (in 5m)                                         │
+		24 text (settable)                                           │7d [codex/primary]: 80% · reset: 2026-10-10T04:26:52Z                           │
+		25 text (settable)                                           │                                                                                │
+		26 text (settable)                                           │Grok — not signed in                                                            │
+		27 text (settable)                                           │reason: not signed in                                                           │
+		28 text (settable)                                           │source: Grok selected native profile; generation 1                              │
+		29 text (settable)                                           │last observation: not reported                                                  │
+		30 text (settable)                                           │last account check: not reported (native callback is not a backend check)       │
+		31 text (settable)                                           │next check: 2026-10-05 00:40:22 (in 10m)                                        │
+		32 text (settable)                                           │                                                                                │
+		33 text (settable)                                           │                                                                                │
+		34 text (settable)                                           │                                                                                │
+		35 text (settable)                                           │                                                                                │
+		36 text (settable)                                           │                                                                                │
+		37 text (settable)                                           │                                                                                │
+		38 text (settable)                                           └────────────────────────────────────────────────────────────────────────────────┘
+		39 text (settable) BROWSE  Space Menu  : Search  ? Help
+	40 close button
+	41 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	42 minimize button
+	43 text OVRCR GUI
+44 menu bar
+	45 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+pid: 59198  elapsed: 7m  agent unknown  local (#1)
+local (#1)
+consigint

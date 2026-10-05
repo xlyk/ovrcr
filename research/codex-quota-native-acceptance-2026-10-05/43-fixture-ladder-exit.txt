@@ -1,0 +1,24 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+pid: 92074  elapsed: 8m  agent unknown  local (#1)
+local (#1)
+CUA_CODEX_
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable) pid: 92074  elapsed: 8m  agent unknown  local (#1)
+		5 text (settable) local (#1)
+		6 text (settable) CUA_CODEX_LADDER_DONE
+		7 text (settable) consigint ›
+		8 text (settable) Terminal mode  Ctrl-g browse  then s Agents
+	9 close button
+	10 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	11 minimize button
+	12 text OVRCR GUI
+13 menu bar
+	14 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+pid: 92074  elapsed: 8m  agent unknown  local (#1)
+local (#1)
+CUA_CODEX_
