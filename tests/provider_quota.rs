@@ -294,6 +294,12 @@ fn claude_oauth_usage_reaches_separate_five_hour_and_seven_day_rows() {
 fn grok_native_billing_reaches_actual_monthly_remaining_bar() {
     let fixture = live::Live::idle().bounded();
     let home = grok_home(&fixture);
+    let auth_path = home.join("auth.json");
+    let mut native_auth: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&auth_path).unwrap()).unwrap();
+    native_auth["https://auth.x.ai::fixture"]["team_id"] = serde_json::json!("native-login-team");
+    native_auth["https://auth.x.ai::fixture"]["teamId"] = serde_json::json!("native-login-team");
+    std::fs::write(auth_path, serde_json::to_vec(&native_auth).unwrap()).unwrap();
     let auth = std::fs::read(home.join("auth.json")).unwrap();
     let billing = format!(
         "{}/v1/billing?format=credits",
@@ -332,6 +338,11 @@ fn grok_native_billing_reaches_actual_monthly_remaining_bar() {
         );
         let message: ServerMessage = read_frame(&mut socket).unwrap();
         let quota = match &message {
+            ServerMessage::Event(ServerEvent::QuotaChanged(snapshot))
+                if snapshot.grok.state == QuotaState::Unsupported =>
+            {
+                panic!("a team ID alone must not reject native subscription allowance");
+            }
             ServerMessage::Event(ServerEvent::QuotaChanged(snapshot))
                 if snapshot.grok.state == QuotaState::Current =>
             {

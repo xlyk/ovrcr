@@ -1342,13 +1342,6 @@ fn grok_token(program: &NativeCommand) -> Result<(String, String)> {
         .or_else(|| entries.iter().find(|(scope, _)| scope.contains("sign-in")))
         .map(|(_, entry)| entry)
         .ok_or_else(|| Failure::new(QuotaState::NotSignedIn))?;
-    if entry["team_id"].as_str().is_some_and(|id| !id.is_empty())
-        || entry["teamId"].as_str().is_some_and(|id| !id.is_empty())
-    {
-        return Err(
-            Failure::new(QuotaState::Unsupported).because("team or non-user context unsupported")
-        );
-    }
     if let Some(expires) = entry["expires_at"].as_str() {
         let expired = chrono::DateTime::parse_from_rfc3339(expires)
             .map(|stamp| stamp.timestamp_millis() <= i64::try_from(now_ms()).unwrap_or(i64::MAX))
