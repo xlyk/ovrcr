@@ -1,4 +1,4 @@
-//! Bounded ring and `events.jsonl` beside the instance identity.
+//! Bounded ring and `events.jsonl` inside the instance directory.
 //!
 //! The ring is what the Dashboard and `ovrcr events` read. The file is for
 //! people and other tools: one JSON event per line, mode 0600, capped at 5 MB
@@ -13,13 +13,10 @@ use std::os::unix::fs::OpenOptionsExt;
 pub(super) const RING_LIMIT: usize = 2000;
 pub(super) const FILE_CAP_BYTES: u64 = 5 * 1024 * 1024;
 
-/// `events.jsonl` beside the instance identity, the same directory as
-/// `dashboard.toml` when that file is not redirected.
-pub(super) fn events_path(registry_path: &Path) -> PathBuf {
-    registry_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("events.jsonl")
+/// `events.jsonl` inside the instance directory, next to `dashboard.toml`
+/// when that file is not redirected.
+pub(super) fn events_path(home: &Path) -> PathBuf {
+    crate::config::events_log_path(home)
 }
 
 fn backup_path(path: &Path) -> PathBuf {
@@ -256,7 +253,9 @@ mod tests {
     #[test]
     fn json_lines_round_trip_the_ring_they_were_written_from() {
         let dir = tempfile::tempdir().unwrap();
-        let path = events_path(&dir.path().join("config.toml"));
+        let home = dir.path();
+        let path = events_path(home);
+        assert_eq!(path, home.join("events.jsonl"));
         let mut log = Log::open(path.clone());
         log.push(
             EventComponent::Titles,

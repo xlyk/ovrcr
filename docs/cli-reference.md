@@ -154,7 +154,7 @@ closes the connection; with `--json`, events after the array are one JSON
 object per line.
 
 The command needs a running Server. It does not start one, and it does not
-read `events.jsonl`. That file, beside `config.toml`, is for people and other
+read `events.jsonl`. That file, in the instance directory, is for people and other
 tools. An event message never includes a prompt, a transcript, a credential,
 an account identifier, or a native body.
 
