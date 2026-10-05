@@ -1220,14 +1220,16 @@ fn cli_request(socket: &std::path::Path, request: Request) -> Result<Response, S
 }
 
 fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
-    // Hash before claiming the Dashboard so greeting validation cannot hold up
-    // selection while the Server's collectors queue their startup decisions.
+    // macOS requires native context: hash before claiming the Dashboard so
+    // greeting validation cannot hold up selection during collector startup.
+    // Elsewhere, only hash if the Server actually supplies optional context.
     let callback = std::path::Path::new(env!("CARGO_BIN_EXE_ovrcr"))
         .canonicalize()
         .unwrap();
-    let expected_callback_sha256 =
+    let expected_callback_sha256 = cfg!(target_os = "macos").then(|| {
         ovrcr::server::bridge_executable_sha256(&callback, Instant::now() + Duration::from_secs(5))
-            .expect("hash the fixture CLI before the Dashboard greeting");
+            .expect("hash the fixture CLI before the Dashboard greeting")
+    });
     let mut stream = connect_server(socket).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_millis(250)))
@@ -1273,6 +1275,13 @@ fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
                 std::path::Path::new(&context.callback_executable),
                 callback.as_path()
             );
+            let expected_callback_sha256 = expected_callback_sha256.unwrap_or_else(|| {
+                ovrcr::server::bridge_executable_sha256(
+                    &callback,
+                    Instant::now() + Duration::from_secs(5),
+                )
+                .expect("hash the fixture CLI for the received Bridge context")
+            });
             assert_eq!(context.callback_executable_sha256, expected_callback_sha256);
             next_skipping_quota(&mut stream)
         }
