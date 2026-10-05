@@ -141,11 +141,11 @@ One user-chosen key with a typed value, a default, and one owner (Server or Dash
 _Avoid_: preference, configuration, option as synonyms
 
 **Settings document**:
-The one TOML file holding every setting, `dashboard.toml` beside the instance identity.
+The one TOML file holding every setting, `dashboard.toml` in the instance directory.
 _Avoid_: config, dashboard config, a per-process settings file
 
 **Instance identity**:
-The `config.toml` path that names one OVRCR instance: its database, task store and socket. It is not a settings file.
+The instance directory (`OVRCR_HOME`, or the platform config directory by default) that holds `registry.sqlite3`, `dashboard.toml`, `tasks/`, `events.jsonl` and `server.sock`. It is not a settings file. `OVRCR_CONFIG` remains a deprecated file-path alias for one release.
 _Avoid_: registry file, config file as "where settings go"
 
 **Effective value**:

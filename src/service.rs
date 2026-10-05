@@ -61,7 +61,8 @@ pub struct ServiceConfig {
 
 impl ServiceConfig {
     pub fn resolve() -> Result<Self> {
-        let registry_override = env::var_os("OVRCR_CONFIG").is_some();
+        let registry_override = env::var_os(crate::config::HOME_ENV).is_some()
+            || env::var_os(crate::config::CONFIG_ENV).is_some();
         let registry_path = absolute(RegistryPath::resolve()?.0)?;
         let mut server_paths = ServerPaths::resolve()?;
         server_paths.socket = absolute(server_paths.socket)?;
@@ -244,7 +245,10 @@ pub fn read_environment_file(path: &Path) -> Result<Vec<(String, String)>> {
         }
         if matches!(
             key,
-            "OVRCR_CONFIG" | "OVRCR_SOCKET" | ENVIRONMENT_FILE_VARIABLE
+            crate::config::HOME_ENV
+            | crate::config::CONFIG_ENV
+            | "OVRCR_SOCKET"
+            | ENVIRONMENT_FILE_VARIABLE
         ) {
             bail!("environment file may not set {key}");
         }
@@ -275,10 +279,12 @@ fn install(
 ) -> Result<()> {
     let loaded = manager_loaded(config)?;
     let connection = managed_connection(config, loaded)?;
-    if let Some(parent) = config.registry_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("create OVRCR data directory {}", parent.display()))?;
-    }
+    fs::create_dir_all(&config.registry_path).with_context(|| {
+        format!(
+            "create OVRCR instance directory {}",
+            config.registry_path.display()
+        )
+    })?;
     if let Some(mut stream) = connection
         && let Err(error) = client::shutdown(&mut stream, 1, kill_sessions)
     {
@@ -645,8 +651,8 @@ fn launchd_target(config: &ServiceConfig) -> std::ffi::OsString {
 
 fn launchd_definition(config: &ServiceConfig, environment_file: Option<&Path>) -> Result<String> {
     let mut environment = service_environment(config, environment_file);
-    let stdout = config.registry_path.with_extension("service.log");
-    let stderr = config.registry_path.with_extension("service.err.log");
+    let stdout = config.registry_path.join("service.log");
+    let stderr = config.registry_path.join("service.err.log");
     let mut variables = String::new();
     for (key, value) in &mut environment {
         variables.push_str(&format!(
@@ -702,7 +708,7 @@ fn service_environment(
         .cloned()
         .collect::<BTreeMap<_, _>>();
     environment.insert(
-        "OVRCR_CONFIG".into(),
+        crate::config::HOME_ENV.into(),
         config.registry_path.display().to_string(),
     );
     environment.insert(

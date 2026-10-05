@@ -91,7 +91,7 @@ impl Fixture {
             definition_path,
             manager_executable: manager,
             executable,
-            registry_path: root.path().join("config/config.toml"),
+            registry_path: root.path().join("config"),
             server_paths: ServerPaths {
                 socket: root.path().join("run/server.sock"),
             },
@@ -232,7 +232,7 @@ fn systemd_install_writes_user_unit_and_enables_login_startup() {
         fixture.config.executable.display()
     )));
     assert!(unit.contains(&format!(
-        "Environment=\"OVRCR_CONFIG={}\"",
+        "Environment=\"OVRCR_HOME={}\"",
         fixture.config.registry_path.display()
     )));
     let log = fixture.manager_log();
@@ -480,9 +480,8 @@ fn failed_graceful_shutdown_does_not_stop_the_manager() {
 #[test]
 fn uninstall_removes_only_service_files_and_preserves_task_data() {
     let fixture = Fixture::new(ServicePlatform::Systemd);
-    let tasks = fixture.config.registry_path.with_extension("tasks");
+    let tasks = fixture.config.registry_path.join("tasks");
     fs::create_dir_all(&tasks).unwrap();
-    fs::write(&fixture.config.registry_path, "projects = []\n").unwrap();
     fs::write(tasks.join("state.toml"), "max_concurrent = 3\n").unwrap();
     fixture.install_stopped();
     run_with(&fixture.config, ServiceCommand::Uninstall, false).unwrap();

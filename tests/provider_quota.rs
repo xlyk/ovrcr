@@ -555,7 +555,7 @@ fn remaining(row: &ProviderQuota, label: &str) -> u16 {
 
 /// The settings document beside the fixture's instance identity.
 fn settings_document(fixture: &live::Live) -> std::path::PathBuf {
-    fixture.config.with_file_name("dashboard.toml")
+    fixture.config.join("dashboard.toml")
 }
 
 fn native_executable(fixture: &live::Live, name: &str, version: &str) -> std::path::PathBuf {
@@ -576,7 +576,7 @@ fn quota_table_in_instance_identity_is_a_finding_and_starts_no_worker() {
     let command = serde_json::to_string(&native.to_string_lossy()).unwrap();
     // Before the shared settings document this enabled collection.
     std::fs::write(
-        &fixture.config,
+        ovrcr::config::legacy_identity_path(&fixture.config),
         format!("projects = []\n[quota]\nenabled = true\n[quota.codex]\ncommand = {command}\n"),
     )
     .unwrap();
@@ -1058,7 +1058,7 @@ fn quota_enabled_flips_live_without_restart() {
         .replace('\'', "'\\''");
     std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-cli 0.155.1'; exit 0; fi\nprintf '%s\\n' \"$*\" >> '{argv}'\nexec '{executable}' --ignored --exact native_quota_rpc_fixture --nocapture --quiet\n", argv = native.with_extension("argv").display())).unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let settings = fixture.root.path().join("dashboard.toml");
+    let settings = fixture.config.join("dashboard.toml");
     let quota = |enabled: bool| {
         format!(
             "[quota]\nenabled = {enabled}\n[quota.codex]\ncommand = {}\n[quota.grok]\ncommand = '/not-a-native-fixture'\n",

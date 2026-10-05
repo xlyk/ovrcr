@@ -1,7 +1,7 @@
 //! One live OVRCR server per fixture.
 //!
 //! Every `Live` owns a private temporary root and, inside it, the Git
-//! repository, workspace root, registry file and Unix socket the server under
+//! repository, workspace root, instance directory and Unix socket the server under
 //! test is given. Nothing is shared with the developer's own server, with the
 //! other suites, or with a sibling fixture in the same binary.
 //!
@@ -43,7 +43,7 @@ use std::sync::Mutex;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-/// Where the default config path sits under HOME (`directories::ProjectDirs`).
+/// Where the default instance directory sits under HOME (`directories::ProjectDirs`).
 #[cfg(target_os = "macos")]
 pub const DEFAULT_CONFIG_DIR: &str = "Library/Application Support/ovrcr";
 #[cfg(not(target_os = "macos"))]
@@ -85,6 +85,7 @@ pub struct Live {
     pub root: tempfile::TempDir,
     pub repo: PathBuf,
     pub workspace_root: PathBuf,
+    /// Instance directory (`OVRCR_HOME`).
     pub config: PathBuf,
     pub socket: PathBuf,
     pub executable: PathBuf,
@@ -116,8 +117,10 @@ impl Live {
         std::fs::create_dir(&repo).unwrap();
         std::fs::create_dir(&workspace_root).unwrap();
         init_repo(&repo);
-        let config = root.path().join("config.toml");
-        std::fs::write(&config, "projects = []\n").unwrap();
+        // Instance directory (`OVRCR_HOME`). Empty until the server creates
+        // `registry.sqlite3` and friends; no legacy `config.toml` sibling.
+        let config = root.path().join("instance");
+        std::fs::create_dir(&config).unwrap();
         let bin = root.path().join("claude-auth-fixture");
         std::fs::create_dir(&bin).unwrap();
         let claude = claude_auth::ClaudeAuth::install(&bin);
@@ -125,7 +128,7 @@ impl Live {
             repo: repo.canonicalize().unwrap(),
             workspace_root: workspace_root.canonicalize().unwrap(),
             // The server makes this directory private; keeping the socket out
-            // of the root leaves the root's own mode the test's business.
+            // of the instance leaves the instance's own mode the test's business.
             socket: root.path().join("private").join("server.sock"),
             config,
             root,
@@ -142,16 +145,16 @@ impl Live {
     }
 
     /// A fresh install: like [`idle`](Self::idle), but every process of this
-    /// instance runs with an empty private HOME and no `OVRCR_CONFIG`, so the
-    /// default config path is the one under test. Nothing is written there;
-    /// `config` is where the instance identity will live.
+    /// instance runs with an empty private HOME and no `OVRCR_HOME`, so the
+    /// default instance directory is the one under test. Nothing is written
+    /// there; `config` is that directory (`OVRCR_HOME`).
     pub fn isolated_home() -> Self {
         let mut live = Self::idle();
-        std::fs::remove_file(&live.config).unwrap();
+        std::fs::remove_dir(&live.config).unwrap();
         let home = live.root.path().join("home");
         std::fs::create_dir(&home).unwrap();
         let home = home.canonicalize().unwrap();
-        live.config = home.join(DEFAULT_CONFIG_DIR).join("config.toml");
+        live.config = home.join(DEFAULT_CONFIG_DIR);
         live.home = Some(home);
         live
     }
@@ -178,8 +181,12 @@ impl Live {
             .env("SHELL", "/bin/sh")
             .env("PATH", self.path());
         match &self.home {
-            None => command.env("OVRCR_CONFIG", &self.config),
-            Some(_) => command.env_remove("OVRCR_CONFIG"),
+            None => command
+                .env("OVRCR_HOME", &self.config)
+                .env_remove("OVRCR_CONFIG"),
+            Some(_) => command
+                .env_remove("OVRCR_HOME")
+                .env_remove("OVRCR_CONFIG"),
         };
         command
     }
@@ -249,7 +256,7 @@ impl Live {
         );
         // The thread shares the test's PATH, so name the fixture `claude`
         // unless the test wrote its own settings.
-        let document = self.config.with_file_name("dashboard.toml");
+        let document = self.config.join("dashboard.toml");
         if !document.exists() {
             std::fs::write(
                 &document,

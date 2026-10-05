@@ -128,7 +128,7 @@ fn palette_creates_switches_and_closes_a_real_terminal() -> Result<()> {
     let inventory = std::process::Command::new(env!("CARGO_BIN_EXE_ovrcr"))
         .args(["terminal", "list", "--json"])
         .env("OVRCR_SOCKET", root.join("server.sock"))
-        .env("OVRCR_CONFIG", root.join("config.toml"))
+        .env("OVRCR_HOME", &root)
         .output()?;
     assert!(inventory.status.success());
     let records: serde_json::Value = serde_json::from_slice(&inventory.stdout)?;
@@ -233,7 +233,7 @@ fn demo_shells_inherit_paths_and_cli_reaches_fixture() -> Result<()> {
             // Refuse the CLI call if either path is wrong: a broken fixture must
             // never query the user's default socket, even in the red test.
             let script = format!(
-                "printf '%s\\n' \"$OVRCR_CONFIG\" \"$OVRCR_SOCKET\" > '{}'; if [ \"$OVRCR_CONFIG\" = '{}/config.toml' ] && [ \"$OVRCR_SOCKET\" = '{}/server.sock' ]; then '{}' terminal list --json > '{}'; fi; printf 'ENV_{index}_%s\\n' DONE",
+                "printf '%s\\n' \"$OVRCR_HOME\" \"$OVRCR_SOCKET\" > '{}'; if [ \"$OVRCR_HOME\" = '{}' ] && [ \"$OVRCR_SOCKET\" = '{}/server.sock' ]; then '{}' terminal list --json > '{}'; fi; printf 'ENV_{index}_%s\\n' DONE",
                 env_file.display(),
                 root.display(),
                 root.display(),
@@ -256,7 +256,9 @@ fn demo_shells_inherit_paths_and_cli_reaches_fixture() -> Result<()> {
             anyhow::ensure!(
                 std::fs::read_to_string(env_file)?
                     == format!(
-                        "{}/config.toml\n{}/server.sock\n",
+                        "{}
+{}/server.sock
+",
                         root.display(),
                         root.display()
                     ),
@@ -627,7 +629,7 @@ fn real_dashboard_initial_selection_survives_quota_events_before_startup_respons
         result
     });
     let mut command = portable_pty::CommandBuilder::new(env!("CARGO_BIN_EXE_ovrcr"));
-    command.env("OVRCR_CONFIG", root.join("config.toml"));
+    command.env("OVRCR_HOME", &root);
     command.env("OVRCR_SOCKET", &socket);
     #[cfg(target_os = "macos")]
     {
@@ -837,14 +839,14 @@ fn real_dashboard_saves_alert_preferences_and_reloads_config() -> Result<()> {
     let root = demo.root().to_owned();
     let pgids = demo_session_groups(&root)?;
     // The client names its own document; the Server (started without it) reads
-    // the one beside config.toml. Toggles must follow the Server's reading.
+    // the one in the instance directory. Toggles must follow the Server's reading.
     let client_only = root.join("preferences/custom.toml");
     let settings = root.join("dashboard.toml");
     #[cfg(target_os = "macos")]
     let (home, path) = desktop_alert_environment(&root)?;
     let launch = || -> Result<Terminal> {
         let mut command = portable_pty::CommandBuilder::new(env!("CARGO_BIN_EXE_ovrcr"));
-        command.env("OVRCR_CONFIG", root.join("config.toml"));
+        command.env("OVRCR_HOME", &root);
         command.env("OVRCR_SOCKET", root.join("server.sock"));
         command.env("OVRCR_DASHBOARD_CONFIG", &client_only);
         #[cfg(target_os = "macos")]

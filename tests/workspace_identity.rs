@@ -330,7 +330,7 @@ fn migration_keeps_legacy_workspace_path_and_identity_without_name_aliases() {
             "main",
         ],
     );
-    std::fs::write(&fixture.config, format!(
+    std::fs::write(ovrcr::config::legacy_identity_path(&fixture.config), format!(
         "[[projects]]\nname = \"fixture\"\nrepo = {:?}\nworkspace_root = {:?}\n\
          [[projects.workspaces]]\nname = \"old-title\"\npath = {:?}\nbranch = \"feature/migrated\"\n",
         fixture.repo.to_str().unwrap(), fixture.workspace_root.to_str().unwrap(),
@@ -363,7 +363,7 @@ fn migration_keeps_legacy_workspace_path_and_identity_without_name_aliases() {
                 "--branch",
                 branch,
             ])
-            .env("OVRCR_CONFIG", &fixture.config)
+            .env("OVRCR_HOME", &fixture.config)
             .env("OVRCR_SOCKET", &fixture.socket)
             .output()
             .unwrap()
@@ -631,7 +631,7 @@ fn cli(fixture: &Live, args: &[&str]) -> std::process::Output {
     std::process::Command::new(&fixture.executable)
         .arg("--json")
         .args(args)
-        .env("OVRCR_CONFIG", &fixture.config)
+        .env("OVRCR_HOME", &fixture.config)
         .env("OVRCR_SOCKET", &fixture.socket)
         .env("SHELL", "/bin/sh")
         .output()

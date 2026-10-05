@@ -2607,7 +2607,7 @@ fn test_state_with_dispatch(
             quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
             quota_refresh: Mutex::default(),
             settings: Mutex::new(super::watch::Watched::empty()),
-            registry_path: PathBuf::from("config.toml"),
+            registry_path: PathBuf::from("inst"),
             registry: Mutex::new(Registry::default()),
             sessions: Mutex::new(HashMap::new()),
             dashboard: ActiveDashboard::default(),
@@ -2653,7 +2653,7 @@ fn test_state_with_socket(
             quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
             quota_refresh: Mutex::default(),
             settings: Mutex::new(super::watch::Watched::empty()),
-            registry_path: PathBuf::from("config.toml"),
+            registry_path: PathBuf::from("inst"),
             registry: Mutex::new(registry),
             sessions: Mutex::new(HashMap::new()),
             dashboard: ActiveDashboard::default(),
@@ -5055,7 +5055,7 @@ fn close_and_kill_without_live_arc_do_not_mark_stopped() {
     );
     for close in [false, true] {
         let dir = tempfile::tempdir().unwrap();
-        let config = dir.path().join("config.toml");
+        let config = dir.path().to_path_buf();
         crate::config::initialize_registry(&config).unwrap();
         let cwd = {
             use std::os::unix::ffi::OsStrExt;
@@ -5297,7 +5297,7 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
         quota_refresh: Mutex::default(),
         settings: Mutex::new(super::watch::Watched::empty()),
         socket: socket_path,
-        registry_path: root.path().join("config.toml"),
+        registry_path: root.path().to_path_buf(),
         registry: Mutex::new(registry),
         sessions: Mutex::new(HashMap::new()),
         dashboard: ActiveDashboard::default(),
@@ -5513,7 +5513,7 @@ fn session_output_flows_while_another_session_spawns() {
         quota_refresh: Mutex::default(),
         settings: Mutex::new(super::watch::Watched::empty()),
         socket: socket_path,
-        registry_path: root.path().join("config.toml"),
+        registry_path: root.path().to_path_buf(),
         registry: Mutex::new(registry),
         sessions: Mutex::new(HashMap::new()),
         dashboard: ActiveDashboard::default(),
@@ -6115,7 +6115,7 @@ fn dashboard_slot_is_released_when_registration_panics() {
 fn accept_loop_survives_thread_spawn_failure() {
     let root = tempfile::tempdir().unwrap();
     let socket = root.path().join("server.sock");
-    let registry = root.path().join("config.toml");
+    let registry = root.path().to_path_buf();
     save_registry_atomic(&Registry::default(), &registry).unwrap();
     // Not the developer's `claude`: `claude auth status` finds nothing here.
     std::fs::write(
@@ -7635,7 +7635,7 @@ fn failed_root_shell_keeps_setup_pending_and_does_not_duplicate_launch() {
     }
     let repo = std::fs::canonicalize(&repo).unwrap();
     let git_identity = Some(crate::git::capture_worktree_identity(&repo).unwrap());
-    let config = dir.path().join("config.toml");
+    let config = dir.path().to_path_buf();
     let root_id = "root-workspace";
     let registry = Registry {
         projects: vec![crate::config::ProjectRecord {
@@ -7974,11 +7974,8 @@ fn init_repo_with_default(repo: &Path, default_branch: &str) {
     }
 }
 
-fn write_local_policy(config: &Path, policy: &str) {
-    let dashboard = config
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("dashboard.toml");
+fn write_local_policy(home: &Path, policy: &str) {
+    let dashboard = home.join("dashboard.toml");
     std::fs::write(
         dashboard,
         format!("automatic_local_terminals = \"{policy}\"\n"),
@@ -8066,7 +8063,7 @@ fn automatic_local_terminals_default_branch_only_skips_feature_workspaces() {
     let repo = dir.path().join("repo");
     init_repo_with_default(&repo, "trunk");
     let repo = std::fs::canonicalize(&repo).unwrap();
-    let config = dir.path().join("config.toml");
+    let config = dir.path().to_path_buf();
     // No dashboard.toml → default_branch_only.
     crate::config::save_registry_atomic(&Registry::default(), &config).unwrap();
     let socket_dir = tempfile::tempdir().unwrap();
@@ -8160,7 +8157,7 @@ fn automatic_local_terminals_on_and_off_cover_root_and_feature() {
         let repo = dir.path().join("repo");
         init_repo_with_default(&repo, "develop");
         let repo = std::fs::canonicalize(&repo).unwrap();
-        let config = dir.path().join("config.toml");
+        let config = dir.path().to_path_buf();
         crate::config::save_registry_atomic(&Registry::default(), &config).unwrap();
         write_local_policy(&config, policy);
         let socket_dir = tempfile::tempdir().unwrap();
@@ -8259,7 +8256,7 @@ fn changing_automatic_local_policy_leaves_existing_terminals() {
     let repo = dir.path().join("repo");
     init_repo_with_default(&repo, "main");
     let repo = std::fs::canonicalize(&repo).unwrap();
-    let config = dir.path().join("config.toml");
+    let config = dir.path().to_path_buf();
     crate::config::save_registry_atomic(&Registry::default(), &config).unwrap();
     write_local_policy(&config, "on");
     let socket_dir = tempfile::tempdir().unwrap();

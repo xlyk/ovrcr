@@ -12,27 +12,13 @@ impl ServerPaths {
                 socket: PathBuf::from(socket),
             });
         }
-        #[cfg(target_os = "linux")]
-        let root = std::env::var_os("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| user_temp_dir("ovrcr"));
-        #[cfg(target_os = "macos")]
-        let root = user_temp_dir("ovrcr");
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        let root = user_temp_dir("ovrcr");
+        let home = crate::config::RegistryPath::resolve()?.0;
         Ok(Self {
-            socket: root.join("ovrcr").join("server.sock"),
+            socket: crate::config::default_socket_path(&home),
         })
     }
 }
 
-fn user_temp_dir(name: &str) -> PathBuf {
-    let temp = std::env::var_os("TMPDIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp"));
-    let user = unsafe { libc::getuid() };
-    temp.join(format!("{name}-{user}"))
-}
 
 /// Test seam: make the next accepted connection's thread spawn fail.
 #[cfg(test)]

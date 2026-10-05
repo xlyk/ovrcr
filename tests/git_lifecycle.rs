@@ -1178,7 +1178,7 @@ fn automatic_local_terminals_policy_controls_provisioning_paths() {
     ] {
         let fixture = Live::idle().bounded();
         live::git(&fixture.repo, &["branch", "-m", "trunk"]);
-        let dashboard = fixture.root.path().join("dashboard.toml");
+        let dashboard = fixture.config.join("dashboard.toml");
         match policy {
             Some(value) => {
                 std::fs::write(

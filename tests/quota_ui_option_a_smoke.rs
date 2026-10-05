@@ -1,5 +1,5 @@
 //! Linux TUI dashboard smoke for Atelier Option A Quota left redesign.
-//! Isolated OVRCR_CONFIG, projects = [], real server + Dashboard render path.
+//! Isolated OVRCR_HOME, empty instance directory, real server + Dashboard render path.
 
 #[path = "support/live.rs"]
 mod live;
@@ -12,10 +12,9 @@ use std::time::Duration;
 #[test]
 fn quota_left_option_a_linux_dashboard_smoke() {
     let fixture = live::Live::idle().bounded();
-    assert_eq!(
-        std::fs::read_to_string(&fixture.config).unwrap().trim(),
-        "projects = []"
-    );
+    assert!(fixture.config.is_dir());
+    assert!(!fixture.config.join("config.toml").exists());
+    assert!(!fixture.config.join("registry.sqlite3").exists());
     let server_log = fixture.root.path().join("server.log");
     fixture.start_binary_logged(&[], &server_log);
 

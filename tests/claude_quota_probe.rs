@@ -8,7 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
 
 fn settings_document(fixture: &live::Live) -> std::path::PathBuf {
-    fixture.config.with_file_name("dashboard.toml")
+    fixture.config.join("dashboard.toml")
 }
 
 fn attach(fixture: &live::Live) -> std::os::unix::net::UnixStream {
@@ -564,19 +564,10 @@ fn claude_probe_off_allows_an_account_read_without_spawning_a_probe() {
             .join("claude-quota-probe")
             .exists()
     );
-    // Collection is on by default; Disabled is only the explicit `quota.enabled = false` off state.
-    assert_ne!(
-        snapshot.codex.state,
-        QuotaState::Disabled,
-        "{:?}",
-        snapshot.codex.state
-    );
-    assert_ne!(
-        snapshot.grok.state,
-        QuotaState::Disabled,
-        "{:?}",
-        snapshot.grok.state
-    );
+    // Explicit `quota.enabled = false` leaves Codex and Grok Disabled while the
+    // Claude account read above can still publish Current.
+    assert_eq!(snapshot.codex.state, QuotaState::Disabled);
+    assert_eq!(snapshot.grok.state, QuotaState::Disabled);
 }
 
 #[test]
