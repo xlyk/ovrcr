@@ -26,7 +26,7 @@ Interface: `startup_hooks::run(confirm: &mut impl FnMut(&str) -> anyhow::Result<
 - [x] Run `cargo test -p ovrcr --test agent_setup` and retain the original behavioral failure.
 - [x] Factor existing composers, use toml_edit for Codex comments, and implement bounded guarded atomic repair. Do not add hooks to inactive historical profiles.
 - [x] Run meaningful unit tests plus actual CLI/PTY startup integration cases.
-- [ ] Review and commit the coherent hook change after root integration.
+- [x] Review and commit the coherent hook change after root integration.
 
 ### Task 2: Build freshness and controlled restart
 
@@ -37,7 +37,7 @@ Interface: `ovrcr::client::connect_dashboard(paths: &ServerPaths, confirm: &mut 
 - [x] Run focused tests on the original behavior and save the failure.
 - [x] Capture executable bytes at server startup, compare intended server build and validate discovery against connected peer. Prefer a bounded startup-owned identity file over changing the framed wire protocol only for discovery; never treat a found PID as permission to signal it.
 - [x] Reuse service ownership checks. Refuse incompatible protocol or fixed outdated service executable with an actionable message rather than an unsafe restart.
-- [ ] Run focused unit/integration tests, review and commit after integration.
+- [x] Run focused unit/integration tests, review and commit after integration.
 
 ### Task 3: Asset packaging and startup integration
 
@@ -51,3 +51,7 @@ Interfaces: `startup::run(paths: &ServerPaths) -> anyhow::Result<UnixStream>` ow
 - [ ] Run focused gates, workspace regression/lint, native CUA on the reviewed checkout, then independent final review, PR/CI and work diary closeout.
 
 2026-10-05 checkpoint: hook suite18/18, CLI units23/23, PTY startup3/3, server startup13/13, service14/14, build units4/4. Relocated payload3/3, packaging15/15, compiled guards22/22. Thread-hosted DesktopAlert fixture now explicitly names its test executable as intended server; its failed startup case passes1/1. Final review, workspace/CI and native acceptance remain. macOS discovery captures startup-path bytes; Linux reads /proc/self/exe. A macOS replacement before the initial capture is not a loaded-image proof.
+
+2026-10-05 final checkpoint: implementation and shared-palette prompts independently reviewed at db1b6cd after rebasing unchanged patches onto 2bbbc14. Native macOS missing-hook/repair acceptance, separate input output marker, idempotent repeat startup, same-version changed-build warning and default-No session preservation passed. Fixture launcher exited0; root/socket and all twelve recorded groups are gone. Workspace Clippy passed. Required macOS and manually dispatched Linux regression failed consistently in claude_probe_off_allows_an_account_read_without_spawning_a_probe: upstream default-on assertions were combined with an explicit collection-off setup from the independently merged Claude fix. Correction and full hosted regression remain pending. Linux capacity and memory high-water passed on db1b6cd; these do not replace final-head regression.
+
+2026-10-05 integration correction: remove only the explicit collection-off write from the account-read/probe-off fixture. Current defaults remain enabled collection with probe=false, preserving the upstream default-on Codex/Grok assertions and the no-hidden-probe/account-response checks. Original combined setup reproduced RED; corrected focused test passed1/1. Full affected suite and final-head hosted gates remain pending.
