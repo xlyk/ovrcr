@@ -1,4 +1,7 @@
-use super::{Dashboard, DashboardAction, InputMode, render::sidebar_area};
+use super::{
+    Dashboard, DashboardAction, InputMode,
+    render::{RED, SUBTEXT, SURFACE2, TEXT, YELLOW, compose_row, label_color, sidebar_area},
+};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
 use ovrcr_protocol::{
     ClientMessage, ProviderQuota, QuotaSnapshot, QuotaSource, QuotaState, QuotaWindow, Request,
@@ -6,7 +9,8 @@ use ovrcr_protocol::{
 use ratatui::{
     Frame,
     layout::Rect,
-    style::Style,
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Clear, Paragraph, Wrap},
 };
 
@@ -233,18 +237,22 @@ impl Dashboard {
             if sidebar.width < 8 {
                 0
             } else {
-                sidebar_quota_rows(quota, sidebar.width, 0)
+                let content = sidebar_quota_rows(quota, sidebar.width, 0)
                     .iter()
                     .map(|(_, height)| height)
-                    .sum()
+                    .sum::<u16>();
+                // Trailing blank under the last provider row; dropped first when short.
+                content.saturating_add(1)
             }
         });
-        // The ladder keeps three tree lines: every row, one line per
-        // provider, the pointer line, then nothing.
+        let content = desired.saturating_sub(1);
+        // The ladder keeps three tree lines: full (blank optional), compact, pointer, then nothing.
         let height = if desired == 0 || sidebar.height < 4 {
             0
         } else if sidebar.height >= desired + 3 {
             desired
+        } else if content > 0 && sidebar.height >= content + 3 {
+            content
         } else if sidebar.height >= 6 {
             3
         } else {
@@ -262,51 +270,310 @@ impl Dashboard {
         if area.is_empty() {
             return;
         }
-        let style = Style::default().fg(super::render::TEXT);
-        // Every full block is taller than three lines, so these are the ladder.
         match area.height {
-            1 => return frame.render_widget(Paragraph::new("Quota: u").style(style), area),
+            1 => {
+                return frame.render_widget(
+                    Paragraph::new("Quota: u").style(Style::default().fg(TEXT)),
+                    area,
+                );
+            }
             3 => {
                 let lines = [&quota.claude, &quota.codex, &quota.grok]
-                    .map(|provider| compact_line(provider, now))
-                    .join("\n");
-                return frame.render_widget(Paragraph::new(lines).style(style), area);
+                    .map(|provider| compact_line(provider, now));
+                return frame.render_widget(Paragraph::new(Vec::from(lines)), area);
             }
             _ => {}
         }
-        let mut offset = 0;
-        for (text, height) in sidebar_quota_rows(quota, area.width, now) {
+        let rows = sidebar_quota_rows(quota, area.width, now);
+        let content: u16 = rows.iter().map(|(_, height)| height).sum();
+        let mut offset = 0u16;
+        for (line, height) in rows {
             frame.render_widget(
-                Paragraph::new(text)
-                    .wrap(Wrap { trim: false })
-                    .style(Style::default().fg(super::render::TEXT)),
+                Paragraph::new(line).wrap(Wrap { trim: false }),
                 Rect::new(area.x, area.y + offset, area.width, height),
             );
-            offset += height;
+            offset = offset.saturating_add(height);
+        }
+        if area.height > content {
+            frame.render_widget(
+                Paragraph::new(Line::from("")),
+                Rect::new(area.x, area.y + content, area.width, 1),
+            );
         }
     }
 }
 
-/// Reserve the same rows for current, stale, and reset-due states, without a clock-driven resize.
-fn sidebar_quota_rows(quota: &QuotaSnapshot, width: u16, now: u64) -> Vec<(String, u16)> {
-    let height = |text: &str| {
-        Paragraph::new(text)
-            .wrap(Wrap { trim: false })
-            .line_count(width) as u16
+/// Fixed cells around the bar: inset + name + gaps + label + % + right inset.
+const QUOTA_FIXED_COLS: usize = 17;
+/// Widest reserved stale suffix so every row stays column-aligned.
+const STALE_RESERVE: usize = " stale 59m".len();
+const FILL_GLYPH: &str = "━";
+const TRACK_GLYPH: &str = "─";
+
+/// Bar width N for Option A, or `None` when the sidebar is too narrow for bars.
+fn bar_width(sidebar_width: u16, reserve_stale: bool) -> Option<usize> {
+    let mut n = usize::from(sidebar_width).saturating_sub(QUOTA_FIXED_COLS);
+    if reserve_stale {
+        n = n.saturating_sub(STALE_RESERVE);
+    }
+    (n >= 6).then_some(n)
+}
+
+/// Filled cells for a remaining-allowance bar of width `n`.
+fn bar_filled(remaining_bp: u16, n: usize) -> usize {
+    if n == 0 {
+        return 0;
+    }
+    let remaining = f64::from(remaining_bp) / 10_000.0;
+    let mut filled = (remaining * n as f64).round() as usize;
+    if remaining_bp > 0 && filled == 0 {
+        filled = 1;
+    }
+    if remaining_bp < 10_000 {
+        filled = filled.min(n.saturating_sub(1));
+    }
+    filled.min(n)
+}
+
+fn any_provider_stale(quota: &QuotaSnapshot, now: u64) -> bool {
+    [&quota.claude, &quota.codex, &quota.grok]
+        .into_iter()
+        .any(|provider| provider.stale(now) && !provider.windows.is_empty())
+}
+
+fn provider_color(provider: &ProviderQuota) -> Color {
+    label_color(provider.provider.name())
+}
+
+fn name_style(provider: &ProviderQuota) -> Style {
+    Style::default()
+        .fg(provider_color(provider))
+        .add_modifier(Modifier::BOLD)
+}
+
+fn subtext() -> Style {
+    Style::default().fg(SUBTEXT)
+}
+
+fn text_style() -> Style {
+    Style::default().fg(TEXT)
+}
+
+/// Threshold colors on % text only (WCAG 1.4.1 keeps the words).
+fn percent_style(window: &QuotaWindow, now: u64) -> Style {
+    if window.resets_unix_ms.is_some_and(|reset| reset <= now) {
+        return subtext();
+    }
+    if window.over_limit {
+        return Style::default().fg(RED);
+    }
+    match window.remaining_basis_points() {
+        None => subtext(),
+        Some(0) => Style::default().fg(RED),
+        Some(left) => {
+            let pct = (u32::from(left) + 50) / 100;
+            if pct <= 5 {
+                Style::default().fg(RED)
+            } else if pct <= 20 {
+                Style::default().fg(YELLOW)
+            } else {
+                text_style()
+            }
+        }
+    }
+}
+
+fn percent_label(window: &QuotaWindow, now: u64) -> String {
+    if window.resets_unix_ms.is_some_and(|reset| reset <= now) {
+        return "— reset due".into();
+    }
+    if window.over_limit {
+        return "over limit".into();
+    }
+    match window.remaining_basis_points() {
+        Some(0) => "0% exhausted".into(),
+        Some(left) if left < 100 => "<1%".into(),
+        Some(left) => format!("{}%", (u32::from(left) + 50) / 100),
+        None => "—".into(),
+    }
+}
+
+fn short_percent_column(label: &str) -> Option<String> {
+    match label {
+        "—" | "<1%" => Some(format!("{label:>4}")),
+        s if s.ends_with('%') && !s.contains(' ') && s.len() <= 4 => Some(format!("{s:>4}")),
+        _ => None,
+    }
+}
+
+fn stale_suffix(provider: &ProviderQuota, now: u64) -> Option<String> {
+    if !provider.stale(now) || provider.windows.is_empty() {
+        return None;
+    }
+    match provider
+        .checked_unix_ms
+        .max(provider.observed_unix_ms)
+        .and_then(|stamp| ovrcr_protocol::freshness::age_ms(stamp, now))
+    {
+        Some(age) => Some(format!(" stale {}", span(age / 60_000))),
+        None => Some(" stale".into()),
+    }
+}
+
+fn header_line(width: u16) -> Line<'static> {
+    let title = " QUOTA LEFT ";
+    let clipped = if title.len() > usize::from(width) {
+        let mut out = title.chars().take(usize::from(width)).collect::<String>();
+        while out.len() > usize::from(width) {
+            out.pop();
+        }
+        out
+    } else {
+        title.to_string()
     };
-    let mut rows = vec![("Quota left".into(), height("Quota left"))];
+    let rule = if clipped == title { "─" } else { " " };
+    compose_row(
+        vec![Span::styled(
+            clipped,
+            Style::default().fg(SUBTEXT).add_modifier(Modifier::BOLD),
+        )],
+        Span::styled(rule, Style::default().fg(SURFACE2)),
+        Vec::new(),
+        usize::from(width),
+        false,
+    )
+}
+
+fn bar_spans(
+    provider: &ProviderQuota,
+    window: &QuotaWindow,
+    n: usize,
+    now: u64,
+) -> Vec<Span<'static>> {
+    let color = provider_color(provider);
+    let show_bar = !window.over_limit
+        && window.resets_unix_ms.is_none_or(|reset| reset > now)
+        && window.remaining_basis_points().is_some();
+    if !show_bar {
+        return Vec::new();
+    }
+    match window.remaining_basis_points() {
+        Some(left) => {
+            let filled = bar_filled(left, n);
+            vec![
+                Span::styled(FILL_GLYPH.repeat(filled), Style::default().fg(color)),
+                Span::styled(
+                    TRACK_GLYPH.repeat(n.saturating_sub(filled)),
+                    Style::default().fg(SURFACE2),
+                ),
+            ]
+        }
+        None => Vec::new(),
+    }
+}
+
+fn unknown_track(n: usize) -> Vec<Span<'static>> {
+    vec![Span::styled(
+        TRACK_GLYPH.repeat(n),
+        Style::default().fg(SURFACE2),
+    )]
+}
+
+fn window_row(
+    provider: &ProviderQuota,
+    window: &QuotaWindow,
+    name: &str,
+    _width: u16,
+    n: Option<usize>,
+    reserve_stale: bool,
+    now: u64,
+) -> Line<'static> {
+    let label = percent_label(window, now);
+    let style = percent_style(window, now);
+    let stale = stale_suffix(provider, now);
+    let mut spans = vec![
+        Span::raw(" "),
+        Span::styled(format!("{name:6}"), name_style(provider)),
+        Span::raw(" "),
+        Span::styled(format!("{:2}", window.label), subtext()),
+        Span::raw(" "),
+    ];
+    if let Some(n) = n {
+        if label == "—" {
+            spans.extend(unknown_track(n));
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(format!("{:>4}", "—"), subtext()));
+        } else if let Some(column) = short_percent_column(&label) {
+            spans.extend(bar_spans(provider, window, n, now));
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(column, style));
+        } else {
+            // Long words (0% exhausted / over limit / reset due): occupy bar + % columns.
+            spans.push(Span::styled(label.clone(), style));
+            let used = label.chars().count();
+            let pad = n.saturating_add(1).saturating_add(4).saturating_sub(used);
+            if pad > 0 {
+                spans.push(Span::raw(" ".repeat(pad)));
+            }
+        }
+        match (&stale, reserve_stale) {
+            (Some(suffix), _) => spans.push(Span::styled(suffix.clone(), subtext())),
+            (None, true) => spans.push(Span::raw(" ".repeat(STALE_RESERVE))),
+            (None, false) => {}
+        }
+    } else {
+        // Narrow: identity + percentage/state, no bars (state may wrap below).
+        spans.push(Span::styled(label, style));
+        if let Some(suffix) = stale {
+            // Keep the historical " left" cue only beside a positive retained % when stale.
+            let left =
+                if !window.over_limit && window.remaining_basis_points().is_some_and(|l| l > 0) {
+                    " left"
+                } else {
+                    ""
+                };
+            if !left.is_empty() {
+                spans.push(Span::styled(left, style));
+            }
+            // suffix already includes a leading space (" stale …").
+            spans.push(Span::styled(suffix, subtext()));
+        }
+    }
+    Line::from(spans)
+}
+
+fn state_row(provider: &ProviderQuota, width: u16, now: u64) -> Vec<(Line<'static>, u16)> {
+    let (state, widest) = state_text(provider, now);
+    let name = provider.provider.name();
+    let gap = separator(provider);
+    let widest_line = format!("{name}{gap}{widest}");
+    if Line::raw(widest_line).width() > usize::from(width) {
+        vec![
+            (
+                Line::from(Span::styled(name.to_string(), name_style(provider))),
+                1,
+            ),
+            (Line::from(Span::styled(state, subtext())), 1),
+        ]
+    } else {
+        vec![(
+            Line::from(vec![
+                Span::styled(name.to_string(), name_style(provider)),
+                Span::styled(format!("{gap}{state}"), subtext()),
+            ]),
+            1,
+        )]
+    }
+}
+
+/// Reserve the same rows for current, stale, and reset-due states, without a clock-driven resize.
+fn sidebar_quota_rows(quota: &QuotaSnapshot, width: u16, now: u64) -> Vec<(Line<'static>, u16)> {
+    let reserve_stale = any_provider_stale(quota, now);
+    let n = bar_width(width, reserve_stale);
+    let mut rows = vec![(header_line(width), 1)];
     for provider in [&quota.claude, &quota.codex, &quota.grok] {
         if !provider.windows.iter().any(|window| window.general) {
-            let (state, widest) = state_text(provider, now);
-            let name = provider.provider.name();
-            let gap = separator(provider);
-            if ratatui::text::Line::raw(format!("{name}{gap}{widest}")).width() > usize::from(width)
-            {
-                rows.push((name.into(), 1));
-                rows.push((state, height(&widest)));
-            } else {
-                rows.push((format!("{name}{gap}{state}"), 1));
-            }
+            rows.extend(state_row(provider, width, now));
         } else {
             for (index, window) in provider
                 .windows
@@ -320,37 +587,36 @@ fn sidebar_quota_rows(quota: &QuotaSnapshot, width: u16, now: u64) -> Vec<(Strin
                 } else {
                     ""
                 };
-                let prefix = format!("{name:6} {:2}", window.label);
-                let suffix = window_text(provider, window, now);
-                let longest_state = "0% exhausted  stale 59m";
-                if ratatui::text::Line::raw(format!("{prefix} {longest_state}")).width()
-                    > usize::from(width)
-                {
-                    rows.push((prefix.clone(), height(&prefix)));
-                    rows.push((suffix, height(longest_state)));
-                    continue;
+                if n.is_none() {
+                    // Narrow ladder: keep identity readable before decorative bars.
+                    let prefix = format!("{name:6} {:2}", window.label);
+                    let suffix = window_text(provider, window, now);
+                    let longest_state = "0% exhausted  stale 59m";
+                    let wrapped = |text: &str| {
+                        Paragraph::new(text.to_string())
+                            .wrap(Wrap { trim: false })
+                            .line_count(width) as u16
+                    };
+                    if Line::raw(format!("{prefix} {longest_state}")).width() > usize::from(width) {
+                        rows.push((
+                            Line::from(vec![
+                                Span::styled(format!("{name:6}"), name_style(provider)),
+                                Span::raw(" "),
+                                Span::styled(format!("{:2}", window.label), subtext()),
+                            ]),
+                            wrapped(&prefix),
+                        ));
+                        rows.push((
+                            Line::from(Span::styled(suffix, percent_style(window, now))),
+                            wrapped(longest_state),
+                        ));
+                        continue;
+                    }
                 }
-                let reserved = ratatui::text::Line::raw(format!("{prefix} {suffix}")).width();
-                let bar_width = usize::from(width).saturating_sub(reserved + 3).min(10);
-                let bar = if bar_width >= 3
-                    && !window.over_limit
-                    && window.resets_unix_ms.is_none_or(|reset| reset > now)
-                {
-                    window
-                        .remaining_basis_points()
-                        .map(|left| {
-                            let filled = usize::from(left) * bar_width / 10_000;
-                            format!(
-                                " [{}{}]",
-                                "█".repeat(filled),
-                                "░".repeat(bar_width - filled)
-                            )
-                        })
-                        .unwrap_or_default()
-                } else {
-                    String::new()
-                };
-                rows.push((format!("{prefix}{bar} {suffix}"), 1));
+                rows.push((
+                    window_row(provider, window, name, width, n, reserve_stale, now),
+                    1,
+                ));
             }
         }
     }
@@ -401,19 +667,15 @@ fn state_text(provider: &ProviderQuota, now: u64) -> (String, String) {
         .filter(|_| failed(provider.state))
     {
         Some(next) => (
-            format!("{label}  retry {}", until_short(next, now)),
-            format!("{label}  retry 59m"),
+            format!("{label} · retry {}", until_short(next, now)),
+            format!("{label} · retry 59m"),
         ),
         None => (label.into(), label.into()),
     }
 }
 
-fn separator(provider: &ProviderQuota) -> &'static str {
-    if provider.state == QuotaState::Disabled {
-        " "
-    } else {
-        " — "
-    }
+fn separator(_provider: &ProviderQuota) -> &'static str {
+    " · "
 }
 
 fn failed(state: QuotaState) -> bool {
@@ -424,19 +686,40 @@ fn failed(state: QuotaState) -> bool {
 }
 
 /// The compact ladder's one line per provider: its first general window, or its state.
-fn compact_line(provider: &ProviderQuota, now: u64) -> String {
+fn compact_line(provider: &ProviderQuota, now: u64) -> Line<'static> {
     let name = provider.provider.name();
     match provider.windows.iter().find(|window| window.general) {
-        Some(window) => format!(
-            "{name} {} {}",
-            window.label,
-            window_text(provider, window, now)
-        ),
-        None => format!(
-            "{name}{}{}",
-            separator(provider),
-            state_text(provider, now).0
-        ),
+        Some(window) => {
+            let label = percent_label(window, now);
+            let mut spans = vec![
+                Span::styled(name.to_string(), name_style(provider)),
+                Span::raw(" "),
+                Span::styled(window.label.clone(), subtext()),
+                Span::raw(" "),
+                Span::styled(label, percent_style(window, now)),
+            ];
+            if let Some(suffix) = stale_suffix(provider, now) {
+                let left = if !window.over_limit
+                    && window.remaining_basis_points().is_some_and(|l| l > 0)
+                {
+                    " left"
+                } else {
+                    ""
+                };
+                if !left.is_empty() {
+                    spans.push(Span::styled(left, percent_style(window, now)));
+                }
+                spans.push(Span::styled(suffix, subtext()));
+            }
+            Line::from(spans)
+        }
+        None => {
+            let (state, _) = state_text(provider, now);
+            Line::from(vec![
+                Span::styled(name.to_string(), name_style(provider)),
+                Span::styled(format!("{}{state}", separator(provider)), subtext()),
+            ])
+        }
     }
 }
 
@@ -475,4 +758,28 @@ pub(super) fn local_time(stamp: u64) -> String {
                 .to_string()
         })
         .unwrap_or_else(|| "unverifiable".into())
+}
+
+#[cfg(test)]
+mod bar_math_tests {
+    use super::{STALE_RESERVE, bar_filled, bar_width};
+
+    #[test]
+    fn bar_width_subtracts_fixed_columns_and_floors_at_six() {
+        assert_eq!(bar_width(22, false), None);
+        assert_eq!(bar_width(23, false), Some(6));
+        assert_eq!(bar_width(39, false), Some(22));
+        assert_eq!(bar_width(39, true), Some(39 - 17 - STALE_RESERVE));
+        assert_eq!(bar_width(27, true), None);
+    }
+
+    #[test]
+    fn bar_fill_rounds_clamps_full_and_keeps_a_sliver() {
+        assert_eq!(bar_filled(10_000, 10), 10);
+        assert_eq!(bar_filled(9_800, 10), 9); // 98% never looks full
+        assert_eq!(bar_filled(1, 10), 1); // positive remaining keeps one cell
+        assert_eq!(bar_filled(0, 10), 0);
+        assert_eq!(bar_filled(5_000, 10), 5);
+        assert_eq!(bar_filled(3_700, 10), 4); // 37% remaining → round(3.7)=4
+    }
 }

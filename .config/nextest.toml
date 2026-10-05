@@ -1,10 +1,13 @@
 # Hosted runners are slow and shared; timing-sensitive PTY, socket and
 # process-group tests race there. CI runs with `--profile ci`: a failing test is
-# retried twice and reported as FLAKY instead of failing the job, a test that
-# fails every attempt still fails, and a hung test ends after five minutes
-# instead of consuming the whole job. FLAKY in the log is the list of tests to
-# harden; retries hide the red, not the defect.
+# retried twice and reported as FLAKY instead of failing the job; after those
+# retries are exhausted the suite fail-fasts so one red dashboard matcher does
+# not burn the rest of the job. A hung test ends after five minutes. FLAKY in
+# the log is the list of tests to harden; retries hide the red, not the defect.
 [profile.ci]
 retries = 2
-fail-fast = false
+# Stop the rest of the suite after a hard failure (retries still apply to that
+# test). Keeps long server_lifecycle / dashboard runs from burning the job once
+# one screen matcher is already red.
+fail-fast = true
 slow-timeout = { period = "60s", terminate-after = 5 }

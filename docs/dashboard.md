@@ -30,9 +30,10 @@ The sidebar's **Quota left** block shows remaining Claude, Codex and Grok accoun
 allowance. See [provider allowance](provider-quota.md) for native sources,
 collection settings, freshness and reset behavior.
 Providers remain visible before the first report: **checking** until the
-account read returns. **Codex usage off** and **Grok usage off** only while
-`quota.enabled` is explicitly false. A stale value shows its age (`37% left  stale 12m`),
-and a failed row shows when the Server tries again (`unavailable  retry 3m`).
+account read returns. **Codex · usage off** and **Grok · usage off** only while
+`quota.enabled` is explicitly false. Wide sidebars use Option A bars (`━`/`─`) without
+brackets; a stale value keeps its age after the percentage (`37% stale 12m`),
+and a failed row shows when the Server tries again (`unavailable · retry 3m`).
 Narrow sidebars put window values and full state text on a second row
 before sacrificing labels or percentages. A short sidebar keeps at least three
 tree lines and shrinks the block in steps: one line per provider, then a single

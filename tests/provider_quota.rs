@@ -274,7 +274,7 @@ fn claude_oauth_usage_reaches_separate_five_hour_and_seven_day_rows() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(screen.contains("Quota left"), "{screen}");
+    assert!(screen.contains("QUOTA LEFT"), "{screen}");
     assert!(
         screen
             .lines()
@@ -502,7 +502,7 @@ fn default_settings_publish_current_allowance_without_opt_in() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(screen.contains("Quota left"), "{screen}");
+    assert!(screen.contains("QUOTA LEFT"), "{screen}");
     assert!(
         screen
             .lines()
@@ -823,10 +823,10 @@ fn providers_remain_visible_before_any_native_quota_source_reports() {
         .map(|cell| cell.symbol())
         .collect::<String>();
     for expected in [
-        "Quota left",
-        "Claude — checking",
-        "Codex usage off",
-        "Grok usage off",
+        "QUOTA LEFT",
+        "Claude · checking",
+        "Codex · usage off",
+        "Grok · usage off",
     ] {
         assert!(screen.contains(expected), "missing {expected}: {screen}");
     }

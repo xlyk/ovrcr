@@ -44,12 +44,11 @@ fn quota_waiting_providers_are_visible_before_the_first_native_report() {
         cols: 120,
     });
     let rows = sidebar_rows(&dashboard, 39, 1_000);
-    for expected in [
-        "Quota left",
-        "Claude — checking",
-        "Codex usage off",
-        "Grok usage off",
-    ] {
+    assert!(
+        rows.iter().any(|row| row.contains("QUOTA LEFT")),
+        "{rows:?}"
+    );
+    for expected in ["Claude · checking", "Codex · usage off", "Grok · usage off"] {
         assert!(
             rows.iter().any(|row| row == expected),
             "{expected}: {rows:?}"
@@ -65,7 +64,7 @@ fn quota_narrow_sidebar_preserves_waiting_provider_and_full_state() {
     )));
     narrow_sidebar(&mut dashboard);
     let rows = sidebar_rows(&dashboard, 19, 1_000);
-    for expected in ["Claude — checking", "Codex usage off", "Grok usage off"] {
+    for expected in ["Claude · checking", "Codex · usage off", "Grok · usage off"] {
         assert!(
             rows.iter().any(|row| row == expected),
             "{expected}: {rows:?}"
@@ -138,8 +137,11 @@ fn quota_narrow_sidebar_preserves_window_identity_percentage_and_full_state() {
             },
             "{rows:?}"
         );
-        assert!(rows.iter().any(|row| row == "Codex usage off"), "{rows:?}");
-        assert!(rows.iter().any(|row| row == "Grok usage off"), "{rows:?}");
+        assert!(
+            rows.iter().any(|row| row == "Codex · usage off"),
+            "{rows:?}"
+        );
+        assert!(rows.iter().any(|row| row == "Grok · usage off"), "{rows:?}");
     }
 }
 
@@ -186,10 +188,10 @@ fn quota_wrapped_rows_preserve_last_tree_selection_and_exclude_quota_mouse_hits(
     let expired = sidebar_rows(&dashboard, 19, 301_001);
     let quota_row = current
         .iter()
-        .position(|row| row == "Quota left")
+        .position(|row| row.contains("QUOTA LEFT"))
         .expect("quota heading");
     assert_eq!(
-        expired.iter().position(|row| row == "Quota left"),
+        expired.iter().position(|row| row.contains("QUOTA LEFT")),
         Some(quota_row),
         "expiry must preserve tree geometry"
     );
@@ -296,7 +298,7 @@ fn rows_at(dashboard: &Dashboard, height: u16, now: u64) -> Vec<String> {
 fn quota_block_shows_off_checking_current_and_failed_with_retry() {
     let mut dashboard = dashboard_fixture();
     let rows = sidebar_rows(&dashboard, 39, NOW);
-    for expected in ["Claude — checking", "Codex usage off", "Grok usage off"] {
+    for expected in ["Claude · checking", "Codex · usage off", "Grok · usage off"] {
         assert!(
             rows.iter().any(|row| row == expected),
             "{expected}: {rows:?}"
@@ -305,16 +307,23 @@ fn quota_block_shows_off_checking_current_and_failed_with_retry() {
     publish_quota(&mut dashboard, mixed_snapshot());
     let rows = sidebar_rows(&dashboard, 39, NOW);
     assert!(
-        rows.iter().any(|row| row == "Claude — checking"),
+        rows.iter().any(|row| row == "Claude · checking"),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter().any(|row| {
+            row.contains("Codex")
+                && row.contains("5h")
+                && row.contains('━')
+                && row.contains("37%")
+                && !row.contains('[')
+                && !row.contains(']')
+        }),
         "{rows:?}"
     );
     assert!(
         rows.iter()
-            .any(|row| row.starts_with("Codex  5h [") && row.ends_with("] 37%")),
-        "{rows:?}"
-    );
-    assert!(
-        rows.iter().any(|row| row == "Grok — unavailable  retry 3m"),
+            .any(|row| row == "Grok · unavailable · retry 3m"),
         "{rows:?}"
     );
     // The retry marker counts down from next_check, never resets on redraw.
@@ -322,12 +331,13 @@ fn quota_block_shows_off_checking_current_and_failed_with_retry() {
     assert!(
         later
             .iter()
-            .any(|row| row == "Grok — unavailable  retry 1m"),
+            .any(|row| row == "Grok · unavailable · retry 1m"),
         "{later:?}"
     );
     let due = sidebar_rows(&dashboard, 39, NOW + 170_000);
     assert!(
-        due.iter().any(|row| row == "Grok — unavailable  retry now"),
+        due.iter()
+            .any(|row| row == "Grok · unavailable · retry now"),
         "{due:?}"
     );
 }
@@ -342,13 +352,20 @@ fn quota_block_shows_a_stale_value_with_its_age() {
     publish_quota(&mut dashboard, snapshot);
     let rows = sidebar_rows(&dashboard, 39, NOW);
     assert!(
-        rows.iter()
-            .any(|row| row.starts_with("Codex  5h") && row.ends_with("37% left  stale 12m")),
+        rows.iter().any(|row| {
+            row.contains("Codex")
+                && row.contains("5h")
+                && row.contains("37%")
+                && row.contains("stale 12m")
+                && !row.contains("left")
+        }),
         "{rows:?}"
     );
     let hours = sidebar_rows(&dashboard, 39, NOW + 3 * 3_600_000);
     assert!(
-        hours.iter().any(|row| row.ends_with("37% left  stale 3h")),
+        hours
+            .iter()
+            .any(|row| row.contains("37%") && row.contains("stale 3h")),
         "{hours:?}"
     );
 }
@@ -361,16 +378,19 @@ fn quota_block_ladder_gives_three_lines_then_one_then_none() {
     dashboard.install_hierarchy(hierarchy);
     publish_quota(&mut dashboard, mixed_snapshot());
     let full = rows_at(&dashboard, 12, NOW);
-    assert!(full.iter().any(|row| row == "Quota left"), "{full:?}");
+    assert!(
+        full.iter().any(|row| row.contains("QUOTA LEFT")),
+        "{full:?}"
+    );
     let mut seen = Vec::new();
     for height in (3..12).rev() {
         let rows = rows_at(&dashboard, height, NOW);
         let compact = [
-            "Claude — checking",
+            "Claude · checking",
             "Codex 5h 37%",
-            "Grok — unavailable  retry 3m",
+            "Grok · unavailable · retry 3m",
         ];
-        let state = if rows.iter().any(|row| row == "Quota left") {
+        let state = if rows.iter().any(|row| row.contains("QUOTA LEFT")) {
             "full"
         } else if let Some(at) = rows.iter().position(|row| row == compact[0]) {
             assert_eq!(rows[at..at + 3], compact, "height {height}: {rows:?}");
@@ -379,7 +399,8 @@ fn quota_block_ladder_gives_three_lines_then_one_then_none() {
             "one"
         } else {
             assert!(
-                !rows.iter().any(|row| row.contains("Quota")
+                !rows.iter().any(|row| row.contains("QUOTA")
+                    || row.contains("Quota")
                     || row.contains("Claude")
                     || row.contains("Codex")),
                 "height {height}: {rows:?}"
@@ -523,7 +544,10 @@ fn palette_enable_usage_asks_the_server_and_applies_nothing() {
         response: Response::Ok,
     });
     let rows = sidebar_rows(&dashboard, 39, NOW);
-    assert!(rows.iter().any(|row| row == "Codex usage off"), "{rows:?}");
+    assert!(
+        rows.iter().any(|row| row == "Codex · usage off"),
+        "{rows:?}"
+    );
     // Once the Server republishes the setting on, the command is gone.
     publish_quota(&mut dashboard, mixed_snapshot());
     dashboard.key(KeyCode::Char(':'));
@@ -604,7 +628,7 @@ fn quota_rows_keep_reported_windows_and_dash_missing_allowance() {
     publish_quota(&mut dashboard, snapshot);
     let rows = sidebar_rows(&dashboard, 39, NOW);
     let joined = rows.join("\n");
-    assert!(joined.contains("Quota left"), "{rows:?}");
+    assert!(joined.contains("QUOTA LEFT"), "{rows:?}");
     assert!(
         rows.iter()
             .any(|row| row.contains("Claude") && row.contains("5h") && row.contains("58%")),
@@ -616,8 +640,12 @@ fn quota_rows_keep_reported_windows_and_dash_missing_allowance() {
         .expect("seven-day row");
     assert!(seven.contains('—') || seven.contains("—"), "{seven}");
     assert!(
-        !seven.contains('█') && !seven.contains('░'),
-        "missing allowance drew a bar: {seven}"
+        !seven.contains('━') || seven.contains('─'),
+        "missing allowance must be track-only: {seven}"
+    );
+    assert!(
+        !seven.contains('█') && !seven.contains('░') && !seven.contains('['),
+        "legacy bar glyphs: {seven}"
     );
     assert!(
         rows.iter().any(|row| row.contains("Grok")

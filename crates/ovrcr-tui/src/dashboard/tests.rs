@@ -3088,10 +3088,22 @@ fn a_clicked_popup_row_clears_the_desktop_notice() {
         .draw(|frame| super::render::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     let buffer = terminal.backend().buffer();
+    // Scan by cell, not UTF-8 byte index: Option A header rules are multi-byte glyphs.
     let (column, row) = (0..40)
         .find_map(|y| {
-            let line: String = (0..120).map(|x| buffer[(x, y)].symbol()).collect();
-            line.find("q  Detach").map(|x| (x as u16 + 1, y))
+            (0..120u16).find_map(|x| {
+                let label: String = (0..9)
+                    .map(|offset| {
+                        let col = x + offset;
+                        if col < 120 {
+                            buffer[(col, y)].symbol()
+                        } else {
+                            ""
+                        }
+                    })
+                    .collect();
+                (label == "q  Detach").then_some((x + 1, y))
+            })
         })
         .expect("the popup lists Detach");
     let click = MouseEvent {

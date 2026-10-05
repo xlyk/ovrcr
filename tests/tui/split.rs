@@ -392,11 +392,17 @@ fn quota_block_keeps_sidebar_border_draggable_at_the_bottom() {
     }
     assert_eq!(pane_widths(&dashboard, area), vec![70]);
     assert_view_input_blocked(&mut dashboard);
-    assert!(rendered_rows(&dashboard, 120, 40)[38].contains("Grok usage off"));
-    assert_eq!(
-        rendered_rows(&dashboard, 120, 40)[38].chars().nth(49),
-        Some('│')
+    let rows = rendered_rows(&dashboard, 120, 40);
+    let grok = rows
+        .iter()
+        .rposition(|row| row.contains("Grok"))
+        .unwrap_or_else(|| panic!("missing Grok: {rows:?}"));
+    assert!(
+        rows[grok].contains("Grok · usage off"),
+        "row {grok}: {}",
+        rows[grok]
     );
+    assert_eq!(rows[grok].chars().nth(49), Some('│'), "{}", rows[grok]);
     let resized = request_view(&mut dashboard, area, 0);
     assert_eq!(
         set_view(&resized).panes[0].size,
