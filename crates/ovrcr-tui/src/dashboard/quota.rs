@@ -558,7 +558,7 @@ fn state_row(provider: &ProviderQuota, width: u16, now: u64) -> Vec<(Line<'stati
     } else {
         vec![(
             Line::from(vec![
-                Span::styled(format!("{name}"), name_style(provider)),
+                Span::styled(name.to_string(), name_style(provider)),
                 Span::styled(format!("{gap}{state}"), subtext()),
             ]),
             1,
