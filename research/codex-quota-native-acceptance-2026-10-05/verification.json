@@ -1,0 +1,35 @@
+{
+  "tested_revision": "05adc3d0cfdb23eacb31e3b6ac50db652d8754ce",
+  "native_version": "codex-cli 0.155.1",
+  "native_auth_mode": "ChatGPT",
+  "native_launch": "codex -s read-only -a never app-server",
+  "native_quota": {
+    "window": "7d",
+    "remaining_percent": 80,
+    "reset": "2026-10-10T04:26:52Z"
+  },
+  "auth_file_unchanged": true,
+  "auth_permissions": "0o600",
+  "original_codex_processes_preserved": 5,
+  "owned_process_groups_absent": 36,
+  "all_recorded_native_workspaces_absent": true,
+  "gui_fixture_roots_absent": true,
+  "gui_fixture_sockets_absent": true,
+  "nested_socket_absent": true,
+  "temporary_controls_removed": true,
+  "live_launcher_exit": 0,
+  "fixture_launcher_exit": 0,
+  "isolated_focused_tests": {
+    "provider_quota": {
+      "passed": 20,
+      "failed": 0,
+      "ignored": 1
+    },
+    "quota_schema": {
+      "passed": 4,
+      "failed": 0,
+      "ignored": 0
+    }
+  },
+  "scope": "Provider-local acceptance; combined-provider #231 is not certified"
+}

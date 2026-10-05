@@ -1,0 +1,49 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                             [Actions] [Menu]
+ CONSIGINT ────────│pid: 59198  elapsed: 7m  agent unknown  local (#1)
+  󰘬 main      root │local (#1)
+▌    $ local       │consigint › rtk proxy printf 'CUA_CODEX_%s\n' LIVE_OK
+  󰘬 gui-consigint-…│CUA_CODEX_LIVE_OK
+     $ local       │consigint ›
+
+		3 text (settable) 󰚩 OVRCR  agent runtime                                             [Actions] [Menu]
+		4 text (settable)  CONSIGINT ────────│pid: 59198  elapsed: 7m  agent unknown  local (#1)
+		5 text (settable)   󰘬 main      root │local (#1)
+		6 text (settable) ▌    $ local       │consigint › rtk proxy printf 'CUA_CODEX_%s\n' LIVE_OK
+		7 text (settable)   󰘬 gui-consigint-…│CUA_CODEX_LIVE_OK
+		8 text (settable)      $ local       │consigint ›
+		9 text (settable)      - review auth…│
+		10 text (settable)        └ grok:4.6  │
+		11 text (settable)   󰘬 gui-consigint-…│
+		12 text (settable)      $ local       │
+		13 text (settable)      - implement l…│
+		14 text (settable)        └ claude:s… │
+		15 text (settable)      - review webs…│
+		16 text (settable)        └ codex:gp… │
+		17 text (settable)      - plan snapsh…│
+		18 text (settable)        └ pi:grok-… │
+		19 text (settable) Quota left         │
+		20 text (settable) Claude             │
+		21 text (settable) not signed in      │
+		22 text (settable) Codex  7d          │
+		23 text (settable) 80%                │
+		24 text (settable)                    │
+		25 text (settable) Grok               │
+		26 text (settable) not signed in      │
+		27 text (settable) retry 9m           │
+		28 text (settable) BROWSE  Space Menu  : Search  ? Help
+	29 close button
+	30 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	31 minimize button
+	32 text OVRCR GUI
+33 menu bar
+	34 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                             [Actions] [Menu]
+ CONSIGINT ────────│pid: 59198  elapsed: 7m  agent unknown  local (#1)
+  󰘬 main      root │local (#1)
+▌    $ local       │consigint › rtk proxy printf 'CUA_CODEX_%s\n' LIVE_OK
+  󰘬 gui-consigint-…│CUA_CODEX_LIVE_OK
+     $ local       │consigint ›
