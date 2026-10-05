@@ -1,5 +1,8 @@
 #![cfg(feature = "gui")]
 
+#[path = "support/dashboard_proxy.rs"]
+mod dashboard_proxy;
+
 use anyhow::{Result, bail};
 use eframe::egui::{self, Event, Key, Modifiers, MouseWheelUnit, TouchPhase};
 use ovrcr::gui::input::{Mouse, encode_event};
@@ -564,6 +567,7 @@ fn real_dashboard_initial_selection_survives_quota_events_before_startup_respons
     let pgids = demo_session_groups(&root)?;
     let socket = root.join("startup-proxy.sock");
     let listener = UnixListener::bind(&socket)?;
+    let proxy_executable = dashboard_proxy::publish_build(&socket)?;
     let upstream = root.join("server.sock");
     let proxy = thread::spawn(move || -> Result<()> {
         let (mut front, _) = listener.accept()?;
@@ -631,6 +635,7 @@ fn real_dashboard_initial_selection_survives_quota_events_before_startup_respons
     let mut command = portable_pty::CommandBuilder::new(env!("CARGO_BIN_EXE_ovrcr"));
     command.env("OVRCR_HOME", &root);
     command.env("OVRCR_SOCKET", &socket);
+    command.env("OVRCR_SERVER_EXECUTABLE", proxy_executable);
     #[cfg(target_os = "macos")]
     {
         let (home, path) = desktop_alert_environment(&root)?;

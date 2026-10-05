@@ -292,10 +292,10 @@ impl Dashboard {
                     Some("OVRCR notification permission needed; checking authorization")
                 }
                 Some(BridgeStatus::Incompatible) => Some(
-                    "OVRCR Bridge needs updating; run scripts/install-bridge.sh from this checkout",
+                    "OVRCR Bridge needs updating; restart OVRCR to review the Bridge repair offer",
                 ),
                 Some(BridgeStatus::Failed) => Some(
-                    "OVRCR Bridge unavailable; install with scripts/install-bridge.sh from this checkout",
+                    "OVRCR Bridge unavailable; restart OVRCR to review the Bridge install or repair offer",
                 ),
                 _ => None,
             };
@@ -2910,7 +2910,7 @@ printf '{{"schema":1,"server_wire":{},"status":"%s"}}\n' "$status"
             install_fake_bridge(&mut d, client);
             wait_bridge(&mut d, |d| d.desktop.bridge.status == Some(expected));
             let notice = d.desktop_status_notice().unwrap();
-            assert!(notice.contains("install-bridge.sh"));
+            assert!(notice.contains("restart OVRCR to review the Bridge"));
             assert!(!notice.contains("PRIVATE_HOST_ERROR"));
             assert!(!d.notification_recovery_available());
             assert_eq!(d.recover_notification_permission(), DashboardAction::None);
@@ -2921,7 +2921,11 @@ printf '{{"schema":1,"server_wire":{},"status":"%s"}}\n' "$status"
         wait_bridge(&mut d, |d| {
             d.desktop.bridge.status == Some(BridgeStatus::Failed)
         });
-        assert!(d.desktop_status_notice().unwrap().contains("install with"));
+        assert!(
+            d.desktop_status_notice()
+                .unwrap()
+                .contains("Bridge install or repair offer")
+        );
     }
 
     #[cfg(target_os = "macos")]

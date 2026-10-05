@@ -20,7 +20,17 @@ executes its early `--check-contract` guard only. An optional final argument
 selects the output root. Existing output bundles are refused. The compiler may
 emit an ad-hoc Mach-O code directory; the build does not sign/seal the app with
 an installation identity. Neither build mode installs, registers or requests
-native permission. The ordinary `just run` path does not build or replace it.
+native permission. `just run` builds a cached, validated runtime payload and installs that payload
+beside the CLI under `~/.local/lib/ovrcr`. Interactive Dashboard startup offers
+installation or repair of the app from this payload; runtime does not compile
+Swift or require a checkout. The relocated validator carries exact contract,
+build and sound/license hashes. It preserves the same installer guards.
+
+Startup defaults to no. An accepted install uses the single valid non-ad-hoc
+signing identity when available, or `OVRCR_BRIDGE_SIGNING_IDENTITY` when set.
+Missing or ambiguous identities leave the app unchanged and produce a warning.
+Optional setup failures do not prevent Dashboard attachment. No notification
+permission operation runs as part of installation.
 
 Install explicitly, after the relevant native operation is authorized:
 

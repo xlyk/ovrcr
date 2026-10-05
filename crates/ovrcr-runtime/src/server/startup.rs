@@ -91,6 +91,12 @@ fn run_server_inner(
     #[cfg(feature = "acceptance-diagnostics")] dashboard_monitor: Option<DashboardQueueMonitor>,
     #[cfg(not(feature = "acceptance-diagnostics"))] _dashboard_monitor: Option<()>,
 ) -> Result<()> {
+    let executable = std::env::current_exe().context("resolve running server executable")?;
+    #[cfg(target_os = "linux")]
+    let running_executable = Path::new("/proc/self/exe");
+    #[cfg(not(target_os = "linux"))]
+    let running_executable = executable.as_path();
+    let build = build_identity::executable_build(running_executable)?;
     let parent = paths
         .socket
         .parent()
@@ -134,6 +140,15 @@ fn run_server_inner(
         .with_context(|| format!("bind server socket {}", paths.socket.display()))?;
     fs::set_permissions(&paths.socket, fs::Permissions::from_mode(0o700))
         .with_context(|| format!("secure server socket {}", paths.socket.display()))?;
+    let build_publication =
+        match build_identity::Publication::publish(&paths.socket, executable, build) {
+            Ok(publication) => publication,
+            Err(error) => {
+                drop(listener);
+                let _ = fs::remove_file(&paths.socket);
+                return Err(error);
+            }
+        };
     drop(startup_lock);
     eprintln!("ovrcr server listening on {}", paths.socket.display());
     // The socket is bound so concurrent starters see a live server, but a
@@ -149,6 +164,7 @@ fn run_server_inner(
         Ok(loaded) => loaded,
         Err(error) => {
             drop(listener);
+            drop(build_publication);
             let _ = fs::remove_file(&paths.socket);
             return Err(error);
         }
@@ -344,6 +360,7 @@ fn run_server_inner(
     bridge
         .join()
         .map_err(|_| anyhow::anyhow!("server event bridge panicked"))?;
+    drop(build_publication);
     let _ = fs::remove_file(&paths.socket);
     match &task_shutdown {
         Ok(()) => eprintln!("ovrcr server stopped"),

@@ -896,3 +896,142 @@ fn retarget_hooks_rewrites_managed_reporter_paths_and_stops() {
     assert_eq!(std::fs::read_to_string(&toml).unwrap(), toml_text);
     assert!(String::from_utf8_lossy(&again.stderr).contains("already name"));
 }
+
+#[test]
+fn setup_repairs_stale_owned_claude_statusline_without_wrapping_it() {
+    let _env_lock = env_lock();
+    let root = tempfile::tempdir().unwrap();
+    let original = json!({"statusLine":{"type":"command","command":": ovrcr-managed-claude-v1; '/old installation/ovrcr' report claude-statusline --stdin-json --render-command 'printf renderer'","refreshInterval":15}});
+    let (value, _) = setup(&root, &original);
+    let command = value["statusLine"]["command"].as_str().unwrap();
+    assert!(!command.contains("/old installation/ovrcr"));
+    assert!(command.contains("--render-command 'printf renderer'"));
+    assert_eq!(value["statusLine"]["refreshInterval"], 15);
+    let (again, _) = setup(&root, &value);
+    assert_eq!(again, value);
+}
+
+#[test]
+fn codex_setup_repairs_stale_owned_handler_and_preserves_comments() {
+    let _env_lock = env_lock();
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("config.toml");
+    let original = "# private config comment\n[projects.example] # project\ntrust_level = 'trusted' # preserve trust\n[hooks.state.example]\ntrusted_hash = 'preserve-only' # native hash\n[[hooks.Stop]]\n[[hooks.Stop.hooks]]\ntype = 'command'\ncommand = \"exec '/old installation/ovrcr' report codex --stdin\" # old reporter\nasync = true\n[[hooks.Stop.hooks]]\ntype = 'command'\ncommand = 'echo untouched' # external handler\n";
+    std::fs::write(&path, original).unwrap();
+    let output = command(&root)
+        .args(["agent", "setup", "codex", "--print", "--settings"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let next = String::from_utf8(output.stdout).unwrap();
+    assert!(!next.contains("/old installation/ovrcr"));
+    for comment in [
+        "# private config comment",
+        "# project",
+        "# preserve trust",
+        "# native hash",
+        "# external handler",
+    ] {
+        assert!(next.contains(comment), "missing {comment}");
+    }
+    let value: toml::Value = toml::from_str(&next).unwrap();
+    assert_eq!(
+        value["projects"]["example"]["trust_level"].as_str(),
+        Some("trusted")
+    );
+    assert_eq!(
+        value["hooks"]["state"]["example"]["trusted_hash"].as_str(),
+        Some("preserve-only")
+    );
+    let groups = value["hooks"]["Stop"].as_array().unwrap();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0]["hooks"].as_array().unwrap().len(), 2);
+    assert_eq!(groups[0]["hooks"][0]["async"].as_bool(), Some(false));
+    assert_eq!(
+        groups[0]["hooks"][1]["command"].as_str(),
+        Some("echo untouched")
+    );
+    std::fs::write(&path, &next).unwrap();
+    let again = command(&root)
+        .args(["agent", "setup", "codex", "--print", "--settings"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert_eq!(again.stdout, next.as_bytes());
+}
+
+#[test]
+fn codex_setup_repairs_inline_filtered_hooks_once_without_changing_native_approvals() {
+    let _env_lock = env_lock();
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("config.toml");
+    for original in [
+        "# config\nhooks = { Stop = [{ matcher = 'resume', hooks = [{ type = 'command', command = \"exec '/stale/ovrcr' report codex --stdin\" }, { type = 'command', command = 'echo first' }] }, { hooks = [{ type = 'command', command = 'echo second' }] }] } # hooks\napproval_policy = 'on-request' # approvals\n",
+        "# config\napproval_policy = 'on-request' # approvals\n[[hooks.Stop]]\nmatcher = 'resume' # keep matcher\nhooks = [{ type = 'command', command = \"exec '/stale/ovrcr' report codex --stdin\" }, { type = 'command', command = 'echo first' }] # handlers\n[[hooks.Stop]]\nhooks = [{ type = 'command', command = 'echo second' }]\n",
+    ] {
+        std::fs::write(&path, original).unwrap();
+        let output = command(&root)
+            .args(["agent", "setup", "codex", "--print", "--settings"])
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(text.contains("# config"));
+        assert!(text.contains("# approvals"));
+        assert!(!text.contains("/stale/ovrcr"));
+        let value: toml::Value = toml::from_str(&text).unwrap();
+        assert_eq!(value["approval_policy"].as_str(), Some("on-request"));
+        let groups = value["hooks"]["Stop"].as_array().unwrap();
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups[0]["matcher"].as_str(), Some("resume"));
+        assert_eq!(
+            groups[0]["hooks"][0]["command"].as_str(),
+            Some("echo first")
+        );
+        assert_eq!(
+            groups[1]["hooks"][0]["command"].as_str(),
+            Some("echo second")
+        );
+        assert!(groups[2].get("matcher").is_none());
+        std::fs::write(&path, &text).unwrap();
+        let again = command(&root)
+            .args(["agent", "setup", "codex", "--print", "--settings"])
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert_eq!(again.stdout, text.as_bytes());
+    }
+}
+
+#[test]
+fn codex_setup_keeps_already_configured_native_value_formatting() {
+    let _env_lock = env_lock();
+    let root = tempfile::tempdir().unwrap();
+    let fresh = command(&root)
+        .args(["agent", "setup", "codex", "--print"])
+        .output()
+        .unwrap();
+    assert!(fresh.status.success());
+    let configured = String::from_utf8(fresh.stdout)
+        .unwrap()
+        .replace("type = \"command\"", "type = 'command' # native style");
+    let path = root.path().join("config.toml");
+    std::fs::write(&path, &configured).unwrap();
+    let output = command(&root)
+        .args(["agent", "setup", "codex", "--print", "--settings"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, configured.as_bytes());
+}
