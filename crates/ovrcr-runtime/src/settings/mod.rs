@@ -874,6 +874,10 @@ command = "/opt/grok"
                 ("desktop_notifications", DESKTOP_NOTIFICATIONS_OFF),
                 ("title_model", TITLES_OFF),
                 (
+                    "save_uncommitted_work",
+                    ovrcr_protocol::SAVE_UNCOMMITTED_WORK_OFF
+                ),
+                (
                     "quota.claude.probe",
                     ovrcr_protocol::CLAUDE_PROBE_DESCRIPTION
                 ),
@@ -888,6 +892,7 @@ command = "/opt/grok"
                 "automatic_local_terminals",
                 "title_model",
                 "branch_prefix",
+                "save_uncommitted_work",
                 "picker_roots",
                 "agents",
                 "launch_choices",
