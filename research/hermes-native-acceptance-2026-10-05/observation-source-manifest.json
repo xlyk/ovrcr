@@ -1,0 +1,62 @@
+[
+  {
+    "original_basename": "02-dashboard-session.json",
+    "original_sha256": "d28e3d62ec61df9ec28d1fc99591c31329c4ab7e5d84eb88c04478d1602d0568"
+  },
+  {
+    "original_basename": "06-paused-session.json",
+    "original_sha256": "606cb2434b6e07e8bd85c29ad9d33366ba3d994a973be2064e031a6389bdc5a3"
+  },
+  {
+    "original_basename": "06-paused-input-rejected.json",
+    "original_sha256": "74307389cf0f2bf0cb5ce52ece8ca7269972598fb1f52d6f79632b1ea7bde13e"
+  },
+  {
+    "original_basename": "06-kernel-paused-processes.json",
+    "original_sha256": "503aa16510da010d64b71917a2084e22962d4447eab6e78cc2a5a77642f861bc"
+  },
+  {
+    "original_basename": "08-dashboard-exit.json",
+    "original_sha256": "96efd92b81e7f5b0b045645996e1e56baf7ff90b10b828876f5022d50f755e76"
+  },
+  {
+    "original_basename": "09-cli-created.json",
+    "original_sha256": "4d07897bcdff652f938d36325e670a220ef4b4971c4f42312adcbff616d987b5"
+  },
+  {
+    "original_basename": "10-cli-input-result.json",
+    "original_sha256": "e5f1eb4d806641698a35efe20e098efd20d7d57a9b90ee69079d5bb650920726"
+  },
+  {
+    "original_basename": "10-cli-session.json",
+    "original_sha256": "4d07897bcdff652f938d36325e670a220ef4b4971c4f42312adcbff616d987b5"
+  },
+  {
+    "original_basename": "10-cli-doctor.json",
+    "original_sha256": "d05ceffc79b5f43beccf4b1451c0db50ca1af8f4c521b6f5abafaa524fc64a60"
+  },
+  {
+    "original_basename": "11-cli-paused-session.json",
+    "original_sha256": "fb0746d9a4bb86eb64b1ce90135bd9dd65fdc63db2993e01c1204e9dc956a537"
+  },
+  {
+    "original_basename": "12-cli-clean-exit.json",
+    "original_sha256": "7050d20e2084e5d445195a71302ebc8eed811c38f4c123c925de4acd9023e63a"
+  },
+  {
+    "original_basename": "13-peer-after-native-turns.json",
+    "original_sha256": "32e722ba2333c7b932d8aa204a5c649477d6123627a4c149e8751ef8fccd18f0"
+  },
+  {
+    "original_basename": "native-owned-session-counts.json",
+    "original_sha256": "874e65d2f31b1ba862f3cee77662b3c8668f0343e017f57472b208ea753cf3cd"
+  },
+  {
+    "original_basename": "verification.json",
+    "original_sha256": "de3f8e51b30a6dcac7cfdbb29218f645f614834298fff0cb1f5fe52ec02f2120"
+  },
+  {
+    "original_basename": "11-cli-kernel-paused.json",
+    "original_sha256": "6757fc7131d245a6f3c289030d7b3f016fbe42ee10ac771a308948c9cdb96cf0"
+  }
+]

@@ -1,0 +1,30 @@
+Native GUI close failure, separate from the two Hermes native exits:
+
+The macOS close button was pressed on the task-owned OVRCR GUI bundle.
+The launcher stayed alive. Its output thread reported:
+  thread 'ovrcr-gui-output' panicked at epaint-0.36.1/src/mutex.rs:81:17:
+  DEBUG PANIC: Failed to acquire RwLock read after 10s. Deadlock?
+
+A bounded one-second macOS sample of the owned GUI process showed the main
+thread waiting along this path (excerpt of the retained private sample):
+  App::show (src/bin/ovrcr-gui.rs:453)
+  App::close (src/bin/ovrcr-gui.rs:442)
+  Terminal::stop
+  portable_pty Child::wait
+  std::process Child::wait
+  __wait4
+
+Recovery used the exact owned config/socket: ovrcr shutdown --kill --json.
+After that returned ok, SIGTERM was sent to the exact owned GUI PID 84426.
+The launcher exited 143; this is forced recovery, not a successful normal close.
+Final kernel probes found the GUI and server PIDs absent, all 23 recorded owned
+session process groups gone, the private socket absent, and all five pre-existing
+Hermes peer PIDs alive. The shared launcher process group was never signalled.
+
+Candidate cause, not a proven fix: App::close runs inside the egui callback.
+Terminal::stop synchronously waits and joins the output reader, whose
+Context::request_repaint can need the context RwLock. The sample and panic
+support investigating the wait and repaint interaction. An egui callback alone
+does not prove a Context guard is held; a reproducer is required before a fix.
+The earlier stale post-CLI-control
+GUI/AX display has no established root cause. No GUI production change was made.

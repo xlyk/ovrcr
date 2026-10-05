@@ -1,0 +1,73 @@
+application_base_revision=643e3122fbbcb0b3630d77ed4089e1d7a260e199
+scope=approved Hermes help wording changes; no runtime behavior changes
+command=rtk proxy cargo test --locked --offline -p ovrcr --test cli --test server_lifecycle hermes -- --test-threads=1
+   Compiling ovrcr v0.1.0 (<checkout>)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.19s
+     Running tests/cli.rs (target/debug/deps/cli-1bb4dcc63f374b64)
+
+running 3 tests
+test hermes_cli_launch_uses_real_server_pty_and_truthful_lifecycle ... ok
+test hermes_managed_cli_preserves_native_arguments_output_and_failure ... ok
+test hermes_setup_and_doctor_are_read_only_and_do_not_execute_native_client ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 43 filtered out; finished in 3.56s
+
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-8698643bf44a3261)
+
+running 1 test
+test hermes_supervision_preserves_job_control_failure_and_peer_isolation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 130 filtered out; finished in 3.25s
+
+
+command=rtk proxy cargo test --locked --offline -p ovrcr-tui hermes_detection_uses_managed_launch_and_preserves_explicit_override -- --test-threads=1
+[initial compilation output omitted]
+   Compiling errno v0.3.14
+   Compiling mio v1.2.3
+   Compiling num_threads v0.1.7
+   Compiling parking_lot_core v0.9.12
+   Compiling filedescriptor v0.8.3
+   Compiling getrandom v0.4.3
+   Compiling time v0.3.55
+   Compiling signal-hook-registry v1.4.8
+   Compiling rustix v1.1.4
+   Compiling parking_lot v0.12.5
+   Compiling signal-hook v0.3.18
+   Compiling signal-hook-mio v0.2.5
+   Compiling darling_macro v0.20.11
+   Compiling darling v0.20.11
+   Compiling darling_core v0.24.1
+   Compiling derive_builder_core v0.20.2
+   Compiling crossterm v0.29.0
+   Compiling tempfile v3.27.0
+   Compiling thiserror-impl v2.0.20
+   Compiling serde_derive v1.0.229
+   Compiling derive_builder_macro v0.20.2
+   Compiling derive_builder v0.20.2
+   Compiling thiserror v2.0.20
+   Compiling croner v3.0.1
+   Compiling kasuari v0.4.12
+   Compiling darling_macro v0.24.1
+   Compiling ratatui-core v0.1.2
+   Compiling darling v0.24.1
+   Compiling serde v1.0.229
+   Compiling instability v0.3.13
+   Compiling ratatui-widgets v0.3.2
+   Compiling ratatui-crossterm v0.1.2
+   Compiling bincode v2.0.1
+   Compiling ovrcr-protocol v0.1.0 (<checkout>/crates/ovrcr-protocol)
+   Compiling ratatui-macros v0.7.2
+   Compiling ratatui v0.30.2
+   Compiling ovrcr-terminal v0.1.0 (<checkout>/crates/ovrcr-terminal)
+   Compiling ovrcr-tui v0.1.0 (<checkout>/crates/ovrcr-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 14.94s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_tui-7e64225096cfd5e8)
+
+running 1 test
+test dashboard::agents::tests::hermes_detection_uses_managed_launch_and_preserves_explicit_override ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 194 filtered out; finished in 0.00s
+
+
+command=rtk proxy cargo fmt --all -- --check
+exit_code=0

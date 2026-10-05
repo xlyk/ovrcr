@@ -1,0 +1,20 @@
+Non-passing observations are preserved separately:
+
+- A transient initial CUA coordinate click returned noWindowsAvailable while the
+  exact task-owned GUI was still alive; bounded keyboard control recovered.
+- An exploratory `terminal pause` was rejected: pause/resume are top-level CLI
+  commands. The successful control used `ovrcr pause 15 --json` and resume 15.
+- Temporary evidence-script assumptions expected a nested agent-name JSON shape
+  and lowercase doctor process phase. Those assertions failed before correction:
+  terminal kind is {"agent":"hermes"}; doctor lifecycle process is "Running".
+  These were capture expectations, not product regressions or passing tests.
+- CLI pause returned success and the kernel foreground processes were stopped,
+  but GUI/AX did not redraw the pause, later resume, or native exit. The recorded
+  post-pause and post-exit AX still shows PID 19404, elapsed 2m, agent unknown.
+  Raising the window and bounded keyboard attempts did not resolve it. Native
+  exit 0 is established by server inventory, not the stale screenshot.
+- Normal GUI close panicked/hung and required owned-process recovery (exit 143).
+- No live interrupt turn, native Linux run, alternate auth/model/profile run,
+  native reporting hook, recovery, or cost-reporting proof was performed.
+- Two model turns total were submitted sequentially; no retry or extra model turn
+  was used to resolve these GUI failures.

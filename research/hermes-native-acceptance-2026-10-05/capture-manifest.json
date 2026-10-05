@@ -1,0 +1,151 @@
+[
+  {
+    "stage": "04-dashboard-response",
+    "public_ax_excerpt": "04-dashboard-response-ax-excerpt.txt",
+    "public_ax_excerpt_sha256": "0016b73db842bc62fb56339f1f377ba3fc9fbdb631f304945aeeafc3d5cca391",
+    "original_screenshot_basename": "04-dashboard-response.png",
+    "original_screenshot_sha256": "2b7bca36e9f372120655e87f3a8df41fe9fc6ef859653e9b07d4c2918a8c005c",
+    "original_screenshot_dimensions": [
+      2200,
+      1864
+    ],
+    "original_ax_basename": "04-dashboard-response.txt",
+    "original_ax_sha256": "0b7997dc5e46ea746db2c025001450c7062bbce0d8c866efe081e91d326a8739",
+    "ax_indices_retained": [
+      4,
+      45,
+      46,
+      55,
+      56,
+      57,
+      58
+    ],
+    "screenshot_published": false,
+    "reason": "Whole screenshot includes unrelated live quota and native tool/skill inventory; no image edits or generated images used.",
+    "status": "observed_result"
+  },
+  {
+    "stage": "05-dashboard-paused",
+    "public_ax_excerpt": "05-dashboard-paused-ax-excerpt.txt",
+    "public_ax_excerpt_sha256": "045b7f4180084a35ac822c498e07841f7c03f5a90c9a2f10ed600962e3bac601",
+    "original_screenshot_basename": "05-dashboard-paused.png",
+    "original_screenshot_sha256": "d03549055c4ed78e4b55f4989acd41472fbb13ae381b1dbc9fa19fa2dc47f21b",
+    "original_screenshot_dimensions": [
+      2200,
+      1864
+    ],
+    "original_ax_basename": "05-dashboard-paused.txt",
+    "original_ax_sha256": "183519faacccc7c0929067f9c98f6d26a1560eff0e48126fa0bf40a61b12ff9a",
+    "ax_indices_retained": [
+      4
+    ],
+    "screenshot_published": false,
+    "reason": "Whole screenshot includes unrelated live quota and native tool/skill inventory; no image edits or generated images used.",
+    "status": "observed_result"
+  },
+  {
+    "stage": "07-dashboard-resumed",
+    "public_ax_excerpt": "07-dashboard-resumed-ax-excerpt.txt",
+    "public_ax_excerpt_sha256": "294803d7729242bd5b9de60e5215f6e4b909932ae0a064a43bd57a000af20923",
+    "original_screenshot_basename": "07-dashboard-resumed.png",
+    "original_screenshot_sha256": "f3f016863236da73026f0bf020453df483cb4ac3d9183fe3d02a0f90e4b96d0a",
+    "original_screenshot_dimensions": [
+      2200,
+      1864
+    ],
+    "original_ax_basename": "07-dashboard-resumed.txt",
+    "original_ax_sha256": "ca73333332d6072c73aab00a5d6bbf7993bff28212c993ea12ac9036e84956f9",
+    "ax_indices_retained": [
+      4
+    ],
+    "screenshot_published": false,
+    "reason": "Whole screenshot includes unrelated live quota and native tool/skill inventory; no image edits or generated images used.",
+    "status": "observed_result"
+  },
+  {
+    "stage": "08-dashboard-clean-exit",
+    "public_ax_excerpt": "08-dashboard-clean-exit-ax-excerpt.txt",
+    "public_ax_excerpt_sha256": "b278ef6d90420d570a6dc9317a3dc8335c4977faad23e1208d80945145185ffa",
+    "original_screenshot_basename": "08-dashboard-clean-exit.png",
+    "original_screenshot_sha256": "d4c1ba4468a4bf3ba56e639fd05a6b17193348f8612dfc79a74753381ccf7f00",
+    "original_screenshot_dimensions": [
+      2200,
+      1864
+    ],
+    "original_ax_basename": "08-dashboard-clean-exit.txt",
+    "original_ax_sha256": "558acf5a280a4c9c073b7d91260d239a633307e23be00feb87ca270ff291ce90",
+    "ax_indices_retained": [
+      4,
+      11,
+      12,
+      13,
+      14
+    ],
+    "screenshot_published": false,
+    "reason": "Whole screenshot includes unrelated live quota and native tool/skill inventory; no image edits or generated images used.",
+    "status": "observed_result"
+  },
+  {
+    "stage": "10-cli-response",
+    "public_ax_excerpt": "10-cli-response-ax-excerpt.txt",
+    "public_ax_excerpt_sha256": "d8e13470abf9e5b0102fdf639e9ec46fef90729c1f5f2d3b6ecae1bc9a4cb1aa",
+    "original_screenshot_basename": "10-cli-response.png",
+    "original_screenshot_sha256": "486eef394e1865cf4f9fe4cc4f3b46a5dbb05f59e8a31920175f29cc78728f2f",
+    "original_screenshot_dimensions": [
+      2200,
+      1864
+    ],
+    "original_ax_basename": "10-cli-response.txt",
+    "original_ax_sha256": "05bbb428e4dcdd06cfff9152291c81d5eb42a9a0a45c9d216225a0a59b6894a5",
+    "ax_indices_retained": [
+      4,
+      45,
+      46,
+      55,
+      56,
+      57,
+      58
+    ],
+    "screenshot_published": false,
+    "reason": "Whole screenshot includes unrelated live quota and native tool/skill inventory; no image edits or generated images used.",
+    "status": "observed_result"
+  },
+  {
+    "stage": "11-cli-paused",
+    "public_ax_excerpt": "11-cli-paused-ax-excerpt.txt",
+    "public_ax_excerpt_sha256": "55aa86378cba49781560710a6213611e5a27c1dabd35e9b9da7f801081019914",
+    "original_screenshot_basename": "11-cli-paused.png",
+    "original_screenshot_sha256": "ba4b7e22bf00d8be113fe521c60c9a31f826552d3641fbbcd15285a215a1be79",
+    "original_screenshot_dimensions": [
+      2200,
+      1864
+    ],
+    "original_ax_basename": "11-cli-paused.txt",
+    "original_ax_sha256": "d589d0f229879a89ad22396582edb5bff2d353cccc06411ff49ca0074d82c62e",
+    "ax_indices_retained": [
+      4
+    ],
+    "screenshot_published": false,
+    "reason": "Whole screenshot includes unrelated live quota and native tool/skill inventory; no image edits or generated images used.",
+    "status": "stale_failure_evidence"
+  },
+  {
+    "stage": "12-cli-clean-exit",
+    "public_ax_excerpt": "12-cli-clean-exit-ax-excerpt.txt",
+    "public_ax_excerpt_sha256": "55aa86378cba49781560710a6213611e5a27c1dabd35e9b9da7f801081019914",
+    "original_screenshot_basename": "12-cli-clean-exit.png",
+    "original_screenshot_sha256": "ba4b7e22bf00d8be113fe521c60c9a31f826552d3641fbbcd15285a215a1be79",
+    "original_screenshot_dimensions": [
+      2200,
+      1864
+    ],
+    "original_ax_basename": "12-cli-clean-exit.txt",
+    "original_ax_sha256": "d589d0f229879a89ad22396582edb5bff2d353cccc06411ff49ca0074d82c62e",
+    "ax_indices_retained": [
+      4
+    ],
+    "screenshot_published": false,
+    "reason": "Whole screenshot includes unrelated live quota and native tool/skill inventory; no image edits or generated images used.",
+    "status": "stale_failure_evidence"
+  }
+]

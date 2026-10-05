@@ -1,0 +1,416 @@
+{
+  "02-dashboard-session.json": {
+    "activity": "unknown",
+    "agent": null,
+    "agent_epoch": 0,
+    "archived": false,
+    "context_stale": null,
+    "context_usage": null,
+    "cwd": "<empty fixture>",
+    "display_name": "hermes-dashboard",
+    "exit_code": null,
+    "exit_signal": null,
+    "id": 14,
+    "kind": {
+      "agent": "hermes"
+    },
+    "label": "hermes",
+    "measurement_age_ms": null,
+    "name": "hermes-dashboard",
+    "phase": "running",
+    "pid": 10332,
+    "project": "hermes234",
+    "recovery": null,
+    "reporting_unavailable": null,
+    "run": 1,
+    "started_unix_ms": 1791210913364,
+    "title": null,
+    "unread": null,
+    "workspace": "main"
+  },
+  "06-paused-session.json": {
+    "activity": "unknown",
+    "agent": null,
+    "agent_epoch": 0,
+    "archived": false,
+    "context_stale": null,
+    "context_usage": null,
+    "cwd": "<empty fixture>",
+    "display_name": "hermes-dashboard",
+    "exit_code": null,
+    "exit_signal": null,
+    "id": 14,
+    "kind": {
+      "agent": "hermes"
+    },
+    "label": "hermes",
+    "measurement_age_ms": null,
+    "name": "hermes-dashboard",
+    "phase": "paused",
+    "pid": 10332,
+    "project": "hermes234",
+    "recovery": null,
+    "reporting_unavailable": null,
+    "run": 1,
+    "started_unix_ms": 1791210913364,
+    "title": null,
+    "unread": null,
+    "workspace": "main"
+  },
+  "06-paused-input-rejected.json": {
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "{\"error\":{\"code\":\"Conflict\",\"message\":\"session is paused; resume it before sending input\"}}\n"
+  },
+  "06-kernel-paused-processes.json": [
+    {
+      "pid": 10727,
+      "pgid": 10727,
+      "state": "Ss"
+    },
+    {
+      "pid": 10332,
+      "pgid": 10332,
+      "state": "Ts"
+    },
+    {
+      "pid": 10337,
+      "pgid": 10337,
+      "state": "T+"
+    }
+  ],
+  "08-dashboard-exit.json": {
+    "activity": "unknown",
+    "agent": null,
+    "agent_epoch": 0,
+    "archived": false,
+    "context_stale": null,
+    "context_usage": null,
+    "cwd": "<empty fixture>",
+    "display_name": "hermes-dashboard",
+    "exit_code": 0,
+    "exit_signal": null,
+    "id": 14,
+    "kind": {
+      "agent": "hermes"
+    },
+    "label": "hermes",
+    "measurement_age_ms": null,
+    "name": "hermes-dashboard",
+    "phase": "exited",
+    "pid": null,
+    "project": "hermes234",
+    "recovery": {
+      "attached": false,
+      "conversation": null,
+      "failure": null,
+      "requires_ack": true,
+      "unavailable": "Native resume is not available for hermes"
+    },
+    "reporting_unavailable": null,
+    "run": 1,
+    "started_unix_ms": 1791210913364,
+    "title": null,
+    "unread": null,
+    "workspace": "main"
+  },
+  "09-cli-created.json": {
+    "activity": "unknown",
+    "agent": null,
+    "agent_epoch": 0,
+    "archived": false,
+    "context_stale": null,
+    "context_usage": null,
+    "cwd": "<empty fixture>",
+    "display_name": "hermes-cli",
+    "exit_code": null,
+    "exit_signal": null,
+    "id": 15,
+    "kind": {
+      "agent": "hermes"
+    },
+    "label": "hermes",
+    "measurement_age_ms": null,
+    "name": "hermes-cli",
+    "phase": "running",
+    "pid": 19404,
+    "project": "hermes234",
+    "recovery": null,
+    "reporting_unavailable": null,
+    "run": 1,
+    "started_unix_ms": 1791211174286,
+    "title": null,
+    "unread": null,
+    "workspace": "main"
+  },
+  "10-cli-input-result.json": {
+    "ok": true
+  },
+  "10-cli-session.json": {
+    "activity": "unknown",
+    "agent": null,
+    "agent_epoch": 0,
+    "archived": false,
+    "context_stale": null,
+    "context_usage": null,
+    "cwd": "<empty fixture>",
+    "display_name": "hermes-cli",
+    "exit_code": null,
+    "exit_signal": null,
+    "id": 15,
+    "kind": {
+      "agent": "hermes"
+    },
+    "label": "hermes",
+    "measurement_age_ms": null,
+    "name": "hermes-cli",
+    "phase": "running",
+    "pid": 19404,
+    "project": "hermes234",
+    "recovery": null,
+    "reporting_unavailable": null,
+    "run": 1,
+    "started_unix_ms": 1791211174286,
+    "title": null,
+    "unread": null,
+    "workspace": "main"
+  },
+  "10-cli-doctor.json": {
+    "capabilities": {
+      "approvals": "unavailable",
+      "generated_titles": "unavailable",
+      "managed_launch": true,
+      "metrics": "unavailable",
+      "process_lifecycle": "available",
+      "questions": "unavailable",
+      "readiness": "unavailable",
+      "recovery": "unavailable",
+      "reporting": "unavailable"
+    },
+    "executable": "hermes",
+    "executable_status": "found",
+    "guidance": "Install/configure Hermes separately. Choose a preconfigured Hermes profile per concurrent instance; OVRCR workspaces do not isolate Hermes profiles. Doctor does not inspect credentials or determine the active profile. OVRCR forwards native argv unchanged and observes process lifecycle only. No native version/account acceptance is claimed; see docs/hermes-harness.md.",
+    "lifecycle": {
+      "activity": "unknown",
+      "process": "Running"
+    },
+    "probe_status": "not_run",
+    "provider": "hermes",
+    "session_status": "recognized_agent",
+    "source_reviewed_versions": [
+      "0.20.5"
+    ],
+    "tested_versions": [],
+    "version": null,
+    "version_gate": "native_passthrough",
+    "version_status": "unverified"
+  },
+  "11-cli-paused-session.json": {
+    "activity": "unknown",
+    "agent": null,
+    "agent_epoch": 0,
+    "archived": false,
+    "context_stale": null,
+    "context_usage": null,
+    "cwd": "<empty fixture>",
+    "display_name": "hermes-cli",
+    "exit_code": null,
+    "exit_signal": null,
+    "id": 15,
+    "kind": {
+      "agent": "hermes"
+    },
+    "label": "hermes",
+    "measurement_age_ms": null,
+    "name": "hermes-cli",
+    "phase": "paused",
+    "pid": 19404,
+    "project": "hermes234",
+    "recovery": null,
+    "reporting_unavailable": null,
+    "run": 1,
+    "started_unix_ms": 1791211174286,
+    "title": null,
+    "unread": null,
+    "workspace": "main"
+  },
+  "12-cli-clean-exit.json": {
+    "activity": "unknown",
+    "agent": null,
+    "agent_epoch": 0,
+    "archived": false,
+    "context_stale": null,
+    "context_usage": null,
+    "cwd": "<empty fixture>",
+    "display_name": "hermes-cli",
+    "exit_code": 0,
+    "exit_signal": null,
+    "id": 15,
+    "kind": {
+      "agent": "hermes"
+    },
+    "label": "hermes",
+    "measurement_age_ms": null,
+    "name": "hermes-cli",
+    "phase": "exited",
+    "pid": null,
+    "project": "hermes234",
+    "recovery": {
+      "attached": false,
+      "conversation": null,
+      "failure": null,
+      "requires_ack": true,
+      "unavailable": "Native resume is not available for hermes"
+    },
+    "reporting_unavailable": null,
+    "run": 1,
+    "started_unix_ms": 1791211174286,
+    "title": null,
+    "unread": null,
+    "workspace": "main"
+  },
+  "13-peer-after-native-turns.json": {
+    "cols": 126,
+    "id": 13,
+    "rows": 57,
+    "text": "empty-repository \u203a printf 'HERMES_%s\\n' PEER_AFTER_DASHBOARD_OK\nHERMES_PEER_AFTER_DASHBOARD_OK\nempty-repository \u203a printf 'HERMES_%s\\n' PEER_AFTER_CLI_OK\nHERMES_PEER_AFTER_CLI_OK\n                                                                                                                              "
+  },
+  "native-owned-session-counts.json": [
+    {
+      "native_session_id": "20261005_073514_d01467",
+      "model": "grok-4.6",
+      "message_count": 2,
+      "tool_call_count": 0,
+      "ended_at": 1791211130.359971,
+      "end_reason": "cli_close",
+      "actual_cost_usd": null,
+      "cost_status": "unknown",
+      "message_roles": {
+        "assistant": 1,
+        "user": 1
+      },
+      "tool_messages": 0
+    },
+    {
+      "native_session_id": "20261005_073935_ea7eab",
+      "model": "grok-4.6",
+      "message_count": 2,
+      "tool_call_count": 0,
+      "ended_at": 1791211647.7143738,
+      "end_reason": "cli_close",
+      "actual_cost_usd": null,
+      "cost_status": "unknown",
+      "message_roles": {
+        "assistant": 1,
+        "user": 1
+      },
+      "tool_messages": 0
+    }
+  ],
+  "verification.json": {
+    "native_model_turns_submitted": 2,
+    "native_model": "grok-4.6",
+    "native_provider_configuration": "xai-oauth",
+    "native_tool_calls": 0,
+    "native_dashboard_exit_code": 0,
+    "native_cli_exit_code": 0,
+    "gui_launcher_exit_code": 143,
+    "gui_normal_close": "failed",
+    "gui_output_panic": "DEBUG PANIC: Failed to acquire RwLock read after 10s. Deadlock?",
+    "owned_session_groups": {
+      "10332": "gone",
+      "10337": "gone",
+      "10727": "gone",
+      "10728": "gone",
+      "19404": "gone",
+      "19409": "gone",
+      "20023": "gone",
+      "20024": "gone",
+      "22036": "gone",
+      "85879": "gone",
+      "86524": "gone",
+      "86967": "gone",
+      "87468": "gone",
+      "87876": "gone",
+      "88423": "gone",
+      "89313": "gone",
+      "89759": "gone",
+      "90418": "gone",
+      "90798": "gone",
+      "91098": "gone",
+      "91416": "gone",
+      "91592": "gone",
+      "91754": "gone"
+    },
+    "existing_hermes_peer_count": 5,
+    "existing_hermes_peers_alive": 5,
+    "existing_hermes_peers_unverified": 0,
+    "demo_root_removed": true,
+    "demo_socket_removed": true,
+    "native_file_metadata": {
+      "config.yaml": {
+        "metadata_unchanged": true,
+        "mode_unchanged": true
+      },
+      "auth.json": {
+        "metadata_unchanged": true,
+        "mode_unchanged": true
+      },
+      ".env": {
+        "metadata_unchanged": true,
+        "mode_unchanged": true
+      },
+      "state.db": {
+        "metadata_unchanged": false,
+        "mode_unchanged": true
+      },
+      "state.db-wal": {
+        "metadata_unchanged": false,
+        "mode_unchanged": true
+      },
+      "state.db-shm": {
+        "metadata_unchanged": true,
+        "mode_unchanged": true
+      },
+      "memories/MEMORY.md": {
+        "metadata_unchanged": true,
+        "mode_unchanged": true
+      },
+      "memories/USER.md": {
+        "metadata_unchanged": true,
+        "mode_unchanged": true
+      }
+    },
+    "actual_spend": "unknown",
+    "gui_pid_absent": true,
+    "server_pid_absent": true,
+    "empty_repository_removed": true,
+    "empty_workspace_root_removed": true
+  },
+  "11-cli-kernel-paused.json": [
+    {
+      "pid": 20023,
+      "ppid": 19409,
+      "pgid": 20023,
+      "state": "Ss"
+    },
+    {
+      "pid": 20024,
+      "ppid": 20023,
+      "pgid": 20024,
+      "state": "Ss"
+    },
+    {
+      "pid": 19404,
+      "ppid": 85577,
+      "pgid": 19404,
+      "state": "Ts"
+    },
+    {
+      "pid": 19409,
+      "ppid": 19404,
+      "pgid": 19409,
+      "state": "T+"
+    }
+  ]
+}

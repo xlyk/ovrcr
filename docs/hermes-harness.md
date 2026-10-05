@@ -21,8 +21,10 @@ unchanged. Ordinary Hermes startup and commands still have their native effects.
 
 ## Native configuration and profiles
 
-The following maps upstream 0.20.5 documentation to the OVRCR boundary. It is
-source evidence, with **no tested native versions or auth modes**. Hermes owns
+The following maps reviewed upstream documentation to the OVRCR boundary.
+The [2026-10-05 macOS acceptance](../research/hermes-native-acceptance-2026-10-05/README.md)
+records the locally installed Hermes command, its configured `xai-oauth` default
+and two genuine `grok-4.6` responses. It does not certify other configurations. Hermes owns
 model selection and authentication; OVRCR does not validate either. The native
 [model picker](https://github.com/NousResearch/hermes-agent/blob/5ef1409f50484dddc38c9665b32a837ff1b191af/website/docs/user-guide/configuring-models.md)
 can open OAuth login and persist model defaults, so it is not a read-only probe.
@@ -30,7 +32,7 @@ can open OAuth login and persist model defaults, so it is not a read-only probe.
 | Native configuration choice | What upstream documents | OVRCR acceptance |
 | --- | --- | --- |
 | API-key provider | A provider credential and selected model; secret configuration belongs in the native `.env`. | Unverified; no credential inspection or provider request. |
-| Hermes-managed OAuth | Native login/browser flows and credential storage in `auth.json`; credential sources depend on the provider. | Unverified; no login or token refresh. |
+| Hermes-managed OAuth | Native login/browser flows and credential storage in `auth.json`; credential sources depend on the provider. | The existing configured `xai-oauth` default responded in the bounded macOS run; other OAuth modes and login/refresh flows remain unverified. |
 | Custom endpoint | A configured endpoint and model, with credentials where required. | Unverified; no endpoint connectivity or model-response check. |
 
 Native [configuration](https://github.com/NousResearch/hermes-agent/blob/5ef1409f50484dddc38c9665b32a837ff1b191af/website/docs/user-guide/configuration.md)
@@ -74,10 +76,12 @@ Dashboard detach/reattach keeps a surviving session through ordinary PTY ownersh
 
 Doctor checks executable presence/permissions and, when requested, reads the existing
 Server/offline session inventory. It does not start a Server or execute Hermes,
-including `--version`. `found` is filesystem evidence only: installed version and
-account/provider acceptance remain **unverified**, with no tested native versions.
-The launcher has no version gate because it forwards a native command without a
-version-dependent reporting adapter; this is not a compatibility certification.
+including `--version`. `found` is filesystem evidence only. Doctor leaves its runtime version/auth/model
+probe unverified, including after a separately recorded acceptance run; it does
+not inspect the current native configuration or credentials. The launcher has no
+version gate: it supervises whatever native command is installed at runtime and
+forwards its arguments unchanged. Recorded versions identify observations, not a
+maintained release allowlist or a compatibility certification.
 
 ## Source review and acceptance limits
 
@@ -101,7 +105,10 @@ preservation, failure handling, honest capabilities and unrelated-session isolat
 The controlled native-child fixture also checks interrupt forwarding, real
 pause/resume, refused paused input, shell terminal-mode restoration, failure exit
 status, private-socket cleanup and removal of the owned native process group.
-Synthetic CUA can prove the Dashboard flow. Neither establishes genuine Hermes
-model responses, native hook delivery or provider/auth-mode support. Issue #234 stays
-open until separately authorized native Dashboard/CLI acceptance and all required
-platform checks are recorded.
+Synthetic CUA can prove the Dashboard flow. It does not establish genuine Hermes
+model responses or provider/auth-mode support. The separately authorized
+[2026-10-05 native record](../research/hermes-native-acceptance-2026-10-05/README.md)
+proves bounded Dashboard/CLI responses, process controls and native exit on macOS.
+That run also exposed a GUI-helper close panic and stale post-CLI-control capture;
+normal desktop close remains failed. Native hooks, other configurations and native
+Linux remain unverified. Issue #234 stays open for those remaining gates.
