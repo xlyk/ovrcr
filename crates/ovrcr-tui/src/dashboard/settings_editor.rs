@@ -19,7 +19,8 @@ use ratatui::{
 };
 use std::collections::HashMap;
 
-pub(super) const TITLE: &str = "Settings · Enter edit · r reset · x remove · / filter · Esc close";
+pub(super) const TITLE: &str =
+    "Settings · Enter edit · [ up · ] down · r reset · x remove · / filter · Esc close";
 const UNPARSEABLE: &str = "Editing is off until dashboard.toml is fixed by hand.";
 
 #[derive(Default)]
@@ -90,6 +91,18 @@ fn toml_string(text: &str) -> String {
 
 fn toml_array<'a>(items: impl IntoIterator<Item = &'a str>) -> String {
     items.into_iter().collect::<toml_edit::Array>().to_string()
+}
+
+/// The whole `picker_roots` array with the entry at `index` swapped by `delta`.
+/// `None` when that step would pass either end.
+fn reordered_roots(roots: &[String], index: usize, delta: isize) -> Option<String> {
+    let target = index as isize + delta;
+    if target < 0 || target >= roots.len() as isize {
+        return None;
+    }
+    let mut quoted: Vec<String> = roots.iter().map(|root| toml_string(root)).collect();
+    quoted.swap(index, target as usize);
+    Some(format!("[{}]", quoted.join(", ")))
 }
 
 fn count(entries: usize) -> String {
@@ -565,11 +578,55 @@ impl Dashboard {
             KeyCode::Home => self.move_setting_selection(isize::MIN / 2),
             KeyCode::End => self.move_setting_selection(isize::MAX / 2),
             KeyCode::Enter => return self.start_edit(),
+            KeyCode::Char('[') => return self.move_picker_root(-1),
+            KeyCode::Char(']') => return self.move_picker_root(1),
             KeyCode::Char('r') => return self.reset_or_remove(false),
             KeyCode::Char('x') | KeyCode::Delete => return self.reset_or_remove(true),
             _ => {}
         }
         DashboardAction::Redraw
+    }
+
+    fn move_picker_root(&mut self, delta: isize) -> DashboardAction {
+        let Some(row) = self.selected_row() else {
+            return DashboardAction::Redraw;
+        };
+        if self.editing_disabled() {
+            return DashboardAction::Redraw;
+        }
+        let Some(index) = row
+            .id
+            .strip_prefix("picker_roots[")
+            .and_then(|rest| rest.strip_suffix(']'))
+            .and_then(|index| index.parse().ok())
+        else {
+            self.settings_editor.notice =
+                Some("Move up and Move down apply to picker roots".into());
+            return DashboardAction::Redraw;
+        };
+        let roots: Vec<String> = self
+            .settings_report
+            .as_ref()
+            .expect("editing is off without a reading")
+            .settings
+            .picker_roots
+            .iter()
+            .map(|root| root.display().to_string())
+            .collect();
+        match reordered_roots(&roots, index, delta) {
+            Some(value) => self.send_setting(&row.id, "picker_roots".into(), Some(value)),
+            None => {
+                self.settings_editor.notice = Some(
+                    if delta < 0 {
+                        "Already the first picker root"
+                    } else {
+                        "Already the last picker root"
+                    }
+                    .into(),
+                );
+                DashboardAction::Redraw
+            }
+        }
     }
 
     fn reset_or_remove(&mut self, remove: bool) -> DashboardAction {
@@ -1104,6 +1161,111 @@ mod tests {
         assert_eq!(wrap("refused: a bc def", 8), ["refused:", "a bc def"]);
         assert_eq!(wrap("short", 80), ["short"]);
         assert_eq!(wrap("toolongword x", 4), ["toolongword", "x"]);
+    }
+
+    fn editor(document: bool) -> super::super::Dashboard {
+        use ovrcr_protocol::{AgentOverride, ServerEvent, ServerMessage, TerminalSize};
+        let settings = Settings {
+            picker_roots: vec!["/a".into(), "/b".into(), "/c".into()],
+            agents: vec![
+                AgentOverride {
+                    name: "one".into(),
+                    argv: vec!["one".into()],
+                },
+                AgentOverride {
+                    name: "two".into(),
+                    argv: vec!["two".into()],
+                },
+            ],
+            ..Settings::default()
+        };
+        let rows = if document {
+            vec![(
+                "picker_roots",
+                Some("[\"/a\", \"/b\", \"/c\"]"),
+                SettingSource::Document,
+            )]
+        } else {
+            Vec::new()
+        };
+        let mut dashboard = super::super::Dashboard::new(TerminalSize {
+            rows: 40,
+            cols: 120,
+        });
+        dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SettingsChanged(
+            Box::new(report(settings, rows)),
+        )));
+        dashboard.open_details(super::super::quota::Details::Settings);
+        dashboard
+    }
+
+    fn setting_write(action: DashboardAction) -> (String, Option<String>) {
+        match action {
+            DashboardAction::Request(ClientMessage {
+                request: Request::SetSetting { path, value },
+                ..
+            }) => (path, value),
+            other => panic!("expected SetSetting, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn move_up_and_move_down_reorder_only_picker_roots() {
+        for document in [true, false] {
+            let mut dashboard = editor(document);
+            dashboard.settings_editor.selected = Some("picker_roots[1]".into());
+            let (path, value) = setting_write(dashboard.key(KeyCode::Char(']')));
+            assert_eq!(path, "picker_roots", "document={document}");
+            assert_eq!(
+                value.as_deref(),
+                Some("[\"/a\", \"/c\", \"/b\"]"),
+                "move down, document={document}"
+            );
+            let (path, value) = setting_write(dashboard.key(KeyCode::Char('[')));
+            assert_eq!(path, "picker_roots");
+            assert_eq!(
+                value.as_deref(),
+                Some("[\"/b\", \"/a\", \"/c\"]"),
+                "move up, document={document}"
+            );
+
+            dashboard.settings_editor.selected = Some("picker_roots[0]".into());
+            assert!(matches!(
+                dashboard.key(KeyCode::Char('[')),
+                DashboardAction::Redraw
+            ));
+            assert_eq!(
+                dashboard.settings_editor.notice.as_deref(),
+                Some("Already the first picker root")
+            );
+            dashboard.settings_editor.selected = Some("picker_roots[2]".into());
+            assert!(matches!(
+                dashboard.key(KeyCode::Char(']')),
+                DashboardAction::Redraw
+            ));
+            assert_eq!(
+                dashboard.settings_editor.notice.as_deref(),
+                Some("Already the last picker root")
+            );
+
+            dashboard.settings_editor.selected = Some("agents[1]".into());
+            assert!(matches!(
+                dashboard.key(KeyCode::Char('[')),
+                DashboardAction::Redraw
+            ));
+            assert_eq!(
+                dashboard.settings_editor.notice.as_deref(),
+                Some("Move up and Move down apply to picker roots")
+            );
+            assert!(matches!(
+                dashboard.key(KeyCode::Char(']')),
+                DashboardAction::Redraw
+            ));
+            assert_eq!(
+                dashboard.settings_editor.notice.as_deref(),
+                Some("Move up and Move down apply to picker roots")
+            );
+        }
     }
 
     #[test]

@@ -741,6 +741,58 @@ mod tests {
         assert!(reading(&document).settings.launch_choices.is_empty());
     }
 
+    /// Moving a root is one `SetSetting` of the whole list, the write
+    /// `picker_roots` already accepts. The comment on the list and the
+    /// unrelated key stay as that writer leaves them.
+    #[test]
+    fn moving_a_picker_root_rewrites_the_list_and_keeps_its_comment() {
+        let original = "\
+# kept
+picker_roots = [\"/a\", \"/b\", \"/c\"] # roots
+branch_prefix = 'kh/' # mine
+";
+        let root = tempfile::tempdir().unwrap();
+        let down = root.path().join("down.toml");
+        std::fs::write(&down, original).unwrap();
+        set(&down, "picker_roots", Some("[\"/b\", \"/a\", \"/c\"]")).unwrap();
+        assert_eq!(
+            read(&down),
+            "\
+# kept
+picker_roots = [\"/b\", \"/a\", \"/c\"] # roots
+branch_prefix = 'kh/' # mine
+"
+        );
+        assert_eq!(
+            reading(&down).settings.picker_roots,
+            [
+                PathBuf::from("/b"),
+                PathBuf::from("/a"),
+                PathBuf::from("/c")
+            ]
+        );
+
+        let up = root.path().join("up.toml");
+        std::fs::write(&up, original).unwrap();
+        set(&up, "picker_roots", Some("[\"/a\", \"/c\", \"/b\"]")).unwrap();
+        assert_eq!(
+            read(&up),
+            "\
+# kept
+picker_roots = [\"/a\", \"/c\", \"/b\"] # roots
+branch_prefix = 'kh/' # mine
+"
+        );
+        assert_eq!(
+            reading(&up).settings.picker_roots,
+            [
+                PathBuf::from("/a"),
+                PathBuf::from("/c"),
+                PathBuf::from("/b")
+            ]
+        );
+    }
+
     #[test]
     fn invalid_values_are_rejected_naming_the_expected_type_and_leave_the_document() {
         let original = "# keep\n[[agents]]\nname = \"x\"\nargv = [\"x\"]\n";
