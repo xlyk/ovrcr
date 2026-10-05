@@ -2690,7 +2690,8 @@ fn reopen_confirm_keeps_captured_run_when_hierarchy_advances() {
 
 #[test]
 fn refused_workspace_removal_offers_force_and_sends_it_only_on_explicit_confirm() {
-    for code in [ovrcr::protocol::ErrorCode::SessionsRemain] {
+    {
+        let code = ovrcr::protocol::ErrorCode::SessionsRemain;
         let mut dashboard = dashboard_fixture();
         palette_search(&mut dashboard, "remove workspace");
         dashboard.key(KeyCode::Enter);
