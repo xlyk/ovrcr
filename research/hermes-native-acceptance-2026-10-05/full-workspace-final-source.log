@@ -1,0 +1,256 @@
+application_base_revision=643e3122fbbcb0b3630d77ed4089e1d7a260e199
+src/cli/args.rs_sha256=ac51d77e7137e9dcd65ef3f5b5c7e60f9d1ccd9e99217e6f626c7dea7c84a8ac
+src/cli/hermes.rs_sha256=70ef2af6cc0016fb4e6cb056fd9d8878fbc313af11aec550b2b8198e5bcb130d
+command=rtk proxy cargo test --locked --offline --workspace --all-features -- --test-threads=1
+   Compiling ovrcr-runtime v0.1.0 (<checkout>/crates/ovrcr-runtime)
+   Compiling ovrcr-tui v0.1.0 (<checkout>/crates/ovrcr-tui)
+   Compiling ovrcr-terminal v0.1.0 (<checkout>/crates/ovrcr-terminal)
+   Compiling ovrcr-protocol v0.1.0 (<checkout>/crates/ovrcr-protocol)
+   Compiling ovrcr v0.1.0 (<checkout>)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.40s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr-ac25c88afdac4d33)
+
+running 113 tests
+test gui::input::tests::alt_letter_encodes_meta ... ok
+test gui::input::tests::drag_is_forwarded_in_button_motion_mode ... ok
+test gui::input::tests::drag_released_outside_ends_at_the_last_reported_cell ... ok
+test gui::input::tests::press_encoding_matches_encode_mouse ... ok
+test gui::input::tests::release_with_nothing_held_reports_nothing ... ok
+test gui::input::tests::special_keys_carry_modifiers ... ok
+test gui::input::tests::unmodified_letter_keeps_its_text ... ok
+test gui::input::tests::wheel_ignores_off_axis_drift ... ok
+test gui::input::tests::wheel_points_accumulate_into_lines ... ok
+test report::admission::tests::a_lost_bind_reply_is_recovered_by_the_next_announcement ... ok
+test report::admission::tests::a_refused_binding_status_closes_without_rebinding ... ok
+test report::admission::tests::a_resume_recovers_only_on_an_announcement_that_names_its_transcript ... ok
+test report::admission::tests::blocked_version_probe_reaps_the_exact_group_within_budget ... ok
+test report::admission::tests::collector_process_loss_automatically_publishes_unavailable_health ... ok
+test report::admission::tests::compact_and_foreign_end_do_not_invent_replacement ... ok
+test report::admission::tests::foreground_fork_after_leave_rebinds_but_bare_fork_freezes ... ok
+test report::admission::tests::initial_admission_argv_accepts_only_certified_explicit_uuid_resume ... ok
+test report::admission::tests::initial_admission_argv_grammar_is_conservative_and_value_aware ... ok
+test report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit ... ok
+test report::admission::tests::initial_resume_rejects_wrong_child_missing_source_and_end_without_binding ... ok
+test report::admission::tests::native_completion_drains_past_pending_pre_exit_eof ... POST_EXIT_DRAIN_NATIVE_OUTPUT
+ok
+test report::admission::tests::supported_clear_and_resume_rebind_with_fresh_generations_and_drop_stale_requests ... ok
+test report::admission::tests::the_certified_announcement_binds_once_and_a_repeat_is_ignored ... ok
+test report::claude::tests::claude_identity_is_typed_and_never_inferred_from_agent_type ... ok
+test report::claude::tests::claude_native_permission_notification_correlates_to_prompt ... ok
+test report::claude::tests::claude_protocol_ids_validate_before_receiver_mutation ... ok
+test report::claude::tests::claude_stop_maps_to_observed_response_ready ... ok
+test report::claude::tests::claude_unknown_and_uncertified_waits_do_not_map ... ok
+test report::claude_metrics::tests::byte_cap_charges_keys_and_values_before_insertion ... ok
+test report::claude_metrics::tests::capacity_freezes_prefix_including_later_oldest_replacements ... ok
+test report::claude_metrics::tests::cost_rounds_original_decimal_ties_even_and_checks_overflow ... ok
+test report::claude_metrics::tests::invalid_replacement_and_total_overflow_leave_snapshot_intact ... ok
+test report::claude_metrics::tests::missing_usage_components_are_unknown_until_replaced ... ok
+test report::claude_metrics::tests::native_quota_distinguishes_missing_zero_exhausted_overlimit_and_invalid_without_losing_metrics ... ok
+test report::claude_metrics::tests::production_identity_cap_preserves_oldest_and_freezes_at_cap_plus_one ... ok
+test report::claude_metrics::tests::replacement_replay_and_distinct_requests_do_not_double_count ... ok
+test report::claude_metrics::tests::statusline_context_and_exact_cost_preserve_unknowns ... ok
+test report::claude_metrics::tests::statusline_rejects_child_malformed_identity_and_invalid_context ... ok
+test report::claude_metrics::tests::synthetic_assistants_do_not_require_request_identity_or_count_usage ... ok
+test report::claude_metrics::tests::unique_subset_compares_counted_unknowns_and_ignores_excluded_metadata ... ok
+test report::codex::tests::a_closed_turn_that_repeats_is_a_duplicate_and_publishes_nothing ... ok
+test report::codex::tests::a_frame_that_is_not_the_native_roots_is_never_this_receivers ... ok
+test report::codex::tests::a_second_prompt_while_a_cycle_is_open_ends_reporting ... ok
+test report::codex::tests::a_session_end_for_a_turn_this_receiver_published_ends_reporting ... ok
+test report::codex::tests::auto_approved_tools_and_interrupt_do_not_invent_or_leak_requests ... ok
+test report::codex::tests::compact_is_not_a_replacement_and_conflicting_startup_freezes ... ok
+test report::codex::tests::eligible_launch_accepts_exact_resume_and_rejects_picker_or_prompted_resume ... ok
+test report::codex::tests::exact_resume_admits_matching_root_then_reports_new_turn_without_historical_ready ... ok
+test report::codex::tests::launch_model_flag_is_not_read_as_the_reported_model ... ok
+test report::codex::tests::no_model_is_invented_when_codex_has_not_reported_one ... ok
+test report::codex::tests::non_resumable_reporting_identity_still_produces_ready ... ok
+test report::codex::tests::permission_request_can_cover_ready_and_native_fixture_correlates_unanswered_selector ... ok
+test report::codex::tests::permission_request_opens_approval_identity_and_closes_on_next_root_activity ... ok
+test report::codex::tests::recovery_uses_only_certified_root_identity_and_conflicting_startup_freezes ... ok
+test report::codex::tests::resumed_invocation_follows_clear_and_rejects_conflicting_startup ... ok
+test report::codex::tests::session_start_and_later_hooks_publish_the_reported_model ... ok
+test report::codex::tests::supported_clear_and_resume_rebind_with_fresh_generations_and_drop_stale_requests ... ok
+test report::cursor::tests::hook_whitelist_validates_identity_and_discards_private_fields ... ok
+test report::cursor::tests::only_native_owned_startup_binds_once_without_observations ... ok
+test report::cursor::tests::only_source_inspected_fresh_arguments_are_eligible ... ok
+test report::cursor::tests::refused_bind_disables_instead_of_retrying_or_fabricating_identity ... ok
+test report::cursor::tests::temporary_plugin_names_are_isolated_per_invocation ... ok
+test report::cursor::tests::unresolved_bind_receipt_disables_without_another_bind ... ok
+test report::cursor::tests::version_is_exact_not_a_guessed_compatible_range ... ok
+test report::extension::tests::a_gap_pauses_before_the_event_is_applied_and_only_a_boundary_recovers_it ... ok
+test report::extension::tests::a_re_announced_conversation_invalidates_the_open_cycle ... ok
+test report::extension::tests::a_reattach_on_a_healthy_receiver_is_a_fresh_generation_that_keeps_its_fences ... ok
+test report::extension::tests::a_recovering_continuation_publishes_its_cycle_on_the_fresh_generation ... ok
+test report::extension::tests::a_reload_retires_the_producer_it_observed_shutting_down ... ok
+test report::extension::tests::a_settled_or_repeated_run_that_is_not_the_open_cycle_publishes_nothing ... ok
+test report::extension::tests::a_transition_names_the_conversation_it_left ... ok
+test report::extension::tests::a_transition_this_receiver_never_saw_pauses_instead_of_rebinding ... ok
+test report::extension::tests::an_approval_or_question_namespace_fixes_the_kind_it_publishes ... ok
+test report::extension::tests::an_open_whose_namespace_kind_or_identity_is_wrong_is_ignored ... ok
+test report::extension::tests::an_overflow_notice_pauses_instead_of_disabling ... ok
+test report::extension::tests::an_unobserved_producer_replacement_pauses_and_retires_what_it_replaced ... ok
+test report::extension::tests::cycle_invalidated_forgets_the_response_cycle ... ok
+test report::extension::tests::each_harness_ignores_the_other_harness_envelope ... ok
+test report::extension::tests::foreign_provider_non_tui_and_grandchild_payloads_are_ignored ... ok
+test report::extension::tests::input_close_for_an_unknown_or_stale_request_is_ignored ... ok
+test report::extension::tests::model_select_before_a_binding_is_ignored ... ok
+test report::extension::tests::no_model_is_invented_when_the_session_has_not_reported_one ... ok
+test report::extension::tests::session_start_and_model_select_publish_the_reported_model_for_both_harnesses ... ok
+test report::extension::tests::session_start_and_shutdown_publish_the_close_before_forgetting_the_request ... ok
+test report::extension::tests::stale_and_replayed_sequences_are_ignored_before_any_mutation ... ok
+test report::extension::tests::the_request_set_keeps_its_order_and_removes_only_the_closed_member ... ok
+test report::extension::tests::the_settled_quality_is_the_harness_claim_about_its_own_boundary ... ok
+test report::extension::tests::the_thirty_third_open_is_ignored_without_disabling ... ok
+test report::extension::tests::unknown_producer_is_admitted_only_by_session_start ... ok
+test report::grok::tests::a_refused_bind_leaves_the_native_arguments_alone ... ok
+test report::grok::tests::admission_binds_and_retains_the_documented_history_before_naming_the_session ... ok
+test report::grok::tests::only_a_fresh_interactive_launch_in_this_directory_is_eligible ... ok
+test report::reporter::tests::a_bind_resets_the_revision_set_and_a_forced_bind_recovers_the_pause ... ok
+test report::reporter::tests::a_disabled_reporter_removes_the_directory_it_materialized ... ok
+test report::reporter::tests::a_lost_bind_receipt_is_remembered_and_the_bind_is_never_issued_twice ... ok
+test report::reporter::tests::a_publication_that_cannot_be_delivered_disables_the_reporter ... ok
+test report::reporter::tests::a_receiver_with_no_second_chance_re_reads_the_lost_receipt_in_the_same_call ... ok
+test report::reporter::tests::a_refused_bind_closes_the_reporter_without_asking_again ... ok
+test report::reporter::tests::a_retired_producer_leaves_no_producer_behind_and_cannot_return ... ok
+test report::reporter::tests::admit_fences_gaps_retired_producers_and_an_unobserved_replacement ... ok
+test report::reporter::tests::finalize_settles_a_bound_invocation_and_only_releases_an_unbound_one ... ok
+test report::reporter::tests::health_reports_a_reason_once_and_says_when_it_is_healthy_again ... ok
+test report::reporter::tests::one_revision_set_numbers_every_observation_kind_in_order ... ok
+test report::reporter::tests::polling_never_promotes_pending_retention_to_a_replacement_generation ... ok
+test report::reporter::tests::preflight_names_the_first_reason_a_launch_cannot_be_reported_on ... ok
+test report::reporter::tests::retention_retry_cannot_retarget_a_new_binding ... ok
+test report::reporter::tests::the_identity_budget_answers_duplicates_before_capacity ... ok
+test report::reporter::tests::the_identity_budget_counts_fences_and_cycles_against_one_ceiling ... ok
+test report::reporter::tests::unacknowledged_health_disables_and_an_unbound_reporter_has_none_to_report ... ok
+test report::tests::agent_hook_claude_ignores_nested_and_unknown_events ... ok
+test report::tests::agent_hook_claude_maps_supported_events ... ok
+test report::tests::agent_hook_claude_rejects_malformed_or_oversized_input ... ok
+test report::versions::tests::compatibility_requires_stable_release_at_or_above_floor ... ok
+
+test result: ok. 113 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.75s
+
+     Running unittests src/main.rs (target/debug/deps/ovrcr-d703796971530ae5)
+
+running 16 tests
+test cli::agent_setup::tests::boot_hook_warning_names_missing_claude_hooks_with_setup_command ... ok
+test cli::agent_setup::tests::configuration_issues_flag_missing_hooks_and_accept_setup_output ... ok
+test cli::agent_setup::tests::doctor_health_reason_exposes_known_codes_and_redacts_arbitrary_text ... ok
+test cli::agent_setup::tests::retarget_replaces_only_a_different_ovrcr_reporter_token ... ok
+test cli::args::launch_cli_tests::terminal_creation_can_request_automatic_name ... ok
+test cli::args::launch_cli_tests::title_and_reopen_commands_parse_without_ambiguous_reset ... ok
+test cli::args::launch_cli_tests::workspace_create_rejects_name_and_accepts_slash_branches ... ok
+test cli::codex_setup::tests::boot_hook_warning_names_missing_codex_hooks_with_setup_command ... ok
+test cli::codex_setup::tests::configuration_presence_requires_unfiltered_synchronous_exact_command ... ok
+test cli::managed::tests::a_pause_is_recoverable_only_where_the_provider_has_a_way_out_of_it ... ok
+test cli::managed::tests::version_of_accepts_harness_formats_and_rejects_everything_else ... ok
+test cli::resources::session_kind_tests::direct_known_executable_is_agent ... ok
+test cli::resources::session_kind_tests::managed_wrapper_global_flag_before_agent_stays_agent ... ok
+test cli::resources::session_kind_tests::managed_wrapper_positional_provider_is_agent ... ok
+test cli::resources::session_kind_tests::managed_wrapper_provider_flag_is_agent ... ok
+test cli::resources::session_kind_tests::shell_wrapping_agent_run_stays_terminal ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/bin/ovrcr-gui.rs (target/debug/deps/ovrcr_gui-18fecab5c916a7f0)
+
+running 7 tests
+test command_palette_opens_when_another_control_has_focus ... ok
+test native_glyph::native_raster_retains_style_scale_and_opacity ... ok
+test native_glyph_cache_evicts_entries_unused_last_frame ... ok
+test native_glyph_cache_keeps_a_screen_of_distinct_glyphs ... ok
+test terminal_fonts_render_mockup_glyphs_or_default_symbols ... ok
+test terminal_paints_missing_unicode_as_native_images ... ok
+test terminal_paints_reserved_icon_cell_before_foreground_glyph ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.49s
+
+     Running tests/agent_setup.rs (target/debug/deps/agent_setup-e350026b8a52fcd7)
+
+running 14 tests
+test codex_doctor_checks_supplied_hooks_without_certifying_trust ... ok
+test codex_doctor_defaults_dispatch_and_rejects_versions_without_server_or_secrets ... ok
+test codex_doctor_missing_session_and_failed_inspection_do_not_start_a_server ... ok
+test codex_setup_preserves_handlers_trust_and_quotes_noop_helper ... ok
+test doctor_distinguishes_compatible_patches_from_tested_releases ... ok
+test doctor_does_not_certify_filtered_hooks_wrong_types_or_statusline_suffixes ... ok
+test doctor_inspects_unbound_and_unavailable_sessions_without_private_values ... ok
+test doctor_interrupt_cleans_its_owned_version_probe_before_exit ... ok
+test doctor_reports_partial_config_proof_missing_and_unsupported_versions_without_secrets ... ok
+test retarget_hooks_rewrites_managed_reporter_paths_and_stops ... ok
+test setup_adds_status_line_refresh_interval_and_keeps_the_users ... ok
+test setup_migrates_only_exact_legacy_statusline_and_marks_hooks ... ok
+test setup_preserves_settings_and_external_renderer_bytes_once ... ok
+test setup_quotes_actual_executable_path ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.81s
+
+     Running tests/automatic_titles.rs (target/debug/deps/automatic_titles-9e8a4c7ef409788e)
+
+running 32 tests
+test agent_and_terminal_titles_stay_user_controlled_across_dashboard_reconnect ... ok
+test claude_matching_mode_and_session_id_shows_subject_replacing_creation_name_until_rename ... ok
+test claude_mismatched_session_id_does_not_produce_subject_or_spend_attempt ... ok
+test claude_missing_model_or_failed_title_call_leaves_current_name ... ok
+test clear_restores_original_dismisses_current_subject_and_keeps_other ... ok
+test codex_history_change_without_recorded_switch_keeps_title ... ok
+test codex_matching_session_meta_shows_subject_replacing_creation_name_until_rename ... ok
+test codex_mismatched_first_line_does_not_produce_subject_or_spend_attempt ... ok
+test codex_missing_model_or_failed_title_call_leaves_current_name ... ok
+test conversation_subjects_use_retained_provider_histories_and_survive_restart ... ok
+test empty_workspace_and_generated_names_preserve_explicit_titles ... ok
+test identical_subject_reply_does_not_count_as_replacement ... ok
+test late_title_result_after_archive_is_not_saved_or_shown ... ok
+test late_title_result_after_clear_is_dropped ... ok
+test late_title_result_after_recorded_switch_is_dropped ... ok
+test one_later_subject_may_replace_once_then_window_closes ... ok
+test recorded_pi_switch_shows_stored_subjects_without_new_title_calls ... ok
+test rename_keeps_manual_title_and_drops_late_subject ... ok
+test saved_titles_survive_restart_and_reopen_without_legacy_application_titles ... ok
+test second_session_due_during_title_call_gets_subject_after_first_ends ... ok
+test stable_workspace_launch_titles_rename_reset_and_reopen_keep_identity_and_reset_output ... ok
+test terminal_with_retained_agent_does_not_spawn_title_pi ... ok
+test three_failed_title_attempts_close_window_and_survive_restart ... ok
+test title_failures_mismatches_and_missing_binary_do_not_change_rows_or_retry ... ok
+test title_history_read_stops_at_256_kib ... ok
+test title_model_missing_mismatches_terminal_and_grok_do_not_spawn_pi ... ok
+test title_model_set_and_cleared_while_running_starts_and_stops_titling ... ok
+test title_prompt_and_excerpt_stay_out_of_server_log ... ok
+test title_save_failure_while_live_leaves_subject_unsaved ... ok
+test title_startup_and_shutdown_cleanup_titles_directory_and_process_group ... ok
+test title_subject_storage_archive_and_exclusions_cover_live_paths ... ok
+test workspace_launch_failure_retains_worktree_and_retry_uses_existing_workspace ... ok
+
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 204.74s
+
+     Running tests/claude_quota_probe.rs (target/debug/deps/claude_quota_probe-8855924a30d1fccc)
+
+running 10 tests
+test a_live_managed_claude_session_suppresses_the_probe ... ok
+test claude_probe_cadence_and_refresh_cooldown_follow_the_fake_clock ... ok
+test claude_probe_does_not_run_before_a_dashboard_attaches ... ok
+test claude_probe_managed_helper ... ignored, task-owned managed Claude helper for the probe suppression test
+test claude_probe_off_spawns_nothing_and_waits_for_a_managed_session ... FAILED
+test claude_probe_output_does_not_contain_a_fixture_credential ... ok
+test claude_probe_silent_for_sixty_seconds_times_out_and_the_process_is_gone ... ok
+test claude_probe_that_exits_is_unavailable ... ok
+test claude_probe_trust_dialog_is_answered_once ... ok
+test claude_probe_without_rate_limits_is_unsupported ... ok
+
+failures:
+
+---- claude_probe_off_spawns_nothing_and_waits_for_a_managed_session stdout ----
+
+thread 'claude_probe_off_spawns_nothing_and_waits_for_a_managed_session' (699596724) panicked at tests/claude_quota_probe.rs:166:13:
+assertion `left == right` failed
+  left: Unavailable
+ right: Checking
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    claude_probe_off_spawns_nothing_and_waits_for_a_managed_session
+
+test result: FAILED. 8 passed; 1 failed; 1 ignored; 0 measured; 0 filtered out; finished in 70.81s
+
+error: test failed, to rerun pass `-p ovrcr --test claude_quota_probe`
+
+command_exit_code=101

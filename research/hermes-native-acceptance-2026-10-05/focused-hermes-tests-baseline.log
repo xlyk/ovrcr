@@ -1,0 +1,44 @@
+revision=643e3122fbbcb0b3630d77ed4089e1d7a260e199
+command=rtk proxy cargo test --locked --offline -p ovrcr --test cli --test server_lifecycle hermes -- --test-threads=1
+   Compiling smallvec v1.16.0
+   Compiling log v0.4.34
+   Compiling num-traits v0.2.19
+   Compiling mio v1.2.3
+   Compiling rustls v0.23.45
+   Compiling portable-pty v0.9.0
+   Compiling parking_lot_core v0.9.12
+   Compiling icu_normalizer v2.3.0
+   Compiling rusqlite v0.40.2
+   Compiling parking_lot v0.12.5
+   Compiling signal-hook-mio v0.2.5
+   Compiling idna_adapter v1.2.2
+   Compiling crossterm v0.29.0
+   Compiling idna v1.1.0
+   Compiling url v2.5.8
+   Compiling chrono v0.4.45
+   Compiling ratatui-crossterm v0.1.2
+   Compiling ratatui v0.30.2
+   Compiling chrono-tz v0.10.4
+   Compiling croner v3.0.1
+   Compiling ureq v2.12.1
+   Compiling ovrcr-protocol v0.1.0 (<checkout>/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (<checkout>/crates/ovrcr-terminal)
+   Compiling ovrcr-tui v0.1.0 (<checkout>/crates/ovrcr-tui)
+   Compiling ovrcr-runtime v0.1.0 (<checkout>/crates/ovrcr-runtime)
+   Compiling ovrcr v0.1.0 (<checkout>)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 34.44s
+     Running tests/cli.rs (target/debug/deps/cli-1bb4dcc63f374b64)
+
+running 3 tests
+test hermes_cli_launch_uses_real_server_pty_and_truthful_lifecycle ... ok
+test hermes_managed_cli_preserves_native_arguments_output_and_failure ... ok
+test hermes_setup_and_doctor_are_read_only_and_do_not_execute_native_client ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 43 filtered out; finished in 4.56s
+
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-8698643bf44a3261)
+
+running 1 test
+test hermes_supervision_preserves_job_control_failure_and_peer_isolation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 130 filtered out; finished in 4.13s

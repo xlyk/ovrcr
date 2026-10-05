@@ -19,7 +19,7 @@ fn no_settings(settings: Option<&Path>) -> AppResult<()> {
 pub(super) fn setup(settings: Option<&Path>) -> AppResult<()> {
     no_settings(settings)?;
     println!(
-        "Hermes process supervision needs no OVRCR settings or hooks. Configure Hermes separately, then pick hermes in the Dashboard or launch `ovrcr agent run hermes -- hermes [ARGS...]`. Choose a preconfigured Hermes profile per concurrent instance; OVRCR workspaces do not isolate Hermes profiles. Activity/reporting, Ready/Unread, Input requests, metrics, generated titles and recovery are unavailable. Native version/account acceptance is unverified; doctor does not inspect credentials or determine the active profile. See docs/hermes-harness.md."
+        "Hermes process supervision needs no OVRCR settings or hooks. Configure Hermes separately, then pick hermes in the Dashboard or launch `ovrcr agent run hermes -- hermes [ARGS...]`. Choose a preconfigured Hermes profile per concurrent instance; OVRCR workspaces do not isolate Hermes profiles. Activity/reporting, Ready/Unread, Input requests, metrics, generated titles and recovery are unavailable. Doctor does not validate the runtime version, authentication or model, inspect credentials, or determine the active profile. See docs/hermes-harness.md."
     );
     Ok(())
 }
@@ -78,7 +78,7 @@ pub(super) fn doctor(
             "recovery": "unavailable", "metrics": "unavailable", "generated_titles": "unavailable",
         },
         "session_status": session_status, "lifecycle": lifecycle,
-        "guidance": "Install/configure Hermes separately. Choose a preconfigured Hermes profile per concurrent instance; OVRCR workspaces do not isolate Hermes profiles. Doctor does not inspect credentials or determine the active profile. OVRCR forwards native argv unchanged and observes process lifecycle only. No native version/account acceptance is claimed; see docs/hermes-harness.md.",
+        "guidance": "Install/configure Hermes separately. Choose a preconfigured Hermes profile per concurrent instance; OVRCR workspaces do not isolate Hermes profiles. Doctor does not inspect credentials or determine the active profile. OVRCR forwards native argv unchanged and observes process lifecycle only. Doctor does not validate the runtime version, authentication or model; see docs/hermes-harness.md for recorded acceptance and its limits.",
     });
     println!(
         "{}",

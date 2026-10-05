@@ -1,0 +1,6 @@
+Documented excerpt of the original full macOS accessibility snapshot.
+Only the right terminal column of the listed AX text indices is retained.
+Other UI rows, the left sidebar, and unrelated native tool/skill inventory are omitted.
+The original screenshot and full AX are retained privately, byte-identical.
+
+AX index 4: pid: 10332  elapsed: 2m  agent unknown  paused  hermes-dashboard

@@ -1,0 +1,10 @@
+Documented excerpt of the original full macOS accessibility snapshot.
+Only the right terminal column of the listed AX text indices is retained.
+Other UI rows, the left sidebar, and unrelated native tool/skill inventory are omitted.
+The original screenshot and full AX are retained privately, byte-identical.
+
+AX index 4: pid: closed  elapsed: 4m  Native resume is not available for hermes · confirm previous processes stopped  hermes-dashboard
+AX index 11: Session:        20261005_073514_d01467
+AX index 12: Title:          Reply with HERMES_DASHBOARD_OK
+AX index 13: Duration:       3m 35s
+AX index 14: Messages:       2 (1 user, 0 tool calls)

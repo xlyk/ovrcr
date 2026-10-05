@@ -1,0 +1,12 @@
+Documented excerpt of the original full macOS accessibility snapshot.
+Only the right terminal column of the listed AX text indices is retained.
+Other UI rows, the left sidebar, and unrelated native tool/skill inventory are omitted.
+The original screenshot and full AX are retained privately, byte-identical.
+
+AX index 4: pid: 10332  elapsed: 2m  agent unknown  hermes-dashboard
+AX index 45: ● Reply with exactly HERMES_DASHBOARD_OK. Do not use tools, skills, files, memory updates, delegation, network fetches or any
+AX index 46: other actions.
+AX index 55: ╭─ ⚕ Hermes ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+AX index 56: HERMES_DASHBOARD_OK
+AX index 57: ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+AX index 58:  ⚕ grok-4.6 │ 39.5K/500K │ [█░░░░░░░░░] 8% │ 1m │ ⏲ 11s │ ✓ 0s                                 ─ Reply with exactly HERMES...
