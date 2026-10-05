@@ -115,7 +115,7 @@ pub fn instance_tasks_dir(home: &Path) -> PathBuf {
     home.join(TASKS_DIR)
 }
 
-/// Planned event log path inside the instance directory.
+/// Event log inside the instance directory.
 pub fn events_log_path(home: &Path) -> PathBuf {
     home.join(EVENTS_LOG)
 }
