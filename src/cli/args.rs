@@ -143,7 +143,7 @@ pub(super) enum Command {
 
 #[derive(Subcommand)]
 pub(super) enum ReportCommand {
-    /// Passive source-pinned Cursor startup identity hook.
+    /// Passive native Cursor startup identity hook.
     CursorAgent {
         #[arg(long, required = true)]
         stdin: bool,
