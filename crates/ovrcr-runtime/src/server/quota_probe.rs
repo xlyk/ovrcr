@@ -2,8 +2,8 @@
 use super::quota;
 use super::{DispatchMessage, ServerState};
 use ovrcr_protocol::{
-    AgentProvider, PROBE_EXITED, PROBE_NOT_SUBSCRIPTION, PROBE_TIMED_OUT, QuotaProvider,
-    QuotaReport, QuotaSource, QuotaState, QuotaWindow,
+    AgentProvider, PROBE_EXITED, PROBE_MISSING_USAGE, PROBE_TIMED_OUT, QuotaProvider, QuotaReport,
+    QuotaSource, QuotaState, QuotaWindow,
 };
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde_json::{Value, json};
@@ -328,6 +328,7 @@ fn spawn_and_wait(
     let mut seen = String::new();
     let mut answered = false;
     let mut callback: Option<ProbeUpdate> = None;
+    let mut received_callback = false;
     let mut exited = false;
     let probe_path = directory.display().to_string();
     while Instant::now() < deadline && callback.is_none() && !exited {
@@ -350,7 +351,12 @@ fn spawn_and_wait(
         match listener.accept() {
             Ok((stream, _)) => {
                 if let Some(update) = read_callback(stream, token) {
-                    callback = Some(update);
+                    received_callback = true;
+                    // Claude's startup callback precedes its first API response.
+                    // Keep the same probe alive until it supplies usage.
+                    if update.report.state != QuotaState::Checking {
+                        callback = Some(update);
+                    }
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
@@ -371,6 +377,9 @@ fn spawn_and_wait(
     }
     if let Some(update) = callback {
         return Run::Finished(update);
+    }
+    if received_callback {
+        return Run::Finished(classified(QuotaState::Unavailable, PROBE_MISSING_USAGE));
     }
     if Instant::now() >= deadline {
         return Run::Finished(classified(QuotaState::Unavailable, PROBE_TIMED_OUT));
@@ -433,9 +442,16 @@ fn read_callback(mut stream: std::os::unix::net::UnixStream, token: &str) -> Opt
 
 fn report_from_payload(payload: &Value) -> ProbeUpdate {
     if payload.get("rate_limits").is_none() || payload["rate_limits"].is_null() {
-        return classified(QuotaState::Unsupported, PROBE_NOT_SUBSCRIPTION);
+        return classified(QuotaState::Checking, PROBE_MISSING_USAGE);
     }
     match parse_rate_limits(&payload["rate_limits"]) {
+        Some(windows)
+            if !windows
+                .iter()
+                .any(|window| window.used_basis_points.is_some() || window.over_limit) =>
+        {
+            classified(QuotaState::Checking, PROBE_MISSING_USAGE)
+        }
         Some(windows) => ProbeUpdate {
             report: QuotaReport {
                 windows: Some(windows),
@@ -492,4 +508,68 @@ fn parse_rate_limits(value: &Value) -> Option<Vec<QuotaWindow>> {
         });
     }
     Some(windows)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn startup_callbacks_wait_for_usable_subscription_usage() {
+        for payload in [
+            json!({}),
+            json!({"rate_limits": null}),
+            json!({"rate_limits": {}}),
+            json!({"rate_limits": {"five_hour": null, "seven_day": null}}),
+            json!({"rate_limits": {"five_hour": {}, "seven_day": {"used_percentage": null}}}),
+            json!({"rate_limits": {"seven_day": {"resets_at": 1800000000}}}),
+            json!({"rate_limits": {"spend_limit": {"used_percentage": 10}}}),
+        ] {
+            let update = report_from_payload(&payload);
+            assert_eq!(update.report.state, QuotaState::Checking, "{payload}");
+            assert_eq!(update.report.windows, None);
+            assert_eq!(update.reason.as_deref(), Some(PROBE_MISSING_USAGE));
+        }
+    }
+
+    #[test]
+    fn usable_subscription_usage_preserves_partial_zero_exhausted_and_over_limit() {
+        for (used, expected, over_limit) in [
+            (0.0, Some(0), false),
+            (12.345, Some(1234), false),
+            (100.0, Some(10000), false),
+            (101.0, None, true),
+        ] {
+            let update = report_from_payload(&json!({"rate_limits": {
+                "seven_day": {"used_percentage": used, "resets_at": 1800000000}
+            }}));
+            assert_eq!(update.report.state, QuotaState::Current);
+            assert_eq!(update.reason, None);
+            update.report.validate().unwrap();
+            let windows = update.report.windows.unwrap();
+            assert_eq!(windows.len(), 1);
+            assert_eq!(windows[0].id, "seven_day");
+            assert_eq!(windows[0].used_basis_points, expected);
+            assert_eq!(windows[0].over_limit, over_limit);
+            assert_eq!(windows[0].resets_unix_ms, Some(1800000000000));
+        }
+    }
+
+    #[test]
+    fn malformed_subscription_usage_is_invalid() {
+        for rates in [
+            json!([]),
+            json!({"five_hour": 1}),
+            json!({"five_hour": {"used_percentage": -1}}),
+            json!({"five_hour": {"used_percentage": "12"}}),
+            json!({"five_hour": {"used_percentage": 12, "resets_at": -1}}),
+            json!({"five_hour": {"used_percentage": 12, "resets_at": u64::MAX}}),
+            json!({"five_hour": {"used_percentage": 12}, "seven_day": false}),
+        ] {
+            let update = report_from_payload(&json!({"rate_limits": rates}));
+            assert_eq!(update.report.state, QuotaState::Invalid);
+            assert_eq!(update.report.windows, None);
+            assert_eq!(update.reason.as_deref(), Some("invalid report"));
+        }
+    }
 }

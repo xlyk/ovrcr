@@ -159,8 +159,8 @@ pub const PROBE_TIMED_OUT: &str = "probe timed out";
 /// The probe process ended without a status-line callback.
 pub const PROBE_EXITED: &str = "probe exited before reporting";
 
-/// A status-line callback with no `rate_limits` (not a Pro or Max login).
-pub const PROBE_NOT_SUBSCRIPTION: &str = "not a Pro or Max login";
+/// The probe ended or reached its deadline without usable subscription usage.
+pub const PROBE_MISSING_USAGE: &str = "claude did not report subscription usage";
 
 impl ProviderQuota {
     pub fn unknown(provider: QuotaProvider, state: QuotaState) -> Self {

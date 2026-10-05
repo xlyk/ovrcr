@@ -48,7 +48,7 @@ assert b"\x1b[B" in d and (b"\r" in d or b"\n" in d), d'
     ;;
 esac
 export OVRCR_PROBE_RATE=1
-if [ "$mode" = no-limits ]; then export OVRCR_PROBE_RATE=0; fi
+case "$mode" in no-limits|no-limits-hang) export OVRCR_PROBE_RATE=0;; esac
 exec python3 - "$@" << 'PY'
 import json, os, subprocess, sys, time
 args = sys.argv[1:]
@@ -61,5 +61,19 @@ if os.environ.get("OVRCR_PROBE_RATE") == "1":
         "seven_day": {"used_percentage": 3, "resets_at": now + 86400},
     }
 command = doc["statusLine"]["command"]
+if os.environ.get("OVRCR_CLAUDE_FIXTURE_MODE") == "cold-start":
+    for startup in [
+        {}, {"rate_limits": None}, {"rate_limits": {}},
+        {"rate_limits": {"five_hour": {}}},
+        {"rate_limits": {"seven_day": {"used_percentage": None}}},
+    ]:
+        startup["session_id"] = "probe-fixture"
+        subprocess.run(["sh", "-c", command], input=json.dumps(startup).encode(), check=True)
+    with open(os.environ["OVRCR_CLAUDE_FIXTURE_LOG"], "a") as log:
+        log.write("COLD_CALLBACK_ACKNOWLEDGED\n")
 subprocess.run(["sh", "-c", command], input=json.dumps(payload).encode(), check=True)
+if os.environ.get("OVRCR_CLAUDE_FIXTURE_MODE") == "no-limits-hang":
+    with open(os.environ["OVRCR_CLAUDE_FIXTURE_PID"], "w") as pid:
+        pid.write(str(os.getpid()))
+    time.sleep(180)
 PY

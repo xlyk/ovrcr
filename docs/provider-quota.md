@@ -27,7 +27,9 @@ This state applies only while the row would otherwise be checking. An oauth usag
 
 `quota.claude.probe` is off by default. Turning it on lets the Server run the unmodified `claude` binary (the same executable as `claude auth status`: the `agents` entry named `claude`, else `claude` on PATH) in a PTY when no managed Claude session has reported inside the stale boundary. The probe is a Server-internal process, never a Session. It spends one small prompt and leaves a conversation in Claude's history; the setting says so.
 
-The run uses `--model haiku`, `--tools ""`, `--permission-mode dontAsk`, and `--settings` that carry only OVRCR's status-line command. The prompt is `Reply with OK.`. The working directory is an OVRCR-owned empty directory under the instance directory, recreated empty if it is missing. The user's own settings files are not loaded. The reporter environment carries a probe identity so the status-line callback reaches the Server and is not admitted as a Session. If that PTY shows Claude's folder-trust dialog for the probe directory, the Server answers it once, and for no other directory. The process ends when the callback includes `rate_limits`, or after 60 seconds.
+The run uses `--model haiku`, `--tools ""`, `--permission-mode dontAsk`, and `--settings` that carry only OVRCR's status-line command. The prompt is `Reply with OK.`. The working directory is an OVRCR-owned empty directory under the instance directory, recreated empty if it is missing. The user's own settings files are not loaded. The reporter environment carries a probe identity so the status-line callback reaches the Server and is not admitted as a Session. If that PTY shows Claude's folder-trust dialog for the probe directory, the Server answers it once, and for no other directory. The process ends when a callback supplies usable subscription usage, or after 60 seconds.
+
+Claude sends a startup status line before its first API response, when `rate_limits` can be absent. The probe keeps waiting through missing, null or empty usage; those callbacks do not establish whether the login has a subscription. [Claude status-line documentation](https://code.claude.com/docs/en/statusline#available-data) describes when these fields become available.
 
 A probe runs on Dashboard attach when the Claude reading is stale, on manual refresh (the same 30-second cooldown as Codex and Grok), and every 30 minutes while a Dashboard stays attached and no managed Claude session has reported inside the stale boundary. It never runs while no Dashboard is attached, and never two at a time. It also waits until `claude auth status` has said an allowance can exist: not signed in, an API-key login, or a missing `claude` stays on that row and does not spend a prompt.
 
@@ -35,8 +37,9 @@ Details for a probe reading say `source: probe; last probe <time> (<age>)`. A li
 
 | Probe outcome | Claude row |
 | --- | --- |
-| status line with `rate_limits` | current, source probe |
-| status line without `rate_limits` (not a Pro or Max login) | unsupported, "not a Pro or Max login" |
+| status line with usable 5h or 7d `rate_limits` | current, source probe |
+| startup status line with missing, null or empty usage | keeps waiting in the same probe |
+| process ended or reached 60 seconds after callbacks without usable usage | unavailable, "claude did not report subscription usage" |
 | no callback within 60 seconds | unavailable, "probe timed out" |
 | process ended with no callback | unavailable, "probe exited before reporting" |
 | `claude` missing | unavailable, "claude not found on PATH" or "claude not found at the configured path" |
