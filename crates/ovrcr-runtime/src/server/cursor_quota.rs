@@ -413,7 +413,12 @@ fn windows(body: &str) -> Result<Vec<QuotaWindow>, Failure> {
     if !value.is_object() {
         return Err(invalid());
     }
-    if value.get("teamUsage").is_some_and(|v| !v.is_null()) {
+    // Personal replies include an empty teamUsage object. Only that placeholder
+    // is safe to ignore; populated or malformed team usage remains unsupported.
+    if value
+        .get("teamUsage")
+        .is_some_and(|v| !v.is_null() && v.as_object().is_none_or(|team| !team.is_empty()))
+    {
         return Err(Failure::new(QuotaState::Unsupported).because("Cursor team usage unsupported"));
     }
     let reset = date(value.get("billingCycleEnd"))?;
@@ -546,6 +551,33 @@ mod tests {
                 .iter()
                 .all(|v| v.resets_unix_ms == Some(1_896_134_400_000))
         );
+    }
+    #[test]
+    fn empty_team_placeholder_preserves_individual_percentage() {
+        let values = parse(json!({
+            "teamUsage": {},
+            "billingCycleEnd": "2030-02-01T00:00:00Z",
+            "individualUsage": {
+                "plan": {"enabled":true,"used":2000,"limit":2000,"remaining":0,"totalPercentUsed":37.125},
+                "onDemand": {"enabled":false,"used":0,"limit":null,"remaining":null}
+            }
+        }));
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].used_basis_points, Some(3712));
+        assert_eq!(values[0].remaining_basis_points(), Some(6288));
+        assert_eq!(values[0].resets_unix_ms, Some(1_896_134_400_000));
+        for team in [json!({"plan":{}}), json!({"used":0}), json!([])] {
+            assert_eq!(
+                windows(
+                    &json!({"teamUsage":team,"individualUsage":{"plan":{"totalPercentUsed":20}}})
+                        .to_string()
+                )
+                .err()
+                .unwrap()
+                .state,
+                QuotaState::Unsupported
+            );
+        }
     }
     #[test]
     fn explicit_cents_cap_is_used_without_treating_breakdown_total_as_limit() {

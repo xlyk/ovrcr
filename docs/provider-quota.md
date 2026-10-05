@@ -129,9 +129,13 @@ Authentication and response fields were checked against the public
 and [desktop authentication reader](https://github.com/steipete/CodexBar/blob/6a26b2e9b1b60471970deb6fe663f9e5f284e2ce/Sources/CodexBarCore/Providers/Cursor/CursorAppAuth.swift).
 These references establish an observed compatibility source, not a guarantee
 from Cursor. Changes to the dashboard, credentials or response schema can make
-it unavailable or unsupported. Live authenticated acceptance has not yet been
-performed for this OVRCR adapter; synthetic SQLite/HTTP and real Server/UI tests
-are separate evidence.
+it unavailable or unsupported. A live macOS personal-account check on
+2026-10-05 used an existing desktop login and matched pool percentages, the
+billing reset date and disabled on-demand usage to Cursor's Plan & Usage screen.
+The web dashboard rendered blank in the local Comet browser, so the visual
+comparison used the desktop screen. This verifies that observation, not future
+API compatibility. Native Linux acceptance remains unverified; synthetic
+SQLite/HTTP and real Server/UI tests are separate evidence.
 
 The database is opened read-only, never refreshed, copied or persisted by
 OVRCR. The token stays in the quota worker and is sent only to the fixed Cursor
@@ -165,7 +169,9 @@ this adapter's scope.
 
 `plan.breakdown.total` is usage, not a cap. No plan price, cap, interval,
 legacy request quota, team budget or unlimited allowance is invented. Team
-usage and legacy-only responses are unsupported. Details show used and remaining percentages; the sidebar follows the existing
+usage and legacy-only responses are unsupported. Personal responses may contain
+an empty `teamUsage: {}` placeholder, which is ignored; populated or malformed
+team usage remains unsupported. Details show used and remaining percentages; the sidebar follows the existing
 remaining-allowance convention. Dollar spending is not displayed. Disabled buckets are omitted.
 
 Collection runs only while a Dashboard is attached, every five minutes, with

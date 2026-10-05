@@ -1863,7 +1863,7 @@ fn refresh_during_inflight_native_read_does_not_start_another() {
 // Synthetic personal Cursor credentials, never a developer login.
 const CURSOR_TOKEN_A: &str = "e30.eyJzdWIiOiJhdXRofGZpeHR1cmUtYSIsImV4cCI6NDAwMDAwMDAwMH0.sig";
 const CURSOR_TOKEN_B: &str = "e30.eyJzdWIiOiJhdXRofGZpeHR1cmUtYiIsImV4cCI6NDAwMDAwMDAwMH0.sig";
-const CURSOR_BODY: &str = r#"{"billingCycleStart":"2026-01-01T00:00:00Z","billingCycleEnd":"2099-01-01T00:00:00Z","individualUsage":{"plan":{"enabled":true,"used":600,"limit":2000,"remaining":1400},"onDemand":{"enabled":true,"used":50,"limit":100}}}"#;
+const CURSOR_BODY: &str = r#"{"billingCycleStart":"2026-01-01T00:00:00Z","billingCycleEnd":"2099-01-01T00:00:00Z","teamUsage":{},"individualUsage":{"plan":{"enabled":true,"used":600,"limit":2000,"remaining":1400},"onDemand":{"enabled":true,"used":50,"limit":100}}}"#;
 
 type CursorReply = (u16, String, Option<u64>);
 struct CursorHttp {
