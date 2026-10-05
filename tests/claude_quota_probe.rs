@@ -276,18 +276,57 @@ fn claude_probe_trust_dialog_is_answered_once() {
 }
 
 #[test]
-fn claude_probe_without_rate_limits_is_unsupported() {
+fn claude_probe_waits_for_usage_after_the_startup_callback() {
+    let run = start_probe("cold-start", &[]);
+    let mut socket = attach(&run.fixture);
+    let snapshot = quota_until(
+        &mut socket,
+        "cold startup never reached current usage",
+        |quota| {
+            assert_ne!(
+                quota.claude.state,
+                QuotaState::Unsupported,
+                "a startup callback cannot classify a subscription"
+            );
+            quota.claude.state == QuotaState::Current
+        },
+    );
+    assert!(
+        probe_lines(&run.log)
+            .iter()
+            .any(|line| line == "COLD_CALLBACK_ACKNOWLEDGED")
+    );
+    assert_eq!(snapshot.claude.windows.len(), 2);
+    assert_eq!(
+        snapshot.claude.windows[0].remaining_basis_points(),
+        Some(8800)
+    );
+    assert!(matches!(
+        snapshot.claude.source,
+        Some(QuotaSource::Probe { .. })
+    ));
+    wait_probes(&run.log, 1);
+    assert_eq!(
+        probe_count(&run.log),
+        1,
+        "startup callbacks restarted the probe"
+    );
+    assert!(!pid_alive(last_probe_pid(&run.log)));
+}
+
+#[test]
+fn claude_probe_without_rate_limits_is_unavailable() {
     let run = start_probe("no-limits", &[]);
     let mut socket = attach(&run.fixture);
     let snapshot = quota_until(
         &mut socket,
         "missing rate_limits was not classified",
-        |quota| quota.claude.state == QuotaState::Unsupported,
+        |quota| {
+            quota.claude.state == QuotaState::Unavailable
+                && quota.claude.reason.as_deref() == Some(PROBE_MISSING_USAGE)
+        },
     );
-    assert_eq!(
-        snapshot.claude.reason.as_deref(),
-        Some(PROBE_NOT_SUBSCRIPTION)
-    );
+    assert_eq!(snapshot.claude.reason.as_deref(), Some(PROBE_MISSING_USAGE));
     assert!(matches!(
         snapshot.claude.source,
         Some(QuotaSource::Probe { .. })
@@ -310,7 +349,17 @@ fn claude_probe_that_exits_is_unavailable() {
 
 #[test]
 fn claude_probe_silent_for_sixty_seconds_times_out_and_the_process_is_gone() {
-    let run = start_probe("silent", &[]);
+    assert_probe_deadline("silent", PROBE_TIMED_OUT);
+}
+
+#[test]
+fn claude_probe_startup_without_usage_reaches_the_deadline_and_the_process_is_gone() {
+    assert_probe_deadline("no-limits-hang", PROBE_MISSING_USAGE);
+}
+
+fn assert_probe_deadline(mode: &str, reason: &str) {
+    let run = start_probe(mode, &[]);
+    let started = std::time::Instant::now();
     let mut socket = attach(&run.fixture);
     socket
         .set_read_timeout(Some(Duration::from_secs(75)))
@@ -320,13 +369,17 @@ fn claude_probe_silent_for_sixty_seconds_times_out_and_the_process_is_gone() {
     while std::time::Instant::now() < deadline {
         if let Ok(ServerMessage::Event(ServerEvent::QuotaChanged(next))) =
             read_frame::<ServerMessage>(&mut socket)
-            && next.claude.reason.as_deref() == Some(PROBE_TIMED_OUT)
+            && next.claude.reason.as_deref() == Some(reason)
         {
             snapshot = Some(next.claude.clone());
             break;
         }
     }
-    let snapshot = snapshot.expect("silent probe did not time out");
+    let snapshot = snapshot.expect("probe did not reach the deadline");
+    assert!(
+        started.elapsed() >= Duration::from_secs(60),
+        "probe ended before its deadline"
+    );
     assert_eq!(snapshot.state, QuotaState::Unavailable);
     let pid = std::fs::read_to_string(run.fixture.root.path().join("probe.pid"))
         .unwrap()
@@ -464,6 +517,7 @@ fn claude_usage_fixture(body: &'static str) -> (String, std::thread::JoinHandle<
 fn claude_probe_off_allows_an_account_read_without_spawning_a_probe() {
     let fixture = live::Live::idle().bounded();
     install_probe_claude(&fixture);
+    std::fs::write(settings_document(&fixture), "[quota]\nenabled = false\n").unwrap();
     let credentials = fixture.root.path().join("claude-config");
     std::fs::create_dir(&credentials).unwrap();
     let path = credentials.join(".credentials.json");
