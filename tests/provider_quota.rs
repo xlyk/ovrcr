@@ -40,6 +40,21 @@ fn native_quota_rpc_fixture() {
             continue;
         };
         let mode = std::env::var("OVRCR_QUOTA_FIXTURE_MODE").unwrap_or_default();
+        // `hold` keeps the in-flight Codex read open until the release file
+        // appears. The server's own deadline still applies; this is not a cache.
+        if method == "account/rateLimits/read" && mode == "hold" {
+            let release = std::env::var_os("OVRCR_QUOTA_FIXTURE_RELEASE");
+            let deadline = std::time::Instant::now() + Duration::from_secs(25);
+            while std::time::Instant::now() < deadline {
+                let released = release
+                    .as_ref()
+                    .is_some_and(|path| std::path::Path::new(path).exists());
+                if released {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
         if method == "account/rateLimits/read" && matches!(mode.as_str(), "http503" | "retry") {
             // A native error whose body a Quota reason must never echo.
             let mut data = serde_json::json!({"status": 503, "body": FIXTURE_BODY});
@@ -619,6 +634,7 @@ fn grok_home(fixture: &live::Live) -> std::path::PathBuf {
 fn quota_http(fixture: &live::Live) -> std::ffi::OsString {
     use std::io::{Read, Write};
     let log = fixture.root.path().join("http-quota");
+    let hold = fixture.root.path().join("http-quota-hold");
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     std::thread::spawn(move || {
@@ -636,6 +652,13 @@ fn quota_http(fixture: &live::Live) -> std::ffi::OsString {
                 .nth(1)
                 .unwrap_or("");
             let lower = text.to_ascii_lowercase();
+            // Present only in tests that must observe a restart before Grok answers.
+            if path.contains("/v1/billing") {
+                let deadline = std::time::Instant::now() + Duration::from_secs(12);
+                while hold.exists() && std::time::Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
             let line = format!(
                 "{path} auth={} beta={} xai={}\n",
                 lower.contains("authorization:"),
@@ -686,22 +709,48 @@ fn native_fixture(mode: &str) -> live::Live {
         ));
     }
     std::fs::write(settings_document(&fixture), config).unwrap();
-    let log = fixture.root.path().join("native-methods");
-    let home = grok_home(&fixture);
+    grok_home(&fixture);
     let billing = format!(
         "{}/v1/billing?format=credits",
         quota_http(&fixture).to_string_lossy()
     );
+    std::fs::write(fixture.root.path().join("billing-url"), billing.as_bytes()).unwrap();
+    start_native(&fixture, mode);
+    fixture
+}
+
+/// Restart the fixture server. The billing stand-in keeps listening; mode is
+/// the only collector behavior that changes. Credential homes stay inside the
+/// fixture root.
+fn start_native(fixture: &live::Live, mode: &str) {
+    let log = fixture.root.path().join("native-methods");
+    let home = fixture.root.path().join("grok-home");
+    let claude = fixture.root.path().join("claude-config-empty");
+    std::fs::create_dir_all(&claude).unwrap();
+    let release = fixture.root.path().join("quota-release");
+    let pids = fixture.root.path().join("fixture-pids");
+    let billing = std::fs::read_to_string(fixture.root.path().join("billing-url")).unwrap();
     fixture.start_binary_env(&[
         ("OVRCR_QUOTA_FIXTURE_LOG", log.as_os_str()),
         ("OVRCR_QUOTA_FIXTURE_MODE", std::ffi::OsStr::new(mode)),
         ("GROK_HOME", home.as_os_str()),
         (
             "OVRCR_QUOTA_GROK_BILLING_URL",
-            std::ffi::OsStr::new(&billing),
+            std::ffi::OsStr::new(billing.trim()),
         ),
+        ("OVRCR_QUOTA_FIXTURE_RELEASE", release.as_os_str()),
+        ("OVRCR_QUOTA_FIXTURE_PIDS", pids.as_os_str()),
+        ("CLAUDE_CONFIG_DIR", claude.as_os_str()),
     ]);
-    fixture
+}
+
+fn restart_native(fixture: &live::Live, mode: &str) {
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: true }),
+        Response::Ok
+    );
+    fixture.join();
+    start_native(fixture, mode);
 }
 
 fn attach(fixture: &live::Live) -> std::os::unix::net::UnixStream {
@@ -1418,4 +1467,395 @@ fn claude_auth_cut_short_by_shutdown_publishes_nothing() {
             };
     }
     assert!(acknowledged, "shutdown was not acknowledged");
+}
+
+fn dashboard_send(socket: &mut std::os::unix::net::UnixStream, request_id: u64, request: Request) {
+    write_frame(
+        socket,
+        &ClientMessage {
+            request_id,
+            request,
+        },
+    )
+    .unwrap();
+}
+
+/// Skip snapshots and screen frames until this request is acknowledged.
+fn dashboard_ok(socket: &mut std::os::unix::net::UnixStream, request_id: u64) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "dashboard request {request_id} was not acknowledged"
+        );
+        match read_frame::<ServerMessage>(socket).unwrap() {
+            ServerMessage::Response {
+                request_id: id,
+                response: Response::Ok,
+            } if id == request_id => return,
+            ServerMessage::Response {
+                request_id: id,
+                response: Response::Error { message, .. },
+            } if id == request_id => panic!("dashboard request {request_id} failed: {message}"),
+            _ => {}
+        }
+    }
+}
+
+fn terminal_text(fixture: &live::Live, session: SessionId) -> String {
+    match fixture.request(Request::ReadTerminal {
+        session,
+        max_lines: Some(40),
+    }) {
+        Response::TerminalText { text, .. } => text,
+        response => panic!("terminal read failed: {response:?}"),
+    }
+}
+
+fn echo_session(fixture: &live::Live, name: &str) -> (SessionId, SessionRunId) {
+    let Response::CreatedSession(summary) =
+        fixture.request(Request::CreateSession(CreateSessionRequest {
+            project: live::PROJECT.into(),
+            workspace: live::WORKSPACE.into(),
+            name: name.into(),
+            label: None,
+            argv: vec![
+                "sh".into(),
+                "-c".into(),
+                "printf 'READY\\n'; while IFS= read -r line; do printf 'got:%s\\n' \"$line\"; done"
+                    .into(),
+            ],
+            kind: SessionKind::Terminal,
+        }))
+    else {
+        panic!("create {name}");
+    };
+    (summary.id, summary.run)
+}
+
+/// One line per native RPC process the Codex worker spawned. This file is the
+/// fixture's own record; CI cannot read another process's `/proc`.
+fn native_clients(fixture: &live::Live) -> String {
+    std::fs::read_to_string(fixture.root.path().join("fixture-pids")).unwrap_or_default()
+}
+
+fn native_client_count(fixture: &live::Live) -> usize {
+    native_clients(fixture)
+        .lines()
+        .filter(|line| !line.is_empty())
+        .count()
+}
+
+/// The Codex worker has sent `account/rateLimits/read` and that process is the
+/// only native client. The hold has not been released, so the reply is still open.
+fn codex_rate_limit_is_open(fixture: &live::Live) -> bool {
+    reads(fixture, "account/rateLimits/read") == 1 && native_client_count(fixture) == 1
+}
+
+/// A new process has no quota snapshot to load. While both collectors are held,
+/// the attachment publish stays empty rather than the previous process's bars.
+#[test]
+fn server_restart_publishes_unknown_allowance_not_the_previous_snapshot() {
+    let fixture = native_fixture("normal");
+    let mut socket = attach(&fixture);
+    let previous = quota_until(&mut socket, "quota before restart", |quota| {
+        quota.codex.state == QuotaState::Current && quota.grok.state == QuotaState::Current
+    });
+    assert!(!previous.codex.windows.is_empty());
+    assert!(previous.codex.observed_unix_ms.is_some());
+    assert!(!previous.grok.windows.is_empty());
+    drop(socket);
+    let hold = fixture.root.path().join("http-quota-hold");
+    std::fs::write(&hold, b"hold").unwrap();
+    let _ = std::fs::remove_file(fixture.root.path().join("quota-release"));
+    restart_native(&fixture, "hold");
+    let mut socket = attach(&fixture);
+    let started = std::time::Instant::now();
+    let mut saw_unknown = false;
+    while started.elapsed() < Duration::from_millis(1500) {
+        socket
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+        let Ok(message) = read_frame::<ServerMessage>(&mut socket) else {
+            continue;
+        };
+        let ServerMessage::Event(ServerEvent::QuotaChanged(snapshot)) = message else {
+            continue;
+        };
+        assert!(
+            snapshot.codex.windows.is_empty()
+                && snapshot.codex.observed_unix_ms.is_none()
+                && snapshot.codex.checked_unix_ms.is_none()
+                && snapshot.codex.state != QuotaState::Current,
+            "restart resurrected Codex allowance: {:?}",
+            snapshot.codex
+        );
+        assert!(
+            snapshot.grok.windows.is_empty()
+                && snapshot.grok.observed_unix_ms.is_none()
+                && snapshot.grok.checked_unix_ms.is_none()
+                && snapshot.grok.state != QuotaState::Current,
+            "restart resurrected Grok allowance: {:?}",
+            snapshot.grok
+        );
+        assert_ne!(snapshot.codex.windows, previous.codex.windows);
+        assert_ne!(snapshot.grok.windows, previous.grok.windows);
+        saw_unknown = true;
+    }
+    assert!(saw_unknown, "restart published no quota snapshot");
+    std::fs::remove_file(&hold).unwrap();
+    std::fs::write(fixture.root.path().join("quota-release"), b"go").unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let fresh = quota_until(&mut socket, "fresh read after restart", |quota| {
+        quota.codex.state == QuotaState::Current && quota.grok.state == QuotaState::Current
+    });
+    assert!(!fresh.codex.windows.is_empty());
+    assert!(fresh.codex.observed_unix_ms > previous.codex.observed_unix_ms);
+    assert!(fresh.grok.observed_unix_ms > previous.grok.observed_unix_ms);
+}
+
+/// Detach publishes the same observation, including its age, and does not spawn
+/// another Codex or Grok collector.
+#[test]
+fn detach_reattach_restores_cached_observation_age_without_a_second_collector() {
+    let fixture = native_fixture("normal");
+    let mut socket = attach(&fixture);
+    let cached = quota_until(&mut socket, "quota before detach", |quota| {
+        quota.codex.state == QuotaState::Current && quota.grok.state == QuotaState::Current
+    });
+    assert!(cached.codex.observed_unix_ms.is_some());
+    assert!(cached.codex.checked_unix_ms.is_some());
+    assert!(cached.grok.observed_unix_ms.is_some());
+    let methods = std::fs::read_to_string(fixture.root.path().join("native-methods")).unwrap();
+    let http = std::fs::read_to_string(fixture.root.path().join("http-quota")).unwrap();
+    let clients = native_clients(&fixture);
+    assert_eq!(
+        clients.lines().filter(|line| !line.is_empty()).count(),
+        1,
+        "expected one Codex native client before detach: {clients:?}"
+    );
+    // An age reset would stamp "now". Sit past the timestamp granularity first.
+    std::thread::sleep(Duration::from_millis(30));
+    drop(socket);
+    let mut reattached = attach(&fixture);
+    let restored = quota_until(&mut reattached, "reattach snapshot", |_| true);
+    assert_eq!(
+        restored.codex, cached.codex,
+        "Codex age was not the cached observation"
+    );
+    assert_eq!(
+        restored.grok, cached.grok,
+        "Grok age was not the cached observation"
+    );
+    reattached
+        .set_read_timeout(Some(Duration::from_millis(400)))
+        .unwrap();
+    while let Ok(message) = read_frame::<ServerMessage>(&mut reattached) {
+        if let ServerMessage::Event(ServerEvent::QuotaChanged(snapshot)) = message {
+            assert_eq!(snapshot.codex, cached.codex);
+            assert_eq!(snapshot.grok, cached.grok);
+        }
+    }
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.path().join("native-methods")).unwrap(),
+        methods,
+        "reattach started another Codex read"
+    );
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.path().join("http-quota")).unwrap(),
+        http,
+        "reattach started another Grok read"
+    );
+    assert_eq!(
+        native_clients(&fixture),
+        clients,
+        "reattach started another native client"
+    );
+}
+
+/// The replacement keeps the cached allowance and its own focused session after
+/// the closed dashboard's handler finishes.
+#[test]
+fn replacement_dashboard_keeps_cached_quota_after_obsolete_cleanup() {
+    let fixture = native_fixture("normal");
+    fixture.ready("feature/quota-replace");
+    let (old_session, _) = echo_session(&fixture, "source-a");
+    let (new_session, new_run) = echo_session(&fixture, "source-b");
+    wait_until("session A ready", || {
+        terminal_text(&fixture, old_session).contains("READY")
+    });
+    wait_until("session B ready", || {
+        terminal_text(&fixture, new_session).contains("READY")
+    });
+    let mut old = attach(&fixture);
+    let cached = quota_until(&mut old, "quota before replacement", |quota| {
+        quota.codex.state == QuotaState::Current && quota.grok.state == QuotaState::Current
+    });
+    let size = TerminalSize { rows: 12, cols: 40 };
+    dashboard_send(
+        &mut old,
+        4,
+        Request::Select {
+            session: old_session,
+            size,
+        },
+    );
+    dashboard_ok(&mut old, 4);
+    old.shutdown(std::net::Shutdown::Both).unwrap();
+    let mut replacement = attach(&fixture);
+    let restored = quota_until(&mut replacement, "replacement snapshot", |quota| {
+        quota.codex.state == QuotaState::Current && quota.grok.state == QuotaState::Current
+    });
+    assert_eq!(restored.codex, cached.codex);
+    assert_eq!(restored.grok, cached.grok);
+    dashboard_send(
+        &mut replacement,
+        5,
+        Request::Select {
+            session: new_session,
+            size,
+        },
+    );
+    dashboard_ok(&mut replacement, 5);
+    std::thread::sleep(Duration::from_millis(200));
+    dashboard_send(
+        &mut replacement,
+        6,
+        Request::Input {
+            session: new_session,
+            run: new_run,
+            bytes: b"only-b\n".to_vec(),
+        },
+    );
+    dashboard_ok(&mut replacement, 6);
+    wait_until("replacement input", || {
+        terminal_text(&fixture, new_session).contains("got:only-b")
+    });
+    assert!(
+        !terminal_text(&fixture, old_session).contains("only-b"),
+        "obsolete cleanup moved input back to the previous session"
+    );
+    let mut third = connect_server(&fixture.socket).unwrap();
+    third
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    dashboard_send(&mut third, 9, Request::DashboardHello);
+    match read_frame::<ServerMessage>(&mut third).unwrap() {
+        ServerMessage::Response {
+            response:
+                Response::Error {
+                    code: ErrorCode::Conflict,
+                    ..
+                },
+            ..
+        } => {}
+        other => panic!("replacement was revoked: {other:?}"),
+    }
+    replacement
+        .set_read_timeout(Some(Duration::from_millis(300)))
+        .unwrap();
+    while let Ok(message) = read_frame::<ServerMessage>(&mut replacement) {
+        if let ServerMessage::Event(ServerEvent::QuotaChanged(snapshot)) = message {
+            assert_eq!(snapshot.codex.source, cached.codex.source);
+            assert_eq!(
+                snapshot.codex.observed_unix_ms,
+                cached.codex.observed_unix_ms
+            );
+            assert_eq!(snapshot.grok.source, cached.grok.source);
+            assert_eq!(snapshot.grok.windows, cached.grok.windows);
+        }
+    }
+}
+
+/// A Codex read that does not answer must not block PTY input, and Grok still publishes.
+#[test]
+fn blocked_codex_collector_does_not_stall_pty_while_grok_updates() {
+    let fixture = native_fixture("hold");
+    fixture.ready("feature/quota-pty");
+    let (session, run) = echo_session(&fixture, "pty");
+    wait_until("echo session ready", || {
+        terminal_text(&fixture, session).contains("READY")
+    });
+    let mut socket = attach(&fixture);
+    let during = quota_until(&mut socket, "Grok updated while Codex was held", |quota| {
+        quota.grok.state == QuotaState::Current
+    });
+    assert_ne!(during.codex.state, QuotaState::Current);
+    assert!(during.codex.windows.is_empty());
+    wait_until("Codex rateLimits request is open", || {
+        codex_rate_limit_is_open(&fixture)
+    });
+    let started = std::time::Instant::now();
+    let size = TerminalSize { rows: 12, cols: 40 };
+    dashboard_send(&mut socket, 7, Request::Select { session, size });
+    dashboard_ok(&mut socket, 7);
+    dashboard_send(
+        &mut socket,
+        8,
+        Request::Input {
+            session,
+            run,
+            bytes: b"ping\n".to_vec(),
+        },
+    );
+    dashboard_ok(&mut socket, 8);
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while !terminal_text(&fixture, session).contains("got:ping") {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "PTY output stalled for {:?} while Codex was blocked",
+            started.elapsed()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "PTY round trip took {:?}",
+        started.elapsed()
+    );
+    assert!(
+        codex_rate_limit_is_open(&fixture),
+        "PTY traffic started another Codex read"
+    );
+    assert_eq!(http_reads(&fixture, "/v1/billing?format=credits"), 1);
+}
+
+/// A refresh asked for while the one Codex read is open is answered by that read.
+#[test]
+fn refresh_during_inflight_native_read_does_not_start_another() {
+    let fixture = native_fixture("hold");
+    let mut socket = attach(&fixture);
+    wait_until("Codex rateLimits request is open", || {
+        codex_rate_limit_is_open(&fixture)
+    });
+    assert_eq!(
+        fixture.request(Request::RefreshQuota {
+            provider: Some(QuotaProvider::Codex),
+        }),
+        Response::Ok
+    );
+    let still_open = std::time::Instant::now() + Duration::from_secs(1);
+    while std::time::Instant::now() < still_open {
+        assert!(
+            codex_rate_limit_is_open(&fixture),
+            "refresh started another native read while the first was open"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    std::fs::write(fixture.root.path().join("quota-release"), b"go").unwrap();
+    let _current = quota_until(&mut socket, "held Codex read finished", |quota| {
+        quota.codex.state == QuotaState::Current
+    });
+    // The worker only starts another read after this one returns. Watch long
+    // enough for that spawn to append a pid and a method line.
+    let quiet = std::time::Instant::now() + Duration::from_millis(500);
+    while std::time::Instant::now() < quiet {
+        assert!(
+            codex_rate_limit_is_open(&fixture),
+            "manual refresh started a second account read"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
