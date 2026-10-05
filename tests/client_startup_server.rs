@@ -475,3 +475,167 @@ fn server_refuses_unrecognized_existing_identity_without_replacing_user_file() {
         "failed publication must remove its owned socket"
     );
 }
+
+fn startup_peer_executable(fixture: &Live, mode: &str) -> std::path::PathBuf {
+    let host = std::env::current_exe().unwrap();
+    let quoted_host = host.to_str().unwrap().replace('\'', "'\\''");
+    let executable = fixture.root.path().join("startup-peer");
+    fs::write(
+        &executable,
+        format!(
+            "#!/bin/sh\nOVRCR_TEST_STARTUP_PEER_MODE={mode} exec '{quoted_host}' --exact startup_peer_child --ignored --nocapture\n"
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+    executable
+}
+
+// The client owns this child, and the fixture owns its release file and group.
+// Release it on every assertion failure before Live removes its private root.
+struct StartupPeerCleanup<'a>(&'a Live);
+
+impl Drop for StartupPeerCleanup<'_> {
+    fn drop(&mut self) {
+        let directory = self.0.socket.parent().unwrap();
+        let _ = fs::write(directory.join("startup-peer.release"), "release");
+        let Some(group) = fs::read_to_string(directory.join("startup-peer.pgid"))
+            .ok()
+            .and_then(|text| text.trim().parse::<libc::pid_t>().ok())
+        else {
+            return;
+        };
+        eprintln!(
+            "startup peer fixture: root={} owned_pgid={group}",
+            self.0.root.path().display()
+        );
+        self.0.own_group(group);
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while live::group_exists(group) && std::time::Instant::now() < deadline {
+            let mut status = 0;
+            // connect_or_start spawned this fixture child from this test process.
+            // Reap it after release; a dropped Child otherwise leaves a zombie.
+            unsafe { libc::waitpid(group, &mut status, libc::WNOHANG) };
+            std::thread::park_timeout(Duration::from_millis(10));
+        }
+        if !live::group_exists(group) {
+            self.0.forget_group(group);
+            eprintln!("startup peer fixture: owned_pgid={group} reaped");
+        }
+    }
+}
+
+#[test]
+fn spawned_peer_exit_after_handshake_failure_reports_its_status_and_log() {
+    let fixture = Live::idle();
+    let executable = startup_peer_executable(&fixture, "exit");
+    let _environment = Environment::new(&fixture, &executable);
+    let _cleanup = StartupPeerCleanup(&fixture);
+    let started = std::time::Instant::now();
+    let error = ovrcr::client::connect_or_start(&fixture.paths()).unwrap_err();
+    let text = format!("{error:#}");
+    assert!(text.contains("exited during startup"), "{text}");
+    assert!(text.contains("17"), "{text}");
+    assert!(
+        text.contains("fixture startup failure after accepting client"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            &fixture
+                .socket
+                .parent()
+                .unwrap()
+                .join("server.log")
+                .display()
+                .to_string()
+        ),
+        "{text}"
+    );
+    assert!(started.elapsed() < Duration::from_secs(3));
+    assert!(!fixture.socket.exists());
+}
+
+#[test]
+fn spawned_live_peer_preserves_first_handshake_error_without_reconnecting() {
+    let fixture = Live::idle();
+    let executable = startup_peer_executable(&fixture, "live");
+    let _environment = Environment::new(&fixture, &executable);
+    let _cleanup = StartupPeerCleanup(&fixture);
+    let started = std::time::Instant::now();
+    let error = ovrcr::client::connect_or_start(&fixture.paths()).unwrap_err();
+    let elapsed = started.elapsed();
+    let text = format!("{error:#}");
+    assert!(text.contains("protocol version mismatch"), "{text}");
+    assert!(!text.contains("exited during startup"), "{text}");
+    assert!(
+        !text.contains("timed out waiting for server startup"),
+        "{text}"
+    );
+    assert!(elapsed >= Duration::from_secs(5), "{elapsed:?}");
+    assert!(elapsed < Duration::from_secs(6), "{elapsed:?}");
+    assert_eq!(
+        fs::read_to_string(
+            fixture
+                .socket
+                .parent()
+                .unwrap()
+                .join("startup-peer.attempts")
+        )
+        .unwrap(),
+        "accepted\n"
+    );
+}
+
+#[test]
+#[ignore = "subprocess fixture for spawned-child startup tests"]
+fn startup_peer_child() {
+    use std::io::Write;
+    use std::os::unix::net::UnixListener;
+    let mode = std::env::var("OVRCR_TEST_STARTUP_PEER_MODE").unwrap();
+    let socket = std::path::PathBuf::from(std::env::var_os("OVRCR_SOCKET").unwrap());
+    let directory = socket.parent().unwrap();
+    let group = unsafe { libc::getpgrp() };
+    assert_eq!(group as u32, std::process::id());
+    fs::write(directory.join("startup-peer.pgid"), group.to_string()).unwrap();
+    let listener = UnixListener::bind(&socket).unwrap();
+    let (mut stream, _) = listener.accept().unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    ovrcr::protocol::read_preamble(&mut stream).unwrap();
+    fs::write(directory.join("startup-peer.attempts"), "accepted\n").unwrap();
+    if mode == "exit" {
+        eprintln!("fixture startup failure after accepting client");
+        drop(stream);
+        drop(listener);
+        fs::remove_file(socket).unwrap();
+        std::process::exit(17);
+    }
+    assert_eq!(mode, "live");
+    let mut preamble = Vec::from(*b"OVRC");
+    preamble.extend_from_slice(&(ovrcr::protocol::PROTOCOL_VERSION - 1).to_be_bytes());
+    stream.write_all(&preamble).unwrap();
+    drop(stream);
+    listener.set_nonblocking(true).unwrap();
+    let release = directory.join("startup-peer.release");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !release.exists() && std::time::Instant::now() < deadline {
+        if let Ok((stream, _)) = listener.accept() {
+            fs::OpenOptions::new()
+                .append(true)
+                .open(directory.join("startup-peer.attempts"))
+                .unwrap()
+                .write_all(b"accepted\n")
+                .unwrap();
+            drop(stream);
+        }
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
+    assert!(
+        release.exists(),
+        "fixture owner did not release startup peer"
+    );
+    drop(listener);
+    fs::remove_file(socket).unwrap();
+}

@@ -106,9 +106,17 @@ pub fn connect_or_start(paths: &ServerPaths) -> Result<UnixStream> {
     }
     let mut child = command.spawn().context("start detached OVRCR server")?;
     let deadline = Instant::now() + Duration::from_secs(5);
+    let mut handshake_error = None;
     loop {
-        if let Some(stream) = connect_if_running(paths)? {
-            return Ok(stream);
+        // The child can drop its listener before its exit becomes observable.
+        // Keep the first handshake failure without reconnecting or extending startup.
+        if handshake_error.is_none()
+            && let Some(mut stream) = connect_raw_if_running(paths)?
+        {
+            match handshake(&mut stream, &paths.socket) {
+                Ok(()) => return Ok(stream),
+                Err(error) => handshake_error = Some(error),
+            }
         }
         if let Some(status) = child.try_wait().context("poll detached OVRCR server")? {
             bail!(
@@ -118,6 +126,9 @@ pub fn connect_or_start(paths: &ServerPaths) -> Result<UnixStream> {
             );
         }
         if Instant::now() >= deadline {
+            if let Some(error) = handshake_error {
+                return Err(error);
+            }
             bail!(
                 "timed out waiting for server startup; see {}\n{}",
                 log_path.display(),
