@@ -17,8 +17,7 @@ fn no_settings(settings: Option<&Path>) -> AppResult<()> {
 pub(super) fn setup(settings: Option<&Path>) -> AppResult<()> {
     no_settings(settings)?;
     println!(
-        "Cursor startup identity uses a temporary local plugin, with no persistent settings changes. Configure Cursor separately; pick cursor-agent or run `ovrcr agent run cursor-agent -- cursor-agent` inside an OVRCR terminal. Only fresh interactive Cursor CLI {} (optionally --model VALUE) is source-pinned. Activity, Ready/Unread, Input, metrics, generated titles and recovery are unavailable. Native provider acceptance is unverified.",
-        ovrcr::report::cursor::VERSION
+        "Cursor startup identity uses a temporary local plugin, with no persistent settings changes. Configure Cursor separately; pick cursor-agent or run `ovrcr agent run cursor-agent -- cursor-agent` inside an OVRCR terminal. Fresh interactive launches (optionally --model VALUE) inspect the installed CLI's --help for local plugin support and validate its native startup identity at runtime. Activity, Ready/Unread, Input, metrics, generated titles and recovery are unavailable. See docs/cursor-harness.md for native acceptance evidence."
     );
     Ok(())
 }
@@ -70,13 +69,12 @@ pub(super) fn doctor(
     println!("{}", serde_json::to_string_pretty(&json!({
         "provider":"cursor-agent", "executable":executable.to_string_lossy(),
         "executable_status":if found {"found"} else {"missing_or_not_executable"},
-        "probe_status":"not_run", "version":null, "version_status":"unverified", "tested_versions":[],
-        "source_reviewed_versions":[ovrcr::report::cursor::VERSION], "version_gate":"exact_at_launch",
-        "capabilities":{"managed_launch":true,"process_lifecycle":"available","startup_identity":"source_pinned",
+        "probe_status":"not_run", "admission":"runtime_capabilities",
+        "capabilities":{"managed_launch":true,"process_lifecycle":"available","startup_identity":"requires_native_hook",
             "reporting":"startup_identity_only","readiness":"unavailable","approvals":"unavailable","questions":"unavailable",
             "recovery":"unavailable","metrics":"unavailable","generated_titles":"unavailable"},
         "session_status":session_status,"binding":binding,"native_acceptance":"unverified",
-        "guidance":"Fresh interactive cursor-agent or explicit agent alias only; launch probes --version with a bounded deadline. Resume/continue/headless/management/other options remain native with reporting unavailable. Doctor never runs the provider; see docs/cursor-harness.md."
+        "guidance":"Fresh interactive cursor-agent or explicit agent alias only; launch probes --help for local plugin support with a bounded deadline, then validates the native startup hook. No release whitelist. Resume/continue/headless/management/other options remain native with reporting unavailable. Doctor never runs the provider; see docs/cursor-harness.md."
     })).map_err(RuntimeError::internal)?);
     Ok(())
 }

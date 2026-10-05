@@ -2530,8 +2530,11 @@ fn cursor_diagnostics_are_read_only_and_capabilities_are_explicit() {
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["provider"], "cursor-agent");
     assert_eq!(report["probe_status"], "not_run");
-    assert_eq!(report["source_reviewed_versions"][0], "2026.09.10-fd3934a");
-    assert_eq!(report["capabilities"]["startup_identity"], "source_pinned");
+    assert_eq!(report["admission"], "runtime_capabilities");
+    assert_eq!(
+        report["capabilities"]["startup_identity"],
+        "requires_native_hook"
+    );
     for capability in [
         "readiness",
         "approvals",
@@ -2596,14 +2599,14 @@ fn cursor_unavailable_launch_preserves_native_argv_and_exit() {
 }
 
 #[test]
-fn cursor_help_describes_the_pinned_partial_capability() {
+fn cursor_help_describes_the_runtime_partial_capability() {
     let root = tempfile::tempdir().unwrap();
     let mut command = isolated_command(&root);
     command.args(["agent", "run", "--help"]);
     let output = run_cli_bounded(command).unwrap();
     assert!(output.status.success());
     let help = String::from_utf8(output.stdout).unwrap();
-    assert!(help.contains("Cursor CLI 2026.09.10-fd3934a"));
+    assert!(help.contains("Cursor CLI: fresh interactive"));
     assert!(help.contains("startup identity only"));
 }
 
@@ -2655,7 +2658,7 @@ fn cursor_plugin_creation_failure_preserves_native_argv_and_exit() {
     // A regular file at that path makes plugin creation fail. Native launch restores
     // it so existing channel cleanup can finish; no shared paths or modes change.
     let native = fixture.root.path().join("cursor-agent");
-    std::fs::write(&native, "#!/bin/sh\nif [ \"$1\" = --version ]; then mv \"$TMPDIR\" \"$TMPDIR-displaced\" || exit 98; printf 'fixture' > \"$TMPDIR\"; printf '2026.09.10-fd3934a\\n'; exit 0; fi\nrm \"$TMPDIR\" && mv \"$TMPDIR-displaced\" \"$TMPDIR\" || exit 99\nprintf 'ARG:%s\\n' \"$@\"; printf 'CURSOR_NATIVE_ONLY\\n'; exit 17\n").unwrap();
+    std::fs::write(&native, "#!/bin/sh\nif [ \"$1\" = --help ]; then mv \"$TMPDIR\" \"$TMPDIR-displaced\" || exit 98; printf 'fixture' > \"$TMPDIR\"; printf '  --plugin-dir <path>  Load a local plugin\\n'; exit 0; fi\nrm \"$TMPDIR\" && mv \"$TMPDIR-displaced\" \"$TMPDIR\" || exit 99\nprintf 'ARG:%s\\n' \"$@\"; printf 'CURSOR_NATIVE_ONLY\\n'; exit 17\n").unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
     let id = cursor_create(&fixture, &native, &["--model", "auto"]);
     cursor_wait_text(&fixture, id, "CURSOR_NATIVE_ONLY");
@@ -2712,18 +2715,20 @@ fn cursor_rejected_managed_launches_preserve_argv_without_plugin_or_binding() {
     let fixture = live::Live::binary().bounded();
     fixture.ready("feature/cursor-harness");
     let native = fixture.root.path().join("cursor-agent");
-    for (version, probe_exit, args) in [
-        ("unknown", 0, &[][..]),
-        ("2026.09.10-fd3934a", 9, &[][..]),
-        ("2026.09.10-fd3934a", 0, &["--resume", "native-id"][..]),
+    let oversized_help = format!("  --plugin-dir <path>\\n{}", "x".repeat(16 * 1024));
+    for (help, probe_exit, args) in [
+        ("Usage: agent\\n  --model <model>", 0, &[][..]),
+        ("  --plugin-dir <path>", 9, &[][..]),
+        (oversized_help.as_str(), 0, &[][..]),
+        ("  --plugin-dir <path>", 0, &["--resume", "native-id"][..]),
         (
-            "2026.09.10-fd3934a",
+            "  --plugin-dir <path>",
             0,
             &["--plugin-dir", "user-plugin"][..],
         ),
-        ("2026.09.10-fd3934a", 0, &["-p", "prompt"][..]),
+        ("  --plugin-dir <path>", 0, &["-p", "prompt"][..]),
     ] {
-        std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '{version}\\n'; exit {probe_exit}; fi\nprintf 'ARG:%s\\n' \"$@\"; printf 'CURSOR_NATIVE_ONLY\\n'; exit 17\n")).unwrap();
+        std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --help ]; then printf '{help}\\n'; exit {probe_exit}; fi\nprintf 'ARG:%s\\n' \"$@\"; printf 'CURSOR_NATIVE_ONLY\\n'; exit 17\n")).unwrap();
         std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
         let id = cursor_create(&fixture, &native, args);
         cursor_wait_text(&fixture, id, "CURSOR_NATIVE_ONLY");
@@ -2803,7 +2808,7 @@ fn cursor_startup_identity_is_native_owned_and_no_semantics_are_inferred() {
     let probe = fixture.root.path().join("plugin-path");
     let quote =
         |path: &std::path::Path| format!("'{}'", path.to_str().unwrap().replace('\'', "'\"'\"'"));
-    std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '2026.09.10-fd3934a\\n'; exit 0; fi\nOVRCR_CURSOR_PLUGIN=\"$2\" OVRCR_CURSOR_PROBE={} exec {} --ignored --exact cursor_native_fixture --nocapture\n",
+    std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'local-build\\n'; exit 0; fi\nif [ \"$1\" = --help ]; then printf 'Usage: cursor-agent\\n  --plugin-dir <path>  Load a local plugin\\n'; exit 0; fi\nif [ \"$1\" != --plugin-dir ]; then printf 'CURSOR_PLUGIN_NOT_INJECTED\\n'; exit 17; fi\nOVRCR_CURSOR_PLUGIN=\"$2\" OVRCR_CURSOR_PROBE={} exec {} --ignored --exact cursor_native_fixture --nocapture\n",
         quote(&probe), quote(&std::env::current_exe().unwrap()))).unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
     let id = cursor_create(&fixture, &native, &[]);
@@ -2940,7 +2945,7 @@ fn cursor_native_fixture() {
     )
     .unwrap();
     let report = |conversation: &str, generation: &str| {
-        let payload = serde_json::json!({"hook_event_name":"sessionStart", "cursor_version":"2026.09.10-fd3934a",
+        let payload = serde_json::json!({"hook_event_name":"sessionStart", "cursor_version":"local-build",
             "conversation_id":conversation,"session_id":conversation,"generation_id":generation,"is_background_agent":false,
             "model":"fixture-model", "user_email":"fixture@example.invalid", "transcript_path":"DO_NOT_RETAIN"});
         let mut command = Command::new("/bin/sh");
