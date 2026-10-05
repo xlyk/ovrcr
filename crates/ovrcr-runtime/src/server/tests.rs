@@ -8199,6 +8199,207 @@ fn changing_automatic_local_policy_leaves_existing_terminals() {
     assert_eq!(state.session_summaries().len(), before);
 }
 
+#[test]
+fn obsolete_dashboard_writer_cannot_revoke_replacement_or_its_quota_source() {
+    use ovrcr_protocol::{
+        ProviderQuota, QuotaProvider, QuotaSnapshot, QuotaSource, QuotaState, QuotaWindow,
+    };
+    use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+
+    let planted = QuotaSnapshot {
+        codex: ProviderQuota {
+            provider: QuotaProvider::Codex,
+            source: Some(QuotaSource::NativeProfile {
+                profile: "codex selected native profile".into(),
+                generation: 4,
+            }),
+            windows: vec![QuotaWindow {
+                id: "codex/primary".into(),
+                label: "5h".into(),
+                general: true,
+                used_basis_points: Some(6_700),
+                over_limit: false,
+                resets_unix_ms: Some(9_000),
+            }],
+            observed_unix_ms: Some(1_700_000_000_000),
+            checked_unix_ms: Some(1_700_000_000_100),
+            state: QuotaState::Current,
+            reason: None,
+            next_check_unix_ms: Some(1_700_000_300_000),
+        },
+        ..QuotaSnapshot::default()
+    };
+    let (state, _receiver) = test_state_with_dispatch(None, None);
+    state.settings.lock().unwrap().report.settings.quota.enabled = true;
+    *state.quotas.lock().unwrap() = planted.clone();
+
+    let (server, mut client) = UnixStream::pair().unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let handler_state = Arc::clone(&state);
+    let handler = thread::spawn(move || handle_connection(handler_state, server));
+    exchange_preamble(&mut client).unwrap();
+    write_frame(
+        &mut client,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut client).unwrap(),
+        ServerMessage::Response {
+            response: Response::Hierarchy(_),
+            ..
+        }
+    ));
+    expect_settings_reading(&mut client);
+    let published = loop {
+        if let ServerMessage::Event(ServerEvent::QuotaChanged(snapshot)) =
+            read_frame::<ServerMessage>(&mut client).unwrap()
+        {
+            break *snapshot;
+        }
+    };
+    assert_eq!(published.codex, planted.codex);
+
+    let gate = Arc::new(AtomicBool::new(true));
+    let entered = Arc::new(AtomicBool::new(false));
+    // Only the obsolete writer's next frame blocks. The replacement's writer
+    // must still be able to deliver its attachment snapshot.
+    let hold_once = Arc::new(AtomicBool::new(true));
+    let gate_for_hook = Arc::clone(&gate);
+    let entered_for_hook = Arc::clone(&entered);
+    let hold_for_hook = Arc::clone(&hold_once);
+    *state.before_dashboard_write_hook.lock().unwrap() = Some(Arc::new(move || {
+        if hold_for_hook.swap(false, AtomicOrdering::SeqCst) {
+            entered_for_hook.store(true, AtomicOrdering::SeqCst);
+            while gate_for_hook.load(AtomicOrdering::SeqCst) {
+                thread::park_timeout(Duration::from_millis(5));
+            }
+        }
+    }));
+    state.publish_quotas();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !entered.load(AtomicOrdering::SeqCst) {
+        assert!(
+            Instant::now() < deadline,
+            "writer never reached the held frame"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    let old_owner = state
+        .dashboard
+        .slot_for_test()
+        .as_ref()
+        .unwrap()
+        .identity
+        .clone();
+    client.shutdown(Shutdown::Both).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while state.dashboard.is_claimed() {
+        assert!(
+            Instant::now() < deadline,
+            "old dashboard did not release the slot"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    }
+
+    let (replacement_server, mut replacement) = UnixStream::pair().unwrap();
+    replacement
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let replacement_state = Arc::clone(&state);
+    let replacement_handler =
+        thread::spawn(move || handle_connection(replacement_state, replacement_server));
+    exchange_preamble(&mut replacement).unwrap();
+    write_frame(
+        &mut replacement,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    // The held writer owns the write hook for the whole pause, so this hello
+    // cannot hit the socket yet. The slot claim itself does not, and it has
+    // to win before obsolete cleanup runs.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let owner = loop {
+        let current = state
+            .dashboard
+            .slot_for_test()
+            .as_ref()
+            .map(|slot| slot.identity.clone());
+        if let Some(current) = current.filter(|identity| !Arc::ptr_eq(identity, &old_owner)) {
+            break current;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "replacement did not claim the dashboard"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    };
+    assert!(state.dashboard.publish_view(
+        &owner,
+        DashboardView {
+            revision: 9,
+            panes: Vec::new(),
+            focused: None,
+        },
+        true,
+        || {},
+    ));
+    // The writer holds the hook mutex for the whole pause. Open the gate
+    // before taking that mutex again, or this thread and the writer deadlock.
+    gate.store(false, AtomicOrdering::SeqCst);
+    handler.join().unwrap();
+    *state.before_dashboard_write_hook.lock().unwrap() = None;
+    assert!(
+        state
+            .dashboard
+            .slot_for_test()
+            .as_ref()
+            .is_some_and(|slot| Arc::ptr_eq(&slot.identity, &owner)),
+        "obsolete writer cleanup revoked the replacement"
+    );
+    assert_eq!(state.dashboard.view().map(|view| view.revision), Some(9));
+    assert_eq!(
+        state.quotas.lock().unwrap().codex.source,
+        planted.codex.source
+    );
+
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut replacement).unwrap(),
+        ServerMessage::Response {
+            response: Response::Hierarchy(_),
+            ..
+        }
+    ));
+    expect_settings_reading(&mut replacement);
+    let attached = loop {
+        if let ServerMessage::Event(ServerEvent::QuotaChanged(snapshot)) =
+            read_frame::<ServerMessage>(&mut replacement).unwrap()
+        {
+            break *snapshot;
+        }
+    };
+    assert_eq!(attached.codex, planted.codex);
+    state.publish_quotas();
+    let after_cleanup = loop {
+        if let ServerMessage::Event(ServerEvent::QuotaChanged(snapshot)) =
+            read_frame::<ServerMessage>(&mut replacement).unwrap()
+        {
+            break *snapshot;
+        }
+    };
+    assert_eq!(after_cleanup.codex, planted.codex);
+    drop(replacement);
+    replacement_handler.join().unwrap();
+}
+
 /// Every Dashboard hello is answered with the hierarchy and then the Server's
 /// reading of the settings document.
 fn expect_settings_reading(stream: &mut UnixStream) {
