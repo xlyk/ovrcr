@@ -132,9 +132,10 @@ fn read_word(text: &str, start: usize) -> Option<(usize, String)> {
                 token.push_str(&text[index + 1..index + 1 + close]);
                 index += close + 2;
             }
-            byte => {
-                token.push(byte as char);
-                index += 1;
+            _ => {
+                let character = text[index..].chars().next()?;
+                token.push(character);
+                index += character.len_utf8();
             }
         }
     }
@@ -261,6 +262,16 @@ fn exact(command: &str, executable: &str, report: &str) -> bool {
     .any(|prefix| command == format!("{prefix} report {report} --stdin-json"))
 }
 
+pub(super) fn owned_reporter(command: &str, executable: &str, report: &str, input: &str) -> bool {
+    let Some(prefix) = command.strip_suffix(&format!(" report {report} {input}")) else {
+        return false;
+    };
+    read_word(prefix, 0).is_some_and(|(end, token)| {
+        end == prefix.len()
+            && (token == executable || Path::new(&token).file_name() == Some(OsStr::new("ovrcr")))
+    })
+}
+
 // Recognize the exact command emitted by setup, including its single quoted
 // renderer argument. Other shell syntax is deliberately left unverified.
 fn supported_statusline(command: &str, executable: &str) -> bool {
@@ -289,87 +300,152 @@ fn refresh_interval(value: &mut Value) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Compose the same hooks used by print setup and Dashboard startup. Existing
+/// native settings remain authoritative; only owned reporters are replaced.
+pub(super) fn compose(text: &str, executable: &str) -> anyhow::Result<String> {
+    let original: Value = serde_json::from_str(text)?;
+    anyhow::ensure!(original.is_object(), "settings must be a JSON object");
+    let value = compose_value(original.clone(), executable)?;
+    if value == original {
+        return Ok(text.to_owned());
+    }
+    Ok(format!("{}\n", serde_json::to_string_pretty(&value)?))
+}
+
+fn compose_value(mut value: Value, executable: &str) -> anyhow::Result<Value> {
+    anyhow::ensure!(
+        value.get("statusLine").is_none_or(|line| line.is_object()
+            && line.get("command").is_none_or(Value::is_string)
+            && line
+                .get("type")
+                .is_none_or(|kind| kind.as_str() == Some("command"))),
+        "statusLine must be an object with a command string"
+    );
+    let command = format!("{MARKER}{} report claude --stdin-json", quote(executable));
+    let hooks = value
+        .as_object_mut()
+        .unwrap()
+        .entry("hooks")
+        .or_insert_with(|| json!({}));
+    let hooks = hooks
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("hooks must be an object"))?;
+    for event in HOOKS {
+        let groups = hooks
+            .entry(*event)
+            .or_insert_with(|| json!([]))
+            .as_array_mut()
+            .ok_or_else(|| anyhow::anyhow!("hook event must be an array"))?;
+        anyhow::ensure!(
+            groups.iter().all(|group| group.is_object()
+                && group.get("hooks").is_some_and(Value::is_array)
+                && group.get("matcher").is_none_or(Value::is_string)),
+            "hook group must contain a hooks array"
+        );
+        anyhow::ensure!(
+            groups.iter().all(
+                |group| group["hooks"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|handler| handler.is_object()
+                        && handler.get("command").is_none_or(Value::is_string)
+                        && handler.get("async").is_none_or(Value::is_boolean))
+            ),
+            "hook handler must be an object"
+        );
+        // Replace only exact old OVRCR reporters or entries bearing our marker.
+        groups.retain_mut(|group| {
+            let Some(handlers) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
+                return true;
+            };
+            let originally_empty = handlers.is_empty();
+            handlers.retain(|handler| {
+                !handler
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| {
+                        text.starts_with(MARKER)
+                            || owned_reporter(text, executable, "claude", "--stdin-json")
+                    })
+            });
+            originally_empty || !handlers.is_empty()
+        });
+        groups.push(
+            json!({"hooks":[{"type":"command", "command":command, "timeout":2, "async":false}]}),
+        );
+    }
+    let renderer = value
+        .get("statusLine")
+        .and_then(|line| line.get("command"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let default = format!(
+        "{MARKER}{} report claude-statusline --stdin-json",
+        quote(executable)
+    );
+    match renderer {
+        Some(ref renderer) if renderer.starts_with(MARKER) => {
+            let marked = renderer.strip_prefix(MARKER).unwrap();
+            let repaired = read_word(marked, 0)
+                .filter(|(end, _)| {
+                    marked[*end..].starts_with(" report claude-statusline --stdin-json")
+                })
+                .map(|(end, _)| {
+                    format!(
+                        "{MARKER}{}{suffix}",
+                        quote(executable),
+                        suffix = &marked[end..]
+                    )
+                })
+                .unwrap_or_else(|| default.clone());
+            value["statusLine"]["type"] = json!("command");
+            value["statusLine"]["command"] = json!(repaired);
+            refresh_interval(&mut value)?;
+        }
+        Some(ref renderer)
+            if renderer.contains("claude-context")
+                && !owned_reporter(renderer, executable, "claude-context", "--stdin-json") =>
+        {
+            eprintln!(
+                "Manual migration required: statusLine contains a wrapper around the legacy claude-context reporter and was left untouched. Edit that wrapper to remove its reporting call, then rerun setup with a renderer-only command; or replace statusLine.command with: {default}"
+            );
+        }
+        renderer => {
+            let composed = match renderer {
+                Some(renderer)
+                    if !owned_reporter(&renderer, executable, "claude-context", "--stdin-json")
+                        && !owned_reporter(
+                            &renderer,
+                            executable,
+                            "claude-statusline",
+                            "--stdin-json",
+                        ) =>
+                {
+                    format!("{default} --render-command {}", quote(&renderer))
+                }
+                _ => default,
+            };
+            let status = value
+                .as_object_mut()
+                .unwrap()
+                .entry("statusLine")
+                .or_insert_with(|| json!({}));
+            let status = status
+                .as_object_mut()
+                .ok_or_else(|| anyhow::anyhow!("statusLine must be an object"))?;
+            status.insert("type".into(), json!("command"));
+            status.insert("command".into(), json!(composed));
+            refresh_interval(&mut value)?;
+        }
+    }
+    Ok(value)
+}
+
 pub(super) fn setup(path: Option<&Path>) -> AppResult<()> {
     let result = (|| -> anyhow::Result<Value> {
-        let mut value = settings(path)?;
         let executable = binary()?;
-        let command = format!("{MARKER}{} report claude --stdin-json", quote(&executable));
-        let hooks = value
-            .as_object_mut()
-            .unwrap()
-            .entry("hooks")
-            .or_insert_with(|| json!({}));
-        let hooks = hooks
-            .as_object_mut()
-            .ok_or_else(|| anyhow::anyhow!("hooks must be an object"))?;
-        for event in HOOKS {
-            let groups = hooks
-                .entry(*event)
-                .or_insert_with(|| json!([]))
-                .as_array_mut()
-                .ok_or_else(|| anyhow::anyhow!("hook event must be an array"))?;
-            // Replace only exact old OVRCR reporters or entries bearing our marker.
-            groups.retain_mut(|group| {
-                let Some(handlers) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
-                    return true;
-                };
-                let originally_empty = handlers.is_empty();
-                handlers.retain(|handler| {
-                    !handler
-                        .get("command")
-                        .and_then(Value::as_str)
-                        .is_some_and(|text| {
-                            text.starts_with(MARKER) || exact(text, &executable, "claude")
-                        })
-                });
-                originally_empty || !handlers.is_empty()
-            });
-            groups.push(json!({"hooks":[{"type":"command", "command":command, "timeout":2, "async":false}]}));
-        }
-        let renderer = value
-            .get("statusLine")
-            .and_then(|line| line.get("command"))
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        let default = format!(
-            "{MARKER}{} report claude-statusline --stdin-json",
-            quote(&executable)
-        );
-        match renderer {
-            Some(ref renderer) if renderer.starts_with(MARKER) => {
-                refresh_interval(&mut value)?;
-            }
-            Some(ref renderer)
-                if renderer.contains("claude-context")
-                    && !exact(renderer, &executable, "claude-context") =>
-            {
-                eprintln!(
-                    "Manual migration required: statusLine contains a wrapper around the legacy claude-context reporter and was left untouched. Edit that wrapper to remove its reporting call, then rerun setup with a renderer-only command; or replace statusLine.command with: {default}"
-                );
-            }
-            renderer => {
-                let composed = match renderer {
-                    Some(renderer)
-                        if !exact(&renderer, &executable, "claude-context")
-                            && !exact(&renderer, &executable, "claude-statusline") =>
-                    {
-                        format!("{default} --render-command {}", quote(&renderer))
-                    }
-                    _ => default,
-                };
-                let status = value
-                    .as_object_mut()
-                    .unwrap()
-                    .entry("statusLine")
-                    .or_insert_with(|| json!({}));
-                let status = status
-                    .as_object_mut()
-                    .ok_or_else(|| anyhow::anyhow!("statusLine must be an object"))?;
-                status.insert("type".into(), json!("command"));
-                status.insert("command".into(), json!(composed));
-                refresh_interval(&mut value)?;
-            }
-        }
+        let value = compose_value(settings(path)?, &executable)?;
         eprintln!(
             "Review the printed JSON and merge it into the intended Claude settings file. No file was written. Use synchronous command hooks with stable Claude Code >=2.1.267; supplied settings do not prove effective enterprise/plugin configuration. Fresh launcher inside an OVRCR session: {} agent run --provider claude -- claude. Initial resume launcher throughout the range: {} agent run --provider claude -- claude --resume UUID. Claude Code 2.1.268 and later compatible patches also support the exact separate-token form claude -r UUID",
             quote(&executable),
@@ -380,7 +456,7 @@ pub(super) fn setup(path: Option<&Path>) -> AppResult<()> {
         );
         Ok(value)
     })();
-    let value = result.map_err(RuntimeError::internal)?;
+    let value = result.map_err(|_| RuntimeError::internal(anyhow::anyhow!("Cannot compose Claude JSON: settings unreadable, invalid, oversized, or incompatible hook structure")))?;
     println!(
         "{}",
         serde_json::to_string_pretty(&value).map_err(RuntimeError::internal)?

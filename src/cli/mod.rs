@@ -8,6 +8,9 @@ mod managed;
 mod output;
 mod report;
 mod resources;
+mod startup;
+mod startup_bridge;
+mod startup_hooks;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -64,7 +67,7 @@ fn run(cli: Cli) -> AppResult<()> {
     let Some(command) = cli.command else {
         let paths = ServerPaths::resolve().map_err(RuntimeError::internal)?;
         return run_dashboard(
-            connect_or_start(&paths).map_err(RuntimeError::internal)?,
+            startup::run(&paths).map_err(RuntimeError::internal)?,
             agent_setup::boot_hook_warning(),
         )
         .map_err(RuntimeError::internal);

@@ -385,8 +385,9 @@ installed service) and retry
 ```
 
 Stop live sessions or run `ovrcr shutdown --kill`, then launch the updated binary.
-Retained exited or stopped rows do not block `ovrcr shutdown`. The CLI never
-stops an old server automatically and never restores its lost PTYs.
+Retained exited or stopped rows do not block `ovrcr shutdown`. Interactive Dashboard startup offers a separate controlled restart for a different
+or unknown build. It never restores lost PTYs; incompatible protocols require
+the matching old CLI or service to stop the selected instance.
 
 The first start of this binary against an existing `config.toml` imports project
 and workspace records into that path with `.sqlite3` appended, in one transaction.
@@ -453,24 +454,38 @@ inferring the rules from this summary.
 ```sh
 just verify    # fmt-check, check, lint, test
 just run       # build, install ~/.local/bin/ovrcr, then launch
-just restart   # stop a leftover local server, then start the dashboard
+just restart   # controlled stop of the selected server, then rebuild and launch
 ```
 
-`just run` refreshes `~/.local/bin/ovrcr` with the debug build before launching
-it, forwarding any arguments (for example, `just run --version`). It then
-rewrites existing Claude, Codex, and Grok reporter commands that already call
-`ovrcr` so they name that installed binary. A command that already names it is
-left unchanged, which keeps a Codex trust hash valid. It does not add hooks or
-change trust. Keep `~/.local/bin` on your `PATH`. It builds into
-`CARGO_TARGET_DIR` when set, otherwise the checkout's `target` directory. A
-failed build, install, or hook retarget stops the launch; replacement is atomic
-so running processes keep their existing binary. After install, `just run`
-probes the existing server with the same protocol handshake as a normal
-`ovrcr list`. On a version mismatch (or an older build that closes before
-handshake), it prints the existing error and asks interactively whether to
-`pkill` that server before continuing; answering no aborts and leaves the
-server running. Non-interactive runs abort with a pointer to `just restart`.
-Matching or absent servers are left alone.
+`just run` atomically refreshes `~/.local/bin/ovrcr` before launch, forwards
+arguments (for example, `just run --version`) and honors `CARGO_TARGET_DIR`.
+On macOS it also packages Bridge installation assets under `~/.local/lib/ovrcr`;
+unchanged native sources reuse the validated build. Keep `~/.local/bin` on PATH.
+Build or publication failures stop launch.
+
+Interactive Dashboard startup offers missing Claude/Codex reporting hooks and
+repairs to existing OVRCR hooks in the active native profiles. Each offer shows
+the destination and requires y/n; no, EOF or noninteractive input leaves it
+untouched. Native approval/trust settings, unrelated handlers, file permissions
+and valid symlinks are preserved. Review/trust new Codex hooks in native Codex;
+configuration does not prove hook delivery. Embedded and per-invocation adapters
+need no global installation. Reporting callbacks and inspection/help/version
+commands skip these startup offers.
+
+On macOS startup also offers a missing or outdated Bridge from the packaged
+assets. It requires Python 3 and a valid non-ad-hoc signing identity: when exactly
+one identity is available it is selected, otherwise set
+`OVRCR_BRIDGE_SIGNING_IDENTITY` explicitly. Runtime does not compile Swift or need
+a checkout. Installation does not request notification permission or restart an
+already running Bridge. Optional repair failures warn and leave Dashboard usable.
+
+Startup compares the server's captured executable build, even when package and
+protocol versions match. A different or unknown legacy build gets a separate
+restart offer naming the socket and warning that running sessions stop. No leaves
+that server untouched and aborts attachment. Yes requests controlled shutdown on
+the checked connection. Incompatible protocols require the matching old CLI or
+service to stop that instance; no process-name or discovered-PID cleanup is used.
+A fixed service pointing at another build must be explicitly reinstalled.
 
 Or with Cargo directly — always name the package, since the workspace has five:
 

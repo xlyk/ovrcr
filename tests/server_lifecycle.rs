@@ -11131,6 +11131,9 @@ printf '{"schema":@BRIDGE_SCHEMA@,"server_wire":%s,"status":"%s"}\n' "$wire" "$s
         };
         let pair = portable_pty::native_pty_system().openpty(size).unwrap();
         let mut command = portable_pty::CommandBuilder::new(env!("CARGO_BIN_EXE_ovrcr"));
+        // ControlFixture hosts run_server in this test executable. The CLI must
+        // compare that intended build, rather than pretending it is the CLI image.
+        command.env("OVRCR_SERVER_EXECUTABLE", std::env::current_exe().unwrap());
         command.env("OVRCR_SOCKET", &fixture.socket);
         command.env("OVRCR_CONFIG", fixture.root.path().join("config.toml"));
         command.env("OVRCR_DASHBOARD_CONFIG", settings_path);
