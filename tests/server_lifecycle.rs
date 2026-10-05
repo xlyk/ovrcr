@@ -19197,9 +19197,10 @@ fn iterm_setup_real_palette_requires_separate_opt_in_and_uses_current_owned_dash
     assert!(target.iterm_focus);
     let owner = *target.owner.unwrap();
     assert!(owner.validate());
+    // The Server publishes its canonical bound socket, including TMPDIR aliases.
     assert_eq!(
         owner.context.server_socket,
-        fixture.socket.to_str().unwrap()
+        fixture.socket.canonicalize().unwrap().to_str().unwrap()
     );
     let Response::BridgeOwner(confirmed) =
         fixture.request(Request::BridgeOwner(ovrcr::protocol::BridgeOwnerCall {
