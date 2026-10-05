@@ -1,8 +1,6 @@
 use super::{
     Dashboard, DashboardAction, InputMode,
-    render::{
-        RED, SUBTEXT, SURFACE2, TEXT, YELLOW, compose_row, label_color, sidebar_area,
-    },
+    render::{RED, SUBTEXT, SURFACE2, TEXT, YELLOW, compose_row, label_color, sidebar_area},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
 use ovrcr_protocol::{
@@ -446,7 +444,12 @@ fn header_line(width: u16) -> Line<'static> {
     )
 }
 
-fn bar_spans(provider: &ProviderQuota, window: &QuotaWindow, n: usize, now: u64) -> Vec<Span<'static>> {
+fn bar_spans(
+    provider: &ProviderQuota,
+    window: &QuotaWindow,
+    n: usize,
+    now: u64,
+) -> Vec<Span<'static>> {
     let color = provider_color(provider);
     let show_bar = !window.over_limit
         && window.resets_unix_ms.is_none_or(|reset| reset > now)
@@ -523,12 +526,12 @@ fn window_row(
         spans.push(Span::styled(label, style));
         if let Some(suffix) = stale {
             // Keep the historical " left" cue only beside a positive retained % when stale.
-            let left = if !window.over_limit && window.remaining_basis_points().is_some_and(|l| l > 0)
-            {
-                " left"
-            } else {
-                ""
-            };
+            let left =
+                if !window.over_limit && window.remaining_basis_points().is_some_and(|l| l > 0) {
+                    " left"
+                } else {
+                    ""
+                };
             if !left.is_empty() {
                 spans.push(Span::styled(left, style));
             }
@@ -696,12 +699,13 @@ fn compact_line(provider: &ProviderQuota, now: u64) -> Line<'static> {
                 Span::styled(label, percent_style(window, now)),
             ];
             if let Some(suffix) = stale_suffix(provider, now) {
-                let left =
-                    if !window.over_limit && window.remaining_basis_points().is_some_and(|l| l > 0) {
-                        " left"
-                    } else {
-                        ""
-                    };
+                let left = if !window.over_limit
+                    && window.remaining_basis_points().is_some_and(|l| l > 0)
+                {
+                    " left"
+                } else {
+                    ""
+                };
                 if !left.is_empty() {
                     spans.push(Span::styled(left, percent_style(window, now)));
                 }

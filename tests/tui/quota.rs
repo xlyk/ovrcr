@@ -48,11 +48,7 @@ fn quota_waiting_providers_are_visible_before_the_first_native_report() {
         rows.iter().any(|row| row.contains("QUOTA LEFT")),
         "{rows:?}"
     );
-    for expected in [
-        "Claude · checking",
-        "Codex · usage off",
-        "Grok · usage off",
-    ] {
+    for expected in ["Claude · checking", "Codex · usage off", "Grok · usage off"] {
         assert!(
             rows.iter().any(|row| row == expected),
             "{expected}: {rows:?}"
@@ -141,7 +137,10 @@ fn quota_narrow_sidebar_preserves_window_identity_percentage_and_full_state() {
             },
             "{rows:?}"
         );
-        assert!(rows.iter().any(|row| row == "Codex · usage off"), "{rows:?}");
+        assert!(
+            rows.iter().any(|row| row == "Codex · usage off"),
+            "{rows:?}"
+        );
         assert!(rows.iter().any(|row| row == "Grok · usage off"), "{rows:?}");
     }
 }
@@ -364,7 +363,9 @@ fn quota_block_shows_a_stale_value_with_its_age() {
     );
     let hours = sidebar_rows(&dashboard, 39, NOW + 3 * 3_600_000);
     assert!(
-        hours.iter().any(|row| row.contains("37%") && row.contains("stale 3h")),
+        hours
+            .iter()
+            .any(|row| row.contains("37%") && row.contains("stale 3h")),
         "{hours:?}"
     );
 }
@@ -377,7 +378,10 @@ fn quota_block_ladder_gives_three_lines_then_one_then_none() {
     dashboard.install_hierarchy(hierarchy);
     publish_quota(&mut dashboard, mixed_snapshot());
     let full = rows_at(&dashboard, 12, NOW);
-    assert!(full.iter().any(|row| row.contains("QUOTA LEFT")), "{full:?}");
+    assert!(
+        full.iter().any(|row| row.contains("QUOTA LEFT")),
+        "{full:?}"
+    );
     let mut seen = Vec::new();
     for height in (3..12).rev() {
         let rows = rows_at(&dashboard, height, NOW);
@@ -540,7 +544,10 @@ fn palette_enable_usage_asks_the_server_and_applies_nothing() {
         response: Response::Ok,
     });
     let rows = sidebar_rows(&dashboard, 39, NOW);
-    assert!(rows.iter().any(|row| row == "Codex · usage off"), "{rows:?}");
+    assert!(
+        rows.iter().any(|row| row == "Codex · usage off"),
+        "{rows:?}"
+    );
     // Once the Server republishes the setting on, the command is gone.
     publish_quota(&mut dashboard, mixed_snapshot());
     dashboard.key(KeyCode::Char(':'));
