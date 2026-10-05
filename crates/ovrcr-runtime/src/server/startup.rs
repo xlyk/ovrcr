@@ -192,7 +192,7 @@ fn run_server_inner(
         registry: Mutex::new(registry),
         sessions: Mutex::new(HashMap::new()),
         dashboard: ActiveDashboard::default(),
-        quotas: Mutex::new(quota::initial(settings.report.settings.quota.enabled)),
+        quotas: Mutex::new(quota::initial(&settings.report.settings.quota)),
         quota_refresh: Mutex::default(),
         settings: Mutex::new(settings),
         retained: parking_lot::Mutex::new(retained),
@@ -229,6 +229,10 @@ fn run_server_inner(
     let grok_quota_thread = thread::Builder::new()
         .name("ovrcr-grok-quota".into())
         .spawn(move || quota::run(grok_state, ovrcr_protocol::QuotaProvider::Grok))?;
+    let cursor_state = Arc::clone(&state);
+    let cursor_quota_thread = thread::Builder::new()
+        .name("ovrcr-cursor-quota".into())
+        .spawn(move || super::cursor_quota::run(cursor_state))?;
     let claude_state = Arc::clone(&state);
     let claude_auth_thread = thread::Builder::new()
         .name("ovrcr-claude-auth".into())
@@ -333,6 +337,7 @@ fn run_server_inner(
     title_thread.thread().unpark();
     quota_thread.thread().unpark();
     grok_quota_thread.thread().unpark();
+    cursor_quota_thread.thread().unpark();
     claude_auth_thread.thread().unpark();
     claude_account_thread.thread().unpark();
     claude_probe_thread.thread().unpark();
@@ -344,6 +349,7 @@ fn run_server_inner(
     }
     let _ = quota_thread.join();
     let _ = grok_quota_thread.join();
+    let _ = cursor_quota_thread.join();
     let _ = claude_auth_thread.join();
     let _ = claude_account_thread.join();
     let _ = claude_probe_thread.join();

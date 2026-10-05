@@ -42,9 +42,9 @@ the reserved quota rows; sidebar and pane dividers remain draggable over their
 full height.
 
 The palette offers **Refresh quota**, which asks the Server to read Codex and
-Grok now, and Claude too while `quota.claude.probe` is on (a refusal inside the
+Grok now, Cursor while `quota.cursor.dashboard` is on, and Claude too while `quota.claude.probe` is on (a refusal inside the
 Server's 30-second cooldown shows the remaining seconds in the footer), and,
-while collection is off, **Enable Codex and Grok usage**, which asks the Server
+while collection is off, **Enable native account usage**, which asks the Server
 to set `quota.enabled = true`. The Dashboard changes nothing itself; the rows
 change when the Server republishes. The Claude probe is a separate consent,
 `quota.claude.probe`, off until set; see [provider allowance](provider-quota.md).
@@ -686,17 +686,19 @@ there; existing sessions stay usable. OVRCR does not switch the checkout.
 
 ## Dashboard settings
 
-Every setting lives in one settings document, `dashboard.toml` beside
-`config.toml`, including the Server's `title_model`, `automatic_local_terminals`
+Every setting lives in one settings document, `dashboard.toml` in the instance
+directory selected by `OVRCR_HOME`, including the Server's `title_model`, `automatic_local_terminals`
 and `[quota]`. Override the path with `OVRCR_DASHBOARD_CONFIG`; it chooses a file
 only. Remembered launch choices stay in this file. Do not put settings in
-`config.toml`. That path remains the instance identity for the project/workspace
-database (`config.toml.sqlite3`) and scheduled-task storage (`config.tasks`); a
-`[quota]` table there configures nothing and is reported as a finding.
+the preserved legacy `config.toml`; a `[quota]` table there configures nothing
+and is reported as a finding. Project/workspace records live in
+`registry.sqlite3`, and scheduled tasks live in `tasks/`, in the instance directory.
 
 A missing file uses defaults. A symlink at that path whose target does not
 exist is not a missing file: it is one document-level finding naming the path.
-A wrong-typed value keeps its own default. A wrong-typed element of a list or
+A wrong-typed value keeps its own default. An invalid explicit
+`quota.cursor.state_db` disables the Cursor reader so it cannot select the default
+account. A wrong-typed element of a list or
 table (`picker_roots[1]`, `agents[1]`, `launch_choices.demo`) is dropped on its
 own, with a finding naming that element; sibling elements stay. An
 unknown key or an unknown spelling such as `automatic_local_terminals = "always"`
@@ -800,6 +802,10 @@ command = "codex"
 [quota.grok]
 command = "grok"
 # home = "/absolute/path/to/grok-profile"
+
+[quota.cursor]
+dashboard = false                 # opt in: experimental personal Cursor dashboard reader
+# state_db = "/absolute/path/to/state.vscdb" # omit for the Cursor desktop default
 ```
 
 Every setting takes effect without a restart: the Server checks the file every

@@ -318,9 +318,9 @@ fn items(report: &SettingsReport, presets: &[String]) -> Vec<Row> {
             top(
                 "Usage",
                 "quota.enabled",
-                "Codex and Grok usage",
+                "Native account usage",
                 Kind::Toggle(quota.enabled),
-                &["On by default while a Dashboard is attached. The readers do not rewrite auth files. Set false to turn Codex and Grok collection off."],
+                &["On by default while a Dashboard is attached. The readers do not rewrite auth files. Set false to turn Codex, Grok and the opt-in Cursor reader off."],
             ),
             top(
                 "Usage",
@@ -333,6 +333,8 @@ fn items(report: &SettingsReport, presets: &[String]) -> Vec<Row> {
             top("Usage", "quota.codex.home", "Codex home", Kind::Path, &[]),
             top("Usage", "quota.grok.command", "Grok command", Kind::Path, &[]),
             top("Usage", "quota.grok.home", "Grok home", Kind::Path, &[]),
+            top("Usage", "quota.cursor.dashboard", "Cursor dashboard usage", Kind::Toggle(quota.cursor.dashboard), &[ovrcr_protocol::CURSOR_QUOTA_DESCRIPTION]),
+            top("Usage", "quota.cursor.state_db", "Cursor state database", Kind::Path, &["Optional absolute path to Cursor's state.vscdb; otherwise the platform default."]),
         ],
     );
     let mut agents = vec![top("Agents", "agents", "Agent overrides", Kind::Fixed, &[])];

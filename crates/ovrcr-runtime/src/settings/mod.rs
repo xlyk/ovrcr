@@ -229,6 +229,30 @@ impl Loader<'_> {
             }
             self.native(&mut quota, "quota.codex", &mut settings.quota.codex);
             self.native(&mut quota, "quota.grok", &mut settings.quota.grok);
+            if let Some(mut cursor) = self.take::<toml::Table>(&mut quota, "quota.cursor") {
+                self.value(
+                    &mut cursor,
+                    "quota.cursor.dashboard",
+                    &mut settings.quota.cursor.dashboard,
+                );
+                let explicit_path = cursor.contains_key("state_db");
+                if let Some(path) = self.take::<PathBuf>(&mut cursor, "quota.cursor.state_db") {
+                    if path.is_absolute() {
+                        self.accept(
+                            "quota.cursor.state_db",
+                            &mut settings.quota.cursor.state_db,
+                            Some(path),
+                        );
+                    } else {
+                        self.finding("quota.cursor.state_db", "expected an absolute path".into());
+                        // A malformed explicit path must never select the default account.
+                        settings.quota.cursor.dashboard = false;
+                    }
+                } else if explicit_path {
+                    settings.quota.cursor.dashboard = false;
+                }
+                self.unknown(cursor, "quota.cursor.");
+            }
             self.unknown(quota, "quota.");
         }
         self.unknown(std::mem::take(table), "");
@@ -679,6 +703,18 @@ fn rows(settings: &Settings, set: &HashSet<String>) -> Vec<SettingRow> {
             quota.grok.home.as_deref().and_then(path),
             None,
         ),
+        row(
+            "quota.cursor.dashboard",
+            Server,
+            display(&quota.cursor.dashboard),
+            (!quota.cursor.dashboard).then_some(ovrcr_protocol::CURSOR_QUOTA_DESCRIPTION),
+        ),
+        row(
+            "quota.cursor.state_db",
+            Server,
+            quota.cursor.state_db.as_deref().and_then(path),
+            None,
+        ),
     ];
     let defaults = if set.is_empty() {
         None
@@ -769,6 +805,10 @@ home = "/tmp/codex-home"
 
 [quota.grok]
 command = "/opt/grok"
+
+[quota.cursor]
+dashboard = true
+state_db = "/tmp/cursor/state.vscdb"
 "#;
 
     #[test]
@@ -824,6 +864,27 @@ command = "/opt/grok"
     }
 
     #[test]
+    fn invalid_explicit_cursor_database_never_selects_default_account() {
+        for raw in ["7", "'relative/state.vscdb'"] {
+            let report = read(&format!("[quota.cursor]\ndashboard=true\nstate_db={raw}\n"));
+            assert!(!report.settings.quota.cursor.dashboard);
+            assert!(
+                report
+                    .findings
+                    .iter()
+                    .any(|finding| finding.key.as_deref() == Some("quota.cursor.state_db"))
+            );
+        }
+        let report = read("[quota.cursor]\ndashboard=true\nstate_db='/tmp/cursor.vscdb'\n");
+        assert!(report.settings.quota.cursor.dashboard);
+        assert_eq!(
+            report.settings.quota.cursor.state_db.as_deref(),
+            Some(Path::new("/tmp/cursor.vscdb"))
+        );
+        assert!(report.findings.is_empty());
+    }
+
+    #[test]
     fn empty_document_is_all_defaults_and_consent_settings_say_how_to_turn_on() {
         let report = read("");
         assert_eq!(report.findings, vec![]);
@@ -852,6 +913,10 @@ command = "/opt/grok"
                     "quota.claude.probe",
                     ovrcr_protocol::CLAUDE_PROBE_DESCRIPTION
                 ),
+                (
+                    "quota.cursor.dashboard",
+                    ovrcr_protocol::CURSOR_QUOTA_DESCRIPTION
+                ),
             ]
         );
         let keys: Vec<_> = report.rows.iter().map(|row| row.key.as_str()).collect();
@@ -872,6 +937,8 @@ command = "/opt/grok"
                 "quota.codex.home",
                 "quota.grok.command",
                 "quota.grok.home",
+                "quota.cursor.dashboard",
+                "quota.cursor.state_db",
             ]
         );
     }

@@ -51,7 +51,7 @@ The Server still observes native process lifecycle and the supervisor preserves
 terminal input/output, signals and exit status. Agent activity stays **Unknown**.
 Busy, Ready/Unread/review/alerts, approval/question Input requests, model/context/
 usage/cost/quota, generated titles and conversation recovery are **unavailable**.
-Terminal text and silence never infer them. No conversation recovery reference
+Terminal text and silence never infer them. Personal account quota can be read independently through the opt-in [Cursor dashboard adapter](provider-quota.md#cursor-personal-account); it does not add quota or activity fields to native session reports. No conversation recovery reference
 is fabricated. Resume/continue, headless, ACP, management commands and other
 options run natively with their original argv and reporting unavailable.
 Dashboard detach/reattach uses existing PTY ownership; Reopen stays unavailable.

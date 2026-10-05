@@ -97,9 +97,17 @@ pub struct NativeCommand {
     pub home: Option<PathBuf>,
 }
 
+/// Experimental personal Cursor dashboard reader; no credentials in settings.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CursorQuotaSettings {
+    pub dashboard: bool,
+    /// Absolute SQLite state.vscdb path, or the platform default when absent.
+    pub state_db: Option<PathBuf>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuotaSettings {
-    /// Codex and Grok account collection. On by default while a Dashboard is
+    /// Codex, Grok and opt-in Cursor account collection. On by default while a Dashboard is
     /// attached. `false` is the explicit off switch. The readers do not rewrite
     /// auth files.
     pub enabled: bool,
@@ -107,12 +115,14 @@ pub struct QuotaSettings {
     pub claude_probe: bool,
     pub codex: NativeCommand,
     pub grok: NativeCommand,
+    pub cursor: CursorQuotaSettings,
 }
 
 impl Default for QuotaSettings {
     fn default() -> Self {
         Self {
             enabled: true,
+            cursor: CursorQuotaSettings::default(),
             claude_probe: false,
             codex: NativeCommand {
                 command: "codex".into(),
