@@ -396,7 +396,7 @@ fn quota_block_keeps_sidebar_border_draggable_at_the_bottom() {
     let grok = rows
         .iter()
         .rposition(|row| row.contains("Grok"))
-        .expect(&format!("missing Grok: {rows:?}"));
+        .unwrap_or_else(|| panic!("missing Grok: {rows:?}"));
     assert!(
         rows[grok].contains("Grok · usage off"),
         "row {grok}: {}",

@@ -67,58 +67,56 @@ fn quota_left_option_a_linux_dashboard_smoke() {
     );
 
     let now = 1_800_000_000_000u64;
-    let mut snapshot = QuotaSnapshot::default();
-    snapshot.claude = ProviderQuota {
-        state: QuotaState::Current,
-        observed_unix_ms: Some(now),
-        checked_unix_ms: Some(now),
-        windows: vec![
-            QuotaWindow {
+    let snapshot = QuotaSnapshot {
+        claude: ProviderQuota {
+            observed_unix_ms: Some(now),
+            checked_unix_ms: Some(now),
+            windows: vec![
+                QuotaWindow {
+                    id: "five_hour".into(),
+                    label: "5h".into(),
+                    general: true,
+                    used_basis_points: Some(4_200),
+                    over_limit: false,
+                    resets_unix_ms: Some(now + 3_600_000),
+                },
+                QuotaWindow {
+                    id: "seven_day".into(),
+                    label: "7d".into(),
+                    general: true,
+                    used_basis_points: Some(2_000),
+                    over_limit: false,
+                    resets_unix_ms: Some(now + 86_400_000),
+                },
+            ],
+            ..ProviderQuota::unknown(QuotaProvider::Claude, QuotaState::Current)
+        },
+        codex: ProviderQuota {
+            observed_unix_ms: Some(now),
+            checked_unix_ms: Some(now),
+            windows: vec![QuotaWindow {
                 id: "five_hour".into(),
                 label: "5h".into(),
                 general: true,
-                used_basis_points: Some(4_200),
+                used_basis_points: Some(6_300),
                 over_limit: false,
                 resets_unix_ms: Some(now + 3_600_000),
-            },
-            QuotaWindow {
-                id: "seven_day".into(),
-                label: "7d".into(),
+            }],
+            ..ProviderQuota::unknown(QuotaProvider::Codex, QuotaState::Current)
+        },
+        grok: ProviderQuota {
+            observed_unix_ms: Some(now),
+            checked_unix_ms: Some(now),
+            windows: vec![QuotaWindow {
+                id: "week".into(),
+                label: "wk".into(),
                 general: true,
-                used_basis_points: Some(2_000),
+                used_basis_points: Some(2_400),
                 over_limit: false,
-                resets_unix_ms: Some(now + 86_400_000),
-            },
-        ],
-        ..ProviderQuota::unknown(QuotaProvider::Claude, QuotaState::Current)
-    };
-    snapshot.codex = ProviderQuota {
-        state: QuotaState::Current,
-        observed_unix_ms: Some(now),
-        checked_unix_ms: Some(now),
-        windows: vec![QuotaWindow {
-            id: "five_hour".into(),
-            label: "5h".into(),
-            general: true,
-            used_basis_points: Some(6_300),
-            over_limit: false,
-            resets_unix_ms: Some(now + 3_600_000),
-        }],
-        ..ProviderQuota::unknown(QuotaProvider::Codex, QuotaState::Current)
-    };
-    snapshot.grok = ProviderQuota {
-        state: QuotaState::Current,
-        observed_unix_ms: Some(now),
-        checked_unix_ms: Some(now),
-        windows: vec![QuotaWindow {
-            id: "week".into(),
-            label: "wk".into(),
-            general: true,
-            used_basis_points: Some(2_400),
-            over_limit: false,
-            resets_unix_ms: Some(now + 604_800_000),
-        }],
-        ..ProviderQuota::unknown(QuotaProvider::Grok, QuotaState::Current)
+                resets_unix_ms: Some(now + 604_800_000),
+            }],
+            ..ProviderQuota::unknown(QuotaProvider::Grok, QuotaState::Current)
+        },
     };
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::QuotaChanged(Box::new(
         snapshot,
