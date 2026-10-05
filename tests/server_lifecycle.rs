@@ -11131,9 +11131,14 @@ printf '{"schema":@BRIDGE_SCHEMA@,"server_wire":%s,"status":"%s"}\n' "$wire" "$s
         };
         let pair = portable_pty::native_pty_system().openpty(size).unwrap();
         let mut command = portable_pty::CommandBuilder::new(env!("CARGO_BIN_EXE_ovrcr"));
-        // ControlFixture hosts run_server in this test executable. The CLI must
-        // compare that intended build, rather than pretending it is the CLI image.
-        command.env("OVRCR_SERVER_EXECUTABLE", std::env::current_exe().unwrap());
+        // Select the intended image from the fixture's owned server adapter.
+        // A binary host runs the CLI; a thread host runs this test executable.
+        let server_executable = if fixture.server_pid().is_some() {
+            fixture.executable.clone()
+        } else {
+            std::env::current_exe().unwrap()
+        };
+        command.env("OVRCR_SERVER_EXECUTABLE", server_executable);
         command.env("OVRCR_SOCKET", &fixture.socket);
         command.env("OVRCR_CONFIG", fixture.root.path().join("config.toml"));
         command.env("OVRCR_DASHBOARD_CONFIG", settings_path);
@@ -11201,7 +11206,7 @@ printf '{"schema":@BRIDGE_SCHEMA@,"server_wire":%s,"status":"%s"}\n' "$wire" "$s
 
     fn wait_unavailable_notice(&mut self) {
         let notice = if cfg!(target_os = "macos") {
-            "OVRCR Bridge unavailable; install with scripts/install-bridge.sh from this checkout"
+            "OVRCR Bridge unavailable; restart OVRCR to review the Bridge install or repair offer"
         } else {
             "Desktop notifications unavailable"
         };
@@ -16236,7 +16241,15 @@ fn desktop_notifications_bridge_installation_failures_are_actionable_without_set
             "codex-hooks",
             status,
         );
-        dashboard.wait_screen(|screen| screen.contains("Bridge") && screen.contains("install"));
+        if status == "missing" {
+            dashboard.wait_unavailable_notice();
+        } else {
+            dashboard.wait_screen(|screen| {
+                screen.contains(
+                    "OVRCR Bridge needs updating; restart OVRCR to review the Bridge repair offer",
+                )
+            });
+        }
         let expected = if status == "missing" {
             &[][..]
         } else {
