@@ -166,7 +166,12 @@
     "recorded_dashboard_plugin_removed": true,
     "cli_plugin_path_removal": "not separately captured",
     "cli_native_exit_status": "unverified",
-    "normal_gui_close_action": "not captured; cause of fixture closure unknown"
+    "normal_gui_close_action": "not captured; cause of fixture closure unknown",
+    "launcher_completion_source": {
+      "private_file": "39-launcher-completion-source.private.json",
+      "sha256": "28b8626d24d6657414dd861740ec52dc77f45ba5a9731b95bb390d8f770fba3f",
+      "timestamp": "2026-10-05T15:43:08.434Z"
+    }
   },
   "metadata_comparison": {
     "baseline_files": 665,
@@ -186,5 +191,14 @@
     "Normal GUI-close action and cause of fixture closure not captured",
     "CLI pause/resume and native interrupt acceptance not run",
     "Native Linux and other accounts/auth modes not tested"
-  ]
+  ],
+  "dashboard_trust": {
+    "observed_text": [
+      "Workspace Trust Required",
+      "Trusting workspace..."
+    ],
+    "explicit_trust_selection_in_recorded_acceptance_inputs": false,
+    "approval_request": "unanswered",
+    "trust_state_change_actor": "unverified; UI text alone does not establish an action or authorization"
+  }
 }
