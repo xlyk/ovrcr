@@ -34,9 +34,14 @@ remains open for the failures and unverified platform/configuration checks.
 
 ## Observed results
 
-The recorded [server/doctor/kernel observations](observations.json) retain the
-captured values, including unavailable capabilities and the baseline doctor
-guidance. Only the fixture's absolute path is normalized to `<empty fixture>`.
+The public [server/doctor/kernel observations](observations.json) preserve the
+recorded values in retained fields, including unavailable capabilities and the
+baseline doctor guidance. Session `cwd` paths replace the fixture's absolute path
+with `<empty fixture>`. For `11-cli-kernel-paused.json`, the public record selects
+four of the 21 original process rows: the supervisor, foreground native Python
+process and two native helpers. It removes their `executable` fields and retains
+`pid`, `ppid`, `pgid` and `state` unchanged. The originals remain private; their
+SHA-256 hashes are recorded in the [source manifest](observation-source-manifest.json).
 
 | Check | Result | Evidence |
 | --- | --- | --- |
