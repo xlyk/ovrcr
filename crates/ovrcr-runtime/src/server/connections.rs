@@ -837,6 +837,23 @@ pub(super) fn handle_request_with_id(
             await_view_completion(receiver)
         }
         Request::Events { .. } => Response::Events(state.event_snapshot()),
+        Request::SaveWorkspaceWip { project, name } => state
+            .save_workspace_wip(&project, &name)
+            .map_or_else(error_for_lifecycle, |_| Response::Ok),
+        Request::AnswerWipSave {
+            project,
+            workspace,
+            save,
+        } => {
+            if state.answer_wip_save(&project, &workspace, save) {
+                Response::Ok
+            } else {
+                error_response(
+                    ErrorCode::InvalidRequest,
+                    "no uncommitted-work question is waiting for that workspace",
+                )
+            }
+        }
     }
 }
 

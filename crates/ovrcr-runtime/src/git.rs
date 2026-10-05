@@ -823,6 +823,135 @@ fn local_branches(repo: &Path) -> Result<Vec<String>> {
         .collect())
 }
 
+/// `refs/heads/wip/<branch>` when `branch` is a legal Git ref suffix.
+pub fn wip_refname(branch: &str) -> Result<String> {
+    let name = format!("refs/heads/wip/{branch}");
+    let status = Command::new("git")
+        .args(["check-ref-format", &name])
+        .env_remove("GIT_DIR")
+        .status()
+        .context("run git check-ref-format")?;
+    if !status.success() {
+        bail!("checkout {branch:?} cannot be saved as {name}");
+    }
+    Ok(name)
+}
+
+/// Commit every unignored change onto `refs/heads/wip/<branch>` and push that
+/// ref to `origin`. The checkout's branch, index, and files stay as they are.
+pub fn publish_wip(worktree: &Path, branch: &str) -> Result<()> {
+    let refname = wip_refname(branch)?;
+    let index = std::env::temp_dir().join(format!(
+        "ovrcr-wip-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let _index = RemoveOnDrop(&index);
+    git_index(worktree, &index, &["read-tree", "HEAD"])?;
+    git_index(worktree, &index, &["add", "--all"])?;
+    let tree = git_index_stdout(worktree, &index, &["write-tree"])?;
+    let head_tree = git_stdout(
+        worktree,
+        &[OsString::from("rev-parse"), OsString::from("HEAD^{tree}")],
+    )?;
+    if tree == head_tree {
+        bail!("worktree has no unignored changes");
+    }
+    let head = git_stdout(
+        worktree,
+        &[OsString::from("rev-parse"), OsString::from("HEAD")],
+    )?;
+    let commit = git_stdout(
+        worktree,
+        &[
+            OsString::from("commit-tree"),
+            OsString::from(&tree),
+            OsString::from("-p"),
+            OsString::from(&head),
+            OsString::from("-m"),
+            OsString::from("Save uncommitted work"),
+        ],
+    )?;
+    run_git(
+        worktree,
+        &[
+            OsString::from("update-ref"),
+            OsString::from(&refname),
+            OsString::from(&commit),
+        ],
+    )?;
+    let mut push = git_command(worktree);
+    push.args([
+        "-c",
+        "credential.helper=",
+        "push",
+        "origin",
+        &format!("{refname}:{refname}"),
+    ])
+    .env("GIT_TERMINAL_PROMPT", "0");
+    let output = push
+        .output()
+        .with_context(|| format!("run git push in {}", worktree.display()))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("git push failed ({}): {}", output.status, stderr.trim());
+    }
+    Ok(())
+}
+
+struct RemoveOnDrop<'a>(&'a Path);
+
+impl Drop for RemoveOnDrop<'_> {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(self.0);
+    }
+}
+
+fn git_command(repo: &Path) -> Command {
+    let mut command = Command::new("git");
+    command
+        .current_dir(repo)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+        .env_remove("GIT_INDEX_FILE");
+    command
+}
+
+fn git_index(repo: &Path, index: &Path, args: &[&str]) -> Result<()> {
+    let mut command = git_command(repo);
+    command.args(args).env("GIT_INDEX_FILE", index);
+    let output = command
+        .output()
+        .with_context(|| format!("run git in {}", repo.display()))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("git command failed ({}): {}", output.status, stderr.trim());
+    }
+    Ok(())
+}
+
+fn git_index_stdout(repo: &Path, index: &Path, args: &[&str]) -> Result<String> {
+    let mut command = git_command(repo);
+    command.args(args).env("GIT_INDEX_FILE", index);
+    let output = command
+        .output()
+        .with_context(|| format!("run git in {}", repo.display()))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("git command failed ({}): {}", output.status, stderr.trim());
+    }
+    Ok(String::from_utf8(output.stdout)
+        .context("decode git output")?
+        .trim()
+        .to_owned())
+}
+
 fn git_stdout(repo: &Path, args: &[OsString]) -> Result<String> {
     let output = run_git(repo, args)?;
     Ok(String::from_utf8(output.stdout)
@@ -837,14 +966,8 @@ fn try_git_stdout(repo: &Path, args: &[OsString]) -> Option<String> {
 }
 
 fn run_git(repo: &Path, args: &[OsString]) -> Result<Output> {
-    let output = Command::new("git")
+    let output = git_command(repo)
         .args(args)
-        .current_dir(repo)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_COMMON_DIR")
-        .env_remove("GIT_OBJECT_DIRECTORY")
-        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
         .output()
         .with_context(|| format!("run git in {}", repo.display()))?;
     if !output.status.success() {

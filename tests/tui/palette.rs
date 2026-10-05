@@ -2690,10 +2690,7 @@ fn reopen_confirm_keeps_captured_run_when_hierarchy_advances() {
 
 #[test]
 fn refused_workspace_removal_offers_force_and_sends_it_only_on_explicit_confirm() {
-    for code in [
-        ovrcr::protocol::ErrorCode::SessionsRemain,
-        ovrcr::protocol::ErrorCode::DirtyWorktree,
-    ] {
+    for code in [ovrcr::protocol::ErrorCode::SessionsRemain] {
         let mut dashboard = dashboard_fixture();
         palette_search(&mut dashboard, "remove workspace");
         dashboard.key(KeyCode::Enter);
@@ -2744,6 +2741,142 @@ fn refused_workspace_removal_offers_force_and_sends_it_only_on_explicit_confirm(
             ovrcr::tui::DashboardAction::Request(_)
         ));
     }
+}
+
+#[test]
+fn dirty_workspace_removal_asks_to_save_then_removes_only_after_yes() {
+    let mut dashboard = dashboard_fixture();
+    palette_search(&mut dashboard, "remove workspace");
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    let ovrcr::tui::DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
+        panic!("expected confirmed removal")
+    };
+    let Request::RemoveWorkspace {
+        project,
+        name,
+        force: false,
+    } = request.request.clone()
+    else {
+        panic!("first removal must not force: {:?}", request.request)
+    };
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Error {
+            code: ovrcr::protocol::ErrorCode::DirtyWorktree,
+            message: "worktree has changes".into(),
+        },
+    });
+    let text = palette_text(&dashboard);
+    assert!(
+        text.contains("Save uncommitted work to origin/wip/"),
+        "{text}"
+    );
+    assert!(text.contains("worktree has changes"), "{text}");
+    assert!(!text.contains("Force remove workspace"), "{text}");
+    let ovrcr::tui::DashboardAction::Request(save) = dashboard.key(KeyCode::Enter) else {
+        panic!("yes must send the save")
+    };
+    assert_eq!(
+        save.request,
+        Request::SaveWorkspaceWip {
+            project: project.clone(),
+            name: name.clone(),
+        }
+    );
+    let followed = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: save.request_id,
+        response: Response::Ok,
+    });
+    assert!(
+        followed.iter().any(|message| {
+            message.request
+                == Request::RemoveWorkspace {
+                    project: project.clone(),
+                    name: name.clone(),
+                    force: true,
+                }
+        }),
+        "yes removes the workspace after the save: {followed:?}"
+    );
+}
+
+#[test]
+fn declining_the_save_does_not_remove_the_workspace() {
+    let mut dashboard = dashboard_fixture();
+    palette_search(&mut dashboard, "remove workspace");
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    let ovrcr::tui::DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
+        panic!("expected confirmed removal")
+    };
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Error {
+            code: ovrcr::protocol::ErrorCode::DirtyWorktree,
+            message: "worktree has changes".into(),
+        },
+    });
+    assert!(!matches!(
+        dashboard.key(KeyCode::Esc),
+        ovrcr::tui::DashboardAction::Request(_)
+    ));
+    assert!(
+        !palette_text(&dashboard).contains("Save uncommitted work"),
+        "no leaves the save question"
+    );
+}
+
+#[test]
+fn shutdown_asks_once_per_dirty_worktree() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::WipSavePrompt {
+        project: "consigint".into(),
+        workspace: "one".into(),
+        branch: "feature/one".into(),
+    }));
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::WipSavePrompt {
+        project: "consigint".into(),
+        workspace: "two".into(),
+        branch: "feature/two".into(),
+    }));
+    let text = palette_text(&dashboard);
+    assert!(
+        text.contains("Save uncommitted work to origin/wip/feature/one?"),
+        "{text}"
+    );
+    assert!(!text.contains("feature/two"), "{text}");
+    let ovrcr::tui::DashboardAction::Request(first) = dashboard.key(KeyCode::Enter) else {
+        panic!("first yes")
+    };
+    assert_eq!(
+        first.request,
+        Request::AnswerWipSave {
+            project: "consigint".into(),
+            workspace: "one".into(),
+            save: true,
+        }
+    );
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: first.request_id,
+        response: Response::Ok,
+    });
+    let text = palette_text(&dashboard);
+    assert!(
+        text.contains("Save uncommitted work to origin/wip/feature/two?"),
+        "{text}"
+    );
+    let ovrcr::tui::DashboardAction::Request(second) = dashboard.key(KeyCode::Esc) else {
+        panic!("second no")
+    };
+    assert_eq!(
+        second.request,
+        Request::AnswerWipSave {
+            project: "consigint".into(),
+            workspace: "two".into(),
+            save: false,
+        }
+    );
 }
 
 #[test]

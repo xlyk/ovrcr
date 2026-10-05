@@ -46,6 +46,12 @@ never start a server. With none running they fail with `OVRCR server is not
 running`: only the server mutates retained records or controls processes.
 `workspace remove --force` acknowledges ownership-uncertain stopped sessions and
 discards uncommitted changes; live sessions and active task runs still block it.
+A dirty worktree without `--force` is still refused. With
+`save_uncommitted_work` on, removal pushes the unignored files to
+`origin/wip/<branch>` and then removes the workspace; the checkout's branch is
+not moved. Server shutdown asks the attached Dashboard the same question once
+per dirty feature worktree, or pushes without asking when that setting is on.
+The repository-root workspace is never saved.
 `ovrcr events` also never starts a Server. With none running it fails with
 `OVRCR server is not running`. It asks the Server for the in-memory ring and
 does not read `events.jsonl`.
@@ -93,7 +99,7 @@ ovrcr settings --json
 It never contacts or starts a server. It prints the resolved document path, then
 one line per setting with its key, owner (`Server` or `Dashboard`), source
 (`default` or `document`) and effective value (`unset` when there is none). An
-off consent setting (`desktop_notifications`, `title_model`, `quota.claude.probe`, and `quota.enabled` when it is false) is
+off consent setting (`desktop_notifications`, `title_model`, `quota.claude.probe`, `save_uncommitted_work`, and `quota.enabled` when it is false) is
 followed by what to set to turn it on. `quota.enabled` defaults to true: Codex and Grok collection runs while a Dashboard is attached unless the document sets it false. Findings come last: wrong types, unknown
 keys, unknown spellings, an unparseable document, and a `[quota]` table left in
 the instance identity file, each with its key and line when known. The command exits 0 even
