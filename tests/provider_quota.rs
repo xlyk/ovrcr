@@ -1522,47 +1522,23 @@ fn echo_session(fixture: &live::Live, name: &str) -> (SessionId, SessionRunId) {
     (summary.id, summary.run)
 }
 
-fn thread_names(pid: u32) -> Vec<String> {
-    let mut names = Vec::new();
-    let Ok(tasks) = std::fs::read_dir(format!("/proc/{pid}/task")) else {
-        return names;
-    };
-    for task in tasks.flatten() {
-        if let Ok(comm) = std::fs::read_to_string(task.path().join("comm")) {
-            names.push(comm.trim().to_owned());
-        }
-    }
-    names.sort();
-    names
+/// One line per native RPC process the Codex worker spawned. This file is the
+/// fixture's own record; CI cannot read another process's `/proc`.
+fn native_clients(fixture: &live::Live) -> String {
+    std::fs::read_to_string(fixture.root.path().join("fixture-pids")).unwrap_or_default()
 }
 
-fn collector_count(fixture: &live::Live, prefix: &str) -> usize {
-    let pid = fixture.server_pid().expect("binary server");
-    let names = thread_names(pid);
-    let count = names.iter().filter(|name| name.starts_with(prefix)).count();
-    assert!(count > 0, "no thread matching {prefix} in {names:?}");
-    count
-}
-
-fn process_alive(pid: i32) -> bool {
-    let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
-        return false;
-    };
-    let Some(end) = stat.rfind(')') else {
-        return false;
-    };
-    stat.as_bytes()
-        .get(end + 2)
-        .is_some_and(|state| *state != b'Z')
-}
-
-fn alive_fixture_pids(fixture: &live::Live) -> usize {
-    std::fs::read_to_string(fixture.root.path().join("fixture-pids"))
-        .unwrap_or_default()
+fn native_client_count(fixture: &live::Live) -> usize {
+    native_clients(fixture)
         .lines()
-        .filter_map(|line| line.parse::<i32>().ok())
-        .filter(|pid| process_alive(*pid))
+        .filter(|line| !line.is_empty())
         .count()
+}
+
+/// The Codex worker has sent `account/rateLimits/read` and that process is the
+/// only native client. The hold has not been released, so the reply is still open.
+fn codex_rate_limit_is_open(fixture: &live::Live) -> bool {
+    reads(fixture, "account/rateLimits/read") == 1 && native_client_count(fixture) == 1
 }
 
 /// A new process has no quota snapshot to load. While both collectors are held,
@@ -1643,8 +1619,12 @@ fn detach_reattach_restores_cached_observation_age_without_a_second_collector() 
     assert!(cached.grok.observed_unix_ms.is_some());
     let methods = std::fs::read_to_string(fixture.root.path().join("native-methods")).unwrap();
     let http = std::fs::read_to_string(fixture.root.path().join("http-quota")).unwrap();
-    assert_eq!(collector_count(&fixture, "ovrcr-codex-quo"), 1);
-    assert_eq!(collector_count(&fixture, "ovrcr-grok-quot"), 1);
+    let clients = native_clients(&fixture);
+    assert_eq!(
+        clients.lines().filter(|line| !line.is_empty()).count(),
+        1,
+        "expected one Codex native client before detach: {clients:?}"
+    );
     // An age reset would stamp "now". Sit past the timestamp granularity first.
     std::thread::sleep(Duration::from_millis(30));
     drop(socket);
@@ -1677,8 +1657,11 @@ fn detach_reattach_restores_cached_observation_age_without_a_second_collector() 
         http,
         "reattach started another Grok read"
     );
-    assert_eq!(collector_count(&fixture, "ovrcr-codex-quo"), 1);
-    assert_eq!(collector_count(&fixture, "ovrcr-grok-quot"), 1);
+    assert_eq!(
+        native_clients(&fixture),
+        clients,
+        "reattach started another native client"
+    );
 }
 
 /// The replacement keeps the cached allowance and its own focused session after
@@ -1790,8 +1773,8 @@ fn blocked_codex_collector_does_not_stall_pty_while_grok_updates() {
     });
     assert_ne!(during.codex.state, QuotaState::Current);
     assert!(during.codex.windows.is_empty());
-    wait_until("Codex read in flight", || {
-        reads(&fixture, "account/rateLimits/read") == 1 && alive_fixture_pids(&fixture) == 1
+    wait_until("Codex rateLimits request is open", || {
+        codex_rate_limit_is_open(&fixture)
     });
     let started = std::time::Instant::now();
     let size = TerminalSize { rows: 12, cols: 40 };
@@ -1821,8 +1804,10 @@ fn blocked_codex_collector_does_not_stall_pty_while_grok_updates() {
         "PTY round trip took {:?}",
         started.elapsed()
     );
-    assert_eq!(reads(&fixture, "account/rateLimits/read"), 1);
-    assert_eq!(alive_fixture_pids(&fixture), 1);
+    assert!(
+        codex_rate_limit_is_open(&fixture),
+        "PTY traffic started another Codex read"
+    );
     assert_eq!(http_reads(&fixture, "/v1/billing?format=credits"), 1);
 }
 
@@ -1831,8 +1816,8 @@ fn blocked_codex_collector_does_not_stall_pty_while_grok_updates() {
 fn refresh_during_inflight_native_read_does_not_start_another() {
     let fixture = native_fixture("hold");
     let mut socket = attach(&fixture);
-    wait_until("Codex read in flight", || {
-        reads(&fixture, "account/rateLimits/read") == 1 && alive_fixture_pids(&fixture) == 1
+    wait_until("Codex rateLimits request is open", || {
+        codex_rate_limit_is_open(&fixture)
     });
     assert_eq!(
         fixture.request(Request::RefreshQuota {
@@ -1840,17 +1825,26 @@ fn refresh_during_inflight_native_read_does_not_start_another() {
         }),
         Response::Ok
     );
-    std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(reads(&fixture, "account/rateLimits/read"), 1);
-    assert_eq!(alive_fixture_pids(&fixture), 1);
+    let still_open = std::time::Instant::now() + Duration::from_secs(1);
+    while std::time::Instant::now() < still_open {
+        assert!(
+            codex_rate_limit_is_open(&fixture),
+            "refresh started another native read while the first was open"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
     std::fs::write(fixture.root.path().join("quota-release"), b"go").unwrap();
     let _current = quota_until(&mut socket, "held Codex read finished", |quota| {
         quota.codex.state == QuotaState::Current
     });
-    assert_eq!(
-        reads(&fixture, "account/rateLimits/read"),
-        1,
-        "manual refresh started a second in-flight account read"
-    );
-    assert_eq!(alive_fixture_pids(&fixture), 1);
+    // The worker only starts another read after this one returns. Watch long
+    // enough for that spawn to append a pid and a method line.
+    let quiet = std::time::Instant::now() + Duration::from_millis(500);
+    while std::time::Instant::now() < quiet {
+        assert!(
+            codex_rate_limit_is_open(&fixture),
+            "manual refresh started a second account read"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
