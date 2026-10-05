@@ -184,12 +184,12 @@ fn shutdown_asks_twice_and_pushes_two_refs() {
     )
     .unwrap();
     loop {
-        match read_frame::<ServerMessage>(&mut dashboard).unwrap() {
-            ServerMessage::Response {
-                response: Response::Hierarchy(_),
-                ..
-            } => break,
-            _ => {}
+        if let ServerMessage::Response {
+            response: Response::Hierarchy(_),
+            ..
+        } = read_frame::<ServerMessage>(&mut dashboard).unwrap()
+        {
+            break;
         }
     }
 
