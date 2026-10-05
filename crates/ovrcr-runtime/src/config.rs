@@ -162,13 +162,8 @@ pub fn migrate_instance_layout(home: &Path) -> Result<bool> {
 }
 
 fn copy_file_private(from: &Path, to: &Path) -> Result<()> {
-    fs::copy(from, to).with_context(|| {
-        format!(
-            "migrate {} to {}",
-            from.display(),
-            to.display()
-        )
-    })?;
+    fs::copy(from, to)
+        .with_context(|| format!("migrate {} to {}", from.display(), to.display()))?;
     let _ = fs::set_permissions(to, fs::Permissions::from_mode(0o600));
     Ok(())
 }
@@ -176,8 +171,8 @@ fn copy_file_private(from: &Path, to: &Path) -> Result<()> {
 fn copy_tree(from: &Path, to: &Path) -> Result<()> {
     fs::create_dir_all(to)
         .with_context(|| format!("create migrated directory {}", to.display()))?;
-    for entry in fs::read_dir(from)
-        .with_context(|| format!("read legacy directory {}", from.display()))?
+    for entry in
+        fs::read_dir(from).with_context(|| format!("read legacy directory {}", from.display()))?
     {
         let entry = entry?;
         let src = entry.path();
@@ -186,9 +181,8 @@ fn copy_tree(from: &Path, to: &Path) -> Result<()> {
         if file_type.is_dir() {
             copy_tree(&src, &dst)?;
         } else if file_type.is_file() {
-            fs::copy(&src, &dst).with_context(|| {
-                format!("migrate {} to {}", src.display(), dst.display())
-            })?;
+            fs::copy(&src, &dst)
+                .with_context(|| format!("migrate {} to {}", src.display(), dst.display()))?;
         }
     }
     Ok(())
@@ -578,16 +572,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(home, Path::new("/x"));
-        assert_eq!(notes.config_alias.as_deref(), Some(Path::new("/x/config.toml")));
-        assert!(
-            config_alias_finding(Path::new("/x/config.toml")).contains("OVRCR_HOME=/x")
+        assert_eq!(
+            notes.config_alias.as_deref(),
+            Some(Path::new("/x/config.toml"))
         );
+        assert!(config_alias_finding(Path::new("/x/config.toml")).contains("OVRCR_HOME=/x"));
     }
 
     #[test]
     fn home_defaults_to_platform_config_directory() {
-        let (home, notes) =
-            home_from_env(None, None, PathBuf::from("/default/ovrcr")).unwrap();
+        let (home, notes) = home_from_env(None, None, PathBuf::from("/default/ovrcr")).unwrap();
         assert_eq!(home, Path::new("/default/ovrcr"));
         assert!(notes.config_alias.is_none());
     }
@@ -618,14 +612,16 @@ mod tests {
         assert_eq!(std::fs::read(database_path(&home)).unwrap(), b"legacy-db");
         assert!(home.join("tasks/state.toml").is_file());
         assert!(legacy_db.is_file(), "legacy database must remain");
-        assert!(legacy_tasks.join("state.toml").is_file(), "legacy tasks must remain");
+        assert!(
+            legacy_tasks.join("state.toml").is_file(),
+            "legacy tasks must remain"
+        );
 
         // Second pass is a no-op once modern names exist.
         std::fs::write(&legacy_db, b"changed-legacy").unwrap();
         assert!(!migrate_instance_layout(&home).unwrap());
         assert_eq!(std::fs::read(database_path(&home)).unwrap(), b"legacy-db");
     }
-
 
     #[test]
     fn registry_round_trip_preserves_projects_and_workspaces() {
@@ -665,7 +661,10 @@ mod tests {
             error.downcast_ref::<toml::de::Error>().is_some(),
             "{error:#}"
         );
-        assert_eq!(std::fs::read_to_string(legacy_identity_path(&path)).unwrap(), "[[projects]\n");
+        assert_eq!(
+            std::fs::read_to_string(legacy_identity_path(&path)).unwrap(),
+            "[[projects]\n"
+        );
     }
 
     #[test]
@@ -678,7 +677,10 @@ mod tests {
             error.downcast_ref::<toml::de::Error>().is_some(),
             "{error:#}"
         );
-        assert_eq!(std::fs::read_to_string(legacy_identity_path(&path)).unwrap(), "");
+        assert_eq!(
+            std::fs::read_to_string(legacy_identity_path(&path)).unwrap(),
+            ""
+        );
     }
 
     #[test]

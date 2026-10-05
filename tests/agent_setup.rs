@@ -692,11 +692,7 @@ fn codex_doctor_missing_session_and_failed_inspection_do_not_start_a_server() {
     };
     assert_eq!(run()["session_status"], "session_not_found");
     assert!(!root.path().join("config.toml").exists());
-    std::fs::write(
-        root.path().join("config.toml"),
-        "NEVER_PRIVATE_CONFIG = [",
-    )
-    .unwrap();
+    std::fs::write(root.path().join("config.toml"), "NEVER_PRIVATE_CONFIG = [").unwrap();
     let value = run();
     assert_eq!(value["session_status"], "inspection_unavailable");
     assert!(!value.to_string().contains("NEVER_PRIVATE_CONFIG"));

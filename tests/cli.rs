@@ -3116,10 +3116,7 @@ fn settings_command_reports_document_rows_and_findings_and_json_round_trips() {
         .unwrap();
     assert!(json.status.success(), "{json:?}");
     let report: SettingsReport = serde_json::from_slice(&json.stdout).unwrap();
-    let expected = ovrcr::settings::load_document(
-        root.path(),
-        &root.path().join("dashboard.toml"),
-    );
+    let expected = ovrcr::settings::load_document(root.path(), &root.path().join("dashboard.toml"));
     assert_eq!(report.path, root.path().join("dashboard.toml"));
     assert_eq!(report.rows, expected.rows);
     assert_eq!(report.findings, expected.findings);

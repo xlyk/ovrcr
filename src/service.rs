@@ -246,9 +246,9 @@ pub fn read_environment_file(path: &Path) -> Result<Vec<(String, String)>> {
         if matches!(
             key,
             crate::config::HOME_ENV
-            | crate::config::CONFIG_ENV
-            | "OVRCR_SOCKET"
-            | ENVIRONMENT_FILE_VARIABLE
+                | crate::config::CONFIG_ENV
+                | "OVRCR_SOCKET"
+                | ENVIRONMENT_FILE_VARIABLE
         ) {
             bail!("environment file may not set {key}");
         }

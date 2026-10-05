@@ -833,7 +833,11 @@ fn sqlite_migration_is_authoritative_across_online_offline_and_restart() {
         }],
     })
     .unwrap();
-    std::fs::write(ovrcr::config::legacy_identity_path(&fixture.config), &original).unwrap();
+    std::fs::write(
+        ovrcr::config::legacy_identity_path(&fixture.config),
+        &original,
+    )
+    .unwrap();
     fixture.start_binary();
     let imported_count = fixture.json(&["project", "get", "fixture"])["workspace_count"]
         .as_u64()
@@ -893,7 +897,11 @@ fn sqlite_migration_is_authoritative_across_online_offline_and_restart() {
     fixture.join();
 
     // Once imported, even a broken legacy file cannot replace committed inventory.
-    std::fs::write(ovrcr::config::legacy_identity_path(&fixture.config), "[[projects]\n").unwrap();
+    std::fs::write(
+        ovrcr::config::legacy_identity_path(&fixture.config),
+        "[[projects]\n",
+    )
+    .unwrap();
     let offline = fixture.json(&[
         "workspace",
         "get",

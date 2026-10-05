@@ -19,7 +19,6 @@ impl ServerPaths {
     }
 }
 
-
 /// Test seam: make the next accepted connection's thread spawn fail.
 #[cfg(test)]
 pub(super) static FAIL_NEXT_ACCEPT_SPAWN: AtomicBool = AtomicBool::new(false);

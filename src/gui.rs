@@ -71,10 +71,7 @@ impl Demo {
         let workspaces = self.root.join("workspaces");
         fs::create_dir(&repositories)?;
         fs::create_dir(&workspaces)?;
-        crate::config::save_registry_atomic(
-            &crate::config::Registry::default(),
-            &self.root,
-        )?;
+        crate::config::save_registry_atomic(&crate::config::Registry::default(), &self.root)?;
         // Demo workspaces intentionally keep automatic local shells on every
         // worktree so the GUI helper exercises a full sidebar of terminals.
         let fragment = match std::env::var_os("OVRCR_GUI_QUOTA_CONFIG") {

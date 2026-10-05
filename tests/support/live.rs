@@ -184,9 +184,7 @@ impl Live {
             None => command
                 .env("OVRCR_HOME", &self.config)
                 .env_remove("OVRCR_CONFIG"),
-            Some(_) => command
-                .env_remove("OVRCR_HOME")
-                .env_remove("OVRCR_CONFIG"),
+            Some(_) => command.env_remove("OVRCR_HOME").env_remove("OVRCR_CONFIG"),
         };
         command
     }
