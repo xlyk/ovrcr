@@ -8467,7 +8467,7 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        sidebar.contains("Quota left"),
+        sidebar.contains("QUOTA LEFT"),
         "quota block missing: {sidebar}"
     );
     assert!(

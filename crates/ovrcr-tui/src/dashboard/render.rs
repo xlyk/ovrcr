@@ -1267,7 +1267,7 @@ fn tree_line_text(
 
 /// Compose one `width`-cell sidebar row: `left`, the `fill` glyph across the gap,
 /// then `right`. A selected row replaces its first cell with a mauve bar.
-fn compose_row(
+pub(super) fn compose_row(
     mut left: Vec<Span<'static>>,
     fill: Span<'static>,
     right: Vec<Span<'static>>,
@@ -1436,7 +1436,7 @@ fn model_without_agent(agent: &str, model: &str) -> String {
     model.to_string()
 }
 
-fn label_color(label: &str) -> Color {
+pub(super) fn label_color(label: &str) -> Color {
     let explicit_label = label.split('/').next().unwrap_or(label).trim();
     if explicit_label.eq_ignore_ascii_case("claude") {
         PEACH
