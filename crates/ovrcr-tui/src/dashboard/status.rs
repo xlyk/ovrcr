@@ -395,6 +395,7 @@ mod tests {
             workspace: "w".into(),
             name: "s".into(),
             title: None,
+            manual_title: None,
             label: "claude/sonnet".into(),
             pid: Some(42),
             started_unix_ms: Some(0),

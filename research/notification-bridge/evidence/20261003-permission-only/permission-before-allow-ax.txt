@@ -1,0 +1,11 @@
+Window: "Notification Center", App: Notification Center.
+0 system dialog Notification Center, Secondary Actions: Raise
+	1 container
+		2 scroll area
+			3 container ID: C0CE7F62-50BC-433A-85DA-C3AB7159BE34, Secondary Actions: Show Details, Don’t Allow, Allow, Close, Description: “OVRCR Permission Probe 40a8531a” Notifications, Notifications may include alerts, sounds, and icon badges.
+				4 text ID: title, Value: “OVRCR Permission Probe 40a8531a” Notifications Notifications may include alerts, sounds, and icon badges.
+5 menu bar
+	6 Notification Center
+	7 File
+	8 Edit
+	9 Format

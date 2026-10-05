@@ -1,0 +1,50 @@
+{
+  "date_utc": "2026-10-03",
+  "publication": "not performed",
+  "issues": [
+    {
+      "number": 220,
+      "title": "Add the macOS Bridge for OVRCR alerts and safe click-to-focus",
+      "url": "https://github.com/xlyk/ovrcr/issues/220",
+      "state_at_read": "OPEN",
+      "source_sha256": "30078fef043a229e04dfe270f7160ebd86863c62401e641824c6c41ca04999ff",
+      "original_body_sha256": "6822845fde7d4925dd5b59598b7e408dd7960befdf75ce0b4ac521eebf2f5e59",
+      "draft_file": "issue-220.md",
+      "draft_sha256": "30f4a0be5c83f8d4e9fe591fb881bfa98fe8f13619640155256652fb9b10395b",
+      "exact_replacements": 6
+    },
+    {
+      "number": 221,
+      "title": "Verify the native Bridge notification and installation contract",
+      "url": "https://github.com/xlyk/ovrcr/issues/221",
+      "state_at_read": "OPEN",
+      "source_sha256": "c24ecd7b421f06d6fd507f6622342c0969bc24a2632e45f14531a48778cc9f08",
+      "original_body_sha256": "c6bd14262385b84c7854e36b4d9913a5c47423f971978844b91736df4cd9330d",
+      "draft_file": "issue-221.md",
+      "draft_sha256": "9eb4a780a412308028bcf45d979bf4ee54ad02990912f0c2c6d8e3f4294c7ddf",
+      "exact_replacements": 3
+    },
+    {
+      "number": 224,
+      "title": "Move macOS alert sound into banners without expanding saved opt-ins",
+      "url": "https://github.com/xlyk/ovrcr/issues/224",
+      "state_at_read": "OPEN",
+      "source_sha256": "c86c6dc118e8ef045590bff9ac47f064372547d616a50028335be63e14ea323a",
+      "original_body_sha256": "4a89be370964b7a798c042feb06857809c091511fc75205cb31332451d1c8d26",
+      "draft_file": "issue-224.md",
+      "draft_sha256": "040a30b183b182965456fd327af9c6b9c7b2114d5a8388cd59e7ab742c1fc7ba",
+      "exact_replacements": 3
+    },
+    {
+      "number": 226,
+      "title": "Verify the complete Bridge release without weakening cross-platform regressions",
+      "url": "https://github.com/xlyk/ovrcr/issues/226",
+      "state_at_read": "OPEN",
+      "source_sha256": "4062170c3358f061b18bdccf4618564238bcf38caf6294b8d0ee55f8d83ddccd",
+      "original_body_sha256": "9c3d28d2578353398e6e7de92bfd02aa0a711bcaeb2f18d502a7778a84bb4cc3",
+      "draft_file": "issue-226.md",
+      "draft_sha256": "70d092a9d6af2921c45fbe9bfd575ad0f507139c487920ad7c915e68f89464ac",
+      "exact_replacements": 1
+    }
+  ]
+}

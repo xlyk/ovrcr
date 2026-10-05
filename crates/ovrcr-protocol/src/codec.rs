@@ -15,7 +15,7 @@ pub const MAX_FRAME_BYTES: usize = 1_048_576;
 /// exchange it in an 8-byte preamble before the first frame so a client and
 /// a long-running server built from different sources fail with a clear
 /// message instead of decoding one request as another.
-pub const PROTOCOL_VERSION: u32 = 33;
+pub const PROTOCOL_VERSION: u32 = 34;
 
 const PREAMBLE_MAGIC: [u8; 4] = *b"OVRC";
 
@@ -168,16 +168,15 @@ mod tests {
         let error = read_preamble(&mut right).unwrap_err().to_string();
         assert!(error.contains("bad preamble magic"), "{error}");
 
-        let (mut left, mut right) = UnixStream::pair().unwrap();
-        let mut newer = Vec::from(*b"OVRC");
-        newer.extend_from_slice(&(PROTOCOL_VERSION + 1).to_be_bytes());
-        left.write_all(&newer).unwrap();
-        let error = exchange_preamble(&mut right).unwrap_err().to_string();
-        assert!(error.contains("protocol version mismatch"), "{error}");
-        assert!(
-            error.contains(&format!("version {}", PROTOCOL_VERSION + 1)),
-            "{error}"
-        );
+        for version in [PROTOCOL_VERSION - 1, PROTOCOL_VERSION + 1] {
+            let (mut left, mut right) = UnixStream::pair().unwrap();
+            let mut preamble = Vec::from(*b"OVRC");
+            preamble.extend_from_slice(&version.to_be_bytes());
+            left.write_all(&preamble).unwrap();
+            let error = exchange_preamble(&mut right).unwrap_err().to_string();
+            assert!(error.contains("protocol version mismatch"), "{error}");
+            assert!(error.contains(&format!("version {version}")), "{error}");
+        }
 
         let (left, mut right) = UnixStream::pair().unwrap();
         drop(left);
@@ -354,6 +353,7 @@ mod tests {
             agent_epoch: 0,
             unread: None,
             title: None,
+            manual_title: None,
         };
         let (mut left, mut right) = UnixStream::pair().unwrap();
         let message = ServerMessage::Event(ServerEvent::SessionChanged(Box::new(paused)));

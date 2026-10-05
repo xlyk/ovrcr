@@ -93,6 +93,14 @@ build:
 build-release:
     rtk proxy cargo build --workspace --release
 
+# Stage the macOS app; no installation-identity signing, installation or launch.
+bridge-build *args:
+    rtk proxy bash scripts/build-bridge.sh "$@"
+
+# Pure headless native protocol/transport checks; no notification permission or app launch.
+bridge-check *args:
+    rtk proxy bash scripts/build-bridge.sh --check "$@"
+
 check:
     rtk proxy cargo check --workspace --all-targets
 

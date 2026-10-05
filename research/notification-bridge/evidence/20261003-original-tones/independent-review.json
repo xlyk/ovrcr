@@ -1,0 +1,92 @@
+{
+  "revision": "e6d2602362a237a054c30676becdb8a4964d8b4e",
+  "base": "4b6a5a572321c0af7033410ab3918ee78304843c",
+  "python": "3.13.7 (v3.13.7:bcee1c32211, Aug 14 2025, 19:10:51) [Clang 16.0.0 (clang-1600.0.26.6)]",
+  "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "generator_sha256": "1a0a1a905e644bf9409416d7c2fee9b562c6fe17dd88cf2640886d4e1931a0fc",
+  "generation_attempts": [
+    {
+      "command": [
+        "/usr/local/bin/python3",
+        "/Users/xlyk/Documents/Codex/2026-10-02/task-3/notification-bridge/research/notification-bridge/sounds/generate.py",
+        "/tmp/ovrcr-tones-review-20261003-4yxtxg6_/run-1"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/usr/local/bin/python3",
+        "/Users/xlyk/Documents/Codex/2026-10-02/task-3/notification-bridge/research/notification-bridge/sounds/generate.py",
+        "/tmp/ovrcr-tones-review-20261003-4yxtxg6_/run-2"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "byte_identical_regeneration": "both WAV sets and manifests match committed originals",
+  "assets": [
+    {
+      "id": "tap",
+      "sha256": "cfd6bec99cb836b6289501789d2624cf978145d036498374dea16013144e4624",
+      "bytes": 21164,
+      "sample_rate_hz": 48000,
+      "channels": 1,
+      "bits_per_sample": 16,
+      "sample_count": 10560,
+      "duration_seconds": 0.22,
+      "peak_normalized": 0.179992676,
+      "peak_dbfs": -14.894903,
+      "rms_normalized": 0.037517918,
+      "dc_offset_normalized": -7.86e-07,
+      "clipped_samples": 0,
+      "first_sample": 0,
+      "last_sample": 0,
+      "start_step": 0,
+      "end_step": 0,
+      "max_adjacent_step_normalized": 0.023895264
+    },
+    {
+      "id": "chime",
+      "sha256": "c08d8450e8c74d026cf110889ac3ed12f62b60bd3d1a728632669c0f78f5ed53",
+      "bytes": 80684,
+      "sample_rate_hz": 48000,
+      "channels": 1,
+      "bits_per_sample": 16,
+      "sample_count": 40320,
+      "duration_seconds": 0.84,
+      "peak_normalized": 0.179992676,
+      "peak_dbfs": -14.894903,
+      "rms_normalized": 0.041941967,
+      "dc_offset_normalized": 4.2e-08,
+      "clipped_samples": 0,
+      "first_sample": 0,
+      "last_sample": 0,
+      "start_step": 0,
+      "end_step": 0,
+      "max_adjacent_step_normalized": 0.031860352
+    },
+    {
+      "id": "rise",
+      "sha256": "fbfdb5a4e263a0569fff8aa8f8bb7f986bf18c90e7bfbf512b1f9267ded49bb1",
+      "bytes": 61484,
+      "sample_rate_hz": 48000,
+      "channels": 1,
+      "bits_per_sample": 16,
+      "sample_count": 30720,
+      "duration_seconds": 0.64,
+      "peak_normalized": 0.179992676,
+      "peak_dbfs": -14.894903,
+      "rms_normalized": 0.084137228,
+      "dc_offset_normalized": -2.97e-07,
+      "clipped_samples": 0,
+      "first_sample": 0,
+      "last_sample": 0,
+      "start_step": 0,
+      "end_step": 0,
+      "max_adjacent_step_normalized": 0.018951416
+    }
+  ],
+  "license_notice": "byte-identical to repository MIT notice",
+  "playback_performed": false,
+  "native_notification_operation_performed": false,
+  "evidence_root": "/tmp/ovrcr-tones-review-20261003-4yxtxg6_"
+}

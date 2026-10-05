@@ -57,6 +57,7 @@ fn session_summary(
         workspace: workspace.into(),
         name: name.into(),
         title: None,
+        manual_title: None,
         label: label.into(),
         pid,
         started_unix_ms: Some(started_unix_ms),

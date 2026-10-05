@@ -39,6 +39,8 @@ pub(super) enum Action {
     NextSession,
     PreviousSession,
     ToggleNotifications,
+    #[cfg(target_os = "macos")]
+    NotificationSettings,
     ToggleSound,
     CycleLocalTerminals,
     ToggleSidebar,
@@ -338,6 +340,8 @@ impl Dashboard {
                 }
             }
             Action::ToggleNotifications => self.toggle_desktop_notifications(),
+            #[cfg(target_os = "macos")]
+            Action::NotificationSettings => self.recover_notification_permission(),
             Action::ToggleSound => self.toggle_ready_sound(),
             Action::CycleLocalTerminals => self.cycle_automatic_local_terminals(),
             Action::ToggleSidebar => self.toggle_sidebar(),
@@ -811,7 +815,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             Action::Focus,
         )
     };
-    vec![
+    let groups = vec![
         KeyGroup { title: "Create".into(), keys: vec![
             key_binding("n", "Create terminal", format!("Choose an agent or shell to start in {workspace_target}; opens a form"), Char('n'), Action::CreateTerminal).unless(launch_blocked.or(no_workspace)).group('w', "n"),
             key_binding("w", "Create workspace", format!("Create a worktree and branch under {project_target} and choose its first Agent or Terminal; opens a form"), Char('w'), Action::CreateWorkspace).unless(dashboard.hierarchy.projects.is_empty().then_some("no project registered")).group('p', "n"),
@@ -828,12 +832,46 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         ] },
         KeyGroup { title: "View".into(), keys: view },
         KeyGroup { title: "Dashboard".into(), keys: vec![
-            key_binding("N", if dashboard.settings.desktop_notifications { "Disable desktop notifications" } else { "Enable desktop notifications" }, "Toggle notifications for new background agent responses or input requests in this dashboard; no replay".into(), Char('N'), Action::ToggleNotifications).once(),
-            key_binding("S", if dashboard.settings.ready_sound { "Disable ready sound" } else { "Enable ready sound" }, "Toggle a sound for new background agent responses or input requests in this dashboard, independent of desktop notifications; no replay".into(), Char('S'), Action::ToggleSound).once(),
+            key_binding("N", if dashboard.settings.desktop_notifications { "Disable desktop notifications" } else { "Enable desktop notifications" }, "Save notifications through the Server for new agent responses or input requests; no replay".into(), Char('N'), Action::ToggleNotifications).once(),
+            key_binding("S", if dashboard.settings.ready_sound { "Disable ready sound" } else { "Enable ready sound" }, "Save ready sound through the Server for new agent responses or input requests, independent of desktop notifications; no replay".into(), Char('S'), Action::ToggleSound).once(),
             key_binding("L", "Automatic local terminals", format!("Cycle automatic local terminal creation (currently {}); applies to newly provisioned workspaces only", dashboard.settings.automatic_local_terminals.label()), Char('L'), Action::CycleLocalTerminals).once(),
             key_binding("q", "Detach", "Detach this dashboard; the server and every session keep running".into(), Char('q'), Action::Detach),
         ] },
-    ]
+    ];
+    #[cfg(target_os = "macos")]
+    let groups = {
+        let mut groups = groups;
+        let checking = dashboard.notification_permission_unconfirmed();
+        groups.last_mut().unwrap().keys.insert(
+            1,
+            key_binding(
+                "O",
+                if checking {
+                    "Check notification permission"
+                } else {
+                    "Open notification settings"
+                },
+                if checking {
+                    "Check OVRCR's current macOS notification permission once"
+                } else {
+                    "Open System Settings, then choose Notifications → OVRCR to allow banners"
+                }
+                .into(),
+                Char('O'),
+                Action::NotificationSettings,
+            )
+            .once()
+            .bare()
+            .unless(if !dashboard.settings.desktop_notifications {
+                Some("desktop notifications are disabled")
+            } else {
+                (!dashboard.notification_recovery_available())
+                    .then_some("notification permission does not need recovery")
+            }),
+        );
+        groups
+    };
+    groups
 }
 
 #[cfg(test)]

@@ -214,7 +214,11 @@ fn items(report: &SettingsReport, presets: &[String]) -> Vec<Row> {
             "desktop_notifications",
             "Desktop notifications",
             Kind::Toggle(settings.desktop_notifications),
-            &["Turning this on may show an OS notification permission prompt."],
+            &[
+                "Turning this on may show an OS notification permission prompt.",
+                #[cfg(target_os = "macos")]
+                "macOS uses the installed OVRCR Bridge app. In Browse, O checks unconfirmed permission or opens System Settings when denied; choose Notifications → OVRCR.",
+            ],
         ),
         top(
             "Alerts",

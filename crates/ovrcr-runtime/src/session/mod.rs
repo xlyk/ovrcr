@@ -499,6 +499,7 @@ impl Session {
                 cwd: spec.cwd.clone(),
                 archived: false,
                 title: None,
+                manual_title: None,
                 id,
                 run: spec.run,
                 kind: spec.kind.clone(),
@@ -651,6 +652,7 @@ impl Session {
         }
         let mut summary = self.summary.clone();
         summary.title = self.effective_title();
+        summary.manual_title = summary.title.clone();
         summary.recovery = None;
         let state = self.state.lock().unwrap();
         summary.phase = state.phase.clone();

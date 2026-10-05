@@ -22,6 +22,36 @@ fn wait_screen(terminal: &Terminal, needle: &str) -> Result<()> {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn desktop_alert_environment(root: &Path) -> Result<(std::path::PathBuf, std::ffi::OsString)> {
+    use ovrcr::protocol::{BRIDGE_SCHEMA_VERSION, BridgeReply, BridgeStatus, PROTOCOL_VERSION};
+    use std::os::unix::fs::PermissionsExt;
+    let home = root.join("home");
+    let client = home.join("Applications/OVRCR Bridge.app/Contents/MacOS/OVRCRBridge");
+    std::fs::create_dir_all(client.parent().unwrap())?;
+    let reply = serde_json::to_string(&BridgeReply {
+        schema: BRIDGE_SCHEMA_VERSION,
+        server_wire: PROTOCOL_VERSION,
+        status: BridgeStatus::Available,
+    })?;
+    std::fs::write(
+        &client,
+        format!(
+            "#!/bin/sh\n[ \"$1\" = --client ] && [ \"$#\" = 1 ] || exit 99\ncat > \"$0.request\"\nprintf '%s\\n' '{reply}'\n"
+        ),
+    )?;
+    std::fs::set_permissions(&client, std::fs::Permissions::from_mode(0o755))?;
+    let bin = home.join("bin");
+    std::fs::create_dir_all(&bin)?;
+    let player = bin.join("afplay");
+    std::fs::write(&player, "#!/bin/sh\nexit 0\n")?;
+    std::fs::set_permissions(&player, std::fs::Permissions::from_mode(0o755))?;
+    let path = std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    )))?;
+    Ok((home, path))
+}
+
 #[test]
 fn command_k_is_not_forwarded_to_terminal() {
     let parser = vt100::Parser::new(24, 80, 0);
@@ -52,7 +82,9 @@ fn palette_creates_switches_and_closes_a_real_terminal() -> Result<()> {
     let root = demo.root().to_owned();
     let mut pgids = demo_session_groups(&root)?;
     let mut terminal = demo.dashboard(40, 120, Default::default())?;
-    wait_screen(&terminal, "claude:sonnet-4")?;
+    // The complete Demo inventory is established above, but the initial frame
+    // arrives in PTY chunks. Wait for the last required sidebar label.
+    wait_screen(&terminal, "claude:opus-4")?;
     let initial = terminal.screen().contents();
     let sidebar = initial
         .lines()
@@ -597,6 +629,12 @@ fn real_dashboard_initial_selection_survives_quota_events_before_startup_respons
     let mut command = portable_pty::CommandBuilder::new(env!("CARGO_BIN_EXE_ovrcr"));
     command.env("OVRCR_CONFIG", root.join("config.toml"));
     command.env("OVRCR_SOCKET", &socket);
+    #[cfg(target_os = "macos")]
+    {
+        let (home, path) = desktop_alert_environment(&root)?;
+        command.env("HOME", home);
+        command.env("PATH", path);
+    }
     command.env("TERM", "xterm-256color");
     let mut terminal = Terminal::start(command, 40, 160, Default::default())?;
     // The actual first session's child output proves selection, not just rows.
@@ -802,11 +840,18 @@ fn real_dashboard_saves_alert_preferences_and_reloads_config() -> Result<()> {
     // the one beside config.toml. Toggles must follow the Server's reading.
     let client_only = root.join("preferences/custom.toml");
     let settings = root.join("dashboard.toml");
+    #[cfg(target_os = "macos")]
+    let (home, path) = desktop_alert_environment(&root)?;
     let launch = || -> Result<Terminal> {
         let mut command = portable_pty::CommandBuilder::new(env!("CARGO_BIN_EXE_ovrcr"));
         command.env("OVRCR_CONFIG", root.join("config.toml"));
         command.env("OVRCR_SOCKET", root.join("server.sock"));
         command.env("OVRCR_DASHBOARD_CONFIG", &client_only);
+        #[cfg(target_os = "macos")]
+        {
+            command.env("HOME", &home);
+            command.env("PATH", &path);
+        }
         command.env("TERM", "xterm-256color");
         Terminal::start(command, 40, 160, Default::default())
     };

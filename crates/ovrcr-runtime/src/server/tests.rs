@@ -7744,6 +7744,134 @@ fn failed_root_shell_keeps_setup_pending_and_does_not_duplicate_launch() {
 }
 
 #[test]
+fn manual_title_provenance_is_preserved_in_live_and_retained_server_summaries() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = root.path().join("work");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let socket_dir = tempfile::tempdir().unwrap();
+    let socket = socket_dir.path().join("server.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let registry = Registry {
+        projects: vec![crate::config::ProjectRecord {
+            name: "project".into(),
+            repo: root.path().to_path_buf(),
+            workspace_root: root.path().to_path_buf(),
+            workspaces: vec![crate::config::WorkspaceRecord {
+                id: "workspace".into(),
+                path: cwd,
+                branch: "main".into(),
+                git_identity: None,
+                setup_pending: false,
+            }],
+        }],
+    };
+    let (state, commands, events) = test_state_with_socket(socket, registry);
+    let _cleanup = ProvisioningCleanup::new(state.clone(), events, commands);
+    let mut created = Vec::new();
+    for (name, kind, manual_title) in [
+        ("", SessionKind::Terminal, None),
+        ("terminal", SessionKind::Terminal, Some("terminal")),
+        ("agent", SessionKind::Agent { name: "pi".into() }, None),
+    ] {
+        let summary = state
+            .create_session(ovrcr_protocol::CreateSessionRequest {
+                kind,
+                project: "project".into(),
+                workspace: "workspace".into(),
+                name: name.into(),
+                label: None,
+                argv: vec!["/bin/sleep".into(), "30".into()],
+            })
+            .unwrap();
+        assert!(!summary.name.is_empty());
+        assert_eq!(summary.title.as_deref(), manual_title);
+        assert_eq!(summary.manual_title.as_deref(), manual_title);
+        created.push(summary);
+    }
+    let agent = created.pop().unwrap();
+    let session = state.sessions.lock().unwrap()[&agent.id].clone();
+    {
+        let reference =
+            ovrcr_protocol::ConversationReference::Pi(ovrcr_protocol::ExtensionConversation {
+                conversation: "fixture-conversation".into(),
+                executable: "pi".into(),
+                history: None,
+                config_dir: root.path().to_path_buf(),
+                options: vec![],
+            });
+        let mut retained = state.retained.lock();
+        retained
+            .retain_conversation(agent.id, agent.run, Some(&reference))
+            .unwrap();
+        assert!(
+            retained
+                .save_conversation_subject(
+                    agent.id,
+                    agent.run,
+                    "fixture-conversation",
+                    "Private generated subject".into(),
+                )
+                .unwrap()
+        );
+    }
+    // Server summaries use retained provenance even if an in-memory title differs.
+    session.restore_titles(Some("Stale live title".into()), None);
+    let generated = state.session_summary(agent.id).unwrap();
+    assert_eq!(
+        generated.title.as_deref(),
+        Some("Private generated subject")
+    );
+    assert_eq!(generated.manual_title, None);
+    assert_eq!(
+        state
+            .session_summaries()
+            .into_iter()
+            .find(|summary| summary.id == agent.id)
+            .unwrap(),
+        generated
+    );
+    session.restore_titles(None, None);
+
+    state
+        .set_session_title(agent.id, Some("  Manual\n title  ".into()))
+        .unwrap();
+    let manual = state.session_summary(agent.id).unwrap();
+    assert_eq!(manual.title.as_deref(), Some("Manual title"));
+    assert_eq!(manual.manual_title.as_deref(), Some("Manual title"));
+    assert_eq!(session.summary().manual_title, manual.manual_title);
+    state.set_session_title(agent.id, None).unwrap();
+    let cleared = state.session_summary(agent.id).unwrap();
+    assert_eq!(cleared.title, None);
+    assert_eq!(cleared.manual_title, None);
+    assert_eq!(cleared.display_name(), "agent");
+    assert_eq!(session.summary().manual_title, None);
+    assert!(
+        state.retained.lock().get(agent.id).unwrap().subjects["fixture-conversation"].dismissed
+    );
+
+    state
+        .set_session_title(agent.id, Some("Retained manual".into()))
+        .unwrap();
+    state
+        .kill_session(agent.id, Duration::from_millis(200))
+        .unwrap();
+    assert!(wait_test_group_absent(
+        agent.pid.unwrap() as libc::pid_t,
+        Duration::from_secs(2)
+    ));
+    state.sessions.lock().unwrap().remove(&agent.id).unwrap();
+    let inactive = state.session_summary(agent.id).unwrap();
+    assert_eq!(inactive.pid, None);
+    assert_eq!(inactive.manual_title.as_deref(), Some("Retained manual"));
+    assert_eq!(inactive.title, inactive.manual_title);
+    state.set_session_title(agent.id, None).unwrap();
+    let inactive = state.session_summary(agent.id).unwrap();
+    assert_eq!(inactive.manual_title, None);
+    assert_eq!(inactive.title, None);
+    assert_eq!(inactive.display_name(), "agent");
+}
+
+#[test]
 fn cli_created_agent_label_uses_kind_not_launcher_argv0() {
     let root = tempfile::tempdir().unwrap();
     let cwd = root.path().join("work");

@@ -1,0 +1,10 @@
+{"activationPolicy":1,"bundle":"com.ovrcr.permissiononly.40a8531aed84413596f8789d9b6519a5","event":"launched","mode":"--request-permission-only","pid":11240,"uiElement":true,"unixMS":1791003250076}
+{"alerts":0,"authorization":0,"event":"initial-settings","pid":11240,"sound":0,"unixMS":1791003250080}
+{"event":"request-start","options":["alert","sound"],"pid":11240,"unixMS":1791003250080}
+{"alerts":2,"authorization":1,"event":"periodic-settings","pid":11240,"sound":2,"unixMS":1791003260082}
+{"alerts":2,"authorization":1,"event":"periodic-settings","pid":11240,"sound":2,"unixMS":1791003270082}
+{"alerts":2,"authorization":1,"event":"periodic-settings","pid":11240,"sound":2,"unixMS":1791003280082}
+{"alerts":2,"authorization":1,"event":"periodic-settings","pid":11240,"sound":2,"unixMS":1791003290082}
+{"event":"authorization-completion","granted":true,"pid":11240,"unixMS":1791003298815}
+{"alerts":2,"authorization":2,"event":"final-settings","pid":11240,"sound":2,"unixMS":1791003298824}
+{"event":"terminating","pid":11240,"unixMS":1791003298825}

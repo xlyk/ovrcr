@@ -585,11 +585,40 @@ mod wire_snapshot {
                 received_unix_ms: 6,
             }),
             title: None,
+            manual_title: None,
         }
     }
 
     fn size() -> TerminalSize {
         TerminalSize { rows: 1, cols: 2 }
+    }
+
+    #[test]
+    fn session_summary_preserves_manual_title_separately_from_effective_title() {
+        for manual_title in [None, Some("User title".to_owned())] {
+            let mut session = summary();
+            session.title = Some("Conversation subject".into());
+            session.manual_title = manual_title;
+            let message = ServerMessage::Event(ServerEvent::SessionChanged(Box::new(session)));
+            let mut bytes = Vec::new();
+            crate::write_frame(&mut bytes, &message).unwrap();
+            assert_eq!(
+                crate::read_frame::<ServerMessage>(&mut bytes.as_slice()).unwrap(),
+                message
+            );
+        }
+    }
+
+    #[test]
+    fn json_summary_without_manual_title_defaults_to_none() {
+        let mut session = summary();
+        session.title = Some("Conversation subject".into());
+        let mut json = serde_json::to_value(&session).unwrap();
+        json.as_object_mut().unwrap().remove("manual_title");
+        let decoded: SessionSummary = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded, session);
+        assert_eq!(decoded.manual_title, None);
+        assert_eq!(decoded.title.as_deref(), Some("Conversation subject"));
     }
 
     fn requests() -> Vec<(&'static str, Request)> {
@@ -1265,13 +1294,13 @@ mod wire_snapshot {
         ("Response::Hierarchy", "0100"),
         (
             "Response::CreatedSession",
-            "020100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e0201000000010401050600",
+            "020100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e020100000001040105060000",
         ),
         ("Response::Screen", "0301040301020107"),
         ("Response::Error", "0401016d"),
         (
             "Response::Inventory",
-            "0500010100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e0201000000010401050600",
+            "0500010100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e020100000001040105060000",
         ),
         ("Response::TerminalText", "060101020174"),
         ("Response::Task", "070601"),
@@ -1290,7 +1319,7 @@ mod wire_snapshot {
         ("ServerEvent::ScreenDirty", "02010403"),
         (
             "ServerEvent::SessionChanged",
-            "030100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e0201000000010401050600",
+            "030100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e020100000001040105060000",
         ),
         (
             "ServerEvent::QuotaChanged",

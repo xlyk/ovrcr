@@ -406,6 +406,7 @@ impl ServerState {
         if let Some(session) = session.filter(|session| session.run() == record.run) {
             let mut summary = session.summary();
             summary.title = record.effective_title();
+            summary.manual_title = record.metadata.pinned_title.clone();
             if !summary.phase.is_live() || record.conversation.is_some() || record.identity_invalid
             {
                 let mut recovery = record.recovery(boot_id);

@@ -1,0 +1,25 @@
+{
+  "source_commit": "63c93a77827bc1b37b7144c91a717b6b48e7bf5c",
+  "source_sha256": "100e35a03dec047e51906d81aa9a1338f18da2d8876b9aead3cbf866ee30933d",
+  "bundle_id": "com.ovrcr.permissiononly.40a8531aed84413596f8789d9b6519a5",
+  "name": "OVRCR Permission Probe 40a8531a",
+  "signed_executable_sha256": "61a18617626b9354c63cf3fc1899c164228ab0a70ee8cc8e670d485e781d5b25",
+  "request_start_utc": "2026-10-03T04:54:10.017000+00:00",
+  "request_count": 1,
+  "exit_code": 0,
+  "elapsed_seconds": 48.86370762484148,
+  "status_process_group_gone": true,
+  "request_process_group_gone": true,
+  "owned_executable_instances": 0,
+  "task_registration_removed": true,
+  "unique_installation_removed": true,
+  "signed_recovery_verified": true,
+  "os_permission_record": "retained; no reset",
+  "notification_inventory": "No submission API exists in the reviewed probe; no native pending/delivered inventory query was performed",
+  "evidence_sha256": {
+    "status-events.jsonl": "7e1693e6684933a4e0a34ded9083b821bd2de8c4ac092e735d129f3a312fb9ed",
+    "request-events.jsonl": "509c1eb262564bb9c59e93b5276f3a7d5b3d67b515b6538aef2e5a01c47b6947",
+    "permission-before-allow.jpg": "a178b3e1130db4515aa982063783e5e57ecd4fa818cf4bca1749ab85ed826e9d",
+    "permission-before-allow-ax.txt": "9d3d14a4a0a6ffab2d51826c945197935df0a8b682907f351eb84d88e94b1ab8"
+  }
+}
