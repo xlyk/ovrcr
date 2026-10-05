@@ -112,7 +112,7 @@ fn pi_setup_prints_managed_launch_contract_and_writes_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
         .args(["agent", "setup", "pi", "--print"])
-        .env("OVRCR_CONFIG", dir.path().join("registry.toml"))
+        .env("OVRCR_HOME", dir.path())
         .env("OVRCR_SOCKET", dir.path().join("socket"))
         .output()
         .unwrap();
@@ -227,7 +227,7 @@ fn pi_and_omp_doctor_classify_versions_as_evidence_not_an_allowlist() {
         let output = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
             .args(["agent", "doctor", provider, "--json", "--executable"])
             .arg(&executable)
-            .env("OVRCR_CONFIG", dir.path().join("registry.toml"))
+            .env("OVRCR_HOME", dir.path())
             .env("OVRCR_SOCKET", dir.path().join("socket"))
             .env_remove("OVRCR_SESSION_ID")
             .output()

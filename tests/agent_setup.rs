@@ -19,7 +19,7 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
 fn command(root: &tempfile::TempDir) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ovrcr"));
     command
-        .env("OVRCR_CONFIG", root.path().join("registry.toml"))
+        .env("OVRCR_HOME", root.path())
         .env("OVRCR_SOCKET", root.path().join("socket"))
         .env_remove("OVRCR_SESSION_ID")
         .env_remove("OVRCR_HOOK_TOKEN")
@@ -49,7 +49,7 @@ fn setup(root: &tempfile::TempDir, value: &Value) -> (Value, String) {
         0o600
     );
     assert!(!root.path().join("socket").exists());
-    assert!(!root.path().join("registry.toml").exists());
+    assert!(!root.path().join("config.toml").exists());
     (
         serde_json::from_slice(&output.stdout).unwrap(),
         String::from_utf8(output.stderr).unwrap(),
@@ -592,7 +592,7 @@ command = "my-approval-handler"
         // Execute the actual emitted shell command, including its quoted absolute path.
         let mut helper = Command::new("sh");
         helper
-            .env("OVRCR_CONFIG", root.path().join("registry.toml"))
+            .env("OVRCR_HOME", root.path())
             .env("OVRCR_SOCKET", root.path().join("socket"));
         helper
             .args(["-c", cmd])
@@ -661,7 +661,7 @@ fn codex_doctor_defaults_dispatch_and_rejects_versions_without_server_or_secrets
         assert_eq!(value["capabilities"]["initial_invocation"]["fresh"], false);
     }
     assert!(!root.path().join("socket").exists());
-    assert!(!root.path().join("registry.toml").exists());
+    assert!(!root.path().join("config.toml").exists());
 }
 
 #[test]
@@ -691,17 +691,13 @@ fn codex_doctor_missing_session_and_failed_inspection_do_not_start_a_server() {
         value
     };
     assert_eq!(run()["session_status"], "session_not_found");
-    assert!(!root.path().join("registry.toml").exists());
-    std::fs::write(
-        root.path().join("registry.toml"),
-        "NEVER_PRIVATE_CONFIG = [",
-    )
-    .unwrap();
+    assert!(!root.path().join("config.toml").exists());
+    std::fs::write(root.path().join("config.toml"), "NEVER_PRIVATE_CONFIG = [").unwrap();
     let value = run();
     assert_eq!(value["session_status"], "inspection_unavailable");
     assert!(!value.to_string().contains("NEVER_PRIVATE_CONFIG"));
     assert_eq!(
-        std::fs::read_to_string(root.path().join("registry.toml")).unwrap(),
+        std::fs::read_to_string(root.path().join("config.toml")).unwrap(),
         "NEVER_PRIVATE_CONFIG = ["
     );
 }

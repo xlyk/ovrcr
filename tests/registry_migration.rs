@@ -11,6 +11,10 @@ fn database(live: &Live) -> PathBuf {
     ovrcr::config::database_path(&live.config)
 }
 
+fn identity(live: &Live) -> PathBuf {
+    ovrcr::config::legacy_identity_path(&live.config)
+}
+
 fn seed_project(live: &Live, name: &str) -> String {
     let original = toml::to_string(&ovrcr::config::Registry {
         projects: vec![ovrcr::config::ProjectRecord {
@@ -21,14 +25,14 @@ fn seed_project(live: &Live, name: &str) -> String {
         }],
     })
     .unwrap();
-    std::fs::write(&live.config, &original).unwrap();
+    std::fs::write(identity(live), &original).unwrap();
     original
 }
 
 fn run(live: &Live, args: &[&str]) -> Output {
     Command::new(&live.executable)
         .args(args)
-        .env("OVRCR_CONFIG", &live.config)
+        .env("OVRCR_HOME", &live.config)
         .env("OVRCR_SOCKET", &live.socket)
         .env("SHELL", "/bin/sh")
         .output()
@@ -75,7 +79,7 @@ fn refuse_startup(live: &Live) -> ExitStatus {
     let mut child = Command::new(&live.executable)
         .arg("server")
         .env("OVRCR_SOCKET", &live.socket)
-        .env("OVRCR_CONFIG", &live.config)
+        .env("OVRCR_HOME", &live.config)
         .env("SHELL", "/bin/sh")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -127,7 +131,7 @@ fn refuse_existing_sqlite(arrange: impl FnOnce(&Path)) {
         "refused startup must not publish a socket"
     );
     fails(&live, &["--json", "project", "list"]);
-    assert_eq!(std::fs::read_to_string(&live.config).unwrap(), original);
+    assert_eq!(std::fs::read_to_string(identity(&live)).unwrap(), original);
     assert_eq!(std::fs::read(&database).unwrap(), sqlite_before);
 }
 
@@ -141,14 +145,14 @@ fn offline_inventory_before_startup_does_not_create_sqlite() {
     assert_eq!(project["workspace_count"], 0);
     assert!(!database(&live).exists());
     assert!(!live.socket.exists());
-    assert_eq!(std::fs::read_to_string(&live.config).unwrap(), original);
+    assert_eq!(std::fs::read_to_string(identity(&live)).unwrap(), original);
 }
 
 #[test]
 fn malformed_legacy_startup_and_offline_query_fail_without_replacing_source() {
     let live = Live::idle().bounded();
     let original = "[[projects]\n";
-    std::fs::write(&live.config, original).unwrap();
+    std::fs::write(identity(&live), original).unwrap();
 
     fails(&live, &["--json", "project", "list"]);
     assert!(!live.socket.exists());
@@ -160,7 +164,7 @@ fn malformed_legacy_startup_and_offline_query_fail_without_replacing_source() {
         "failed startup must not publish inventory"
     );
     fails(&live, &["--json", "project", "list"]);
-    assert_eq!(std::fs::read_to_string(&live.config).unwrap(), original);
+    assert_eq!(std::fs::read_to_string(identity(&live)).unwrap(), original);
 }
 
 #[test]
@@ -259,11 +263,11 @@ fn interrupted_initial_sqlite_transaction_recovers_into_one_time_migration() {
         "offline inspection must not start a server"
     );
     assert_eq!(std::fs::read(&database).unwrap(), sqlite_before);
-    assert_eq!(std::fs::read_to_string(&live.config).unwrap(), original);
+    assert_eq!(std::fs::read_to_string(identity(&live)).unwrap(), original);
 
     live.start_binary();
     assert_eq!(project_names(&live), ["recover"]);
-    assert_eq!(std::fs::read_to_string(&live.config).unwrap(), original);
+    assert_eq!(std::fs::read_to_string(identity(&live)).unwrap(), original);
 
     let shutdown = run(&live, &["shutdown", "--kill"]);
     assert!(
@@ -283,11 +287,11 @@ fn interrupted_initial_sqlite_transaction_recovers_into_one_time_migration() {
     assert_eq!(workspaces[0]["path"], live.repo.to_str().unwrap());
     assert_eq!(workspaces[0]["branch"], "main");
     assert!(!live.socket.exists());
-    assert_eq!(std::fs::read_to_string(&live.config).unwrap(), original);
+    assert_eq!(std::fs::read_to_string(identity(&live)).unwrap(), original);
 
     live.start_binary();
     assert_eq!(project_names(&live), ["recover"]);
-    assert_eq!(std::fs::read_to_string(&live.config).unwrap(), original);
+    assert_eq!(std::fs::read_to_string(identity(&live)).unwrap(), original);
 }
 
 #[test]
@@ -326,27 +330,31 @@ fn held_sqlite_write_lock_rejects_mutation_boundedly_then_recovers() {
 }
 
 #[test]
-fn custom_config_path_keeps_task_and_settings_namespaces() {
+fn custom_home_keeps_task_and_settings_namespaces() {
     let mut live = Live::idle().bounded();
-    let config = live.root.path().join("alpha").join("full-config.toml");
-    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
-    live.config = config;
+    let home = live.root.path().join("alpha");
+    std::fs::create_dir_all(&home).unwrap();
+    live.config = home;
     let original = seed_project(&live, "alpha");
 
-    let settings = live.config.parent().unwrap().join("dashboard.toml");
+    let settings = live.config.join("dashboard.toml");
     let settings_body = "# keep-namespace-sentinel\nready_sound = true\n";
     std::fs::write(&settings, settings_body).unwrap();
-    let decoy = live.config.with_extension("sqlite3");
+    let decoy = live.config.join("config.sqlite3");
     std::fs::write(&decoy, "decoy-wrong-extension-replacement").unwrap();
 
-    let other = live.root.path().join("beta").join("full-config.toml");
-    std::fs::create_dir_all(other.parent().unwrap()).unwrap();
-    std::fs::write(&other, "projects = []\n").unwrap();
+    let other = live.root.path().join("beta");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(
+        ovrcr::config::legacy_identity_path(&other),
+        "projects = []\n",
+    )
+    .unwrap();
 
     assert_eq!(json(&live, &["project", "get", "alpha"])["name"], "alpha");
     assert!(!database(&live).exists());
     assert!(!live.socket.exists());
-    assert_eq!(std::fs::read_to_string(&live.config).unwrap(), original);
+    assert_eq!(std::fs::read_to_string(identity(&live)).unwrap(), original);
 
     live.start_binary();
     let task = json(
@@ -375,15 +383,15 @@ fn custom_config_path_keeps_task_and_settings_namespaces() {
 
     assert!(database(&live).exists());
     assert!(
-        database(&live).ends_with("full-config.toml.sqlite3"),
-        "sqlite path must append .sqlite3 to the full config filename: {}",
+        database(&live).ends_with("registry.sqlite3"),
+        "sqlite path must be registry.sqlite3 in the instance directory: {}",
         database(&live).display()
     );
     assert_eq!(
         std::fs::read_to_string(&decoy).unwrap(),
         "decoy-wrong-extension-replacement"
     );
-    assert_eq!(std::fs::read_to_string(&live.config).unwrap(), original);
+    assert_eq!(std::fs::read_to_string(identity(&live)).unwrap(), original);
     assert_eq!(std::fs::read_to_string(&settings).unwrap(), settings_body);
     assert!(!live.socket.exists());
     assert_eq!(json(&live, &["project", "get", "alpha"])["name"], "alpha");
@@ -400,7 +408,7 @@ fn custom_config_path_keeps_task_and_settings_namespaces() {
 
     let other_tasks = Command::new(&live.executable)
         .args(["--json", "task", "list"])
-        .env("OVRCR_CONFIG", &other)
+        .env("OVRCR_HOME", &other)
         .env("OVRCR_SOCKET", live.root.path().join("beta.sock"))
         .env("SHELL", "/bin/sh")
         .output()

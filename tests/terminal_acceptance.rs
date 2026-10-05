@@ -51,7 +51,7 @@ impl AcceptanceFixture {
         let child = Command::new(&self.executable)
             .args(args)
             .env("OVRCR_SOCKET", &self.socket)
-            .env("OVRCR_CONFIG", &self.config)
+            .env("OVRCR_HOME", &self.config)
             .spawn()
             .context("run OVRCR CLI")?;
         bounded_output(child, timeout)
@@ -304,11 +304,11 @@ impl OuterDashboard {
         let pair = pty.openpty(size)?;
         let mut command = CommandBuilder::new(&fixture.executable);
         command.env("OVRCR_SOCKET", &fixture.socket);
-        command.env("OVRCR_CONFIG", &fixture.config);
+        command.env("OVRCR_HOME", &fixture.config);
         command.env("OVRCR_SERVER_EXECUTABLE", server_executable);
         command.env(
             "OVRCR_DASHBOARD_CONFIG",
-            fixture.config.with_file_name("dashboard.toml"),
+            fixture.config.join("dashboard.toml"),
         );
         let child = pair.slave.spawn_command(command)?;
         let reader = pair.master.try_clone_reader()?;
@@ -1134,7 +1134,7 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
     )?;
     git(&fixture.repo, &["branch", "-D", "trunk"])?;
     std::fs::write(
-        fixture.config.with_file_name("dashboard.toml"),
+        fixture.config.join("dashboard.toml"),
         "branch_prefix = \"task/\"\n",
     )?;
     let mut dashboard = OuterDashboard::start(

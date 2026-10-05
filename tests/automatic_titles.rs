@@ -71,7 +71,7 @@ fn prepare_title_fixture(
     .unwrap();
     std::fs::set_permissions(&fake_pi, std::fs::Permissions::from_mode(0o700)).unwrap();
     if let Some(settings) = settings {
-        std::fs::write(live.root.path().join("dashboard.toml"), settings).unwrap();
+        std::fs::write(live.config.join("dashboard.toml"), settings).unwrap();
     }
     (live, fake_pi, calls)
 }
@@ -878,7 +878,7 @@ fn title_failures_mismatches_and_missing_binary_do_not_change_rows_or_retry() {
 
     let missing = Live::idle().bounded();
     std::fs::write(
-        missing.root.path().join("dashboard.toml"),
+        missing.config.join("dashboard.toml"),
         "title_model = 'pi/test'\n",
     )
     .unwrap();
@@ -1073,7 +1073,7 @@ fn title_subject_storage_archive_and_exclusions_cover_live_paths() {
     );
     let archived = std::process::Command::new(&live.executable)
         .args(["--json", "terminal", "list", "--archived"])
-        .env("OVRCR_CONFIG", &live.config)
+        .env("OVRCR_HOME", &live.config)
         .env("OVRCR_SOCKET", &live.socket)
         .output()
         .unwrap();
@@ -1422,7 +1422,7 @@ fn title_startup_and_shutdown_cleanup_titles_directory_and_process_group() {
     std::fs::create_dir_all(&titles).unwrap();
     std::fs::write(titles.join("leftover"), "stale").unwrap();
     std::fs::write(
-        live.root.path().join("dashboard.toml"),
+        live.config.join("dashboard.toml"),
         "title_model = 'pi/test'\n",
     )
     .unwrap();
@@ -1535,7 +1535,7 @@ fn late_title_result_after_archive_is_not_saved_or_shown() {
     std::thread::sleep(Duration::from_secs(3));
     let archived = std::process::Command::new(&live.executable)
         .args(["--json", "terminal", "list", "--archived"])
-        .env("OVRCR_CONFIG", &live.config)
+        .env("OVRCR_HOME", &live.config)
         .env("OVRCR_SOCKET", &live.socket)
         .output()
         .unwrap();
@@ -1795,7 +1795,7 @@ fn agent_and_terminal_titles_stay_user_controlled_across_dashboard_reconnect() {
                 };
                 let result = std::process::Command::new(&live.executable)
                     .args(args)
-                    .env("OVRCR_CONFIG", &live.config)
+                    .env("OVRCR_HOME", &live.config)
                     .env("OVRCR_SOCKET", &live.socket)
                     .output()
                     .unwrap();
@@ -1862,7 +1862,7 @@ fn saved_titles_survive_restart_and_reopen_without_legacy_application_titles() {
     let expected = ["title-work", "title-work-2", "User title"];
     let offline = std::process::Command::new(&live.executable)
         .args(["--json", "terminal", "list"])
-        .env("OVRCR_CONFIG", &live.config)
+        .env("OVRCR_HOME", &live.config)
         .env("OVRCR_SOCKET", &live.socket)
         .output()
         .unwrap();
@@ -3397,7 +3397,7 @@ fn title_model_set_and_cleared_while_running_starts_and_stops_titling() {
     std::thread::sleep(Duration::from_secs(4));
     assert_eq!(call_count(&calls), 0, "titled without a title_model");
 
-    let settings = live.root.path().join("dashboard.toml");
+    let settings = live.config.join("dashboard.toml");
     std::fs::write(&settings, "title_model = 'pi/test'\n").unwrap();
     wait_display(&live, first.id, "Fixture Topic");
     assert_eq!(call_count(&calls), 1);

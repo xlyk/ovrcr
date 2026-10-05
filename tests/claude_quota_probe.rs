@@ -8,7 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
 
 fn settings_document(fixture: &live::Live) -> std::path::PathBuf {
-    fixture.config.with_file_name("dashboard.toml")
+    fixture.config.join("dashboard.toml")
 }
 
 fn attach(fixture: &live::Live) -> std::os::unix::net::UnixStream {

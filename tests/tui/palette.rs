@@ -298,7 +298,7 @@ fn empty_hierarchy_shows_start_screen() {
     assert!(text.contains("a  Register project"));
     assert!(text.contains(":  Search"));
     assert!(text.contains("?  Help"));
-    assert!(text.contains("Config:"));
+    assert!(text.contains("Home:"));
     assert!(text.contains("Socket:"));
 }
 

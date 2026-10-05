@@ -36,7 +36,7 @@ change the environment the server reads; `Live::binary` spawns the compiled
 talking to a server it did not start. `Live::idle` hands back the paths without
 a server, for tests whose subject is start-up itself. `Live::isolated_home` is
 `idle` for a fresh install: the binary server and every `Live::command` run with
-an empty private HOME and no `OVRCR_CONFIG`, so the default config path is the
+an empty private HOME and no `OVRCR_HOME`, so the default instance directory is the
 one under test. Session, CLI and terminal helpers stay in the suite that needs
 them, wrapped around a `Live`; `tests/support/claude_auth.rs` installs a
 stand-in `claude` whose `auth status --json` answer a test can change while a
@@ -87,7 +87,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
 - Keep documentation-only verification proportional; do not run Rust suites for prose edits.
-- Give every live fixture its own `OVRCR_CONFIG`, `OVRCR_SOCKET`, and temporary workspace. Use the required execution permission for PTY/socket/process tests; sandbox denial is not an application failure.
+- Give every live fixture its own `OVRCR_HOME`, `OVRCR_SOCKET`, and temporary workspace. Use the required execution permission for PTY/socket/process tests; sandbox denial is not an application failure.
 - Follow [Computer-use testing](../testing-computer-use.md) for `just gui`. Use the exact checkout under review and fresh screenshots/accessibility state.
 - Record owned fixture PIDs/PGIDs and paths, retain the launcher result, and verify cleanup. Permission denial does not prove a process group is gone. Stop a hung owned test before starting another.
 - Never bypass a tool's access denial through another control channel or modify the user's live agent configuration to make an acceptance check pass.

@@ -761,7 +761,7 @@ impl Dashboard {
                 .as_ref()
                 .map(|(c, s)| (c.display().to_string(), s.display().to_string()))
                 .unwrap_or_else(|| ("not supplied".into(), "not supplied".into()));
-            lines.push(Line::from(format!("Config: {config}")));
+            lines.push(Line::from(format!("Home: {config}")));
             lines.push(Line::from(format!("Socket: {socket}")));
         } else if let Some(super::TreeRow::Workspace { project, id }) = &self.selected_container
             && let Some(workspace) = find_workspace(self, project, id)

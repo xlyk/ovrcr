@@ -1374,7 +1374,7 @@ impl ServerState {
             quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
             quota_refresh: Mutex::default(),
             settings: Mutex::new(watch::Watched::empty()),
-            socket: registry_path.with_extension("sock"),
+            socket: crate::config::default_socket_path(&registry_path),
             registry_path,
             registry: Mutex::new(Registry::default()),
             sessions: Mutex::new(HashMap::new()),

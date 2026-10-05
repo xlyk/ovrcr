@@ -16,10 +16,10 @@ type FileStamp = Option<(u64, Option<SystemTime>)>;
 struct Stamp(FileStamp, FileStamp);
 
 impl Stamp {
-    fn of(registry_path: &Path) -> Self {
+    fn of(home: &Path) -> Self {
         Self(
-            file_stamp(&crate::settings::document_path(registry_path)),
-            file_stamp(registry_path),
+            file_stamp(&crate::settings::document_path(home)),
+            file_stamp(&crate::config::legacy_identity_path(home)),
         )
     }
 }
@@ -185,7 +185,7 @@ mod tests {
     fn poll_reloads_only_on_stamp_change_and_republishes_only_real_changes() {
         let dir = tempfile::tempdir().unwrap();
         let mut state = super::super::tests::test_state(None, None);
-        Arc::get_mut(&mut state).unwrap().registry_path = dir.path().join("config.toml");
+        Arc::get_mut(&mut state).unwrap().registry_path = dir.path().to_path_buf();
         let document = dir.path().join("dashboard.toml");
 
         // Missing document, missing identity: same stamp as the empty reading.
@@ -218,7 +218,7 @@ mod tests {
         use ovrcr_protocol::{ErrorCode, Request, Response};
         let dir = tempfile::tempdir().unwrap();
         let mut state = super::super::tests::test_state(None, None);
-        Arc::get_mut(&mut state).unwrap().registry_path = dir.path().join("config.toml");
+        Arc::get_mut(&mut state).unwrap().registry_path = dir.path().to_path_buf();
         let document = dir.path().join("dashboard.toml");
         std::fs::write(&document, "# mine\nbranch_prefix = \"a/\" # prefix\n").unwrap();
         assert!(state.poll_settings());
@@ -277,7 +277,7 @@ mod tests {
     fn settings_reload_on_its_own_thread_without_the_title_worker() {
         let dir = tempfile::tempdir().unwrap();
         let mut state = super::super::tests::test_state(None, None);
-        Arc::get_mut(&mut state).unwrap().registry_path = dir.path().join("config.toml");
+        Arc::get_mut(&mut state).unwrap().registry_path = dir.path().to_path_buf();
         let document = dir.path().join("dashboard.toml");
         std::fs::write(&document, "title_model = 'pi/own-thread'\n").unwrap();
         assert_eq!(state.title_model(), None);
@@ -308,7 +308,7 @@ mod tests {
     fn settings_events_record_a_reload_with_findings_and_a_refusal() {
         let dir = tempfile::tempdir().unwrap();
         let mut state = super::super::tests::test_state(None, None);
-        Arc::get_mut(&mut state).unwrap().registry_path = dir.path().join("config.toml");
+        Arc::get_mut(&mut state).unwrap().registry_path = dir.path().to_path_buf();
         let document = dir.path().join("dashboard.toml");
         let secret = "SECRET_VALUE_9f3a";
         std::fs::write(

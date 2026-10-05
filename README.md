@@ -335,28 +335,29 @@ service installation, scheduling rules, and retained-work cleanup.
 
 | Path | Default |
 | --- | --- |
-| Registry / config | `~/Library/Application Support/ovrcr/config.toml` on macOS, `$XDG_CONFIG_HOME/ovrcr/config.toml` (usually `~/.config/ovrcr`) on Linux |
-| Project/workspace database | The full registry path with `.sqlite3` appended. Default `config.toml` therefore uses `config.toml.sqlite3`, not `config.sqlite3`. |
-| Settings document | `dashboard.toml` beside `config.toml`; every setting, including `title_model` and `[quota]` |
-| Scheduled tasks | `config.tasks` beside `config.toml` |
-| Server socket | `$XDG_RUNTIME_DIR/ovrcr/server.sock` on Linux, `$TMPDIR/ovrcr-UID/ovrcr/server.sock` on macOS and wherever `XDG_RUNTIME_DIR` is unset |
+| Instance directory | `~/Library/Application Support/ovrcr` on macOS, `$XDG_CONFIG_HOME/ovrcr` (usually `~/.config/ovrcr`) on Linux |
+| Project/workspace database | `registry.sqlite3` in the instance directory |
+| Settings document | `dashboard.toml` in the instance directory; every setting, including `title_model` and `[quota]` |
+| Scheduled tasks | `tasks/` in the instance directory |
+| Server socket | `server.sock` in the instance directory |
 | Server log | `server.log` beside the socket |
-| Event log | `events.jsonl` beside `config.toml` (one rotation to `events.jsonl.1`). The Server appends it; `ovrcr events` reads the in-memory ring through the Server, not the file |
+| Event log | `events.jsonl` in the instance directory (one rotation to `events.jsonl.1`). The Server appends it; `ovrcr events` reads the in-memory ring through the Server, not the file |
 
-`OVRCR_CONFIG` still names the `config.toml` path. The settings document and
-scheduled-task storage are derived from that path as before. After the first
-server start, project and workspace records live in the `.sqlite3` file. The
-server writes that database only and never rewrites `config.toml`. Keep every
-setting in `dashboard.toml`; `ovrcr settings` shows what it holds and any
-findings, and `ovrcr settings set PATH VALUE` changes one.
+An instance is one directory (`OVRCR_HOME`). After the first server start,
+project and workspace records live in `registry.sqlite3`. Keep every setting in
+`dashboard.toml`; `ovrcr settings` shows what it holds and any findings, and
+`ovrcr settings set PATH VALUE` changes one. An older layout that still uses
+`config.toml.sqlite3` and `config.tasks` is migrated once in place; the old
+files are kept.
 
 | Variable | Effect |
 | --- | --- |
-| `OVRCR_CONFIG` | Registry path; selects an isolated instance |
-| `OVRCR_SOCKET` | Server socket path; selects an isolated server |
-| `OVRCR_DASHBOARD_CONFIG` | Settings document path; chooses a file only. The Server resolves it and is the only reader and writer of that document; set it where the Server runs. The installed service receives only `OVRCR_CONFIG` and `OVRCR_SOCKET`, so it reads `dashboard.toml` beside `config.toml`. The Dashboard and `ovrcr settings set` use the Server's document, not their own environment; with no Server running, `ovrcr settings` and `ovrcr settings set` resolve it themselves |
+| `OVRCR_HOME` | Instance directory; selects an isolated instance |
+| `OVRCR_CONFIG` | Deprecated file-path alias for one release; `OVRCR_CONFIG=/x/config.toml` means `OVRCR_HOME=/x` and yields a finding |
+| `OVRCR_SOCKET` | Server socket path override; when unset, defaults to `server.sock` in the instance directory |
+| `OVRCR_DASHBOARD_CONFIG` | Settings document path; chooses a file only. The Server resolves it and is the only reader and writer of that document; set it where the Server runs. The installed service receives `OVRCR_HOME` and `OVRCR_SOCKET`, so it reads `dashboard.toml` in the instance directory. The Dashboard and `ovrcr settings set` use the Server's document, not their own environment; with no Server running, `ovrcr settings` and `ovrcr settings set` resolve it themselves |
 
-Set `OVRCR_CONFIG` and `OVRCR_SOCKET` together for a test fixture or a second
+Set `OVRCR_HOME` (and optionally `OVRCR_SOCKET`) for a test fixture or a second
 instance. OVRCR creates a missing socket directory with mode 700 and refuses to
 start when an existing one is a symlink or owned by another user. It never changes
 the permissions of a directory it did not create. The socket file itself is always
@@ -511,7 +512,7 @@ resize, mouse selection, detach, reattach, and bounded cleanup:
 cargo test -p ovrcr --test terminal_acceptance -- --nocapture
 ```
 
-Give every live fixture its own `OVRCR_CONFIG`, `OVRCR_SOCKET`, and temporary
+Give every live fixture its own `OVRCR_HOME`, `OVRCR_SOCKET`, and temporary
 workspace, so a test cannot reach your real server.
 
 CI runs one `checks` job on macos-latest: format, clippy, the full workspace

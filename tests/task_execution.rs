@@ -64,7 +64,7 @@ while True:
         Command::new(env!("CARGO_BIN_EXE_ovrcr"))
             .args(args)
             .env("SHELL", "/bin/sh")
-            .env("OVRCR_CONFIG", self.root.path().join("config.toml"))
+            .env("OVRCR_HOME", self.root.path())
             .env("OVRCR_SOCKET", self.root.path().join("server.sock"))
             .env("OVRCR_PI_EXECUTABLE", self.root.path().join("pi-fixture"))
             .output()
@@ -126,7 +126,7 @@ while True:
 }
 impl Fixture {
     fn run_dir(&self, id: &str) -> std::path::PathBuf {
-        self.root.path().join("config.tasks/runs").join(id)
+        self.root.path().join("tasks/runs").join(id)
     }
     /// The supervisor records its PID in run.lock once it owns the run.
     fn supervisor_pid(&self, id: &str) -> i32 {
@@ -388,7 +388,7 @@ fn git_runs_fetch_remote_head_keep_files_and_preserve_branches_on_cleanup() {
     ]);
     assert!(!rejected.status.success());
     assert!(
-        !fs::read_to_string(f.root.path().join("config.tasks/state.toml"))
+        !fs::read_to_string(f.root.path().join("tasks/state.toml"))
             .unwrap()
             .contains("user:secret")
     );
@@ -464,7 +464,7 @@ fn server_crash_interrupts_pi_and_recovery_does_not_replay_the_run() {
     let f = Fixture::new();
     let mut server = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
         .arg("server")
-        .env("OVRCR_CONFIG", f.root.path().join("config.toml"))
+        .env("OVRCR_HOME", f.root.path())
         .env("OVRCR_SOCKET", f.root.path().join("server.sock"))
         .env("OVRCR_PI_EXECUTABLE", f.root.path().join("pi-fixture"))
         .stdin(std::process::Stdio::null())
@@ -513,7 +513,7 @@ fn shutdown_finishes_even_when_final_state_persistence_fails() {
     let task = f.task("shutdown-fault", "HOLD");
     let id = f.start(&task);
     f.wait(&id, "Running");
-    let state = f.root.path().join("config.tasks/state.toml");
+    let state = f.root.path().join("tasks/state.toml");
     let backup = state.with_extension("backup");
     fs::rename(&state, &backup).unwrap();
     fs::create_dir(&state).unwrap();
@@ -537,7 +537,7 @@ fn signal_shutdown_cleans_up_despite_final_state_write_failure() {
     let f = Fixture::new();
     let mut server = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
         .arg("server")
-        .env("OVRCR_CONFIG", f.root.path().join("config.toml"))
+        .env("OVRCR_HOME", f.root.path())
         .env("OVRCR_SOCKET", f.root.path().join("server.sock"))
         .env("OVRCR_PI_EXECUTABLE", f.root.path().join("pi-fixture"))
         .stdin(std::process::Stdio::null())
@@ -552,7 +552,7 @@ fn signal_shutdown_cleans_up_despite_final_state_write_failure() {
     let task = f.task("signal-fault", "HOLD");
     let id = f.start(&task);
     f.wait(&id, "Running");
-    let state = f.root.path().join("config.tasks/state.toml");
+    let state = f.root.path().join("tasks/state.toml");
     let backup = state.with_extension("backup");
     fs::rename(&state, &backup).unwrap();
     fs::create_dir(&state).unwrap();

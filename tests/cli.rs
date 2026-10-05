@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 fn isolated_command(root: &tempfile::TempDir) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ovrcr"));
     command
-        .env("OVRCR_CONFIG", root.path().join("config.toml"))
+        .env("OVRCR_HOME", root.path())
         .env("OVRCR_SOCKET", root.path().join("server.sock"))
         .env("SHELL", "/bin/sh");
     command
@@ -258,7 +258,7 @@ fn assert_activity_reaches_managed_session(
     std::fs::create_dir(&workspaces).unwrap();
     live::init_repo(&repo);
 
-    let config = root.path().join("config.toml");
+    let config = root.path().to_path_buf();
     let socket = root.path().join("server.sock");
     let bin = env!("CARGO_BIN_EXE_ovrcr");
     let mut cleanup = CleanupGuard::new(bin, &config, &socket);
@@ -511,7 +511,7 @@ fn context_helper_reports_from_managed_pty() {
     let repo = root.path().join("repo");
     let workspaces = root.path().join("workspaces");
     setup_git_fixture(&repo, &workspaces);
-    let config = root.path().join("config.toml");
+    let config = root.path().to_path_buf();
     let socket = root.path().join("server.sock");
     let bin = env!("CARGO_BIN_EXE_ovrcr");
     let mut cleanup = CleanupGuard::new(bin, &config, &socket);
@@ -714,7 +714,7 @@ fn context_helper_invalid_input_has_no_effect() {
     let repo = root.path().join("repo");
     let workspaces = root.path().join("workspaces");
     setup_git_fixture(&repo, &workspaces);
-    let config = root.path().join("config.toml");
+    let config = root.path().to_path_buf();
     let socket = root.path().join("server.sock");
     let bin = env!("CARGO_BIN_EXE_ovrcr");
     let mut cleanup = CleanupGuard::new(bin, &config, &socket);
@@ -872,7 +872,7 @@ fn context_inspect_reports_unknown_and_sample() {
     let repo = root.path().join("repo");
     let workspaces = root.path().join("workspaces");
     setup_git_fixture(&repo, &workspaces);
-    let config = root.path().join("config.toml");
+    let config = root.path().to_path_buf();
     let socket = root.path().join("server.sock");
     let bin = env!("CARGO_BIN_EXE_ovrcr");
     let mut cleanup = CleanupGuard::new(bin, &config, &socket);
@@ -1135,7 +1135,7 @@ fn context_helper_missing_server_does_not_start_one() {
     let mut command = isolated_command(&root);
     command
         .args(["report", "context", "--stdin-json"])
-        .env("OVRCR_CONFIG", &config)
+        .env("OVRCR_HOME", root.path())
         .env("OVRCR_SOCKET", &socket)
         .env("OVRCR_HOOK_SOCKET", &socket)
         .env("OVRCR_SESSION_ID", "7")
@@ -1160,7 +1160,7 @@ fn context_helper_missing_server_does_not_start_one() {
     let mut incomplete = isolated_command(&incomplete_root);
     incomplete
         .args(["report", "context", "--stdin-json"])
-        .env("OVRCR_CONFIG", &incomplete_config)
+        .env("OVRCR_HOME", incomplete_root.path())
         .env("OVRCR_SOCKET", &incomplete_socket)
         .env("OVRCR_HOOK_SOCKET", &incomplete_socket)
         .env("OVRCR_SESSION_ID", "7")
@@ -1564,7 +1564,7 @@ fn new_and_existing_branch_flags_are_exclusive() {
             "--branch",
             "feature/existing",
         ])
-        .env("OVRCR_CONFIG", root.path().join("config.toml"))
+        .env("OVRCR_HOME", root.path())
         .env("OVRCR_SOCKET", root.path().join("server.sock"))
         .output()
         .expect("run compiled ovrcr binary");
@@ -1584,10 +1584,10 @@ fn session_command_keeps_arguments_after_separator() {
     std::fs::create_dir(&repo).unwrap();
     std::fs::create_dir(&workspaces).unwrap();
     live::init_repo(&repo);
-    let config = root.path().join("config.toml");
+    let config = root.path().to_path_buf();
     let socket = root.path().join("server.sock");
     let envs = [
-        ("OVRCR_CONFIG", config.as_os_str()),
+        ("OVRCR_HOME", root.path().as_os_str()),
         ("OVRCR_SOCKET", socket.as_os_str()),
     ];
     let bin = env!("CARGO_BIN_EXE_ovrcr");
@@ -1795,7 +1795,7 @@ impl<'a> CleanupGuard<'a> {
     fn cleanup(&mut self) -> Result<(), String> {
         let mut shutdown = Command::new(self.bin)
             .args(["shutdown", "--kill"])
-            .env("OVRCR_CONFIG", self.config)
+            .env("OVRCR_HOME", self.config)
             .env("OVRCR_SOCKET", self.socket)
             .env("OVRCR_KILL_GRACE_MS", "200")
             .stdout(Stdio::null())
@@ -2366,7 +2366,7 @@ fn hermes_cli_launch_uses_real_server_pty_and_truthful_lifecycle() {
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
     let mut create = Command::new(&fixture.executable);
     create
-        .env("OVRCR_CONFIG", &fixture.config)
+        .env("OVRCR_HOME", &fixture.config)
         .env("OVRCR_SOCKET", &fixture.socket)
         .args([
             "--json",
@@ -2441,7 +2441,7 @@ fn hermes_cli_launch_uses_real_server_pty_and_truthful_lifecycle() {
     let run = session.run;
     let mut doctor = Command::new(&fixture.executable);
     doctor
-        .env("OVRCR_CONFIG", &fixture.config)
+        .env("OVRCR_HOME", &fixture.config)
         .env("OVRCR_SOCKET", &fixture.socket)
         .args([
             "agent",
@@ -2617,7 +2617,7 @@ fn cursor_create(
 ) -> ovrcr::session::SessionId {
     let mut command = Command::new(&fixture.executable);
     command
-        .env("OVRCR_CONFIG", &fixture.config)
+        .env("OVRCR_HOME", &fixture.config)
         .env("OVRCR_SOCKET", &fixture.socket)
         .args([
             "terminal",
@@ -2859,7 +2859,7 @@ fn cursor_startup_identity_is_native_owned_and_no_semantics_are_inferred() {
     assert!(session.unread.is_none() && session.recovery.is_none());
     let mut doctor = Command::new(&fixture.executable);
     doctor
-        .env("OVRCR_CONFIG", &fixture.config)
+        .env("OVRCR_HOME", &fixture.config)
         .env("OVRCR_SOCKET", &fixture.socket)
         .args(["agent", "doctor", "cursor-agent", "--json", "--session"])
         .arg(id.0.to_string())
@@ -2995,7 +2995,7 @@ fn stable_titles_rename_reset_and_reopen_through_cli() {
         let mut command = Command::new(&fixture.executable);
         command
             .args(args)
-            .env("OVRCR_CONFIG", &fixture.config)
+            .env("OVRCR_HOME", &fixture.config)
             .env("OVRCR_SOCKET", &fixture.socket)
             .env("SHELL", "/bin/sh");
         let output = run_cli_bounded(command).unwrap();
@@ -3116,10 +3116,7 @@ fn settings_command_reports_document_rows_and_findings_and_json_round_trips() {
         .unwrap();
     assert!(json.status.success(), "{json:?}");
     let report: SettingsReport = serde_json::from_slice(&json.stdout).unwrap();
-    let expected = ovrcr::settings::load_document(
-        &root.path().join("config.toml"),
-        &root.path().join("dashboard.toml"),
-    );
+    let expected = ovrcr::settings::load_document(root.path(), &root.path().join("dashboard.toml"));
     assert_eq!(report.path, root.path().join("dashboard.toml"));
     assert_eq!(report.rows, expected.rows);
     assert_eq!(report.findings, expected.findings);
