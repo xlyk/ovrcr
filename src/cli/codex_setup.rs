@@ -265,7 +265,7 @@ pub(super) fn setup(path: Option<&Path>) -> AppResult<()> {
     let value = result.map_err(|_| RuntimeError::internal(anyhow::anyhow!("Cannot compose Codex TOML: settings unreadable, invalid, oversized, or incompatible hook structure")))?;
     print!("{value}");
     eprintln!(
-        "{REQUIREMENTS}\n{FORMS}\nNo file was written. Review the printed TOML and explicitly merge it into the intended Codex config.toml. Existing values, handler order, comments and formatting are preserved. Do not redirect onto the input file. Preserve permission, approval and trust settings; never copy trust hashes from an example. Removal: remove only the exact added direct-exec reporter handlers; preserve other handlers and their order."
+        "{REQUIREMENTS}\n{FORMS}\nNo file was written. Review the printed TOML and explicitly merge it into the intended Codex config.toml. Unrelated native values, handler order, comments and formatting are preserved. OVRCR-owned reporters are repaired to one unfiltered synchronous reporter per event. Do not redirect onto the input file. Preserve permission, approval and trust settings; never copy trust hashes from an example. Removal: remove only the exact added direct-exec reporter handlers; preserve other handlers and their order."
     );
     Ok(())
 }

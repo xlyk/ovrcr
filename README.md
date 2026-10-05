@@ -312,9 +312,10 @@ ovrcr new --project demo --workspace feature/hooks --name agent -- ovrcr agent r
 ovrcr session usage SESSION_ID
 ```
 
-Review and merge the printed settings before launching. OVRCR never edits provider
-settings. See [Claude Code setup](docs/claude-code-setup.md) for composition,
-diagnostics, removal, and supported invocation limits, and the
+Review and merge the printed settings before launching. `--print` leaves provider
+files untouched; interactive Dashboard startup can install or repair OVRCR hooks
+after a y/n confirmation. See [Claude Code setup](docs/claude-code-setup.md) for
+composition, diagnostics, removal, and supported invocation limits, and the
 [support matrix](docs/agent-reporting-support.md) for acceptance evidence.
 
 Other harness integrations remain planned. Existing generic activity/context and

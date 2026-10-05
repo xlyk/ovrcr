@@ -23,7 +23,9 @@ ovrcr agent setup codex --print --settings /path/to/codex/config.toml
 ovrcr agent doctor codex --json --settings /path/to/codex/config.toml
 ```
 
-Omit `--settings` to print a standalone example. Setup prints TOML to stdout and instructions to stderr; it never writes configuration or trust. Review the output, then explicitly merge it into the intended Codex `config.toml`. Do not redirect output onto the input file. Composition preserves existing values, unrelated handlers and their order, including approval handlers and trust entries. It appends missing reporters and recognizes an already configured exact reporter; comments and formatting are not preserved. `just run` installs `~/.local/bin/ovrcr` and rewrites only the `ovrcr` token inside existing reporter commands to that binary. If the command already names that file, the bytes stay put, so the Codex trust hash stays valid. A path that actually changes needs native trust review again. Do not remove and re-add a handler just to move the path. Never copy trust hashes from retained evidence.
+Omit `--settings` to print a standalone example. Setup prints TOML to stdout and instructions to stderr; it never writes configuration or trust. Review the output, then explicitly merge it into the intended Codex `config.toml`. Do not redirect output onto the input file. Composition preserves unrelated native values, handlers and their order, approval/trust entries, comments and formatting. It adds missing reporters and repairs OVRCR-owned stale, filtered, asynchronous or duplicate reporters to one unfiltered synchronous reporter per event. An already correct reporter stays unchanged.
+
+`just run` atomically installs `~/.local/bin/ovrcr` and launches the client. Interactive Dashboard startup offers missing-hook installation or repairs in the active Codex profile; it writes only after y/n confirmation. Read-only commands and reporting callbacks skip these offers. Changed reporter commands need native trust review again; configuration does not prove delivery. Never copy trust hashes from retained evidence.
 
 Run setup and doctor from the exact OVRCR binary whose absolute path the hooks will execute. Setup embeds its own executable path; output from a temporary build points to that temporary build. Doctor checks for reporters using its own path too. Moving the binary requires reviewing a new composition and any native trust prompt. Keep full compositions and backups private because they contain the supplied configuration.
 
@@ -80,12 +82,13 @@ command = "exec '/absolute/path/to/ovrcr' report codex --stdin"
 Keep the `SessionStart` reporter unfiltered (omit `matcher`, or use an empty
 string). Codex 0.155.1 supplies `fork` as a Root source; the former
 `startup|resume|clear|compact` matcher suppresses that callback and prevents
-OVRCR's existing identity guard from seeing it. Setup preserves a filtered
-reporter and appends an unfiltered one; doctor flags a supplied file containing
-only the filtered reporter as missing `SessionStart` coverage. Review and trust
-the added handler through native Codex before relying on delivery. Retaining
-both groups can deliver supported sources twice; duplicate callbacks remain
-silent. No configuration or trust is written by setup.
+OVRCR's existing identity guard from seeing it. Setup replaces the owned filtered
+reporter with one unfiltered reporter, preserving unrelated handlers and native
+trust state; doctor flags a supplied file containing only the filtered reporter
+as missing `SessionStart` coverage. Review and trust the generated handler through
+native Codex before relying on delivery. Manually retained duplicate reporters
+can deliver supported sources twice; duplicate callbacks remain silent. No
+configuration or trust is written by setup.
 
 Receiving `fork` does not establish a supported foreground replacement: when
 already bound, it freezes reporting with `identity_transition_unavailable`,
