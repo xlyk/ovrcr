@@ -665,8 +665,8 @@ children, directories only, filtered by fuzzy subsequence on the last path
 segment. Hidden names stay hidden unless the typed segment starts with `.`. Git
 checkouts sort first and are marked `git`. `Tab` accepts the highlight and
 appends `/`; `Enter` keeps the typed text and moves on. An empty field lists
-`picker_roots` from `dashboard.toml`. Name becomes the repository basename once a
-path is chosen. Workspace root defaults to `<config dir>/workspaces/<name>` until
+`picker_roots` from `dashboard.toml` in document order, not sorted. Name becomes
+the repository basename once a path is chosen. Workspace root defaults to `<config dir>/workspaces/<name>` until
 you edit it, and is created on registration if missing. Registration creates the
 protected repository-root workspace on the detected default branch. Whether it
 also starts a `local` shell there follows `automatic_local_terminals` (default
@@ -730,6 +730,7 @@ for no confirmation.
 | --- | --- |
 | `↑`/`↓`, `j`/`k`, Page Up/Down, Home/End, wheel | Move the selection |
 | `Enter` | Edit the selected row in place |
+| `[` / `]` | Move the selected picker root up or down |
 | `r` | Reset: remove the key so the source returns to `default` (only for a `set` row) |
 | `x` / Delete | Remove the selected element of a collection |
 | `/` | Filter rows across groups with the palette's word filter; Enter keeps it, Escape clears it |
@@ -745,7 +746,10 @@ new reading arrives. A value the Server refuses shows under its row as
 **refused: …** and the document is unchanged.
 
 `picker_roots`, `[[agents]]` and `launch_choices` expand into one child row per
-element or entry plus an **Add** row; there is no reordering. An agent row edits
+element or entry plus an **Add** row. `[` and `]` on a picker-root row send one
+`SetSetting` of the whole `picker_roots` list in the new order; the first row
+cannot move up and the last cannot move down. Agent rows have no order, so those
+keys do nothing there. An agent row edits
 its `argv` as a TOML array literal such as `["claude", "--verbose"]`; Add asks for
 the agent's name and starts its argv as that name. Add under Remembered launches
 asks for a project name and remembers Terminal. While `picker_roots` is its
@@ -753,7 +757,7 @@ default, an edit or Add writes the whole default list with the change.
 
 While the document is not valid TOML, every row shows its default, the top
 finding names the line, and **Editing is off until dashboard.toml is fixed by
-hand.**; Enter, `r` and `x` change nothing.
+hand.**; Enter, `[`, `]`, `r` and `x` change nothing.
 
 At attach the footer shows one line when the reading has findings, for example
 **2 settings findings; see Settings**, and nothing when it has none. When a later

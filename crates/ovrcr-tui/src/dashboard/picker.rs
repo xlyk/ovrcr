@@ -226,6 +226,8 @@ pub fn list_path_entries(input: &str, roots: &[PathBuf]) -> PathListing {
     let (prefix, segment) = split_input(input);
     let show_hidden = segment.starts_with('.');
     let mut entries = if prefix.is_empty() {
+        // Roots stay in the order the settings document saved them. Git-first
+        // sorting is for the children of a directory, below.
         roots
             .iter()
             .filter_map(|root| {
@@ -241,9 +243,10 @@ pub fn list_path_entries(input: &str, roots: &[PathBuf]) -> PathListing {
             .collect::<Vec<_>>()
     } else {
         let dir = expand_dir(prefix);
-        read_dirs(&dir, segment, show_hidden)
+        let mut entries = read_dirs(&dir, segment, show_hidden);
+        entries.sort_by(|a, b| b.git.cmp(&a.git).then_with(|| a.name.cmp(&b.name)));
+        entries
     };
-    entries.sort_by(|a, b| b.git.cmp(&a.git).then_with(|| a.name.cmp(&b.name)));
     let omitted = entries.len().saturating_sub(PATH_LIST_LIMIT);
     entries.truncate(PATH_LIST_LIMIT);
     PathListing { entries, omitted }
@@ -444,6 +447,29 @@ mod tests {
             assert_eq!(first, second);
             let third = picker.listing("~/Code/r", &roots).clone();
             assert!(third.entries.is_empty(), "{:?}", third.entries);
+        });
+    }
+
+    /// An empty field is the picker roots themselves. Git-first and name
+    /// sorting apply to a directory's children, not to this list.
+    #[test]
+    fn empty_field_lists_roots_in_the_given_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let plain = dir.path().join("z-plain");
+        let repo = dir.path().join("a-git");
+        std::fs::create_dir(&plain).unwrap();
+        std::fs::create_dir(&repo).unwrap();
+        std::fs::create_dir(repo.join(".git")).unwrap();
+        with_home(dir.path(), || {
+            let listing = list_path_entries("", &[plain.clone(), repo.clone()]);
+            assert_eq!(
+                listing
+                    .entries
+                    .iter()
+                    .map(|entry| (entry.name.as_str(), entry.git))
+                    .collect::<Vec<_>>(),
+                [("~/z-plain", false), ("~/a-git", true)]
+            );
         });
     }
 
