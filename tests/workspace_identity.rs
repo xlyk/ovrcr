@@ -447,7 +447,7 @@ fn unregistering_a_project_keeps_its_protected_repository_checkout() {
 fn migration_reuses_an_existing_root_registration_and_initializes_its_shell() {
     let fixture = Live::idle();
     std::fs::write(
-        &fixture.config,
+        ovrcr::config::legacy_identity_path(&fixture.config),
         format!(
             "[[projects]]\nname = \"fixture\"\nrepo = {:?}\nworkspace_root = {:?}\n\
          [[projects.workspaces]]\nname = \"old-root\"\npath = {:?}\nbranch = \"main\"\n",
