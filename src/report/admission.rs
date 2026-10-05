@@ -277,10 +277,17 @@ pub fn pinned_version(executable: &OsStr) -> ClaudeVersionProbe {
 pub fn probe_version(executable: &OsStr) -> Option<Vec<u8>> {
     let mut command = Command::new(executable);
     command.arg("--version");
-    probe_command(command)
+    probe_command(command, 128)
 }
 
-fn probe_command(mut command: Command) -> Option<Vec<u8>> {
+/// Reuse the owned, bounded probe for capabilities advertised by the installed CLI.
+pub(super) fn probe_help(executable: &OsStr) -> Option<Vec<u8>> {
+    let mut command = Command::new(executable);
+    command.arg("--help");
+    probe_command(command, 16 * 1024)
+}
+
+fn probe_command(mut command: Command, output_limit: usize) -> Option<Vec<u8>> {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -298,7 +305,7 @@ fn probe_command(mut command: Command) -> Option<Vec<u8>> {
     let Ok(mut child) = command.spawn() else {
         return None;
     };
-    let mut stdout = child.stdout.take().expect("piped version stdout");
+    let mut stdout = child.stdout.take().expect("piped probe stdout");
     let fd = stdout.as_raw_fd();
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
     let deadline = Instant::now() + Duration::from_secs(1);
@@ -315,7 +322,7 @@ fn probe_command(mut command: Command) -> Option<Vec<u8>> {
                     ) => {}
                 Err(_) => break,
             }
-            if bytes.len() > 128 {
+            if bytes.len() > output_limit {
                 break;
             }
             let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
@@ -340,9 +347,10 @@ fn probe_command(mut command: Command) -> Option<Vec<u8>> {
                 }
                 let status = child.wait();
                 let _ = stdout
-                    .take(129 - bytes.len() as u64)
+                    .take((output_limit + 1 - bytes.len()) as u64)
                     .read_to_end(&mut bytes);
-                return if status.is_ok_and(|status| status.success()) {
+                return if status.is_ok_and(|status| status.success()) && bytes.len() <= output_limit
+                {
                     Some(bytes)
                 } else {
                     None
@@ -1778,7 +1786,7 @@ mod tests {
             .arg(&identity)
             .arg(&fifo);
         let started = Instant::now();
-        assert!(probe_command(command).is_none());
+        assert!(probe_command(command, 128).is_none());
         assert!(started.elapsed() < Duration::from_secs(2));
         let pid = std::fs::read_to_string(identity)
             .unwrap()
@@ -1819,7 +1827,7 @@ mod tests {
                 .arg(&identity)
                 .arg(version)
                 .arg(exit.to_string());
-            let probe = probe_command(command)
+            let probe = probe_command(command, 128)
                 .as_deref()
                 .map_or(ClaudeVersionProbe::Unavailable, classify_version);
             assert_eq!(probe.supported().is_some(), expected);

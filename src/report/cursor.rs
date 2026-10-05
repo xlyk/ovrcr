@@ -1,4 +1,4 @@
-//! Pinned fresh Cursor CLI startup identity. No activity, metrics or recovery claims.
+//! Runtime-validated fresh Cursor CLI startup identity. No activity or recovery claims.
 use super::InvocationLease;
 use super::reporter::{self, Frames, Reporter};
 use ovrcr_protocol::AgentProvider;
@@ -11,13 +11,14 @@ use std::{
     time::Instant,
 };
 
-pub const VERSION: &str = "2026.09.10-fd3934a";
-
-pub fn supported_version(bytes: &[u8]) -> bool {
-    bytes == format!("{VERSION}\n").as_bytes()
+fn supports_local_plugin(bytes: &[u8]) -> bool {
+    std::str::from_utf8(bytes).is_ok_and(|help| {
+        help.lines()
+            .any(|line| line.split_whitespace().next() == Some("--plugin-dir"))
+    })
 }
 
-/// Only fresh default interactive launches and the inspected native model option.
+/// Only fresh default interactive launches and the native model option.
 pub fn eligible_argv(argv: &[OsString]) -> bool {
     if !matches!(
         argv.first()
@@ -48,7 +49,6 @@ pub fn eligible_argv(argv: &[OsString]) -> bool {
 #[derive(Deserialize, Serialize)]
 pub(super) struct Startup {
     hook_event_name: String,
-    cursor_version: String,
     pub(super) conversation_id: String,
     generation_id: String,
     session_id: String,
@@ -58,7 +58,6 @@ pub(super) struct Startup {
 impl Startup {
     fn valid(&self) -> bool {
         self.hook_event_name == "sessionStart"
-            && self.cursor_version == VERSION
             && super::admission::canonical_uuid_v4(&self.conversation_id)
             && self.generation_id == self.conversation_id
             && self.session_id == self.conversation_id
@@ -130,10 +129,10 @@ pub fn receiver(lease: Option<InvocationLease>, argv: &mut Vec<OsString>) -> Hoo
     )
     .map(str::to_owned)
     .or_else(|| {
-        (!super::admission::probe_version(&argv[0])
+        (!super::admission::probe_help(&argv[0])
             .as_deref()
-            .is_some_and(supported_version))
-        .then(|| "version probe unsupported or unavailable".to_owned())
+            .is_some_and(supports_local_plugin))
+        .then(|| "local plugin capability unavailable".to_owned())
     })
     .or_else(|| match materialize_plugin() {
         Ok(root) => {
@@ -206,7 +205,7 @@ mod tests {
     use std::time::Duration;
 
     fn payload() -> Value {
-        json!({"hook_event_name":"sessionStart","cursor_version":VERSION,
+        json!({"hook_event_name":"sessionStart","cursor_version":"local-build",
             "conversation_id":"00000000-0000-4000-8000-000000000001",
             "generation_id":"00000000-0000-4000-8000-000000000001",
             "session_id":"00000000-0000-4000-8000-000000000001","is_background_agent":false})
@@ -240,20 +239,23 @@ mod tests {
     }
 
     #[test]
-    fn version_is_exact_not_a_guessed_compatible_range() {
-        assert!(supported_version(format!("{VERSION}\n").as_bytes()));
+    fn help_requires_the_native_local_plugin_option() {
+        assert!(supports_local_plugin(
+            b"Usage: agent\n  --plugin-dir <path>  Load a local plugin\n"
+        ));
         for invalid in [
-            VERSION,
-            "2026.09.11-fd3934a\n",
-            "2026.09.10-fd3934a\nextra",
-            "2026.09.10-fd3934a\r\n",
+            "local-build\n",
+            "No support for --plugin-dir\n",
+            "  --plugin-directory <path>\n",
+            "  --model <model>\n",
         ] {
-            assert!(!supported_version(invalid.as_bytes()), "{invalid}");
+            assert!(!supports_local_plugin(invalid.as_bytes()), "{invalid}");
         }
+        assert!(!supports_local_plugin(b"\xff --plugin-dir"));
     }
 
     #[test]
-    fn only_source_inspected_fresh_arguments_are_eligible() {
+    fn only_fresh_interactive_arguments_are_eligible() {
         let args = |native: &str, args: &[&str]| {
             std::iter::once(native)
                 .chain(args.iter().copied())
@@ -294,14 +296,20 @@ mod tests {
         input["user_email"] = "DO_NOT_FORWARD".into();
         input["transcript_path"] = "DO_NOT_FORWARD".into();
         input["model"] = "DO_NOT_FORWARD".into();
+        input["cursor_version"] = "DO_NOT_FORWARD".into();
         let parsed = startup(&serde_json::to_vec(&input).unwrap()).unwrap();
         assert!(
             !serde_json::to_string(&parsed)
                 .unwrap()
                 .contains("DO_NOT_FORWARD")
         );
+        let mut without_release = payload();
+        without_release
+            .as_object_mut()
+            .unwrap()
+            .remove("cursor_version");
+        assert!(startup(&serde_json::to_vec(&without_release).unwrap()).is_some());
         for (key, value) in [
-            ("cursor_version", json!("unknown")),
             ("hook_event_name", json!("stop")),
             ("conversation_id", json!("not-a-uuid")),
             ("generation_id", json!("other")),
@@ -330,7 +338,6 @@ mod tests {
         );
         assert!(reporter.binding().is_none());
         for (key, value) in [
-            ("cursor_version", json!("unknown")),
             ("generation_id", json!("foreign")),
             ("is_background_agent", json!(true)),
         ] {

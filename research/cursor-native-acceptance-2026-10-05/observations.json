@@ -1,0 +1,204 @@
+{
+  "source_commit": "c2e29ac4e2cd57177f20738405fc9c487f963a07",
+  "installed_cli_observation": "2026.10.01-e373342",
+  "release_admission": false,
+  "platform": "native macOS",
+  "model_turns_submitted": 1,
+  "model_responses_verified": 1,
+  "cli_marker": "CURSOR_CLI_OK",
+  "native_model_observed": "Grok 4.6 High Fast",
+  "tool_call_count": "not independently counted",
+  "bindings": {
+    "dashboard": {
+      "session_status": "bound",
+      "binding_health": "Connected",
+      "executable_status": "found",
+      "probe_status": "not_run",
+      "startup_identity": "requires_native_hook"
+    },
+    "cli": {
+      "session_status": "bound",
+      "binding_health": "Connected",
+      "executable_status": "found",
+      "probe_status": "not_run",
+      "startup_identity": "requires_native_hook"
+    }
+  },
+  "ax_excerpts": {
+    "20-native-cursor-paused": [
+      {
+        "ax_index": 4,
+        "selection": "whole task header",
+        "text": "\t\t4 text (settable)  CONSIGINT ────────────────────────────│pid: 26546  elapsed: 21m  agent unknown  paused  cursor-dashboard"
+      },
+      {
+        "ax_index": 5,
+        "selection": "whole task header",
+        "text": "\t\t5 text (settable)   󰘬 main                          root │cursor-dashboard · tokens —  cost —"
+      }
+    ],
+    "23-native-cursor-resumed": [
+      {
+        "ax_index": 4,
+        "selection": "whole task header",
+        "text": "\t\t4 text (settable)  CONSIGINT ────────────────────────────│pid: 26546  elapsed: 23m  agent unknown  cursor-dashboard"
+      },
+      {
+        "ax_index": 5,
+        "selection": "whole task header",
+        "text": "\t\t5 text (settable)   󰘬 main                          root │cursor-dashboard · tokens —  cost —"
+      }
+    ],
+    "31-cli-marker-observed": [
+      {
+        "ax_index": 4,
+        "selection": "whole task header",
+        "text": "\t\t4 text (settable)  CONSIGINT ────────────────────────────│pid: 56634  elapsed: 5m  agent unknown  cursor-cli"
+      },
+      {
+        "ax_index": 5,
+        "selection": "whole task header",
+        "text": "\t\t5 text (settable)   󰘬 main                          root │cursor-cli · tokens —  cost —"
+      },
+      {
+        "ax_index": 8,
+        "selection": "right terminal column",
+        "text": "Cursor Agent"
+      },
+      {
+        "ax_index": 13,
+        "selection": "right terminal column",
+        "text": "Reply only with CURSOR_CLI_OK. Do not use tools, read or modify files, run commands, or delegate."
+      },
+      {
+        "ax_index": 16,
+        "selection": "right terminal column",
+        "text": "CURSOR_CLI_OK"
+      }
+    ]
+  },
+  "captures": [
+    {
+      "name": "11-cursor-native-start",
+      "image_filename": "11-cursor-native-start.private.png",
+      "image_format": "JPEG",
+      "image_sha256": "b14075a04586afdb79e40dabed8952c334985ac40ca3c2164e9e8f74bb7e6fa7",
+      "image_bytes": 312299,
+      "dimensions": [
+        2200,
+        1864
+      ],
+      "ax_sha256": "cfced24c8866bdc0e532943cb021e45096030154497c8953f97ee342b465654c",
+      "ax_bytes": 13881
+    },
+    {
+      "name": "20-native-cursor-paused",
+      "image_filename": "20-native-cursor-paused.private.png",
+      "image_format": "JPEG",
+      "image_sha256": "b4374b34d9e5e17c56ce4fe8256d4f43f3b3b6585eb00768e5fef8c6b8b20dc1",
+      "image_bytes": 361752,
+      "dimensions": [
+        2200,
+        1864
+      ],
+      "ax_sha256": "0faa8b1897b2e983a46e408f9a1f9d9ce39ae1c39b2ebf906eccaedfce077c87",
+      "ax_bytes": 13898
+    },
+    {
+      "name": "23-native-cursor-resumed",
+      "image_filename": "23-native-cursor-resumed.private.png",
+      "image_format": "JPEG",
+      "image_sha256": "f251acfdf6d769b3b9677f1d711aa314bbd8ff8aea9d2da58bff5e0b2af266e9",
+      "image_bytes": 359922,
+      "dimensions": [
+        2200,
+        1864
+      ],
+      "ax_sha256": "4f72faa6eee1e2995793f7be95a58d80ee1040f5e5a8b78a7ff90c110bdd2a0c",
+      "ax_bytes": 13898
+    },
+    {
+      "name": "29-cli-native-ready",
+      "image_filename": "29-cli-native-ready.private.png",
+      "image_format": "JPEG",
+      "image_sha256": "854c9e28a7e3d1a05705b3e0509256649e10f79eb90c182b6568e4c855e4d720",
+      "image_bytes": 273498,
+      "dimensions": [
+        2200,
+        1864
+      ],
+      "ax_sha256": "519025f43cce48d5d2d775d9a083be7f420fa1e48b74776293a00009d1db3a8c",
+      "ax_bytes": 13343
+    },
+    {
+      "name": "31-cli-marker-observed",
+      "image_filename": "31-cli-marker-observed.private.png",
+      "image_format": "JPEG",
+      "image_sha256": "29a4c6a2cf38b21d15696b9f1a3bc47bfad66ba4c80ea7070d49e85302b295fc",
+      "image_bytes": 300146,
+      "dimensions": [
+        2200,
+        1864
+      ],
+      "ax_sha256": "dca10426114a8a28bc26e0dacd5f330b1256729f714107e3517bd37df50a1f85",
+      "ax_bytes": 13344
+    },
+    {
+      "name": "32-cli-native-exit",
+      "image_filename": "32-cli-native-exit.private.png",
+      "image_format": "JPEG",
+      "image_sha256": "e684b28181063ce395d40fdb32c6ab2bbdf15ac3a16f112a0f9a9471d728215d",
+      "image_bytes": 312387,
+      "dimensions": [
+        2200,
+        1864
+      ],
+      "ax_sha256": "71814477d13914d0633b50864cba47a5f36c1686d2382dc6184e8fb123158039",
+      "ax_bytes": 13344
+    }
+  ],
+  "cleanup": {
+    "launcher_exit": 0,
+    "root_removed": true,
+    "socket_removed": true,
+    "recorded_owned_groups": 20,
+    "all_recorded_groups_gone": true,
+    "recorded_dashboard_plugin_removed": true,
+    "cli_plugin_path_removal": "not separately captured",
+    "cli_native_exit_status": "unverified",
+    "normal_gui_close_action": "not captured; cause of fixture closure unknown",
+    "launcher_completion_source": {
+      "private_file": "39-launcher-completion-source.private.json",
+      "sha256": "28b8626d24d6657414dd861740ec52dc77f45ba5a9731b95bb390d8f770fba3f",
+      "timestamp": "2026-10-05T15:43:08.434Z"
+    }
+  },
+  "metadata_comparison": {
+    "baseline_files": 665,
+    "changed_or_missing": 16,
+    "observed_paths": [
+      "~/.cursor/cli-config.json",
+      "~/.cursor/statsig-cache.json",
+      "~/.cursor/skills-cursor/"
+    ],
+    "contents_read": false,
+    "new_native_files_inventory": "not captured",
+    "causal_attribution": "not proven for individual changes"
+  },
+  "gaps": [
+    "Dashboard response awaits explicit approval of disposable-workspace trust",
+    "Native CLI exit status not captured before registry removal",
+    "Normal GUI-close action and cause of fixture closure not captured",
+    "CLI pause/resume and native interrupt acceptance not run",
+    "Native Linux and other accounts/auth modes not tested"
+  ],
+  "dashboard_trust": {
+    "observed_text": [
+      "Workspace Trust Required",
+      "Trusting workspace..."
+    ],
+    "explicit_trust_selection_in_recorded_acceptance_inputs": false,
+    "approval_request": "unanswered",
+    "trust_state_change_actor": "unverified; UI text alone does not establish an action or authorization"
+  }
+}

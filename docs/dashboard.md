@@ -541,10 +541,12 @@ shows unknown activity; reporting, Ready/Unread, Input requests, metrics, genera
 titles and recovery remain unavailable. See [Hermes harness](hermes-harness.md) for
 setup/doctor guidance and the distinction between source review and native acceptance.
 
-Cursor CLI has a source-pinned fresh startup identity adapter. Activity remains
+Cursor CLI validates fresh startup identity through a temporary local plugin when
+the installed CLI advertises support at runtime. Activity remains
 unknown; Ready/Unread, Input, metrics, generated titles and recovery are unavailable.
-Resume and unsupported versions/options remain native with reporting unavailable.
-See [Cursor harness](cursor-harness.md) for the exact release and passive plugin contract.
+Resume, unavailable plugin support and unsupported options remain native with
+reporting unavailable.
+See [Cursor harness](cursor-harness.md) for the runtime capability check and passive plugin contract.
 
 ### Create workspace (`w`)
 

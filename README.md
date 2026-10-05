@@ -554,10 +554,10 @@ unchanged and activity unknown. Native reporting and conversation recovery remai
 unavailable; source review is not native provider acceptance. See the
 [Hermes harness guide](docs/hermes-harness.md) for launch and read-only diagnostics.
 
-Detected Cursor CLI (`cursor-agent`) uses managed supervision with a source-pinned
-fresh startup identity adapter. Activity, metrics, Input and recovery remain
+Detected Cursor CLI (`cursor-agent`) uses managed supervision with a runtime
+capability check and fresh startup identity adapter. Activity, metrics, Input and recovery remain
 unavailable; native provider acceptance is open. See the
-[Cursor harness guide](docs/cursor-harness.md) for the exact release and launch limits.
+[Cursor harness guide](docs/cursor-harness.md) for runtime admission and launch limits.
 
 ## License
 
