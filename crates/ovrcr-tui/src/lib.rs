@@ -1,5 +1,6 @@
 mod dashboard;
 pub mod task_tui;
+pub mod theme;
 
 pub(crate) use ovrcr_protocol as protocol;
 pub(crate) use ovrcr_protocol as session;

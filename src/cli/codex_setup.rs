@@ -1,6 +1,6 @@
 use super::{
     AppResult, RuntimeError,
-    agent_setup::{binary, public_health_reason, quote, with_version_probe},
+    agent_setup::{binary, owned_reporter, public_health_reason, quote, with_version_probe},
 };
 use ovrcr::protocol::{AgentProvider, ReporterHealth};
 use serde_json::json;
@@ -87,39 +87,185 @@ pub(super) fn boot_hook_warning() -> Option<String> {
     })
 }
 
-pub(super) fn setup(path: Option<&Path>) -> AppResult<()> {
-    let result = (|| -> anyhow::Result<String> {
-        let mut value = settings(path)?;
-        let command = command()?;
-        let hooks = value
-            .as_table_mut()
-            .ok_or_else(|| anyhow::anyhow!("settings must be a TOML table"))?
-            .entry("hooks")
-            .or_insert_with(|| Value::Table(Default::default()))
-            .as_table_mut()
-            .ok_or_else(|| anyhow::anyhow!("hooks must be a table"))?;
-        for event in HOOKS {
-            let groups = hooks
-                .entry(*event)
-                .or_insert_with(|| Value::Array(vec![]))
-                .as_array_mut()
-                .ok_or_else(|| anyhow::anyhow!("hook event must be an array"))?;
-            if !groups.iter().any(|group| reporter(group, &command)) {
-                let mut group = toml::map::Map::new();
-                let mut handler = toml::map::Map::new();
-                handler.insert("type".into(), Value::String("command".into()));
-                handler.insert("command".into(), Value::String(command.clone()));
-                group.insert("hooks".into(), Value::Array(vec![Value::Table(handler)]));
-                groups.push(Value::Table(group));
+/// Preserve native TOML layout and trust tables while repairing owned reporters.
+pub(super) fn compose(text: &str, executable: &str) -> anyhow::Result<String> {
+    use toml_edit::{ArrayOfTables, Item, Table};
+    let mut document: toml_edit::DocumentMut = text.parse()?;
+    let command = format!("exec {} report codex --stdin", quote(executable));
+    let hooks = document
+        .entry("hooks")
+        .or_insert_with(|| Item::Table(Table::new()))
+        .as_table_like_mut()
+        .ok_or_else(|| anyhow::anyhow!("hooks must be a table"))?;
+    for event in HOOKS {
+        let groups = hooks
+            .entry(event)
+            .or_insert_with(|| Item::ArrayOfTables(ArrayOfTables::new()));
+        let mut found = false;
+        filter_tables(groups, &mut |group| {
+            let unfiltered = match group.get("matcher") {
+                None => true,
+                Some(item) => item
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("matcher must be a string"))?
+                    .is_empty(),
+            };
+            let handlers = group
+                .get_mut("hooks")
+                .ok_or_else(|| anyhow::anyhow!("hook group must contain a hooks array"))?;
+            let mut had_handler = false;
+            let remaining = filter_tables(handlers, &mut |handler| {
+                had_handler = true;
+                let text = handler.get("command").and_then(Item::as_str);
+                anyhow::ensure!(
+                    handler.get("type").and_then(Item::as_str) != Some("command") || text.is_some(),
+                    "command hook must contain a command string"
+                );
+                anyhow::ensure!(
+                    handler
+                        .get("async")
+                        .is_none_or(|item| item.as_bool().is_some()),
+                    "async must be a boolean"
+                );
+                let owned = text
+                    .and_then(|text| text.strip_prefix("exec "))
+                    .is_some_and(|text| owned_reporter(text, executable, "codex", "--stdin"));
+                if !owned {
+                    return Ok(true);
+                }
+                if !unfiltered || found {
+                    return Ok(false);
+                }
+                found = true;
+                replace_value(handler, "type", "command".into());
+                replace_value(handler, "command", command.clone().into());
+                if handler.get("async").and_then(Item::as_bool) == Some(true) {
+                    replace_value(handler, "async", false.into());
+                }
+                Ok(true)
+            })?;
+            Ok(!had_handler || remaining != 0)
+        })?;
+        if !found {
+            let mut handler = Table::new();
+            handler["type"] = toml_edit::value("command");
+            handler["command"] = toml_edit::value(&command);
+            let mut handlers = ArrayOfTables::new();
+            handlers.push(handler);
+            let mut group = Table::new();
+            group["hooks"] = Item::ArrayOfTables(handlers);
+            match groups {
+                Item::ArrayOfTables(groups) => groups.push(group),
+                Item::Value(toml_edit::Value::Array(groups)) => {
+                    groups.push(group.into_inline_table())
+                }
+                _ => unreachable!("filter_tables validated the array"),
             }
         }
-        Ok(toml::to_string_pretty(&value)?)
+    }
+    Ok(document.to_string())
+}
+
+// Both [[hooks.Event]] and native inline arrays are legal TOML. Keep their
+// existing representation and every unrelated table or handler in place.
+fn filter_tables(
+    item: &mut toml_edit::Item,
+    edit: &mut impl FnMut(&mut dyn toml_edit::TableLike) -> anyhow::Result<bool>,
+) -> anyhow::Result<usize> {
+    let mut error = None;
+    let mut remaining = 0;
+    let mut keep = |table: &mut dyn toml_edit::TableLike| {
+        if error.is_some() {
+            return true;
+        }
+        match edit(table) {
+            Ok(retain) => {
+                remaining += usize::from(retain);
+                retain
+            }
+            Err(failure) => {
+                error = Some(failure);
+                true
+            }
+        }
+    };
+    match item {
+        toml_edit::Item::ArrayOfTables(tables) => {
+            let removed: Vec<_> = tables
+                .iter_mut()
+                .enumerate()
+                .filter_map(|(index, table)| (!keep(table)).then_some(index))
+                .collect();
+            for index in removed.into_iter().rev() {
+                tables.remove(index);
+            }
+        }
+        toml_edit::Item::Value(toml_edit::Value::Array(tables)) => {
+            anyhow::ensure!(
+                tables.iter().all(|value| value.is_inline_table()),
+                "hook array entries must be tables"
+            );
+            let removed: Vec<_> = tables
+                .iter_mut()
+                .enumerate()
+                .filter_map(|(index, value)| {
+                    (!keep(value.as_inline_table_mut().unwrap())).then_some(index)
+                })
+                .collect();
+            for index in removed.into_iter().rev() {
+                tables.remove(index);
+            }
+        }
+        _ => anyhow::bail!("hook event or handlers must be an array"),
+    }
+    if let Some(error) = error {
+        return Err(error);
+    }
+    Ok(remaining)
+}
+
+fn replace_value(table: &mut dyn toml_edit::TableLike, key: &str, value: toml_edit::Value) {
+    if table
+        .get(key)
+        .and_then(toml_edit::Item::as_value)
+        .is_some_and(|old| {
+            value
+                .as_str()
+                .is_some_and(|text| old.as_str() == Some(text))
+                || value
+                    .as_bool()
+                    .is_some_and(|flag| old.as_bool() == Some(flag))
+        })
+    {
+        return;
+    }
+    // Carry comments on an owned command forward when replacing its value.
+    let mut value = value;
+    if let Some(old) = table.get(key).and_then(toml_edit::Item::as_value) {
+        *value.decor_mut() = old.decor().clone();
+    }
+    table.insert(key, toml_edit::Item::Value(value));
+}
+
+pub(super) fn setup(path: Option<&Path>) -> AppResult<()> {
+    let result = (|| -> anyhow::Result<String> {
+        let text = if let Some(path) = path {
+            let mut bytes = Vec::new();
+            std::fs::File::open(path)?
+                .take(1_048_577)
+                .read_to_end(&mut bytes)?;
+            anyhow::ensure!(bytes.len() <= 1_048_576, "settings file exceeds 1 MiB");
+            String::from_utf8(bytes)?
+        } else {
+            String::new()
+        };
+        compose(&text, &binary()?)
     })();
     // Do not echo parser diagnostics: malformed supplied configuration may contain secrets.
     let value = result.map_err(|_| RuntimeError::internal(anyhow::anyhow!("Cannot compose Codex TOML: settings unreadable, invalid, oversized, or incompatible hook structure")))?;
     print!("{value}");
     eprintln!(
-        "{REQUIREMENTS}\n{FORMS}\nNo file was written. Review the printed TOML and explicitly merge it into the intended Codex config.toml. Existing values and handler order are preserved; comments and formatting are not. Do not redirect onto the input file. Preserve permission, approval and trust settings; never copy trust hashes from an example. Removal: remove only the exact added direct-exec reporter handlers; preserve other handlers and their order."
+        "{REQUIREMENTS}\n{FORMS}\nNo file was written. Review the printed TOML and explicitly merge it into the intended Codex config.toml. Unrelated native values, handler order, comments and formatting are preserved. OVRCR-owned reporters are repaired to one unfiltered synchronous reporter per event. Do not redirect onto the input file. Preserve permission, approval and trust settings; never copy trust hashes from an example. Removal: remove only the exact added direct-exec reporter handlers; preserve other handlers and their order."
     );
     Ok(())
 }

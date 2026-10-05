@@ -517,7 +517,6 @@ fn claude_usage_fixture(body: &'static str) -> (String, std::thread::JoinHandle<
 fn claude_probe_off_allows_an_account_read_without_spawning_a_probe() {
     let fixture = live::Live::idle().bounded();
     install_probe_claude(&fixture);
-    std::fs::write(settings_document(&fixture), "[quota]\nenabled = false\n").unwrap();
     let credentials = fixture.root.path().join("claude-config");
     std::fs::create_dir(&credentials).unwrap();
     let path = credentials.join(".credentials.json");

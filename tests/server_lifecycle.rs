@@ -11131,6 +11131,14 @@ printf '{"schema":@BRIDGE_SCHEMA@,"server_wire":%s,"status":"%s"}\n' "$wire" "$s
         };
         let pair = portable_pty::native_pty_system().openpty(size).unwrap();
         let mut command = portable_pty::CommandBuilder::new(env!("CARGO_BIN_EXE_ovrcr"));
+        // Select the intended image from the fixture's owned server adapter.
+        // A binary host runs the CLI; a thread host runs this test executable.
+        let server_executable = if fixture.server_pid().is_some() {
+            fixture.executable.clone()
+        } else {
+            std::env::current_exe().unwrap()
+        };
+        command.env("OVRCR_SERVER_EXECUTABLE", server_executable);
         command.env("OVRCR_SOCKET", &fixture.socket);
         command.env("OVRCR_CONFIG", fixture.root.path().join("config.toml"));
         command.env("OVRCR_DASHBOARD_CONFIG", settings_path);
@@ -11198,7 +11206,7 @@ printf '{"schema":@BRIDGE_SCHEMA@,"server_wire":%s,"status":"%s"}\n' "$wire" "$s
 
     fn wait_unavailable_notice(&mut self) {
         let notice = if cfg!(target_os = "macos") {
-            "OVRCR Bridge unavailable; install with scripts/install-bridge.sh from this checkout"
+            "OVRCR Bridge unavailable; restart OVRCR to review the Bridge install or repair offer"
         } else {
             "Desktop notifications unavailable"
         };
@@ -11955,8 +11963,8 @@ fn codex_setup_dispatches_fork_to_existing_identity_guard() {
                 .as_table_mut()
                 .unwrap()
                 .insert("matcher".into(), "startup|resume|clear|compact".into());
-            // Preserve opaque trust/permission values; setup must append without
-            // changing existing security state or writing the supplied file.
+            // Repair the owned filtered reporter while preserving opaque native
+            // trust/permission values and leaving the supplied file untouched.
             old["hooks"].as_table_mut().unwrap().insert(
                 "state".into(),
                 toml::from_str::<toml::Value>(
@@ -11973,15 +11981,14 @@ fn codex_setup_dispatches_fork_to_existing_identity_guard() {
             assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
             let composed: toml::Value =
                 toml::from_str(std::str::from_utf8(&bytes).unwrap()).unwrap();
-            assert_eq!(
-                composed["hooks"]["SessionStart"][0],
-                old["hooks"]["SessionStart"][0]
-            );
+            let mut repaired = old["hooks"]["SessionStart"][0].clone();
+            repaired.as_table_mut().unwrap().remove("matcher");
+            assert_eq!(composed["hooks"]["SessionStart"][0], repaired);
             assert_eq!(composed["hooks"]["state"], old["hooks"]["state"]);
             assert_eq!(composed["approval_policy"], old["approval_policy"]);
             assert_eq!(
                 composed["hooks"]["SessionStart"].as_array().unwrap().len(),
-                2
+                1
             );
         }
         std::fs::write(&path, &bytes).unwrap();
@@ -12002,14 +12009,7 @@ fn codex_setup_dispatches_fork_to_existing_identity_guard() {
         ] {
             desktop_codex_callback(&fixture, summary.id, &mut index, &callback);
         }
-        fixture.wait_terminal_contains(
-            summary.id,
-            if legacy {
-                "CODEX_REPORTERS=0:2"
-            } else {
-                "CODEX_REPORTERS=0:1"
-            },
-        );
+        fixture.wait_terminal_contains(summary.id, "CODEX_REPORTERS=0:1");
         let before = fixture.session_summary(summary.id);
         let agent = before.agent.unwrap();
         assert_eq!(
@@ -16241,7 +16241,15 @@ fn desktop_notifications_bridge_installation_failures_are_actionable_without_set
             "codex-hooks",
             status,
         );
-        dashboard.wait_screen(|screen| screen.contains("Bridge") && screen.contains("install"));
+        if status == "missing" {
+            dashboard.wait_unavailable_notice();
+        } else {
+            dashboard.wait_screen(|screen| {
+                screen.contains(
+                    "OVRCR Bridge needs updating; restart OVRCR to review the Bridge repair offer",
+                )
+            });
+        }
         let expected = if status == "missing" {
             &[][..]
         } else {

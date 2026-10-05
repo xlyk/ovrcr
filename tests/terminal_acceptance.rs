@@ -1,3 +1,5 @@
+#[path = "support/dashboard_proxy.rs"]
+mod dashboard_proxy;
 #[path = "support/live.rs"]
 mod live;
 #[path = "support/mouse_app.rs"]
@@ -290,11 +292,20 @@ struct OuterDashboard {
 
 impl OuterDashboard {
     fn start(fixture: &AcceptanceFixture, size: PtySize) -> Result<Self> {
+        Self::start_with_server_executable(fixture, size, &fixture.executable)
+    }
+
+    fn start_with_server_executable(
+        fixture: &AcceptanceFixture,
+        size: PtySize,
+        server_executable: &Path,
+    ) -> Result<Self> {
         let pty = native_pty_system();
         let pair = pty.openpty(size)?;
         let mut command = CommandBuilder::new(&fixture.executable);
         command.env("OVRCR_SOCKET", &fixture.socket);
         command.env("OVRCR_CONFIG", &fixture.config);
+        command.env("OVRCR_SERVER_EXECUTABLE", server_executable);
         command.env(
             "OVRCR_DASHBOARD_CONFIG",
             fixture.config.with_file_name("dashboard.toml"),
@@ -780,8 +791,9 @@ fn agent_search_real_loading_input_is_discarded_and_never_replayed() -> Result<(
     let actual_socket = fixture.live.socket.clone();
     let proxy_socket = actual_socket.with_file_name("view-gate.sock");
     let (held, release, proxy) = gate_agent_view(&proxy_socket, &actual_socket, second.id)?;
+    let proxy_executable = dashboard_proxy::publish_build(&proxy_socket)?;
     fixture.live.socket = proxy_socket;
-    let outer = OuterDashboard::start(
+    let outer = OuterDashboard::start_with_server_executable(
         &fixture,
         PtySize {
             rows: 40,
@@ -789,6 +801,7 @@ fn agent_search_real_loading_input_is_discarded_and_never_replayed() -> Result<(
             pixel_width: 0,
             pixel_height: 0,
         },
+        &proxy_executable,
     );
     fixture.live.socket = actual_socket;
     let mut dashboard = outer?;

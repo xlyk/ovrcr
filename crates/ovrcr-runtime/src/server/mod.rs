@@ -27,6 +27,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+pub mod build_identity;
 mod connections;
 mod dashboard;
 mod dispatch;

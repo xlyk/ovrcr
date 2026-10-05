@@ -31,6 +31,12 @@ xcrun --sdk macosx swiftc -swift-version 5 -O -target "$(uname -m)-apple-macosx1
     "$repo_dir/native/bridge/Contract.swift" "$repo_dir/native/bridge/Transport.swift" \
     "$repo_dir/native/bridge/App.swift" "$repo_dir/native/bridge/main.swift" \
     -o "$bundle/Contents/MacOS/OVRCRBridge"
+build=$(python3 -I - "$bundle/Contents/MacOS/OVRCRBridge" <<'PY_HASH'
+import hashlib, sys
+from pathlib import Path
+print(hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest())
+PY_HASH
+)
 cat > "$bundle/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -46,6 +52,7 @@ cat > "$bundle/Contents/Info.plist" <<EOF
 <key>LSUIElement</key><true/>
 <key>OVRCRBridgeSchema</key><integer>$schema</integer>
 <key>OVRCRServerWire</key><integer>$wire</integer>
+<key>OVRCRBridgeBuild</key><string>$build</string>
 </dict></plist>
 EOF
 for tone in tap chime rise; do

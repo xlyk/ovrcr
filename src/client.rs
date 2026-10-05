@@ -1,8 +1,10 @@
 use anyhow::{Context, Result, bail};
 use ovrcr_protocol::exchange_preamble;
+use ovrcr_runtime::server::build_identity::{executable_build, read_server_build, socket_identity};
 use ovrcr_runtime::server::{ServerPaths, prepare_socket_directory};
 use std::fs::{File, OpenOptions};
 use std::io;
+use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -34,6 +36,9 @@ pub fn handshake(stream: &mut UnixStream, socket: &Path) -> Result<()> {
     stream
         .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
         .context("bound protocol handshake")?;
+    stream
+        .set_write_timeout(Some(HANDSHAKE_TIMEOUT))
+        .context("bound protocol handshake write")?;
     let result = exchange_preamble(stream).map_err(|error| {
         let timed_out = error.chain().any(|cause| {
             cause
@@ -51,6 +56,7 @@ pub fn handshake(stream: &mut UnixStream, socket: &Path) -> Result<()> {
         }
     });
     let _ = stream.set_read_timeout(None);
+    let _ = stream.set_write_timeout(None);
     result.with_context(|| format!("handshake with server {}", socket.display()))
 }
 
@@ -79,10 +85,7 @@ pub fn connect_or_start(paths: &ServerPaths) -> Result<UnixStream> {
             thread::sleep(Duration::from_millis(20));
         }
     }
-    let executable = std::env::var_os("OVRCR_SERVER_EXECUTABLE")
-        .map(PathBuf::from)
-        .map(Ok)
-        .unwrap_or_else(|| std::env::current_exe().context("resolve OVRCR executable"))?;
+    let executable = intended_executable()?;
     let log_path = prepare_socket_directory(&paths.socket)?;
     let log = open_server_log(&log_path)?;
     let mut command = Command::new(executable);
@@ -103,9 +106,17 @@ pub fn connect_or_start(paths: &ServerPaths) -> Result<UnixStream> {
     }
     let mut child = command.spawn().context("start detached OVRCR server")?;
     let deadline = Instant::now() + Duration::from_secs(5);
+    let mut handshake_error = None;
     loop {
-        if let Some(stream) = connect_if_running(paths)? {
-            return Ok(stream);
+        // The child can drop its listener before its exit becomes observable.
+        // Keep the first handshake failure without reconnecting or extending startup.
+        if handshake_error.is_none()
+            && let Some(mut stream) = connect_raw_if_running(paths)?
+        {
+            match handshake(&mut stream, &paths.socket) {
+                Ok(()) => return Ok(stream),
+                Err(error) => handshake_error = Some(error),
+            }
         }
         if let Some(status) = child.try_wait().context("poll detached OVRCR server")? {
             bail!(
@@ -115,6 +126,9 @@ pub fn connect_or_start(paths: &ServerPaths) -> Result<UnixStream> {
             );
         }
         if Instant::now() >= deadline {
+            if let Some(error) = handshake_error {
+                return Err(error);
+            }
             bail!(
                 "timed out waiting for server startup; see {}\n{}",
                 log_path.display(),
@@ -148,4 +162,165 @@ fn log_tail(path: &Path, lines: usize) -> String {
         }
         Err(error) => format!("(server log unavailable: {error})"),
     }
+}
+
+fn intended_executable() -> Result<PathBuf> {
+    let path = std::env::var_os("OVRCR_SERVER_EXECUTABLE")
+        .map(PathBuf::from)
+        .map(Ok)
+        .unwrap_or_else(|| std::env::current_exe().context("resolve OVRCR executable"))?;
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
+}
+
+/// Check the captured server build before Dashboard attachment. Restart
+/// approval applies only to this connection and its observed socket identity.
+pub fn connect_dashboard(
+    paths: &ServerPaths,
+    confirm: &mut impl FnMut(&str) -> Result<bool>,
+) -> Result<UnixStream> {
+    let executable = intended_executable()?;
+    let intended = executable_build(&executable)?;
+    let before = socket_identity(&paths.socket).ok();
+    let Some(mut stream) = connect_raw_if_running(paths)? else {
+        crate::service::dashboard_service(paths, &executable, None)?;
+        let stream = connect_or_start(paths)?;
+        return check_started_build(paths, stream, &intended);
+    };
+    let socket = socket_identity(&paths.socket)?;
+    if before != Some(socket) {
+        bail!("server socket changed while connecting; retry Dashboard startup");
+    }
+    let peer = peer_pid(&stream)?;
+    let service = crate::service::dashboard_service(paths, &executable, Some(&stream))?;
+    if let Err(error) = handshake(&mut stream, &paths.socket) {
+        let detail = error
+            .chain()
+            .find_map(|cause| {
+                let text = cause.to_string();
+                text.starts_with("protocol version mismatch")
+                    .then(|| text.split(';').next().unwrap().to_owned())
+            })
+            .unwrap_or_else(|| format!("{error:#}"));
+        bail!(
+            "{detail}; automatic restart refused for {}. Use the matching old CLI with OVRCR_SOCKET set to this socket and `shutdown --kill`, or its matching CLI's `service stop`, then retry",
+            paths.socket.display()
+        );
+    }
+    let captured = read_server_build(&paths.socket, peer).ok();
+    if captured
+        .as_ref()
+        .is_some_and(|record| record.build == intended)
+    {
+        return Ok(stream);
+    }
+    let reason = if captured.is_some() {
+        "a different build"
+    } else {
+        "an unknown build (legacy or invalid identity)"
+    };
+    if !confirm(&format!(
+        "Restart OVRCR server\nSocket: {}\nRunning build: {reason}\nReplacement: {}\n\nAll running sessions will stop.",
+        paths.socket.display(),
+        executable.display()
+    ))? {
+        bail!(
+            "server restart declined for {}; running sessions were left untouched. Retry and approve the separate restart offer, or use the matching CLI to stop this server",
+            paths.socket.display()
+        );
+    }
+    if socket_identity(&paths.socket)? != socket
+        || peer_pid(&stream)? != peer
+        || read_server_build(&paths.socket, peer).ok() != captured
+        || executable_build(&executable)? != intended
+        || crate::service::dashboard_service(paths, &executable, Some(&stream))? != service
+    {
+        bail!(
+            "server, executable or service changed during restart approval; no shutdown was sent; retry Dashboard startup"
+        );
+    }
+    const STOP_TIMEOUT: Duration = Duration::from_secs(10);
+    stream.set_read_timeout(Some(STOP_TIMEOUT))?;
+    stream.set_write_timeout(Some(STOP_TIMEOUT))?;
+    ovrcr_protocol::client::shutdown(&mut stream, 1, true)
+        .context("controlled server restart refused or failed; no process signal was sent")?;
+    let deadline = Instant::now() + STOP_TIMEOUT;
+    loop {
+        match std::fs::symlink_metadata(&paths.socket) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => break,
+            Err(error) => return Err(error).context("wait for checked server socket removal"),
+            Ok(_) if socket_identity(&paths.socket)? != socket => bail!(
+                "a replacement server appeared during controlled shutdown; retry Dashboard startup"
+            ),
+            Ok(_) => {}
+        }
+        if Instant::now() >= deadline {
+            bail!("timed out waiting for controlled server shutdown; no process signal was sent");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    drop(stream);
+    if crate::service::dashboard_service(paths, &executable, None)? != service
+        || executable_build(&executable)? != intended
+    {
+        bail!("executable or service changed during controlled shutdown; retry Dashboard startup");
+    }
+    let stream = connect_or_start(paths)?;
+    check_started_build(paths, stream, &intended)
+}
+
+fn check_started_build(
+    paths: &ServerPaths,
+    stream: UnixStream,
+    intended: &ovrcr_runtime::server::build_identity::ExecutableBuild,
+) -> Result<UnixStream> {
+    let captured = read_server_build(&paths.socket, peer_pid(&stream)?).context(
+        "started server has unknown build identity; use a current OVRCR server executable",
+    )?;
+    if &captured.build != intended {
+        bail!(
+            "started server has a different build; check OVRCR_SERVER_EXECUTABLE and the installed service, then retry Dashboard startup"
+        );
+    }
+    Ok(stream)
+}
+
+pub(crate) fn peer_pid(stream: &UnixStream) -> Result<u32> {
+    #[cfg(target_os = "macos")]
+    let (level, option, mut credentials) = (libc::SOL_LOCAL, libc::LOCAL_PEERPID, 0 as libc::pid_t);
+    #[cfg(target_os = "linux")]
+    let (level, option, mut credentials) = (
+        libc::SOL_SOCKET,
+        libc::SO_PEERCRED,
+        libc::ucred {
+            pid: 0,
+            uid: 0,
+            gid: 0,
+        },
+    );
+    let mut length = std::mem::size_of_val(&credentials) as libc::socklen_t;
+    // SAFETY: credentials is a correctly sized, writable value for the platform's socket option.
+    if unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            level,
+            option,
+            std::ptr::from_mut(&mut credentials).cast(),
+            &mut length,
+        )
+    } == -1
+    {
+        return Err(std::io::Error::last_os_error()).context("identify service socket peer");
+    }
+    #[cfg(target_os = "macos")]
+    let pid = credentials;
+    #[cfg(target_os = "linux")]
+    let pid = credentials.pid;
+    if pid <= 0 {
+        bail!("service socket peer has no live process identity");
+    }
+    Ok(pid as u32)
 }

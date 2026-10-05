@@ -1,3 +1,4 @@
+use crate::client::peer_pid;
 use crate::config::RegistryPath;
 use crate::protocol::ErrorCode;
 use crate::protocol::client;
@@ -9,8 +10,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::env;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
-use std::os::fd::AsRawFd;
+use std::io::{Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -198,6 +198,89 @@ pub fn start_if_installed_with(config: &ServiceConfig) -> Result<bool> {
     validate_installed_socket(config)?;
     start_installed(config)?;
     Ok(true)
+}
+
+/// Validate the service that Dashboard startup would control; retain its
+/// definition as the consent snapshot. Never take over an unrelated listener.
+pub(crate) fn dashboard_service(
+    paths: &ServerPaths,
+    executable: &Path,
+    stream: Option<&UnixStream>,
+) -> Result<Option<String>> {
+    dashboard_service_with(&ServiceConfig::resolve()?, paths, executable, stream)
+}
+
+fn dashboard_service_with(
+    config: &ServiceConfig,
+    paths: &ServerPaths,
+    executable: &Path,
+    stream: Option<&UnixStream>,
+) -> Result<Option<String>> {
+    config.validate()?;
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = match OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(&config.definition_path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("read installed service definition"),
+    };
+    if !file.metadata()?.is_file() {
+        bail!("installed service definition is not a regular file");
+    }
+    let mut contents = String::new();
+    file.take(64 * 1024 + 1)
+        .read_to_string(&mut contents)
+        .context("read installed service definition")?;
+    if contents.len() > 64 * 1024 {
+        bail!("installed service definition is oversized; reinstall with `ovrcr service install`");
+    }
+    if config.server_paths.socket != absolute(paths.socket.clone())? {
+        bail!("Dashboard socket does not match the installed service configuration");
+    }
+    validate_installed_socket_contents(config, &contents)?;
+    let executable = path_text(&absolute(executable.to_path_buf())?)?;
+    let matches = match config.platform {
+        ServicePlatform::Launchd => {
+            let mut lines = contents.lines().map(str::trim);
+            contents
+                .lines()
+                .filter(|line| line.trim() == "<key>ProgramArguments</key>")
+                .count()
+                == 1
+                && lines.any(|line| line == "<key>ProgramArguments</key>")
+                && lines.next() == Some("<array>")
+                && lines.next()
+                    == Some(format!("<string>{}</string>", xml_escape(&executable)).as_str())
+                && lines.next() == Some("<string>server</string>")
+                && lines.next() == Some("</array>")
+        }
+        ServicePlatform::Systemd => contents
+            .lines()
+            .filter(|line| line.starts_with("ExecStart="))
+            .eq([format!(
+                "ExecStart=\"{}\" server",
+                systemd_escape(&executable)
+            )]
+            .iter()
+            .map(String::as_str)),
+    };
+    if !matches {
+        bail!(
+            "installed service {} uses a different or unsupported executable; reinstall it with the intended CLI using `ovrcr service install --kill-sessions`, then retry",
+            config.definition_path.display()
+        );
+    }
+    if let Some(stream) = stream
+        && (!manager_loaded(config)? || manager_pid(config)? != Some(peer_pid(stream)?))
+    {
+        bail!(
+            "refusing to replace unmanaged OVRCR server while an installed service owns this socket configuration"
+        );
+    }
+    Ok(Some(contents))
 }
 
 pub fn load_environment_file() -> Result<()> {
@@ -502,17 +585,32 @@ fn validate_installed_socket(config: &ServiceConfig) -> Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error).context("read installed service definition"),
     };
+    validate_installed_socket_contents(config, &contents)
+}
+
+fn validate_installed_socket_contents(config: &ServiceConfig, contents: &str) -> Result<()> {
     let socket = path_text(&config.server_paths.socket)?;
     let matches = match config.platform {
         ServicePlatform::Launchd => {
             let mut lines = contents.lines().map(str::trim);
-            lines.any(|line| line == "<key>OVRCR_SOCKET</key>")
+            contents
+                .lines()
+                .filter(|line| line.trim() == "<key>OVRCR_SOCKET</key>")
+                .count()
+                == 1
+                && lines.any(|line| line == "<key>OVRCR_SOCKET</key>")
                 && lines.next()
                     == Some(format!("<string>{}</string>", xml_escape(&socket)).as_str())
         }
-        ServicePlatform::Systemd => contents.lines().any(|line| {
-            line == format!("Environment=\"OVRCR_SOCKET={}\"", systemd_escape(&socket))
-        }),
+        ServicePlatform::Systemd => contents
+            .lines()
+            .filter(|line| line.starts_with("Environment=\"OVRCR_SOCKET="))
+            .eq([format!(
+                "Environment=\"OVRCR_SOCKET={}\"",
+                systemd_escape(&socket)
+            )]
+            .iter()
+            .map(String::as_str)),
     };
     if !matches {
         bail!(
@@ -533,43 +631,6 @@ fn managed_connection(config: &ServiceConfig, loaded: bool) -> Result<Option<Uni
     }
     handshake(&mut stream, &config.server_paths.socket)?;
     Ok(Some(stream))
-}
-
-fn peer_pid(stream: &UnixStream) -> Result<u32> {
-    #[cfg(target_os = "macos")]
-    let (level, option, mut credentials) = (libc::SOL_LOCAL, libc::LOCAL_PEERPID, 0 as libc::pid_t);
-    #[cfg(target_os = "linux")]
-    let (level, option, mut credentials) = (
-        libc::SOL_SOCKET,
-        libc::SO_PEERCRED,
-        libc::ucred {
-            pid: 0,
-            uid: 0,
-            gid: 0,
-        },
-    );
-    let mut length = std::mem::size_of_val(&credentials) as libc::socklen_t;
-    // SAFETY: credentials is a correctly sized, writable value for the platform's socket option.
-    if unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            level,
-            option,
-            std::ptr::from_mut(&mut credentials).cast(),
-            &mut length,
-        )
-    } == -1
-    {
-        return Err(std::io::Error::last_os_error()).context("identify service socket peer");
-    }
-    #[cfg(target_os = "macos")]
-    let pid = credentials;
-    #[cfg(target_os = "linux")]
-    let pid = credentials.pid;
-    if pid <= 0 {
-        bail!("service socket peer has no live process identity");
-    }
-    Ok(pid as u32)
 }
 
 fn manager_pid(config: &ServiceConfig) -> Result<Option<u32>> {
@@ -789,4 +850,88 @@ fn print_action(action: &str, json: bool) -> Result<()> {
         println!("service {action}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod dashboard_startup_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixListener;
+
+    #[test]
+    fn dashboard_service_checks_executable_and_manager_ownership_for_both_platforms() {
+        for platform in [ServicePlatform::Launchd, ServicePlatform::Systemd] {
+            let root = tempfile::tempdir().unwrap();
+            let socket = root.path().join("server.sock");
+            let listener = UnixListener::bind(&socket).unwrap();
+            let stream = UnixStream::connect(&socket).unwrap();
+            let (_peer, _) = listener.accept().unwrap();
+            let manager = root.path().join("manager");
+            let write_manager = |pid| {
+                fs::write(&manager, format!("#!/bin/sh\nif [ \"$1\" = print ]; then printf '\\tpid = {pid}\\n'; elif [ \"$2\" = show ]; then printf '{pid}\\n'; fi\n")).unwrap();
+                fs::set_permissions(&manager, fs::Permissions::from_mode(0o700)).unwrap();
+            };
+            write_manager(std::process::id());
+            let config = ServiceConfig {
+                platform,
+                service_name: "fixture".into(),
+                definition_path: root.path().join("service"),
+                manager_executable: manager.clone(),
+                executable: root.path().join("intended-ovrcr"),
+                registry_path: root.path().join("config.toml"),
+                server_paths: ServerPaths { socket },
+                environment: Vec::new(),
+            };
+            let definition = match platform {
+                ServicePlatform::Launchd => launchd_definition(&config, None),
+                ServicePlatform::Systemd => systemd_definition(&config, None),
+            }
+            .unwrap();
+            fs::write(&config.definition_path, &definition).unwrap();
+            assert_eq!(
+                dashboard_service_with(
+                    &config,
+                    &config.server_paths,
+                    &config.executable,
+                    Some(&stream)
+                )
+                .unwrap(),
+                Some(definition.clone())
+            );
+            fs::write(&config.definition_path, format!("{definition}{definition}")).unwrap();
+            assert!(
+                dashboard_service_with(
+                    &config,
+                    &config.server_paths,
+                    &config.executable,
+                    Some(&stream)
+                )
+                .is_err(),
+                "duplicate effective service assignments must be refused"
+            );
+            fs::write(&config.definition_path, &definition).unwrap();
+            let error = dashboard_service_with(
+                &config,
+                &config.server_paths,
+                &root.path().join("alternate-ovrcr"),
+                Some(&stream),
+            )
+            .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("different or unsupported executable"),
+                "{error:#}"
+            );
+            write_manager(std::process::id() + 1);
+            let error = dashboard_service_with(
+                &config,
+                &config.server_paths,
+                &config.executable,
+                Some(&stream),
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("unmanaged"), "{error:#}");
+        }
+    }
 }
