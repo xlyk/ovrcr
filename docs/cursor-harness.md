@@ -77,7 +77,7 @@ capability detection, native-owned binding, invalid/replacement identity,
 unknown activity despite terminal text, native fallback, passive helper output
 and cleanup. They do not prove delivery by genuine Cursor, model responses,
 account/auth-mode support or native platforms. Native provider Dashboard/CLI
-acceptance remains tracked in [#236](https://github.com/xlyk/ovrcr/issues/236).
+acceptance remains tracked in [#236](https://github.com/xlyk/ovrcr/issues/236). The [partial native macOS record](../research/cursor-native-acceptance-2026-10-05/README.md) verifies genuine startup binding and a managed CLI response; required gaps remain explicit.
 Ordinary native launch/help execution can write Cursor's caches/logs and use its
 existing auth/network behavior; acceptance records those effects. The Cursor
 wire identity was appended in protocol 27; admission does not change the wire
