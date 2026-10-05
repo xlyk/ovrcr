@@ -11205,6 +11205,18 @@ printf '{"schema":@BRIDGE_SCHEMA@,"server_wire":%s,"status":"%s"}\n' "$wire" "$s
         self.wait_screen(|screen| screen.contains(notice));
     }
 
+    /// After `N` enables notifications while the host tool is missing, the
+    /// toggle notice can be overwritten in the same tick by the sticky
+    /// unavailable/Bridge status (which itself proves the setting is on).
+    fn wait_notifications_enabled(&mut self) {
+        self.wait_screen(|screen| {
+            screen.contains("Desktop notifications: on")
+                || screen.contains("Desktop notifications unavailable")
+                || screen.contains("Desktop notifications and ready sound unavailable")
+                || screen.contains("OVRCR Bridge unavailable")
+        });
+    }
+
     fn select(&mut self, name: &str, terminal_marker: &str) {
         let screen = self.parser.screen().contents();
         let row = screen
@@ -15944,7 +15956,7 @@ fn desktop_notifications_missing_host_tool_preserves_response_and_dashboard_cont
     dashboard.send(b"N");
     dashboard.wait_screen(|screen| screen.contains("Desktop notifications: off"));
     dashboard.send(b"N");
-    dashboard.wait_screen(|screen| screen.contains("Desktop notifications: on"));
+    dashboard.wait_notifications_enabled();
     dashboard.detach();
 }
 
