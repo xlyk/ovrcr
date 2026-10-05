@@ -2,11 +2,13 @@ import AppKit
 import Darwin
 import Foundation
 
-func emit(_ status: BridgeStatus) {
-    var data = BridgeReply(status).data()
+func emit(_ reply: BridgeReply) {
+    var data = reply.data()
     data.append(10)
     FileHandle.standardOutput.write(data)
 }
+
+func emit(_ status: BridgeStatus) { emit(BridgeReply(status)) }
 
 let arguments = CommandLine.arguments
 // These guards run before NSApplication, UserNotifications, launch or IPC.
@@ -32,7 +34,7 @@ if arguments.dropFirst().first == "--client" {
             if remote == nil { RunLoop.current.run(until: Date(timeIntervalSinceNow: min(0.01, deadline.remaining))) }
         }
     }
-    emit(remote.map { exchange($0, data: input, deadline: deadline) } ?? .failed)
+    emit(remote.map { exchange($0, data: input, deadline: deadline) } ?? BridgeReply(.failed))
     exit(0)
 }
 

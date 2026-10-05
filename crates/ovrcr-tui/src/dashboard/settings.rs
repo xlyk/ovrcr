@@ -5,8 +5,23 @@
 use ovrcr_protocol::Request;
 pub use ovrcr_protocol::{AgentOverride, AutomaticLocalTerminals, LaunchChoice, Settings};
 
-/// The footer line for a reading with `count` findings.
-pub(super) fn findings_notice(count: usize) -> String {
+pub(super) const INVALID_SOUND_CHOICE_NOTICE: &str =
+    "Ready sound choice invalid; banners are silent. Choose a sound in Settings";
+
+pub(super) fn invalid_sound_choice_notice(settings: &Settings) -> Option<&'static str> {
+    (cfg!(target_os = "macos")
+        && settings.desktop_notifications
+        && settings.ready_sound
+        && settings.ready_sound_choice.is_none())
+    .then_some(INVALID_SOUND_CHOICE_NOTICE)
+}
+
+/// Keep the actionable sound finding visible when both macOS alert flags are on.
+/// The full reading and every finding remain available in Settings.
+pub(super) fn findings_notice(settings: &Settings, count: usize) -> String {
+    if let Some(notice) = invalid_sound_choice_notice(settings) {
+        return notice.into();
+    }
     match count {
         0 => "No settings findings".into(),
         1 => "1 settings finding; see Settings".into(),

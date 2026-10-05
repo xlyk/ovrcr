@@ -38,13 +38,20 @@ check(["--client", "unexpected"], b"", "failed")
 for data in [b"", b"{}", b"not JSON", b"[]", b"null", b"x" * (1_048_576 + 1)]:
     check(["--client"], data, "failed")
 for wrong in [{"schema": schema + 1, "server_wire": wire},
-              {"schema": schema, "server_wire": wire + 1}]:
+              {"schema": schema, "server_wire": wire + 1},
+              {"schema": 1, "server_wire": 33},
+              {"schema": 2, "server_wire": 34}]:
     check(["--client"], json.dumps({**wrong, "op": {"type": "invalid"}}).encode(),
           "incompatible")
 for op in [{"type": "invalid"}, {"type": "deliver"},
            {"type": "deliver", "title": "private prompt", "subtitle": "x", "body": "x"},
            {"type": "deliver", "title": "OVRCR · response ready", "subtitle": "x\n", "body": "x"},
            {"type": "deliver", "title": "OVRCR · input needed", "subtitle": "x", "body": "x" * 1025}]:
+    check(["--client"], json.dumps({"schema": schema, "server_wire": wire, "op": op}).encode(),
+          "failed")
+for invalid in ["Glass", "/tmp/tap.wav", "ovrcr-tap-v1.wav", True, 7, ["tap"]]:
+    op = {"type": "deliver", "title": "OVRCR · response ready", "subtitle": "label",
+          "body": "p / w / n (#1)", "sound": invalid}
     check(["--client"], json.dumps({"schema": schema, "server_wire": wire, "op": op}).encode(),
           "failed")
 

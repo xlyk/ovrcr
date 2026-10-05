@@ -120,9 +120,17 @@ text: `true`, `"kh/"`, `["claude", "--verbose"]`, or an inline table such as
 `{ name = "claude", argv = ["claude"] }` for an `agents` element and
 `{ kind = "Agent", preset = "claude" }` for a launch choice. A bare word that is
 not TOML is taken as is only for a string or path setting (`branch_prefix`,
-`title_model`, `automatic_local_terminals`, `picker_roots[N]`, `quota.*.command`
+`title_model`, `automatic_local_terminals`, `ready_sound_choice`, `picker_roots[N]`, `quota.*.command`
 and `home`, a launch choice's `kind` and `preset`), so
 `ovrcr settings set title_model pi/gpt-5-mini` needs no quotes.
+
+On macOS `ovrcr settings set ready_sound_choice chime` saves one of `default`,
+`tap`, `chime` or `rise`; `ovrcr settings reset ready_sound_choice` restores
+System default. Neither command enables notification/sound opt-ins, previews
+audio, requests permission or replays an event. Unknown or wrongly typed values
+loaded from an external edit remain findings and suppress sound; a save rejects
+an invalid choice without changing the document. Linux stores the setting but
+keeps its existing sound behavior.
 
 When a Server is reachable the edit goes through it: the Server checks the
 value, saves, re-reads and sends the attached Dashboard its new reading, and the

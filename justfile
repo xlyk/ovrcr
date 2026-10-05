@@ -9,7 +9,7 @@ run *args:
     set -euo pipefail
     rtk proxy cargo build -p ovrcr --bin ovrcr --target-dir "${CARGO_TARGET_DIR:-target}"
     if [[ "$(uname -s)" == Darwin ]]; then
-      rtk proxy sh scripts/package-startup.sh "${CARGO_TARGET_DIR:-target}/debug/ovrcr-startup"
+      rtk proxy sh scripts/package-startup.sh "${CARGO_TARGET_DIR:-target}/debug/ovrcr-startup" "${CARGO_TARGET_DIR:-target}/debug/ovrcr"
       mkdir -p "$HOME/.local/lib"
       assets="$HOME/.local/lib/ovrcr"
       if [[ -L "$assets" ]] || { [[ -e "$assets" ]] && [[ ! -f "$assets/native/bridge/expected-contract.json" ]]; }; then

@@ -1,6 +1,7 @@
 mod agent;
 mod agent_setup;
 mod args;
+mod bridge;
 mod codex_setup;
 mod cursor;
 mod hermes;
@@ -73,6 +74,12 @@ fn run(cli: Cli) -> AppResult<()> {
         .map_err(RuntimeError::internal);
     };
     match command {
+        Command::Bridge {
+            command: BridgeCommand::Navigate { .. },
+        } => bridge::navigate(),
+        Command::Bridge {
+            command: BridgeCommand::Owner { .. },
+        } => bridge::owner(),
         Command::AgentCollector => {
             ovrcr::report::collector::run_helper().map_err(RuntimeError::internal)
         }

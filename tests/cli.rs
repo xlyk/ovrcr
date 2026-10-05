@@ -1220,6 +1220,14 @@ fn cli_request(socket: &std::path::Path, request: Request) -> Result<Response, S
 }
 
 fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
+    // Hash before claiming the Dashboard so greeting validation cannot hold up
+    // selection while the Server's collectors queue their startup decisions.
+    let callback = std::path::Path::new(env!("CARGO_BIN_EXE_ovrcr"))
+        .canonicalize()
+        .unwrap();
+    let expected_callback_sha256 =
+        ovrcr::server::bridge_executable_sha256(&callback, Instant::now() + Duration::from_secs(5))
+            .expect("hash the fixture CLI before the Dashboard greeting");
     let mut stream = connect_server(socket).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_millis(250)))
@@ -1242,10 +1250,38 @@ fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
         } => {}
         response => panic!("unexpected dashboard hello response: {response:?}"),
     }
+    // The Server sends native navigation context before its settings reading.
+    // Require it on macOS; elsewhere a hello without context keeps the direct
+    // settings path. A present context must identify this fixture's Server/CLI.
+    let message = next_skipping_quota(&mut stream);
+    #[cfg(target_os = "macos")]
+    assert!(
+        matches!(
+            &message,
+            ServerMessage::Event(ovrcr::protocol::ServerEvent::BridgeContext(_))
+        ),
+        "expected native navigation context after hello: {message:?}"
+    );
+    let message = match message {
+        ServerMessage::Event(ovrcr::protocol::ServerEvent::BridgeContext(context)) => {
+            assert!(context.validate(), "invalid Bridge context: {context:?}");
+            assert_eq!(
+                std::path::Path::new(&context.server_socket),
+                socket.canonicalize().unwrap()
+            );
+            assert_eq!(
+                std::path::Path::new(&context.callback_executable),
+                callback.as_path()
+            );
+            assert_eq!(context.callback_executable_sha256, expected_callback_sha256);
+            next_skipping_quota(&mut stream)
+        }
+        message => message,
+    };
     // The Server's settings reading follows every hello. A quota snapshot
     // may follow it (the Claude row when `claude auth status` rules an
     // allowance out), so quota events are skipped from here on.
-    match next_skipping_quota(&mut stream) {
+    match message {
         ServerMessage::Event(ovrcr::protocol::ServerEvent::SettingsChanged(_)) => {}
         message => panic!("expected the settings reading after hello: {message:?}"),
     }

@@ -6,7 +6,10 @@ mod events;
 mod git_hints;
 mod hints;
 mod input;
+#[cfg(target_os = "macos")]
+mod iterm;
 mod keymap;
+mod navigation;
 mod outbox;
 mod palette;
 pub(crate) mod picker;
@@ -245,6 +248,7 @@ pub struct Dashboard {
     /// The whole view state machine: the revision, the one in-flight `SetView`, the
     /// acknowledged view, and the marks pane readiness is derived from.
     handshake: view_handshake::ViewHandshake,
+    navigation: navigation::Navigation,
     agent_typing: Option<state::AgentTyping>,
     /// One display request per retained run; the server persists launch failures across reconnects.
     recovery_requests:

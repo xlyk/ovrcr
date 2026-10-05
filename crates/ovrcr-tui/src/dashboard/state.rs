@@ -579,6 +579,7 @@ impl Dashboard {
             panes: vec![super::PaneState::new(size)],
             focused_pane: 0,
             handshake: Default::default(),
+            navigation: Default::default(),
             agent_typing: None,
             recovery_requests: Default::default(),
             outer_area: Rect::new(0, 0, size.cols, size.rows),
@@ -651,9 +652,12 @@ impl Dashboard {
             self.settings_changed_notice(&before);
         }
         if previous.map_or(count > 0, |previous| previous != count) {
-            self.show_notice(super::settings::findings_notice(count));
+            self.show_notice(super::settings::findings_notice(&self.settings, count));
         }
-        self.apply_alert_channels();
+        self.apply_alert_channels(
+            #[cfg(target_os = "macos")]
+            &before,
+        );
         self.settings_report = Some(Box::new(report));
     }
 
@@ -1071,6 +1075,9 @@ impl Dashboard {
         area: Rect,
         request_id: u64,
     ) -> anyhow::Result<Option<ClientMessage>> {
+        if self.navigation.discard_input {
+            return Ok(None);
+        }
         let geometry_changed = self.outer_area != area;
         if geometry_changed {
             self.cancel_mouse_gesture();
@@ -2142,6 +2149,9 @@ impl Dashboard {
     }
 
     pub fn event_action(&mut self, event: Event) -> DashboardAction {
+        if self.navigation.discard_input {
+            return DashboardAction::None;
+        }
         if let Some(tasks) = &mut self.tasks {
             if tasks.event(event) {
                 self.tasks = None;
@@ -3051,6 +3061,13 @@ impl Dashboard {
     }
 
     pub fn handle_server_message(&mut self, message: ServerMessage) -> Vec<ClientMessage> {
+        #[cfg(target_os = "macos")]
+        if self.handle_iterm_setup_message(&message) {
+            return self.drain_outbox();
+        }
+        if self.handle_notification_navigation(&message) {
+            return self.drain_outbox();
+        }
         if let ServerMessage::Response {
             request_id,
             response,
@@ -3118,7 +3135,11 @@ impl Dashboard {
                 request_id,
                 response,
             } => match response {
-                Response::AgentOperation(_) => {}
+                Response::AgentOperation(_)
+                | Response::NotificationNavigation(_)
+                | Response::NotificationNavigationConfirmed(_)
+                | Response::ITermFocusPrepared(_)
+                | Response::BridgeOwner(_) => {}
                 Response::QuotaCooldown { remaining_ms } => self.set_error(format!(
                     "Quota refresh cooling down: {}s left",
                     remaining_ms.div_ceil(1_000)
@@ -3314,6 +3335,9 @@ impl Dashboard {
                 }
             },
             ServerMessage::Event(event) => match event {
+                ServerEvent::BridgeContext(_)
+                | ServerEvent::NotificationNavigation(_)
+                | ServerEvent::ITermFocus(_) => {}
                 ServerEvent::HierarchyChanged(hierarchy) => {
                     for request in self.update_hierarchy(hierarchy) {
                         self.push_request(request);
@@ -3650,7 +3674,8 @@ impl Dashboard {
     }
 
     pub fn input_request(&mut self, bytes: Vec<u8>, request_id: u64) -> Option<ClientMessage> {
-        if self.whichkey.is_some()
+        if self.navigation.discard_input
+            || self.whichkey.is_some()
             || self.palette.is_some()
             || self.tasks.is_some()
             || self.mode != InputMode::Terminal

@@ -1,10 +1,13 @@
 pub mod agent;
 pub mod auto_trust;
 pub mod bridge;
+pub mod iterm;
 pub use agent::*;
 pub use auto_trust::{apply_default_auto_trust, default_auto_trust_flag};
 pub use bridge::{
-    BRIDGE_SCHEMA_VERSION, BridgeOperation, BridgeReply, BridgeRequest, BridgeStatus,
+    BRIDGE_SCHEMA_VERSION, BridgeActivationTarget, BridgeContext, BridgeNavigationOffer,
+    BridgeNavigationResult, BridgeNavigationTicket, BridgeOperation, BridgeReply, BridgeRequest,
+    BridgeSoundFailure, BridgeStatus,
 };
 pub mod client;
 pub mod event;
@@ -35,3 +38,5 @@ pub use task::{
     TaskTarget,
 };
 pub use wire::*;
+
+pub use iterm::{BridgeOwnerCall, BridgeOwnerResult, BridgeOwnerTicket, ITermFocusStatus};

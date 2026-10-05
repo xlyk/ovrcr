@@ -57,8 +57,16 @@ PY
 }
 staged="$stage_dir/OVRCR Bridge.app"
 ditto "$source_bundle" "$staged"
-codesign --force --options runtime --timestamp --sign "$identity" "$staged"
+codesign --force --options runtime --timestamp --entitlements "$staged/Contents/OVRCRBridge.entitlements" --sign "$identity" "$staged"
 codesign --verify --deep --strict "$staged"
+codesign -d --entitlements - "$staged" > "$stage_dir/signed-entitlements.plist"
+python3 -I - "$stage_dir/signed-entitlements.plist" <<'PY'
+import plistlib, sys
+with open(sys.argv[1], 'rb') as file:
+    entitlements = plistlib.load(file)
+assert set(entitlements) == {'com.apple.security.automation.apple-events'}
+assert entitlements['com.apple.security.automation.apple-events'] is True
+PY
 python3 -I "$repo_dir/native/bridge/validate-bundle.py" "$staged" "$expected_id" "$expected_display"
 schema=$(/usr/libexec/PlistBuddy -c 'Print :OVRCRBridgeSchema' "$staged/Contents/Info.plist")
 wire=$(/usr/libexec/PlistBuddy -c 'Print :OVRCRServerWire' "$staged/Contents/Info.plist")
@@ -67,8 +75,8 @@ if [ -e "$destination" ]; then
     installed_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$destination/Contents/Info.plist")
     [ "$installed_id" = "$expected_id" ] || { echo 'Existing destination belongs to another application' >&2; exit 65; }
     codesign --verify --deep --strict "$destination"
-    codesign -d -r- "$destination" 2> "$stage_dir/installed-requirement.txt"
-    codesign -d -r- "$staged" 2> "$stage_dir/staged-requirement.txt"
+    codesign -d -r- "$destination" > "$stage_dir/installed-requirement.txt" 2>&1
+    codesign -d -r- "$staged" > "$stage_dir/staged-requirement.txt" 2>&1
     sed -n '/^designated =>/p' "$stage_dir/installed-requirement.txt" > "$stage_dir/installed-dr.txt"
     sed -n '/^designated =>/p' "$stage_dir/staged-requirement.txt" > "$stage_dir/staged-dr.txt"
     [ -s "$stage_dir/installed-dr.txt" ] && [ -s "$stage_dir/staged-dr.txt" ] || { echo 'Cannot compare signing requirements' >&2; exit 65; }

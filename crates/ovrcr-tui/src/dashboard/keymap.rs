@@ -833,7 +833,11 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         KeyGroup { title: "View".into(), keys: view },
         KeyGroup { title: "Dashboard".into(), keys: vec![
             key_binding("N", if dashboard.settings.desktop_notifications { "Disable desktop notifications" } else { "Enable desktop notifications" }, "Save notifications through the Server for new agent responses or input requests; no replay".into(), Char('N'), Action::ToggleNotifications).once(),
-            key_binding("S", if dashboard.settings.ready_sound { "Disable ready sound" } else { "Enable ready sound" }, "Save ready sound through the Server for new agent responses or input requests, independent of desktop notifications; no replay".into(), Char('S'), Action::ToggleSound).once(),
+            key_binding("S", if dashboard.settings.ready_sound { "Disable ready sound" } else { "Enable ready sound" }, if cfg!(target_os = "macos") {
+                "Save ready sound through the Server for new agent responses or input requests; requires desktop notifications; choose a sound in Settings; no replay"
+            } else {
+                "Save ready sound through the Server for new agent responses or input requests, independent of desktop notifications; no replay"
+            }.into(), Char('S'), Action::ToggleSound).once(),
             key_binding("L", "Automatic local terminals", format!("Cycle automatic local terminal creation (currently {}); applies to newly provisioned workspaces only", dashboard.settings.automatic_local_terminals.label()), Char('L'), Action::CycleLocalTerminals).once(),
             key_binding("q", "Detach", "Detach this dashboard; the server and every session keep running".into(), Char('q'), Action::Detach),
         ] },

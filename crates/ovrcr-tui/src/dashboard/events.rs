@@ -148,7 +148,7 @@ impl Dashboard {
         })
     }
 
-    fn close_events(&mut self) {
+    pub(super) fn close_events(&mut self) {
         if let Some(request_id) = self.events.request.take() {
             self.ignored_responses.insert(request_id);
         }

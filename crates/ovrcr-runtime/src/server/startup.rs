@@ -201,6 +201,14 @@ fn run_server_inner(
     let event_log = event_log::Log::open(event_log::events_path(&registry_path));
     let (dispatch, dispatch_receiver) = dispatch_channel(dispatch_monitor.as_ref());
     let state = Arc::new(ServerState {
+        server_lifetime: super::navigation::new_identity()?,
+        callback_executable_sha256: std::env::current_exe().ok().and_then(|path| {
+            super::navigation::bridge_executable_sha256(
+                &path,
+                Instant::now() + Duration::from_secs(2),
+            )
+            .ok()
+        }),
         tasks: Some(Arc::clone(&task_manager)),
         socket: bound_socket,
         registry_path,

@@ -42,7 +42,13 @@ fn profiles(fixture: &live::Live) -> Result<()> {
 }
 
 fn launch(fixture: &live::Live) -> Result<Terminal> {
-    let mut command = CommandBuilder::new(&fixture.executable);
+    // The fixture tests hook offers, not install assets from a shared build.
+    let directory = fixture.root.path().join("startup-client");
+    fs::create_dir_all(&directory)?;
+    let executable = directory.join("ovrcr");
+    fs::copy(&fixture.executable, &executable)?;
+    let mut command = CommandBuilder::new(&executable);
+    command.env("OVRCR_SERVER_EXECUTABLE", &fixture.executable);
     command.env("HOME", fixture.root.path());
     command.env("OVRCR_CONFIG", &fixture.config);
     command.env("OVRCR_SOCKET", &fixture.socket);

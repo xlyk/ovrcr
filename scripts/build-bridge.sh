@@ -2,9 +2,24 @@
 set -eu
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 mode=build
-if [ "${1:-}" = --check ]; then mode=check; shift; fi
-if [ "$#" -gt 1 ]; then echo 'Usage: scripts/build-bridge.sh [--check] [OUTPUT_ROOT]' >&2; exit 64; fi
-output_root=${1:-"$repo_dir/target/bridge"}
+callback_executable=
+output_root="$repo_dir/target/bridge"
+output_given=false
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --check) mode=check; shift;;
+        --callback-executable)
+            [ "$#" -ge 2 ] || { echo 'Missing callback executable' >&2; exit 64; }
+            callback_executable=$2; shift 2;;
+        --*) echo 'Unknown build option' >&2; exit 64;;
+        *) [ "$output_given" = false ] || { echo 'Unexpected output root' >&2; exit 64; }
+            output_root=$1; output_given=true; shift;;
+    esac
+done
+if [ "$mode" = build ] && [ -z "$callback_executable" ]; then
+    echo 'Build requires --callback-executable with the reviewed CLI matching the running Server' >&2
+    exit 64
+fi
 mkdir -p "$output_root"
 stage_dir=$(mktemp -d "$output_root/.bridge-build.XXXXXX")
 trap 'rm -rf "$stage_dir"' EXIT
@@ -17,19 +32,63 @@ let bridgeSchema: UInt32 = $schema
 let bridgeServerWire: UInt32 = $wire
 EOF
 if [ "$mode" = check ]; then
-    xcrun --sdk macosx swiftc -swift-version 5 -module-cache-path "$stage_dir/cache" \
-        "$stage_dir/Version.swift" "$repo_dir/native/bridge/Contract.swift" \
-        "$repo_dir/native/bridge/Transport.swift" "$repo_dir/native/bridge/headless/main.swift" \
-        -o "$stage_dir/headless-checks"
-    "$stage_dir/headless-checks"
+    # These runners use parser/early guards and injected owner/permission/
+    # selector doubles. They cannot establish native consent or visible focus.
+    for runner in headless headless-iterm headless-iterm-setup headless-iterm-workflow; do
+        sound_checks_source=
+        if [ "$runner" = headless ]; then
+            sound_checks_source="$repo_dir/native/bridge/headless/SoundChecks.swift"
+        fi
+        xcrun --sdk macosx swiftc -swift-version 5 -module-cache-path "$stage_dir/cache" \
+            "$stage_dir/Version.swift" "$repo_dir/native/bridge/Contract.swift" \
+            "$repo_dir/native/bridge/Transport.swift" "$repo_dir/native/bridge/Sounds.swift" \
+            "$repo_dir/native/bridge/Navigation.swift" \
+            "$repo_dir/native/bridge/ITermFocus.swift" "$repo_dir/native/bridge/ITermWorkflow.swift" \
+            "$repo_dir/native/bridge/ITermSetup.swift" ${sound_checks_source:+"$sound_checks_source"} \
+            "$repo_dir/native/bridge/$runner/main.swift" \
+            -o "$stage_dir/$runner-checks"
+        "$stage_dir/$runner-checks" "$repo_dir"
+    done
     exit
 fi
 bundle="$stage_dir/OVRCR Bridge.app"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
+callback_hash=$(python3 -I - "$callback_executable" "$bundle/Contents/MacOS/ovrcr" <<'PY'
+import hashlib, os, stat, sys
+from pathlib import Path
+source, destination = map(Path, sys.argv[1:])
+assert source.is_absolute() and source.name == 'ovrcr' and not source.is_symlink()
+descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+with os.fdopen(descriptor, 'rb') as original, destination.open('xb') as output:
+    before = os.fstat(original.fileno())
+    assert stat.S_ISREG(before.st_mode) and before.st_uid == os.getuid()
+    assert before.st_mode & 0o111 and 0 < before.st_size <= 512 * 1024 * 1024
+    digest = hashlib.sha256()
+    count = 0
+    for chunk in iter(lambda: original.read(65536), b''):
+        count += len(chunk)
+        assert count <= before.st_size
+        digest.update(chunk)
+        output.write(chunk)
+    after = os.fstat(original.fileno())
+    assert count == before.st_size
+    assert (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) == (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+    named = source.lstat()
+    assert stat.S_ISREG(named.st_mode) and (named.st_dev, named.st_ino) == (before.st_dev, before.st_ino)
+destination.chmod(0o755)
+print(digest.hexdigest())
+PY
+)
+# Preserve reviewed bytes. Re-signing a helper would change its compatibility hash.
+codesign --verify --strict "$bundle/Contents/MacOS/ovrcr"
 xcrun --sdk macosx swiftc -swift-version 5 -O -target "$(uname -m)-apple-macosx11.0" \
     -module-cache-path "$stage_dir/cache" "$stage_dir/Version.swift" \
     "$repo_dir/native/bridge/Contract.swift" "$repo_dir/native/bridge/Transport.swift" \
-    "$repo_dir/native/bridge/App.swift" "$repo_dir/native/bridge/main.swift" \
+    "$repo_dir/native/bridge/Sounds.swift" \
+    "$repo_dir/native/bridge/Navigation.swift" "$repo_dir/native/bridge/ITermFocus.swift" \
+    "$repo_dir/native/bridge/ITermWorkflow.swift" "$repo_dir/native/bridge/ITermSetup.swift" \
+    "$repo_dir/native/bridge/App.swift" \
+    "$repo_dir/native/bridge/main.swift" \
     -o "$bundle/Contents/MacOS/OVRCRBridge"
 build=$(python3 -I - "$bundle/Contents/MacOS/OVRCRBridge" <<'PY_HASH'
 import hashlib, sys
@@ -52,9 +111,12 @@ cat > "$bundle/Contents/Info.plist" <<EOF
 <key>LSUIElement</key><true/>
 <key>OVRCRBridgeSchema</key><integer>$schema</integer>
 <key>OVRCRServerWire</key><integer>$wire</integer>
+<key>OVRCRCallbackSHA256</key><string>$callback_hash</string>
+<key>NSAppleEventsUsageDescription</key><string>OVRCR can select the existing iTerm session hosting your current Dashboard after you explicitly set up iTerm focus.</string>
 <key>OVRCRBridgeBuild</key><string>$build</string>
 </dict></plist>
 EOF
+cp "$repo_dir/native/bridge/entitlements.plist" "$bundle/Contents/OVRCRBridge.entitlements"
 for tone in tap chime rise; do
     cp "$repo_dir/research/notification-bridge/sounds/ovrcr-$tone-v1.wav" "$bundle/Contents/Resources/"
 done

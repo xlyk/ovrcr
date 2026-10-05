@@ -1,5 +1,15 @@
 # Dashboard behavior
 
+Notification offers require a matching pending Server confirmation and current
+lifetime/run hierarchy. Application uses `retarget` even for the same session,
+lands Browse, cancels unsent overlays/captures and removes queued Input from the
+outbox while leaving submitted operation targets intact. The actual event loop
+observes the navigation input epoch, stops later Server dispatch and discards
+old terminal events through bounded continuation batches until the input queue
+is empty. It then emits the ordinary `ViewHandshake` request; new input still
+requires all current snapshots and the final matching acknowledgment. A clicked
+retained run is excluded from automatic recovery.
+
 - Revoke input permission immediately when focus, assignment, or visible geometry changes. Input requires a Running session in the current acknowledged visible view, using that pane's terminal modes.
 - Match snapshots by request, revision, session and run. Require every expected snapshot plus the matching final acknowledgement before enabling input. An empty view expects zero snapshots and must still complete.
 - Keep one view request in flight and coalesce desired changes. A true no-op must preserve readiness. Stale responses must not populate reassigned panes, clear current errors, or enable input.

@@ -1,10 +1,18 @@
+#[cfg(not(target_os = "macos"))]
 #[path = "../support/deadline.rs"]
 mod deadline;
+
+#[cfg(target_os = "macos")]
+#[path = "../support/live.rs"]
+mod live;
 
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
+#[cfg(not(target_os = "macos"))]
 use deadline::wait_deadline;
+#[cfg(target_os = "macos")]
+use live::wait_deadline;
 use ovrcr::context::{ContextSource, ContextUsageReport, ContextUsageSnapshot};
 use ovrcr::protocol::{
     ClientMessage, ErrorCode, HierarchySnapshot, HistoryCell, HistoryColor, HistoryOpened,
@@ -27,6 +35,7 @@ use std::sync::mpsc::TrySendError;
 
 mod agent_attention;
 mod agent_search;
+mod bridge_navigation;
 mod copy_history;
 mod events;
 mod mouse;

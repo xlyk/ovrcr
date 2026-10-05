@@ -56,7 +56,12 @@ fn palette_hint_action_ignores_late_inspection_error() {
     };
     assert_eq!(message.request, Request::Inspect);
     dashboard.event_action(Event::Paste("focus".into()));
-    dashboard.key(KeyCode::Enter);
+    // macOS also offers "Set up iTerm focus" before the existing Focus hint.
+    // Select the typing action; the fixture's screen already acknowledges it.
+    #[cfg(target_os = "macos")]
+    dashboard.key(KeyCode::Down);
+    assert!(palette_text(&dashboard).contains("› Focus"));
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
     assert_eq!(
         dashboard.key(KeyCode::Char('z')),
         ovrcr::tui::DashboardAction::PtyBytes(b"z".to_vec())

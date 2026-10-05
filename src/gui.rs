@@ -279,7 +279,16 @@ impl Demo {
     }
 
     pub fn dashboard(&self, rows: u16, cols: u16, context: egui::Context) -> Result<Terminal> {
-        let mut command = CommandBuilder::new(&self.executable);
+        // A disposable demo must not discover installation assets from the
+        // caller's build directory. Keep its original Server image explicit.
+        let directory = self.root.join("dashboard-client");
+        fs::create_dir_all(&directory)?;
+        let executable = directory.join("ovrcr");
+        if !executable.exists() {
+            fs::copy(&self.executable, &executable)?;
+        }
+        let mut command = CommandBuilder::new(&executable);
+        command.env("OVRCR_SERVER_EXECUTABLE", &self.executable);
         command.env("OVRCR_CONFIG", self.root.join("config.toml"));
         command.env("OVRCR_SOCKET", self.root.join("server.sock"));
         command.env_remove("OVRCR_DASHBOARD_CONFIG");

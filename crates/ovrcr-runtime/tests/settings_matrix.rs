@@ -9,7 +9,9 @@
 //! Each test collects every failing case and reports them together, so a
 //! broken loader rule shows the whole set of cases it breaks.
 
-use ovrcr_protocol::{SettingRow, SettingSource, SettingsFinding, SettingsReport};
+use ovrcr_protocol::{
+    ReadySoundChoice, SettingRow, SettingSource, SettingsFinding, SettingsReport,
+};
 use ovrcr_runtime::settings;
 use std::path::Path;
 
@@ -32,6 +34,11 @@ const UNSET_KINDS: &[(&str, Kind)] = &[
 /// Enum settings: how one spelling sits in the document, and the documented
 /// spellings. Near misses of each spelling are the unknown-spelling cases.
 const ENUMS: &[(&str, &str, &[&str])] = &[
+    (
+        "ready_sound_choice",
+        "\"{}\"",
+        &["default", "tap", "chime", "rise"],
+    ),
     (
         "automatic_local_terminals",
         "\"{}\"",
@@ -145,6 +152,19 @@ impl Setting {
             source: SettingSource::Document,
             off_state,
             ..self.default.clone()
+        }
+    }
+
+    /// Invalid sound choices suppress sound; other invalid values keep their default.
+    fn invalid_row(&self) -> SettingRow {
+        if self.key == ReadySoundChoice::KEY {
+            SettingRow {
+                value: None,
+                source: SettingSource::Document,
+                ..self.default.clone()
+            }
+        } else {
+            self.default.clone()
         }
     }
 }
@@ -316,6 +336,8 @@ fn matrix_covers_every_declared_setting() {
         [
             "desktop_notifications",
             "ready_sound",
+            "ready_sound_choice",
+            "iterm_focus",
             "automatic_local_terminals",
             "title_model",
             "branch_prefix",
@@ -335,7 +357,8 @@ fn matrix_covers_every_declared_setting() {
     assert_eq!(
         kinds,
         [
-            Bool, Bool, Str, Str, Str, Array, Array, Table, Bool, Bool, Str, Str, Str, Str
+            Bool, Bool, Str, Bool, Str, Str, Str, Array, Array, Table, Bool, Bool, Str, Str, Str,
+            Str
         ]
     );
     // Every test-side table names a declared setting, so none goes stale.
@@ -426,7 +449,7 @@ fn explicit_non_default_takes_effect() {
 }
 
 #[test]
-fn wrong_type_defaults_only_that_setting_with_one_finding() {
+fn wrong_type_changes_only_that_setting_with_one_finding() {
     let settings = Setting::all();
     let (mut failures, mut cases) = (Failures::default(), 0);
     for setting in &settings {
@@ -438,7 +461,7 @@ fn wrong_type_defaults_only_that_setting_with_one_finding() {
             let line = document.set(&setting.key, value);
             let report = read(&document.text());
             failures.one_finding(&case, &report.findings, &setting.key, line, "");
-            failures.rows(&case, &report, &baseline, &setting.default);
+            failures.rows(&case, &report, &baseline, &setting.invalid_row());
         }
     }
     failures.assert_none(cases);
@@ -501,7 +524,7 @@ fn unknown_enum_spelling_is_one_finding_not_a_silent_default() {
                     let line = document.set(key, &value);
                     let report = read(&document.text());
                     failures.one_finding(&case, &report.findings, key, line, &near);
-                    failures.rows(&case, &report, &baseline, &setting.default);
+                    failures.rows(&case, &report, &baseline, &setting.invalid_row());
                 }
             }
         }

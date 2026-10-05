@@ -65,8 +65,8 @@ pub fn run_dashboard(
             TreeRow::Project { .. } | TreeRow::Workspace { .. } => None,
         });
     if let Some(id) = first_session {
-        // The initial hello and geometry requests reserve IDs 1 and 2, so the selection is 3.
-        dashboard.next_request_id = 3;
+        // Hello and geometry reserve 1 and 2. Context identity may already
+        // have consumed another ID, so retain the allocator's current value.
         dashboard.select_session(id);
         let view = dashboard
             .request_view_at(Rect::new(0, 0, size.cols, size.rows))
@@ -81,7 +81,6 @@ pub fn run_dashboard(
             expected_screens,
         )?;
     }
-    dashboard.next_request_id = 4;
 
     let mut guard = TerminalGuard::enter()?;
     let mut mouse_enabled = guard.mouse;
@@ -375,8 +374,16 @@ pub(super) fn next_dashboard_messages(
         // A final Ok may race input that arrived during Loading. Keep its guard through
         // the following bounded input drain, including InputPending continuation batches.
         dashboard.defer_agent_typing_until_input_boundary();
-        for request in dashboard.handle_server_message(message) {
+        let input_epoch = dashboard.navigation.input_epoch;
+        let outgoing = dashboard.handle_server_message(message);
+        if dashboard.navigation.input_epoch != input_epoch {
+            dashboard.navigation.discard_input = true;
+        }
+        for request in outgoing {
             write_frame(stream, &request)?;
+        }
+        if dashboard.navigation.discard_input {
+            break;
         }
     }
     Ok(redraw)
@@ -461,6 +468,12 @@ pub(super) fn drain_dashboard_input_then_emit_with<
     }
 
     let typing_changed = dashboard.finish_agent_input_boundary();
+    if dashboard.navigation.discard_input {
+        // No new view or later Server acknowledgment may cut over while old
+        // parsed terminal events remain queued, including continuation batches.
+        dashboard.navigation.discard_input = false;
+        emit_view_request(stream, dashboard, dashboard.outer_area)?;
+    }
     let desktop_changed = dashboard.emit_desktop_notifications();
     if emit_pending_history_copy(terminal, dashboard) {
         flush(stream, dashboard)?;
@@ -508,6 +521,9 @@ fn process_dashboard_input<W: Write>(
     mouse_enabled: &mut bool,
 ) -> Result<bool> {
     let event = event::read()?;
+    if dashboard.navigation.discard_input {
+        return Ok(false);
+    }
     let action = match event {
         Event::Mouse(mouse) => {
             let area = terminal.size()?.into();

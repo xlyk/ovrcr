@@ -4,11 +4,12 @@
 //! and the findings. A bad value defaults only its own setting; a wrong-typed
 //! element of a list or table drops only that element; an unknown key or
 //! spelling is a finding; only an unparseable document falls back to all
-//! defaults. Nothing here fails: a settings mistake never stops the Server.
+//! defaults. An explicitly invalid sound choice instead suppresses sound.
+//! Nothing here fails: a settings mistake never stops the Server.
 
 use ovrcr_protocol::{
-    AgentOverride, AutomaticLocalTerminals, LaunchChoice, NativeCommand, SettingOwner, SettingRow,
-    SettingSource, Settings, SettingsFinding, SettingsReport,
+    AgentOverride, AutomaticLocalTerminals, LaunchChoice, NativeCommand, ReadySoundChoice,
+    SettingOwner, SettingRow, SettingSource, Settings, SettingsFinding, SettingsReport,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -26,6 +27,7 @@ pub const DOCUMENT_ENV: &str = "OVRCR_DASHBOARD_CONFIG";
 pub use ovrcr_protocol::QUOTA_OFF;
 pub const TITLES_OFF: &str =
     "Automatic titles off: set `title_model = \"provider/model\"` in dashboard.toml";
+pub const ITERM_FOCUS_OFF: &str = "Exact iTerm focus off: set `iterm_focus = true`, then choose Set up iTerm focus in the Dashboard palette (separate Automation permission)";
 pub const DESKTOP_NOTIFICATIONS_OFF: &str = "Desktop alerts off: set `desktop_notifications = true` in dashboard.toml (needs OS notification permission)";
 
 /// `OVRCR_DASHBOARD_CONFIG`, else `dashboard.toml` beside the instance identity.
@@ -161,6 +163,27 @@ impl Loader<'_> {
             &mut settings.desktop_notifications,
         );
         self.value(table, "ready_sound", &mut settings.ready_sound);
+        if table.contains_key(ReadySoundChoice::KEY) {
+            self.accept(
+                ReadySoundChoice::KEY,
+                &mut settings.ready_sound_choice,
+                None,
+            );
+            if let Some(raw) = self.take::<String>(table, ReadySoundChoice::KEY) {
+                match ReadySoundChoice::parse(&raw) {
+                    Some(choice) => self.accept(
+                        ReadySoundChoice::KEY,
+                        &mut settings.ready_sound_choice,
+                        Some(choice),
+                    ),
+                    None => self.finding(
+                        ReadySoundChoice::KEY,
+                        format!("unknown value {raw:?}; expected \"default\", \"tap\", \"chime\" or \"rise\""),
+                    ),
+                }
+            }
+        }
+        self.value(table, "iterm_focus", &mut settings.iterm_focus);
         if let Some(raw) = self.take::<String>(table, AutomaticLocalTerminals::KEY) {
             match AutomaticLocalTerminals::parse(&raw) {
                 Some(policy) => self.accept(
@@ -600,6 +623,20 @@ fn rows(settings: &Settings, set: &HashSet<String>) -> Vec<SettingRow> {
             None,
         ),
         row(
+            ReadySoundChoice::KEY,
+            Dashboard,
+            settings
+                .ready_sound_choice
+                .map(|choice| choice.as_str().into()),
+            None,
+        ),
+        row(
+            "iterm_focus",
+            Dashboard,
+            display(&settings.iterm_focus),
+            (!settings.iterm_focus).then_some(ITERM_FOCUS_OFF),
+        ),
+        row(
             AutomaticLocalTerminals::KEY,
             Server,
             Some(settings.automatic_local_terminals.as_str().into()),
@@ -721,6 +758,57 @@ mod tests {
         parse(Path::new("dashboard.toml"), text)
     }
 
+    #[test]
+    fn ready_sound_choice_defaults_or_fails_closed_without_changing_opt_ins() {
+        for notifications in [false, true] {
+            for sound in [false, true] {
+                for (raw, choice) in [
+                    (None, Some(ReadySoundChoice::Default)),
+                    (Some("\"default\""), Some(ReadySoundChoice::Default)),
+                    (Some("\"tap\""), Some(ReadySoundChoice::Tap)),
+                    (Some("\"chime\""), Some(ReadySoundChoice::Chime)),
+                    (Some("\"rise\""), Some(ReadySoundChoice::Rise)),
+                    (Some("\"Glass\""), None),
+                    (Some("\" tap\""), None),
+                    (Some("true"), None),
+                    (Some("7"), None),
+                    (Some("[\"tap\"]"), None),
+                    (Some("{ tap = {} }"), None),
+                ] {
+                    let mut text = format!(
+                        "desktop_notifications = {notifications}\nready_sound = {sound}\nbranch_prefix = 'preserved/'\n"
+                    );
+                    if let Some(raw) = raw {
+                        text.push_str(&format!("ready_sound_choice = {raw}\n"));
+                    }
+                    let report = read(&text);
+                    assert_eq!(report.settings.ready_sound_choice, choice, "{text}");
+                    assert_eq!(report.settings.desktop_notifications, notifications);
+                    assert_eq!(report.settings.ready_sound, sound);
+                    assert_eq!(report.settings.branch_prefix, "preserved/");
+                    let row = row(&report, ReadySoundChoice::KEY);
+                    assert_eq!(row.value.as_deref(), choice.map(ReadySoundChoice::as_str));
+                    assert_eq!(row.default.as_deref(), Some("default"));
+                    assert_eq!(
+                        row.source,
+                        if raw.is_some() {
+                            SettingSource::Document
+                        } else {
+                            SettingSource::Default
+                        }
+                    );
+                    if choice.is_some() {
+                        assert!(report.findings.is_empty(), "{:?}", report.findings);
+                    } else {
+                        assert!(matches!(report.findings.as_slice(), [finding]
+                            if finding.key.as_deref() == Some(ReadySoundChoice::KEY)
+                                && finding.line == Some(4)));
+                    }
+                }
+            }
+        }
+    }
+
     fn row<'a>(report: &'a SettingsReport, key: &str) -> &'a SettingRow {
         report.rows.iter().find(|row| row.key == key).unwrap()
     }
@@ -737,11 +825,13 @@ mod tests {
 
     const FULL: &str = r#"desktop_notifications = true
 ready_sound = true
+iterm_focus = true
 automatic_local_terminals = "off"
 title_model = "pi/test"
 branch_prefix = "kh/"
 picker_roots = ["/tmp/a", "~/b"]
 agents = [{ name = "claude", argv = ["claude", "--x"] }]
+ready_sound_choice = "chime"
 
 [launch_choices.ovrcr]
 kind = "Agent"
@@ -770,6 +860,8 @@ command = "/opt/grok"
         assert_eq!(report.findings, vec![]);
         let settings = &report.settings;
         assert!(settings.desktop_notifications && settings.ready_sound);
+        assert_eq!(settings.ready_sound_choice, Some(ReadySoundChoice::Chime));
+        assert!(settings.iterm_focus);
         assert_eq!(
             settings.automatic_local_terminals,
             AutomaticLocalTerminals::Off
@@ -840,6 +932,7 @@ command = "/opt/grok"
             off,
             vec![
                 ("desktop_notifications", DESKTOP_NOTIFICATIONS_OFF),
+                ("iterm_focus", ITERM_FOCUS_OFF),
                 ("title_model", TITLES_OFF),
                 (
                     "quota.claude.probe",
@@ -853,6 +946,8 @@ command = "/opt/grok"
             [
                 "desktop_notifications",
                 "ready_sound",
+                "ready_sound_choice",
+                "iterm_focus",
                 "automatic_local_terminals",
                 "title_model",
                 "branch_prefix",
@@ -890,7 +985,7 @@ command = "/opt/grok"
         let text = FULL.replace("command = \"/opt/codex\"", "command = 7");
         let report = read(&text);
         assert_eq!(report.findings.len(), 1, "{:?}", report.findings);
-        finding("quota.codex.command", 23, "expected path", &report);
+        finding("quota.codex.command", 25, "expected path", &report);
         assert_eq!(report.settings.quota.codex.command, PathBuf::from("codex"));
         assert_eq!(
             report.settings.quota.codex.home,

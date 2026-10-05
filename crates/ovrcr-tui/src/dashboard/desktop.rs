@@ -4,6 +4,8 @@
 //! do not suppress or cancel otherwise valid alerts.
 use super::ready::{delivery_live, input_live};
 use super::settings::{AutomaticLocalTerminals, Settings};
+#[cfg(target_os = "macos")]
+use super::settings::{INVALID_SOUND_CHOICE_NOTICE, invalid_sound_choice_notice};
 use super::{Dashboard, DashboardAction};
 #[cfg(test)]
 use ovrcr_protocol::{AgentActivity, AgentProvider, SessionPhase};
@@ -12,8 +14,8 @@ use ovrcr_protocol::{
 };
 #[cfg(target_os = "macos")]
 use ovrcr_protocol::{
-    BRIDGE_SCHEMA_VERSION, BridgeOperation, BridgeReply, BridgeRequest, BridgeStatus,
-    MAX_FRAME_BYTES, PROTOCOL_VERSION,
+    BRIDGE_SCHEMA_VERSION, BridgeOperation, BridgeReply, BridgeRequest, BridgeSoundFailure,
+    BridgeStatus, MAX_FRAME_BYTES, PROTOCOL_VERSION, ReadySoundChoice,
 };
 use ovrcr_protocol::{ClientMessage, Request};
 use std::collections::VecDeque;
@@ -31,12 +33,12 @@ use std::{
     io::{Read, Write},
     os::fd::AsRawFd,
     path::PathBuf,
+    sync::Mutex,
 };
 
 const QUEUE_CAPACITY: usize = 50;
 const HOST_TIMEOUT: Duration = Duration::from_secs(2);
-// The system player exits after playback; measured afplay wall time for the
-// fixed sound is about 2.5 seconds on macOS.
+#[cfg(not(target_os = "macos"))]
 const SOUND_TIMEOUT: Duration = Duration::from_secs(5);
 const CHANNEL_DESKTOP: u8 = 1;
 const CHANNEL_SOUND: u8 = 2;
@@ -61,6 +63,8 @@ struct Notification {
     #[cfg(target_os = "macos")]
     subtitle: String,
     body: String,
+    #[cfg(target_os = "macos")]
+    navigation: Option<ovrcr_protocol::BridgeNavigationTicket>,
 }
 
 const DELIVERY_ACTIVE: u8 = 0;
@@ -72,6 +76,8 @@ const DELIVERY_CANCELLED_FINISHED: u8 = DELIVERY_CANCELLED | DELIVERY_FINISHED;
 struct Delivery {
     notification: Notification,
     state: Arc<AtomicU8>,
+    #[cfg(target_os = "macos")]
+    started: Arc<AtomicBool>,
 }
 
 impl Delivery {
@@ -95,6 +101,10 @@ pub(super) struct DesktopNotifications {
     host: Option<DesktopHost>,
     #[cfg(target_os = "macos")]
     bridge: BridgePermission,
+    #[cfg(target_os = "macos")]
+    sound_unavailable: Option<(ReadySoundChoice, BridgeSoundFailure)>,
+    #[cfg(target_os = "macos")]
+    pub(super) iterm: super::iterm::Setup,
 }
 
 #[cfg(target_os = "macos")]
@@ -112,15 +122,25 @@ struct BridgePermission {
 
 #[cfg(target_os = "macos")]
 #[derive(Clone)]
-struct BridgeControl {
+pub(super) struct BridgeControl {
     operation: BridgeOperation,
     state: Arc<AtomicU8>,
 }
 
 #[cfg(target_os = "macos")]
+impl BridgeControl {
+    pub(super) fn cancel(&self) {
+        self.state.store(DELIVERY_CANCELLED, Ordering::Release);
+    }
+    pub(super) fn finished(&self) -> bool {
+        self.state.load(Ordering::Acquire) == DELIVERY_FINISHED
+    }
+}
+
+#[cfg(target_os = "macos")]
 struct BridgeUpdate {
     operation: BridgeOperation,
-    status: BridgeStatus,
+    reply: BridgeReply,
     state: Arc<AtomicU8>,
     ticket: Option<u64>,
 }
@@ -131,10 +151,19 @@ impl Dashboard {
         if self.settings.desktop_notifications {
             channels |= CHANNEL_DESKTOP;
         }
-        if self.settings.ready_sound {
+        if self.settings.ready_sound
+            && (!cfg!(target_os = "macos") || self.settings.desktop_notifications)
+        {
             channels |= CHANNEL_SOUND;
         }
         channels
+    }
+
+    #[cfg(target_os = "macos")]
+    fn notification_sound(&self) -> Option<ReadySoundChoice> {
+        (self.settings.desktop_notifications && self.settings.ready_sound)
+            .then_some(self.settings.ready_sound_choice)
+            .flatten()
     }
 
     pub(super) fn toggle_desktop_notifications(&mut self) -> DashboardAction {
@@ -176,6 +205,21 @@ impl Dashboard {
     /// reading changed, whether by a toggle here or an edit elsewhere.
     pub(super) fn settings_changed_notice(&mut self, before: &Settings) {
         let on_off = |enabled: bool| if enabled { "on" } else { "off" };
+        #[cfg(target_os = "macos")]
+        if invalid_sound_choice_notice(&self.settings).is_none() {
+            if self.desktop.notice.as_deref() == Some(INVALID_SOUND_CHOICE_NOTICE) {
+                self.desktop.notice = None;
+            }
+            self.notice_queue
+                .retain(|notice| notice != INVALID_SOUND_CHOICE_NOTICE);
+        }
+        #[cfg(target_os = "macos")]
+        if before.ready_sound_choice != self.settings.ready_sound_choice
+            || before.ready_sound != self.settings.ready_sound
+            || before.desktop_notifications != self.settings.desktop_notifications
+        {
+            self.desktop.sound_unavailable = None;
+        }
         let automatic = (before.automatic_local_terminals
             != self.settings.automatic_local_terminals)
             .then(|| {
@@ -186,6 +230,15 @@ impl Dashboard {
             });
         let sound = (before.ready_sound != self.settings.ready_sound)
             .then(|| format!("Ready sound: {}", on_off(self.settings.ready_sound)));
+        #[cfg(target_os = "macos")]
+        let choice = if before.ready_sound_choice != self.settings.ready_sound_choice {
+            match self.settings.ready_sound_choice {
+                Some(choice) => Some(format!("Ready sound choice: {}", choice.label())),
+                None => invalid_sound_choice_notice(&self.settings).map(str::to_owned),
+            }
+        } else {
+            None
+        };
         let desktop =
             (before.desktop_notifications != self.settings.desktop_notifications).then(|| {
                 format!(
@@ -193,19 +246,44 @@ impl Dashboard {
                     on_off(self.settings.desktop_notifications)
                 )
             });
-        for notice in [automatic, sound, desktop].into_iter().flatten() {
+        let iterm = (before.iterm_focus != self.settings.iterm_focus)
+            .then(|| format!("Exact iTerm focus: {}", on_off(self.settings.iterm_focus)));
+        for notice in [
+            automatic,
+            sound,
+            #[cfg(target_os = "macos")]
+            choice,
+            desktop,
+            iterm,
+        ]
+        .into_iter()
+        .flatten()
+        {
             self.show_notice(notice);
         }
     }
 
     /// Hand the current alert preferences to a running host.
-    pub(super) fn apply_alert_channels(&mut self) {
+    pub(super) fn apply_alert_channels(&mut self, #[cfg(target_os = "macos")] before: &Settings) {
+        #[cfg(target_os = "macos")]
+        self.cancel_iterm_setup_if_disabled();
         let channels = self.alert_channels();
         if channels == 0 {
             self.desktop.pending.clear();
         }
         if let Some(host) = &mut self.desktop.host {
-            host.set_channels(channels);
+            host.set_channels(
+                channels,
+                #[cfg(target_os = "macos")]
+                (self.settings.desktop_notifications && self.settings.ready_sound)
+                    .then_some(self.settings.ready_sound_choice)
+                    .flatten(),
+                #[cfg(target_os = "macos")]
+                (before.ready_sound != self.settings.ready_sound
+                    || before.ready_sound_choice != self.settings.ready_sound_choice)
+                    .then_some(self.desktop.in_flight.as_ref())
+                    .flatten(),
+            );
         }
         #[cfg(target_os = "macos")]
         {
@@ -222,6 +300,9 @@ impl Dashboard {
                     control.state.store(DELIVERY_CANCELLED, Ordering::Release);
                 }
             }
+            // The complete Server reading has posted its notices before this
+            // preference application. Reveal any unrelated notice still waiting.
+            self.reveal_queued_notice();
         }
     }
 
@@ -281,7 +362,7 @@ impl Dashboard {
             if self.notification_permission_unconfirmed() {
                 return Some("OVRCR notification permission unconfirmed; O: check permission");
             }
-            return match self.desktop.bridge.status {
+            let permission = match self.desktop.bridge.status {
                 Some(BridgeStatus::Denied) => {
                     Some("OVRCR notifications denied; O: System Settings → Notifications → OVRCR")
                 }
@@ -299,6 +380,30 @@ impl Dashboard {
                 ),
                 _ => None,
             };
+            if permission.is_some() {
+                return permission;
+            }
+            if self.settings.ready_sound {
+                if let Some(notice) = invalid_sound_choice_notice(&self.settings) {
+                    return Some(notice);
+                }
+                if let Some((choice, failure)) = self.desktop.sound_unavailable
+                    && Some(choice) == self.notification_sound()
+                {
+                    return Some(match failure {
+                        BridgeSoundFailure::LookupConflict => {
+                            "Ready sound unavailable; banner submitted silently. Sound name conflict; choose System default in Settings"
+                        }
+                        _ => {
+                            "Ready sound unavailable; banner submitted silently. Reinstall OVRCR Bridge or choose System default in Settings"
+                        }
+                    });
+                }
+            }
+        }
+        #[cfg(target_os = "macos")]
+        if self.settings.ready_sound && !self.settings.desktop_notifications {
+            return Some("Ready sound saved; enable desktop notifications to hear it");
         }
         None
     }
@@ -326,6 +431,28 @@ impl Dashboard {
                 continue;
             }
             changed = true;
+            let status = update.reply.status;
+            if matches!(
+                update.operation,
+                BridgeOperation::ITermSetup { .. } | BridgeOperation::ITermStatus { .. }
+            ) {
+                self.handle_iterm_bridge_update(&update.operation, status);
+                continue;
+            }
+            if let BridgeOperation::Deliver { sound, .. } = &update.operation
+                && status == BridgeStatus::Submitted
+                && *sound == self.notification_sound()
+            {
+                self.desktop.sound_unavailable = sound.and_then(|choice| {
+                    update
+                        .reply
+                        .sound_unavailable
+                        .map(|failure| (choice, failure))
+                });
+                if update.reply.sound_unavailable.is_some() {
+                    self.desktop.notice = None;
+                }
+            }
             let bridge = &mut self.desktop.bridge;
             if update.operation == BridgeOperation::Status {
                 // A fresh check retires the completed recovery action, including
@@ -347,7 +474,7 @@ impl Dashboard {
             if update.operation == BridgeOperation::Settings {
                 bridge.check_after_settings = true;
                 self.show_notice(
-                    if update.status == BridgeStatus::SettingsOpened {
+                    if status == BridgeStatus::SettingsOpened {
                         "System Settings opened; choose Notifications → OVRCR, then Browse O checks permission"
                     } else {
                         "Open System Settings manually: Notifications → OVRCR; then Browse O checks permission"
@@ -356,13 +483,13 @@ impl Dashboard {
                 continue;
             }
             bridge.check_after_settings = false;
-            bridge.status = Some(if update.status == BridgeStatus::Submitted {
+            bridge.status = Some(if status == BridgeStatus::Submitted {
                 BridgeStatus::Available
             } else {
-                update.status
+                status
             });
             if matches!(
-                update.status,
+                status,
                 BridgeStatus::Denied
                     | BridgeStatus::PermissionPending
                     | BridgeStatus::Incompatible
@@ -371,14 +498,14 @@ impl Dashboard {
                 self.desktop.notice = None;
             }
             if update.operation == BridgeOperation::Status
-                && update.status == BridgeStatus::NotDetermined
+                && status == BridgeStatus::NotDetermined
                 && bridge.enabled
                 && !bridge.authorization_requested
             {
                 bridge.pending = Some(BridgeOperation::Authorize);
                 bridge.authorization_requested = true;
             }
-            if update.status == BridgeStatus::PermissionPending {
+            if status == BridgeStatus::PermissionPending {
                 bridge
                     .poll_until
                     .get_or_insert_with(|| Instant::now() + PERMISSION_POLL_BUDGET);
@@ -418,7 +545,23 @@ impl Dashboard {
                 bridge.in_flight = Some(control);
             }
         }
+        changed |= self.emit_iterm_control();
         changed
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn submit_iterm_control(&self, operation: BridgeOperation) -> Option<BridgeControl> {
+        let control = BridgeControl {
+            operation,
+            state: Arc::new(AtomicU8::new(DELIVERY_ACTIVE)),
+        };
+        self.desktop
+            .host
+            .as_ref()?
+            .controls
+            .try_send(control.clone())
+            .ok()?;
+        Some(control)
     }
 
     #[cfg(test)]
@@ -480,6 +623,8 @@ impl Dashboard {
                 #[cfg(target_os = "macos")]
                 subtitle: identity_subtitle(session),
                 body: identity_body(session),
+                #[cfg(target_os = "macos")]
+                navigation: self.navigation_ticket(session.id, session.run),
             });
         }
         // The second lane, consumed on the same terms: answering is not a review, so this
@@ -502,6 +647,8 @@ impl Dashboard {
                     #[cfg(target_os = "macos")]
                     subtitle: identity_subtitle(session),
                     body: identity_body(session),
+                    #[cfg(target_os = "macos")]
+                    navigation: self.navigation_ticket(session.id, session.run),
                 });
             }
         }
@@ -521,7 +668,9 @@ impl Dashboard {
         self.desktop.pending = pending;
         let mut changed = false;
         #[cfg(target_os = "macos")]
-        if self.desktop.bridge.pending.is_some() && self.desktop.host.is_none() {
+        if (self.desktop.bridge.pending.is_some() || self.iterm_control_pending())
+            && self.desktop.host.is_none()
+        {
             changed |= self.start_desktop_host();
         }
         #[cfg(target_os = "macos")]
@@ -557,6 +706,8 @@ impl Dashboard {
             let delivery = Delivery {
                 notification,
                 state: Arc::new(AtomicU8::new(DELIVERY_ACTIVE)),
+                #[cfg(target_os = "macos")]
+                started: Arc::new(AtomicBool::new(false)),
             };
             if let Some(host) = &self.desktop.host
                 && host.send(delivery.clone())
@@ -588,7 +739,14 @@ impl Dashboard {
             .as_ref()
             .map(std::os::unix::net::UnixStream::try_clone)
             .transpose()
-            .and_then(|wake| DesktopHost::start(wake, self.alert_channels()));
+            .and_then(|wake| {
+                DesktopHost::start(
+                    wake,
+                    self.alert_channels(),
+                    #[cfg(target_os = "macos")]
+                    self.notification_sound(),
+                )
+            });
         match host {
             Ok(host) => {
                 self.desktop.host = Some(host);
@@ -600,6 +758,9 @@ impl Dashboard {
                 {
                     self.desktop.bridge.pending = None;
                     self.desktop.bridge.status = Some(BridgeStatus::Failed);
+                    if self.iterm_control_pending() {
+                        self.fail_iterm_host();
+                    }
                 }
                 true
             }
@@ -679,13 +840,21 @@ struct DesktopHost {
     controls: mpsc::SyncSender<BridgeControl>,
     #[cfg(target_os = "macos")]
     updates: mpsc::Receiver<BridgeUpdate>,
+    #[cfg(target_os = "macos")]
+    sound: Arc<Mutex<Option<ReadySoundChoice>>>,
 }
 
 impl DesktopHost {
-    fn start(wake: Option<std::os::unix::net::UnixStream>, channels: u8) -> std::io::Result<Self> {
+    fn start(
+        wake: Option<std::os::unix::net::UnixStream>,
+        channels: u8,
+        #[cfg(target_os = "macos")] sound: Option<ReadySoundChoice>,
+    ) -> std::io::Result<Self> {
         Self::start_at(
             wake,
             channels,
+            #[cfg(target_os = "macos")]
+            sound,
             #[cfg(target_os = "macos")]
             bridge_client_path(),
         )
@@ -694,10 +863,13 @@ impl DesktopHost {
     fn start_at(
         mut wake: Option<std::os::unix::net::UnixStream>,
         channels: u8,
+        #[cfg(target_os = "macos")] sound: Option<ReadySoundChoice>,
         #[cfg(target_os = "macos")] bridge_client: Option<PathBuf>,
     ) -> std::io::Result<Self> {
         let (sender, receiver) = mpsc::sync_channel::<(u64, Delivery)>(1);
         let (failure, failures) = mpsc::sync_channel(2);
+        #[cfg(target_os = "macos")]
+        drop(failure);
         #[cfg(target_os = "macos")]
         let (controls, control_requests) = mpsc::sync_channel::<BridgeControl>(1);
         #[cfg(target_os = "macos")]
@@ -708,6 +880,10 @@ impl DesktopHost {
         let worker_epoch = Arc::clone(&epoch);
         let worker_channels = Arc::clone(&channels);
         let worker_stop = Arc::clone(&stop);
+        #[cfg(target_os = "macos")]
+        let sound = Arc::new(Mutex::new(sound));
+        #[cfg(target_os = "macos")]
+        let worker_sound = Arc::clone(&sound);
         let worker = thread::Builder::new()
             .name("ovrcr-desktop-notifications".into())
             .spawn(move || {
@@ -720,11 +896,11 @@ impl DesktopHost {
                                 || control.state.load(Ordering::Acquire) != DELIVERY_ACTIVE
                         };
                         if !cancelled() {
-                            let status =
+                            let reply =
                                 run_bridge(bridge_client.as_deref(), &control.operation, cancelled);
                             let _ = updated.try_send(BridgeUpdate {
                                 operation: control.operation.clone(),
-                                status,
+                                reply,
                                 state: Arc::clone(&control.state),
                                 ticket: None,
                             });
@@ -747,48 +923,49 @@ impl DesktopHost {
                             || worker_stop.load(Ordering::Acquire)
                             || delivery.state.load(Ordering::Acquire) != DELIVERY_ACTIVE
                     };
-                    // ponytail: channels run one after another; run them concurrently
-                    // if a sound-length backlog per response ever matters.
+                    #[cfg(target_os = "macos")]
+                    if !cancelled()
+                        && worker_channels.load(Ordering::Acquire) & CHANNEL_DESKTOP != 0
+                        && let Some(navigation) = delivery.notification.navigation.clone()
+                    {
+                        let sound = worker_sound.lock().ok().and_then(|choice| {
+                            delivery.started.store(true, Ordering::Release);
+                            *choice
+                        });
+                        let operation = BridgeOperation::Deliver {
+                            title: delivery.notification.title.into(),
+                            subtitle: delivery.notification.subtitle.clone(),
+                            body: delivery.notification.body.clone(),
+                            sound,
+                            navigation,
+                        };
+                        let reply = run_bridge(bridge_client.as_deref(), &operation, || {
+                            cancelled()
+                                || worker_channels.load(Ordering::Acquire) & CHANNEL_DESKTOP == 0
+                        });
+                        if !cancelled()
+                            && worker_channels.load(Ordering::Acquire) & CHANNEL_DESKTOP != 0
+                        {
+                            let _ = updated.try_send(BridgeUpdate {
+                                operation,
+                                reply,
+                                state: Arc::clone(&delivery.state),
+                                ticket: Some(ticket),
+                            });
+                        }
+                    }
+                    // ponytail: Linux channels run one after another; run them
+                    // concurrently if a sound-length backlog ever matters.
+                    #[cfg(not(target_os = "macos"))]
                     for channel in [CHANNEL_DESKTOP, CHANNEL_SOUND] {
                         // A toggle applies to every host command not yet started.
                         if cancelled() || worker_channels.load(Ordering::Acquire) & channel == 0 {
                             continue;
                         }
-                        #[cfg(target_os = "macos")]
-                        if channel == CHANNEL_DESKTOP {
-                            let operation = BridgeOperation::Deliver {
-                                title: delivery.notification.title.into(),
-                                subtitle: delivery.notification.subtitle.clone(),
-                                body: delivery.notification.body.clone(),
-                            };
-                            let status = run_bridge(bridge_client.as_deref(), &operation, || {
-                                cancelled()
-                                    || worker_channels.load(Ordering::Acquire) & CHANNEL_DESKTOP
-                                        == 0
-                            });
-                            if !cancelled()
-                                && worker_channels.load(Ordering::Acquire) & CHANNEL_DESKTOP != 0
-                            {
-                                let _ = updated.try_send(BridgeUpdate {
-                                    operation,
-                                    status,
-                                    state: Arc::clone(&delivery.state),
-                                    ticket: Some(ticket),
-                                });
-                            }
-                            continue;
-                        }
                         let (command, timeout) = if channel == CHANNEL_SOUND {
                             (sound_command(), SOUND_TIMEOUT)
                         } else {
-                            #[cfg(not(target_os = "macos"))]
-                            {
-                                (host_command(&delivery.notification), HOST_TIMEOUT)
-                            }
-                            #[cfg(target_os = "macos")]
-                            {
-                                unreachable!("Bridge delivery handled above")
-                            }
+                            (host_command(&delivery.notification), HOST_TIMEOUT)
                         };
                         if !run_host(command, timeout, cancelled) && !cancelled() {
                             let _ = failure.try_send((ticket, channel));
@@ -812,12 +989,30 @@ impl DesktopHost {
             controls,
             #[cfg(target_os = "macos")]
             updates,
+            #[cfg(target_os = "macos")]
+            sound,
         })
     }
     fn enabled(&self) -> bool {
         self.channels.load(Ordering::Acquire) != 0
     }
-    fn set_channels(&mut self, channels: u8) {
+    fn set_channels(
+        &mut self,
+        channels: u8,
+        #[cfg(target_os = "macos")] sound: Option<ReadySoundChoice>,
+        #[cfg(target_os = "macos")] cancel_sound_delivery: Option<&Delivery>,
+    ) {
+        #[cfg(target_os = "macos")]
+        if let Ok(mut choice) = self.sound.lock() {
+            *choice = sound;
+            if let Some(delivery) = cancel_sound_delivery
+                && delivery.started.load(Ordering::Acquire)
+            {
+                // Only this client is cancelled, best effort. Native/OS
+                // admission may already have happened; no retraction or replay.
+                delivery.cancel();
+            }
+        }
         let previous = self.channels.swap(channels, Ordering::AcqRel);
         if (previous != 0) != (channels != 0) {
             self.epoch.fetch_add(1, Ordering::AcqRel);
@@ -841,6 +1036,7 @@ impl Drop for DesktopHost {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn run_host(mut command: Command, timeout: Duration, cancelled: impl Fn() -> bool) -> bool {
     command
         .stdin(Stdio::null())
@@ -885,20 +1081,26 @@ fn run_bridge(
     client: Option<&std::path::Path>,
     operation: &BridgeOperation,
     cancelled: impl Fn() -> bool,
-) -> BridgeStatus {
+) -> BridgeReply {
+    let unavailable = |status| BridgeReply {
+        schema: BRIDGE_SCHEMA_VERSION,
+        server_wire: PROTOCOL_VERSION,
+        status,
+        sound_unavailable: None,
+    };
     let request = BridgeRequest {
         schema: BRIDGE_SCHEMA_VERSION,
         server_wire: PROTOCOL_VERSION,
         op: operation.clone(),
     };
     let Ok(input) = serde_json::to_vec(&request) else {
-        return BridgeStatus::Failed;
+        return unavailable(BridgeStatus::Failed);
     };
     let Some(client) = client else {
-        return BridgeStatus::Failed;
+        return unavailable(BridgeStatus::Failed);
     };
     if cancelled() || input.len() > MAX_FRAME_BYTES {
-        return BridgeStatus::Failed;
+        return unavailable(BridgeStatus::Failed);
     }
     let deadline = Instant::now() + HOST_TIMEOUT;
     let Ok(mut child) = Command::new(client)
@@ -909,10 +1111,10 @@ fn run_bridge(
         .process_group(0)
         .spawn()
     else {
-        return BridgeStatus::Failed;
+        return unavailable(BridgeStatus::Failed);
     };
     let mut reaped = false;
-    let result = (|| -> std::io::Result<BridgeStatus> {
+    let result = (|| -> std::io::Result<BridgeReply> {
         let mut stdin = child.stdin.take();
         let mut stdout = child.stdout.take().unwrap();
         for fd in [stdin.as_ref().unwrap().as_raw_fd(), stdout.as_raw_fd()] {
@@ -966,13 +1168,17 @@ fn run_bridge(
                 if eof {
                     let reply: BridgeReply = serde_json::from_slice(&output)
                         .map_err(|_| std::io::ErrorKind::InvalidData)?;
+                    if reply.sound_unavailable.is_some() && reply.status != BridgeStatus::Submitted
+                    {
+                        return Err(std::io::ErrorKind::InvalidData.into());
+                    }
                     return Ok(
                         if reply.schema == BRIDGE_SCHEMA_VERSION
                             && reply.server_wire == PROTOCOL_VERSION
                         {
-                            reply.status
+                            reply
                         } else {
-                            BridgeStatus::Incompatible
+                            unavailable(BridgeStatus::Incompatible)
                         },
                     );
                 }
@@ -990,7 +1196,7 @@ fn run_bridge(
                 }
                 let _ = child.wait();
             }
-            BridgeStatus::Failed
+            unavailable(BridgeStatus::Failed)
         }
     }
 }
@@ -1011,13 +1217,6 @@ fn host_command(notification: &Notification) -> Command {
         notification.title,
         &body,
     ]);
-    command
-}
-
-#[cfg(target_os = "macos")]
-fn sound_command() -> Command {
-    let mut command = Command::new("afplay");
-    command.arg("/System/Library/Sounds/Glass.aiff");
     command
 }
 
@@ -1536,6 +1735,8 @@ mod tests {
         d.desktop.in_flight = Some(Delivery {
             notification: d.desktop.pending.pop_front().unwrap(),
             state: Arc::new(AtomicU8::new(DELIVERY_ACTIVE)),
+            #[cfg(target_os = "macos")]
+            started: Arc::new(AtomicBool::new(false)),
         });
         let (receiver, _failed) = stub_host(&mut d);
         assert_eq!(d.desktop.pending.len(), 1);
@@ -1670,10 +1871,18 @@ mod tests {
             .set_read_timeout(Some(Duration::from_secs(1)))
             .unwrap();
         sender.set_nonblocking(true).unwrap();
-        let host = DesktopHost::start(Some(sender), CHANNEL_DESKTOP).unwrap();
+        let host = DesktopHost::start(
+            Some(sender),
+            CHANNEL_DESKTOP,
+            #[cfg(target_os = "macos")]
+            None,
+        )
+        .unwrap();
         assert!(host.send(Delivery {
             notification: d.desktop.pending.pop_front().unwrap(),
-            state: Arc::new(AtomicU8::new(DELIVERY_CANCELLED))
+            state: Arc::new(AtomicU8::new(DELIVERY_CANCELLED)),
+            #[cfg(target_os = "macos")]
+            started: Arc::new(AtomicBool::new(false)),
         }));
         let wake = super::super::event_loop::wait_for_dashboard_activity(
             -1,
@@ -2099,6 +2308,8 @@ mod tests {
             controls,
             #[cfg(target_os = "macos")]
             updates,
+            #[cfg(target_os = "macos")]
+            sound: Arc::new(Mutex::new(d.notification_sound())),
         });
         (receiver, failed)
     }
@@ -2114,7 +2325,7 @@ mod tests {
             deliver(&mut d, snapshot(1, "a", AgentActivity::Busy));
             let (receiver, _failed) = stub_host(&mut d);
             deliver(&mut d, snapshot(2, "a", AgentActivity::ResponseReady));
-            if !desktop && !sound {
+            if !desktop && (!sound || cfg!(target_os = "macos")) {
                 assert!(d.desktop.pending.is_empty(), "neither channel enqueues");
                 continue;
             }
@@ -2134,7 +2345,10 @@ mod tests {
                 .channels
                 .load(Ordering::Acquire);
             assert_eq!(mask & CHANNEL_DESKTOP != 0, desktop);
-            assert_eq!(mask & CHANNEL_SOUND != 0, sound);
+            assert_eq!(
+                mask & CHANNEL_SOUND != 0,
+                sound && (desktop || !cfg!(target_os = "macos"))
+            );
             delivery.state.store(DELIVERY_FINISHED, Ordering::Release);
             deliver(&mut d, snapshot(2, "a", AgentActivity::ResponseReady));
             deliver(&mut d, snapshot(3, "a", AgentActivity::ResponseReady));
@@ -2145,6 +2359,7 @@ mod tests {
             );
         }
     }
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn ready_sound_toggle_is_independent_and_only_disabling_both_cancels_pending() {
         let mut d = dashboard();
@@ -2185,6 +2400,7 @@ mod tests {
         deliver(&mut d, snapshot(4, "b", AgentActivity::ResponseReady));
         assert_eq!(d.desktop.pending.len(), 1);
     }
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn sound_host_command_is_a_fixed_system_player_without_identity() {
         let command = sound_command();
@@ -2193,18 +2409,11 @@ mod tests {
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
-        #[cfg(target_os = "macos")]
-        {
-            assert_eq!(program, "afplay");
-            assert_eq!(args, ["/System/Library/Sounds/Glass.aiff"]);
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            assert_eq!(program, "paplay");
-            assert_eq!(args, ["/usr/share/sounds/freedesktop/stereo/complete.oga"]);
-        }
+        assert_eq!(program, "paplay");
+        assert_eq!(args, ["/usr/share/sounds/freedesktop/stereo/complete.oga"]);
         assert!(SOUND_TIMEOUT >= HOST_TIMEOUT);
     }
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn sound_host_failure_reports_its_own_notice() {
         let mut d = dashboard();
@@ -2249,15 +2458,20 @@ mod tests {
 [ "$1" = '--client' ] && [ "$#" = 1 ] || exit 99
 input=$(cat)
 printf '%s\n' "$input" >> "$0.requests"
+while [ -e "$0.pause" ]; do sleep 0.01; done
 status=$(cat "$0.status")
 case "$input" in
   *'"type":"authorize"'*) status=$(cat "$0.authorize"); printf '%s' "$status" > "$0.status" ;;
   *'"type":"settings"'*) status=$(cat "$0.settings") ;;
   *'"type":"deliver"'*) [ "$status" != available ] || status=submitted ;;
 esac
-printf '{{"schema":1,"server_wire":{},"status":"%s"}}\n' "$status"
+extra=''
+if [ "$status" = submitted ] && [ -s "$0.sound_failure" ]; then
+  extra=$(cat "$0.sound_failure")
+fi
+printf '{{"schema":{},"server_wire":{},"status":"%s"%s}}\n' "$status" "$extra"
 "#,
-                PROTOCOL_VERSION
+                BRIDGE_SCHEMA_VERSION, PROTOCOL_VERSION
             ),
         )
         .unwrap();
@@ -2279,8 +2493,21 @@ printf '{{"schema":1,"server_wire":{},"status":"%s"}}\n' "$status"
 
     #[cfg(target_os = "macos")]
     fn install_fake_bridge(d: &mut Dashboard, client: PathBuf) {
-        d.desktop.host =
-            Some(DesktopHost::start_at(None, d.alert_channels(), Some(client)).unwrap());
+        d.navigation.context = Some(ovrcr_protocol::BridgeContext {
+            server_socket: "/tmp/owning-fake-server.sock".into(),
+            callback_executable: "/tmp/ovrcr".into(),
+            callback_executable_sha256: "0".repeat(64),
+            server_lifetime: "12345678-1234-4234-8234-123456789abc".into(),
+        });
+        d.desktop.host = Some(
+            DesktopHost::start_at(
+                None,
+                d.alert_channels(),
+                d.notification_sound(),
+                Some(client),
+            )
+            .unwrap(),
+        );
     }
 
     #[cfg(target_os = "macos")]
@@ -2389,6 +2616,595 @@ printf '{{"schema":1,"server_wire":{},"status":"%s"}}\n' "$status"
 
     #[cfg(target_os = "macos")]
     #[test]
+    fn bridge_sound_choices_flags_and_both_lanes_use_server_settings() {
+        for choice in [
+            Some(ReadySoundChoice::Default),
+            Some(ReadySoundChoice::Tap),
+            Some(ReadySoundChoice::Chime),
+            Some(ReadySoundChoice::Rise),
+            None,
+        ] {
+            for (desktop, sound) in [(false, false), (true, false), (false, true), (true, true)] {
+                let (_root, client) = fake_bridge("available");
+                let mut d = Dashboard::new(TerminalSize {
+                    rows: 24,
+                    cols: 120,
+                });
+                let settings = Settings {
+                    desktop_notifications: desktop,
+                    ready_sound: sound,
+                    ready_sound_choice: choice,
+                    ..Default::default()
+                };
+                d.handle_server_message(super::super::tests::settings_reading(settings.clone()));
+                deliver(&mut d, snapshot(1, "baseline", AgentActivity::Busy));
+                install_fake_bridge(&mut d, client.clone());
+                if desktop {
+                    wait_bridge(&mut d, |d| {
+                        d.desktop.bridge.status == Some(BridgeStatus::Available)
+                    });
+                }
+                for hierarchy in [
+                    snapshot(2, "ready", AgentActivity::ResponseReady),
+                    snapshot_with_requests(
+                        3,
+                        "input",
+                        AgentActivity::Busy,
+                        &[request("question", InputKind::Input)],
+                    ),
+                ] {
+                    deliver(&mut d, hierarchy.clone());
+                    wait_bridge(&mut d, |d| {
+                        d.desktop.pending.is_empty() && d.desktop.in_flight.is_none()
+                    });
+                    deliver(&mut d, hierarchy);
+                    d.emit_desktop_notifications();
+                }
+                let requests = bridge_requests(&client);
+                let banners: Vec<_> = requests
+                    .iter()
+                    .filter_map(|request| match &request.op {
+                        BridgeOperation::Deliver { title, sound, .. } => {
+                            Some((title.as_str(), *sound))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let selected = (desktop && sound).then_some(choice).flatten();
+                if desktop {
+                    assert_eq!(
+                        banners,
+                        [
+                            ("OVRCR · response ready", selected),
+                            ("OVRCR · input needed", selected)
+                        ],
+                        "choice={choice:?}, N={desktop}, S={sound}"
+                    );
+                    assert_eq!(
+                        requests.len(),
+                        3,
+                        "one status and two banners, no sound retry or permission request"
+                    );
+                    assert_eq!(requests[0].op, BridgeOperation::Status);
+                } else {
+                    assert!(
+                        requests.is_empty(),
+                        "N off sends neither native sound nor banner nor permission controls"
+                    );
+                }
+                assert_eq!(
+                    d.settings, settings,
+                    "delivery must not change saved flags or choice"
+                );
+                if desktop && sound && choice.is_none() {
+                    assert_eq!(
+                        d.desktop_status_notice(),
+                        Some(
+                            "Ready sound choice invalid; banners are silent. Choose a sound in Settings"
+                        )
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bridge_sound_changes_before_dispatch_apply_without_replay_or_permission() {
+        let (_root, client) = fake_bridge("available");
+        std::fs::write(client.with_extension("pause"), "").unwrap();
+        let mut d = dashboard();
+        super::super::tests::press_setting(&mut d, 'S');
+        install_fake_bridge(&mut d, client.clone());
+        wait_bridge(&mut d, |_| !bridge_requests(&client).is_empty());
+        assert_eq!(bridge_requests(&client)[0].op, BridgeOperation::Status);
+        deliver(&mut d, snapshot(2, "ready", AgentActivity::ResponseReady));
+        d.emit_desktop_notifications();
+        let mut settings = d.settings.clone();
+        settings.ready_sound_choice = Some(ReadySoundChoice::Rise);
+        d.handle_server_message(super::super::tests::settings_reading(settings.clone()));
+        assert_eq!(
+            bridge_requests(&client).len(),
+            1,
+            "held native control keeps banner unsubmitted"
+        );
+        std::fs::remove_file(client.with_extension("pause")).unwrap();
+        wait_bridge(&mut d, |d| {
+            d.desktop.pending.is_empty() && d.desktop.in_flight.is_none()
+        });
+        let requests = bridge_requests(&client);
+        assert_eq!(requests.len(), 2);
+        assert!(matches!(
+            requests[1].op,
+            BridgeOperation::Deliver {
+                sound: Some(ReadySoundChoice::Rise),
+                ..
+            }
+        ));
+        settings.ready_sound_choice = Some(ReadySoundChoice::Tap);
+        d.handle_server_message(super::super::tests::settings_reading(settings.clone()));
+        deliver(&mut d, snapshot(2, "ready", AgentActivity::ResponseReady));
+        d.emit_desktop_notifications();
+        assert_eq!(
+            bridge_requests(&client).len(),
+            2,
+            "choice change never replays the response"
+        );
+        deliver(
+            &mut d,
+            snapshot_with_requests(
+                3,
+                "input",
+                AgentActivity::Busy,
+                &[request("question", InputKind::Input)],
+            ),
+        );
+        wait_bridge(&mut d, |d| {
+            d.desktop.pending.is_empty() && d.desktop.in_flight.is_none()
+        });
+        let requests = bridge_requests(&client);
+        assert_eq!(requests.len(), 3);
+        assert!(matches!(
+            requests[2].op,
+            BridgeOperation::Deliver {
+                sound: Some(ReadySoundChoice::Tap),
+                ..
+            }
+        ));
+        assert!(
+            requests
+                .iter()
+                .all(|r| !matches!(r.op, BridgeOperation::Authorize | BridgeOperation::Settings))
+        );
+        assert_eq!(d.settings, settings);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bridge_sound_changes_cancel_only_started_delivery_clients_without_replay() {
+        for change in ["choice", "sound", "notifications"] {
+            for input in [false, true] {
+                let (_root, client) = fake_bridge("available");
+                let mut d = dashboard();
+                super::super::tests::press_setting(&mut d, 'S');
+                let mut settings = d.settings.clone();
+                settings.ready_sound_choice = Some(ReadySoundChoice::Rise);
+                d.handle_server_message(super::super::tests::settings_reading(settings));
+                install_fake_bridge(&mut d, client.clone());
+                wait_bridge(&mut d, |d| {
+                    d.desktop.bridge.status == Some(BridgeStatus::Available)
+                });
+                std::fs::write(client.with_extension("pause"), "").unwrap();
+                let hierarchy = if input {
+                    snapshot_with_requests(
+                        2,
+                        "input",
+                        AgentActivity::Busy,
+                        &[request("question", InputKind::Input)],
+                    )
+                } else {
+                    snapshot(2, "ready", AgentActivity::ResponseReady)
+                };
+                deliver(&mut d, hierarchy.clone());
+                wait_bridge(&mut d, |d| {
+                    bridge_requests(&client).len() == 2
+                        && d.desktop
+                            .in_flight
+                            .as_ref()
+                            .is_some_and(|delivery| delivery.started.load(Ordering::Acquire))
+                });
+                let delivery = d.desktop.in_flight.clone().unwrap();
+                let mut settings = d.settings.clone();
+                match change {
+                    "choice" => settings.ready_sound_choice = Some(ReadySoundChoice::Tap),
+                    "sound" => settings.ready_sound = false,
+                    "notifications" => settings.desktop_notifications = false,
+                    _ => unreachable!(),
+                }
+                let started = Instant::now();
+                d.handle_server_message(super::super::tests::settings_reading(settings.clone()));
+                assert!(
+                    started.elapsed() < Duration::from_millis(100),
+                    "accepted preference update blocks on neither host nor permission"
+                );
+                wait_bridge(&mut d, |d| d.desktop.in_flight.is_none());
+                assert_eq!(
+                    delivery.state.load(Ordering::Acquire),
+                    DELIVERY_CANCELLED_FINISHED,
+                    "{change}, input={input}: owned client was cancelled"
+                );
+                assert_eq!(bridge_requests(&client).len(), 2, "no cancellation retry");
+                assert_eq!(d.settings, settings);
+                assert!(d.desktop.sound_unavailable.is_none());
+                std::fs::remove_file(client.with_extension("pause")).unwrap();
+                if change == "notifications" {
+                    assert!(d.settings.ready_sound, "N off retains S");
+                    assert_eq!(d.settings.ready_sound_choice, Some(ReadySoundChoice::Rise));
+                    super::super::tests::press_setting(&mut d, 'N');
+                    wait_bridge(&mut d, |d| {
+                        d.desktop.bridge.status == Some(BridgeStatus::Available)
+                            && d.desktop.bridge.in_flight.is_none()
+                            && d.desktop.bridge.pending.is_none()
+                    });
+                }
+                deliver(&mut d, hierarchy);
+                d.emit_desktop_notifications();
+                let controls = if change == "notifications" { 2 } else { 1 };
+                assert_eq!(
+                    bridge_requests(&client).len(),
+                    controls + 1,
+                    "accepted preference change does not replay cancelled work"
+                );
+                let next = if input {
+                    snapshot_with_requests(
+                        3,
+                        "next-input",
+                        AgentActivity::Busy,
+                        &[request("next-question", InputKind::Input)],
+                    )
+                } else {
+                    snapshot(3, "next-ready", AgentActivity::ResponseReady)
+                };
+                deliver(&mut d, next);
+                wait_bridge(&mut d, |d| {
+                    d.desktop.pending.is_empty() && d.desktop.in_flight.is_none()
+                });
+                let requests = bridge_requests(&client);
+                assert_eq!(requests.len(), controls + 2);
+                assert!(
+                    matches!(requests.last().unwrap().op, BridgeOperation::Deliver { sound, .. } if sound == d.notification_sound())
+                );
+                assert!(requests.iter().all(|r| !matches!(
+                    r.op,
+                    BridgeOperation::Authorize | BridgeOperation::Settings
+                )));
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bridge_sound_resource_failure_is_a_silent_submitted_banner_without_retry() {
+        for failure in [
+            BridgeSoundFailure::MissingResource,
+            BridgeSoundFailure::UnreadableResource,
+            BridgeSoundFailure::InvalidResource,
+            BridgeSoundFailure::LookupConflict,
+        ] {
+            let (_root, client) = fake_bridge("available");
+            std::fs::write(
+                client.with_extension("sound_failure"),
+                format!(
+                    ",\"sound_unavailable\":{}",
+                    serde_json::to_string(&failure).unwrap()
+                ),
+            )
+            .unwrap();
+            let mut d = dashboard();
+            super::super::tests::press_setting(&mut d, 'S');
+            let mut settings = d.settings.clone();
+            settings.ready_sound_choice = Some(ReadySoundChoice::Chime);
+            d.handle_server_message(super::super::tests::settings_reading(settings.clone()));
+            install_fake_bridge(&mut d, client.clone());
+            deliver(&mut d, snapshot(2, "ready", AgentActivity::ResponseReady));
+            wait_bridge(&mut d, |d| {
+                d.desktop.pending.is_empty()
+                    && d.desktop.in_flight.is_none()
+                    && d.desktop.sound_unavailable == Some((ReadySoundChoice::Chime, failure))
+            });
+            assert_eq!(d.desktop.bridge.status, Some(BridgeStatus::Available));
+            assert_eq!(
+                d.desktop.sound_unavailable,
+                Some((ReadySoundChoice::Chime, failure))
+            );
+            assert_eq!(d.settings, settings);
+            let notice = d.desktop_status_notice().unwrap();
+            assert!(
+                notice.contains("banner submitted silently")
+                    && notice.contains("choose System default in Settings")
+            );
+            assert_eq!(
+                notice.contains("Sound name conflict"),
+                failure == BridgeSoundFailure::LookupConflict
+            );
+            assert_eq!(
+                notice.contains("Reinstall OVRCR Bridge"),
+                failure != BridgeSoundFailure::LookupConflict
+            );
+            d.key(KeyCode::Char('?'));
+            assert_eq!(
+                d.desktop_status_notice(),
+                Some(notice),
+                "warning persists after a key clears transient notices"
+            );
+            d.key(KeyCode::Esc);
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+            d.draw(&mut terminal).unwrap();
+            let footer: String = (0..120)
+                .map(|x| terminal.backend().buffer()[(x, 23)].symbol())
+                .collect();
+            assert!(
+                footer.contains(notice),
+                "actionable sound warning fits the rendered footer: {footer}"
+            );
+            deliver(&mut d, snapshot(3, "ready", AgentActivity::ResponseReady));
+            d.emit_desktop_notifications();
+            assert_eq!(
+                bridge_requests(&client).len(),
+                2,
+                "no delivery retry or fallback"
+            );
+            std::fs::remove_file(client.with_extension("sound_failure")).unwrap();
+            deliver(
+                &mut d,
+                snapshot_with_requests(
+                    4,
+                    "input",
+                    AgentActivity::Busy,
+                    &[request("question", InputKind::Input)],
+                ),
+            );
+            wait_bridge(&mut d, |d| {
+                d.desktop.pending.is_empty()
+                    && d.desktop.in_flight.is_none()
+                    && d.desktop.sound_unavailable.is_none()
+            });
+            assert_eq!(bridge_requests(&client).len(), 3);
+            assert!(
+                d.desktop.sound_unavailable.is_none(),
+                "a later successful sound request clears the warning without replay"
+            );
+            assert!(d.desktop_status_notice().is_none());
+            assert_eq!(d.settings, settings);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn sound_settings_event(settings: Settings) -> ServerMessage {
+        let invalid = settings.ready_sound_choice.is_none();
+        let mut event = super::super::tests::settings_reading(settings);
+        if invalid && let ServerMessage::Event(ServerEvent::SettingsChanged(report)) = &mut event {
+            report.findings.push(ovrcr_protocol::SettingsFinding {
+                key: Some("ready_sound_choice".into()),
+                message: "unrecognized saved sound choice".into(),
+                line: Some(3),
+            });
+        }
+        event
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bridge_invalid_sound_guidance_is_retired_on_valid_settings_behind_an_error() {
+        let guidance = "Ready sound choice invalid; banners are silent. Choose a sound in Settings";
+        let mut d = Dashboard::new(TerminalSize {
+            rows: 24,
+            cols: 120,
+        });
+        let settings = Settings {
+            desktop_notifications: true,
+            ready_sound: true,
+            ready_sound_choice: Some(ReadySoundChoice::Tap),
+            ..Default::default()
+        };
+        d.handle_server_message(sound_settings_event(settings.clone()));
+        d.set_error("Unrelated fixture error");
+        d.show_notice("Unrelated fixture notice A");
+        d.handle_server_message(sound_settings_event(Settings {
+            ready_sound_choice: None,
+            ..settings.clone()
+        }));
+        d.show_notice("Unrelated fixture notice B");
+        assert_eq!(
+            d.notice_queue
+                .iter()
+                .filter(|notice| notice.as_str() == guidance)
+                .count(),
+            2,
+            "both changed-choice and finding producers queue guidance behind the error"
+        );
+        d.handle_server_message(sound_settings_event(Settings {
+            ready_sound_choice: Some(ReadySoundChoice::Chime),
+            ..settings
+        }));
+        assert_eq!(d.error.as_deref(), Some("Unrelated fixture error"));
+        assert!(d.desktop.notice.is_none());
+        assert!(
+            d.notice_queue.iter().all(|notice| notice != guidance),
+            "fresh valid choice retires every queued copy of obsolete guidance"
+        );
+        assert_eq!(
+            d.notice_queue
+                .iter()
+                .take(2)
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["Unrelated fixture notice A", "Unrelated fixture notice B"]
+        );
+        assert_eq!(d.settings.ready_sound_choice, Some(ReadySoundChoice::Chime));
+        assert!(d.settings.desktop_notifications && d.settings.ready_sound);
+        assert!(d.settings_report.as_ref().unwrap().findings.is_empty());
+        d.dismiss_error_banner();
+        assert_eq!(
+            d.desktop.notice.as_deref(),
+            Some("Unrelated fixture notice A")
+        );
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+        d.draw(&mut terminal).unwrap();
+        let footer: String = (0..120)
+            .map(|x| terminal.backend().buffer()[(x, 23)].symbol())
+            .collect();
+        assert!(footer.contains("Unrelated fixture notice A") && !footer.contains(guidance));
+        d.key(KeyCode::Null);
+        assert_eq!(
+            d.desktop.notice.as_deref(),
+            Some("Unrelated fixture notice B")
+        );
+        while d.desktop.notice.is_some() {
+            assert_ne!(d.desktop.notice.as_deref(), Some(guidance));
+            d.key(KeyCode::Null);
+        }
+        assert!(d.notice_queue.is_empty());
+        assert!(d.desktop_status_notice().is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bridge_invalid_sound_guidance_is_retired_on_opt_out_without_losing_findings() {
+        let guidance = "Ready sound choice invalid; banners are silent. Choose a sound in Settings";
+        for desktop_off in [true, false] {
+            for was_invalid in [true, false] {
+                let mut d = Dashboard::new(TerminalSize {
+                    rows: 24,
+                    cols: 120,
+                });
+                let settings = Settings {
+                    desktop_notifications: true,
+                    ready_sound: true,
+                    ready_sound_choice: Some(ReadySoundChoice::Tap),
+                    ..Default::default()
+                };
+                d.handle_server_message(sound_settings_event(settings.clone()));
+                d.set_error("Unrelated opt-out error");
+                d.show_notice("Unrelated fixture notice A");
+                if was_invalid {
+                    d.handle_server_message(sound_settings_event(Settings {
+                        ready_sound_choice: None,
+                        ..settings.clone()
+                    }));
+                    assert!(d.notice_queue.iter().any(|notice| notice == guidance));
+                }
+                d.show_notice("Unrelated fixture notice B");
+                let fresh = Settings {
+                    desktop_notifications: !desktop_off,
+                    ready_sound: desktop_off,
+                    ready_sound_choice: None,
+                    ..settings
+                };
+                d.handle_server_message(sound_settings_event(fresh.clone()));
+                assert_eq!(d.error.as_deref(), Some("Unrelated opt-out error"));
+                assert!(
+                    d.notice_queue.iter().all(|notice| notice != guidance),
+                    "N-off={desktop_off}, already invalid={was_invalid}: opt-out cannot retain or create obsolete sound guidance"
+                );
+                assert_eq!(
+                    d.notice_queue
+                        .iter()
+                        .take(2)
+                        .map(String::as_str)
+                        .collect::<Vec<_>>(),
+                    ["Unrelated fixture notice A", "Unrelated fixture notice B"]
+                );
+                assert_eq!(
+                    d.settings, fresh,
+                    "retiring guidance does not repair invalid settings or change consent"
+                );
+                assert_eq!(d.settings_report.as_ref().unwrap().findings.len(), 1);
+                d.dismiss_error_banner();
+                assert_eq!(
+                    d.desktop.notice.as_deref(),
+                    Some("Unrelated fixture notice A")
+                );
+                d.key(KeyCode::Null);
+                assert_eq!(
+                    d.desktop.notice.as_deref(),
+                    Some("Unrelated fixture notice B")
+                );
+                while d.desktop.notice.is_some() {
+                    assert_ne!(d.desktop.notice.as_deref(), Some(guidance));
+                    d.key(KeyCode::Null);
+                }
+                assert_ne!(d.desktop_status_notice(), Some(guidance));
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bridge_invalid_sound_guidance_retires_current_and_queued_copies_only() {
+        let guidance = "Ready sound choice invalid; banners are silent. Choose a sound in Settings";
+        for current_is_guidance in [true, false] {
+            let mut d = Dashboard::new(TerminalSize {
+                rows: 24,
+                cols: 120,
+            });
+            let settings = Settings {
+                desktop_notifications: true,
+                ready_sound: true,
+                ready_sound_choice: Some(ReadySoundChoice::Rise),
+                ..Default::default()
+            };
+            d.handle_server_message(sound_settings_event(settings.clone()));
+            d.desktop.notice = Some(
+                if current_is_guidance {
+                    guidance
+                } else {
+                    "Unrelated fixture notice A"
+                }
+                .into(),
+            );
+            if current_is_guidance {
+                d.notice_queue
+                    .push_back("Unrelated fixture notice A".into());
+            }
+            d.notice_queue.push_back(guidance.into());
+            d.notice_queue
+                .push_back("Unrelated fixture notice B".into());
+            d.notice_queue.push_back(guidance.into());
+            d.handle_server_message(sound_settings_event(settings.clone()));
+            assert_eq!(
+                d.desktop.notice.as_deref(),
+                Some("Unrelated fixture notice A"),
+                "current exact guidance retires, current unrelated notice survives"
+            );
+            assert_eq!(
+                d.notice_queue
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                ["Unrelated fixture notice B"],
+                "only exact obsolete guidance is removed from the queue"
+            );
+            assert_eq!(d.settings, settings);
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+            d.draw(&mut terminal).unwrap();
+            let footer: String = (0..120)
+                .map(|x| terminal.backend().buffer()[(x, 23)].symbol())
+                .collect();
+            assert!(footer.contains("Unrelated fixture notice A") && !footer.contains(guidance));
+            d.key(KeyCode::Null);
+            assert_eq!(
+                d.desktop.notice.as_deref(),
+                Some("Unrelated fixture notice B")
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
     fn bridge_outbound_banners_use_only_manual_or_original_identity() {
         let (_root, client) = fake_bridge("available");
         let mut d = dashboard();
@@ -2417,11 +3233,15 @@ printf '{{"schema":1,"server_wire":{},"status":"%s"}}\n' "$status"
                 title,
                 subtitle: actual,
                 body,
+                navigation,
+                ..
             } = &requests.last().unwrap().op
             else {
                 panic!("expected banner");
             };
             assert_eq!(title, "OVRCR · response ready");
+            assert!(navigation.validate());
+            assert_eq!(navigation.session, SessionId(1));
             assert_eq!(actual, subtitle);
             assert_eq!(body, "project / workspace / session (#1)");
             let outbound = std::fs::read_to_string(client.with_extension("requests")).unwrap();
@@ -2462,11 +3282,15 @@ printf '{{"schema":1,"server_wire":{},"status":"%s"}}\n' "$status"
             title,
             subtitle,
             body,
+            navigation,
+            ..
         } = &requests.last().unwrap().op
         else {
             panic!("expected Input banner");
         };
         assert_eq!(title, "OVRCR · input needed");
+        assert!(navigation.validate());
+        assert_eq!(navigation.session, SessionId(1));
         assert_eq!(subtitle.chars().count(), 80);
         assert!(subtitle.len() <= 320 && body.len() <= 1024 && title.len() <= 96);
         assert!(body.ends_with(" (#1)"));
@@ -2880,17 +3704,42 @@ printf '{{"schema":1,"server_wire":{},"status":"%s"}}\n' "$status"
     fn bridge_invalid_missing_and_incompatible_clients_have_fixed_guidance() {
         use std::os::unix::fs::PermissionsExt;
         for (reply, expected) in [
-            ("PRIVATE_HOST_ERROR", BridgeStatus::Failed),
+            ("PRIVATE_HOST_ERROR".to_string(), BridgeStatus::Failed),
             (
-                r#"{"schema":2,"server_wire":33,"status":"available"}"#,
+                format!(
+                    r#"{{"schema":{},"server_wire":{},"status":"available"}}"#,
+                    BRIDGE_SCHEMA_VERSION + 1,
+                    PROTOCOL_VERSION
+                ),
                 BridgeStatus::Incompatible,
             ),
             (
-                r#"{"schema":1,"server_wire":32,"status":"available"}"#,
+                format!(
+                    r#"{{"schema":{},"server_wire":{},"status":"available"}}"#,
+                    BRIDGE_SCHEMA_VERSION,
+                    PROTOCOL_VERSION - 1
+                ),
                 BridgeStatus::Incompatible,
             ),
             (
-                r#"{"schema":1,"server_wire":33,"status":"untyped PRIVATE_HOST_ERROR"}"#,
+                format!(
+                    r#"{{"schema":{},"server_wire":{},"status":"untyped PRIVATE_HOST_ERROR"}}"#,
+                    BRIDGE_SCHEMA_VERSION, PROTOCOL_VERSION
+                ),
+                BridgeStatus::Failed,
+            ),
+            (
+                format!(
+                    r#"{{"schema":{},"server_wire":{},"status":"available","sound_unavailable":"missing_resource"}}"#,
+                    BRIDGE_SCHEMA_VERSION, PROTOCOL_VERSION
+                ),
+                BridgeStatus::Failed,
+            ),
+            (
+                format!(
+                    r#"{{"schema":{},"server_wire":{},"status":"submitted","sound_unavailable":"PRIVATE_HOST_ERROR"}}"#,
+                    BRIDGE_SCHEMA_VERSION, PROTOCOL_VERSION
+                ),
                 BridgeStatus::Failed,
             ),
         ] {
@@ -2903,7 +3752,7 @@ printf '{{"schema":1,"server_wire":{},"status":"%s"}}\n' "$status"
             .unwrap();
             std::fs::set_permissions(&client, std::fs::Permissions::from_mode(0o755)).unwrap();
             assert_eq!(
-                run_bridge(Some(&client), &BridgeOperation::Status, || false),
+                run_bridge(Some(&client), &BridgeOperation::Status, || false).status,
                 expected
             );
             let mut d = dashboard();
@@ -2934,6 +3783,14 @@ printf '{{"schema":1,"server_wire":{},"status":"%s"}}\n' "$status"
         use std::os::unix::{fs::PermissionsExt, process::ExitStatusExt};
         let mut outcomes = Vec::new();
         for (case, reply, exit) in [
+            (
+                "invalid sound status",
+                format!(
+                    r#"{{"schema":{},"server_wire":{},"status":"available","sound_unavailable":"missing_resource"}}"#,
+                    BRIDGE_SCHEMA_VERSION, PROTOCOL_VERSION
+                ),
+                "0",
+            ),
             ("invalid JSON", "not JSON".into(), "0"),
             (
                 "nonzero exit",
@@ -3033,13 +3890,21 @@ printf 'survived' > "$1.survived"
                 );
                 (reply.unwrap(), status, survived)
             });
-            outcomes.push((case, reply, status.code(), status.signal(), survived));
+            outcomes.push((
+                case,
+                reply.status,
+                reply.sound_unavailable,
+                status.code(),
+                status.signal(),
+                survived,
+            ));
         }
         assert_eq!(
             outcomes,
-            ["invalid JSON", "nonzero exit"].map(|case| (
+            ["invalid sound status", "invalid JSON", "nonzero exit"].map(|case| (
                 case,
                 BridgeStatus::Failed,
+                None,
                 Some(0),
                 None,
                 true
@@ -3058,7 +3923,7 @@ printf 'survived' > "$1.survived"
         std::fs::set_permissions(&client, std::fs::Permissions::from_mode(0o755)).unwrap();
         let started = Instant::now();
         assert_eq!(
-            run_bridge(Some(&client), &BridgeOperation::Status, || false),
+            run_bridge(Some(&client), &BridgeOperation::Status, || false).status,
             BridgeStatus::Failed
         );
         assert!(started.elapsed() < HOST_TIMEOUT + Duration::from_secs(1));

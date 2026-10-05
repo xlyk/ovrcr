@@ -2062,7 +2062,7 @@ fn partial_resize_connection_delivers_error_before_owner_close() {
             response: Response::Hierarchy(_),
         }
     ));
-    expect_settings_reading(&mut client_stream);
+    expect_settings_reading(&mut client_stream, &state);
     write_frame(
         &mut client_stream,
         &ClientMessage {
@@ -2172,7 +2172,7 @@ fn partial_resize_blocked_writer_times_out_and_closes_owner() {
             response: Response::Hierarchy(_),
         }
     ));
-    expect_settings_reading(&mut client_stream);
+    expect_settings_reading(&mut client_stream, &state);
     let sink = state
         .dashboard
         .slot_for_test()
@@ -2299,7 +2299,7 @@ fn terminal_frame_survives_a_concurrent_lifecycle_event() {
             response: Response::Hierarchy(_),
         }
     ));
-    expect_settings_reading(&mut client_stream);
+    expect_settings_reading(&mut client_stream, &state);
     let sink = state
         .dashboard
         .slot_for_test()
@@ -2602,6 +2602,8 @@ fn test_state_with_dispatch(
     let (dispatch, receiver) = dispatch_channel(Some(&ReportingQueueMonitor::default()));
     let (state, receiver) = (
         Arc::new(ServerState {
+            server_lifetime: super::navigation::new_identity().unwrap(),
+            callback_executable_sha256: Some("0".repeat(64)),
             tasks: None,
             socket: PathBuf::from("/tmp/ovrcr-test.sock"),
             quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
@@ -2648,6 +2650,8 @@ fn test_state_with_socket(
     let (dispatch, dispatch_receiver) = dispatch_channel(None);
     (
         Arc::new(ServerState {
+            server_lifetime: super::navigation::new_identity().unwrap(),
+            callback_executable_sha256: Some("0".repeat(64)),
             tasks: None,
             socket,
             quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
@@ -3203,7 +3207,7 @@ fn history_owner_and_token_isolation() {
                     response: Response::Hierarchy(_),
                 }
             ));
-            expect_settings_reading(&mut client);
+            expect_settings_reading(&mut client, &state);
             write_frame(
                 &mut client,
                 &ClientMessage {
@@ -3250,7 +3254,7 @@ fn history_owner_and_token_isolation() {
             response: Response::Hierarchy(_),
         }
     ));
-    expect_settings_reading(&mut replacement_client);
+    expect_settings_reading(&mut replacement_client, &replacement_state);
     let old_identity = replacement_state
         .dashboard
         .slot_for_test()
@@ -3779,7 +3783,7 @@ fn late_response_does_not_reach_a_replacement_dashboard() {
             response: Response::Hierarchy(_),
         }
     ));
-    expect_settings_reading(&mut first_client);
+    expect_settings_reading(&mut first_client, &state);
     let first_snapshot = state.dashboard.snapshot().expect("first dashboard slot");
     // The report handler blocks until the dispatcher answers, and this test is
     // the dispatcher, so the response cannot be written before the slot changes.
@@ -3826,7 +3830,7 @@ fn late_response_does_not_reach_a_replacement_dashboard() {
             response: Response::Hierarchy(_),
         }
     ));
-    expect_settings_reading(&mut second_client);
+    expect_settings_reading(&mut second_client, &state);
     report_completion.send(Response::Ok).unwrap();
     assert!(join_test_thread_bounded(
         first_handler,
@@ -3881,7 +3885,7 @@ fn stale_geometry_does_not_overwrite_replacement_size() {
             response: Response::Hierarchy(_),
         }
     ));
-    expect_settings_reading(&mut first_client);
+    expect_settings_reading(&mut first_client, &state);
     // Hold the mutation lock so the geometry request cannot be applied until
     // the slot already belongs to the replacement.
     let mutation = state.mutation_lock.lock().unwrap();
@@ -3926,7 +3930,7 @@ fn stale_geometry_does_not_overwrite_replacement_size() {
             response: Response::Hierarchy(_),
         }
     ));
-    expect_settings_reading(&mut second_client);
+    expect_settings_reading(&mut second_client, &state);
     let second_identity = state
         .dashboard
         .slot_for_test()
@@ -4188,7 +4192,7 @@ fn dashboard_shutdown_completes_when_response_sink_is_closed() {
             response: Response::Hierarchy(_)
         }
     ));
-    expect_settings_reading(&mut client);
+    expect_settings_reading(&mut client, &state);
     // Force response delivery to fail, independently of writer scheduling.
     state
         .dashboard
@@ -4269,7 +4273,7 @@ fn dashboard_shutdown_waits_for_stalled_writer_completion() {
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
     let _ = read_frame::<ServerMessage>(&mut client_stream).unwrap();
-    expect_settings_reading(&mut client_stream);
+    expect_settings_reading(&mut client_stream, &state);
     assert!(matches!(
         read_frame::<ServerMessage>(&mut client_stream).unwrap(),
         ServerMessage::Response {
@@ -5292,6 +5296,8 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
     let socket_path = root.path().join("socket");
     let _socket_guard = UnixListener::bind(&socket_path).unwrap();
     let state = Arc::new(ServerState {
+        server_lifetime: super::navigation::new_identity().unwrap(),
+        callback_executable_sha256: Some("0".repeat(64)),
         tasks: None,
         quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
         quota_refresh: Mutex::default(),
@@ -5508,6 +5514,8 @@ fn session_output_flows_while_another_session_spawns() {
     )
     .unwrap();
     let state = Arc::new(ServerState {
+        server_lifetime: super::navigation::new_identity().unwrap(),
+        callback_executable_sha256: Some("0".repeat(64)),
         tasks: None,
         quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
         quota_refresh: Mutex::default(),
@@ -7656,6 +7664,8 @@ fn failed_root_shell_keeps_setup_pending_and_does_not_duplicate_launch() {
     let (events, _event_receiver) = event_channel(None);
     let (dispatch, _dispatch_receiver) = dispatch_channel(None);
     let state = Arc::new(ServerState {
+        server_lifetime: super::navigation::new_identity().unwrap(),
+        callback_executable_sha256: Some("0".repeat(64)),
         tasks: None,
         socket: dir.path().join("socket"),
         quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
@@ -8076,6 +8086,8 @@ fn automatic_local_terminals_default_branch_only_skips_feature_workspaces() {
     let (events, event_receiver) = event_channel(None);
     let (dispatch, dispatch_receiver) = dispatch_channel(None);
     let state = Arc::new(ServerState {
+        server_lifetime: super::navigation::new_identity().unwrap(),
+        callback_executable_sha256: Some("0".repeat(64)),
         tasks: None,
         quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
         quota_refresh: Mutex::default(),
@@ -8170,6 +8182,8 @@ fn automatic_local_terminals_on_and_off_cover_root_and_feature() {
         let (events, event_receiver) = event_channel(None);
         let (dispatch, dispatch_receiver) = dispatch_channel(None);
         let state = Arc::new(ServerState {
+            server_lifetime: super::navigation::new_identity().unwrap(),
+            callback_executable_sha256: Some("0".repeat(64)),
             tasks: None,
             quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
             quota_refresh: Mutex::default(),
@@ -8269,6 +8283,8 @@ fn changing_automatic_local_policy_leaves_existing_terminals() {
     let (events, event_receiver) = event_channel(None);
     let (dispatch, dispatch_receiver) = dispatch_channel(None);
     let state = Arc::new(ServerState {
+        server_lifetime: super::navigation::new_identity().unwrap(),
+        callback_executable_sha256: Some("0".repeat(64)),
         tasks: None,
         quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
         quota_refresh: Mutex::default(),
@@ -8383,7 +8399,7 @@ fn obsolete_dashboard_writer_cannot_revoke_replacement_or_its_quota_source() {
             ..
         }
     ));
-    expect_settings_reading(&mut client);
+    expect_settings_reading(&mut client, &state);
     let published = loop {
         if let ServerMessage::Event(ServerEvent::QuotaChanged(snapshot)) =
             read_frame::<ServerMessage>(&mut client).unwrap()
@@ -8506,7 +8522,7 @@ fn obsolete_dashboard_writer_cannot_revoke_replacement_or_its_quota_source() {
             ..
         }
     ));
-    expect_settings_reading(&mut replacement);
+    expect_settings_reading(&mut replacement, &state);
     let attached = loop {
         if let ServerMessage::Event(ServerEvent::QuotaChanged(snapshot)) =
             read_frame::<ServerMessage>(&mut replacement).unwrap()
@@ -8528,9 +8544,16 @@ fn obsolete_dashboard_writer_cannot_revoke_replacement_or_its_quota_source() {
     replacement_handler.join().unwrap();
 }
 
-/// Every Dashboard hello is answered with the hierarchy and then the Server's
-/// reading of the settings document.
-fn expect_settings_reading(stream: &mut UnixStream) {
+/// Every Dashboard hello is answered with the hierarchy, the configured bridge
+/// context when available, and then the Server's reading of the settings document.
+fn expect_settings_reading(stream: &mut UnixStream, state: &ServerState) {
+    if let Some(context) = state.bridge_context() {
+        assert_eq!(
+            read_frame::<ServerMessage>(stream).unwrap(),
+            ServerMessage::Event(ServerEvent::BridgeContext(context)),
+            "expected the configured Server bridge context after hello"
+        );
+    }
     let message = read_frame::<ServerMessage>(stream).unwrap();
     assert!(
         matches!(

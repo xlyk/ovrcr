@@ -27,7 +27,7 @@ def validate(bundle, expected=True, *identity):
 validate(source)
 with tempfile.TemporaryDirectory(prefix="ovrcr-bridge-packaging-") as temporary:
     root = Path(temporary)
-    for case in ["schema", "wire", "schema_bool", "wire_float", "display", "executable", "license", "hash", "missing", "symlink", "extra"]:
+    for case in ["schema", "wire", "schema_bool", "wire_float", "display", "executable", "license", "hash", "missing", "symlink", "extra", "callback_hash", "callback_missing", "callback_symlink", "callback_extra", "purpose", "entitlements", "entitlements_missing"]:
         bundle = root / f"{case}.app"
         shutil.copytree(source, bundle)
         info_path = bundle / "Contents/Info.plist"
@@ -51,6 +51,23 @@ with tempfile.TemporaryDirectory(prefix="ovrcr-bridge-packaging-") as temporary:
             tone = resources / "ovrcr-tap-v1.wav"
             tone.unlink()
             tone.symlink_to(source / "Contents/Resources/ovrcr-tap-v1.wav")
+        elif case == "callback_hash":
+            (bundle / "Contents/MacOS/ovrcr").write_bytes(b"changed")
+        elif case == "callback_missing":
+            (bundle / "Contents/MacOS/ovrcr").unlink()
+        elif case == "callback_symlink":
+            helper = bundle / "Contents/MacOS/ovrcr"
+            helper.unlink()
+            helper.symlink_to(source / "Contents/MacOS/ovrcr")
+        elif case == "purpose":
+            info["NSAppleEventsUsageDescription"] = ""
+            info_path.write_bytes(plistlib.dumps(info))
+        elif case == "entitlements":
+            (bundle / "Contents/OVRCRBridge.entitlements").write_bytes(plistlib.dumps({"com.apple.security.automation.apple-events": False}))
+        elif case == "entitlements_missing":
+            (bundle / "Contents/OVRCRBridge.entitlements").unlink()
+        elif case == "callback_extra":
+            (bundle / "Contents/MacOS/unreviewed-helper").write_bytes(b"extra")
         else:
             (resources / "unexpected-resource").write_bytes(b"extra")
         validate(bundle, False)

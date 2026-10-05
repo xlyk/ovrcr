@@ -7,6 +7,58 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
+/// The four approved native notification sounds; never a caller-selected path.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadySoundChoice {
+    #[default]
+    Default,
+    Tap,
+    Chime,
+    Rise,
+}
+
+impl ReadySoundChoice {
+    pub const KEY: &'static str = "ready_sound_choice";
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Tap => "tap",
+            Self::Chime => "chime",
+            Self::Rise => "rise",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Default => "System default",
+            Self::Tap => "Tap",
+            Self::Chime => "Chime",
+            Self::Rise => "Rise",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "default" => Some(Self::Default),
+            "tap" => Some(Self::Tap),
+            "chime" => Some(Self::Chime),
+            "rise" => Some(Self::Rise),
+            _ => None,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Default => Self::Tap,
+            Self::Tap => Self::Chime,
+            Self::Chime => Self::Rise,
+            Self::Rise => Self::Default,
+        }
+    }
+}
+
 /// When OVRCR automatically creates a terminal named `local`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AutomaticLocalTerminals {
@@ -131,6 +183,12 @@ impl Default for QuotaSettings {
 pub struct Settings {
     pub desktop_notifications: bool,
     pub ready_sound: bool,
+    /// Absent document choice is `Some(Default)`; an explicit invalid value is
+    /// `None` with a finding, so consumers suppress sound without changing flags.
+    pub ready_sound_choice: Option<ReadySoundChoice>,
+    /// Separate consent for exact existing-iTerm-session focus; OS permission
+    /// is requested only by the explicit Dashboard setup action.
+    pub iterm_focus: bool,
     pub automatic_local_terminals: AutomaticLocalTerminals,
     /// `provider/model`, validated; `None` means titles are off.
     pub title_model: Option<String>,
@@ -148,6 +206,8 @@ impl Default for Settings {
         Self {
             desktop_notifications: false,
             ready_sound: false,
+            ready_sound_choice: Some(ReadySoundChoice::Default),
+            iterm_focus: false,
             automatic_local_terminals: AutomaticLocalTerminals::default(),
             title_model: None,
             branch_prefix: "feature/".into(),
@@ -210,6 +270,57 @@ pub struct SettingsReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ready_sound_choices_have_stable_ids_labels_and_default() {
+        let choices = [
+            (ReadySoundChoice::Default, "default", "System default"),
+            (ReadySoundChoice::Tap, "tap", "Tap"),
+            (ReadySoundChoice::Chime, "chime", "Chime"),
+            (ReadySoundChoice::Rise, "rise", "Rise"),
+        ];
+        for (index, (choice, id, label)) in choices.iter().enumerate() {
+            assert_eq!(choice.as_str(), *id);
+            assert_eq!(choice.label(), *label);
+            assert_eq!(ReadySoundChoice::parse(id), Some(*choice));
+            assert_eq!(choice.next(), choices[(index + 1) % choices.len()].0);
+            assert_eq!(serde_json::to_value(choice).unwrap(), *id);
+            assert_eq!(
+                serde_json::from_value::<ReadySoundChoice>((*id).into()).unwrap(),
+                *choice
+            );
+        }
+        let settings = Settings::default();
+        assert_eq!(settings.ready_sound_choice, Some(ReadySoundChoice::Default));
+        assert!(!settings.desktop_notifications);
+        assert!(!settings.ready_sound);
+        for invalid in ["", "Glass", "TAP", " tap", "tap ", "/tmp/tap.wav"] {
+            assert_eq!(ReadySoundChoice::parse(invalid), None);
+        }
+    }
+
+    #[test]
+    fn settings_wire_retains_valid_and_invalid_sound_choices_without_enabling_flags() {
+        for choice in [
+            None,
+            Some(ReadySoundChoice::Default),
+            Some(ReadySoundChoice::Tap),
+            Some(ReadySoundChoice::Chime),
+            Some(ReadySoundChoice::Rise),
+        ] {
+            let settings = Settings {
+                ready_sound_choice: choice,
+                ..Default::default()
+            };
+            let encoded =
+                bincode::serde::encode_to_vec(&settings, bincode::config::standard()).unwrap();
+            let (decoded, consumed): (Settings, usize) =
+                bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+            assert_eq!(decoded, settings);
+            assert_eq!(consumed, encoded.len());
+            assert!(!decoded.desktop_notifications && !decoded.ready_sound);
+        }
+    }
 
     #[test]
     fn default_is_default_branch_only() {
