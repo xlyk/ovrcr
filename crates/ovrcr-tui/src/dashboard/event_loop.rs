@@ -45,7 +45,7 @@ pub fn run_dashboard(
     let size = terminal_size()?;
     let pane_size = pane_size(size);
     let mut dashboard = Dashboard::new(pane_size);
-    // Workspace roots default beside the instance identity. Settings arrive
+    // Workspace roots default beside the instance directory. Settings arrive
     // from the Server after hello; changing one is a request to the Server.
     if let Some(parent) = configuration_paths.0.parent() {
         dashboard.config_dir = parent.to_path_buf();

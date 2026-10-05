@@ -1,7 +1,7 @@
 //! Settings lifecycle against a real `ovrcr` (item 5, tier 2).
 //!
-//! Each case uses a private HOME and no `OVRCR_CONFIG`, so the default config
-//! path is the one under test. Fixture binaries stand in for providers.
+//! Each case uses a private HOME and no `OVRCR_HOME`, so the default instance
+//! directory is the one under test. Fixture binaries stand in for providers.
 
 #[path = "support/live.rs"]
 mod live;
@@ -37,8 +37,8 @@ fn fresh_install_reports_every_default_and_matches_the_cli_byte_for_byte() {
     let home = live.home.clone().unwrap();
     let directory = home.join(live::DEFAULT_CONFIG_DIR);
     assert!(
-        directory.join("config.toml.sqlite3").is_file(),
-        "the Server did not start on the default config path"
+        directory.join("registry.sqlite3").is_file(),
+        "the Server did not start on the default instance directory"
     );
 
     let (cli_stdout, cli) = cli_settings(&live);
@@ -208,12 +208,11 @@ fn dashboard_shows_the_server_reading_when_the_client_cannot_read_the_document()
 fn service_document_is_the_servers_and_never_the_clients() {
     let live = fresh();
     let home = live.home.clone().unwrap();
-    let server_config = live.root.path().join("server-instance/config.toml");
-    std::fs::create_dir_all(server_config.parent().unwrap()).unwrap();
-    std::fs::write(&server_config, "projects = []\n").unwrap();
+    let server_config = live.root.path().join("server-instance");
+    std::fs::create_dir_all(&server_config).unwrap();
     let client_document = live.root.path().join("client-dashboard.toml");
     std::fs::write(&client_document, "branch_prefix = \"client-side\"\n").unwrap();
-    let server_document = server_config.with_file_name("dashboard.toml");
+    let server_document = server_config.join("dashboard.toml");
 
     let definition = live.root.path().join("service-definition");
     let manager = live.root.path().join("service-manager");
@@ -578,7 +577,7 @@ fn fresh() -> live::Live {
 }
 
 fn settings_document(live: &live::Live) -> PathBuf {
-    live.config.with_file_name("dashboard.toml")
+    live.config.join("dashboard.toml")
 }
 
 fn restart(live: &live::Live) {

@@ -686,13 +686,15 @@ there; existing sessions stay usable. OVRCR does not switch the checkout.
 
 ## Dashboard settings
 
-Every setting lives in one settings document, `dashboard.toml` beside
-`config.toml`, including the Server's `title_model`, `automatic_local_terminals`
-and `[quota]`. Override the path with `OVRCR_DASHBOARD_CONFIG`; it chooses a file
-only. Remembered launch choices stay in this file. Do not put settings in
-`config.toml`. That path remains the instance identity for the project/workspace
-database (`config.toml.sqlite3`) and scheduled-task storage (`config.tasks`); a
-`[quota]` table there configures nothing and is reported as a finding.
+Every setting lives in one settings document, `dashboard.toml` in the instance
+directory, including the Server's `title_model`, `automatic_local_terminals`
+and `[quota]`. `OVRCR_HOME` chooses that directory, which also holds
+`registry.sqlite3`, `tasks/`, `events.jsonl` and `server.sock`. Override the
+settings document path with `OVRCR_DASHBOARD_CONFIG`; it chooses a file only.
+Remembered launch choices stay in this file. Do not put settings in a preserved
+legacy `config.toml`: a `[quota]` table there configures nothing and is reported
+as a finding. `OVRCR_CONFIG` remains a deprecated file-path alias for one
+release; its parent directory selects the instance and is reported as a finding.
 
 A missing file uses defaults. A symlink at that path whose target does not
 exist is not a missing file: it is one document-level finding naming the path.

@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 fn cli(live: &Live, args: &[&str]) -> Output {
     Command::new(&live.executable)
         .args(args)
-        .env("OVRCR_CONFIG", &live.config)
+        .env("OVRCR_HOME", &live.config)
         .env("OVRCR_SOCKET", &live.socket)
         .env("SHELL", "/bin/sh")
         .output()

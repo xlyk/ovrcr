@@ -365,7 +365,7 @@ enabled = false
     for refuse_root in [false, true] {
         for accept_first in [false, true] {
             let fixture = live::Live::idle().bounded();
-            let document = fixture.config.with_file_name("dashboard.toml");
+            let document = fixture.config.join("dashboard.toml");
             std::fs::write(&document, original).unwrap();
             fixture.start_binary();
             let mut stream = UnixStream::connect(&fixture.socket).unwrap();

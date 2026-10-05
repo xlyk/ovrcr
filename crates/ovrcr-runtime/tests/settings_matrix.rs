@@ -543,7 +543,7 @@ fn full_document() -> String {
 #[test]
 fn missing_and_empty_documents_are_all_defaults_without_findings() {
     let root = tempfile::tempdir().unwrap();
-    let config = root.path().join("config.toml");
+    let config = root.path().to_path_buf();
     let document = root.path().join("dashboard.toml");
     let report = settings::load_document(&config, &document);
     assert_eq!(report.findings, vec![]);
@@ -571,10 +571,10 @@ fn malformed_document_is_all_defaults_with_one_document_finding() {
 #[test]
 fn quota_in_instance_identity_is_one_finding_and_configures_nothing() {
     let root = tempfile::tempdir().unwrap();
-    let config = root.path().join("config.toml");
+    let config = root.path().to_path_buf();
     let document = root.path().join("dashboard.toml");
     std::fs::write(
-        &config,
+        ovrcr_runtime::config::legacy_identity_path(&config),
         "projects = []\n\n[quota]\nenabled = true\n\n[quota.codex]\ncommand = \"/opt/elsewhere\"\n",
     )
     .unwrap();
@@ -599,7 +599,7 @@ fn quota_in_instance_identity_is_one_finding_and_configures_nothing() {
 #[test]
 fn symlinked_document_is_followed() {
     let root = tempfile::tempdir().unwrap();
-    let config = root.path().join("config.toml");
+    let config = root.path().to_path_buf();
     let target = root.path().join("dotfiles").join("ovrcr.toml");
     let link = root.path().join("dashboard.toml");
     std::fs::create_dir(target.parent().unwrap()).unwrap();
@@ -616,7 +616,7 @@ fn symlinked_document_is_followed() {
 #[test]
 fn dangling_symlink_is_a_document_finding_not_a_fresh_install() {
     let root = tempfile::tempdir().unwrap();
-    let config = root.path().join("config.toml");
+    let config = root.path().to_path_buf();
     let document = root.path().join("dashboard.toml");
     std::os::unix::fs::symlink("missing.toml", &document).unwrap();
 
@@ -643,7 +643,7 @@ fn dangling_symlink_is_a_document_finding_not_a_fresh_install() {
 fn read_only_document_is_still_read() {
     use std::os::unix::fs::PermissionsExt;
     let root = tempfile::tempdir().unwrap();
-    let config = root.path().join("config.toml");
+    let config = root.path().to_path_buf();
     let document = root.path().join("dashboard.toml");
     let full = full_document();
     std::fs::write(&document, &full).unwrap();

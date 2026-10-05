@@ -4,35 +4,201 @@ use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior, params};
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub use ovrcr_protocol::{ProjectRecord, Registry, WorkspaceRecord};
 
+/// Directory that names one OVRCR instance (`OVRCR_HOME`).
+///
+/// Formerly the `config.toml` file path. Callers that still say "registry path"
+/// mean this directory: the database, settings document, task store and default
+/// socket all live inside it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RegistryPath(pub PathBuf);
+
+/// Preferred environment variable for the instance directory.
+pub const HOME_ENV: &str = "OVRCR_HOME";
+/// Deprecated file-path alias kept for one release; maps to the parent directory.
+pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
 const SCHEMA_VERSION: i64 = 7;
 
+const REGISTRY_DB: &str = "registry.sqlite3";
+const LEGACY_IDENTITY: &str = "config.toml";
+const LEGACY_DB_SUFFIX: &str = "config.toml.sqlite3";
+const LEGACY_TASKS: &str = "config.tasks";
+const TASKS_DIR: &str = "tasks";
+const SETTINGS_DOCUMENT: &str = "dashboard.toml";
+const EVENTS_LOG: &str = "events.jsonl";
+const SERVER_SOCK: &str = "server.sock";
+
+/// How [`RegistryPath::resolve`] chose the instance directory.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ResolveNotes {
+    /// Set when `OVRCR_CONFIG` selected the instance; names the file that was given.
+    pub config_alias: Option<PathBuf>,
+}
+
 impl RegistryPath {
     pub fn resolve() -> Result<Self> {
-        if let Some(path) = std::env::var_os("OVRCR_CONFIG") {
-            return Ok(Self(PathBuf::from(path)));
-        }
+        Ok(Self(resolve_home()?.0))
+    }
 
-        let dirs =
-            ProjectDirs::from("", "", "ovrcr").context("resolve OVRCR configuration directory")?;
-        Ok(Self(dirs.config_dir().join("config.toml")))
+    pub fn resolve_with_notes() -> Result<(Self, ResolveNotes)> {
+        let (home, notes) = resolve_home()?;
+        Ok((Self(home), notes))
     }
 }
 
-/// The full config filename remains the instance identity for settings and tasks.
-pub fn database_path(path: &Path) -> PathBuf {
-    let mut name = path.as_os_str().to_os_string();
-    name.push(".sqlite3");
-    name.into()
+fn resolve_home() -> Result<(PathBuf, ResolveNotes)> {
+    home_from_env(
+        std::env::var_os(HOME_ENV),
+        std::env::var_os(CONFIG_ENV),
+        default_home_dir()?,
+    )
+}
+
+fn default_home_dir() -> Result<PathBuf> {
+    let dirs =
+        ProjectDirs::from("", "", "ovrcr").context("resolve OVRCR configuration directory")?;
+    Ok(dirs.config_dir().to_path_buf())
+}
+
+/// Pure resolution used by [`RegistryPath::resolve`] and unit tests.
+pub fn home_from_env(
+    home: Option<std::ffi::OsString>,
+    config: Option<std::ffi::OsString>,
+    default_dir: PathBuf,
+) -> Result<(PathBuf, ResolveNotes)> {
+    let mut notes = ResolveNotes::default();
+    if let Some(home) = home {
+        return Ok((PathBuf::from(home), notes));
+    }
+    if let Some(config) = config {
+        let config = PathBuf::from(config);
+        let home = config
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        notes.config_alias = Some(config);
+        return Ok((home, notes));
+    }
+    Ok((default_dir, notes))
+}
+
+/// `registry.sqlite3` inside the instance directory.
+pub fn database_path(home: &Path) -> PathBuf {
+    home.join(REGISTRY_DB)
+}
+
+/// Pre-layout-migration database name beside the old identity file.
+pub fn legacy_database_path(home: &Path) -> PathBuf {
+    home.join(LEGACY_DB_SUFFIX)
+}
+
+/// Preserved `config.toml` identity file from the old layout.
+pub fn legacy_identity_path(home: &Path) -> PathBuf {
+    home.join(LEGACY_IDENTITY)
+}
+
+/// Settings document inside the instance directory.
+pub fn settings_document_path(home: &Path) -> PathBuf {
+    home.join(SETTINGS_DOCUMENT)
+}
+
+/// Scheduled-task store inside the instance directory.
+pub fn instance_tasks_dir(home: &Path) -> PathBuf {
+    home.join(TASKS_DIR)
+}
+
+/// Event log inside the instance directory.
+pub fn events_log_path(home: &Path) -> PathBuf {
+    home.join(EVENTS_LOG)
+}
+
+/// Default server socket inside the instance directory.
+pub fn default_socket_path(home: &Path) -> PathBuf {
+    home.join(SERVER_SOCK)
+}
+
+/// Database path for a read: prefer the new name, else the legacy sibling.
+pub fn open_database_path(home: &Path) -> PathBuf {
+    let modern = database_path(home);
+    if modern.exists() {
+        return modern;
+    }
+    let legacy = legacy_database_path(home);
+    if legacy.exists() {
+        return legacy;
+    }
+    modern
+}
+
+/// Copy old sibling files to the directory layout once. Never deletes the old names.
+pub fn migrate_instance_layout(home: &Path) -> Result<bool> {
+    fs::create_dir_all(home)
+        .with_context(|| format!("create instance directory {}", home.display()))?;
+    let mut migrated = false;
+
+    let modern_db = database_path(home);
+    let legacy_db = legacy_database_path(home);
+    if !modern_db.exists() && legacy_db.try_exists()? {
+        copy_file_private(&legacy_db, &modern_db)?;
+        migrated = true;
+    }
+
+    let modern_tasks = instance_tasks_dir(home);
+    let legacy_tasks = home.join(LEGACY_TASKS);
+    if !modern_tasks.exists() && legacy_tasks.try_exists()? {
+        copy_tree(&legacy_tasks, &modern_tasks)?;
+        migrated = true;
+    }
+
+    Ok(migrated)
+}
+
+fn copy_file_private(from: &Path, to: &Path) -> Result<()> {
+    fs::copy(from, to)
+        .with_context(|| format!("migrate {} to {}", from.display(), to.display()))?;
+    let _ = fs::set_permissions(to, fs::Permissions::from_mode(0o600));
+    Ok(())
+}
+
+fn copy_tree(from: &Path, to: &Path) -> Result<()> {
+    fs::create_dir_all(to)
+        .with_context(|| format!("create migrated directory {}", to.display()))?;
+    for entry in
+        fs::read_dir(from).with_context(|| format!("read legacy directory {}", from.display()))?
+    {
+        let entry = entry?;
+        let src = entry.path();
+        let dst = to.join(entry.file_name());
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            copy_tree(&src, &dst)?;
+        } else if file_type.is_file() {
+            fs::copy(&src, &dst)
+                .with_context(|| format!("migrate {} to {}", src.display(), dst.display()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Finding text when `OVRCR_CONFIG` selected the instance.
+pub fn config_alias_finding(alias: &Path) -> String {
+    let home = alias
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    format!(
+        "{CONFIG_ENV}={} is a deprecated file-path alias; set {HOME_ENV}={} instead",
+        alias.display(),
+        home.display()
+    )
 }
 
 /// Offline inspection never creates storage or imports legacy records.
@@ -46,7 +212,7 @@ pub fn load_registry(path: &Path) -> Result<Registry> {
 }
 
 pub(crate) fn open_readonly_registry(path: &Path) -> Result<Option<Connection>> {
-    let database = database_path(path);
+    let database = open_database_path(path);
     if !database.try_exists()? {
         return Ok(None);
     }
@@ -70,8 +236,9 @@ pub fn initialize_registry(path: &Path) -> Result<Registry> {
     read_registry(&transaction)
 }
 
-fn load_legacy_registry(path: &Path) -> Result<Registry> {
-    let contents = match fs::read_to_string(path) {
+fn load_legacy_registry(home: &Path) -> Result<Registry> {
+    let path = legacy_identity_path(home);
+    let contents = match fs::read_to_string(&path) {
         Ok(contents) => contents,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(Registry::default());
@@ -96,6 +263,7 @@ pub fn save_registry_atomic(registry: &Registry, path: &Path) -> Result<()> {
 }
 
 pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
+    migrate_instance_layout(path)?;
     let database = database_path(path);
     let parent = database
         .parent()
@@ -384,9 +552,82 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     #[test]
+    fn home_prefers_ovrcr_home_over_config_alias() {
+        let (home, notes) = home_from_env(
+            Some("/inst".into()),
+            Some("/other/config.toml".into()),
+            PathBuf::from("/default"),
+        )
+        .unwrap();
+        assert_eq!(home, Path::new("/inst"));
+        assert!(notes.config_alias.is_none());
+    }
+
+    #[test]
+    fn home_maps_config_alias_to_parent_directory() {
+        let (home, notes) = home_from_env(
+            None,
+            Some("/x/config.toml".into()),
+            PathBuf::from("/default"),
+        )
+        .unwrap();
+        assert_eq!(home, Path::new("/x"));
+        assert_eq!(
+            notes.config_alias.as_deref(),
+            Some(Path::new("/x/config.toml"))
+        );
+        assert!(config_alias_finding(Path::new("/x/config.toml")).contains("OVRCR_HOME=/x"));
+    }
+
+    #[test]
+    fn home_defaults_to_platform_config_directory() {
+        let (home, notes) = home_from_env(None, None, PathBuf::from("/default/ovrcr")).unwrap();
+        assert_eq!(home, Path::new("/default/ovrcr"));
+        assert!(notes.config_alias.is_none());
+    }
+
+    #[test]
+    fn fresh_home_uses_registry_sqlite3_not_legacy_siblings() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().to_path_buf();
+        save_registry_atomic(&Registry::default(), &home).unwrap();
+        assert!(database_path(&home).is_file());
+        assert!(!legacy_database_path(&home).exists());
+        assert!(!legacy_identity_path(&home).exists());
+        assert!(!home.join("config.tasks").exists());
+        assert_eq!(load_registry(&home).unwrap(), Registry::default());
+    }
+
+    #[test]
+    fn migrate_copies_legacy_db_and_tasks_once_without_deleting() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().to_path_buf();
+        let legacy_db = legacy_database_path(&home);
+        std::fs::write(&legacy_db, b"legacy-db").unwrap();
+        let legacy_tasks = home.join("config.tasks");
+        std::fs::create_dir(&legacy_tasks).unwrap();
+        std::fs::write(legacy_tasks.join("state.toml"), "x = 1\n").unwrap();
+
+        assert!(migrate_instance_layout(&home).unwrap());
+        assert_eq!(std::fs::read(database_path(&home)).unwrap(), b"legacy-db");
+        assert!(home.join("tasks/state.toml").is_file());
+        assert!(legacy_db.is_file(), "legacy database must remain");
+        assert!(
+            legacy_tasks.join("state.toml").is_file(),
+            "legacy tasks must remain"
+        );
+
+        // Second pass is a no-op once modern names exist.
+        std::fs::write(&legacy_db, b"changed-legacy").unwrap();
+        assert!(!migrate_instance_layout(&home).unwrap());
+        assert_eq!(std::fs::read(database_path(&home)).unwrap(), b"legacy-db");
+    }
+
+    #[test]
     fn registry_round_trip_preserves_projects_and_workspaces() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
+        let path = dir.path().join("inst");
+        std::fs::create_dir(&path).unwrap();
         let registry = Registry {
             projects: vec![ProjectRecord {
                 name: "consigint".into(),
@@ -404,7 +645,8 @@ mod tests {
         save_registry_atomic(&registry, &path).unwrap();
         assert_eq!(load_registry(&path).unwrap(), registry);
 
-        let empty_path = dir.path().join("empty-config.toml");
+        let empty_path = dir.path().join("empty-inst");
+        std::fs::create_dir(&empty_path).unwrap();
         save_registry_atomic(&Registry::default(), &empty_path).unwrap();
         assert_eq!(load_registry(&empty_path).unwrap(), Registry::default());
     }
@@ -412,27 +654,33 @@ mod tests {
     #[test]
     fn corrupt_registry_is_reported_and_not_replaced() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(&path, "[[projects]\n").unwrap();
+        let path = dir.path().to_path_buf();
+        std::fs::write(legacy_identity_path(&path), "[[projects]\n").unwrap();
         let error = load_registry(&path).unwrap_err();
         assert!(
             error.downcast_ref::<toml::de::Error>().is_some(),
             "{error:#}"
         );
-        assert_eq!(std::fs::read_to_string(path).unwrap(), "[[projects]\n");
+        assert_eq!(
+            std::fs::read_to_string(legacy_identity_path(&path)).unwrap(),
+            "[[projects]\n"
+        );
     }
 
     #[test]
     fn present_empty_registry_is_reported_and_not_replaced() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(&path, "").unwrap();
+        let path = dir.path().to_path_buf();
+        std::fs::write(legacy_identity_path(&path), "").unwrap();
         let error = load_registry(&path).unwrap_err();
         assert!(
             error.downcast_ref::<toml::de::Error>().is_some(),
             "{error:#}"
         );
-        assert_eq!(std::fs::read_to_string(path).unwrap(), "");
+        assert_eq!(
+            std::fs::read_to_string(legacy_identity_path(&path)).unwrap(),
+            ""
+        );
     }
 
     #[test]
@@ -440,7 +688,7 @@ mod tests {
         use std::os::unix::ffi::OsStrExt;
 
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
+        let path = dir.path().to_path_buf() /* instance home */;
         let database = database_path(&path);
         let connection = Connection::open(&database).unwrap();
         connection
@@ -532,7 +780,7 @@ mod tests {
             );
         }
         let missing = dir.path().join("gone");
-        let path = dir.path().join("config.toml");
+        let path = dir.path().to_path_buf() /* instance home */;
         let database = database_path(&path);
         let connection = Connection::open(&database).unwrap();
         connection
@@ -711,7 +959,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let repo = dir.path().join("repo");
         init_git_repo(&repo);
-        let path = dir.path().join("config.toml");
+        let path = dir.path().to_path_buf() /* instance home */;
         let database = database_path(&path);
         seed_v5(
             &database,
@@ -751,7 +999,7 @@ mod tests {
         std::fs::create_dir(&hidden_root).unwrap();
         let feature = hidden_root.join("feature");
         std::fs::create_dir(&feature).unwrap();
-        let path = dir.path().join("config.toml");
+        let path = dir.path().to_path_buf() /* instance home */;
         let database = database_path(&path);
         seed_v5(
             &database,
@@ -806,7 +1054,7 @@ mod tests {
         let canonical = work.canonicalize().unwrap();
         std::fs::remove_dir_all(&canonical).unwrap();
 
-        let path = dir.path().join("config.toml");
+        let path = dir.path().to_path_buf() /* instance home */;
         let database = database_path(&path);
         seed_v5(
             &database,
@@ -854,7 +1102,7 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let path = dir.path().join("config.toml");
+        let path = dir.path().to_path_buf() /* instance home */;
         let database = database_path(&path);
         seed_v5(
             &database,

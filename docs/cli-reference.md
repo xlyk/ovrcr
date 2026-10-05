@@ -34,7 +34,7 @@ the current directory. A new terminal can omit its name for a stable generated n
 
 Read commands never start one. They never write, migrate the registry, or launch
 a shell. With no server running, project and workspace queries read the existing
-`config.toml.sqlite3` without changing it. They read the preserved `config.toml`
+`registry.sqlite3` without changing it. They read the preserved `config.toml`
 if the database is absent or still empty and uninitialized after an interrupted
 import. A foreign, unreadable, or incompatible database is an error, not a TOML
 fallback. Terminal lists include retained rows. Reading or controlling a missing
@@ -89,14 +89,14 @@ ovrcr settings --json
 ```
 
 `settings` with no subcommand reads the settings document locally, as the Server does at startup:
-`dashboard.toml` beside `config.toml`, or the file `OVRCR_DASHBOARD_CONFIG` names.
+`dashboard.toml` in the instance directory, or the file `OVRCR_DASHBOARD_CONFIG` names.
 It never contacts or starts a server. It prints the resolved document path, then
 one line per setting with its key, owner (`Server` or `Dashboard`), source
 (`default` or `document`) and effective value (`unset` when there is none). An
 off consent setting (`desktop_notifications`, `title_model`, `quota.claude.probe`, and `quota.enabled` when it is false) is
 followed by what to set to turn it on. `quota.enabled` defaults to true: Codex and Grok collection runs while a Dashboard is attached unless the document sets it false. Findings come last: wrong types, unknown
 keys, unknown spellings, an unparseable document, and a `[quota]` table left in
-`config.toml`, each with its key and line when known. The command exits 0 even
+the instance identity file, each with its key and line when known. The command exits 0 even
 with findings.
 
 `--json` prints one object: `path`, `read_unix_ms`, `settings` (every effective
@@ -162,7 +162,7 @@ closes the connection; with `--json`, events after the array are one JSON
 object per line.
 
 The command needs a running Server. It does not start one, and it does not
-read `events.jsonl`. That file, beside `config.toml`, is for people and other
+read `events.jsonl`. That file, in the instance directory, is for people and other
 tools. An event message never includes a prompt, a transcript, a credential,
 an account identifier, or a native body.
 
@@ -472,7 +472,7 @@ illustrated output use the variables captured above; actual output contains numb
 
 ```sh
 $ d=$(mktemp -d)
-$ export OVRCR_CONFIG="$d/config.toml"
+$ export OVRCR_HOME="$d"
 $ export OVRCR_SOCKET="$d/server.sock"
 $ trap 'if [ -e "$OVRCR_SOCKET" ]; then ovrcr shutdown --kill >/dev/null 2>&1 & p=$!; i=0; while kill -0 "$p" 2>/dev/null && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i + 1)); done; status=0; if kill -0 "$p" 2>/dev/null; then kill -KILL "$p" 2>/dev/null || true; wait "$p" 2>/dev/null || true; status=124; else wait "$p"; status=$?; fi; if [ "$status" -ne 0 ] || [ -e "$OVRCR_SOCKET" ]; then echo "cleanup failed; preserving $d" >&2; exit 1; fi; fi; rm -rf "$d"' EXIT
 $ git -C "$d" init -b main

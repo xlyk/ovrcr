@@ -266,9 +266,9 @@ fn delete_refuses_active_then_cancels_pending_and_preserves_history() {
 #[test]
 fn store_and_run_metadata_round_trip_through_real_files() {
     let root = tempfile::tempdir().unwrap();
-    let registry = root.path().join("config.toml");
+    let registry = root.path().to_path_buf();
     let state = tasks_dir(&registry).join("state.toml");
-    assert_eq!(tasks_dir(&registry), root.path().join("config.tasks"));
+    assert_eq!(tasks_dir(&registry), root.path().join("tasks"));
     let mut store = TaskStore::default();
     let task = store
         .create(spec("poll", Schedule::Interval { seconds: 60 }), 100)

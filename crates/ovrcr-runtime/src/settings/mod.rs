@@ -30,27 +30,23 @@ pub const TITLES_OFF: &str =
 pub const ITERM_FOCUS_OFF: &str = "Exact iTerm focus off: set `iterm_focus = true`, then choose Set up iTerm focus in the Dashboard palette (separate Automation permission)";
 pub const DESKTOP_NOTIFICATIONS_OFF: &str = "Desktop alerts off: set `desktop_notifications = true` in dashboard.toml (needs OS notification permission)";
 
-/// `OVRCR_DASHBOARD_CONFIG`, else `dashboard.toml` beside the instance identity.
-pub fn document_path(registry_path: &Path) -> PathBuf {
-    document_path_with(registry_path, std::env::var_os(DOCUMENT_ENV))
+/// `OVRCR_DASHBOARD_CONFIG`, else `dashboard.toml` in the instance directory.
+pub fn document_path(home: &Path) -> PathBuf {
+    document_path_with(home, std::env::var_os(DOCUMENT_ENV))
 }
 
-fn document_path_with(registry_path: &Path, env: Option<std::ffi::OsString>) -> PathBuf {
-    env.map(PathBuf::from).unwrap_or_else(|| {
-        registry_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("dashboard.toml")
-    })
+fn document_path_with(home: &Path, env: Option<std::ffi::OsString>) -> PathBuf {
+    env.map(PathBuf::from)
+        .unwrap_or_else(|| crate::config::settings_document_path(home))
 }
 
-/// Load the settings document for the instance whose identity is `registry_path`.
-pub fn load(registry_path: &Path) -> SettingsReport {
-    load_document(registry_path, &document_path(registry_path))
+/// Load the settings document for the instance whose identity is `home`.
+pub fn load(home: &Path) -> SettingsReport {
+    load_document(home, &document_path(home))
 }
 
-/// Load `document`, and report a `[quota]` table left in the instance identity.
-pub fn load_document(registry_path: &Path, document: &Path) -> SettingsReport {
+/// Load `document`, and report a `[quota]` table left in the preserved identity file.
+pub fn load_document(home: &Path, document: &Path) -> SettingsReport {
     let mut report = match std::fs::read_to_string(document) {
         Ok(text) => parse(document, &text),
         Err(error) => {
@@ -77,7 +73,8 @@ pub fn load_document(registry_path: &Path, document: &Path) -> SettingsReport {
             report
         }
     };
-    if let Ok(text) = std::fs::read_to_string(registry_path)
+    let identity_path = crate::config::legacy_identity_path(home);
+    if let Ok(text) = std::fs::read_to_string(&identity_path)
         && let Ok(identity) = toml_edit::Document::parse(text.as_str())
         && let Some((key, item)) = identity.as_table().get_key_value("quota")
     {
@@ -85,9 +82,19 @@ pub fn load_document(registry_path: &Path, document: &Path) -> SettingsReport {
             key: Some("quota".into()),
             message: format!(
                 "quota settings belong in dashboard.toml; the [quota] table in {} configures nothing",
-                registry_path.display()
+                identity_path.display()
             ),
             line: key.span().or_else(|| item.span()).map(|s| line_at(&text, s.start)),
+        });
+    }
+    if std::env::var_os(crate::config::HOME_ENV).is_none()
+        && let Some(alias) = std::env::var_os(crate::config::CONFIG_ENV)
+    {
+        let alias = PathBuf::from(alias);
+        report.findings.push(SettingsFinding {
+            key: None,
+            message: crate::config::config_alias_finding(&alias),
+            line: None,
         });
     }
     report
@@ -1199,10 +1206,14 @@ launch_choices = { kept = { kind = \"Terminal\" }, bad = \"nope\" }
     #[test]
     fn quota_in_instance_identity_is_a_finding_and_configures_nothing() {
         let root = tempfile::tempdir().unwrap();
-        let config = root.path().join("config.toml");
-        std::fs::write(&config, "projects = []\n\n[quota]\nenabled = true\n").unwrap();
+        let config = root.path().to_path_buf();
+        std::fs::write(
+            crate::config::legacy_identity_path(&config),
+            "projects = []\n\n[quota]\nenabled = true\n",
+        )
+        .unwrap();
         let report = load_document(&config, &root.path().join("dashboard.toml"));
-        // A [quota] table in config.toml is ignored. Collection stays at the
+        // A [quota] table in the preserved identity file is ignored. Collection stays at the
         // default, which is on unless dashboard.toml sets quota.enabled = false.
         assert_eq!(report.settings.quota, defaults().quota);
         assert!(report.settings.quota.enabled);
@@ -1218,26 +1229,27 @@ launch_choices = { kept = { kind = \"Terminal\" }, bad = \"nope\" }
     #[test]
     fn unreadable_document_is_a_document_finding() {
         let root = tempfile::tempdir().unwrap();
-        let config = root.path().join("config.toml");
+        let config = root.path().join("inst");
+        std::fs::create_dir(&config).unwrap();
         // A directory cannot be read as a file.
         let report = load_document(&config, root.path());
         assert_eq!(report.settings, defaults());
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].key, None);
         // A missing document is the normal first run: no finding.
-        let report = load_document(&config, &root.path().join("dashboard.toml"));
+        let report = load_document(&config, &config.join("dashboard.toml"));
         assert_eq!(report.findings, vec![]);
     }
 
     #[test]
     fn env_chooses_the_document_path_only() {
-        let config = Path::new("/inst/config.toml");
+        let home = Path::new("/inst");
         assert_eq!(
-            document_path_with(config, None),
+            document_path_with(home, None),
             PathBuf::from("/inst/dashboard.toml")
         );
         assert_eq!(
-            document_path_with(config, Some("/elsewhere/custom.toml".into())),
+            document_path_with(home, Some("/elsewhere/custom.toml".into())),
             PathBuf::from("/elsewhere/custom.toml")
         );
     }

@@ -46,7 +46,7 @@ impl Fixture {
     fn run(&self, args: &[&str]) -> Output {
         Command::new(&self.executable)
             .args(args)
-            .env("OVRCR_CONFIG", &self.config)
+            .env("OVRCR_HOME", &self.config)
             .env("OVRCR_SOCKET", &self.socket)
             .env("SHELL", "/bin/sh")
             .output()
@@ -766,7 +766,7 @@ fn managed_usage_inspection_preserves_scope_unknowns_and_component_ages() {
             } else {
                 vec!["session", "usage", "7"]
             })
-            .env("OVRCR_CONFIG", root.path().join("config.toml"))
+            .env("OVRCR_HOME", root.path())
             .env("OVRCR_SOCKET", &socket)
             .output()
             .unwrap();
@@ -833,7 +833,11 @@ fn sqlite_migration_is_authoritative_across_online_offline_and_restart() {
         }],
     })
     .unwrap();
-    std::fs::write(&fixture.config, &original).unwrap();
+    std::fs::write(
+        ovrcr::config::legacy_identity_path(&fixture.config),
+        &original,
+    )
+    .unwrap();
     fixture.start_binary();
     let imported_count = fixture.json(&["project", "get", "fixture"])["workspace_count"]
         .as_u64()
@@ -885,7 +889,7 @@ fn sqlite_migration_is_authoritative_across_online_offline_and_restart() {
     assert_eq!(online["branch"], "feature/migrated");
     assert_eq!(online["terminal_count"], 1);
     assert_eq!(
-        std::fs::read_to_string(&fixture.config).unwrap(),
+        std::fs::read_to_string(ovrcr::config::legacy_identity_path(&fixture.config)).unwrap(),
         original,
         "migration and later mutations must leave recoverable legacy data untouched"
     );
@@ -893,7 +897,11 @@ fn sqlite_migration_is_authoritative_across_online_offline_and_restart() {
     fixture.join();
 
     // Once imported, even a broken legacy file cannot replace committed inventory.
-    std::fs::write(&fixture.config, "[[projects]\n").unwrap();
+    std::fs::write(
+        ovrcr::config::legacy_identity_path(&fixture.config),
+        "[[projects]\n",
+    )
+    .unwrap();
     let offline = fixture.json(&[
         "workspace",
         "get",

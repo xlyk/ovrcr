@@ -386,8 +386,8 @@ fn next_interval_after(previous_due: i64, now: i64, seconds: u64) -> Result<Opti
     ))
 }
 
-pub fn tasks_dir(registry_path: &Path) -> PathBuf {
-    registry_path.with_extension("tasks")
+pub fn tasks_dir(home: &Path) -> PathBuf {
+    crate::config::instance_tasks_dir(home)
 }
 
 pub fn run_dir(tasks_dir: &Path, id: RunId) -> PathBuf {

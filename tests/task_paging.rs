@@ -8,7 +8,7 @@ impl Fixture {
     fn run(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_ovrcr"))
             .args(args)
-            .env("OVRCR_CONFIG", self.0.path().join("config.toml"))
+            .env("OVRCR_HOME", self.0.path())
             .env("OVRCR_SOCKET", self.0.path().join("server.sock"))
             .env("OVRCR_PI_EXECUTABLE", "/definitely/missing/pi")
             .output()

@@ -18,8 +18,7 @@ One Reporter (`src/report/reporter.rs`) owns every managed invocation's reportin
 Root `src/` and control-role tests speak to the server through `ovrcr_protocol::client` for request/response round trips; dashboard-role code that consumes events reads frames directly. Do not hand-roll `ClientMessage` frames for a plain request.
 
 Project, workspace, and retained interactive-session metadata use SQLite as the
-sole writable store. The database path is the full `config.toml` path with
-`.sqlite3` appended. Initial migration imports legacy projects/workspaces;
+sole writable store. The database path is `registry.sqlite3` in the instance directory. Initial migration imports legacy projects/workspaces;
 schema version 2 adds session metadata; version 3 adds archive disposition.
 Neither migration changes settings or task storage.
 Schema version 6 persists each workspace as a stable `id`, checkout `path`,
@@ -49,7 +48,7 @@ read-only. They read preserved TOML only if the database is absent, or both its
 application ID and version are zero and it has no user objects. That uninitialized
 state can be retried on startup. A foreign, nonempty unversioned, or unsupported
 database fails without replacement and without falling back to TOML.
-`dashboard.toml` and the `config.tasks` directory stay outside this store.
+`dashboard.toml` and the `tasks/` directory stay outside this store.
 `retained::SessionStore` owns durable session IDs, per-row run identities, title
 metadata, original directory and launch kind, and boot-aware recovery state.
 Current process runs remain `Arc<Session>` values; inactive rows allocate no PTY

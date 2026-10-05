@@ -1134,7 +1134,7 @@ fn startup_concurrent_attempts_leave_one_server() {
     unsafe {
         std::env::set_var("OVRCR_SERVER_EXECUTABLE", executable);
         std::env::set_var("OVRCR_SOCKET", &fixture.socket);
-        std::env::set_var("OVRCR_CONFIG", &registry);
+        std::env::set_var("OVRCR_HOME", &registry);
     }
     let mut workers = Vec::new();
     for _ in 0..2 {
@@ -1170,7 +1170,7 @@ fn startup_concurrent_attempts_leave_one_server() {
     unsafe {
         std::env::remove_var("OVRCR_SERVER_EXECUTABLE");
         std::env::remove_var("OVRCR_SOCKET");
-        std::env::remove_var("OVRCR_CONFIG");
+        std::env::remove_var("OVRCR_HOME");
     }
     drop(env_guard);
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -1184,12 +1184,15 @@ fn startup_concurrent_attempts_leave_one_server() {
 fn startup_failure_reports_server_log() {
     let _env_lock = env_lock();
     let fixture = Live::idle();
-    let registry = fixture.root.path().join("config.toml");
-    std::fs::write(&registry, "[[projects]\n").unwrap();
+    std::fs::write(
+        ovrcr::config::legacy_identity_path(&fixture.config),
+        "[[projects]\n",
+    )
+    .unwrap();
     unsafe {
         std::env::set_var("OVRCR_SERVER_EXECUTABLE", env!("CARGO_BIN_EXE_ovrcr"));
         std::env::set_var("OVRCR_SOCKET", &fixture.socket);
-        std::env::set_var("OVRCR_CONFIG", &registry);
+        std::env::set_var("OVRCR_HOME", &fixture.config);
     }
     let started = Instant::now();
     let result = connect_or_start(&fixture.paths());
@@ -1197,7 +1200,7 @@ fn startup_failure_reports_server_log() {
     unsafe {
         std::env::remove_var("OVRCR_SERVER_EXECUTABLE");
         std::env::remove_var("OVRCR_SOCKET");
-        std::env::remove_var("OVRCR_CONFIG");
+        std::env::remove_var("OVRCR_HOME");
     }
     let error = format!("{:#}", result.expect_err("startup must fail"));
     let log = fixture.socket.parent().unwrap().join("server.log");
@@ -1306,14 +1309,14 @@ fn startup_read_only_commands_do_not_start_a_missing_server() {
     let list = Command::new(executable)
         .arg("list")
         .env("OVRCR_SOCKET", &fixture.socket)
-        .env("OVRCR_CONFIG", fixture.root.path().join("config.toml"))
+        .env("OVRCR_HOME", fixture.root.path())
         .output()
         .unwrap();
     assert!(list.status.success());
     let shutdown = Command::new(executable)
         .arg("shutdown")
         .env("OVRCR_SOCKET", &fixture.socket)
-        .env("OVRCR_CONFIG", fixture.root.path().join("config.toml"))
+        .env("OVRCR_HOME", fixture.root.path())
         .status()
         .unwrap();
     assert!(shutdown.success());
@@ -1335,7 +1338,7 @@ fn startup_stale_concurrent_attempts_leave_one_surviving_server() {
             Command::new(executable)
                 .arg("server")
                 .env("OVRCR_SOCKET", &fixture.socket)
-                .env("OVRCR_CONFIG", &registry)
+                .env("OVRCR_HOME", &registry)
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .spawn()
@@ -1956,7 +1959,7 @@ fn workspace_shell_failure_retains_worktree_and_registry() {
     let fixture = ControlFixture::new();
     // Force automatic shell creation so a bad SHELL still exercises PartialFailure.
     std::fs::write(
-        fixture.config.parent().unwrap().join("dashboard.toml"),
+        fixture.config.join("dashboard.toml"),
         "automatic_local_terminals = \"on\"\n",
     )
     .unwrap();
@@ -6430,7 +6433,7 @@ fn cli_resolves_relative_project_paths_against_invocation_cwd_with_existing_serv
             "../fixture-workspaces",
         ])
         .current_dir(&fixture.repo)
-        .env("OVRCR_CONFIG", fixture.root.path().join("config.toml"))
+        .env("OVRCR_HOME", &fixture.config)
         .env("OVRCR_SOCKET", &fixture.socket)
         .output()
         .unwrap();
@@ -6439,7 +6442,7 @@ fn cli_resolves_relative_project_paths_against_invocation_cwd_with_existing_serv
         "relative project registration failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let registry = load_registry(&fixture.root.path().join("config.toml")).unwrap();
+    let registry = load_registry(&fixture.config).unwrap();
     let project = registry
         .projects
         .iter()
@@ -6464,14 +6467,15 @@ fn cli_exit_preserves_session_and_shutdown_kill_cleans_up() {
     std::fs::create_dir(&workspaces).unwrap();
     live::init_repo(&repo);
 
-    let config = root.path().join("config.toml");
+    let config = root.path().join("instance");
+    std::fs::create_dir(&config).unwrap();
     let socket = root.path().join("server.sock");
     save_registry_atomic(&Registry::default(), &config).unwrap();
     let bin = env!("CARGO_BIN_EXE_ovrcr");
     let mut cleanup = CliLifecycleGuard::new(bin, &config, &socket);
     let server = Command::new(bin)
         .arg("server")
-        .env("OVRCR_CONFIG", &config)
+        .env("OVRCR_HOME", &config)
         .env("OVRCR_SOCKET", &socket)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -6576,7 +6580,7 @@ fn cli(bin: &str, config: &Path, socket: &Path, args: &[&str]) {
 fn cli_with_output(bin: &str, config: &Path, socket: &Path, args: &[&str]) -> std::process::Output {
     Command::new(bin)
         .args(args)
-        .env("OVRCR_CONFIG", config)
+        .env("OVRCR_HOME", config)
         .env("OVRCR_SOCKET", socket)
         .output()
         .unwrap()
@@ -11196,7 +11200,7 @@ printf '%s\n' "$reply"
             .unwrap();
             std::fs::set_permissions(&fallback, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
-        let settings_path = fixture.root.path().join("dashboard.toml");
+        let settings_path = fixture.config.join("dashboard.toml");
         if let Some(settings) = settings {
             // These Bridge cases never exercise quota workers. Preserve the
             // raw alert settings while keeping every reload on explicit quota
@@ -11253,7 +11257,7 @@ printf '%s\n' "$reply"
         };
         command.env("OVRCR_SERVER_EXECUTABLE", server_executable);
         command.env("OVRCR_SOCKET", &fixture.socket);
-        command.env("OVRCR_CONFIG", fixture.root.path().join("config.toml"));
+        command.env("OVRCR_HOME", &fixture.config);
         command.env("OVRCR_DASHBOARD_CONFIG", settings_path);
         command.env("OVRCR_TEST_DESKTOP_RECORD", &record);
         command.env("HOME", &home);
@@ -16933,7 +16937,7 @@ fn desktop_notifications_bridge_settings_sources_authorize_and_failed_saves_pres
     );
     dashboard.select("setup", "HOOK_READY");
     dashboard.wait_bridge_controls(&[]);
-    let document = fixture.root.path().join("dashboard.toml");
+    let document = fixture.config.join("dashboard.toml");
     let saved_document = std::fs::read_to_string(&document).unwrap();
     let enabled_document = saved_document.replace(
         "desktop_notifications = false",
@@ -17098,7 +17102,7 @@ fn desktop_notifications_bridge_denied_settings_are_explicit_and_never_modal_or_
     assert!(!dashboard.record.exists());
     assert!(fixture.session_summary(summary.id).unread.is_some());
     assert!(
-        std::fs::read_to_string(fixture.config.with_file_name("dashboard.toml"))
+        std::fs::read_to_string(fixture.config.join("dashboard.toml"))
             .unwrap()
             .contains("desktop_notifications = true")
     );
@@ -17593,13 +17597,9 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"
     write_bridge_startup_settings(&fixture);
     let settings = "desktop_notifications = true\ntitle_model = 'pi/test'\n";
     let mut startup_document =
-        std::fs::read_to_string(fixture.config.with_file_name("dashboard.toml")).unwrap();
+        std::fs::read_to_string(fixture.config.join("dashboard.toml")).unwrap();
     startup_document.push_str(settings);
-    std::fs::write(
-        fixture.config.with_file_name("dashboard.toml"),
-        startup_document,
-    )
-    .unwrap();
+    std::fs::write(fixture.config.join("dashboard.toml"), startup_document).unwrap();
     fixture.start_binary_env(&[
         ("OVRCR_PI_EXECUTABLE", title_program.as_os_str()),
         ("OVRCR_TEST_TITLE_PROMPT", title_prompt.as_os_str()),
@@ -17791,7 +17791,7 @@ fn desktop_sound_mac_flag_matrix_preserves_saved_flags_for_ready_and_input() {
         let mut dashboard = DesktopAlertDashboard::start(&fixture, Some(&saved));
         dashboard.select("setup", "HOOK_READY");
         dashboard.wait_bridge_controls(if notifications { &["status"] } else { &[] });
-        let document = fixture.config.with_file_name("dashboard.toml");
+        let document = fixture.config.join("dashboard.toml");
         let original = std::fs::read_to_string(&document).unwrap();
         assert!(!original.contains("ready_sound_choice"));
         let mut index = 0;
@@ -17845,7 +17845,7 @@ fn desktop_sound_selector_uses_server_settings_without_preview_opt_in_or_replay(
         Some("# keep this comment\ndesktop_notifications = false\nready_sound = false\n"),
     );
     dashboard.select("setup", "HOOK_READY");
-    let document = fixture.config.with_file_name("dashboard.toml");
+    let document = fixture.config.join("dashboard.toml");
     let mut index = 0;
     for command in ["UserPromptSubmit:root:disabled", "Stop:root:disabled"] {
         desktop_codex_callback(&fixture, summary.id, &mut index, command);
@@ -17982,7 +17982,7 @@ fn desktop_sound_invalid_external_and_cli_changes_keep_banners_and_failed_saves_
     );
     dashboard.select("setup", "HOOK_READY");
     dashboard.wait_bridge_controls(&["status"]);
-    let document = fixture.config.with_file_name("dashboard.toml");
+    let document = fixture.config.join("dashboard.toml");
     let saved = std::fs::read_to_string(&document).unwrap();
     std::fs::set_permissions(&document, std::fs::Permissions::from_mode(0o400)).unwrap();
     dashboard.open_sound_choices();
@@ -18119,7 +18119,7 @@ fn desktop_sound_submitted_resource_failure_is_actionable_without_fallback_retry
     );
     dashboard.select("setup", "HOOK_READY");
     dashboard.wait_bridge_controls(&["status"]);
-    let document = fixture.config.with_file_name("dashboard.toml");
+    let document = fixture.config.join("dashboard.toml");
     let mut index = 0;
     let mut expected = Vec::new();
     for (reason, choice) in [
@@ -18340,7 +18340,7 @@ fn desktop_sound_in_flight_preference_changes_cancel_clients_without_replay_and_
         }
         dashboard.assert_no_independent_audio();
         assert!(group_exists(persistent));
-        let document = fixture.config.with_file_name("dashboard.toml");
+        let document = fixture.config.join("dashboard.toml");
         let reading = ovrcr::settings::load_document(&fixture.config, &document);
         assert!(reading.settings.desktop_notifications);
         assert_eq!(reading.settings.ready_sound, change == "choice");
@@ -18769,7 +18769,7 @@ fn dashboard_hello_carries_the_servers_settings_and_toggles_save_through_the_req
     assert_eq!(first.findings[0].key.as_deref(), Some("ready_sound"));
     assert_eq!(first.findings[0].line, Some(2));
     assert!(
-        !fixture.config.with_file_name("dashboard.toml").exists(),
+        !fixture.config.join("dashboard.toml").exists(),
         "the client's default document path is not the one in use"
     );
 
@@ -18880,7 +18880,7 @@ fn ovrcr_settings(fixture: &Live, args: &[&str]) -> std::process::Output {
         .arg("settings")
         .args(args)
         .env("OVRCR_SOCKET", &fixture.socket)
-        .env("OVRCR_CONFIG", &fixture.config)
+        .env("OVRCR_HOME", &fixture.config)
         .env_remove("OVRCR_DASHBOARD_CONFIG")
         .output()
         .unwrap()
@@ -18892,7 +18892,7 @@ fn ovrcr_settings(fixture: &Live, args: &[&str]) -> std::process::Output {
 #[test]
 fn settings_set_without_a_server_writes_the_document_a_later_server_loads() {
     let fixture = Live::idle();
-    let document = fixture.config.with_file_name("dashboard.toml");
+    let document = fixture.config.join("dashboard.toml");
     std::fs::write(&document, "# my settings\nready_sound = false # quiet\n").unwrap();
 
     let set = ovrcr_settings(&fixture, &["set", "branch_prefix", "kh/"]);
@@ -19001,7 +19001,7 @@ fn next_settings(stream: &mut UnixStream, within: Duration) -> Option<SettingsRe
 #[test]
 fn settings_edit_while_attached_republishes_only_real_changes() {
     let fixture = Live::idle();
-    let document = fixture.config.with_file_name("dashboard.toml");
+    let document = fixture.config.join("dashboard.toml");
     std::fs::write(&document, "branch_prefix = \"a/\"\n").unwrap();
     fixture.start_binary();
     let mut stream = connect_server(&fixture.socket).unwrap();
@@ -19047,7 +19047,7 @@ fn write_bridge_startup_settings(live: &Live) {
     // after the Dashboard first rewrites its document. Only the fixture's fake
     // auth executable may be consulted by these application-path cases.
     std::fs::write(
-        live.root.path().join("dashboard.toml"),
+        live.config.join("dashboard.toml"),
         format!(
             "quota.enabled = false\nagents = [{{ name = \"claude\", argv = [{}] }}]\n",
             toml::Value::String(live.claude.command.display().to_string())
@@ -19362,7 +19362,7 @@ fn iterm_setup_real_palette_denial_and_missing_identity_preserve_notification_pr
                 .flat_map(|w| &w.sessions)
                 .any(|s| s.name == "iterm-shell")
         );
-        let saved = std::fs::read_to_string(fixture.root.path().join("dashboard.toml")).unwrap();
+        let saved = std::fs::read_to_string(fixture.config.join("dashboard.toml")).unwrap();
         assert!(saved.contains("desktop_notifications = false"));
         assert!(saved.contains("ready_sound = false"));
         assert!(!dashboard.record.with_extension("fallback").exists());

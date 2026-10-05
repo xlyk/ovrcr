@@ -50,7 +50,7 @@ fn launch(fixture: &live::Live) -> Result<Terminal> {
     let mut command = CommandBuilder::new(&executable);
     command.env("OVRCR_SERVER_EXECUTABLE", &fixture.executable);
     command.env("HOME", fixture.root.path());
-    command.env("OVRCR_CONFIG", &fixture.config);
+    command.env("OVRCR_HOME", &fixture.config);
     command.env("OVRCR_SOCKET", &fixture.socket);
     command.env("CLAUDE_CONFIG_DIR", fixture.root.path().join(".claude"));
     command.env("CODEX_HOME", fixture.root.path().join(".codex"));

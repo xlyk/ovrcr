@@ -71,10 +71,7 @@ impl Demo {
         let workspaces = self.root.join("workspaces");
         fs::create_dir(&repositories)?;
         fs::create_dir(&workspaces)?;
-        crate::config::save_registry_atomic(
-            &crate::config::Registry::default(),
-            &self.root.join("config.toml"),
-        )?;
+        crate::config::save_registry_atomic(&crate::config::Registry::default(), &self.root)?;
         // Demo workspaces intentionally keep automatic local shells on every
         // worktree so the GUI helper exercises a full sidebar of terminals.
         let fragment = match std::env::var_os("OVRCR_GUI_QUOTA_CONFIG") {
@@ -261,9 +258,9 @@ impl Demo {
     fn command(&self) -> Command {
         let mut command = Command::new(&self.executable);
         command
-            .env("OVRCR_CONFIG", self.root.join("config.toml"))
+            .env("OVRCR_HOME", &self.root)
             .env("OVRCR_SOCKET", self.root.join("server.sock"))
-            // The demo's settings document is the one beside its config.toml.
+            // The demo's settings document is the one in its instance directory.
             .env_remove("OVRCR_DASHBOARD_CONFIG")
             .env("TERM", "xterm-256color")
             .env("COLORTERM", "truecolor")
@@ -289,7 +286,7 @@ impl Demo {
         }
         let mut command = CommandBuilder::new(&executable);
         command.env("OVRCR_SERVER_EXECUTABLE", &self.executable);
-        command.env("OVRCR_CONFIG", self.root.join("config.toml"));
+        command.env("OVRCR_HOME", &self.root);
         command.env("OVRCR_SOCKET", self.root.join("server.sock"));
         command.env_remove("OVRCR_DASHBOARD_CONFIG");
         command.env("TERM", "xterm-256color");
