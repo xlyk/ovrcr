@@ -37,7 +37,10 @@ struct Inputs<'a> {
 fn run_at(
     inputs: Inputs<'_>,
     confirm: &mut impl FnMut(&str) -> Result<bool>,
-    execute: &mut impl FnMut(&mut std::process::Command, std::time::Duration) -> Result<std::process::Output>,
+    execute: &mut impl FnMut(
+        &mut std::process::Command,
+        std::time::Duration,
+    ) -> Result<std::process::Output>,
     signing_identity: &mut impl FnMut() -> std::result::Result<String, std::env::VarError>,
     notice: &mut impl FnMut(&str, bool),
 ) -> Result<()> {
@@ -158,7 +161,10 @@ fn run_at(
         installer.arg("--identity").arg(identity);
     }
     let result = execute(
-        installer.arg("--destination").arg(&destination).arg(&source),
+        installer
+            .arg("--destination")
+            .arg(&destination)
+            .arg(&source),
         Duration::from_secs(60),
     )?;
     ensure!(
@@ -185,7 +191,10 @@ fn validate_bundle(
     profile: ovrcr::protocol::bridge_installation::BridgeProfile,
     validator: &std::path::Path,
     bundle: &std::path::Path,
-    execute: &mut impl FnMut(&mut std::process::Command, std::time::Duration) -> Result<std::process::Output>,
+    execute: &mut impl FnMut(
+        &mut std::process::Command,
+        std::time::Duration,
+    ) -> Result<std::process::Output>,
 ) -> Result<bool> {
     use ovrcr::protocol::bridge_installation::BridgeProfile;
     let mut command = std::process::Command::new("python3");
@@ -196,9 +205,11 @@ fn validate_bundle(
             .arg("--local-development")
             .env_remove("OVRCR_BRIDGE_SIGNING_IDENTITY");
     }
-    Ok(execute(command.arg(bundle), std::time::Duration::from_secs(5))?
-        .status
-        .success())
+    Ok(
+        execute(command.arg(bundle), std::time::Duration::from_secs(5))?
+            .status
+            .success(),
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -239,7 +250,11 @@ mod tests {
         }
 
         fn inputs(&self, opt_in: Option<&'static OsStr>) -> Inputs<'_> {
-            Inputs { executable: &self.executable, home: self.root.path(), opt_in }
+            Inputs {
+                executable: &self.executable,
+                home: self.root.path(),
+                opt_in,
+            }
         }
 
         fn payload(&self, profile: BridgeProfile, installed: bool) -> PathBuf {
@@ -266,9 +281,9 @@ mod tests {
             Self {
                 program: command.get_program().to_owned(),
                 args: command.get_args().map(OsStr::to_owned).collect(),
-                identity_removed: command.get_envs().any(|(key, value)| {
-                    key == "OVRCR_BRIDGE_SIGNING_IDENTITY" && value.is_none()
-                }),
+                identity_removed: command
+                    .get_envs()
+                    .any(|(key, value)| key == "OVRCR_BRIDGE_SIGNING_IDENTITY" && value.is_none()),
             }
         }
     }
@@ -295,11 +310,18 @@ mod tests {
         let mut prompts = Vec::new();
         run_at(
             fixture.inputs(Some(OsStr::new("1"))),
-            &mut |prompt| { prompts.push(prompt.to_owned()); Ok(true) },
-            &mut |command, _| { calls.push(Invocation::capture(command)); Ok(output(true, b"")) },
+            &mut |prompt| {
+                prompts.push(prompt.to_owned());
+                Ok(true)
+            },
+            &mut |command, _| {
+                calls.push(Invocation::capture(command));
+                Ok(output(true, b""))
+            },
             &mut no_identity,
             &mut |_, _| {},
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(prompts.len(), 1);
         assert!(prompts[0].contains("Install OVRCR Local"));
         assert!(prompts[0].contains("ad-hoc signing"));
@@ -307,23 +329,35 @@ mod tests {
         assert!(prompts[0].contains("Notification permission is requested separately"));
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].program, "python3");
-        assert_eq!(calls[0].args, [
-            OsString::from("-I"),
-            payload.join("native/bridge/validate-bundle.py").into_os_string(),
-            OsString::from("--local-development"),
-            payload.join(profile.app_name()).into_os_string(),
-        ]);
+        assert_eq!(
+            calls[0].args,
+            [
+                OsString::from("-I"),
+                payload
+                    .join("native/bridge/validate-bundle.py")
+                    .into_os_string(),
+                OsString::from("--local-development"),
+                payload.join(profile.app_name()).into_os_string(),
+            ]
+        );
         assert_eq!(calls[1].program, "/bin/sh");
-        assert_eq!(calls[1].args, [
-            payload.join("scripts/install-bridge.sh").into_os_string(),
-            OsString::from("--local-development"),
-            OsString::from("--destination"),
-            profile.destination(fixture.root.path()).into_os_string(),
-            payload.join(profile.app_name()).into_os_string(),
-        ]);
+        assert_eq!(
+            calls[1].args,
+            [
+                payload.join("scripts/install-bridge.sh").into_os_string(),
+                OsString::from("--local-development"),
+                OsString::from("--destination"),
+                profile.destination(fixture.root.path()).into_os_string(),
+                payload.join(profile.app_name()).into_os_string(),
+            ]
+        );
         assert!(calls.iter().all(|call| call.identity_removed));
         assert!(calls.iter().all(|call| call.program != "/usr/bin/security"));
-        assert!(!BridgeProfile::Production.destination(fixture.root.path()).exists());
+        assert!(
+            !BridgeProfile::Production
+                .destination(fixture.root.path())
+                .exists()
+        );
     }
 
     #[test]
@@ -338,7 +372,8 @@ mod tests {
             &mut |_, _| panic!("missing local assets must not run a tool"),
             &mut no_identity,
             &mut |notice, success| notices.push((notice.to_owned(), success)),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(notices.len(), 1);
         assert!(notices[0].0.contains("OVRCR Local install assets missing"));
         assert!(!notices[0].1);
@@ -353,13 +388,26 @@ mod tests {
         run_at(
             fixture.inputs(Some(OsStr::new("1"))),
             &mut |_| Ok(false),
-            &mut |command, _| { calls.push(Invocation::capture(command)); Ok(output(true, b"")) },
+            &mut |command, _| {
+                calls.push(Invocation::capture(command));
+                Ok(output(true, b""))
+            },
             &mut no_identity,
             &mut |_, _| {},
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].args[1], payload.join("native/bridge/validate-bundle.py").into_os_string());
-        assert!(calls[0].args.contains(&OsString::from("--local-development")));
+        assert_eq!(
+            calls[0].args[1],
+            payload
+                .join("native/bridge/validate-bundle.py")
+                .into_os_string()
+        );
+        assert!(
+            calls[0]
+                .args
+                .contains(&OsString::from("--local-development"))
+        );
     }
 
     #[test]
@@ -373,18 +421,33 @@ mod tests {
         run_at(
             fixture.inputs(Some(OsStr::new("1"))),
             &mut |_| panic!("valid local installation must not prompt"),
-            &mut |command, _| { calls.push(Invocation::capture(command)); Ok(output(true, b"")) },
+            &mut |command, _| {
+                calls.push(Invocation::capture(command));
+                Ok(output(true, b""))
+            },
             &mut no_identity,
             &mut |_, _| {},
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(calls.len(), 2);
-        assert_eq!(calls[0].args.last().unwrap().as_os_str(), destination.as_os_str());
+        assert_eq!(
+            calls[0].args.last().unwrap().as_os_str(),
+            destination.as_os_str()
+        );
         assert_eq!(calls[1].program, "/usr/bin/codesign");
-        assert_eq!(calls[1].args, [
-            OsString::from("--verify"), OsString::from("--deep"),
-            OsString::from("--strict"), destination.clone().into_os_string(),
-        ]);
-        assert_eq!(std::fs::read_to_string(destination.join("keep")).unwrap(), "unchanged");
+        assert_eq!(
+            calls[1].args,
+            [
+                OsString::from("--verify"),
+                OsString::from("--deep"),
+                OsString::from("--strict"),
+                destination.clone().into_os_string(),
+            ]
+        );
+        assert_eq!(
+            std::fs::read_to_string(destination.join("keep")).unwrap(),
+            "unchanged"
+        );
     }
 
     #[test]
@@ -406,11 +469,18 @@ mod tests {
                 },
                 &mut no_identity,
                 &mut |notice, _| notices.push(notice.to_owned()),
-            ).unwrap();
+            )
+            .unwrap();
             assert!(!calls.iter().any(|call| call.program == "/bin/sh"));
-            assert_eq!(calls[0].args.last().unwrap().as_os_str(), destination.as_os_str());
+            assert_eq!(
+                calls[0].args.last().unwrap().as_os_str(),
+                destination.as_os_str()
+            );
             assert!(notices[0].contains("fresh-only"));
-            assert_eq!(std::fs::read_to_string(destination.join("keep")).unwrap(), "unchanged");
+            assert_eq!(
+                std::fs::read_to_string(destination.join("keep")).unwrap(),
+                "unchanged"
+            );
         }
     }
 
@@ -428,9 +498,13 @@ mod tests {
             &mut |_, _| panic!("symlink must not run a tool"),
             &mut no_identity,
             &mut |notice, _| notices.push(notice.to_owned()),
-        ).unwrap();
+        )
+        .unwrap();
         assert!(notices[0].contains("fresh-only"));
-        assert_eq!(std::fs::read_link(destination).unwrap(), PathBuf::from("absent"));
+        assert_eq!(
+            std::fs::read_link(destination).unwrap(),
+            PathBuf::from("absent")
+        );
     }
 
     #[test]
@@ -438,14 +512,25 @@ mod tests {
         use std::os::unix::ffi::OsStrExt;
         let fixture = Fixture::new();
         fixture.payload(BridgeProfile::Production, false);
-        for value in [OsStr::new("true"), OsStr::new("01"), OsStr::new(" 1"), OsStr::new("1 "), OsStr::from_bytes(b"\xff")] {
+        for value in [
+            OsStr::new("true"),
+            OsStr::new("01"),
+            OsStr::new(" 1"),
+            OsStr::new("1 "),
+            OsStr::from_bytes(b"\xff"),
+        ] {
             let error = run_at(
-                Inputs { executable: &fixture.executable, home: fixture.root.path(), opt_in: Some(value) },
+                Inputs {
+                    executable: &fixture.executable,
+                    home: fixture.root.path(),
+                    opt_in: Some(value),
+                },
                 &mut |_| panic!("invalid profile must not prompt"),
                 &mut |_, _| panic!("invalid profile must not execute"),
                 &mut no_identity,
                 &mut |_, _| {},
-            ).unwrap_err();
+            )
+            .unwrap_err();
             assert!(error.to_string().contains(LOCAL_DEVELOPMENT_ENV));
         }
     }
@@ -460,29 +545,53 @@ mod tests {
             let mut identity_reads = 0;
             run_at(
                 fixture.inputs(opt_in),
-                &mut |prompt| { assert!(prompt.contains("Install OVRCR Bridge")); Ok(true) },
+                &mut |prompt| {
+                    assert!(prompt.contains("Install OVRCR Bridge"));
+                    Ok(true)
+                },
                 &mut |command, _| {
                     let security = command.get_program() == "/usr/bin/security";
                     calls.push(Invocation::capture(command));
-                    Ok(output(true, if security { b"1) 0123456789ABCDEF0123456789ABCDEF01234567 \"Certificate\"\n" } else { b"" }))
+                    Ok(output(
+                        true,
+                        if security {
+                            b"1) 0123456789ABCDEF0123456789ABCDEF01234567 \"Certificate\"\n"
+                        } else {
+                            b""
+                        },
+                    ))
                 },
-                &mut || { identity_reads += 1; Err(std::env::VarError::NotPresent) },
+                &mut || {
+                    identity_reads += 1;
+                    Err(std::env::VarError::NotPresent)
+                },
                 &mut |_, _| {},
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(identity_reads, 1);
             assert_eq!(calls.len(), 3);
             assert_eq!(calls[1].program, "/usr/bin/security");
-            assert_eq!(calls[1].args, ["find-identity", "-v", "-p", "codesigning"].map(OsString::from));
-            assert_eq!(calls[2].args, [
-                payload.join("scripts/install-bridge.sh").into_os_string(),
-                OsString::from("--identity"),
-                OsString::from("0123456789ABCDEF0123456789ABCDEF01234567"),
-                OsString::from("--destination"),
-                profile.destination(fixture.root.path()).into_os_string(),
-                payload.join(profile.app_name()).into_os_string(),
-            ]);
+            assert_eq!(
+                calls[1].args,
+                ["find-identity", "-v", "-p", "codesigning"].map(OsString::from)
+            );
+            assert_eq!(
+                calls[2].args,
+                [
+                    payload.join("scripts/install-bridge.sh").into_os_string(),
+                    OsString::from("--identity"),
+                    OsString::from("0123456789ABCDEF0123456789ABCDEF01234567"),
+                    OsString::from("--destination"),
+                    profile.destination(fixture.root.path()).into_os_string(),
+                    payload.join(profile.app_name()).into_os_string(),
+                ]
+            );
             assert!(calls.iter().all(|call| !call.identity_removed));
-            assert!(calls.iter().all(|call| !call.args.contains(&OsString::from("--local-development"))));
+            assert!(
+                calls
+                    .iter()
+                    .all(|call| !call.args.contains(&OsString::from("--local-development")))
+            );
         }
     }
 
@@ -494,8 +603,14 @@ mod tests {
             let mut calls = Vec::new();
             let result = run_at(
                 fixture.inputs(None),
-                &mut |_| { assert!(valid, "invalid payload must not prompt"); Ok(false) },
-                &mut |command, _| { calls.push(Invocation::capture(command)); Ok(output(valid, b"")) },
+                &mut |_| {
+                    assert!(valid, "invalid payload must not prompt");
+                    Ok(false)
+                },
+                &mut |command, _| {
+                    calls.push(Invocation::capture(command));
+                    Ok(output(valid, b""))
+                },
                 &mut no_identity,
                 &mut |_, _| {},
             );
@@ -513,10 +628,18 @@ mod tests {
             let error = run_at(
                 fixture.inputs(None),
                 &mut |_| Ok(true),
-                &mut |command, _| { calls.push(Invocation::capture(command)); Ok(output(true, b"")) },
-                &mut || explicit.map(str::to_owned).ok_or(std::env::VarError::NotPresent),
+                &mut |command, _| {
+                    calls.push(Invocation::capture(command));
+                    Ok(output(true, b""))
+                },
+                &mut || {
+                    explicit
+                        .map(str::to_owned)
+                        .ok_or(std::env::VarError::NotPresent)
+                },
                 &mut |_, _| {},
-            ).unwrap_err();
+            )
+            .unwrap_err();
             assert!(error.to_string().contains("identity"));
             assert!(!calls.iter().any(|call| call.program == "/bin/sh"));
         }

@@ -89,7 +89,10 @@ mod tests {
     #[test]
     fn only_exact_one_selects_local_development() {
         for value in [None, Some(OsStr::new("")), Some(OsStr::new("0"))] {
-            assert_eq!(BridgeProfile::from_opt_in(value), Ok(BridgeProfile::Production));
+            assert_eq!(
+                BridgeProfile::from_opt_in(value),
+                Ok(BridgeProfile::Production)
+            );
         }
         assert_eq!(
             BridgeProfile::from_opt_in(Some(OsStr::new("1"))),
@@ -138,13 +141,22 @@ mod tests {
             assert_eq!(profile.bundle_id(), id);
             assert_eq!(profile.display_name(), display);
             assert_eq!(profile.app_name(), app);
-            assert_eq!(profile.destination(home), home.join("Applications").join(app));
+            assert_eq!(
+                profile.destination(home),
+                home.join("Applications").join(app)
+            );
             assert_eq!(
                 profile.client_path(home),
                 profile.destination(home).join("Contents/MacOS/OVRCRBridge")
             );
-            assert_eq!(profile.installed_assets(executable), Some(PathBuf::from(installed)));
-            assert_eq!(profile.adjacent_assets(executable), Some(PathBuf::from(adjacent)));
+            assert_eq!(
+                profile.installed_assets(executable),
+                Some(PathBuf::from(installed))
+            );
+            assert_eq!(
+                profile.adjacent_assets(executable),
+                Some(PathBuf::from(adjacent))
+            );
         }
     }
 }

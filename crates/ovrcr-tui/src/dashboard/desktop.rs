@@ -7,13 +7,13 @@ use super::settings::{AutomaticLocalTerminals, Settings};
 #[cfg(target_os = "macos")]
 use super::settings::{INVALID_SOUND_CHOICE_NOTICE, invalid_sound_choice_notice};
 use super::{Dashboard, DashboardAction};
+#[cfg(target_os = "macos")]
+use ovrcr_protocol::bridge_installation::BridgeProfile;
 #[cfg(test)]
 use ovrcr_protocol::{AgentActivity, AgentProvider, SessionPhase};
 use ovrcr_protocol::{
     AgentBinding, HierarchySnapshot, InputRequest, ReadyObservation, SessionId, SessionSummary,
 };
-#[cfg(target_os = "macos")]
-use ovrcr_protocol::bridge_installation::BridgeProfile;
 #[cfg(target_os = "macos")]
 use ovrcr_protocol::{
     BRIDGE_SCHEMA_VERSION, BridgeOperation, BridgeReply, BridgeRequest, BridgeSoundFailure,
@@ -988,7 +988,8 @@ impl DesktopHost {
                             &operation,
                             || {
                                 cancelled()
-                                    || worker_channels.load(Ordering::Acquire) & CHANNEL_DESKTOP == 0
+                                    || worker_channels.load(Ordering::Acquire) & CHANNEL_DESKTOP
+                                        == 0
                             },
                         );
                         if !cancelled()
@@ -1114,12 +1115,8 @@ fn run_host(mut command: Command, timeout: Duration, cancelled: impl Fn() -> boo
 }
 
 #[cfg(target_os = "macos")]
-fn bridge_client_path(
-    home: Option<&std::ffi::OsStr>,
-    profile: BridgeProfile,
-) -> Option<PathBuf> {
-    home
-        .filter(|home| !home.is_empty())
+fn bridge_client_path(home: Option<&std::ffi::OsStr>, profile: BridgeProfile) -> Option<PathBuf> {
+    home.filter(|home| !home.is_empty())
         .map(|home| profile.client_path(std::path::Path::new(home)))
 }
 
@@ -2567,7 +2564,9 @@ printf '{{"schema":{},"server_wire":{},"status":"%s"%s}}\n' "$status" "$extra"
         std::fs::create_dir_all(client.parent().unwrap()).unwrap();
         let guard = match profile {
             BridgeProfile::Production => "[ \"$1\" = '--client' ] && [ \"$#\" = 1 ] || exit 99",
-            BridgeProfile::LocalDevelopment => "[ \"$1\" = '--client' ] && [ \"$2\" = '--local-development' ] && [ \"$#\" = 2 ] || exit 99",
+            BridgeProfile::LocalDevelopment => {
+                "[ \"$1\" = '--client' ] && [ \"$2\" = '--local-development' ] && [ \"$#\" = 2 ] || exit 99"
+            }
         };
         let script = std::fs::read_to_string(&source).unwrap().replace(
             "[ \"$1\" = '--client' ] && [ \"$#\" = 1 ] || exit 99",
@@ -2576,17 +2575,23 @@ printf '{{"schema":{},"server_wire":{},"status":"%s"%s}}\n' "$status" "$extra"
         std::fs::write(&client, script).unwrap();
         std::fs::set_permissions(&client, std::fs::Permissions::from_mode(0o755)).unwrap();
         for extension in ["status", "settings", "authorize"] {
-            std::fs::copy(source.with_extension(extension), client.with_extension(extension)).unwrap();
+            std::fs::copy(
+                source.with_extension(extension),
+                client.with_extension(extension),
+            )
+            .unwrap();
         }
         client
     }
 
     #[cfg(target_os = "macos")]
     fn host_status(host: &DesktopHost) -> BridgeReply {
-        host.controls.send(BridgeControl {
-            operation: BridgeOperation::Status,
-            state: Arc::new(AtomicU8::new(DELIVERY_ACTIVE)),
-        }).unwrap();
+        host.controls
+            .send(BridgeControl {
+                operation: BridgeOperation::Status,
+                state: Arc::new(AtomicU8::new(DELIVERY_ACTIVE)),
+            })
+            .unwrap();
         let update = host.updates.recv_timeout(Duration::from_secs(3)).unwrap();
         assert_eq!(update.operation, BridgeOperation::Status);
         update.reply
@@ -2597,17 +2602,43 @@ printf '{{"schema":{},"server_wire":{},"status":"%s"%s}}\n' "$status" "$extra"
     fn bridge_production_constructor_selects_one_fixed_profile_and_guarded_client() {
         use std::ffi::OsStr;
         for (opt_in, profile, expected_status, expected_args) in [
-            (None, BridgeProfile::Production, BridgeStatus::Denied, "--client\n"),
-            (Some(OsStr::new("")), BridgeProfile::Production, BridgeStatus::Denied, "--client\n"),
-            (Some(OsStr::new("0")), BridgeProfile::Production, BridgeStatus::Denied, "--client\n"),
-            (Some(OsStr::new("1")), BridgeProfile::LocalDevelopment, BridgeStatus::Available, "--client\n--local-development\n"),
+            (
+                None,
+                BridgeProfile::Production,
+                BridgeStatus::Denied,
+                "--client\n",
+            ),
+            (
+                Some(OsStr::new("")),
+                BridgeProfile::Production,
+                BridgeStatus::Denied,
+                "--client\n",
+            ),
+            (
+                Some(OsStr::new("0")),
+                BridgeProfile::Production,
+                BridgeStatus::Denied,
+                "--client\n",
+            ),
+            (
+                Some(OsStr::new("1")),
+                BridgeProfile::LocalDevelopment,
+                BridgeStatus::Available,
+                "--client\n--local-development\n",
+            ),
         ] {
             let home = tempfile::tempdir().unwrap();
             let production = profile_fake_bridge(home.path(), BridgeProfile::Production, "denied");
-            let local = profile_fake_bridge(home.path(), BridgeProfile::LocalDevelopment, "available");
+            let local =
+                profile_fake_bridge(home.path(), BridgeProfile::LocalDevelopment, "available");
             let host = DesktopHost::start_with_environment(
-                None, CHANNEL_DESKTOP, None, Some(home.path().as_os_str()), opt_in,
-            ).unwrap();
+                None,
+                CHANNEL_DESKTOP,
+                None,
+                Some(home.path().as_os_str()),
+                opt_in,
+            )
+            .unwrap();
             assert_eq!(host_status(&host).status, expected_status);
             drop(host);
             let (selected, other) = if profile == BridgeProfile::Production {
@@ -2617,7 +2648,10 @@ printf '{{"schema":{},"server_wire":{},"status":"%s"%s}}\n' "$status" "$extra"
             };
             assert_eq!(bridge_requests(selected).len(), 1);
             assert!(bridge_requests(other).is_empty());
-            assert_eq!(std::fs::read_to_string(selected.with_extension("arguments")).unwrap(), expected_args);
+            assert_eq!(
+                std::fs::read_to_string(selected.with_extension("arguments")).unwrap(),
+                expected_args
+            );
             assert!(!other.with_extension("arguments").exists());
         }
     }
@@ -2629,9 +2663,18 @@ printf '{{"schema":{},"server_wire":{},"status":"%s"%s}}\n' "$status" "$extra"
         use std::os::unix::ffi::OsStrExt;
         let home = tempfile::tempdir().unwrap();
         let production = profile_fake_bridge(home.path(), BridgeProfile::Production, "available");
-        for opt_in in [OsStr::new("true"), OsStr::new("01"), OsStr::new(" 1"), OsStr::from_bytes(b"\xff")] {
+        for opt_in in [
+            OsStr::new("true"),
+            OsStr::new("01"),
+            OsStr::new(" 1"),
+            OsStr::from_bytes(b"\xff"),
+        ] {
             let result = DesktopHost::start_with_environment(
-                None, CHANNEL_DESKTOP, None, Some(home.path().as_os_str()), Some(opt_in),
+                None,
+                CHANNEL_DESKTOP,
+                None,
+                Some(home.path().as_os_str()),
+                Some(opt_in),
             );
             assert!(result.is_err());
         }
@@ -2645,8 +2688,13 @@ printf '{{"schema":{},"server_wire":{},"status":"%s"%s}}\n' "$status" "$extra"
         let home = tempfile::tempdir().unwrap();
         let production = profile_fake_bridge(home.path(), BridgeProfile::Production, "available");
         let host = DesktopHost::start_with_environment(
-            None, CHANNEL_DESKTOP, None, Some(home.path().as_os_str()), Some(std::ffi::OsStr::new("1")),
-        ).unwrap();
+            None,
+            CHANNEL_DESKTOP,
+            None,
+            Some(home.path().as_os_str()),
+            Some(std::ffi::OsStr::new("1")),
+        )
+        .unwrap();
         assert_eq!(host_status(&host).status, BridgeStatus::Failed);
         drop(host);
         assert!(bridge_requests(&production).is_empty());
@@ -2662,12 +2710,20 @@ printf '{{"schema":{},"server_wire":{},"status":"%s"%s}}\n' "$status" "$extra"
         std::fs::create_dir_all(local.parent().unwrap()).unwrap();
         std::fs::copy(&production, &local).unwrap();
         let host = DesktopHost::start_with_environment(
-            None, CHANNEL_DESKTOP, None, Some(home.path().as_os_str()), Some(std::ffi::OsStr::new("1")),
-        ).unwrap();
+            None,
+            CHANNEL_DESKTOP,
+            None,
+            Some(home.path().as_os_str()),
+            Some(std::ffi::OsStr::new("1")),
+        )
+        .unwrap();
         assert_eq!(host_status(&host).status, BridgeStatus::Failed);
         drop(host);
         assert!(bridge_requests(&production).is_empty());
-        assert!(bridge_requests(&local).is_empty(), "wrong mode must refuse before reading the request");
+        assert!(
+            bridge_requests(&local).is_empty(),
+            "wrong mode must refuse before reading the request"
+        );
         assert!(!local.with_extension("arguments").exists());
     }
 
@@ -2679,12 +2735,20 @@ printf '{{"schema":{},"server_wire":{},"status":"%s"%s}}\n' "$status" "$extra"
         let production = profile_fake_bridge(home.path(), BridgeProfile::Production, "available");
         let mut d = dashboard();
         install_fake_bridge(&mut d, local.clone());
-        deliver(&mut d, snapshot(2, "local-turn", AgentActivity::ResponseReady));
+        deliver(
+            &mut d,
+            snapshot(2, "local-turn", AgentActivity::ResponseReady),
+        );
         let notification = d.desktop.pending.pop_front().unwrap();
         assert!(notification.navigation.is_some());
         let host = DesktopHost::start_with_environment(
-            None, CHANNEL_DESKTOP, None, Some(home.path().as_os_str()), Some(std::ffi::OsStr::new("1")),
-        ).unwrap();
+            None,
+            CHANNEL_DESKTOP,
+            None,
+            Some(home.path().as_os_str()),
+            Some(std::ffi::OsStr::new("1")),
+        )
+        .unwrap();
         assert!(host.send(Delivery {
             notification,
             state: Arc::new(AtomicU8::new(DELIVERY_ACTIVE)),
@@ -2692,10 +2756,19 @@ printf '{{"schema":{},"server_wire":{},"status":"%s"%s}}\n' "$status" "$extra"
         }));
         let update = host.updates.recv_timeout(Duration::from_secs(3)).unwrap();
         assert_eq!(update.reply.status, BridgeStatus::Submitted);
-        assert!(matches!(update.operation, BridgeOperation::Deliver { sound: None, .. }));
+        assert!(matches!(
+            update.operation,
+            BridgeOperation::Deliver { sound: None, .. }
+        ));
         drop(host);
-        assert!(matches!(bridge_requests(&local)[0].op, BridgeOperation::Deliver { .. }));
-        assert_eq!(std::fs::read_to_string(local.with_extension("arguments")).unwrap(), "--client\n--local-development\n");
+        assert!(matches!(
+            bridge_requests(&local)[0].op,
+            BridgeOperation::Deliver { .. }
+        ));
+        assert_eq!(
+            std::fs::read_to_string(local.with_extension("arguments")).unwrap(),
+            "--client\n--local-development\n"
+        );
         assert!(bridge_requests(&production).is_empty());
     }
 
