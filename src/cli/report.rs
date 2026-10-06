@@ -10,6 +10,15 @@ use super::{AppResult, RuntimeError};
 
 pub(super) fn run_report(command: ReportCommand) -> AppResult<()> {
     match command {
+        ReportCommand::Hermes { stdin: _ } => {
+            if std::env::var_os("OVRCR_AGENT_SOCKET").is_some() {
+                let deadline = Instant::now() + Duration::from_secs(2);
+                if let Ok(input) = app_report::read_hook_stdin_limited(deadline, 8 * 1024 * 1024) {
+                    let _ = app_report::send_hermes_hook(&input, deadline);
+                }
+            }
+            Ok(())
+        }
         ReportCommand::CursorAgent { stdin: _ } => {
             if std::env::var_os("OVRCR_AGENT_SOCKET").is_some() {
                 let deadline = Instant::now() + Duration::from_secs(1);

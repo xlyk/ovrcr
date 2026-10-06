@@ -2227,6 +2227,9 @@ impl ServerState {
                     Some(ovrcr_protocol::ConversationReference::Grok(reference)) => {
                         Some(&reference.history)
                     }
+                    Some(ovrcr_protocol::ConversationReference::Hermes(reference)) => {
+                        Some(&reference.state_db)
+                    }
                     None => None,
                 };
                 history.is_some_and(|path| {

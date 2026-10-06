@@ -6,6 +6,7 @@ pub mod collector;
 pub mod cursor;
 pub mod extension;
 pub mod grok;
+pub mod hermes;
 pub mod omp;
 pub mod pi;
 pub mod reporter;
@@ -215,6 +216,10 @@ pub fn claude_activity(input: &[u8]) -> Result<Option<AgentActivity>> {
 }
 
 pub fn read_hook_stdin(deadline: Instant) -> Result<Vec<u8>> {
+    read_hook_stdin_limited(deadline, HOOK_INPUT_LIMIT)
+}
+
+pub fn read_hook_stdin_limited(deadline: Instant, limit: usize) -> Result<Vec<u8>> {
     let stdin = io::stdin();
     let stdin = stdin.lock();
     let fd = stdin.as_raw_fd();
@@ -240,7 +245,7 @@ pub fn read_hook_stdin(deadline: Instant) -> Result<Vec<u8>> {
             return Err(error).context("read hook stdin");
         }
         input.extend_from_slice(&buffer[..count as usize]);
-        if input.len() > HOOK_INPUT_LIMIT {
+        if input.len() > limit {
             bail!("hook input exceeds limit");
         }
     }
@@ -544,6 +549,20 @@ pub fn send_claude_statusline(input: &[u8], deadline: Instant) -> Result<()> {
 }
 pub fn send_codex_hook(input: &[u8], deadline: Instant) -> Result<()> {
     send_payload(input, "codex", "codex-hook", deadline)
+}
+pub fn send_hermes_hook(input: &[u8], deadline: Instant) -> Result<()> {
+    let state_db = ovrcr_runtime::hermes_recovery::state_db()
+        .ok()
+        .and_then(|path| path.to_str().map(str::to_owned));
+    let Some(notice) = hermes::notice_from_hook(input, state_db.as_deref()) else {
+        return Ok(());
+    };
+    send_payload(
+        &serde_json::to_vec(&notice)?,
+        "hermes",
+        "hermes-hook",
+        deadline,
+    )
 }
 pub fn send_cursor_hook(input: &[u8], deadline: Instant) -> Result<()> {
     let Some(startup) = cursor::startup(input) else {

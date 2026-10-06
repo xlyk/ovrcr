@@ -1,0 +1,61 @@
+󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ────────────────────────────│pid: 74420  elapsed: 0m  agent unknown  local (#1)                                                                            
+  󰘬 main                          root │local (#1)                                                                                                                    
+▌    $ local                           │consigint ›                                                                                                                   
+  󰘬 gui-consigint-auth-handoff         │                                                                                                                              
+     $ local                           │                                                                                                                              
+     - review auth handoff    grok:4.6 │                                                                                                                              
+  󰘬 gui-consigint-worktree-lifecycle   │                                                                                                                              
+     $ local                           │                                                                                                                              
+     - implement lif…  claude:sonnet-4 │                                                                                                                              
+     - review websocke…  codex:gpt-5.4 │                                                                                                                              
+     - plan snapshot res…  pi:grok-4.6 │                                                                                                                              
+                                       │                                                                                                                              
+ SPACELIFT-AGENT ──────────────────────│                                                                                                                              
+  󰘬 main                          root │                                                                                                                              
+     $ local                           │                                                                                                                              
+  󰘬 gui-spacelift-agent-pipeline-progr…│                                                                                                                              
+     $ local                           │                                                                                                                              
+     - build pipeline …  claude:opus-4 │                                                                                                                              
+  󰘬 gui-spacelift-agent-scope-quality  │                                                                                                                              
+     $ local                           │                                                                                                                              
+     - review scope qu…  codex:gpt-5.4 │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+                                       │                                                                                                                              
+ QUOTA LEFT ───────────────────────────│                                                                                                                              
+Claude · unavailable · retry 56m       │                                                                                                                              
+Codex · usage off                      │                                                                                                                              
+Grok · usage off                       │                                                                                                                              
+Cursor · usage off                     │                                                                                                                              
+                                       │                                                                                                                              
+BROWSE  Space Menu  : Search  ? Help                                                                                                                                  
