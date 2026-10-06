@@ -1963,11 +1963,16 @@ fn agent_run_adds_default_auto_trust_only_when_the_permission_family_is_absent()
         run("claude", &["--", "ship it"]),
         expect(&["--dangerously-skip-permissions", "--", "ship it"])
     );
-    assert_eq!(run("codex", &[]), expect(&["--full-auto"]));
+    assert_eq!(run("codex", &[]), expect(&["--approve-for-me"]));
     assert_eq!(
         run("codex", &["-a", "on-request"]),
         expect(&["-a", "on-request"])
     );
+    assert_eq!(
+        run("codex", &["--approve-for-me"]),
+        expect(&["--approve-for-me"])
+    );
+    assert_eq!(run("codex", &["--full-auto"]), expect(&["--full-auto"]));
     assert_eq!(
         run("codex", &["--dangerously-bypass-hook-trust"]),
         expect(&["--dangerously-bypass-hook-trust"])
