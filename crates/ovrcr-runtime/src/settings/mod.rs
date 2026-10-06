@@ -7,11 +7,13 @@
 //! defaults. Nothing here fails: a settings mistake never stops the Server.
 
 use ovrcr_protocol::{
-    AgentOverride, AutomaticLocalTerminals, LaunchChoice, NativeCommand, SettingOwner, SettingRow,
-    SettingSource, Settings, SettingsFinding, SettingsReport,
+    AgentOverride, AutomaticLocalTerminals, LaunchChoice, NativeCommand, SettingRow, Settings,
+    SettingsFinding, SettingsReport,
 };
+#[cfg(test)]
+use ovrcr_protocol::{SettingOwner, SettingSource};
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -23,10 +25,7 @@ pub use write::set;
 /// a file only; there is no per-setting environment layer.
 pub const DOCUMENT_ENV: &str = "OVRCR_DASHBOARD_CONFIG";
 
-pub use ovrcr_protocol::QUOTA_OFF;
-pub const TITLES_OFF: &str =
-    "Automatic titles off: set `title_model = \"provider/model\"` in dashboard.toml";
-pub const DESKTOP_NOTIFICATIONS_OFF: &str = "Desktop alerts off: set `desktop_notifications = true` in dashboard.toml (needs OS notification permission)";
+pub use ovrcr_protocol::{DESKTOP_NOTIFICATIONS_OFF, QUOTA_OFF, TITLES_OFF};
 
 /// `OVRCR_DASHBOARD_CONFIG`, else `dashboard.toml` in the instance directory.
 pub fn document_path(home: &Path) -> PathBuf {
@@ -204,13 +203,13 @@ impl Loader<'_> {
             let roots = roots.iter().map(|root| expand_tilde(root)).collect();
             self.accept("picker_roots", &mut settings.picker_roots, roots);
         }
-        self.drop_unknown_fields(table, "agents", &["name", "argv"]);
+        self.drop_unknown_fields(table, "agents", element_fields("agents"));
         if let Some(agents) =
             self.take_array::<AgentOverride>(table, "agents", "a table { name, argv }")
         {
             self.accept("agents", &mut settings.agents, agents);
         }
-        self.drop_unknown_fields(table, "launch_choices", &["kind", "preset"]);
+        self.drop_unknown_fields(table, "launch_choices", element_fields("launch_choices"));
         if let Some(choices) = self.take_table::<DocumentLaunchChoice>(
             table,
             "launch_choices",
@@ -540,7 +539,7 @@ enum Segment {
 }
 
 /// The document's spelling of a launch choice: `kind = "Agent"`, `preset = "…"`.
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize)]
 #[serde(tag = "kind", content = "preset", deny_unknown_fields)]
 enum DocumentLaunchChoice {
     Terminal,
@@ -552,15 +551,6 @@ impl From<DocumentLaunchChoice> for LaunchChoice {
         match choice {
             DocumentLaunchChoice::Terminal => Self::Terminal,
             DocumentLaunchChoice::Agent(preset) => Self::Agent(preset),
-        }
-    }
-}
-
-impl From<&LaunchChoice> for DocumentLaunchChoice {
-    fn from(choice: &LaunchChoice) -> Self {
-        match choice {
-            LaunchChoice::Terminal => Self::Terminal,
-            LaunchChoice::Agent(preset) => Self::Agent(preset.clone()),
         }
     }
 }
@@ -617,154 +607,21 @@ fn expand_tilde(path: &str) -> PathBuf {
     }
 }
 
-/// Rows in the order `docs/dashboard.md` documents the settings.
+/// Rows from the settings catalog, in the order `docs/dashboard.md` documents.
 fn rows(settings: &Settings, set: &HashSet<String>) -> Vec<SettingRow> {
-    use SettingOwner::{Dashboard, Server};
-    let quota = &settings.quota;
-    let path = |path: &Path| Some(path.display().to_string());
-    let mut rows = vec![
-        row(
-            "desktop_notifications",
-            Dashboard,
-            display(&settings.desktop_notifications),
-            (!settings.desktop_notifications).then_some(DESKTOP_NOTIFICATIONS_OFF),
-        ),
-        row(
-            "ready_sound",
-            Dashboard,
-            display(&settings.ready_sound),
-            None,
-        ),
-        row(
-            AutomaticLocalTerminals::KEY,
-            Server,
-            Some(settings.automatic_local_terminals.as_str().into()),
-            None,
-        ),
-        row(
-            "title_model",
-            Server,
-            settings.title_model.clone(),
-            settings.title_model.is_none().then_some(TITLES_OFF),
-        ),
-        row(
-            "branch_prefix",
-            Dashboard,
-            Some(settings.branch_prefix.clone()),
-            None,
-        ),
-        row(
-            "save_uncommitted_work",
-            Server,
-            display(&settings.save_uncommitted_work),
-            (!settings.save_uncommitted_work).then_some(ovrcr_protocol::SAVE_UNCOMMITTED_WORK_OFF),
-        ),
-        row(
-            "picker_roots",
-            Dashboard,
-            display(&settings.picker_roots),
-            None,
-        ),
-        row("agents", Dashboard, display(&settings.agents), None),
-        row(
-            "launch_choices",
-            Dashboard,
-            display(
-                &settings
-                    .launch_choices
-                    .iter()
-                    .map(|(project, choice)| (project, DocumentLaunchChoice::from(choice)))
-                    .collect::<BTreeMap<_, _>>(),
-            ),
-            None,
-        ),
-        row(
-            "quota.enabled",
-            Server,
-            display(&quota.enabled),
-            (!quota.enabled).then_some(QUOTA_OFF),
-        ),
-        row(
-            "quota.claude.probe",
-            Server,
-            display(&quota.claude_probe),
-            (!quota.claude_probe).then_some(ovrcr_protocol::CLAUDE_PROBE_DESCRIPTION),
-        ),
-        row(
-            "quota.codex.command",
-            Server,
-            path(&quota.codex.command),
-            None,
-        ),
-        row(
-            "quota.codex.home",
-            Server,
-            quota.codex.home.as_deref().and_then(path),
-            None,
-        ),
-        row(
-            "quota.grok.command",
-            Server,
-            path(&quota.grok.command),
-            None,
-        ),
-        row(
-            "quota.grok.home",
-            Server,
-            quota.grok.home.as_deref().and_then(path),
-            None,
-        ),
-        row(
-            "quota.cursor.dashboard",
-            Server,
-            display(&quota.cursor.dashboard),
-            (!quota.cursor.dashboard).then_some(ovrcr_protocol::CURSOR_QUOTA_DESCRIPTION),
-        ),
-        row(
-            "quota.cursor.state_db",
-            Server,
-            quota.cursor.state_db.as_deref().and_then(path),
-            None,
-        ),
-    ];
+    let owned;
     let defaults = if set.is_empty() {
-        None
+        settings
     } else {
-        Some(self::rows(&defaults(), &HashSet::new()))
+        owned = defaults();
+        &owned
     };
-    for (index, row) in rows.iter_mut().enumerate() {
-        row.default = match &defaults {
-            Some(defaults) => defaults[index].value.clone(),
-            None => row.value.clone(),
-        };
-        if set.contains(&row.key) {
-            row.source = SettingSource::Document;
-        }
-    }
-    rows
+    ovrcr_protocol::setting_rows(settings, defaults, set)
 }
 
-fn row(
-    key: &str,
-    owner: SettingOwner,
-    value: Option<String>,
-    off_state: Option<&str>,
-) -> SettingRow {
-    SettingRow {
-        key: key.into(),
-        owner,
-        value,
-        source: SettingSource::Default,
-        default: None,
-        off_state: off_state.map(str::to_owned),
-    }
-}
-
-/// TOML text for a non-string value.
-fn display(value: &impl Serialize) -> Option<String> {
-    toml::Value::try_from(value)
-        .ok()
-        .map(|value| value.to_string())
+fn element_fields(path: &str) -> &'static [&'static str] {
+    ovrcr_protocol::element_fields(path)
+        .unwrap_or_else(|| panic!("{path} has no element fields in the settings catalog"))
 }
 
 #[cfg(test)]
@@ -933,11 +790,11 @@ state_db = "/tmp/cursor/state.vscdb"
             off,
             vec![
                 ("desktop_notifications", DESKTOP_NOTIFICATIONS_OFF),
-                ("title_model", TITLES_OFF),
                 (
                     "save_uncommitted_work",
                     ovrcr_protocol::SAVE_UNCOMMITTED_WORK_OFF
                 ),
+                ("title_model", TITLES_OFF),
                 (
                     "quota.claude.probe",
                     ovrcr_protocol::CLAUDE_PROBE_DESCRIPTION
@@ -955,12 +812,10 @@ state_db = "/tmp/cursor/state.vscdb"
                 "desktop_notifications",
                 "ready_sound",
                 "automatic_local_terminals",
-                "title_model",
-                "branch_prefix",
                 "save_uncommitted_work",
+                "branch_prefix",
                 "picker_roots",
-                "agents",
-                "launch_choices",
+                "title_model",
                 "quota.enabled",
                 "quota.claude.probe",
                 "quota.codex.command",
@@ -969,6 +824,8 @@ state_db = "/tmp/cursor/state.vscdb"
                 "quota.grok.home",
                 "quota.cursor.dashboard",
                 "quota.cursor.state_db",
+                "agents",
+                "launch_choices",
             ]
         );
     }
