@@ -170,7 +170,10 @@ class InstallerTests(unittest.TestCase):
             intercepted = re.findall(r"(?m)^\s*" + command + r"\s", script)
             if not mentions or len(mentions) != len(intercepted):
                 raise RuntimeError("Installer no longer uses exclusively intercepted " + command)
-        if re.search(r"\bsecurity\b", script):
+        # The required entitlement contains this word; exempt its exact quoted
+        # key, while retaining detection of bare and absolute identity queries.
+        identity_commands = script.replace("'com.apple.security.automation.apple-events'", "")
+        if re.search(r"\bsecurity\b", identity_commands):
             raise RuntimeError("Installer must never discover or query signing identities")
         cls.schema = cls.version("bridge.rs", "BRIDGE_SCHEMA_VERSION")
         cls.wire = cls.version("codec.rs", "PROTOCOL_VERSION")
