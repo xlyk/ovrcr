@@ -52,9 +52,14 @@ jobs:
         run: |
           cargo build -p ovrcr --bin ovrcr
           sh scripts/package-startup.sh target/startup-assets target/debug/ovrcr
+          python3 -I native/bridge/check-local-startup.py
           python3 -I native/bridge/check-startup-package.py target/startup-assets
           python3 -I native/bridge/check-packaging.py 'target/startup-assets/OVRCR Bridge.app'
           python3 -I native/bridge/check-guards.py 'target/startup-assets/OVRCR Bridge.app'
+          sh scripts/package-startup.sh --local-development target/startup-assets-local-development "$PWD/target/debug/ovrcr"
+          python3 -I native/bridge/check-startup-package.py --local-development target/startup-assets-local-development
+          python3 -I native/bridge/check-packaging.py --local-development 'target/startup-assets-local-development/OVRCR Bridge Local.app'
+          python3 -I native/bridge/check-guards.py --local-development 'target/startup-assets-local-development/OVRCR Bridge Local.app'
       - uses: actions/setup-node@v4
         with:
           node-version: 22

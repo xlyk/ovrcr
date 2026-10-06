@@ -34,7 +34,7 @@ reviewed CLI as its second argument; `just run` supplies the CLI it just built.
 The relocated checks preserve installer refusal without an identity and reject
 changed helper metadata, missing entitlements, altered purpose and sound bytes.
 
-Startup defaults to no. An accepted install uses the single valid non-ad-hoc
+Production startup defaults to no. An accepted install uses the single valid non-ad-hoc
 signing identity when available, or `OVRCR_BRIDGE_SIGNING_IDENTITY` when set.
 Missing or ambiguous identities leave the app unchanged and produce a warning.
 Optional setup failures do not prevent Dashboard attachment. No notification
@@ -249,3 +249,71 @@ checks use early guards or injected permission/current-owner/selection doubles.
 No such pass proves native consent, session selection or visible focus. Production
 application tests exercise the actual Server, CLI, PTY Dashboard/palette and a
 fake native host. Native screenshots/accessibility acceptance remains unrun.
+
+## Local development without Developer ID or Keychain access
+
+Set `OVRCR_BRIDGE_LOCAL_DEVELOPMENT=1` to select the explicit local profile.
+Unset, empty or `0` retains production behavior; other values are refused.
+Startup and Dashboard use the same selection. This is a launch option, not a
+saved notification or sound preference.
+
+The local app is **OVRCR Local**, with bundle ID `com.ovrcr.bridge.local` and
+destination `~/Applications/OVRCR Bridge Local.app`. Its runtime assets live in
+`~/.local/lib/ovrcr-local-development`, separate from production assets.
+The actual bundle ID and user ID separate the native IPC endpoint. Both client
+profiles reject a mismatched local identity or marker before reading stdin,
+launching an app or contacting an endpoint; local clients pass
+`--client --local-development`. A missing or invalid local app never selects
+the production app.
+
+Package the local assets without installing or launching the native app:
+
+```sh
+scripts/package-startup.sh --local-development target/local-startup /absolute/reviewed/path/ovrcr
+python3 -I native/bridge/check-startup-package.py --local-development target/local-startup
+python3 -I native/bridge/check-packaging.py --local-development 'target/local-startup/OVRCR Bridge Local.app'
+python3 -I native/bridge/check-guards.py --local-development 'target/local-startup/OVRCR Bridge Local.app'
+```
+
+The compiler can produce ordinary ad-hoc Mach-O signatures. These commands do
+not seal the enclosing app with an installation signature, install it, register
+it, request permission or send an admitted native request.
+
+For local use after installation is separately authorized:
+
+```sh
+OVRCR_BRIDGE_LOCAL_DEVELOPMENT=1 just run
+```
+
+This builds the CLI and local payload, refreshes their separate runtime assets
+and launches the client. Interactive startup offers explicit local installation.
+The local installer uses ad-hoc signing, without Developer ID, a certificate,
+private signing key, Keychain identity discovery or a secure timestamp. It
+signs only the enclosing app and preserves the callback helper's exact bytes.
+Expected entitlements, strict nested verification, resource validation, CLI
+digest, owner/lifetime/run fencing and all deadlines still apply.
+
+Local installation is fresh-only. It refuses an existing destination, including
+an invalid app or symlink, and publishes exclusively so a concurrent destination
+cannot be replaced. A publication failure retains the owned staging directory
+for investigation. A matching installed app can be used without re-signing;
+an invalid or changed local app is not repaired or replaced automatically.
+No continuity of permission identity across ad-hoc rebuilds is claimed.
+Production identity selection and designated-requirement update checks retain
+their existing behavior.
+
+Use a matching CLI and Server revision for native click checks; a CLI rebuild
+does not authorize bypassing the sealed-helper digest or restarting a live
+Server. No local fallback changes `LSUIElement`, sends AppleScript notifications,
+plays independent audio, resets permission or retries authorization.
+
+Local native usability remains unverified. An earlier ad-hoc Dock-less probe
+was refused notification authorization; this source mode does not establish
+that the current OS will admit it. Start any separately approved native check
+with status and at most one bounded authorization request when undetermined,
+then stop on failure. Actual Ready/Input banner visibility, listening to the
+selected sounds, click-to-Browse/activation and optional iTerm control require
+observed evidence. Notification permission and explicit iTerm Automation
+consent are separate; ordinary clicks never request Automation consent.
+Local-mode evidence does not establish Developer ID distribution, notarization
+or signed-update continuity.
