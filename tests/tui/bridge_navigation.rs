@@ -1,5 +1,5 @@
-//! Public Dashboard dispatch for Server-confirmed Bridge navigation. Real
-//! callback/socket/PTY coverage belongs to the desktop fixture in server_lifecycle.
+//! Public Dashboard dispatch for Server-confirmed Bridge navigation. Real callback
+//! digest admission/socket/PTY coverage belongs to the desktop fixture in server_lifecycle.
 
 use super::*;
 use ovrcr::protocol::{
@@ -11,23 +11,22 @@ const LIFETIME: &str = "10000000-0000-4000-8000-000000000001";
 const NAVIGATION: &str = "20000000-0000-4000-8000-000000000002";
 
 fn context() -> BridgeContext {
-    static CALLBACK: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
-    let (executable, digest) = CALLBACK.get_or_init(|| {
-        let executable = std::fs::canonicalize(env!("CARGO_BIN_EXE_ovrcr"))
-            .expect("the production callback executable must exist");
-        let digest = ovrcr::server::bridge_executable_sha256(
-            &executable,
-            std::time::Instant::now() + std::time::Duration::from_secs(5),
-        )
-        .expect("derive the actual callback executable digest");
-        (executable.to_str().unwrap().to_owned(), digest)
-    });
-    BridgeContext {
-        server_socket: "/private/bridge-fixture/server.sock".into(),
-        callback_executable: executable.clone(),
-        callback_executable_sha256: digest.clone(),
-        server_lifetime: LIFETIME.into(),
-    }
+    static CONTEXT: std::sync::OnceLock<BridgeContext> = std::sync::OnceLock::new();
+    CONTEXT
+        .get_or_init(|| {
+            let root = tempfile::tempdir().expect("private Dashboard context fixture");
+            // Dashboard dispatch compares serialized context identity, not file bytes.
+            // These private paths have no executable/socket; the scratch root is removed.
+            let context = BridgeContext {
+                server_socket: root.path().join("server.sock").to_str().unwrap().into(),
+                callback_executable: root.path().join("ovrcr").to_str().unwrap().into(),
+                callback_executable_sha256: "0".repeat(64),
+                server_lifetime: LIFETIME.into(),
+            };
+            assert!(context.validate(), "pure context must remain structurally valid");
+            context
+        })
+        .clone()
 }
 
 fn ready_dashboard() -> Dashboard {

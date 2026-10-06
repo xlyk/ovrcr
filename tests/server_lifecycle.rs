@@ -11922,6 +11922,250 @@ fn desktop_navigation_rows(
 
 #[test]
 #[cfg(target_os = "macos")]
+fn desktop_notifications_bridge_click_preserves_queued_wip_shutdown_questions() {
+    let _guard = env_lock();
+    let fixture = bridge_control_fixture();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let server_pid = fixture.server_pid().expect("real binary Server");
+    let mut dashboard = DesktopAlertDashboard::start(
+        &fixture,
+        Some(
+            "desktop_notifications = true\nready_sound = false\niterm_focus = false\nsave_uncommitted_work = false\nautomatic_local_terminals = \"off\"\nquota.enabled = false\nquota.claude_probe = false\n",
+        ),
+    );
+    dashboard.select("setup", "HOOK_READY");
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:wip-click", "Stop:root:wip-click"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let deliveries = dashboard.wait_bridge_delivery(1);
+    let ticket = desktop_navigation_ticket(&deliveries[0]);
+    assert_eq!(deliveries[0]["op"]["title"], "OVRCR · response ready");
+    assert_eq!(deliveries[0]["op"]["sound"], serde_json::Value::Null);
+    assert_eq!(ticket["session"], summary.id.0);
+    assert_eq!(ticket["run"], summary.run.0);
+
+    // The exact captured ticket first succeeds through the real CLI/Server/
+    // Dashboard view handshake, so a later ignored result cannot be explained
+    // by an invalid digest, old lifetime or absent Dashboard owner.
+    desktop_navigation_applied(
+        desktop_navigation_click(&fixture, &ticket, "before-wip-shutdown"),
+        &dashboard,
+    );
+    dashboard
+        .wait_screen(|screen| screen.contains("CODEX_CALLBACK=1") && screen.contains("BROWSE"));
+    dashboard.select("setup", "HOOK_READY");
+    let before = fixture.session_summary(summary.id);
+    assert_eq!(before.run, summary.run);
+    assert!(before.unread.is_some());
+    let rows = desktop_navigation_rows(&fixture);
+
+    // Only this fixture's local bare origin can receive a WIP ref. Capture
+    // actual workspace IDs/paths and Git HEADs instead of manufacturing events.
+    let origin = fixture.root.path().join("wip-click-origin.git");
+    std::fs::create_dir(&origin).unwrap();
+    live::git(&origin, &["init", "--bare"]);
+    live::git(
+        &fixture.repo,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    assert_eq!(
+        live::git(&fixture.repo, &["remote", "get-url", "origin"]).trim(),
+        origin.to_str().unwrap()
+    );
+    live::git(&fixture.repo, &["push", "origin", "main"]);
+    for (id, branch) in [
+        ("wip-one", "feature/wip-click-one"),
+        ("wip-two", "feature/wip-click-two"),
+    ] {
+        assert_eq!(
+            fixture.request(Request::CreateWorkspace {
+                project: PROJECT.into(),
+                id: id.into(),
+                branch: BranchRequest::New {
+                    branch: branch.into(),
+                    base: "main".into(),
+                },
+            }),
+            Response::Ok
+        );
+    }
+    let Response::Hierarchy(hierarchy) = fixture.request(Request::List) else {
+        panic!("real workspace hierarchy unavailable");
+    };
+    let mut workspaces = hierarchy
+        .projects
+        .into_iter()
+        .filter(|project| project.name == PROJECT)
+        .flat_map(|project| project.workspaces)
+        .collect::<Vec<_>>();
+    for workspace in &workspaces {
+        assert!(
+            live::git(
+                &workspace.path,
+                &["status", "--porcelain", "--untracked-files=all"],
+            )
+            .is_empty(),
+            "only the two explicit writes below may make a worktree dirty: {}",
+            workspace.path.display()
+        );
+    }
+    workspaces.retain(|workspace| matches!(workspace.id.as_str(), "wip-one" | "wip-two"));
+    workspaces.sort_by(|left, right| left.name.cmp(&right.name));
+    assert_eq!(workspaces.len(), 2);
+    assert_ne!(workspaces[0].id, workspaces[1].id);
+    assert_eq!(workspaces[0].name, "feature/wip-click-one");
+    assert_eq!(workspaces[1].name, "feature/wip-click-two");
+    let checkout_state = |path: &Path| {
+        (
+            live::git(path, &["rev-parse", "HEAD"]),
+            live::git(path, &["symbolic-ref", "--short", "HEAD"]),
+            live::git(path, &["status", "--porcelain", "--untracked-files=all"]),
+        )
+    };
+    let mut saved_workspaces = Vec::new();
+    for workspace in &workspaces {
+        assert!(checkout_state(&workspace.path).2.is_empty());
+        let content = format!("unsaved {}\n", workspace.id);
+        std::fs::write(workspace.path.join("wip-question.txt"), &content).unwrap();
+        let state = checkout_state(&workspace.path);
+        assert!(state.2.contains("?? wip-question.txt"));
+        assert_eq!(state.1.trim(), workspace.name);
+        saved_workspaces.push((state, content));
+    }
+    let repo_before = checkout_state(&fixture.repo);
+    let local_refs_before = live::git(&fixture.repo, &["show-ref", "--heads"]);
+    let origin_refs_before = live::git(&origin, &["show-ref", "--heads"]);
+    let no_wip_refs = || {
+        for repo in [&fixture.repo, &origin] {
+            let refs = live::git(
+                repo,
+                &["for-each-ref", "--format=%(refname)", "refs/heads/wip/"],
+            );
+            assert!(refs.is_empty(), "no WIP save was chosen: {refs}");
+        }
+    };
+    no_wip_refs();
+    let first = format!("Save uncommitted work to origin/wip/{}?", workspaces[0].name);
+    let second = format!("Save uncommitted work to origin/wip/{}?", workspaces[1].name);
+
+    let socket = fixture.socket.clone();
+    let (sent, received) = std::sync::mpsc::channel();
+    let shutdown = thread::spawn(move || {
+        let response = request_with_timeout(
+            &socket,
+            901,
+            Request::Shutdown { kill: true },
+            Duration::from_secs(20),
+        );
+        let _ = sent.send(response);
+    });
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        dashboard.wait_screen(|screen| screen.contains(&first) && !screen.contains(&second));
+        assert!(matches!(
+            received.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+        desktop_navigation_ignored(desktop_navigation_click(
+            &fixture,
+            &ticket,
+            "queued-wip-shutdown",
+        ));
+
+        // Clear the VT100 model and request an actual new render, rather than
+        // accepting the question's pre-click screen as a visibility assertion.
+        dashboard.resize(179);
+        dashboard.wait_screen(|screen| {
+            screen.contains(&first)
+                && !screen.contains(&second)
+                && screen.contains("HOOK_READY")
+                && !screen.contains("CODEX_CALLBACK=1")
+        });
+        assert_eq!(fixture.server_pid(), Some(server_pid));
+        assert_eq!(desktop_navigation_rows(&fixture), rows);
+        let after = fixture.session_summary(summary.id);
+        assert_eq!(after.run, before.run);
+        assert_eq!(after.unread, before.unread);
+        assert_eq!(after.agent, before.agent);
+        assert!(
+            matches!(
+                received.try_recv(),
+                Err(std::sync::mpsc::TryRecvError::Empty)
+            ),
+            "click must not answer shutdown"
+        );
+        no_wip_refs();
+        assert!(!dashboard.record.with_extension("sound").exists());
+        assert!(!dashboard.record.with_extension("fallback").exists());
+
+        // Escape sends the ordinary exact AnswerWipSave(save=false). The
+        // production palette advances only on that request's matching Ok.
+        dashboard.send(b"\x1b");
+        dashboard.wait_screen(|screen| screen.contains(&second) && !screen.contains(&first));
+        assert!(
+            matches!(
+                received.try_recv(),
+                Err(std::sync::mpsc::TryRecvError::Empty)
+            ),
+            "the second question still requires its own answer"
+        );
+        no_wip_refs();
+        dashboard.send(b"\x1b");
+        assert_eq!(
+            received
+                .recv_timeout(Duration::from_secs(5))
+                .expect("bounded Shutdown response"),
+            Some(Response::Ok)
+        );
+    }));
+    // Release the claimed owner before Server teardown even on a failed screen
+    // or callback assertion, then join the bounded requester instead of leaving
+    // it waiting for a hidden question in the background.
+    drop(dashboard);
+    let deadline = Instant::now() + Duration::from_secs(22);
+    while !shutdown.is_finished() && Instant::now() < deadline {
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    let shutdown_joined = if shutdown.is_finished() {
+        shutdown.join().is_ok()
+    } else {
+        drop(shutdown);
+        false
+    };
+    if let Err(panic) = outcome {
+        if !shutdown_joined {
+            eprintln!("bounded WIP Shutdown requester did not join during failure cleanup");
+        }
+        std::panic::resume_unwind(panic);
+    }
+    assert!(shutdown_joined, "bounded WIP Shutdown requester must join");
+    let stop = fixture.join_within(Duration::from_secs(5));
+    assert!(
+        stop.is_finished(),
+        "explicit declines must complete Shutdown: {stop:?}"
+    );
+    assert!(!fixture.socket.exists());
+    no_wip_refs();
+    assert_eq!(
+        live::git(&fixture.repo, &["show-ref", "--heads"]),
+        local_refs_before
+    );
+    assert_eq!(
+        live::git(&origin, &["show-ref", "--heads"]),
+        origin_refs_before
+    );
+    assert_eq!(checkout_state(&fixture.repo), repo_before);
+    for (workspace, (state, content)) in workspaces.iter().zip(saved_workspaces) {
+        assert_eq!(checkout_state(&workspace.path), state);
+        assert_eq!(
+            std::fs::read_to_string(workspace.path.join("wip-question.txt")).unwrap(),
+            content
+        );
+    }
+}
+
+#[test]
+#[cfg(target_os = "macos")]
 fn desktop_notifications_bridge_click_lands_in_browse_without_reviewing_or_answering() {
     let _guard = env_lock();
     let fixture = bridge_control_fixture();
