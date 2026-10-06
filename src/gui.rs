@@ -452,7 +452,9 @@ impl Terminal {
                             Ok(0) => break,
                             Ok(count) => {
                                 parser.lock().unwrap().process(&buffer[..count]);
-                                context.request_repaint();
+                                if !stopping.load(Ordering::Relaxed) {
+                                    context.request_repaint();
+                                }
                             }
                             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
                                 continue;
@@ -464,7 +466,9 @@ impl Terminal {
                             }
                         }
                     }
-                    context.request_repaint();
+                    if !stopping.load(Ordering::Relaxed) {
+                        context.request_repaint();
+                    }
                 })?,
         );
         Ok(terminal)

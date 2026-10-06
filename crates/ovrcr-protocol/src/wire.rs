@@ -1408,6 +1408,16 @@ mod wire_snapshot {
             )),
         ));
         all.push((
+            "ConversationReference::Hermes".into(),
+            encode(&crate::ConversationReference::Hermes(
+                crate::HermesConversation {
+                    conversation: "20261006_101500_ab12cd".into(),
+                    executable: "/bin/hermes".into(),
+                    state_db: "/home/state.db".into(),
+                },
+            )),
+        ));
+        all.push((
             "WorkspaceRecord".into(),
             encode(&crate::WorkspaceRecord {
                 id: "stable".into(),
@@ -1489,13 +1499,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0427017301630168016c0104",
+            "2a0428017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0427017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0428017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -1526,18 +1536,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04270000"),
+        ("Response::NotificationNavigation", "0d04280000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0427017301630168016c0104",
+            "0e01016e0428017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010427017301630168016c0164",
+            "0f0107080901016901010428017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004270107080901016901010427017301630168016c0164",
+            "1004280107080901016901010428017301630168016c0164",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -1561,7 +1571,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0427017301630168016c0104",
+            "08016e0428017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -1691,6 +1701,10 @@ mod wire_snapshot {
         (
             "ConversationReference::Grok",
             "04066e61746976650e2f686973746f72792e6a736f6e6c",
+        ),
+        (
+            "ConversationReference::Hermes",
+            "051632303236313030365f3130313530305f6162313263640b2f62696e2f6865726d65730e2f686f6d652f73746174652e6462",
         ),
         (
             "WorkspaceRecord",

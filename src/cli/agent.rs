@@ -63,11 +63,7 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
         ),
     };
     let swallow_conflict = name != "claude";
-    // Hermes has no verified reporting adapter or conversation identity. Process
-    // supervision needs no reporting reservation and must not displace another reporter.
-    let mut lease = if name == "hermes" {
-        None
-    } else {
+    let mut lease = {
         ovrcr::report::reserve_invocation_for(provider(&name))
             .or_else(|error| {
                 if swallow_conflict {
@@ -90,8 +86,14 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
     ovrcr::protocol::apply_default_auto_trust(&name, &mut argv);
     let status = ovrcr::agent_runner::run_native(&argv, move |available, native_argv| {
         if name == "hermes" {
-            eprintln!("Hermes activity/reporting and recovery are unavailable; supervising native process only (see `ovrcr agent doctor hermes --json`).");
-            return None;
+            if !available {
+                drop(lease.take());
+                eprintln!(
+                    "Hermes reporting unavailable; supervising native process only. Repair: `ovrcr agent doctor hermes --json`."
+                );
+                return None;
+            }
+            return Some(ovrcr::report::hermes::receiver(lease, native_argv));
         }
         if !available {
             drop(lease.take());

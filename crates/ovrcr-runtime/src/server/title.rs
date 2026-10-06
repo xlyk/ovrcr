@@ -95,6 +95,9 @@ impl TitleWorker {
             }
             if last.elapsed() >= POLL_INTERVAL {
                 last = Instant::now();
+                // Hermes already named the session. Apply that title without a
+                // Dashboard and without another model call.
+                self.apply_hermes_titles(&state);
                 if state.dashboard.is_claimed() {
                     self.tick(&state);
                 }
@@ -137,6 +140,44 @@ impl TitleWorker {
         }
         if !dismissed {
             self.dismissed_noted.remove(&record.id);
+        }
+    }
+
+    fn apply_hermes_titles(&mut self, state: &Arc<ServerState>) {
+        let records: Vec<_> = state.retained.lock().records().cloned().collect();
+        for record in records {
+            let Some(candidate) = Candidate::from_record(&record) else {
+                continue;
+            };
+            if candidate.provider != AgentProvider::Hermes || record.metadata.pinned_title.is_some()
+            {
+                continue;
+            }
+            if record
+                .subjects
+                .get(&candidate.conversation)
+                .is_some_and(|subject| !subject.title_window_open())
+            {
+                continue;
+            }
+            let Ok(Some(topic)) = hermes_title(&candidate.history, &candidate.conversation) else {
+                continue;
+            };
+            let changed = {
+                let mut retained = state.retained.lock();
+                retained
+                    .save_conversation_subject(
+                        record.id,
+                        record.run,
+                        &candidate.conversation,
+                        topic,
+                    )
+                    .unwrap_or(false)
+            };
+            if changed {
+                super::dispatch::publish_session_changed(state, record.id);
+                self.emit(state, Some(record.id), "title applied");
+            }
         }
     }
 
@@ -185,6 +226,10 @@ impl TitleWorker {
                 self.due.remove(&record.id);
                 continue;
             };
+            if candidate.provider == AgentProvider::Hermes {
+                self.due.remove(&record.id);
+                continue;
+            }
             if record.metadata.pinned_title.is_some()
                 || record
                     .subjects
@@ -543,8 +588,33 @@ impl Candidate {
                 conversation: reference.conversation.clone(),
                 history: reference.history.clone(),
             }),
+            ConversationReference::Hermes(reference) => Some(Self {
+                provider: AgentProvider::Hermes,
+                conversation: reference.conversation.clone(),
+                history: reference.state_db.clone(),
+            }),
         }
     }
+}
+
+fn hermes_title(state_db: &std::path::Path, conversation: &str) -> Result<Option<String>> {
+    if !crate::hermes_recovery::valid_session_id(conversation) || !state_db.is_file() {
+        return Ok(None);
+    }
+    let connection = rusqlite::Connection::open_with_flags(
+        state_db,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    let title = connection
+        .query_row(
+            "SELECT title FROM sessions WHERE id = ?1",
+            [conversation],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .unwrap_or(None);
+    Ok(title.filter(|value| {
+        !value.trim().is_empty() && ovrcr_protocol::validate_agent_id(value).is_ok()
+    }))
 }
 
 fn excerpt(candidate: &Candidate) -> Result<Option<String>> {
@@ -573,7 +643,10 @@ fn excerpt(candidate: &Candidate) -> Result<Option<String>> {
                 return Ok(None);
             }
         }
-        AgentProvider::Hermes | AgentProvider::Cursor => return Ok(None),
+        AgentProvider::Hermes => {
+            return hermes_title(&candidate.history, &candidate.conversation);
+        }
+        AgentProvider::Cursor => return Ok(None),
     }
     let tail = read_tail(&candidate.history)?;
     let mut messages = Vec::new();
@@ -1052,5 +1125,77 @@ mod tests {
         assert!(!rendered.contains("account@example.invalid"));
         assert!(!rendered.contains("Name this conversation"));
         assert!(!rendered.contains("Logged Topic"));
+    }
+
+    #[test]
+    fn hermes_title_is_applied_from_the_session_row_without_a_model_call() {
+        let root = tempfile::tempdir().unwrap();
+        let state_db = root.path().join("state.db");
+        let connection = rusqlite::Connection::open(&state_db).unwrap();
+        connection
+            .execute(
+                "CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO sessions (id, title) VALUES ('20261006_101500_ab12cd', 'Ship the title')",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+        let state = super::super::tests::test_state(None, None);
+        let reference =
+            ovrcr_protocol::ConversationReference::Hermes(ovrcr_protocol::HermesConversation {
+                conversation: "20261006_101500_ab12cd".into(),
+                executable: "hermes".into(),
+                state_db: state_db.clone(),
+            });
+        let record = {
+            let mut retained = state.retained.lock();
+            let created = retained
+                .create(SessionMetadata {
+                    project: "p".into(),
+                    workspace: "w".into(),
+                    name: "hermes-ready".into(),
+                    label: "hermes".into(),
+                    cwd: root.path().into(),
+                    kind: SessionKind::Agent {
+                        name: "hermes".into(),
+                    },
+                    pinned_title: None,
+                    application_title: None,
+                })
+                .unwrap();
+            let record = retained.begin_run(created.id, created.run).unwrap();
+            retained
+                .retain_conversation(record.id, record.run, Some(&reference))
+                .unwrap();
+            record
+        };
+        let mut worker = TitleWorker::new(root.path().join("titles"));
+        worker.apply_hermes_titles(&state);
+        let saved = state.retained.lock().get(record.id).unwrap().clone();
+        assert_eq!(saved.effective_title().as_deref(), Some("Ship the title"));
+        worker.apply_hermes_titles(&state);
+        let messages = state
+            .event_snapshot()
+            .into_iter()
+            .map(|event| event.message)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| *message == "title applied")
+                .count(),
+            1
+        );
+        assert!(!messages.iter().any(|message| message.contains("call sent")));
+        assert!(
+            !messages
+                .iter()
+                .any(|message| message.contains("Ship the title"))
+        );
     }
 }

@@ -49,7 +49,11 @@ impl AgentProvider {
     pub const fn supports_readiness(self) -> bool {
         matches!(
             self,
-            AgentProvider::Codex | AgentProvider::Pi | AgentProvider::Omp | AgentProvider::Claude
+            AgentProvider::Codex
+                | AgentProvider::Pi
+                | AgentProvider::Omp
+                | AgentProvider::Claude
+                | AgentProvider::Hermes
         )
     }
 }
@@ -340,6 +344,8 @@ pub enum ConversationReference {
     Codex(CodexConversation),
     /// Appended as tag 4. Retained for the title path only; Grok resume stays unavailable.
     Grok(GrokConversation),
+    /// Appended as tag 5. Hermes session id plus the profile `state.db` that holds it.
+    Hermes(HermesConversation),
 }
 
 impl ConversationReference {
@@ -350,6 +356,7 @@ impl ConversationReference {
             Self::Omp(_) => AgentProvider::Omp,
             Self::Codex(_) => AgentProvider::Codex,
             Self::Grok(_) => AgentProvider::Grok,
+            Self::Hermes(_) => AgentProvider::Hermes,
         }
     }
 
@@ -359,6 +366,7 @@ impl ConversationReference {
             Self::Pi(reference) | Self::Omp(reference) => &reference.conversation,
             Self::Codex(reference) => &reference.conversation,
             Self::Grok(reference) => &reference.conversation,
+            Self::Hermes(reference) => &reference.conversation,
         }
     }
 
@@ -404,6 +412,16 @@ pub struct ExtensionConversation {
 pub struct GrokConversation {
     pub conversation: String,
     pub history: std::path::PathBuf,
+}
+
+/// Hermes session identity. `state_db` is the profile database that owns the row.
+/// Resume uses `hermes --resume <conversation>`, plus `-p <profile>` when the
+/// database lives under `profiles/<name>/`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HermesConversation {
+    pub conversation: String,
+    pub executable: std::path::PathBuf,
+    pub state_db: std::path::PathBuf,
 }
 
 pub fn validate_agent_id(value: &str) -> Result<()> {
@@ -714,8 +732,8 @@ pub(crate) mod tests {
             (AgentProvider::Pi, true),
             (AgentProvider::Omp, true),
             (AgentProvider::Claude, true),
+            (AgentProvider::Hermes, true),
             (AgentProvider::Grok, false),
-            (AgentProvider::Hermes, false),
             (AgentProvider::Cursor, false),
         ] {
             assert_eq!(provider.supports_readiness(), expected, "{provider:?}");
@@ -739,6 +757,7 @@ pub(crate) mod tests {
             AgentProvider::Pi,
             AgentProvider::Omp,
             AgentProvider::Claude,
+            AgentProvider::Hermes,
         ] {
             let ready = ReadyObservation {
                 binding: AgentBinding {
@@ -749,7 +768,7 @@ pub(crate) mod tests {
             };
             ready.validate().unwrap();
         }
-        for provider in [AgentProvider::Grok, AgentProvider::Hermes] {
+        for provider in [AgentProvider::Grok, AgentProvider::Cursor] {
             let ready = ReadyObservation {
                 binding: AgentBinding {
                     provider,

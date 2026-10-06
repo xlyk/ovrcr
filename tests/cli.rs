@@ -2476,14 +2476,7 @@ fn hermes_managed_cli_preserves_native_arguments_output_and_failure() {
     );
     assert_eq!(output.stdout, b"literal argument\n");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Hermes activity/reporting and recovery are unavailable"),
-        "{stderr}"
-    );
-    assert!(
-        !stderr.contains("Repair:"),
-        "unsupported capability advertised as repairable: {stderr}"
-    );
+    assert!(stderr.contains("Hermes reporting unavailable"), "{stderr}");
     assert!(!root.path().join("server.sock").exists());
 
     let mut missing = isolated_command(&root);
@@ -2504,8 +2497,11 @@ fn hermes_setup_and_doctor_are_read_only_and_do_not_execute_native_client() {
     )
     .unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let hermes_home = root.path().join("hermes-home");
+    std::fs::create_dir(&hermes_home).unwrap();
     let mut command = isolated_command(&root);
     command
+        .env("HERMES_HOME", &hermes_home)
         .args(["agent", "doctor", "hermes", "--json", "--executable"])
         .arg(&native);
     let output = run_cli_bounded(command).unwrap();
@@ -2521,25 +2517,18 @@ fn hermes_setup_and_doctor_are_read_only_and_do_not_execute_native_client() {
     assert_eq!(report["version_status"], "unverified");
     assert_eq!(report["tested_versions"], serde_json::json!([]));
     assert_eq!(report["capabilities"]["managed_launch"], true);
-    for capability in [
-        "reporting",
-        "readiness",
-        "approvals",
-        "questions",
-        "recovery",
-        "metrics",
-        "generated_titles",
-    ] {
-        assert_eq!(
-            report["capabilities"][capability], "unavailable",
-            "{capability}: {report}"
-        );
-    }
+    assert_eq!(report["capabilities"]["questions"], "unavailable");
+    assert_eq!(report["capabilities"]["cost"], "unavailable");
+    assert_eq!(report["capabilities"]["reporting"], "needs_setup");
+    assert_eq!(report["capabilities"]["recovery"], "available");
+    assert_eq!(report["capabilities"]["generated_titles"], "available");
+    assert_eq!(report["hooks_installed"], false);
     assert!(!marker.exists(), "doctor executed a provider client");
     assert!(!root.path().join("server.sock").exists());
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o600)).unwrap();
     let mut command = isolated_command(&root);
     command
+        .env("HERMES_HOME", &hermes_home)
         .args(["agent", "doctor", "hermes", "--json", "--executable"])
         .arg(&native);
     let output = run_cli_bounded(command).unwrap();
@@ -2547,15 +2536,27 @@ fn hermes_setup_and_doctor_are_read_only_and_do_not_execute_native_client() {
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["executable_status"], "missing_or_not_executable");
     let mut command = isolated_command(&root);
-    command.args(["agent", "setup", "hermes", "--print"]);
+    command
+        .env("HERMES_HOME", &hermes_home)
+        .args(["agent", "setup", "hermes", "--print"]);
     let output = run_cli_bounded(command).unwrap();
     assert!(output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).contains("needs no OVRCR settings or hooks"));
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("Installed Hermes reporting hooks"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let config = hermes_home.join("config.yaml");
+    let installed = std::fs::read_to_string(&config).unwrap();
+    assert!(installed.contains("report hermes --stdin"));
+    assert!(installed.contains("post_llm_call:"));
+    assert!(!installed.contains("secret"));
     let settings = root.path().join("private-settings");
     std::fs::write(&settings, "DO_NOT_READ_OR_MODIFY").unwrap();
     for action in ["setup", "doctor"] {
         let mut command = isolated_command(&root);
         command
+            .env("HERMES_HOME", &hermes_home)
             .args(["agent", action, "hermes", "--settings"])
             .arg(&settings);
         if action == "setup" {

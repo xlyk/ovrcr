@@ -564,7 +564,7 @@ mod tests {
                 SampleQuality::Confirmed,
                 Some("one"),
                 ReporterHealth::Connected,
-                false,
+                true,
             ),
         ] {
             let binding = AgentBinding {

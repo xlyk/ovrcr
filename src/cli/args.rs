@@ -166,6 +166,12 @@ pub(super) enum ReportCommand {
         #[arg(long, required = true)]
         stdin: bool,
     },
+    /// Hermes shell hook. Reads the native payload and forwards identity,
+    /// activity, approval and token fields only.
+    Hermes {
+        #[arg(long, required = true)]
+        stdin: bool,
+    },
     Activity {
         /// unknown, idle, busy, waiting-input, response-ready, or error.
         #[arg(long, value_parser = parse_activity_state)]
