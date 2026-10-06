@@ -6,6 +6,9 @@ use crate::*;
 use ovrcr::protocol::{ErrorCode, Request, Response, SettingsReport};
 use std::path::Path;
 
+#[cfg(target_os = "macos")]
+use crate::live;
+
 /// The Server's reading of `document`, as published after hello or an edit.
 fn publish(dashboard: &mut Dashboard, document: &Path) {
     let text = std::fs::read_to_string(document).unwrap_or_default();
@@ -200,7 +203,15 @@ fn rows_show_value_source_default_and_findings_with_unknown_keys_first() {
     let (mut dashboard, _root, document) = editor(
         "branch_prefix = \"kh/\"\ncolour = \"blue\"\nready_sound = \"loud\"\n\n[[agents]]\nname = \"claude\"\nargv = [\"claude\", \"--verbose\"]\n\n[launch_choices.demo]\nkind = \"Terminal\"\n",
     );
-    let text = screen(&dashboard);
+    // This overview checks every group and collection's Add row. Include the
+    // Bridge, WIP and Cursor rows and explanations without clipping final groups.
+    // At most 76 inner lines fit in 80 rows after the editor's borders/margins.
+    let text = rendered_rows(&dashboard, 120, 80).join("\n");
+    let line = |needle: &str| {
+        text.lines()
+            .find(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("no line with {needle:?}:\n{text}"))
+    };
     assert!(
         text.contains(&format!("Document: {}", document.display())),
         "{text}"
@@ -226,22 +237,26 @@ fn rows_show_value_source_default_and_findings_with_unknown_keys_first() {
         assert!(at(pair[0]) < at(pair[1]), "{pair:?}\n{text}");
     }
     assert!(
-        line_with(&dashboard, "Branch prefix").contains("kh/  set  (default: feature/)"),
+        line("Branch prefix").contains("kh/  set  (default: feature/)"),
         "{text}"
     );
-    assert!(line_with(&dashboard, "Ready sound").contains("off  default"));
+    assert!(line("Ready sound").contains("off  default"));
     // A bad value defaults only itself and its finding shows on its row.
     assert!(at("! line 3: ") > at("Ready sound"), "{text}");
-    assert!(line_with(&dashboard, "Title model").contains("unset  default"));
+    assert!(line("Title model").contains("unset  default"));
     assert!(text.contains("Automatic titles off: set `title_model"));
     // Consent settings carry their side effect; turning one on asks nothing.
     assert!(text.contains("Setting a model makes paid calls to title sessions."));
     assert!(text.contains("may show an OS notification permission prompt."));
     assert!(text.contains("On by default while a Dashboard is attached."));
+    assert!(line("Cursor dashboard usage").contains("off  default"));
+    assert!(line("Cursor state database").contains("unset  default"));
     // Collections expand into child rows with an Add row.
-    assert!(line_with(&dashboard, "claude  [").contains("[\"claude\", \"--verbose\"]"));
+    assert!(line("claude  [").contains("[\"claude\", \"--verbose\"]"));
     assert!(text.contains("+ Add agent"));
-    assert!(text.contains("+ Add root"));
+    assert!(line("demo  ").contains("Terminal"));
+    assert!(text.contains("+ Add project"), "{text}");
+    assert!(text.contains("+ Add root"), "{text}");
     // Added settings can put remembered launches below this viewport. Reach
     // their child rows through the editor's normal scrolling control.
     assert_eq!(dashboard.key(KeyCode::End), DashboardAction::Redraw);
@@ -279,6 +294,314 @@ fn toggle_saves_at_once_and_applies_only_the_servers_reading() {
         std::fs::read_to_string(&document).unwrap(),
         "ready_sound = true # mine\ndesktop_notifications = true\n"
     );
+}
+
+/// Collect actual Dashboard-role frames, retaining the request's reply and,
+/// when expected, the Server's settings reading. Delivery to the Dashboard
+/// stays under the test's control so two outstanding edits can interleave.
+#[cfg(target_os = "macos")]
+fn settings_frames(
+    stream: &mut std::os::unix::net::UnixStream,
+    message: &ClientMessage,
+    expect_reading: bool,
+) -> anyhow::Result<Vec<ServerMessage>> {
+    use ovrcr::protocol::{read_frame, write_frame};
+    use std::time::Instant;
+
+    let deadline = Instant::now() + live::wait_deadline();
+    write_frame(stream, message)?;
+    let mut frames = Vec::new();
+    let mut answered = false;
+    let mut read = !expect_reading;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        anyhow::ensure!(!remaining.is_zero(), "settings request did not complete");
+        stream.set_read_timeout(Some(remaining))?;
+        let frame = read_frame::<ServerMessage>(stream)?;
+        answered |= matches!(
+            &frame,
+            ServerMessage::Response { request_id, .. } if *request_id == message.request_id
+        );
+        read |= matches!(
+            &frame,
+            ServerMessage::Event(ServerEvent::SettingsChanged(_))
+        );
+        frames.push(frame);
+        if answered && read {
+            return Ok(frames);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn picker_root_line(dashboard: &Dashboard, value: &str) -> String {
+    let mut lines: Vec<_> = rendered_rows(dashboard, 120, 60)
+        .into_iter()
+        .filter(|line| {
+            line.split('│').any(|part| {
+                part.trim()
+                    .trim_start_matches('›')
+                    .split_whitespace()
+                    .next()
+                    == Some(value)
+            })
+        })
+        .collect();
+    assert_eq!(
+        lines.len(),
+        1,
+        "expected exactly one rendered root {value:?}:\n{}",
+        screen(dashboard)
+    );
+    lines.remove(0)
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn pending_root_move_and_sound_save_match_interleaved_server_replies() {
+    use ovrcr::protocol::{ReadySoundChoice, exchange_preamble};
+    use std::os::unix::net::UnixStream;
+
+    let original = "\
+desktop_notifications = false # keep banners off
+ready_sound = true # keep saved sound-only opt-in
+ready_sound_choice = \"tap\" # tone
+picker_roots = [\"/a\", \"/b\", \"/c\"] # roots
+branch_prefix = 'keep/' # unrelated
+[quota]
+enabled = false
+";
+    for refuse_root in [false, true] {
+        for accept_first in [false, true] {
+            let fixture = live::Live::idle().bounded();
+            let document = fixture.config.join("dashboard.toml");
+            std::fs::write(&document, original).unwrap();
+            fixture.start_binary();
+            let mut stream = UnixStream::connect(&fixture.socket).unwrap();
+            stream.set_read_timeout(fixture.timeout()).unwrap();
+            stream.set_write_timeout(fixture.timeout()).unwrap();
+            exchange_preamble(&mut stream).unwrap();
+            let mut dashboard = Dashboard::new(TerminalSize {
+                rows: 60,
+                cols: 120,
+            });
+            dashboard.install_area(Rect::new(0, 0, 120, 60));
+            for frame in settings_frames(
+                &mut stream,
+                &ClientMessage {
+                    request_id: u64::MAX,
+                    request: Request::DashboardHello,
+                },
+                true,
+            )
+            .unwrap()
+            {
+                if let ServerMessage::Event(ServerEvent::SettingsChanged(report)) = &frame {
+                    assert_eq!(report.path, document);
+                    assert!(!report.settings.desktop_notifications);
+                    assert!(report.settings.ready_sound);
+                    assert_eq!(
+                        report.settings.ready_sound_choice,
+                        Some(ReadySoundChoice::Tap)
+                    );
+                }
+                dashboard.handle_server_message(frame);
+            }
+            dashboard.key(KeyCode::Char(':'));
+            dashboard.event_action(Event::Paste("settings".into()));
+            dashboard.key(KeyCode::Enter);
+
+            select(&mut dashboard, "picker_roots[1]");
+            let DashboardAction::Request(root_move) = dashboard.key(KeyCode::Char(']')) else {
+                panic!("moving a picker root sent no request");
+            };
+            assert_eq!(
+                root_move.request,
+                Request::SetSetting {
+                    path: "picker_roots".into(),
+                    value: Some("[\"/a\", \"/c\", \"/b\"]".into()),
+                }
+            );
+            // Match the exact row value: the document's private path may
+            // contain `/b`, and child rows do not display source badges.
+            assert!(picker_root_line(&dashboard, "/b").contains("saving…"));
+
+            select(&mut dashboard, "ready_sound_choice");
+            assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+            dashboard.event_action(Event::Paste("Rise".into()));
+            let DashboardAction::Request(sound_save) = dashboard.key(KeyCode::Enter) else {
+                panic!("choosing a tone sent no request");
+            };
+            assert_eq!(
+                sound_save.request,
+                Request::SetSetting {
+                    path: "ready_sound_choice".into(),
+                    value: Some("\"rise\"".into()),
+                }
+            );
+            assert_ne!(root_move.request_id, sound_save.request_id);
+            let tone = line_with(&dashboard, "Ready sound choice");
+            assert!(
+                tone.contains("Tap  set") && tone.contains("saving…"),
+                "{tone}"
+            );
+            assert_eq!(std::fs::read_to_string(&document).unwrap(), original);
+
+            let (refused, accepted) = if refuse_root {
+                (&root_move, &sound_save)
+            } else {
+                (&sound_save, &root_move)
+            };
+            // A real Server write refusal, without changing document bytes or
+            // asking the watcher to observe a temporary invalid document.
+            let permissions = std::fs::metadata(&document).unwrap().permissions();
+            let mut read_only = permissions.clone();
+            read_only.set_readonly(true);
+            std::fs::set_permissions(&document, read_only).unwrap();
+            let refusal = settings_frames(&mut stream, refused, false);
+            std::fs::set_permissions(&document, permissions).unwrap();
+            let refusal = refusal.unwrap();
+            let refused_path = if refuse_root {
+                "picker_roots"
+            } else {
+                "ready_sound_choice"
+            };
+            assert!(
+                refusal.iter().any(|frame| matches!(
+                    frame,
+                    ServerMessage::Response {
+                        request_id,
+                        response: Response::Error { code: ErrorCode::InvalidRequest, message },
+                    } if *request_id == refused.request_id
+                        && message.contains(&format!("could not save {refused_path}"))
+                        && message.contains("read-only")
+                )),
+                "{refusal:?}"
+            );
+            assert_eq!(std::fs::read_to_string(&document).unwrap(), original);
+            let accepted_frames = settings_frames(&mut stream, accepted, true).unwrap();
+            assert!(
+                accepted_frames.iter().any(|frame| matches!(
+                    frame,
+                    ServerMessage::Response { request_id, response: Response::Ok }
+                        if *request_id == accepted.request_id
+                )),
+                "{accepted_frames:?}"
+            );
+            let saved = original.replace(
+                if refuse_root {
+                    "\"tap\""
+                } else {
+                    "[\"/a\", \"/b\", \"/c\"]"
+                },
+                if refuse_root {
+                    "\"rise\""
+                } else {
+                    "[\"/a\", \"/c\", \"/b\"]"
+                },
+            );
+            assert_eq!(std::fs::read_to_string(&document).unwrap(), saved);
+
+            // Both replies exist, but neither has been delivered. The
+            // Dashboard still displays the old reading and both pending IDs.
+            select(&mut dashboard, "picker_roots[1]");
+            assert!(picker_root_line(&dashboard, "/b").contains("saving…"));
+            select(&mut dashboard, "ready_sound_choice");
+            let tone = line_with(&dashboard, "Ready sound choice");
+            assert!(
+                tone.contains("Tap  set") && tone.contains("saving…"),
+                "{tone}"
+            );
+            let (first, second) = if accept_first {
+                (accepted_frames, refusal)
+            } else {
+                (refusal, accepted_frames)
+            };
+            for (index, frames) in [first, second].into_iter().enumerate() {
+                for frame in frames {
+                    if let ServerMessage::Event(ServerEvent::SettingsChanged(report)) = &frame {
+                        assert!(!report.settings.desktop_notifications);
+                        assert!(report.settings.ready_sound);
+                        assert_eq!(
+                            report.settings.ready_sound_choice,
+                            Some(if refuse_root {
+                                ReadySoundChoice::Rise
+                            } else {
+                                ReadySoundChoice::Tap
+                            })
+                        );
+                        assert_eq!(
+                            report.settings.picker_roots,
+                            (if refuse_root {
+                                ["/a", "/b", "/c"]
+                            } else {
+                                ["/a", "/c", "/b"]
+                            })
+                            .map(PathBuf::from)
+                        );
+                    }
+                    dashboard.handle_server_message(frame);
+                }
+                let refusal_arrived = !accept_first || index == 1;
+                let acceptance_arrived = accept_first || index == 1;
+                select(&mut dashboard, "picker_roots[1]");
+                let root = picker_root_line(
+                    &dashboard,
+                    if !refuse_root && acceptance_arrived {
+                        "/c"
+                    } else {
+                        "/b"
+                    },
+                );
+                assert_eq!(
+                    root.contains("saving…"),
+                    if refuse_root {
+                        !refusal_arrived
+                    } else {
+                        !acceptance_arrived
+                    }
+                );
+                assert_eq!(
+                    screen(&dashboard).contains("refused:"),
+                    refuse_root && refusal_arrived
+                );
+                select(&mut dashboard, "ready_sound_choice");
+                let tone = line_with(&dashboard, "Ready sound choice");
+                assert!(
+                    tone.contains(if refuse_root && acceptance_arrived {
+                        "Rise  set"
+                    } else {
+                        "Tap  set"
+                    }),
+                    "{tone}"
+                );
+                assert_eq!(
+                    tone.contains("saving…"),
+                    if refuse_root {
+                        !acceptance_arrived
+                    } else {
+                        !refusal_arrived
+                    }
+                );
+                assert_eq!(
+                    screen(&dashboard).contains("refused:"),
+                    !refuse_root && refusal_arrived
+                );
+                assert!(!rendered_footer(&dashboard, 120).contains("could not save"));
+                select(&mut dashboard, "desktop_notifications");
+                assert!(line_with(&dashboard, "Desktop notifications").contains("off  set"));
+                select(&mut dashboard, "ready_sound");
+                assert!(line_with(&dashboard, "Ready sound  ").contains("on  set"));
+            }
+            assert_eq!(std::fs::read_to_string(&document).unwrap(), saved);
+            drop(stream);
+            assert_eq!(
+                fixture.request(Request::Shutdown { kill: true }),
+                Response::Ok
+            );
+            fixture.join();
+        }
+    }
 }
 
 #[test]

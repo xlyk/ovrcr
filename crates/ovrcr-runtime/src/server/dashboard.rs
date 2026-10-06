@@ -9,6 +9,9 @@ pub(super) struct DashboardSlot {
     pub(super) stream: UnixStream,
     pub(super) history: Option<ovrcr_terminal::history::FrozenHistory>,
     pub(super) next_history_id: u64,
+    pub(super) bridge_identity: Option<ovrcr_protocol::BridgeActivationTarget>,
+    pub(super) navigation: Option<super::navigation::PendingNavigation>,
+    pub(super) bridge_owner: Option<String>,
 }
 
 pub(super) struct DashboardSnapshot {
@@ -53,12 +56,16 @@ impl ActiveDashboard {
                 *geometry = None;
             }
         }
+        let bridge_identity = super::navigation::peer_identity(&stream);
         *slot = Some(DashboardSlot {
             sink,
             identity: Arc::clone(&identity),
             stream,
             history: None,
             next_history_id: 1,
+            bridge_identity,
+            navigation: None,
+            bridge_owner: super::navigation::new_identity().ok(),
         });
         Some(identity)
     }
@@ -380,12 +387,16 @@ impl ActiveDashboard {
         identity: Arc<()>,
         stream: UnixStream,
     ) {
+        let bridge_identity = super::navigation::peer_identity(&stream);
         *self.slot.lock().unwrap() = Some(DashboardSlot {
             sink,
             identity,
             stream,
             history: None,
             next_history_id: 1,
+            bridge_identity,
+            navigation: None,
+            bridge_owner: super::navigation::new_identity().ok(),
         });
     }
 
@@ -421,7 +432,7 @@ impl ActiveDashboard {
 
 /// `true` only when a read would already return EOF. Unread bytes still belong
 /// to the handler that is about to drain them.
-fn peer_has_closed(stream: &UnixStream) -> bool {
+pub(super) fn peer_has_closed(stream: &UnixStream) -> bool {
     let mut buf = [0u8; 1];
     // SAFETY: `stream` is a live Unix socket and the peek does not consume bytes.
     let n = unsafe {

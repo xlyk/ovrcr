@@ -29,3 +29,12 @@ toml_edit = { workspace = true }
 
 tempfile = { workspace = true }
 ureq = { workspace = true }
+
+# Callback compatibility re-hashes reviewed bytes inside a fixed deadline.
+# Enable RustCrypto's ARM SHA dispatch under Apple's ARM64 platform baseline; all
+# other targets retain their existing implementation and soft fallback.
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+sha2 = { workspace = true, features = ["asm"] }
+
+[target.'cfg(not(all(target_os = "macos", target_arch = "aarch64")))'.dependencies]
+sha2 = { workspace = true }

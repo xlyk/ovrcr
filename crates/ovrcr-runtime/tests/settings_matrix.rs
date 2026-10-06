@@ -9,7 +9,9 @@
 //! Each test collects every failing case and reports them together, so a
 //! broken loader rule shows the whole set of cases it breaks.
 
-use ovrcr_protocol::{SettingRow, SettingSource, SettingsFinding, SettingsReport};
+use ovrcr_protocol::{
+    ReadySoundChoice, SettingOwner, SettingRow, SettingSource, SettingsFinding, SettingsReport,
+};
 use ovrcr_runtime::settings;
 use std::path::Path;
 
@@ -33,6 +35,11 @@ const UNSET_KINDS: &[(&str, Kind)] = &[
 /// Enum settings: how one spelling sits in the document, and the documented
 /// spellings. Near misses of each spelling are the unknown-spelling cases.
 const ENUMS: &[(&str, &str, &[&str])] = &[
+    (
+        "ready_sound_choice",
+        "\"{}\"",
+        &["default", "tap", "chime", "rise"],
+    ),
     (
         "automatic_local_terminals",
         "\"{}\"",
@@ -146,6 +153,19 @@ impl Setting {
             source: SettingSource::Document,
             off_state,
             ..self.default.clone()
+        }
+    }
+
+    /// Invalid sound choices suppress sound; other invalid values keep their default.
+    fn invalid_row(&self) -> SettingRow {
+        if self.key == ReadySoundChoice::KEY {
+            SettingRow {
+                value: None,
+                source: SettingSource::Document,
+                ..self.default.clone()
+            }
+        } else {
+            self.default.clone()
         }
     }
 }
@@ -317,6 +337,8 @@ fn matrix_covers_every_declared_setting() {
         [
             "desktop_notifications",
             "ready_sound",
+            "ready_sound_choice",
+            "iterm_focus",
             "automatic_local_terminals",
             "save_uncommitted_work",
             "branch_prefix",
@@ -339,8 +361,8 @@ fn matrix_covers_every_declared_setting() {
     assert_eq!(
         kinds,
         [
-            Bool, Bool, Str, Bool, Str, Array, Str, Bool, Bool, Str, Str, Str, Str, Bool, Str,
-            Array, Table,
+            Bool, Bool, Str, Bool, Str, Bool, Str, Array, Str, Bool, Bool, Str, Str, Str, Str,
+            Bool, Str, Array, Table,
         ]
     );
     // Every test-side table names a declared setting, so none goes stale.
@@ -352,6 +374,135 @@ fn matrix_covers_every_declared_setting() {
     {
         assert!(keys.contains(&key), "{key} is not a declared setting");
     }
+}
+
+#[test]
+fn bridge_catalog_paths_preserve_invalid_sound_and_independent_iterm_opt_in() {
+    let root = tempfile::tempdir().unwrap();
+    let document = root.path().join("dashboard.toml");
+    let choice_line = "ready_sound_choice = \"glass\" # preserve invalid choice\n";
+    let original = format!(
+        "# Independent opt-ins\ndesktop_notifications = false\nready_sound = true\n{choice_line}iterm_focus = false\n"
+    );
+    std::fs::write(&document, &original).unwrap();
+    let load = || settings::load_document(root.path(), &document);
+    let before = load();
+    assert_eq!(before.settings.ready_sound_choice, None);
+    assert_eq!(
+        (
+            before.settings.desktop_notifications,
+            before.settings.ready_sound,
+            before.settings.iterm_focus,
+        ),
+        (false, true, false)
+    );
+    let choice = before
+        .rows
+        .iter()
+        .find(|row| row.key == ReadySoundChoice::KEY)
+        .unwrap();
+    assert_eq!(choice.value, None);
+    assert_eq!(choice.default.as_deref(), Some("default"));
+    assert_eq!(choice.source, SettingSource::Document);
+    assert_eq!(choice.owner, SettingOwner::Dashboard);
+    let iterm = before
+        .rows
+        .iter()
+        .find(|row| row.key == "iterm_focus")
+        .unwrap();
+    assert_eq!(iterm.value.as_deref(), Some("false"));
+    assert_eq!(iterm.default.as_deref(), Some("false"));
+    assert_eq!(iterm.source, SettingSource::Document);
+    assert_eq!(iterm.owner, SettingOwner::Dashboard);
+    assert_eq!(iterm.off_state.as_deref(), Some(settings::ITERM_FOCUS_OFF));
+    assert!(matches!(before.findings.as_slice(), [finding]
+        if finding.key.as_deref() == Some(ReadySoundChoice::KEY) && finding.line == Some(4)));
+
+    // Both paths must be writable through the shared catalog. An unrelated
+    // consent change preserves the invalid raw choice and its silent meaning.
+    settings::set(&document, "iterm_focus", Some("true")).unwrap();
+    assert!(
+        std::fs::read_to_string(&document)
+            .unwrap()
+            .contains(choice_line)
+    );
+    let opted_in = load();
+    assert_eq!(opted_in.settings.ready_sound_choice, None);
+    assert_eq!(opted_in.findings, before.findings);
+    assert_eq!(
+        (
+            opted_in.settings.desktop_notifications,
+            opted_in.settings.ready_sound,
+            opted_in.settings.iterm_focus,
+        ),
+        (false, true, true)
+    );
+    let saved = std::fs::read(&document).unwrap();
+    for (path, value) in [
+        (ReadySoundChoice::KEY, "\"glass\""),
+        (ReadySoundChoice::KEY, "true"),
+        ("iterm_focus", "\"true\""),
+    ] {
+        let error = settings::set(&document, path, Some(value)).unwrap_err();
+        assert!(format!("{error:#}").contains(&format!("could not save {path}")));
+        assert_eq!(std::fs::read(&document).unwrap(), saved, "{path} = {value}");
+    }
+
+    for choice in [
+        ReadySoundChoice::Default,
+        ReadySoundChoice::Tap,
+        ReadySoundChoice::Chime,
+        ReadySoundChoice::Rise,
+    ] {
+        settings::set(&document, ReadySoundChoice::KEY, Some(choice.as_str())).unwrap();
+        let accepted = load();
+        assert!(accepted.findings.is_empty());
+        assert_eq!(accepted.settings.ready_sound_choice, Some(choice));
+        assert_eq!(
+            (
+                accepted.settings.desktop_notifications,
+                accepted.settings.ready_sound,
+                accepted.settings.iterm_focus,
+            ),
+            (false, true, true)
+        );
+        let row = accepted
+            .rows
+            .iter()
+            .find(|row| row.key == ReadySoundChoice::KEY)
+            .unwrap();
+        assert_eq!(row.value.as_deref(), Some(choice.as_str()));
+        assert_eq!(row.default.as_deref(), Some("default"));
+        assert_eq!(row.source, SettingSource::Document);
+    }
+
+    settings::set(&document, ReadySoundChoice::KEY, None).unwrap();
+    settings::set(&document, "iterm_focus", None).unwrap();
+    let reset = load();
+    assert!(reset.findings.is_empty());
+    assert_eq!(
+        reset.settings.ready_sound_choice,
+        Some(ReadySoundChoice::Default)
+    );
+    assert_eq!(
+        (
+            reset.settings.desktop_notifications,
+            reset.settings.ready_sound,
+            reset.settings.iterm_focus,
+        ),
+        (false, true, false)
+    );
+    for key in [ReadySoundChoice::KEY, "iterm_focus"] {
+        let row = reset.rows.iter().find(|row| row.key == key).unwrap();
+        assert_eq!(row.source, SettingSource::Default);
+        assert_eq!(row.value, row.default);
+    }
+    let iterm = reset
+        .rows
+        .iter()
+        .find(|row| row.key == "iterm_focus")
+        .unwrap();
+    assert_eq!(iterm.off_state.as_deref(), Some(settings::ITERM_FOCUS_OFF));
 }
 
 #[test]
@@ -431,7 +582,7 @@ fn explicit_non_default_takes_effect() {
 }
 
 #[test]
-fn wrong_type_defaults_with_one_finding_and_disables_invalid_cursor_source() {
+fn wrong_type_reports_one_finding_and_disables_invalid_cursor_source() {
     let settings = Setting::all();
     let (mut failures, mut cases) = (Failures::default(), 0);
     for setting in &settings {
@@ -456,7 +607,7 @@ fn wrong_type_defaults_with_one_finding_and_disables_invalid_cursor_source() {
                 });
             }
             failures.one_finding(&case, &report.findings, &setting.key, line, "");
-            failures.rows(&case, &report, &baseline, &setting.default);
+            failures.rows(&case, &report, &baseline, &setting.invalid_row());
         }
     }
     failures.assert_none(cases);
@@ -519,7 +670,7 @@ fn unknown_enum_spelling_is_one_finding_not_a_silent_default() {
                     let line = document.set(key, &value);
                     let report = read(&document.text());
                     failures.one_finding(&case, &report.findings, key, line, &near);
-                    failures.rows(&case, &report, &baseline, &setting.default);
+                    failures.rows(&case, &report, &baseline, &setting.invalid_row());
                 }
             }
         }

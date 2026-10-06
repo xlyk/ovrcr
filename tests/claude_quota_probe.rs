@@ -471,6 +471,9 @@ fn claude_usage_fixture(body: &'static str) -> (String, std::thread::JoinHandle<
                 Err(error) => panic!("loopback accept failed: {error}"),
             }
         };
+        // Only accept polling is nonblocking. A connected client's headers
+        // still have the existing bounded blocking read window.
+        stream.set_nonblocking(false).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
@@ -511,6 +514,38 @@ fn claude_usage_fixture(body: &'static str) -> (String, std::thread::JoinHandle<
         stream.write_all(reply.as_bytes()).unwrap();
     });
     (url, request)
+}
+
+#[test]
+fn claude_usage_fixture_waits_for_connected_clients_headers() {
+    use std::io::{Read, Write};
+    let (usage, request) = claude_usage_fixture("{}");
+    let address = usage
+        .strip_prefix("http://")
+        .unwrap()
+        .strip_suffix("/api/oauth/usage")
+        .unwrap();
+    let mut stream = std::net::TcpStream::connect(address).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    // Connecting does not mean the client has already sent HTTP headers.
+    std::thread::sleep(Duration::from_millis(200));
+    write!(
+        stream,
+        "GET /api/oauth/usage HTTP/1.1\r\nHost: {address}\r\nAuthorization: Bearer {CREDENTIAL}\r\nAnthropic-Beta: oauth-2025-04-20\r\n\r\n"
+    )
+    .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    request.join().expect("loopback account fixture completed");
+    assert_eq!(
+        response,
+        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"
+    );
 }
 
 #[test]
@@ -563,7 +598,7 @@ fn claude_probe_off_allows_an_account_read_without_spawning_a_probe() {
             .join("claude-quota-probe")
             .exists()
     );
-    // Collection is on by default; Disabled is only the explicit `quota.enabled = false` off state.
+    // Collection is on by default; Disabled is only the explicit quota.enabled=false off state.
     assert_ne!(
         snapshot.codex.state,
         QuotaState::Disabled,

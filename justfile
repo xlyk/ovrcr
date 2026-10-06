@@ -7,17 +7,32 @@ default:
 run *args:
     #!/usr/bin/env bash
     set -euo pipefail
+    bridge_package_flag=""
+    payload_name="ovrcr-startup"
+    assets_name="ovrcr"
+    case "${OVRCR_BRIDGE_LOCAL_DEVELOPMENT-}" in
+      ""|0) ;;
+      1)
+        bridge_package_flag="--local-development"
+        payload_name="ovrcr-startup-local-development"
+        assets_name="ovrcr-local-development"
+        ;;
+      *)
+        echo "OVRCR_BRIDGE_LOCAL_DEVELOPMENT must be unset, 0 or 1" >&2
+        exit 64
+        ;;
+    esac
     rtk proxy cargo build -p ovrcr --bin ovrcr --target-dir "${CARGO_TARGET_DIR:-target}"
     if [[ "$(uname -s)" == Darwin ]]; then
-      rtk proxy sh scripts/package-startup.sh "${CARGO_TARGET_DIR:-target}/debug/ovrcr-startup"
+      rtk proxy sh scripts/package-startup.sh ${bridge_package_flag:+"$bridge_package_flag"} "${CARGO_TARGET_DIR:-target}/debug/$payload_name" "${CARGO_TARGET_DIR:-target}/debug/ovrcr"
       mkdir -p "$HOME/.local/lib"
-      assets="$HOME/.local/lib/ovrcr"
+      assets="$HOME/.local/lib/$assets_name"
       if [[ -L "$assets" ]] || { [[ -e "$assets" ]] && [[ ! -f "$assets/native/bridge/expected-contract.json" ]]; }; then
         echo "Refusing to replace unmanaged startup assets at $assets" >&2
         exit 1
       fi
       asset_stage="$(mktemp -d "$HOME/.local/lib/.ovrcr-startup.XXXXXX")"
-      cp -R "${CARGO_TARGET_DIR:-target}/debug/ovrcr-startup" "$asset_stage/current"
+      cp -R "${CARGO_TARGET_DIR:-target}/debug/$payload_name" "$asset_stage/current"
       if [[ -e "$assets" ]]; then mv "$assets" "$asset_stage/previous"; fi
       if ! mv "$asset_stage/current" "$assets"; then
         if [[ -e "$asset_stage/previous" ]] && [[ ! -e "$assets" ]]; then

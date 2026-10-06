@@ -54,6 +54,11 @@ pub(super) enum SettingsCommand {
 
 #[derive(Subcommand)]
 pub(super) enum Command {
+    /// Connect-only Bridge navigation and current-owner validation. Never starts a Server.
+    Bridge {
+        #[command(subcommand)]
+        command: BridgeCommand,
+    },
     /// Run a native agent with invocation supervision.
     Agent {
         #[command(subcommand)]
@@ -138,6 +143,19 @@ pub(super) enum Command {
     Report {
         #[command(subcommand)]
         command: ReportCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub(super) enum BridgeCommand {
+    /// Validate only the existing Server/current Dashboard owner; no setup or launch.
+    Owner {
+        #[arg(long, required = true)]
+        stdin: bool,
+    },
+    Navigate {
+        #[arg(long, required = true)]
+        stdin: bool,
     },
 }
 

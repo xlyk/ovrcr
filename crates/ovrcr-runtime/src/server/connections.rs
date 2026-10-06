@@ -201,6 +201,12 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                 &identity,
                 response_message(message.request_id, Response::Hierarchy(hierarchy)),
             );
+            if let Some(context) = state.bridge_context() {
+                state.dashboard.send_owner(
+                    &identity,
+                    ServerMessage::Event(ServerEvent::BridgeContext(context)),
+                );
+            }
             let spawned = spawn_writer(
                 Arc::clone(&state),
                 Arc::clone(&dashboard_sink),
@@ -228,19 +234,35 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
         let shutdown = matches!(message.request, Request::Shutdown { .. });
         let deferred_view = matches!(
             message.request,
-            Request::Select { .. } | Request::Resize { .. } | Request::SetView { .. }
+            Request::Select { .. }
+                | Request::Resize { .. }
+                | Request::SetView { .. }
+                | Request::ConfirmNotificationNavigation { .. }
         );
         let history = matches!(
             message.request,
             Request::HistoryBegin { .. } | Request::HistoryPage { .. } | Request::HistoryEnd { .. }
         );
-        let response = handle_request_with_id(
-            &state,
-            &mut role,
-            message.request.clone(),
-            message.request_id,
-            ownership.as_ref().map(|owned| &owned.identity),
-        );
+        let response = if let Request::NavigateNotification { ticket } = &message.request
+            && matches!(role, ClientRole::Control)
+            && ownership.is_none()
+            && supervisor.is_none()
+        {
+            match stream.try_clone() {
+                Ok(callback) => state.navigate_notification_from(ticket.clone(), Some(callback)),
+                Err(_) => Response::NotificationNavigation(
+                    ovrcr_protocol::BridgeNavigationResult::ignored(),
+                ),
+            }
+        } else {
+            handle_request_with_id(
+                &state,
+                &mut role,
+                message.request.clone(),
+                message.request_id,
+                ownership.as_ref().map(|owned| &owned.identity),
+            )
+        };
         let successful_shutdown = shutdown && state.stopping.load(Ordering::Acquire);
         let (delivered, dashboard_shutdown_attempt) = match role {
             ClientRole::Control => (
@@ -336,6 +358,36 @@ pub(super) fn handle_request_with_id(
 ) -> Response {
     let dashboard = matches!(role, ClientRole::Dashboard);
     match request {
+        Request::NavigateNotification { ticket } if !dashboard && owner.is_none() => {
+            state.navigate_notification(ticket)
+        }
+        Request::NavigateNotification { .. } => {
+            Response::NotificationNavigation(ovrcr_protocol::BridgeNavigationResult::ignored())
+        }
+        Request::ConfirmNotificationNavigation { navigation } => {
+            owner.filter(|_| dashboard).map_or(Response::Ok, |owner| {
+                state.confirm_notification_navigation(owner, &navigation, request_id)
+            })
+        }
+        Request::NotificationNavigationApplied { navigation } => {
+            owner.filter(|_| dashboard).map_or(Response::Ok, |owner| {
+                state.notification_navigation_applied(owner, &navigation)
+            })
+        }
+        Request::PrepareITermFocus => owner
+            .filter(|_| dashboard)
+            .map_or(Response::ITermFocusPrepared(None), |owner| {
+                state.prepare_iterm_focus(owner)
+            }),
+        Request::BridgeOwner(call) if !dashboard && owner.is_none() => state.bridge_owner(call),
+        Request::BridgeOwner(_) => {
+            Response::BridgeOwner(ovrcr_protocol::BridgeOwnerResult::unavailable())
+        }
+        Request::DashboardBridgeIdentity { iterm_session_id } => {
+            owner.filter(|_| dashboard).map_or(Response::Ok, |owner| {
+                state.dashboard_bridge_identity(owner, iterm_session_id)
+            })
+        }
         Request::Task(request) => match &state.tasks {
             Some(tasks) => tasks.handle(state, *request).map_or_else(
                 |error| error_response(ErrorCode::InvalidRequest, format!("{error:#}")),

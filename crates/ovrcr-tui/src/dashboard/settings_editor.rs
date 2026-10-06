@@ -9,6 +9,8 @@ use super::settings::LaunchChoice;
 use super::text_cursor::TextCursor;
 use super::{Dashboard, DashboardAction};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+#[cfg(target_os = "macos")]
+use ovrcr_protocol::ReadySoundChoice;
 use ovrcr_protocol::{ClientMessage, Request, Response, SettingSource, SettingsReport};
 use ratatui::{
     Frame,
@@ -43,6 +45,13 @@ struct Edit {
     text: String,
     picker: Option<PathPicker>,
     pick: Option<PickList>,
+}
+
+impl Editor {
+    pub(super) fn cancel_draft(&mut self) {
+        self.edit = None;
+        self.filtering = false;
+    }
 }
 
 /// What Enter does on a row, and how its value is written.
@@ -342,16 +351,43 @@ fn items(report: &SettingsReport, presets: &[String]) -> Vec<Row> {
                     String::new(),
                 ));
             }
-            shape => items.push(top(
-                entry.group,
-                entry.path,
-                entry.label,
-                editor_kind(shape, entry, settings),
-                entry.about,
-            )),
+            shape => {
+                #[cfg(not(target_os = "macos"))]
+                if entry.path == ovrcr_protocol::ReadySoundChoice::KEY {
+                    continue;
+                }
+                let row = top(
+                    entry.group,
+                    entry.path,
+                    entry.label,
+                    editor_kind(shape, entry, settings),
+                    entry.about,
+                );
+                #[cfg(target_os = "macos")]
+                let row = native_sound_choice_labels(row, settings);
+                items.push(row);
+            }
         }
     }
     items
+}
+
+/// Native labels are a presentation of the shared enum, while catalog paths
+/// and picker values stay the saved setting's stable identifiers.
+#[cfg(target_os = "macos")]
+fn native_sound_choice_labels(mut row: Row, settings: &ovrcr_protocol::Settings) -> Row {
+    if row.id == ReadySoundChoice::KEY {
+        row.value = settings
+            .ready_sound_choice
+            .map_or("invalid", ReadySoundChoice::label)
+            .into();
+        row.default = row
+            .default
+            .as_deref()
+            .and_then(ReadySoundChoice::parse)
+            .map(|choice| choice.label().into());
+    }
+    row
 }
 
 fn editor_kind(
@@ -368,9 +404,18 @@ fn editor_kind(
         ovrcr_protocol::Shape::Pick { options, .. } => Kind::Pick(
             options
                 .iter()
-                .map(|value| PickItem {
-                    label: (*value).into(),
-                    value: toml_string(value),
+                .map(|value| {
+                    let label = *value;
+                    #[cfg(target_os = "macos")]
+                    let label = if entry.path == ReadySoundChoice::KEY {
+                        ReadySoundChoice::parse(label).map_or(label, ReadySoundChoice::label)
+                    } else {
+                        label
+                    };
+                    PickItem {
+                        label: label.into(),
+                        value: toml_string(value),
+                    }
                 })
                 .collect(),
         ),
@@ -1078,6 +1123,28 @@ mod tests {
     }
 
     #[test]
+    fn iterm_focus_is_a_separate_default_off_setting_and_does_not_enable_alerts() {
+        let settings = Settings::default();
+        assert!(!settings.iterm_focus);
+        let rows = items(&report(settings, Vec::new()), &[]);
+        let focus = row(&rows, "iterm_focus");
+        assert_eq!(focus.value, "off");
+        assert_eq!(focus.kind, Kind::Toggle(false));
+        assert_eq!(focus.path, "iterm_focus");
+        assert!(
+            focus
+                .about
+                .iter()
+                .any(|line| line.contains("Banner clicks never request it"))
+        );
+        assert_eq!(
+            row(&rows, "desktop_notifications").kind,
+            Kind::Toggle(false)
+        );
+        assert_eq!(row(&rows, "ready_sound").kind, Kind::Toggle(false));
+    }
+
+    #[test]
     fn groups_come_in_the_documented_order() {
         let mut headers: Vec<_> = items(&report(Settings::default(), Vec::new()), &[])
             .into_iter()
@@ -1282,5 +1349,278 @@ mod tests {
             .map(|row| row.id.as_str())
             .collect();
         assert_eq!(hits, ["quota.codex.home", "quota.grok.home"]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn sound_choice_editor_shows_four_labels_and_waits_for_server_save() {
+        use ovrcr_protocol::{ErrorCode, ServerEvent, ServerMessage, TerminalSize};
+        for (index, choice) in [
+            ReadySoundChoice::Default,
+            ReadySoundChoice::Tap,
+            ReadySoundChoice::Chime,
+            ReadySoundChoice::Rise,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut d = Dashboard::new(TerminalSize {
+                rows: 40,
+                cols: 160,
+            });
+            let settings = Settings {
+                ready_sound_choice: Some(ReadySoundChoice::Chime),
+                ..Default::default()
+            };
+            let reading = report(
+                settings.clone(),
+                vec![(
+                    ReadySoundChoice::KEY,
+                    Some("chime"),
+                    SettingSource::Document,
+                )],
+            );
+            d.handle_server_message(ServerMessage::Event(ServerEvent::SettingsChanged(
+                Box::new(reading.clone()),
+            )));
+            for code in [KeyCode::Char(' '), KeyCode::Char('v'), KeyCode::Char(',')] {
+                d.key(code);
+            }
+            assert!(
+                matches!(d.details, Some((super::super::quota::Details::Settings, _))),
+                "Settings opens through the real menu path"
+            );
+            d.key(KeyCode::Char('/'));
+            for ch in ReadySoundChoice::KEY.chars() {
+                d.key(KeyCode::Char(ch));
+            }
+            d.key(KeyCode::Enter);
+            assert_eq!(d.selected_row().unwrap().value, "Chime");
+            d.key(KeyCode::Enter);
+            let list = d
+                .settings_editor
+                .edit
+                .as_ref()
+                .unwrap()
+                .pick
+                .as_ref()
+                .unwrap();
+            assert_eq!(
+                list.items
+                    .iter()
+                    .map(|item| item.label.as_str())
+                    .collect::<Vec<_>>(),
+                ["System default", "Tap", "Chime", "Rise"]
+            );
+            assert_eq!(list.selected, 2, "current accepted value is selected");
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 40)).unwrap();
+            d.draw(&mut terminal).unwrap();
+            let drawn: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            for label in ["System default", "Tap", "Chime", "Rise"] {
+                assert!(drawn.contains(label));
+            }
+            let arrows = if index < 2 {
+                KeyCode::Up
+            } else {
+                KeyCode::Down
+            };
+            for _ in 0..index.abs_diff(2) {
+                d.key(arrows);
+            }
+            let DashboardAction::Request(ClientMessage {
+                request_id,
+                request: Request::SetSetting { path, value },
+            }) = d.key(KeyCode::Enter)
+            else {
+                panic!("expected Server setting request");
+            };
+            assert_eq!(path, ReadySoundChoice::KEY);
+            assert_eq!(value, Some(toml_string(choice.as_str())));
+            assert_eq!(
+                d.settings, settings,
+                "selection never changes preferences optimistically"
+            );
+            d.handle_server_message(ServerMessage::Response {
+                request_id,
+                response: Response::Error {
+                    code: ErrorCode::InvalidRequest,
+                    message: "fixture save refused".into(),
+                },
+            });
+            assert_eq!(
+                d.settings, settings,
+                "failed save leaves flags and choice unchanged"
+            );
+            assert_eq!(
+                d.settings_editor
+                    .refused
+                    .get(ReadySoundChoice::KEY)
+                    .map(String::as_str),
+                Some("fixture save refused")
+            );
+            let mut accepted = reading;
+            accepted.settings.ready_sound_choice = Some(choice);
+            accepted.rows[0].value = Some(choice.as_str().into());
+            d.handle_server_message(ServerMessage::Event(ServerEvent::SettingsChanged(
+                Box::new(accepted),
+            )));
+            assert_eq!(d.settings.ready_sound_choice, Some(choice));
+            assert!(
+                !d.settings.desktop_notifications && !d.settings.ready_sound,
+                "choice saves never opt in"
+            );
+            assert!(
+                !d.emit_desktop_notifications(),
+                "selector with both flags off does not start alert work"
+            );
+        }
+    }
+
+    #[test]
+    fn sound_choice_invalid_reading_keeps_findings_and_platform_scope() {
+        let settings = Settings {
+            ready_sound_choice: None,
+            ..Default::default()
+        };
+        let mut reading = report(
+            settings,
+            vec![("ready_sound_choice", None, SettingSource::Document)],
+        );
+        reading.rows[0].default = Some("default".into());
+        reading.findings.push(ovrcr_protocol::SettingsFinding {
+            key: Some("ready_sound_choice".into()),
+            message: "unrecognized saved sound choice".into(),
+            line: Some(3),
+        });
+        let rows = items(&reading, &[]);
+        #[cfg(target_os = "macos")]
+        {
+            let choice = row(&rows, "ready_sound_choice");
+            assert_eq!(choice.value, "invalid");
+            assert_eq!(choice.source, Some(SettingSource::Document));
+            assert_eq!(choice.default.as_deref(), Some("System default"));
+            assert_eq!(
+                choice.finding.as_deref(),
+                Some("line 3: unrecognized saved sound choice")
+            );
+            assert_eq!(choice.reset, Some(("ready_sound_choice".into(), None)));
+            assert!(
+                choice
+                    .about
+                    .iter()
+                    .any(|line| line.contains("banners silent"))
+            );
+        }
+        #[cfg(not(target_os = "macos"))]
+        assert!(
+            rows.iter().all(|row| row.id != "ready_sound_choice"),
+            "Linux keeps the setting out of its editor"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn sound_choice_invalid_finding_renders_recovery_in_browse_and_stays_editable() {
+        use ovrcr_protocol::{ServerEvent, ServerMessage, TerminalSize};
+        for attach in [true, false] {
+            for (notifications, sound) in
+                [(true, true), (true, false), (false, true), (false, false)]
+            {
+                let mut d = Dashboard::new(TerminalSize {
+                    rows: 24,
+                    cols: 120,
+                });
+                let settings = Settings {
+                    desktop_notifications: notifications,
+                    ready_sound: sound,
+                    ready_sound_choice: Some(ReadySoundChoice::Tap),
+                    ..Default::default()
+                };
+                if !attach {
+                    d.handle_server_message(ServerMessage::Event(ServerEvent::SettingsChanged(
+                        Box::new(report(settings.clone(), Vec::new())),
+                    )));
+                }
+                let mut reading = report(
+                    Settings {
+                        ready_sound_choice: None,
+                        ..settings
+                    },
+                    vec![(ReadySoundChoice::KEY, None, SettingSource::Document)],
+                );
+                reading.rows[0].default = Some("default".into());
+                reading.findings.push(ovrcr_protocol::SettingsFinding {
+                    key: Some(ReadySoundChoice::KEY.into()),
+                    message: "unrecognized saved sound choice".into(),
+                    line: Some(3),
+                });
+                d.handle_server_message(ServerMessage::Event(ServerEvent::SettingsChanged(
+                    Box::new(reading.clone()),
+                )));
+                assert_eq!(d.mode, super::super::InputMode::Browse);
+                let mut terminal =
+                    ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+                d.draw(&mut terminal).unwrap();
+                let footer: String = (0..120)
+                    .map(|x| terminal.backend().buffer()[(x, 23)].symbol())
+                    .collect();
+                let expected = if notifications && sound {
+                    "Ready sound choice invalid; banners are silent. Choose a sound in Settings"
+                } else {
+                    "1 settings finding; see Settings"
+                };
+                assert!(
+                    footer.contains(expected),
+                    "attach={attach}, N={notifications}, S={sound}: {footer}"
+                );
+                assert_eq!(
+                    d.settings_report.as_deref(),
+                    Some(&reading),
+                    "guidance preserves the full Server finding and invalid row"
+                );
+                assert!(
+                    !d.editing_disabled(),
+                    "a per-setting finding does not disable the editor"
+                );
+                for code in [
+                    KeyCode::Char(' '),
+                    KeyCode::Char('v'),
+                    KeyCode::Char(','),
+                    KeyCode::Char('/'),
+                ] {
+                    d.key(code);
+                }
+                for ch in ReadySoundChoice::KEY.chars() {
+                    d.key(KeyCode::Char(ch));
+                }
+                d.key(KeyCode::Enter);
+                let row = d.selected_row().unwrap();
+                assert_eq!(row.value, "invalid");
+                assert_eq!(
+                    row.finding.as_deref(),
+                    Some("line 3: unrecognized saved sound choice")
+                );
+                d.key(KeyCode::Enter);
+                assert!(
+                    d.settings_editor.edit.as_ref().unwrap().pick.is_some(),
+                    "valid choices remain editable through the real menu path"
+                );
+                assert_eq!(
+                    d.settings.ready_sound_choice, None,
+                    "opening the picker does not repair or overwrite the invalid choice"
+                );
+                assert_eq!(
+                    (d.settings.desktop_notifications, d.settings.ready_sound),
+                    (notifications, sound)
+                );
+            }
+        }
     }
 }

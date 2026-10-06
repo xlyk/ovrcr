@@ -342,6 +342,25 @@ pub enum Request {
     Events {
         follow: bool,
     },
+    /// Connect-only notification callback. Never launches or recovers a session.
+    NavigateNotification {
+        ticket: crate::BridgeNavigationTicket,
+    },
+    ConfirmNotificationNavigation {
+        navigation: String,
+    },
+    NotificationNavigationApplied {
+        navigation: String,
+    },
+    /// Terminal context supplied only by the already admitted Dashboard owner.
+    DashboardBridgeIdentity {
+        iterm_session_id: Option<String>,
+    },
+    /// Only the currently admitted Dashboard may start explicit iTerm setup.
+    PrepareITermFocus,
+    /// Connect-only native helper: validate current owner, optionally publish
+    /// a bounded typed outcome to that owner's existing Dashboard channel.
+    BridgeOwner(crate::BridgeOwnerCall),
     /// Commit unignored changes onto `refs/heads/wip/<branch>` and push that
     /// ref to `origin`. Does not move the checkout's branch or remove the
     /// workspace.
@@ -430,6 +449,10 @@ pub enum Response {
     },
     /// The Server's event ring, oldest first, newest last.
     Events(Vec<crate::Event>),
+    NotificationNavigation(crate::BridgeNavigationResult),
+    NotificationNavigationConfirmed(Option<Box<crate::BridgeNavigationOffer>>),
+    ITermFocusPrepared(Option<crate::BridgeActivationTarget>),
+    BridgeOwner(crate::BridgeOwnerResult),
 }
 
 /// Which create/remove/close a Lifecycle job performed.
@@ -473,6 +496,9 @@ pub enum ServerEvent {
     /// One newly recorded event. The attached Dashboard appends it while
     /// its Events popup is open.
     Recorded(crate::Event),
+    BridgeContext(crate::BridgeContext),
+    NotificationNavigation(crate::BridgeNavigationOffer),
+    ITermFocus(crate::ITermFocusStatus),
     /// One dirty feature worktree the attached Dashboard should ask about
     /// before server shutdown continues.
     WipSavePrompt {
@@ -930,6 +956,38 @@ mod wire_snapshot {
             ),
             ("Events", Request::Events { follow: true }),
             (
+                "NavigateNotification",
+                Request::NavigateNotification {
+                    ticket: navigation_ticket(),
+                },
+            ),
+            (
+                "ConfirmNotificationNavigation",
+                Request::ConfirmNotificationNavigation {
+                    navigation: "n".into(),
+                },
+            ),
+            (
+                "NotificationNavigationApplied",
+                Request::NotificationNavigationApplied {
+                    navigation: "n".into(),
+                },
+            ),
+            (
+                "DashboardBridgeIdentity",
+                Request::DashboardBridgeIdentity {
+                    iterm_session_id: Some("i".into()),
+                },
+            ),
+            ("PrepareITermFocus", Request::PrepareITermFocus),
+            (
+                "BridgeOwner",
+                Request::BridgeOwner(crate::BridgeOwnerCall {
+                    owner: owner_ticket(),
+                    outcome: Some(crate::ITermFocusStatus::Denied),
+                }),
+            ),
+            (
                 "SaveWorkspaceWip",
                 Request::SaveWorkspaceWip {
                     project: "a".into(),
@@ -1040,6 +1098,26 @@ mod wire_snapshot {
                     message: "title applied".into(),
                 }]),
             ),
+            (
+                "NotificationNavigation",
+                Response::NotificationNavigation(crate::BridgeNavigationResult::ignored()),
+            ),
+            (
+                "NotificationNavigationConfirmed",
+                Response::NotificationNavigationConfirmed(Some(Box::new(navigation_offer()))),
+            ),
+            (
+                "ITermFocusPrepared",
+                Response::ITermFocusPrepared(Some(activation_target())),
+            ),
+            (
+                "BridgeOwner",
+                Response::BridgeOwner(crate::BridgeOwnerResult {
+                    schema: crate::BRIDGE_SCHEMA_VERSION,
+                    server_wire: crate::PROTOCOL_VERSION,
+                    target: Some(activation_target()),
+                }),
+            ),
         ]
     }
 
@@ -1087,6 +1165,23 @@ mod wire_snapshot {
                 }),
             ),
             (
+                "BridgeContext",
+                ServerEvent::BridgeContext(crate::BridgeContext {
+                    server_socket: "s".into(),
+                    callback_executable: "c".into(),
+                    callback_executable_sha256: "h".into(),
+                    server_lifetime: "l".into(),
+                }),
+            ),
+            (
+                "NotificationNavigation",
+                ServerEvent::NotificationNavigation(navigation_offer()),
+            ),
+            (
+                "ITermFocus",
+                ServerEvent::ITermFocus(crate::ITermFocusStatus::Denied),
+            ),
+            (
                 "WipSavePrompt",
                 ServerEvent::WipSavePrompt {
                     project: "a".into(),
@@ -1103,6 +1198,50 @@ mod wire_snapshot {
                 },
             ),
         ]
+    }
+
+    fn owner_ticket() -> crate::BridgeOwnerTicket {
+        crate::BridgeOwnerTicket {
+            schema: crate::BRIDGE_SCHEMA_VERSION,
+            server_wire: crate::PROTOCOL_VERSION,
+            context: crate::BridgeContext {
+                server_socket: "s".into(),
+                callback_executable: "c".into(),
+                callback_executable_sha256: "h".into(),
+                server_lifetime: "l".into(),
+            },
+            dashboard_owner: "d".into(),
+        }
+    }
+    fn activation_target() -> crate::BridgeActivationTarget {
+        crate::BridgeActivationTarget {
+            dashboard_pid: 7,
+            dashboard_start_seconds: 8,
+            dashboard_start_microseconds: 9,
+            iterm_session_id: Some("i".into()),
+            iterm_focus: true,
+            owner: Some(Box::new(owner_ticket())),
+        }
+    }
+
+    fn navigation_ticket() -> crate::BridgeNavigationTicket {
+        crate::BridgeNavigationTicket {
+            schema: crate::BRIDGE_SCHEMA_VERSION,
+            server_wire: crate::PROTOCOL_VERSION,
+            server_socket: "s".into(),
+            callback_executable: "c".into(),
+            callback_executable_sha256: "h".into(),
+            server_lifetime: "l".into(),
+            session: SessionId(1),
+            run: SessionRunId(4),
+        }
+    }
+
+    fn navigation_offer() -> crate::BridgeNavigationOffer {
+        crate::BridgeNavigationOffer {
+            navigation: "n".into(),
+            ticket: navigation_ticket(),
+        }
     }
 
     fn task_requests() -> Vec<(&'static str, TaskRequest)> {
@@ -1254,6 +1393,17 @@ mod wire_snapshot {
             .iter()
             .map(|provider| (format!("AgentProvider::{provider:?}"), encode(provider))),
         );
+        all.extend(
+            [
+                crate::ITermFocusStatus::Authorized,
+                crate::ITermFocusStatus::SelectionRequested,
+                crate::ITermFocusStatus::AuthorizationRequired,
+                crate::ITermFocusStatus::Denied,
+                crate::ITermFocusStatus::Unavailable,
+            ]
+            .iter()
+            .map(|status| (format!("ITermFocusStatus::{status:?}"), encode(status))),
+        );
         let extension = crate::ExtensionConversation {
             conversation: "native".into(),
             executable: "/bin/provider".into(),
@@ -1380,8 +1530,17 @@ mod wire_snapshot {
         ("Request::RefreshQuota", "280102"),
         ("Request::RefreshQuotaCursor", "280103"),
         ("Request::Events", "2901"),
-        ("Request::SaveWorkspaceWip", "2a01610162"),
-        ("Request::AnswerWipSave", "2b0161016201"),
+        (
+            "Request::NavigateNotification",
+            "2a0429017301630168016c0104",
+        ),
+        ("Request::ConfirmNotificationNavigation", "2b016e"),
+        ("Request::NotificationNavigationApplied", "2c016e"),
+        ("Request::DashboardBridgeIdentity", "2d010169"),
+        ("Request::PrepareITermFocus", "2e"),
+        ("Request::BridgeOwner", "2f0429017301630168016c01640103"),
+        ("Request::SaveWorkspaceWip", "3001610162"),
+        ("Request::AnswerWipSave", "310161016201"),
         (
             "Request::MarkReviewed",
             "1e010103696e7604636f6e760101047475726e02",
@@ -1410,6 +1569,19 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
+        ("Response::NotificationNavigation", "0d04290000"),
+        (
+            "Response::NotificationNavigationConfirmed",
+            "0e01016e0429017301630168016c0104",
+        ),
+        (
+            "Response::ITermFocusPrepared",
+            "0f0107080901016901010429017301630168016c0164",
+        ),
+        (
+            "Response::BridgeOwner",
+            "1004290107080901016901010429017301630168016c0164",
+        ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
         ("ServerEvent::ScreenDirty", "02010403"),
@@ -1423,17 +1595,23 @@ mod wire_snapshot {
         ),
         (
             "ServerEvent::SettingsChanged",
-            "05072f642e746f6d6c05000002010470692f6d08666561747572652f01022f63010161010162020170010161017100000005636f64657801022f680467726f6b00000000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
+            "05072f642e746f6d6c05000001000002010470692f6d08666561747572652f01022f63010161010162020170010161017100000005636f64657801022f680467726f6b00000000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
         ),
         (
             "ServerEvent::Recorded",
             "0601020105436f64657821436865636b696e67202d3e20556e617661696c61626c653a204854545020353033",
         ),
+        ("ServerEvent::BridgeContext", "07017301630168016c"),
+        (
+            "ServerEvent::NotificationNavigation",
+            "08016e0429017301630168016c0104",
+        ),
+        ("ServerEvent::ITermFocus", "0903"),
         (
             "ServerEvent::WipSavePrompt",
-            "07016101620d666561747572652f746f706963",
+            "0a016101620d666561747572652f746f706963",
         ),
-        ("ServerEvent::LifecycleCompleted", "08070200"),
+        ("ServerEvent::LifecycleCompleted", "0b070200"),
         ("QuotaState::Waiting", "00"),
         ("QuotaState::Current", "01"),
         ("QuotaState::Unavailable", "02"),
@@ -1537,6 +1715,11 @@ mod wire_snapshot {
         ("AgentProvider::Hermes", "04"),
         ("AgentProvider::Omp", "05"),
         ("AgentProvider::Cursor", "06"),
+        ("ITermFocusStatus::Authorized", "00"),
+        ("ITermFocusStatus::SelectionRequested", "01"),
+        ("ITermFocusStatus::AuthorizationRequired", "02"),
+        ("ITermFocusStatus::Denied", "03"),
+        ("ITermFocusStatus::Unavailable", "04"),
         (
             "ConversationReference::Pi",
             "01066e61746976650d2f62696e2f70726f7669646572010e2f686973746f72792e6a736f6e6c072f636f6e66696700",

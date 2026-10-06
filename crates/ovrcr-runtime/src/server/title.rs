@@ -13,6 +13,9 @@ const EXCERPT_LIMIT: usize = 8 * 1024;
 const MESSAGE_LIMIT: usize = 8;
 const TITLE_TIMEOUT: Duration = Duration::from_secs(30);
 
+#[cfg(test)]
+type AfterStdoutRead = Box<dyn Fn(&mut Child) + Send + Sync>;
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct TitleModel {
     provider: String,
@@ -58,6 +61,8 @@ pub(super) struct TitleWorker {
     live_override: Option<HashMap<SessionId, SessionRunId>>,
     #[cfg(test)]
     pi_executable: Option<PathBuf>,
+    #[cfg(test)]
+    after_stdout_read: Option<AfterStdoutRead>,
 }
 
 impl TitleWorker {
@@ -76,6 +81,8 @@ impl TitleWorker {
             live_override: None,
             #[cfg(test)]
             pi_executable: None,
+            #[cfg(test)]
+            after_stdout_read: None,
         }
     }
 
@@ -447,16 +454,24 @@ impl TitleWorker {
         let deadline = Instant::now() + TITLE_TIMEOUT;
         let mut pending = Vec::new();
         let mut title = None;
+        let mut exited = false;
         loop {
+            let fail = move |child| {
+                if exited {
+                    CallResult::Failed
+                } else {
+                    kill_failed(child)
+                }
+            };
             if state.shutdown.load(Ordering::Acquire) {
-                return kill_failed(child);
+                return fail(child);
             }
             if Instant::now() >= deadline {
-                return kill_failed(child);
+                return fail(child);
             }
             let mut bytes = [0; 4096];
-            match stdout.read(&mut bytes) {
-                Ok(0) => {}
+            let stdout_done = match stdout.read(&mut bytes) {
+                Ok(0) => true,
                 Ok(n) => {
                     pending.extend_from_slice(&bytes[..n]);
                     while let Some(end) = pending.iter().position(|b| *b == b'\n') {
@@ -474,26 +489,35 @@ impl TitleWorker {
                         }
                     }
                     if pending.len() > 1024 * 1024 {
-                        return kill_failed(child);
+                        return fail(child);
                     }
+                    false
                 }
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
-                    ) => {}
-                Err(_) => return kill_failed(child),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => true,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => false,
+                Err(_) => return fail(child),
+            };
+            if exited {
+                if stdout_done {
+                    return title.map_or(CallResult::Failed, CallResult::Title);
+                }
+                continue;
+            }
+            #[cfg(test)]
+            if let Some(after_stdout_read) = &self.after_stdout_read {
+                after_stdout_read(&mut child);
             }
             match child.try_wait() {
                 Ok(Some(status)) => {
-                    return if status.success() {
-                        title.map_or(CallResult::Failed, CallResult::Title)
-                    } else {
-                        CallResult::Failed
-                    };
+                    if !status.success() {
+                        return CallResult::Failed;
+                    }
+                    // Successful exit can precede consuming the final pipe
+                    // bytes. Drain available frames without waiting on writers.
+                    exited = true;
                 }
                 Ok(None) => thread::sleep(Duration::from_millis(10)),
-                Err(_) => return kill_failed(child),
+                Err(_) => return fail(child),
             }
         }
     }
@@ -770,6 +794,69 @@ mod tests {
         assert_eq!(clean_title("  Topic \n".into()).as_deref(), Some("Topic"));
         assert_eq!(clean_title("bad\u{202e}".into()).as_deref(), Some("bad"));
         assert!(clean_title("x".repeat(61)).is_none());
+    }
+
+    #[test]
+    fn successful_exit_drains_all_reply_frames_after_empty_read() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("gated-pi");
+        fs::write(
+            &executable,
+            "#!/bin/sh\nIFS= read -r request || exit 2\nattempt=0\nwhile [ ! -f go ]; do\n  attempt=$((attempt + 1))\n  [ \"$attempt\" -le 200 ] || exit 3\n  sleep 0.01\ndone\ncat reply\n",
+        )
+        .unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+        let frame = |text: &str| {
+            format!(
+                "{}\n",
+                json!({"type":"message_end","message":{"role":"assistant","content":text}})
+            )
+        };
+        // Fits in the pipe while exceeding one 4096-byte read. The final
+        // assistant frame must replace the earlier title after the exit.
+        fs::write(
+            root.path().join("reply"),
+            format!(
+                "{}{}{}",
+                frame("Earlier Topic"),
+                " \n".repeat(3000),
+                frame("Exited Topic")
+            ),
+        )
+        .unwrap();
+        let go = root.path().join("go");
+        let mut worker = TitleWorker::new(root.path().to_path_buf());
+        worker.pi_executable = Some(executable);
+        worker.after_stdout_read = Some(Box::new(move |child| {
+            // No provider output is possible until the first read completed.
+            fs::write(&go, []).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        assert!(status.success(), "fake provider must exit successfully");
+                        break;
+                    }
+                    Ok(None) if Instant::now() < deadline => thread::yield_now(),
+                    result => {
+                        let _ = unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
+                        let _ = child.wait();
+                        panic!("fake provider failed to exit before try_wait: {result:?}");
+                    }
+                }
+            }
+        }));
+        let state = super::super::tests::test_state(None, None);
+        let result = worker.call_in_dir(
+            &TitleModel::parse("fake/model").unwrap(),
+            "private fake excerpt",
+            root.path(),
+            &state,
+        );
+        assert!(
+            matches!(result, CallResult::Title(ref title) if title == "Exited Topic"),
+            "successful exit must consume the last queued assistant frame"
+        );
     }
 
     #[test]

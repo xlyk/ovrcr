@@ -60,6 +60,8 @@ enum Command {
     Events,
     RefreshQuota,
     EnableQuota,
+    #[cfg(target_os = "macos")]
+    ITermSetup,
 }
 
 struct Entry {
@@ -150,6 +152,19 @@ pub(super) struct Palette {
     submit_when_ready: Option<bool>,
     cursor: super::text_cursor::TextCursor,
     scroll: Option<usize>,
+}
+
+impl Dashboard {
+    pub(super) fn cancel_notification_palette(&mut self) {
+        if let Some(palette) = self.palette.take() {
+            if let Some(request_id) = palette.pending {
+                self.navigation.detached_palette_requests.insert(request_id);
+            }
+            if let Some(request_id) = palette.suggestions.inspect {
+                self.ignored_responses.insert(request_id);
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1583,6 +1598,11 @@ impl Dashboard {
             label: "Remove project".into(),
             command: Command::RemoveProject,
         });
+        #[cfg(target_os = "macos")]
+        entries.push(Entry {
+            label: "Set up iTerm focus".into(),
+            command: Command::ITermSetup,
+        });
         entries.push(Entry {
             label: "Settings".into(),
             command: Command::Settings,
@@ -2082,6 +2102,13 @@ impl Dashboard {
                                 }
                                 self.select_session(id);
                                 return self.request_selected();
+                            }
+                            #[cfg(target_os = "macos")]
+                            Command::ITermSetup => {
+                                if let Some(request_id) = palette.suggestions.inspect {
+                                    self.ignored_responses.insert(request_id);
+                                }
+                                return self.begin_iterm_setup();
                             }
                             Command::Settings => {
                                 if let Some(request_id) = palette.suggestions.inspect {
@@ -2784,6 +2811,16 @@ impl Dashboard {
         request_id: u64,
         response: &Response,
     ) -> Option<Vec<ClientMessage>> {
+        if self
+            .navigation
+            .detached_palette_requests
+            .remove(&request_id)
+        {
+            if let Response::Error { message, .. } = response {
+                self.set_error(message);
+            }
+            return Some(Vec::new());
+        }
         if self.palette.as_ref()?.suggestions.inspect == Some(request_id) {
             let mut palette = self.palette.take().unwrap();
             palette.suggestions.inspect = None;

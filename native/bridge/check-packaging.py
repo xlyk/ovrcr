@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Validate disposable bundle copies; never sign, install or launch them."""
+import hashlib
 import os
 import plistlib
 import shutil
@@ -10,15 +11,31 @@ from pathlib import Path
 
 if not __debug__:
     raise SystemExit("Packaging checks require assertions; invoke python3 -I without -O")
-source = Path(sys.argv[1])
+arguments = sys.argv[1:]
+local_development = bool(arguments and arguments[0] == "--local-development")
+if local_development:
+    arguments = arguments[1:]
+if len(arguments) != 1:
+    raise SystemExit("Usage: check-packaging.py [--local-development] APP_BUNDLE")
+source = Path(arguments[0])
 validator = Path(__file__).with_name("validate-bundle.py")
 environment = dict(os.environ, PYTHONOPTIMIZE="1")
 checks = 0
 
+entitlements = source / "Contents/Resources/OVRCRBridge.entitlements"
+expected_entitlements_hash = hashlib.sha256(
+    (Path(__file__).resolve().parents[2] / "native/bridge/entitlements.plist").read_bytes()).hexdigest()
+assert entitlements.is_file() and not entitlements.is_symlink()
+assert hashlib.sha256(entitlements.read_bytes()).hexdigest() == expected_entitlements_hash
+assert plistlib.loads(entitlements.read_bytes()) == {"com.apple.security.automation.apple-events": True}
+assert not os.path.lexists(source / "Contents/OVRCRBridge.entitlements")
+checks += 1
 
-def validate(bundle, expected=True, *identity):
+
+def validate(bundle, expected=True, *identity, local=local_development):
     global checks
-    result = subprocess.run([sys.executable, "-I", str(validator), str(bundle), *identity],
+    profile = ["--local-development"] if local else []
+    result = subprocess.run([sys.executable, "-I", str(validator), *profile, str(bundle), *identity],
                             env=environment, capture_output=True, timeout=5)
     assert (result.returncode == 0) == expected, (bundle, result.returncode, result.stderr)
     checks += 1
@@ -27,7 +44,7 @@ def validate(bundle, expected=True, *identity):
 validate(source)
 with tempfile.TemporaryDirectory(prefix="ovrcr-bridge-packaging-") as temporary:
     root = Path(temporary)
-    for case in ["schema", "wire", "schema_bool", "wire_float", "display", "executable", "license", "hash", "missing", "symlink", "extra"]:
+    for case in ["schema", "wire", "schema_bool", "wire_float", "display", "executable", "license", "hash", "missing", "symlink", "extra", "callback_hash", "callback_missing", "callback_symlink", "callback_extra", "purpose", "entitlements", "entitlements_missing", "entitlements_symlink", "entitlements_legacy", "entitlements_legacy_duplicate", "entitlements_legacy_symlink"]:
         bundle = root / f"{case}.app"
         shutil.copytree(source, bundle)
         info_path = bundle / "Contents/Info.plist"
@@ -51,6 +68,32 @@ with tempfile.TemporaryDirectory(prefix="ovrcr-bridge-packaging-") as temporary:
             tone = resources / "ovrcr-tap-v1.wav"
             tone.unlink()
             tone.symlink_to(source / "Contents/Resources/ovrcr-tap-v1.wav")
+        elif case == "callback_hash":
+            (bundle / "Contents/MacOS/ovrcr").write_bytes(b"changed")
+        elif case == "callback_missing":
+            (bundle / "Contents/MacOS/ovrcr").unlink()
+        elif case == "callback_symlink":
+            helper = bundle / "Contents/MacOS/ovrcr"
+            helper.unlink()
+            helper.symlink_to(source / "Contents/MacOS/ovrcr")
+        elif case == "purpose":
+            info["NSAppleEventsUsageDescription"] = ""
+            info_path.write_bytes(plistlib.dumps(info))
+        elif case == "entitlements":
+            (resources / "OVRCRBridge.entitlements").write_bytes(plistlib.dumps({"com.apple.security.automation.apple-events": False}))
+        elif case == "entitlements_missing":
+            (resources / "OVRCRBridge.entitlements").unlink()
+        elif case == "entitlements_symlink":
+            (resources / "OVRCRBridge.entitlements").unlink()
+            (resources / "OVRCRBridge.entitlements").symlink_to(entitlements)
+        elif case == "entitlements_legacy":
+            (resources / "OVRCRBridge.entitlements").rename(bundle / "Contents/OVRCRBridge.entitlements")
+        elif case == "entitlements_legacy_duplicate":
+            shutil.copy2(resources / "OVRCRBridge.entitlements", bundle / "Contents/OVRCRBridge.entitlements")
+        elif case == "entitlements_legacy_symlink":
+            (bundle / "Contents/OVRCRBridge.entitlements").symlink_to(root / "missing-entitlements")
+        elif case == "callback_extra":
+            (bundle / "Contents/MacOS/unreviewed-helper").write_bytes(b"extra")
         else:
             (resources / "unexpected-resource").write_bytes(b"extra")
         validate(bundle, False)
@@ -64,5 +107,33 @@ with tempfile.TemporaryDirectory(prefix="ovrcr-bridge-packaging-") as temporary:
     info.update(CFBundleIdentifier="com.ovrcr.bridge.packaging-fixture", CFBundleDisplayName="OVRCR Packaging Fixture")
     info_path.write_bytes(plistlib.dumps(info))
     validate(fixture, False)
-    validate(fixture, True, "com.ovrcr.bridge.packaging-fixture", "OVRCR Packaging Fixture")
-print(f"{checks} packaging checks passed under PYTHONOPTIMIZE=1; no signing/install/launch.")
+    # The legacy explicit fixture identity is a production-profile API.
+    # A local artifact cannot use it to bypass the fixed local identity/marker.
+    info.pop("OVRCRBridgeLocalDevelopment", None)
+    info_path.write_bytes(plistlib.dumps(info))
+    validate(fixture, True, "com.ovrcr.bridge.packaging-fixture", "OVRCR Packaging Fixture", local=False)
+    if local_development:
+        validate(source, False, local=False)
+        validate(source, False, "com.ovrcr.bridge.local", "OVRCR Local", local=False)
+        validate(source, False, "com.ovrcr.bridge.local", "OVRCR Local")
+        for case, value in (("absent", None), ("false", False), ("integer", 1), ("string", "true")):
+            bundle = root / f"local-marker-{case}.app"
+            shutil.copytree(source, bundle)
+            info_path = bundle / "Contents/Info.plist"
+            info = plistlib.loads(info_path.read_bytes())
+            if value is None:
+                info.pop("OVRCRBridgeLocalDevelopment")
+            else:
+                info["OVRCRBridgeLocalDevelopment"] = value
+            info_path.write_bytes(plistlib.dumps(info))
+            validate(bundle, False)
+        production = root / "production-profile.app"
+        shutil.copytree(source, production)
+        info_path = production / "Contents/Info.plist"
+        info = plistlib.loads(info_path.read_bytes())
+        info.pop("OVRCRBridgeLocalDevelopment")
+        info.update(CFBundleIdentifier="com.ovrcr.bridge", CFBundleDisplayName="OVRCR")
+        info_path.write_bytes(plistlib.dumps(info))
+        validate(production, False)
+        validate(production, True, local=False)
+print(f"{checks} packaging checks passed under PYTHONOPTIMIZE=1; pinned entitlement SHA256 {expected_entitlements_hash}; no signing/install/launch.")

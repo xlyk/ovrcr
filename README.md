@@ -230,8 +230,14 @@ default off; press `N` in Browse to save the setting through the Server. Alerts
 identify the terminal without including conversation content and require an active
 Dashboard. On macOS the separately installed [OVRCR Bridge](native/bridge/README.md)
 holds the sender identity and notification permission; Linux uses `notify-send`.
-An independent [ready sound](docs/dashboard.md#ready-sound), toggled with `S`,
-follows the same alerts and also defaults off.
+Clicking a macOS alert selects its original run in the current Dashboard and
+lands in Browse. It focuses an existing pane or selects in the focused pane;
+stale, archived or missing targets are ignored. Selection leaves Unread and
+Input requests unchanged. Native click/activation acceptance remains pending.
+A [ready sound](docs/dashboard.md#ready-sound), toggled with `S`, follows the same
+alerts and also defaults off. macOS requires both notification and sound opt-ins
+and offers System default, Tap, Chime and Rise in Settings. Linux keeps its
+independent sound option.
 
 Managed Codex terminals also show an [unread indicator](docs/dashboard.md#unread-responses)
 for their latest unreviewed Ready response. Press `R` in Browse mode or choose
@@ -271,8 +277,9 @@ Three behaviours worth knowing before scripting against it:
   ready or finished. `read` returns the current screen, so a read straight after a
   send can show the earlier one; read again.
 - Read commands never start a server. They never migrate the registry. With no
-  server running, project and workspace queries read `config.toml.sqlite3` after
-  migration. They read the preserved `config.toml` if the database is absent or
+  server running, project and workspace queries read `registry.sqlite3` in the
+  instance directory, or the legacy `config.toml.sqlite3` before migration.
+  They read the preserved `config.toml` if the database is absent or
   still empty and uninitialized after an interrupted import. A foreign, damaged,
   or incompatible database is an error, not a TOML fallback. Terminal lists include
   retained rows without starting their processes. `new`, `terminal create`,

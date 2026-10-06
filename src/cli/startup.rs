@@ -34,7 +34,7 @@ pub(super) fn run(paths: &ServerPaths) -> Result<UnixStream> {
         }
         if super::startup_bridge::run(&mut confirm).is_err() {
             notice(
-                "Bridge setup could not complete; Dashboard will continue. Check signing identity and ~/Applications/.ovrcr-bridge-install.* recovery folders before retrying.",
+                "Bridge setup could not complete; Dashboard will continue. Check the selected Bridge installation and ~/Applications/.ovrcr-bridge-install.* recovery folders before retrying.",
                 false,
             );
         }

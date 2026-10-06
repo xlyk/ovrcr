@@ -37,15 +37,15 @@ func remoteBridgePort(_ name: String) -> CFMessagePort? {
     CFMessagePortCreateRemote(nil, name as CFString)
 }
 
-func exchange(_ remote: CFMessagePort, data: Data, deadline: Deadline) -> BridgeStatus {
-    guard data.count <= bridgeMaxBytes, deadline.remaining > 0 else { return .failed }
+func exchange(_ remote: CFMessagePort, data: Data, deadline: Deadline) -> BridgeReply {
+    guard data.count <= bridgeMaxBytes, deadline.remaining > 0 else { return BridgeReply(.failed) }
     let remaining = deadline.remaining
     let sendTimeout = min(0.1, remaining)
     var reply: Unmanaged<CFData>?
     let result = CFMessagePortSendRequest(remote, 1, data as CFData,
         sendTimeout, max(0, remaining - sendTimeout), CFRunLoopMode.defaultMode.rawValue, &reply)
-    guard result == kCFMessagePortSuccess, let response = reply?.takeRetainedValue() else { return .failed }
-    return receivedStatus(response as Data)
+    guard result == kCFMessagePortSuccess, let response = reply?.takeRetainedValue() else { return BridgeReply(.failed) }
+    return receivedReply(response as Data)
 }
 
 func boundedStdin(_ deadline: Deadline) -> Data? {

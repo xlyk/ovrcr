@@ -44,7 +44,7 @@ impl Environment {
             .unwrap_or_else(|error| error.into_inner());
         let values = [
             ("HOME", fixture.root.path().as_os_str()),
-            ("OVRCR_CONFIG", fixture.config.as_os_str()),
+            ("OVRCR_HOME", fixture.config.as_os_str()),
             ("OVRCR_SOCKET", fixture.socket.as_os_str()),
             ("OVRCR_SERVER_EXECUTABLE", executable.as_os_str()),
             ("SHELL", std::ffi::OsStr::new("/bin/sh")),
