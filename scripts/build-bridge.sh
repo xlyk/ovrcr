@@ -2,12 +2,14 @@
 set -eu
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 mode=build
+local_development=false
 callback_executable=
 output_root="$repo_dir/target/bridge"
 output_given=false
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --check) mode=check; shift;;
+        --local-development) local_development=true; shift;;
         --callback-executable)
             [ "$#" -ge 2 ] || { echo 'Missing callback executable' >&2; exit 64; }
             callback_executable=$2; shift 2;;
@@ -16,6 +18,20 @@ while [ "$#" -gt 0 ]; do
             output_root=$1; output_given=true; shift;;
     esac
 done
+app_name='OVRCR Bridge.app'
+bundle_name='OVRCR Bridge'
+bundle_id=com.ovrcr.bridge
+display_name=OVRCR
+profile_option=
+profile_marker=
+if [ "$local_development" = true ]; then
+    app_name='OVRCR Bridge Local.app'
+    bundle_name='OVRCR Bridge Local'
+    bundle_id=com.ovrcr.bridge.local
+    display_name='OVRCR Local'
+    profile_option=--local-development
+    profile_marker='<key>OVRCRBridgeLocalDevelopment</key><true/>'
+fi
 if [ "$mode" = build ] && [ -z "$callback_executable" ]; then
     echo 'Build requires --callback-executable with the reviewed CLI matching the running Server' >&2
     exit 64
@@ -51,7 +67,7 @@ if [ "$mode" = check ]; then
     done
     exit
 fi
-bundle="$stage_dir/OVRCR Bridge.app"
+bundle="$stage_dir/$app_name"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 callback_hash=$(python3 -I - "$callback_executable" "$bundle/Contents/MacOS/ovrcr" <<'PY'
 import hashlib, os, stat, sys
@@ -101,9 +117,9 @@ cat > "$bundle/Contents/Info.plist" <<EOF
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleExecutable</key><string>OVRCRBridge</string>
-<key>CFBundleIdentifier</key><string>com.ovrcr.bridge</string>
-<key>CFBundleName</key><string>OVRCR Bridge</string>
-<key>CFBundleDisplayName</key><string>OVRCR</string>
+<key>CFBundleIdentifier</key><string>$bundle_id</string>
+<key>CFBundleName</key><string>$bundle_name</string>
+<key>CFBundleDisplayName</key><string>$display_name</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleVersion</key><string>$schema.$wire</string>
 <key>CFBundleShortVersionString</key><string>1.0</string>
@@ -114,6 +130,7 @@ cat > "$bundle/Contents/Info.plist" <<EOF
 <key>OVRCRCallbackSHA256</key><string>$callback_hash</string>
 <key>NSAppleEventsUsageDescription</key><string>OVRCR can select the existing iTerm session hosting your current Dashboard after you explicitly set up iTerm focus.</string>
 <key>OVRCRBridgeBuild</key><string>$build</string>
+$profile_marker
 </dict></plist>
 EOF
 cp "$repo_dir/native/bridge/entitlements.plist" "$bundle/Contents/OVRCRBridge.entitlements"
@@ -122,9 +139,9 @@ for tone in tap chime rise; do
 done
 cp "$repo_dir/research/notification-bridge/sounds/LICENSE" "$bundle/Contents/Resources/NotificationSounds-LICENSE"
 cp "$repo_dir/research/notification-bridge/sounds/manifest.json" "$bundle/Contents/Resources/NotificationSounds-manifest.json"
-python3 -I "$repo_dir/native/bridge/validate-bundle.py" "$bundle"
+python3 -I "$repo_dir/native/bridge/validate-bundle.py" ${profile_option:+"$profile_option"} "$bundle"
 "$bundle/Contents/MacOS/OVRCRBridge" --check-contract "$schema" "$wire"
-destination="$output_root/OVRCR Bridge.app"
-if [ -e "$destination" ]; then echo 'Output bundle exists; choose a fresh output root' >&2; exit 73; fi
+destination="$output_root/$app_name"
+if [ -e "$destination" ] || [ -L "$destination" ]; then echo 'Output bundle exists; choose a fresh output root' >&2; exit 73; fi
 mv "$bundle" "$destination"
 printf '%s\n' "$destination"

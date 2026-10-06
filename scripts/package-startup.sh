@@ -2,7 +2,16 @@
 # Build the optional macOS runtime payload. No signing or user installation.
 set -eu
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-[ "$#" -eq 2 ] || { echo 'Usage: scripts/package-startup.sh OUTPUT_DIRECTORY CALLBACK_EXECUTABLE' >&2; exit 64; }
+profile=production
+profile_option=
+app_name='OVRCR Bridge.app'
+if [ "${1-}" = --local-development ]; then
+    profile=local-development
+    profile_option=--local-development
+    app_name='OVRCR Bridge Local.app'
+    shift
+fi
+[ "$#" -eq 2 ] || { echo 'Usage: scripts/package-startup.sh [--local-development] OUTPUT_DIRECTORY CALLBACK_EXECUTABLE' >&2; exit 64; }
 destination=$1
 callback_executable=$(python3 -I - "$2" <<'PY_PATH'
 import os, sys
@@ -14,7 +23,7 @@ print(source)
 PY_PATH
 )
 [ ! -L "$destination" ] || { echo 'Startup payload destination must not be a symlink' >&2; exit 65; }
-fingerprint=$(python3 -I - "$repo_dir" "$callback_executable" <<'PY_HASH'
+fingerprint=$(python3 -I - "$repo_dir" "$callback_executable" "$profile" <<'PY_HASH'
 import hashlib, os, platform, stat, sys
 from pathlib import Path
 root = Path(sys.argv[1])
@@ -23,6 +32,7 @@ files += [root / "scripts" / name for name in ("build-bridge.sh", "install-bridg
 files += [root / "crates/ovrcr-protocol/src" / name for name in ("bridge.rs", "codec.rs")]
 files += sorted((root / "research/notification-bridge/sounds").glob("*"))
 digest = hashlib.sha256(platform.machine().encode())
+digest.update(b"\0" + sys.argv[3].encode())
 for path in files:
     if path.is_file():
         digest.update(str(path.relative_to(root)).encode())
@@ -47,7 +57,7 @@ print(digest.hexdigest())
 PY_HASH
 )
 if [ -f "$destination/source.sha256" ] && [ "$(cat "$destination/source.sha256")" = "$fingerprint" ] &&
-   python3 -I "$destination/native/bridge/validate-bundle.py" "$destination/OVRCR Bridge.app" >/dev/null 2>&1; then
+   python3 -I "$destination/native/bridge/validate-bundle.py" ${profile_option:+"$profile_option"} "$destination/$app_name" >/dev/null 2>&1; then
     exit
 fi
 parent=$(dirname -- "$destination")
@@ -57,18 +67,20 @@ trap 'rm -rf "$stage"' EXIT
 trap 'exit 130' HUP INT TERM
 payload="$stage/payload"
 mkdir -p "$payload/native/bridge" "$payload/scripts"
-sh "$repo_dir/scripts/build-bridge.sh" --callback-executable "$callback_executable" "$payload"
+sh "$repo_dir/scripts/build-bridge.sh" ${profile_option:+"$profile_option"} --callback-executable "$callback_executable" "$payload"
 cp "$repo_dir/scripts/install-bridge.sh" "$payload/scripts/"
 cp "$repo_dir/native/bridge/validate-bundle.py" "$payload/native/bridge/"
-python3 -I - "$payload" <<'PY_CONTRACT'
+python3 -I - "$payload" "$app_name" "$profile" <<'PY_CONTRACT'
 import hashlib, json, plistlib, sys
 from pathlib import Path
 payload = Path(sys.argv[1])
-bundle = payload / "OVRCR Bridge.app/Contents"
+bundle = payload / sys.argv[2] / "Contents"
 info = plistlib.loads((bundle / "Info.plist").read_bytes())
 resources = bundle / "Resources"
 manifest = (resources / "NotificationSounds-manifest.json").read_bytes()
 contract = dict(wire=info["OVRCRServerWire"], schema=info["OVRCRBridgeSchema"], build=info["OVRCRBridgeBuild"],
+                local_development=sys.argv[3] == "local-development",
+                bundle_id=info["CFBundleIdentifier"], display_name=info["CFBundleDisplayName"],
                 callback_sha256=info["OVRCRCallbackSHA256"],
                 entitlements_sha256=hashlib.sha256((bundle / "OVRCRBridge.entitlements").read_bytes()).hexdigest(),
                 manifest=json.loads(manifest), manifest_sha256=hashlib.sha256(manifest).hexdigest(),
@@ -76,7 +88,7 @@ contract = dict(wire=info["OVRCRServerWire"], schema=info["OVRCRBridgeSchema"], 
 (payload / "native/bridge/expected-contract.json").write_text(json.dumps(contract))
 PY_CONTRACT
 printf '%s\n' "$fingerprint" > "$payload/source.sha256"
-python3 -I "$payload/native/bridge/validate-bundle.py" "$payload/OVRCR Bridge.app"
+python3 -I "$payload/native/bridge/validate-bundle.py" ${profile_option:+"$profile_option"} "$payload/$app_name"
 if [ -e "$destination" ]; then mv "$destination" "$stage/previous"; fi
 if ! mv "$payload" "$destination"; then
     if [ -e "$stage/previous" ] && [ ! -e "$destination" ]; then mv "$stage/previous" "$destination"; fi

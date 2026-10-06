@@ -26,6 +26,9 @@ INSTALLER = REPO / "scripts/install-bridge.sh"
 REQUIREMENT = 'designated => identifier "{bundle_id}" and anchor FAKE'
 IDENTITY = "FAKE installer regression identity; never a signing key"
 DISPLAY_NAME = "OVRCR Installer Fixture"
+LOCAL_BUNDLE_ID = "com.ovrcr.bridge.local"
+LOCAL_DISPLAY_NAME = "OVRCR Local"
+LOCAL_APP_NAME = "OVRCR Bridge Local.app"
 
 # This dispatcher has no subprocess or real-tool fallback. Every executable
 # wrapper passes its role, private configuration and actual path explicitly.
@@ -63,7 +66,7 @@ def bundle_kind(value):
     if path == destination:
         require(config["existing"])
         return "installed"
-    require(path.name == "OVRCR Bridge.app")
+    require(path.name == config["app_name"])
     require(path.parent.parent == destination.parent)
     require(path.parent.name.startswith(".ovrcr-bridge-install."))
     require(path.parent.is_dir() and not path.parent.is_symlink())
@@ -86,11 +89,21 @@ try:
         require(args)
         kind = bundle_kind(args[-1])
         bundle = Path(args[-1])
-        if args == ["--force", "--options", "runtime", "--timestamp",
+        timestamp = "--timestamp=none" if config["local_development"] else "--timestamp"
+        identity = "-" if config["local_development"] else config["identity"]
+        if args == ["--force", "--options", "runtime", timestamp,
                     "--entitlements", str(bundle / "Contents/OVRCRBridge.entitlements"),
-                    "--sign", config["identity"], str(bundle)]:
+                    "--sign", identity, str(bundle)]:
             require(kind == "staged")
             record("sign")
+            if config.get("competing_destination"):
+                require(config["local_development"] and not destination.exists())
+                destination.mkdir(mode=0o700)
+                (root / "competing-destination.json").write_text(json.dumps({
+                    "inode": destination.stat().st_ino,
+                    "mode": destination.stat().st_mode,
+                }))
+                record("create_competing_destination")
         elif args == ["--verify", "--deep", "--strict", str(bundle)]:
             record("verify_" + kind)
         elif args == ["-d", "--entitlements", "-", str(bundle)]:
@@ -157,6 +170,8 @@ class InstallerTests(unittest.TestCase):
             intercepted = re.findall(r"(?m)^\s*" + command + r"\s", script)
             if not mentions or len(mentions) != len(intercepted):
                 raise RuntimeError("Installer no longer uses exclusively intercepted " + command)
+        if re.search(r"\bsecurity\b", script):
+            raise RuntimeError("Installer must never discover or query signing identities")
         cls.schema = cls.version("bridge.rs", "BRIDGE_SCHEMA_VERSION")
         cls.wire = cls.version("codec.rs", "PROTOCOL_VERSION")
 
@@ -186,6 +201,8 @@ class InstallerTests(unittest.TestCase):
         self.destination = self.home / "Applications/OVRCR Installer Fixture.app"
         suffix = self.root.name.rsplit("-", 1)[1].replace("_", "-")
         self.bundle_id = "dev.ovrcr.bridge.installer-fixture." + suffix
+        self.display_name = DISPLAY_NAME
+        self.local_development = False
         self.config_path = self.root / "fake-tools.json"
         self.dispatcher = self.root / "fake-tools.py"
         self.dispatcher.write_text(FAKE_TOOLS)
@@ -240,7 +257,7 @@ class InstallerTests(unittest.TestCase):
         shutil.copyfile(sounds / "LICENSE", resources / "NotificationSounds-LICENSE")
         info = {
             "CFBundleIdentifier": self.bundle_id, "CFBundleExecutable": "OVRCRBridge",
-            "CFBundleDisplayName": DISPLAY_NAME, "CFBundleName": "Installer fixture " + revision,
+            "CFBundleDisplayName": self.display_name, "CFBundleName": "Installer fixture " + revision,
             "CFBundlePackageType": "APPL", "CFBundleVersion": f"{self.schema}.{self.wire}",
             "LSUIElement": True, "OVRCRBridgeSchema": self.schema, "OVRCRServerWire": self.wire,
             "OVRCRCallbackSHA256": hashlib.sha256((macos / "ovrcr").read_bytes()).hexdigest(),
@@ -248,29 +265,25 @@ class InstallerTests(unittest.TestCase):
                 "OVRCR can select the existing iTerm session hosting your current Dashboard "
                 "after you explicitly set up iTerm focus.",
         }
+        if self.local_development:
+            info["OVRCRBridgeLocalDevelopment"] = True
         (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
 
-    def install(self, *, existing=True, stream="stderr", installed_requirement=REQUIREMENT,
-                staged_requirement=REQUIREMENT, error=None):
-        self.create_bundle(self.source, "new")
-        source_before = bundle_snapshot(self.source, include_inode=True)
-        if existing:
-            self.create_bundle(self.destination, "old")
-            installed_before = bundle_snapshot(self.destination, include_inode=True)
-            self.assertNotEqual(bundle_snapshot(self.destination), bundle_snapshot(self.source))
+    def configure_tools(self, *, existing=False, stream="stderr", installed_requirement=REQUIREMENT,
+                        staged_requirement=REQUIREMENT, competing_destination=False):
         self.config_path.write_text(json.dumps({
             "root": str(self.root), "source": str(self.source), "destination": str(self.destination),
             "schema": self.schema, "wire": self.wire, "identity": IDENTITY, "existing": existing,
+            "app_name": LOCAL_APP_NAME if self.local_development else "OVRCR Bridge.app",
+            "local_development": self.local_development,
+            "competing_destination": competing_destination,
             "requirement_stream": stream,
             "installed_requirement": installed_requirement.format(bundle_id=self.bundle_id),
             "staged_requirement": staged_requirement.format(bundle_id=self.bundle_id),
         }))
         self.config_path.chmod(0o600)
-        command = [
-            "/bin/sh", str(INSTALLER), "--identity", IDENTITY,
-            "--destination", str(self.destination), "--bundle-id", self.bundle_id,
-            "--display-name", DISPLAY_NAME, str(self.source),
-        ]
+
+    def run_installer(self, command):
         process = subprocess.Popen(command, env=self.environment, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    start_new_session=True)
@@ -296,18 +309,39 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse(remaining, "Owned installer group still present: " + repr(remaining))
         self.assertFalse(timed_out, "Shipping installer timed out: " + repr((stdout, stderr)))
         self.assertLessEqual(len(stdout) + len(stderr), 65536)
-        self.assertTrue((self.root / "calls.jsonl").is_file(), repr((stdout, stderr)))
-        calls = [json.loads(line) for line in (self.root / "calls.jsonl").read_text().splitlines()]
-        operations = [call["operation"] for call in calls]
+        calls_path = self.root / "calls.jsonl"
+        calls = [json.loads(line) for line in calls_path.read_text().splitlines()] if calls_path.exists() else []
         print(json.dumps({"case": self._testMethodName, "schema": self.schema, "wire": self.wire,
-                          "returncode": process.returncode, "operations": operations,
+                          "returncode": process.returncode,
+                          "operations": [call["operation"] for call in calls],
                           "owned_group_members": remaining}), flush=True)
+        return process.returncode, stdout, stderr, calls
+
+    def install(self, *, existing=True, stream="stderr", installed_requirement=REQUIREMENT,
+                staged_requirement=REQUIREMENT, error=None):
+        self.create_bundle(self.source, "new")
+        source_before = bundle_snapshot(self.source, include_inode=True)
+        if existing:
+            self.create_bundle(self.destination, "old")
+            installed_before = bundle_snapshot(self.destination, include_inode=True)
+            self.assertNotEqual(bundle_snapshot(self.destination), bundle_snapshot(self.source))
+        self.configure_tools(existing=existing, stream=stream,
+                             installed_requirement=installed_requirement,
+                             staged_requirement=staged_requirement)
+        command = [
+            "/bin/sh", str(INSTALLER), "--identity", IDENTITY,
+            "--destination", str(self.destination), "--bundle-id", self.bundle_id,
+            "--display-name", DISPLAY_NAME, str(self.source),
+        ]
+        returncode, stdout, stderr, calls = self.run_installer(command)
+        self.assertTrue((self.root / "calls.jsonl").is_file(), repr((stdout, stderr)))
+        operations = [call["operation"] for call in calls]
         expected = ["copy", "sign", "verify_staged", "entitlements", "bridge_check_contract"]
         if existing:
             expected += ["verify_installed", "requirement_installed", "requirement_staged"]
         self.assertEqual(operations, expected, repr(calls))
         self.assertEqual(bundle_snapshot(self.source, include_inode=True), source_before)
-        self.assertEqual(process.returncode, 65 if error else 0, repr((stdout, stderr, calls)))
+        self.assertEqual(returncode, 65 if error else 0, repr((stdout, stderr, calls)))
         self.assertEqual(stdout.count(b"Bundle metadata/resources valid:"), 2)
         if error:
             self.assertIn(error.encode(), stderr)
@@ -343,6 +377,204 @@ class InstallerTests(unittest.TestCase):
 
     def test_empty_staged_requirement_keeps_exact_old_bundle(self):
         self.install(staged_requirement="", error="Cannot compare signing requirements")
+
+    def prepare_local(self):
+        self.local_development = True
+        self.bundle_id = LOCAL_BUNDLE_ID
+        self.display_name = LOCAL_DISPLAY_NAME
+        self.destination = self.home / "Applications" / LOCAL_APP_NAME
+        self.create_bundle(self.source, "local-new")
+        self.configure_tools()
+
+    def local_command(self, *options):
+        return ["/bin/sh", str(INSTALLER), "--local-development", "--destination",
+                str(self.destination), *options, str(self.source)]
+
+    def assert_refused_before_staging(self, command, *, returncode, message=None):
+        source_before = bundle_snapshot(self.source, include_inode=True)
+        result, stdout, stderr, calls = self.run_installer(command)
+        self.assertEqual(result, returncode, repr((stdout, stderr, calls)))
+        if message:
+            self.assertIn(message.encode(), stderr)
+        self.assertEqual(calls, [], "Refusal must precede copy, signing and contract execution")
+        self.assertNotIn(b"Installed ", stdout)
+        self.assertEqual(list(self.destination.parent.glob(".ovrcr-bridge-install.*")), [])
+        self.assertEqual(bundle_snapshot(self.source, include_inode=True), source_before)
+
+    def test_local_fresh_install_signs_only_enclosing_app_without_identity_or_timestamp(self):
+        self.prepare_local()
+        source_before = bundle_snapshot(self.source, include_inode=True)
+        returncode, stdout, stderr, calls = self.run_installer(self.local_command())
+        self.assertEqual(returncode, 0, repr((stdout, stderr, calls)))
+        self.assertEqual([call["operation"] for call in calls],
+                         ["copy", "sign", "verify_staged", "entitlements", "bridge_check_contract"])
+        sign = next(call for call in calls if call["operation"] == "sign")
+        staged = Path(sign["args"][-1])
+        self.assertEqual(sign["args"], ["--force", "--options", "runtime", "--timestamp=none",
+                                       "--entitlements", str(staged / "Contents/OVRCRBridge.entitlements"),
+                                       "--sign", "-", str(staged)])
+        self.assertEqual(staged.name, LOCAL_APP_NAME)
+        self.assertNotIn("--deep", sign["args"], "Do not re-sign the sealed callback helper")
+        self.assertEqual({call["role"] for call in calls}, {"ditto", "codesign", "bridge"})
+        self.assertEqual(bundle_snapshot(self.source, include_inode=True), source_before)
+        self.assertEqual(bundle_snapshot(self.destination), bundle_snapshot(self.source))
+        self.assertEqual(stdout.count(b"Bundle metadata/resources valid:"), 2)
+        self.assertIn(("Installed " + str(self.destination)).encode(), stdout)
+        self.assertEqual(list(self.destination.parent.iterdir()), [self.destination])
+        self.assertFalse((self.home / "Applications/OVRCR Bridge.app").exists())
+
+    def existing_local_path_is_preserved(self, kind):
+        self.prepare_local()
+        self.destination.parent.mkdir(mode=0o700)
+        if kind == "bundle":
+            self.create_bundle(self.destination, "local-old")
+        elif kind == "directory":
+            self.destination.mkdir(mode=0o700)
+        elif kind == "file":
+            self.destination.write_bytes(b"existing local path must survive")
+        elif kind == "fifo":
+            os.mkfifo(self.destination, 0o600)
+        elif kind == "symlink":
+            self.destination.symlink_to(self.source)
+        elif kind == "broken_symlink":
+            self.destination.symlink_to(self.root / "missing-owned-target")
+        else:
+            raise AssertionError("Unknown existing-path fixture")
+        before = self.destination.lstat()
+        original = (bundle_snapshot(self.destination, include_inode=True) if kind == "bundle"
+                    else self.destination.read_bytes() if kind == "file"
+                    else os.readlink(self.destination) if self.destination.is_symlink() else None)
+        self.assert_refused_before_staging(self.local_command(), returncode=65,
+                                          message="requires a fresh destination")
+        after = self.destination.lstat()
+        self.assertEqual((after.st_ino, after.st_mode, after.st_mtime_ns, after.st_size),
+                         (before.st_ino, before.st_mode, before.st_mtime_ns, before.st_size))
+        if kind == "bundle":
+            self.assertEqual(bundle_snapshot(self.destination, include_inode=True), original)
+        elif kind == "file":
+            self.assertEqual(self.destination.read_bytes(), original)
+        elif self.destination.is_symlink():
+            self.assertEqual(os.readlink(self.destination), original)
+        self.assertEqual(list(self.destination.parent.iterdir()), [self.destination])
+
+    def test_local_existing_valid_bundle_is_never_updated(self):
+        self.existing_local_path_is_preserved("bundle")
+
+    def test_local_existing_empty_directory_is_never_replaced(self):
+        self.existing_local_path_is_preserved("directory")
+
+    def test_local_existing_file_is_never_replaced(self):
+        self.existing_local_path_is_preserved("file")
+
+    def test_local_existing_fifo_is_never_replaced(self):
+        self.existing_local_path_is_preserved("fifo")
+
+    def test_local_existing_symlink_is_never_followed(self):
+        self.existing_local_path_is_preserved("symlink")
+
+    def test_local_existing_broken_symlink_is_never_replaced(self):
+        self.existing_local_path_is_preserved("broken_symlink")
+
+    def test_local_concurrent_empty_destination_is_preserved_and_stage_retained(self):
+        self.prepare_local()
+        self.configure_tools(competing_destination=True)
+        source_before = bundle_snapshot(self.source, include_inode=True)
+        returncode, stdout, stderr, calls = self.run_installer(self.local_command())
+        self.assertEqual(returncode, 74, repr((stdout, stderr, calls)))
+        self.assertEqual([call["operation"] for call in calls],
+                         ["copy", "sign", "create_competing_destination", "verify_staged",
+                          "entitlements", "bridge_check_contract"])
+        competing = json.loads((self.root / "competing-destination.json").read_text())
+        self.assertEqual(self.destination.stat().st_ino, competing["inode"])
+        self.assertEqual(self.destination.stat().st_mode, competing["mode"])
+        self.assertEqual(list(self.destination.iterdir()), [],
+                         "An empty competing directory must survive; ordinary os.rename would replace it")
+        sign = next(call for call in calls if call["operation"] == "sign")
+        staged = Path(sign["args"][-1])
+        self.assertTrue(staged.is_dir())
+        self.assertEqual(staged.name, LOCAL_APP_NAME)
+        self.assertEqual(staged.parent.parent, self.destination.parent)
+        self.assertTrue(staged.parent.name.startswith(".ovrcr-bridge-install."))
+        self.assertEqual(bundle_snapshot(staged), bundle_snapshot(self.source))
+        self.assertEqual(bundle_snapshot(self.source, include_inode=True), source_before)
+        self.assertIn(("Local staged application retained for inspection: " + str(staged)).encode(), stderr)
+        self.assertIn(b"Local development publication refused; destination retained", stderr)
+        self.assertNotIn(b"Installed ", stdout)
+        self.assertEqual(set(self.destination.parent.iterdir()), {self.destination, staged.parent})
+        print(json.dumps({"retained_stage": str(staged), "competing_inode": competing["inode"],
+                          "competing_empty": True}), flush=True)
+
+    def test_local_refuses_all_identity_and_metadata_overrides(self):
+        self.prepare_local()
+        for options in (("--identity", "-"), ("--identity", IDENTITY), ("--identity", ""),
+                        ("--bundle-id", LOCAL_BUNDLE_ID), ("--display-name", LOCAL_DISPLAY_NAME)):
+            with self.subTest(options=options):
+                self.assert_refused_before_staging(self.local_command(*options), returncode=64,
+                                                  message="refuses identity and metadata overrides")
+                self.assertFalse(self.destination.exists())
+
+    def test_local_refuses_production_destination_before_staging(self):
+        self.prepare_local()
+        self.destination = self.home / "Applications/OVRCR Bridge.app"
+        self.destination.parent.mkdir(mode=0o700)
+        self.create_bundle(self.destination, "production-path-owned-fixture")
+        before = bundle_snapshot(self.destination, include_inode=True)
+        self.assert_refused_before_staging(self.local_command(), returncode=64,
+                                          message="destination must be OVRCR Bridge Local.app")
+        self.assertEqual(bundle_snapshot(self.destination, include_inode=True), before)
+
+    def test_local_requires_fixed_profile_and_exact_true_marker(self):
+        self.prepare_local()
+        info_path = self.source / "Contents/Info.plist"
+        original = plistlib.loads(info_path.read_bytes())
+        for field, value in (("OVRCRBridgeLocalDevelopment", None), ("OVRCRBridgeLocalDevelopment", False),
+                             ("OVRCRBridgeLocalDevelopment", 1), ("OVRCRBridgeLocalDevelopment", "true"),
+                             ("CFBundleIdentifier", "com.ovrcr.bridge"), ("CFBundleDisplayName", "OVRCR")):
+            with self.subTest(field=field, value=value):
+                changed = dict(original)
+                if value is None:
+                    changed.pop(field)
+                else:
+                    changed[field] = value
+                info_path.write_bytes(plistlib.dumps(changed))
+                self.assert_refused_before_staging(self.local_command(), returncode=1,
+                                                  message="AssertionError")
+                self.assertFalse(self.destination.exists())
+
+    def test_local_refuses_production_artifact(self):
+        self.prepare_local()
+        info_path = self.source / "Contents/Info.plist"
+        info = plistlib.loads(info_path.read_bytes())
+        info.pop("OVRCRBridgeLocalDevelopment")
+        info.update(CFBundleIdentifier="com.ovrcr.bridge", CFBundleDisplayName="OVRCR")
+        info_path.write_bytes(plistlib.dumps(info))
+        self.assert_refused_before_staging(self.local_command(), returncode=1, message="AssertionError")
+
+    def test_production_refuses_local_artifact_even_with_matching_metadata_overrides(self):
+        self.prepare_local()
+        command = ["/bin/sh", str(INSTALLER), "--identity", IDENTITY,
+                   "--destination", str(self.destination), "--bundle-id", LOCAL_BUNDLE_ID,
+                   "--display-name", LOCAL_DISPLAY_NAME, str(self.source)]
+        self.assert_refused_before_staging(command, returncode=1, message="AssertionError")
+
+    def test_production_still_refuses_ad_hoc_identity(self):
+        self.create_bundle(self.source, "production-new")
+        self.configure_tools()
+        command = ["/bin/sh", str(INSTALLER), "--identity", "-",
+                   "--destination", str(self.destination), "--bundle-id", self.bundle_id,
+                   "--display-name", DISPLAY_NAME, str(self.source)]
+        self.assert_refused_before_staging(command, returncode=64,
+                                          message="An explicit non-ad-hoc --identity is required")
+
+    def test_local_refuses_changed_callback_helper_before_staging(self):
+        self.prepare_local()
+        (self.source / "Contents/MacOS/ovrcr").write_bytes(b"changed callback helper")
+        self.assert_refused_before_staging(self.local_command(), returncode=1, message="AssertionError")
+
+    def test_local_refuses_changed_sound_before_staging(self):
+        self.prepare_local()
+        (self.source / "Contents/Resources/ovrcr-tap-v1.wav").write_bytes(b"changed sound")
+        self.assert_refused_before_staging(self.local_command(), returncode=1, message="AssertionError")
 
 
 if __name__ == "__main__":

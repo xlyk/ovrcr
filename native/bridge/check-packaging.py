@@ -10,15 +10,22 @@ from pathlib import Path
 
 if not __debug__:
     raise SystemExit("Packaging checks require assertions; invoke python3 -I without -O")
-source = Path(sys.argv[1])
+arguments = sys.argv[1:]
+local_development = bool(arguments and arguments[0] == "--local-development")
+if local_development:
+    arguments = arguments[1:]
+if len(arguments) != 1:
+    raise SystemExit("Usage: check-packaging.py [--local-development] APP_BUNDLE")
+source = Path(arguments[0])
 validator = Path(__file__).with_name("validate-bundle.py")
 environment = dict(os.environ, PYTHONOPTIMIZE="1")
 checks = 0
 
 
-def validate(bundle, expected=True, *identity):
+def validate(bundle, expected=True, *identity, local=local_development):
     global checks
-    result = subprocess.run([sys.executable, "-I", str(validator), str(bundle), *identity],
+    profile = ["--local-development"] if local else []
+    result = subprocess.run([sys.executable, "-I", str(validator), *profile, str(bundle), *identity],
                             env=environment, capture_output=True, timeout=5)
     assert (result.returncode == 0) == expected, (bundle, result.returncode, result.stderr)
     checks += 1
@@ -81,5 +88,33 @@ with tempfile.TemporaryDirectory(prefix="ovrcr-bridge-packaging-") as temporary:
     info.update(CFBundleIdentifier="com.ovrcr.bridge.packaging-fixture", CFBundleDisplayName="OVRCR Packaging Fixture")
     info_path.write_bytes(plistlib.dumps(info))
     validate(fixture, False)
-    validate(fixture, True, "com.ovrcr.bridge.packaging-fixture", "OVRCR Packaging Fixture")
+    # The legacy explicit fixture identity is a production-profile API.
+    # A local artifact cannot use it to bypass the fixed local identity/marker.
+    info.pop("OVRCRBridgeLocalDevelopment", None)
+    info_path.write_bytes(plistlib.dumps(info))
+    validate(fixture, True, "com.ovrcr.bridge.packaging-fixture", "OVRCR Packaging Fixture", local=False)
+    if local_development:
+        validate(source, False, local=False)
+        validate(source, False, "com.ovrcr.bridge.local", "OVRCR Local", local=False)
+        validate(source, False, "com.ovrcr.bridge.local", "OVRCR Local")
+        for case, value in (("absent", None), ("false", False), ("integer", 1), ("string", "true")):
+            bundle = root / f"local-marker-{case}.app"
+            shutil.copytree(source, bundle)
+            info_path = bundle / "Contents/Info.plist"
+            info = plistlib.loads(info_path.read_bytes())
+            if value is None:
+                info.pop("OVRCRBridgeLocalDevelopment")
+            else:
+                info["OVRCRBridgeLocalDevelopment"] = value
+            info_path.write_bytes(plistlib.dumps(info))
+            validate(bundle, False)
+        production = root / "production-profile.app"
+        shutil.copytree(source, production)
+        info_path = production / "Contents/Info.plist"
+        info = plistlib.loads(info_path.read_bytes())
+        info.pop("OVRCRBridgeLocalDevelopment")
+        info.update(CFBundleIdentifier="com.ovrcr.bridge", CFBundleDisplayName="OVRCR")
+        info_path.write_bytes(plistlib.dumps(info))
+        validate(production, False)
+        validate(production, True, local=False)
 print(f"{checks} packaging checks passed under PYTHONOPTIMIZE=1; no signing/install/launch.")

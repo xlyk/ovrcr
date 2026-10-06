@@ -9,16 +9,25 @@ from pathlib import Path
 
 if not __debug__:
     raise SystemExit("Validation requires assertions; invoke python3 -I without -O")
-if not 2 <= len(sys.argv) <= 4:
-    raise SystemExit("Usage: validate-bundle.py APP_BUNDLE [BUNDLE_ID [DISPLAY_NAME]]")
+arguments = sys.argv[1:]
+local_development = bool(arguments and arguments[0] == "--local-development")
+if local_development:
+    arguments = arguments[1:]
+if not 1 <= len(arguments) <= (1 if local_development else 3):
+    raise SystemExit("Usage: validate-bundle.py [--local-development] APP_BUNDLE [BUNDLE_ID [DISPLAY_NAME]]")
 repo = Path(__file__).resolve().parents[2]
-bundle = Path(sys.argv[1])
+bundle = Path(arguments[0])
 assert bundle.is_dir() and not bundle.is_symlink()
-expected_id = sys.argv[2] if len(sys.argv) >= 3 else "com.ovrcr.bridge"
-expected_display = sys.argv[3] if len(sys.argv) == 4 else "OVRCR"
+if local_development:
+    expected_id, expected_display = "com.ovrcr.bridge.local", "OVRCR Local"
+else:
+    expected_id = arguments[1] if len(arguments) >= 2 else "com.ovrcr.bridge"
+    expected_display = arguments[2] if len(arguments) == 3 else "OVRCR"
 contract_path = Path(__file__).with_name("expected-contract.json")
 if contract_path.is_file():
     contract = json.loads(contract_path.read_text())
+    assert type(contract["local_development"]) is bool and contract["local_development"] == local_development
+    assert contract["bundle_id"] == expected_id and contract["display_name"] == expected_display
     wire, schema = contract["wire"], contract["schema"]
     manifest_hash, license_hash = contract["manifest_sha256"], contract["license_sha256"]
     manifest = contract["manifest"]
@@ -37,6 +46,11 @@ else:
     license_hash = hashlib.sha256((source / "LICENSE").read_bytes()).hexdigest()
     entitlements_hash = hashlib.sha256((repo / "native/bridge/entitlements.plist").read_bytes()).hexdigest()
 info = plistlib.loads((bundle / "Contents/Info.plist").read_bytes())
+if local_development:
+    assert info.get("OVRCRBridgeLocalDevelopment") is True
+else:
+    assert "OVRCRBridgeLocalDevelopment" not in info
+    assert expected_id != "com.ovrcr.bridge.local" and expected_display != "OVRCR Local"
 assert info["CFBundleIdentifier"] == expected_id
 assert info["CFBundleExecutable"] == "OVRCRBridge"
 assert info["CFBundleDisplayName"] == expected_display and info["LSUIElement"] is True
