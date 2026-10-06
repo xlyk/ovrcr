@@ -4061,7 +4061,11 @@ printf '{{"schema":{},"server_wire":{},"status":"%s"%s}}\n' "$status" "$extra"
     #[cfg(target_os = "macos")]
     #[test]
     fn bridge_reaped_client_failures_do_not_signal_its_former_process_group() {
-        use std::os::unix::{fs::PermissionsExt, process::ExitStatusExt};
+        use std::os::unix::{
+            ffi::OsStrExt,
+            fs::{OpenOptionsExt, PermissionsExt},
+            process::ExitStatusExt,
+        };
         let mut outcomes = Vec::new();
         for (case, reply, exit) in [
             (
@@ -4085,21 +4089,33 @@ printf '{{"schema":{},"server_wire":{},"status":"%s"%s}}\n' "$status" "$extra"
             let root = tempfile::tempdir().unwrap();
             let client = root.path().join("client");
             let witness_script = root.path().join("witness");
+            let ready_path = client.with_extension("ready");
+            let c_ready = std::ffi::CString::new(ready_path.as_os_str().as_bytes()).unwrap();
+            assert_eq!(unsafe { libc::mkfifo(c_ready.as_ptr(), 0o600) }, 0);
+            // Open both ends before the worker starts. The parent never waits
+            // for a FIFO reader, including when the client times out.
+            let mut ready = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&ready_path)
+                .unwrap();
             std::fs::write(
                 &client,
                 r#"#!/bin/sh
 set -eu
-cat > "$0.request"
+request=
+IFS= read -r request || [ -n "$request" ]
+printf '%s' "$request" > "$0.request"
 printf '%s' "$$" > "$0.pid.tmp"
 /bin/mv "$0.pid.tmp" "$0.pid"
-count=0
-while [ ! -f "$0.ready" ] && [ "$count" -lt 200 ]; do
-  /bin/sleep 0.01
-  count=$((count + 1))
-done
-[ -f "$0.ready" ] || exit 99
-cat "$0.reply"
-exit "$(cat "$0.exit")"
+IFS= read -r ready < "$0.ready"
+[ "$ready" = ready ] || exit 99
+IFS= read -r reply < "$0.reply"
+IFS= read -r exit_code < "$0.exit"
+printf '%s' "$reply"
+printf '%s' "$exit_code" > "$0.exiting"
+exit "$exit_code"
 "#,
             )
             .unwrap();
@@ -4107,13 +4123,9 @@ exit "$(cat "$0.exit")"
                 &witness_script,
                 r#"#!/bin/sh
 set -eu
-printf 'ready' > "$1.ready"
-count=0
-while [ ! -f "$1.release" ] && [ "$count" -lt 500 ]; do
-  /bin/sleep 0.01
-  count=$((count + 1))
+while IFS= read -r line; do
+  :
 done
-[ -f "$1.release" ] || exit 98
 printf 'survived' > "$1.survived"
 "#,
             )
@@ -4121,9 +4133,10 @@ printf 'survived' > "$1.survived"
             for script in [&client, &witness_script] {
                 std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o755)).unwrap();
             }
-            std::fs::write(client.with_extension("reply"), reply).unwrap();
-            std::fs::write(client.with_extension("exit"), exit).unwrap();
+            std::fs::write(client.with_extension("reply"), format!("{reply}\n")).unwrap();
+            std::fs::write(client.with_extension("exit"), format!("{exit}\n")).unwrap();
             let (reply, status, survived) = thread::scope(|scope| {
+                let started = Instant::now();
                 let call =
                     scope.spawn(|| run_bridge(Some(&client), &BridgeOperation::Status, || false));
                 let until = Instant::now() + HOST_TIMEOUT;
@@ -4142,14 +4155,20 @@ printf 'survived' > "$1.survived"
                 // keeps the client alive until its group has the ready witness.
                 let mut witness = Command::new(&witness_script)
                     .arg(&client)
-                    .stdin(Stdio::null())
+                    .stdin(Stdio::piped())
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
                     .process_group(group)
                     .spawn()
                     .unwrap();
+                let witness_group = unsafe { libc::getpgid(witness.id() as libc::pid_t) };
+                let gate_release = ready.write_all(b"ready\n");
                 let reply = call.join();
-                let release = std::fs::write(client.with_extension("release"), b"release");
+                let elapsed = started.elapsed();
+                let exiting = std::fs::read_to_string(client.with_extension("exiting")).ok();
+                // EOF releases the owned witness without a blocking write or
+                // another process. Its stdin is held until the real call ends.
+                drop(witness.stdin.take());
                 let until = Instant::now() + HOST_TIMEOUT;
                 let status = loop {
                     match witness.try_wait() {
@@ -4163,11 +4182,23 @@ printf 'survived' > "$1.survived"
                         }
                     }
                 };
-                release.unwrap();
                 let survived = client.with_extension("survived").exists();
                 eprintln!(
-                    "{case}: client PG {group}, witness PID {}, witness status {status}, survived={survived}",
-                    witness.id()
+                    "{case}: client PG {group}, witness PID {}, witness PG {witness_group}, client call {elapsed:?}, exit marker {exiting:?}, gate released={}, witness status {status}, survived={survived}",
+                    witness.id(),
+                    gate_release.is_ok()
+                );
+                // Check admission after cleanup so a failed gate cannot leave
+                // a directly owned witness running during assertion unwind.
+                assert_eq!(
+                    witness_group, group,
+                    "{case}: witness did not join client group"
+                );
+                gate_release.unwrap();
+                assert_eq!(
+                    exiting.as_deref(),
+                    Some(exit),
+                    "{case}: client did not reach its expected exit before the real call ended"
                 );
                 (reply.unwrap(), status, survived)
             });
