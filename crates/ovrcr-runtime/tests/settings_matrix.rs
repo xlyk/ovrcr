@@ -318,12 +318,10 @@ fn matrix_covers_every_declared_setting() {
             "desktop_notifications",
             "ready_sound",
             "automatic_local_terminals",
-            "title_model",
-            "branch_prefix",
             "save_uncommitted_work",
+            "branch_prefix",
             "picker_roots",
-            "agents",
-            "launch_choices",
+            "title_model",
             "quota.enabled",
             "quota.claude.probe",
             "quota.codex.command",
@@ -332,6 +330,8 @@ fn matrix_covers_every_declared_setting() {
             "quota.grok.home",
             "quota.cursor.dashboard",
             "quota.cursor.state_db",
+            "agents",
+            "launch_choices",
         ]
     );
     let kinds: Vec<_> = settings.iter().map(|setting| setting.kind).collect();
@@ -339,8 +339,8 @@ fn matrix_covers_every_declared_setting() {
     assert_eq!(
         kinds,
         [
-            Bool, Bool, Str, Str, Str, Bool, Array, Array, Table, Bool, Bool, Str, Str, Str, Str,
-            Bool, Str
+            Bool, Bool, Str, Bool, Str, Array, Str, Bool, Bool, Str, Str, Str, Str, Bool, Str,
+            Array, Table,
         ]
     );
     // Every test-side table names a declared setting, so none goes stale.

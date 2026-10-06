@@ -2871,6 +2871,7 @@ dependencies = [
  "croner",
  "serde",
  "serde_json",
+ "toml",
 ]
 
 [[package]]

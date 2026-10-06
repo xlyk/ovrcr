@@ -14,7 +14,11 @@ pub mod context;
 pub mod freshness;
 pub mod quota;
 pub use quota::*;
+pub mod catalog;
 pub mod settings;
+pub use catalog::{
+    Entry, SettingName, SettingWrite, Shape, element_fields, entries, setting_rows, write_of,
+};
 pub use settings::*;
 mod registry;
 mod session;
