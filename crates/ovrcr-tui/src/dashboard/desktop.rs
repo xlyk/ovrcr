@@ -13,6 +13,8 @@ use ovrcr_protocol::{
     AgentBinding, HierarchySnapshot, InputRequest, ReadyObservation, SessionId, SessionSummary,
 };
 #[cfg(target_os = "macos")]
+use ovrcr_protocol::bridge_installation::BridgeProfile;
+#[cfg(target_os = "macos")]
 use ovrcr_protocol::{
     BRIDGE_SCHEMA_VERSION, BridgeOperation, BridgeReply, BridgeRequest, BridgeSoundFailure,
     BridgeStatus, MAX_FRAME_BYTES, PROTOCOL_VERSION, ReadySoundChoice,
@@ -850,21 +852,58 @@ impl DesktopHost {
         channels: u8,
         #[cfg(target_os = "macos")] sound: Option<ReadySoundChoice>,
     ) -> std::io::Result<Self> {
-        Self::start_at(
+        #[cfg(target_os = "macos")]
+        {
+            use ovrcr_protocol::bridge_installation::LOCAL_DEVELOPMENT_ENV;
+            let home = std::env::var_os("HOME");
+            let opt_in = std::env::var_os(LOCAL_DEVELOPMENT_ENV);
+            Self::start_with_environment(wake, channels, sound, home.as_deref(), opt_in.as_deref())
+        }
+        #[cfg(not(target_os = "macos"))]
+        Self::start_at(wake, channels)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn start_with_environment(
+        wake: Option<std::os::unix::net::UnixStream>,
+        channels: u8,
+        sound: Option<ReadySoundChoice>,
+        home: Option<&std::ffi::OsStr>,
+        opt_in: Option<&std::ffi::OsStr>,
+    ) -> std::io::Result<Self> {
+        let profile = BridgeProfile::from_opt_in(opt_in).map_err(std::io::Error::other)?;
+        let client = bridge_client_path(home, profile);
+        if profile == BridgeProfile::Production {
+            Self::start_at(wake, channels, sound, client)
+        } else {
+            Self::start_with_profile(wake, channels, sound, client, profile)
+        }
+    }
+
+    fn start_at(
+        wake: Option<std::os::unix::net::UnixStream>,
+        channels: u8,
+        #[cfg(target_os = "macos")] sound: Option<ReadySoundChoice>,
+        #[cfg(target_os = "macos")] bridge_client: Option<PathBuf>,
+    ) -> std::io::Result<Self> {
+        Self::start_with_profile(
             wake,
             channels,
             #[cfg(target_os = "macos")]
             sound,
             #[cfg(target_os = "macos")]
-            bridge_client_path(),
+            bridge_client,
+            #[cfg(target_os = "macos")]
+            BridgeProfile::Production,
         )
     }
 
-    fn start_at(
+    fn start_with_profile(
         mut wake: Option<std::os::unix::net::UnixStream>,
         channels: u8,
         #[cfg(target_os = "macos")] sound: Option<ReadySoundChoice>,
         #[cfg(target_os = "macos")] bridge_client: Option<PathBuf>,
+        #[cfg(target_os = "macos")] profile: BridgeProfile,
     ) -> std::io::Result<Self> {
         let (sender, receiver) = mpsc::sync_channel::<(u64, Delivery)>(1);
         let (failure, failures) = mpsc::sync_channel(2);
@@ -896,8 +935,12 @@ impl DesktopHost {
                                 || control.state.load(Ordering::Acquire) != DELIVERY_ACTIVE
                         };
                         if !cancelled() {
-                            let reply =
-                                run_bridge(bridge_client.as_deref(), &control.operation, cancelled);
+                            let reply = run_bridge_with_profile(
+                                bridge_client.as_deref(),
+                                profile,
+                                &control.operation,
+                                cancelled,
+                            );
                             let _ = updated.try_send(BridgeUpdate {
                                 operation: control.operation.clone(),
                                 reply,
@@ -939,10 +982,15 @@ impl DesktopHost {
                             sound,
                             navigation,
                         };
-                        let reply = run_bridge(bridge_client.as_deref(), &operation, || {
-                            cancelled()
-                                || worker_channels.load(Ordering::Acquire) & CHANNEL_DESKTOP == 0
-                        });
+                        let reply = run_bridge_with_profile(
+                            bridge_client.as_deref(),
+                            profile,
+                            &operation,
+                            || {
+                                cancelled()
+                                    || worker_channels.load(Ordering::Acquire) & CHANNEL_DESKTOP == 0
+                            },
+                        );
                         if !cancelled()
                             && worker_channels.load(Ordering::Acquire) & CHANNEL_DESKTOP != 0
                         {
@@ -1066,19 +1114,30 @@ fn run_host(mut command: Command, timeout: Duration, cancelled: impl Fn() -> boo
 }
 
 #[cfg(target_os = "macos")]
-fn bridge_client_path() -> Option<PathBuf> {
-    std::env::var_os("HOME")
+fn bridge_client_path(
+    home: Option<&std::ffi::OsStr>,
+    profile: BridgeProfile,
+) -> Option<PathBuf> {
+    home
         .filter(|home| !home.is_empty())
-        .map(|home| {
-            PathBuf::from(home).join("Applications/OVRCR Bridge.app/Contents/MacOS/OVRCRBridge")
-        })
+        .map(|home| profile.client_path(std::path::Path::new(home)))
+}
+
+#[cfg(all(test, target_os = "macos"))]
+fn run_bridge(
+    client: Option<&std::path::Path>,
+    operation: &BridgeOperation,
+    cancelled: impl Fn() -> bool,
+) -> BridgeReply {
+    run_bridge_with_profile(client, BridgeProfile::Production, operation, cancelled)
 }
 
 /// Only the short-lived client is a child. Its LaunchServices app lives outside
 /// this owned process group and survives cancellation or Dashboard detach.
 #[cfg(target_os = "macos")]
-fn run_bridge(
+fn run_bridge_with_profile(
     client: Option<&std::path::Path>,
+    profile: BridgeProfile,
     operation: &BridgeOperation,
     cancelled: impl Fn() -> bool,
 ) -> BridgeReply {
@@ -1103,8 +1162,13 @@ fn run_bridge(
         return unavailable(BridgeStatus::Failed);
     }
     let deadline = Instant::now() + HOST_TIMEOUT;
-    let Ok(mut child) = Command::new(client)
-        .arg("--client")
+    let mut command = Command::new(client);
+    command.arg("--client");
+    if profile == BridgeProfile::LocalDevelopment {
+        // The native entry guard rejects a wrong-mode bundle before input or IPC.
+        command.arg("--local-development");
+    }
+    let Ok(mut child) = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -2489,6 +2553,150 @@ printf '{{"schema":{},"server_wire":{},"status":"%s"%s}}\n' "$status" "$extra"
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn profile_fake_bridge(
+        home: &std::path::Path,
+        profile: BridgeProfile,
+        status: &str,
+    ) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let (_root, source) = fake_bridge(status);
+        let client = profile.client_path(home);
+        std::fs::create_dir_all(client.parent().unwrap()).unwrap();
+        let guard = match profile {
+            BridgeProfile::Production => "[ \"$1\" = '--client' ] && [ \"$#\" = 1 ] || exit 99",
+            BridgeProfile::LocalDevelopment => "[ \"$1\" = '--client' ] && [ \"$2\" = '--local-development' ] && [ \"$#\" = 2 ] || exit 99",
+        };
+        let script = std::fs::read_to_string(&source).unwrap().replace(
+            "[ \"$1\" = '--client' ] && [ \"$#\" = 1 ] || exit 99",
+            &format!("{guard}\nprintf '%s\\n' \"$@\" > \"$0.arguments\""),
+        );
+        std::fs::write(&client, script).unwrap();
+        std::fs::set_permissions(&client, std::fs::Permissions::from_mode(0o755)).unwrap();
+        for extension in ["status", "settings", "authorize"] {
+            std::fs::copy(source.with_extension(extension), client.with_extension(extension)).unwrap();
+        }
+        client
+    }
+
+    #[cfg(target_os = "macos")]
+    fn host_status(host: &DesktopHost) -> BridgeReply {
+        host.controls.send(BridgeControl {
+            operation: BridgeOperation::Status,
+            state: Arc::new(AtomicU8::new(DELIVERY_ACTIVE)),
+        }).unwrap();
+        let update = host.updates.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_eq!(update.operation, BridgeOperation::Status);
+        update.reply
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bridge_production_constructor_selects_one_fixed_profile_and_guarded_client() {
+        use std::ffi::OsStr;
+        for (opt_in, profile, expected_status, expected_args) in [
+            (None, BridgeProfile::Production, BridgeStatus::Denied, "--client\n"),
+            (Some(OsStr::new("")), BridgeProfile::Production, BridgeStatus::Denied, "--client\n"),
+            (Some(OsStr::new("0")), BridgeProfile::Production, BridgeStatus::Denied, "--client\n"),
+            (Some(OsStr::new("1")), BridgeProfile::LocalDevelopment, BridgeStatus::Available, "--client\n--local-development\n"),
+        ] {
+            let home = tempfile::tempdir().unwrap();
+            let production = profile_fake_bridge(home.path(), BridgeProfile::Production, "denied");
+            let local = profile_fake_bridge(home.path(), BridgeProfile::LocalDevelopment, "available");
+            let host = DesktopHost::start_with_environment(
+                None, CHANNEL_DESKTOP, None, Some(home.path().as_os_str()), opt_in,
+            ).unwrap();
+            assert_eq!(host_status(&host).status, expected_status);
+            drop(host);
+            let (selected, other) = if profile == BridgeProfile::Production {
+                (&production, &local)
+            } else {
+                (&local, &production)
+            };
+            assert_eq!(bridge_requests(selected).len(), 1);
+            assert!(bridge_requests(other).is_empty());
+            assert_eq!(std::fs::read_to_string(selected.with_extension("arguments")).unwrap(), expected_args);
+            assert!(!other.with_extension("arguments").exists());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bridge_production_constructor_refuses_invalid_opt_in_before_any_client() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let home = tempfile::tempdir().unwrap();
+        let production = profile_fake_bridge(home.path(), BridgeProfile::Production, "available");
+        for opt_in in [OsStr::new("true"), OsStr::new("01"), OsStr::new(" 1"), OsStr::from_bytes(b"\xff")] {
+            let result = DesktopHost::start_with_environment(
+                None, CHANNEL_DESKTOP, None, Some(home.path().as_os_str()), Some(opt_in),
+            );
+            assert!(result.is_err());
+        }
+        assert!(bridge_requests(&production).is_empty());
+        assert!(!production.with_extension("arguments").exists());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bridge_local_constructor_missing_client_never_uses_production() {
+        let home = tempfile::tempdir().unwrap();
+        let production = profile_fake_bridge(home.path(), BridgeProfile::Production, "available");
+        let host = DesktopHost::start_with_environment(
+            None, CHANNEL_DESKTOP, None, Some(home.path().as_os_str()), Some(std::ffi::OsStr::new("1")),
+        ).unwrap();
+        assert_eq!(host_status(&host).status, BridgeStatus::Failed);
+        drop(host);
+        assert!(bridge_requests(&production).is_empty());
+        assert!(!production.with_extension("arguments").exists());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bridge_local_constructor_flags_wrong_mode_client_before_input() {
+        let home = tempfile::tempdir().unwrap();
+        let production = profile_fake_bridge(home.path(), BridgeProfile::Production, "available");
+        let local = BridgeProfile::LocalDevelopment.client_path(home.path());
+        std::fs::create_dir_all(local.parent().unwrap()).unwrap();
+        std::fs::copy(&production, &local).unwrap();
+        let host = DesktopHost::start_with_environment(
+            None, CHANNEL_DESKTOP, None, Some(home.path().as_os_str()), Some(std::ffi::OsStr::new("1")),
+        ).unwrap();
+        assert_eq!(host_status(&host).status, BridgeStatus::Failed);
+        drop(host);
+        assert!(bridge_requests(&production).is_empty());
+        assert!(bridge_requests(&local).is_empty(), "wrong mode must refuse before reading the request");
+        assert!(!local.with_extension("arguments").exists());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bridge_local_constructor_keeps_profile_for_notification_delivery() {
+        let home = tempfile::tempdir().unwrap();
+        let local = profile_fake_bridge(home.path(), BridgeProfile::LocalDevelopment, "available");
+        let production = profile_fake_bridge(home.path(), BridgeProfile::Production, "available");
+        let mut d = dashboard();
+        install_fake_bridge(&mut d, local.clone());
+        deliver(&mut d, snapshot(2, "local-turn", AgentActivity::ResponseReady));
+        let notification = d.desktop.pending.pop_front().unwrap();
+        assert!(notification.navigation.is_some());
+        let host = DesktopHost::start_with_environment(
+            None, CHANNEL_DESKTOP, None, Some(home.path().as_os_str()), Some(std::ffi::OsStr::new("1")),
+        ).unwrap();
+        assert!(host.send(Delivery {
+            notification,
+            state: Arc::new(AtomicU8::new(DELIVERY_ACTIVE)),
+            started: Arc::new(AtomicBool::new(false)),
+        }));
+        let update = host.updates.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_eq!(update.reply.status, BridgeStatus::Submitted);
+        assert!(matches!(update.operation, BridgeOperation::Deliver { sound: None, .. }));
+        drop(host);
+        assert!(matches!(bridge_requests(&local)[0].op, BridgeOperation::Deliver { .. }));
+        assert_eq!(std::fs::read_to_string(local.with_extension("arguments")).unwrap(), "--client\n--local-development\n");
+        assert!(bridge_requests(&production).is_empty());
     }
 
     #[cfg(target_os = "macos")]

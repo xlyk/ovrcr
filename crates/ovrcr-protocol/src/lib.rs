@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod auto_trust;
 pub mod bridge;
+pub mod bridge_installation;
 pub mod iterm;
 pub use agent::*;
 pub use auto_trust::{apply_default_auto_trust, default_auto_trust_flag};
