@@ -11930,7 +11930,7 @@ fn desktop_notifications_bridge_click_preserves_queued_wip_shutdown_questions() 
     let mut dashboard = DesktopAlertDashboard::start(
         &fixture,
         Some(
-            "desktop_notifications = true\nready_sound = false\niterm_focus = false\nsave_uncommitted_work = false\nautomatic_local_terminals = \"off\"\nquota.enabled = false\nquota.claude_probe = false\n",
+            "desktop_notifications = true\nready_sound = false\niterm_focus = false\nsave_uncommitted_work = false\nautomatic_local_terminals = \"off\"\nquota.enabled = false\nquota.claude.probe = false\n",
         ),
     );
     dashboard.select("setup", "HOOK_READY");
@@ -11954,6 +11954,10 @@ fn desktop_notifications_bridge_click_preserves_queued_wip_shutdown_questions() 
     );
     dashboard
         .wait_screen(|screen| screen.contains("CODEX_CALLBACK=1") && screen.contains("BROWSE"));
+    eprintln!(
+        "WIP_BRIDGE_SCREEN positive-control\n{}\nWIP_BRIDGE_SCREEN_END",
+        dashboard.parser.screen().contents()
+    );
     dashboard.select("setup", "HOOK_READY");
     let before = fixture.session_summary(summary.id);
     assert_eq!(before.run, summary.run);
@@ -12068,6 +12072,10 @@ fn desktop_notifications_bridge_click_preserves_queued_wip_shutdown_questions() 
     });
     let outcome = catch_unwind(AssertUnwindSafe(|| {
         dashboard.wait_screen(|screen| screen.contains(&first) && !screen.contains(&second));
+        eprintln!(
+            "WIP_BRIDGE_SCREEN first-question\n{}\nWIP_BRIDGE_SCREEN_END",
+            dashboard.parser.screen().contents()
+        );
         assert!(matches!(
             received.try_recv(),
             Err(std::sync::mpsc::TryRecvError::Empty)
@@ -12087,6 +12095,10 @@ fn desktop_notifications_bridge_click_preserves_queued_wip_shutdown_questions() 
                 && screen.contains("HOOK_READY")
                 && !screen.contains("CODEX_CALLBACK=1")
         });
+        eprintln!(
+            "WIP_BRIDGE_SCREEN rejected-click-fresh-redraw\n{}\nWIP_BRIDGE_SCREEN_END",
+            dashboard.parser.screen().contents()
+        );
         assert_eq!(fixture.server_pid(), Some(server_pid));
         assert_eq!(desktop_navigation_rows(&fixture), rows);
         let after = fixture.session_summary(summary.id);
@@ -12108,6 +12120,10 @@ fn desktop_notifications_bridge_click_preserves_queued_wip_shutdown_questions() 
         // production palette advances only on that request's matching Ok.
         dashboard.send(b"\x1b");
         dashboard.wait_screen(|screen| screen.contains(&second) && !screen.contains(&first));
+        eprintln!(
+            "WIP_BRIDGE_SCREEN second-question-after-explicit-no\n{}\nWIP_BRIDGE_SCREEN_END",
+            dashboard.parser.screen().contents()
+        );
         assert!(
             matches!(
                 received.try_recv(),
