@@ -179,6 +179,13 @@ impl Dashboard {
             self.lifecycle_pending = Some(row);
             return;
         }
+        // Keep the launch preference across the Provisional wait so success can
+        // still ask the Server to remember it (palette closes on accept).
+        let preference = self
+            .palette
+            .as_mut()
+            .and_then(|palette| palette.launch_preference.take());
+        self.lifecycle_preference = preference;
         self.lifecycle_strip = Some(row.kind.strip_message());
         self.provisional = Some(row);
         self.palette = None;
@@ -215,6 +222,7 @@ impl Dashboard {
         self.provisional = None;
         self.lifecycle_pending = None;
         self.lifecycle_strip = None;
+        self.lifecycle_preference = None;
     }
 
     pub(super) fn on_lifecycle_completed(
@@ -255,6 +263,7 @@ impl Dashboard {
                     self.open_forced_remove_workspace(project, id, code, message);
                     return DashboardAction::Redraw;
                 }
+                self.lifecycle_preference = None;
                 row.failed = Some((code.clone(), message.clone()));
                 self.lifecycle_strip = Some(format!("{code:?}: {message}"));
                 self.provisional = Some(row);
@@ -267,9 +276,22 @@ impl Dashboard {
         self.select_session(session.id);
         self.mode = super::InputMode::Terminal;
         let request_id = self.next_request_id();
-        match self.view_request(self.outer_area, request_id) {
-            Ok(Some(message)) => DashboardAction::Request(message),
-            _ => DashboardAction::Redraw,
+        let mut outgoing = match self.view_request(self.outer_area, request_id) {
+            Ok(Some(message)) => vec![message],
+            _ => Vec::new(),
+        };
+        if let Some((project, choice)) = self.lifecycle_preference.take() {
+            let request = super::settings::launch_choice_request(&project, &choice);
+            self.settings.launch_choices.insert(project, choice);
+            outgoing.push(crate::protocol::ClientMessage {
+                request_id: self.error_owning_request_id(),
+                request,
+            });
+        }
+        match outgoing.len() {
+            0 => DashboardAction::Redraw,
+            1 => DashboardAction::Request(outgoing.pop().unwrap()),
+            _ => DashboardAction::RequestBatch(outgoing),
         }
     }
 

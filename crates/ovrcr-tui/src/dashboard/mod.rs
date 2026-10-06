@@ -306,6 +306,8 @@ pub struct Dashboard {
     provisional: Option<lifecycle_ui::Provisional>,
     /// Bottom status strip for Lifecycle progress / soft refuse; Esc dismisses this only.
     lifecycle_strip: Option<String>,
+    /// Remembered launch choice held across Provisional wait until CreatedSession completes.
+    lifecycle_preference: Option<(String, settings::LaunchChoice)>,
 }
 
 thread_local! {

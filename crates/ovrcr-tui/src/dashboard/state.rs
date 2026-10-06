@@ -610,6 +610,7 @@ impl Dashboard {
             lifecycle_pending: None,
             provisional: None,
             lifecycle_strip: None,
+            lifecycle_preference: None,
             settings: Settings::default(),
             config_dir: std::path::PathBuf::new(),
             error_owning_requests: HashSet::new(),

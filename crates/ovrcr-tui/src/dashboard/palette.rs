@@ -142,7 +142,7 @@ pub(super) struct Palette {
     error: Option<String>,
     workspace_acknowledged: bool,
     workspace_id: Option<String>,
-    launch_preference: Option<(String, super::settings::LaunchChoice)>,
+    pub(super) launch_preference: Option<(String, super::settings::LaunchChoice)>,
     failed_launch: Option<CreateSessionRequest>,
     launch_project: Option<String>,
     suggestions: Suggestions,
