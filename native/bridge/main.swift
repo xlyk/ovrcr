@@ -1,12 +1,15 @@
 import AppKit
+import CoreFoundation
 import Darwin
 import Foundation
 
-func emit(_ status: BridgeStatus) {
-    var data = BridgeReply(status).data()
+func emit(_ reply: BridgeReply) {
+    var data = reply.data()
     data.append(10)
     FileHandle.standardOutput.write(data)
 }
+
+func emit(_ status: BridgeStatus) { emit(BridgeReply(status)) }
 
 let arguments = CommandLine.arguments
 // These guards run before NSApplication, UserNotifications, launch or IPC.
@@ -20,7 +23,22 @@ if arguments.dropFirst().first == "--check-contract" {
 }
 
 if arguments.dropFirst().first == "--client" {
-    guard arguments.count == 2 else { emit(.failed); exit(0) }
+    let localDevelopment = arguments.count == 3 && arguments[2] == "--local-development"
+    guard arguments.count == 2 || localDevelopment else { emit(.failed); exit(0) }
+    // A selected local path must not accidentally address a production endpoint.
+    // Reject profile mismatches before stdin, LaunchServices or any remote IPC.
+    let localBundleID = "com.ovrcr.bridge.local"
+    let localMarker = Bundle.main.object(forInfoDictionaryKey: "OVRCRBridgeLocalDevelopment")
+    if localDevelopment {
+        guard Bundle.main.bundleIdentifier == localBundleID,
+              Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String == "OVRCR Local",
+              let marker = localMarker as? NSNumber,
+              CFGetTypeID(marker) == CFBooleanGetTypeID(), marker.boolValue else {
+            emit(.incompatible); exit(0)
+        }
+    } else if Bundle.main.bundleIdentifier == localBundleID || localMarker != nil {
+        emit(.incompatible); exit(0)
+    }
     let deadline = Deadline(seconds: 1.8) // Leave room inside the Dashboard's two-second bound.
     guard let input = boundedStdin(deadline) else { emit(.failed); exit(0) }
     if case .rejected(let failure) = admit(input) { emit(failure); exit(0) }
@@ -32,7 +50,7 @@ if arguments.dropFirst().first == "--client" {
             if remote == nil { RunLoop.current.run(until: Date(timeIntervalSinceNow: min(0.01, deadline.remaining))) }
         }
     }
-    emit(remote.map { exchange($0, data: input, deadline: deadline) } ?? .failed)
+    emit(remote.map { exchange($0, data: input, deadline: deadline) } ?? BridgeReply(.failed))
     exit(0)
 }
 

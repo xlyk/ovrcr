@@ -6,17 +6,31 @@ let bridgeMaxBytes = 1_048_576
 enum BridgeStatus: String, Codable {
     case available, notDetermined = "not_determined", permissionPending = "permission_pending"
     case denied, submitted, settingsOpened = "settings_opened", incompatible, failed
+    case itermPending = "iterm_pending", itermAuthorized = "iterm_authorized"
+    case itermAuthorizationRequired = "iterm_authorization_required", itermDenied = "iterm_denied"
+    case itermUnavailable = "iterm_unavailable"
+}
+
+enum ReadySoundChoice: String, Codable, CaseIterable {
+    case `default`, tap, chime, rise
+}
+
+enum BridgeSoundFailure: String, Codable, CaseIterable {
+    case missingResource = "missing_resource", unreadableResource = "unreadable_resource"
+    case invalidResource = "invalid_resource", lookupConflict = "lookup_conflict"
 }
 
 struct BridgeReply: Codable {
     let schema: UInt32
     let server_wire: UInt32
     let status: BridgeStatus
+    let sound_unavailable: BridgeSoundFailure?
 
-    init(_ status: BridgeStatus) {
+    init(_ status: BridgeStatus, soundUnavailable: BridgeSoundFailure? = nil) {
         schema = bridgeSchema
         server_wire = bridgeServerWire
         self.status = status
+        sound_unavailable = status == .submitted ? soundUnavailable : nil
     }
 
     func data() -> Data {
@@ -32,19 +46,25 @@ struct BridgeVersions: Decodable {
 }
 
 struct BridgeOperation: Decodable {
-    enum Kind: String, Decodable { case status, authorize, settings, deliver }
+    enum Kind: String, Decodable { case status, authorize, settings, deliver, itermSetup = "iterm_setup", itermStatus = "iterm_status" }
     let type: Kind
     let title: String?
     let subtitle: String?
     let body: String?
+    let sound: ReadySoundChoice?
+    let navigation: BridgeNavigationTicket?
+    let target: BridgeActivationTarget?
 
-    enum CodingKeys: String, CodingKey { case type, title, subtitle, body }
+    enum CodingKeys: String, CodingKey { case type, title, subtitle, body, sound, navigation, target }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         type = try values.decode(Kind.self, forKey: .type)
         title = type == .deliver ? try values.decode(String.self, forKey: .title) : nil
         subtitle = type == .deliver ? try values.decode(String.self, forKey: .subtitle) : nil
         body = type == .deliver ? try values.decode(String.self, forKey: .body) : nil
+        sound = type == .deliver ? try values.decodeIfPresent(ReadySoundChoice.self, forKey: .sound) : nil
+        navigation = type == .deliver ? try values.decode(BridgeNavigationTicket.self, forKey: .navigation) : nil
+        target = [.itermSetup, .itermStatus].contains(type) ? try values.decode(BridgeActivationTarget.self, forKey: .target) : nil
     }
 }
 
@@ -80,9 +100,17 @@ func admit(_ data: Data) -> Admission {
     guard let request = try? JSONDecoder().decode(BridgeRequest.self, from: data) else {
         return .rejected(.failed)
     }
+    if [.itermSetup, .itermStatus].contains(request.op.type) {
+        guard let target = request.op.target, target.iterm_focus,
+              let owner = target.owner, owner.valid,
+              target.dashboard_pid > 1, target.dashboard_start_seconds > 0,
+              target.dashboard_start_microseconds < 1_000_000,
+              let identity = target.iterm_session_id, ITermFocus.sessionGUID(identity) != nil else { return .rejected(.failed) }
+    }
     if request.op.type == .deliver {
         guard let title = request.op.title, let subtitle = request.op.subtitle,
-              let body = request.op.body,
+              let body = request.op.body, let navigation = request.op.navigation,
+              navigation.valid,
               ["OVRCR · response ready", "OVRCR · input needed"].contains(title),
               safeBannerText(title, bytes: 96), safeBannerText(subtitle, bytes: 320),
               safeBannerText(body, bytes: 1024) else { return .rejected(.failed) }
@@ -90,11 +118,12 @@ func admit(_ data: Data) -> Admission {
     return .request(request)
 }
 
-func receivedStatus(_ data: Data) -> BridgeStatus {
+func receivedReply(_ data: Data) -> BridgeReply {
     guard data.count <= bridgeMaxBytes,
-          let reply = try? JSONDecoder().decode(BridgeReply.self, from: data) else { return .failed }
-    guard reply.schema == bridgeSchema, reply.server_wire == bridgeServerWire else { return .incompatible }
-    return reply.status
+          let versions = try? JSONDecoder().decode(BridgeVersions.self, from: data) else { return BridgeReply(.failed) }
+    guard versions.schema == bridgeSchema, versions.server_wire == bridgeServerWire else { return BridgeReply(.incompatible) }
+    guard let reply = try? JSONDecoder().decode(BridgeReply.self, from: data) else { return BridgeReply(.failed) }
+    return BridgeReply(reply.status, soundUnavailable: reply.sound_unavailable)
 }
 
 struct Deadline {
@@ -112,7 +141,7 @@ final class BoundedReply {
     private let ready = DispatchSemaphore(value: 0)
     private let deadline: Deadline
     private var active = true
-    private var result: BridgeStatus = .failed
+    private var result = BridgeReply(.failed)
 
     init(seconds: Double = 0.65) { deadline = Deadline(seconds: seconds) }
 
@@ -131,16 +160,16 @@ final class BoundedReply {
         return !active
     }
 
-    func finish(_ status: BridgeStatus) {
+    func finish(_ status: BridgeStatus, soundUnavailable: BridgeSoundFailure? = nil) {
         lock.lock()
         guard active else { lock.unlock(); return }
-        result = deadline.remaining > 0 ? status : .failed
+        result = deadline.remaining > 0 ? BridgeReply(status, soundUnavailable: soundUnavailable) : BridgeReply(.failed)
         active = false
         lock.unlock()
         ready.signal()
     }
 
-    func wait() -> BridgeStatus {
+    func wait() -> BridgeReply {
         _ = ready.wait(timeout: .now() + deadline.remaining)
         lock.lock()
         active = false

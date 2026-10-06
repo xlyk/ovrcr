@@ -1,20 +1,23 @@
 # OVRCR Bridge
 
-The macOS Bridge owns notification display and authorization state only. The
-Dashboard decides eligible alerts; the Server retains all session/process
+The macOS Bridge owns notification display and authorization, and forwards
+default-action clicks through the existing Server connection. The Dashboard
+decides eligible alerts and applies selection; the Server retains session/process
 ownership. Source/build checks do not establish installed native acceptance.
 
 Build from the checkout with Xcode command-line tools and Python 3:
 
 ```sh
 scripts/build-bridge.sh --check
-scripts/build-bridge.sh
+scripts/build-bridge.sh --callback-executable /absolute/reviewed/path/ovrcr
+scripts/package-startup.sh target/ovrcr-startup /absolute/reviewed/path/ovrcr
 python3 -I native/bridge/check-guards.py 'target/bridge/OVRCR Bridge.app'
 python3 -I native/bridge/check-packaging.py 'target/bridge/OVRCR Bridge.app'
+python3 -I native/bridge/check-installer.py
 ```
 
-`--check` compiles Foundation/CoreFoundation-only checks using fresh task-owned
-message-port names. It never initializes AppKit/UserNotifications or launches
+`--check` compiles contract, forwarding and early-guard checks using fresh task-owned
+message-port names. AppKit/CoreServices types are linked for the adapter; the checks never initialize an application/notification lifecycle or launch
 an app. The default build compiles and validates an uninstalled bundle, then
 executes its early `--check-contract` guard only. An optional final argument
 selects the output root. Existing output bundles are refused. The compiler may
@@ -24,13 +27,28 @@ native permission. `just run` builds a cached, validated runtime payload and ins
 beside the CLI under `~/.local/lib/ovrcr`. Interactive Dashboard startup offers
 installation or repair of the app from this payload; runtime does not compile
 Swift or require a checkout. The relocated validator carries exact contract,
-build and sound/license hashes. It preserves the same installer guards.
+build, callback CLI, entitlement and sound/license hashes. The cache fingerprint
+includes the supplied CLI bytes, so an unchanged native source cannot retain an
+older callback helper after a CLI rebuild. The package command requires the
+reviewed CLI as its second argument; `just run` supplies the CLI it just built.
+The relocated checks preserve installer refusal without an identity and reject
+changed helper metadata, missing entitlements, altered purpose and sound bytes.
 
-Startup defaults to no. An accepted install uses the single valid non-ad-hoc
+Production startup defaults to no. An accepted install uses the single valid non-ad-hoc
 signing identity when available, or `OVRCR_BRIDGE_SIGNING_IDENTITY` when set.
 Missing or ambiguous identities leave the app unchanged and produce a warning.
 Optional setup failures do not prevent Dashboard attachment. No notification
 permission operation runs as part of installation.
+
+The build requires an explicitly reviewed CLI matching the running Server. It
+copies its exact bytes into the fixed `Contents/MacOS/ovrcr` helper and records
+SHA256 in `OVRCRCallbackSHA256`. The enclosing app signature seals that metadata
+and helper. The CLI must already have a valid Mach-O integrity signature;
+compiler-produced ad-hoc signatures are accepted. Packaging does not re-sign or
+rewrite helper bytes. Installation strict/deep verification also validates the
+nested helper. No builder-specific source path is stored in the app. Updating
+CLI or Bridge bytes without a matching Server restart/package makes clicks fail
+closed; there is no alternate executable or retry.
 
 Install explicitly, after the relevant native operation is authorized:
 
@@ -44,10 +62,25 @@ The default source is `target/bridge/OVRCR Bridge.app`, with identity
 source bundle; `--destination PATH` selects an installation destination.
 The installer copies into a private staging directory, signs there with the
 explicit non-ad-hoc identity, checks the strict signature and bundled versions,
-and verifies regular resource bytes/license. It verifies an existing app and
+and verifies regular resource bytes/license. The unchanged entitlement plist is
+stored in `Contents/Resources/OVRCRBridge.entitlements`, alongside the other
+non-code resources; validators reject a legacy copy directly under `Contents`.
+Entitlement readback explicitly requests XML because codesign's default display
+uses an abstract representation. The installer parses that plist and requires
+exactly the Apple Events entitlement with Boolean `true`.
+It verifies an existing app and
 refuses a changed designated signing requirement before replacement. A failed
 rename attempts restoration; unresolved recovery state is preserved.
 Signing/notarization and supported-release acceptance remain separate checks.
+
+`check-installer.py` runs 23 shipping-installer tests with private fixtures
+and fake signing, copy and CLI executables. The seven production tests check fresh installation,
+matching designated requirements from either output stream, changed requirements
+and empty requirements, preserving exact old-bundle bytes on refusal. The local
+tests cover fixed metadata, fresh-only refusal, signing arguments and concurrent
+destination creation. It requires
+macOS's read-only PlistBuddy; it performs no actual signing, native app launch,
+permission, notification or audio operation.
 
 For a separately approved native fixture, `--bundle-id ID --display-name NAME`
 sets the explicitly expected metadata of an already prepared source bundle.
@@ -73,16 +106,24 @@ misuse also returns typed `failed` with exit 0; non-client CLI misuse exits 64.
 mismatch and 64 for invalid arguments, before any app/notification/IPC lifecycle.
 Both versions are derived from the shared Rust constants at build time.
 
-Schema 1 requests carry `schema`, `server_wire` and an `op` tagged by `type`:
-`status`, `authorize`, `settings`, or `deliver` with `title`, `subtitle`, `body`.
-Replies carry only the two versions and `status`: `available`,
+Schema 4 / wire 41 requests carry `schema`, `server_wire` and an `op` tagged by `type`:
+`status`, `authorize`, `settings`, `iterm_setup`, `iterm_status`, or `deliver`
+with `title`, `subtitle`, `body`
+and nullable `sound`, plus `navigation`. Null sound is silent; the only choices
+are `default`, `tap`, `chime`, `rise`. The ticket contains versions, original
+Server socket and CLI path, CLI SHA256 cached at Server startup, a fresh
+Server-lifetime UUID, session ID and original run. It contains no generated
+subject, prompt, answer or Input request payload.
+Replies carry the two versions and `status`: `available`,
 `not_determined`, `permission_pending`, `denied`, `submitted`, `settings_opened`,
-`incompatible`, or `failed`. No raw caller input or OS error text is reflected.
+`incompatible`, or `failed`, plus optional `sound_unavailable`. Explicit iTerm
+operations return `iterm_pending`, `iterm_authorized`, `iterm_authorization_required`,
+`iterm_denied`, or `iterm_unavailable`. No raw caller input or OS error text is reflected.
 Unknown fields are ignored. Delivery admits only the fixed Ready/Input title
 literals, at most 320 UTF-8 subtitle bytes and 1024 body bytes, rejecting control,
 line/paragraph and bidirectional control scalars. The producer sanitizes identities
-before this defensive check. The native adapter copies only these three
-admitted fields and ignores other metadata, including sound/click fields.
+before this defensive check. The native adapter copies these three admitted
+display fields, the allowlisted sound choice and the opaque navigation ticket.
 
 The transient client checks versions/admission before contacting the native app.
 It launches its own enclosing bundle once through
@@ -109,13 +150,202 @@ automatically. `settings` explicitly opens the documented System Settings app;
 the Dashboard directs the user to **Notifications → OVRCR** manually. No pane
 URI, automatic Settings opening or permission toggle is used.
 
-Every #222 notification has `sound=nil`, no `userInfo`, and no click routing or
-terminal activation. `submitted` means the native add request succeeded; it
-does not establish visible delivery. Original Tap/Chime/Rise WAVs, their manifest
-and MIT notice are regular bundled resources for later #224. Their presence
-does not enable sound; no Apple sound bytes or independent player are used.
+Only a Dashboard with both notification and sound consent enabled sends a
+sound ID; the Bridge does not interpret settings or eligibility. `submitted`
+means the native add request succeeded; it establishes neither visibility nor
+audibility.
+
+Absent/null sound maps to `sound=nil`; `default` maps to the ordinary
+[system notification sound](https://developer.apple.com/documentation/usernotifications/unnotificationsound/default).
+Custom choices map only to `ovrcr-tap-v1.wav`, `ovrcr-chime-v1.wav` and
+`ovrcr-rise-v1.wav`. The Foundation/CryptoKit preflight checks regular readable
+in-bundle files, bounded reads, exact pinned SHA-256, mono 48 kHz PCM16 WAV headers
+and exact frame counts/durations (0.22/0.84/0.64 seconds). The manifest and MIT
+notice remain packaged as regular resources; no Apple audio or player is used.
+
+[Named-sound lookup](https://developer.apple.com/documentation/usernotifications/unnotificationsound/init(named:))
+checks app-container `Library/Sounds`, configured group containers, then bundle.
+The helper uses Foundation's
+[current sandbox/user home](https://developer.apple.com/documentation/foundation/nshomedirectory())
+for the known `Library/Sounds` candidate. This build has no app-group entitlements
+or additional sound containers. A matching higher-priority filename is a
+`lookup_conflict`; unreadable lookup metadata also fails closed. This source
+mapping does not claim actual OS lookup or native hearing has been observed.
+
+Missing/unreadable/invalid custom resources or a lookup conflict select silence,
+preserving the requested choice outside the Bridge. After a successful otherwise
+eligible silent add, `status=submitted` carries one of `missing_resource`,
+`unreadable_resource`, `invalid_resource`, `lookup_conflict`. Failed/timed-out add
+returns `failed` without this field. There is no automatic system-default or
+other-tone substitution, player, retry or permission/policy bypass. Foreground
+presentation requests `.sound` only when content has a sound object; OS policy
+still governs playback. Reinstalling resolves damaged bundle resources; a known
+lookup conflict requires an explicit alternate selection or owner investigation,
+and the app never removes competing user data.
+
+Each notification carries its admitted ticket in `userInfo` alongside its
+selected sound or silence. Every Dashboard delivery carries all six operation
+fields, including `sound=null` when silent. Only the default notification action
+forwards a callback. The persistent app admits one callback at a time with a
+3.8-second overall budget, including at most 1.8 seconds for navigation and the
+remaining time for current-owner focus/fallback checks. It verifies its enclosing
+signature, the fixed helper's sealed SHA256, the original CLI's current regular
+same-user bytes and the cached ticket digest. It launches only that fixed helper
+with `bridge navigate --stdin`; ticket paths never authorize an executable and
+no shell is used. The helper owns a 1.5-second connect/read/write budget and never
+starts a Server or Dashboard. Input/reply frames are capped at 1 MiB. An owned
+client process group may be killed before reap on failure/timeout; after reap
+numeric PGIDs are never signaled. The persistent Bridge remains independent.
+
+The Server routes through the current active Dashboard owner and revalidates
+lifetime, unarchived run, callback connection and deadline at confirmation and
+applied receipt. Missing/reopened/archived targets and absent/draining/replaced
+owners are no-ops. Original-run process exit is still navigable. The Dashboard
+lands Browse through its normal selection and view acknowledgment paths,
+cancels unsent overlays/history/copy/old input and preserves submitted targets,
+Unread and Input requests. Only an applied current-owner receipt returns the
+socket peer's PID/birth/terminal identity. The Bridge checks the live same-user
+process birth and current ancestor chain before requesting AppKit parent-app
+activation. Parent-app fallback does not create a terminal or select an exact
+tab/window. Exact existing-iTerm selection follows the separately enabled and
+previously authorized flow below. Ordinary clicks never request terminal-control
+permission, reopen/recover a run or send input. OS activation is best effort and
+does not establish foreground success.
+While shutdown WIP-save questions are queued, the Dashboard ignores offers and
+matching confirmations without hiding the questions or inferring an answer.
+The local same-user transport is not a security boundary against concurrent
+modification by that user; signature/hash checks fail closed when observed
+changes or mismatches occur.
 
 Unverified native cases include signed installation/update, LaunchServices
 process separation, first-use pending/Allow/denial, explicit Settings opening,
-native banner visibility and foreground callbacks. Those require an exact
+native banner visibility, listening to each selected tone/default for both
+alert kinds, default-action navigation and parent-app activation. Those require an exact
 reviewed revision and separately authorized task-owned native acceptance.
+
+## Explicit iTerm setup and ordinary clicks (#225)
+
+The Server's default-off `iterm_focus` preference is independent of notifications.
+Only the explicit Dashboard palette action prepares a setup target for its current
+admitted owner. A random per-connection owner token plus Server lifetime and
+sealed CLI digest fence setup and ordinary activation. The fixed bundled helper's
+`bridge owner --stdin` command validates through the existing Server transport;
+it cannot discover or start a Server, recover a session or request OS consent.
+
+Setup starts one background `AEDeterminePermissionToAutomateTarget(..., true)`
+call, reports typed pending status and never retries automatically. Status polling
+cannot start it. Every ordinary selection preflight passes `false`; every metadata
+and selection Apple Event includes `kAEDoNotPromptForUserConsent`. The adapter
+revalidates the current Server owner before each operation, verifies the actual
+Dashboard process birth/ancestry and compares the live iTerm GUID's TTY with the
+Dashboard's controlling TTY. Acknowledged selection is not observed keyboard focus.
+
+macOS may put a protected `/usr/bin/login` process between a same-user Dashboard
+shell and iTerm's same-user cached `iTermServer`. Full BSD process queries cannot
+read that effective-UID-zero ancestor. The shared ancestry reader admits exactly
+one such hop only when public kernel snapshots, short BSD metadata and repeated
+executable-path reads agree on its current PID, microsecond birth, effective UID0,
+real UID equal to the Dashboard's user, parent, process group and controlling TTY.
+That TTY must match the Dashboard; the same-user child is freshly rechecked.
+The login's parent must be a same-user `iTermServer-*` in the current account's
+actual Library cache, directly under the exact live iTerm application. Other root
+processes, denied or partial metadata, duplicate/cyclic ancestors, mismatched
+images or changed identities refuse. Dashboard and application ownership remain
+same-user; the walk stops at the first GUI instead of following inherited iTerm
+environment past it. Both ordinary parent activation and explicit iTerm setup use
+this reader and revalidate the complete captured ancestry before their effects.
+This reads process identity metadata only; it changes no permissions and does
+not inspect argv, environments or terminal contents. The injected-metadata runner
+`headless-iterm-ancestry` exercises the same shipping reader and walker; its pass
+does not establish native selection or visible focus.
+
+The future bundle carries `NSAppleEventsUsageDescription` and the single hardened
+Apple Events entitlement in `Contents/Resources/OVRCRBridge.entitlements`. The installer
+uses that file when signing the enclosing app, without re-signing the sealed
+callback helper or changing its bytes. This is source packaging, not permission
+or signing authority: actual setup, native control, signing and acceptance each
+retain their explicit approval gates. The accepted #222 bundles are unchanged.
+
+This combined #223/#224/#225 source includes main's workspace WIP-save messages
+and Cursor quota settings plus Hermes reporting and uses schema 4 / wire 41.
+It is incompatible with the earlier combined schema 4 / wire 37, wire 38 and
+wire 39 builds and independent
+schema 2 / wire 35 and schema 3 / wire 36 slices. Pure
+adapter, setup-state and click-policy runners are under `headless-iterm*`; their
+checks use early guards or injected permission/current-owner/selection doubles.
+`scripts/build-bridge.sh --check` compiles and runs all five pure runners.
+No such pass proves native consent, session selection or visible focus. Production
+application tests exercise the actual Server, CLI, PTY Dashboard/palette and a
+fake native host. Native screenshots/accessibility acceptance remains unrun.
+
+## Local development without Developer ID or Keychain access
+
+Set `OVRCR_BRIDGE_LOCAL_DEVELOPMENT=1` to select the explicit local profile.
+Unset, empty or `0` retains production behavior; other values are refused.
+Startup and Dashboard use the same selection. This is a launch option, not a
+saved notification or sound preference.
+
+The local app is **OVRCR Local**, with bundle ID `com.ovrcr.bridge.local` and
+destination `~/Applications/OVRCR Bridge Local.app`. Its runtime assets live in
+`~/.local/lib/ovrcr-local-development`, separate from production assets.
+The actual bundle ID and user ID separate the native IPC endpoint. Both client
+profiles reject a mismatched local identity or marker before reading stdin,
+launching an app or contacting an endpoint; local clients pass
+`--client --local-development`. A missing or invalid local app never selects
+the production app.
+
+Package the local assets without installing or launching the native app:
+
+```sh
+scripts/package-startup.sh --local-development target/local-startup /absolute/reviewed/path/ovrcr
+python3 -I native/bridge/check-startup-package.py --local-development target/local-startup
+python3 -I native/bridge/check-packaging.py --local-development 'target/local-startup/OVRCR Bridge Local.app'
+python3 -I native/bridge/check-guards.py --local-development 'target/local-startup/OVRCR Bridge Local.app'
+```
+
+The compiler can produce ordinary ad-hoc Mach-O signatures. These commands do
+not seal the enclosing app with an installation signature, install it, register
+it, request permission or send an admitted native request.
+
+For local use after installation is separately authorized:
+
+```sh
+OVRCR_BRIDGE_LOCAL_DEVELOPMENT=1 just run
+```
+
+This builds the CLI and local payload, refreshes their separate runtime assets
+and launches the client. Interactive startup offers explicit local installation.
+The local installer uses ad-hoc signing, without Developer ID, a certificate,
+private signing key, Keychain identity discovery or a secure timestamp. It
+signs only the enclosing app and preserves the callback helper's exact bytes.
+Expected entitlements, strict nested verification, resource validation, CLI
+digest, owner/lifetime/run fencing and all deadlines still apply.
+
+Local installation is fresh-only. It refuses an existing destination, including
+an invalid app or symlink, and publishes exclusively so a concurrent destination
+cannot be replaced. Once local staging is created, failures during copy, signing,
+strict verification, entitlement readback, bundle validation, the contract guard
+or publication retain the owned staging directory and any partial or signed app
+for investigation. Successful publication clears staging retention and removes
+the temporary directory. The source payload and any existing destination remain
+unchanged on refusal. A matching installed app can be used without re-signing;
+an invalid or changed local app is not repaired or replaced automatically.
+No continuity of permission identity across ad-hoc rebuilds is claimed.
+Production identity selection and designated-requirement update checks retain
+their existing behavior.
+
+Use a matching CLI and Server revision for native click checks; a CLI rebuild
+does not authorize bypassing the sealed-helper digest or restarting a live
+Server. No local fallback changes `LSUIElement`, sends AppleScript notifications,
+plays independent audio, resets permission or retries authorization.
+
+Local native usability remains unverified. An earlier ad-hoc Dock-less probe
+was refused notification authorization; this source mode does not establish
+that the current OS will admit it. Start any separately approved native check
+with status and at most one bounded authorization request when undetermined,
+then stop on failure. Actual Ready/Input banner visibility, listening to the
+selected sounds, click-to-Browse/activation and optional iTerm control require
+observed evidence. Notification permission and explicit iTerm Automation
+consent are separate; ordinary clicks never request Automation consent.
+Local-mode evidence does not establish Developer ID distribution, notarization
+or signed-update continuity.

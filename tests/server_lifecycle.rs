@@ -5401,6 +5401,35 @@ fn dashboard_duplicate_hello_does_not_write_from_reader_thread() {
     stop(&fixture);
 }
 
+// These empty-fixture request tests validate the greeting's executable hash
+// while the claimed Dashboard's collectors can queue their startup events.
+fn read_empty_dashboard_response(dashboard: &mut UnixStream) -> ServerMessage {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut noted_no_model = false;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(!remaining.is_zero(), "Dashboard response timed out");
+        dashboard.set_read_timeout(Some(remaining)).unwrap();
+        match read_frame::<ServerMessage>(dashboard).unwrap() {
+            ServerMessage::Event(ServerEvent::HierarchyChanged(hierarchy)) => {
+                assert!(
+                    hierarchy.projects.is_empty(),
+                    "unexpected empty-fixture hierarchy refresh: {hierarchy:?}"
+                );
+            }
+            ServerMessage::Event(ServerEvent::Recorded(event)) => {
+                assert_eq!(event.component, ovrcr::protocol::EventComponent::Titles);
+                assert_eq!(event.subject, None);
+                assert_eq!(event.message, "no title_model");
+                assert!(event.time_unix_ms > 0, "startup record must be dated");
+                assert!(!noted_no_model, "startup record must be emitted only once");
+                noted_no_model = true;
+            }
+            response => return response,
+        }
+    }
+}
+
 #[test]
 fn duplicate_dashboard_hello_uses_the_sole_writer() {
     let fixture = Live::thread();
@@ -5430,17 +5459,21 @@ fn duplicate_dashboard_hello_uses_the_sole_writer() {
         },
     )
     .unwrap();
-    assert!(matches!(
-        read_frame::<ServerMessage>(&mut dashboard).unwrap(),
-        ServerMessage::Response {
-            request_id: 21,
-            response: Response::Error {
-                code: ErrorCode::Conflict,
+    let response = read_empty_dashboard_response(&mut dashboard);
+    assert!(
+        matches!(
+            &response,
+            ServerMessage::Response {
+                request_id: 21,
+                response: Response::Error {
+                    code: ErrorCode::Conflict,
+                    ..
+                },
                 ..
             },
-            ..
-        }
-    ));
+        ),
+        "unexpected duplicate Dashboard hello response: {response:?}"
+    );
     drop(dashboard);
     stop(&fixture);
 }
@@ -5523,10 +5556,11 @@ fn dashboard_geometry_sizes_connected_empty_and_detached_sessions() {
     wait_for_file_contents(&connected_path, "17 61");
     // A local drop is not a server-side detach acknowledgement. Half-close and
     // drain to EOF: this handler drops its ownership/geometry before its socket.
-    dashboard.shutdown(std::net::Shutdown::Write).unwrap();
+    // Set the drain deadline before half-close can make the peer close its end.
     dashboard
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
+    dashboard.shutdown(std::net::Shutdown::Write).unwrap();
     std::io::copy(&mut dashboard, &mut std::io::sink()).unwrap();
     drop(dashboard);
     let detached_path = fixture.root.path().join("detached-size");
@@ -5572,19 +5606,20 @@ fn dashboard_receives_concrete_ordinary_request_errors() {
         },
     )
     .unwrap();
-    dashboard
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .unwrap();
-    assert!(matches!(
-        read_frame::<ServerMessage>(&mut dashboard).unwrap(),
-        ServerMessage::Response {
-            request_id: 2,
-            response: Response::Error {
-                code: ErrorCode::NotFound,
-                message,
-            },
-        } if message.contains("session 99 not found")
-    ));
+    let response = read_empty_dashboard_response(&mut dashboard);
+    assert!(
+        matches!(
+            &response,
+            ServerMessage::Response {
+                request_id: 2,
+                response: Response::Error {
+                    code: ErrorCode::NotFound,
+                    message,
+                },
+            } if message.contains("session 99 not found")
+        ),
+        "unexpected ordinary Dashboard request response: {response:?}"
+    );
     drop(dashboard);
     stop(&fixture);
 }
@@ -6368,8 +6403,9 @@ fn dashboard_shutdown_acknowledges_through_writer_before_teardown() {
         },
     )
     .unwrap();
+    let response = read_empty_dashboard_response(&mut dashboard);
     assert_eq!(
-        read_frame::<ServerMessage>(&mut dashboard).unwrap(),
+        response,
         ServerMessage::Response {
             request_id: 11,
             response: Response::Ok,
@@ -9972,7 +10008,14 @@ fn codex_hook_native_helper() {
             std::process::exit(17);
         }
         let parts: Vec<_> = line.split(':').collect();
-        let mut payload = serde_json::json!({"hook_event_name":parts[0],"session_id":parts[1],"turn_id":parts[2],"transcript_path":"/ignored/root.jsonl"});
+        // Only the explicit recovery fixture supplies this exact private file;
+        // ordinary callback fixtures retain their previous missing-history path.
+        let transcript = std::env::var_os("OVRCR_TEST_PROBE")
+            .map(PathBuf::from)
+            .map(|probe| probe.with_extension("history"))
+            .filter(|path| path.is_file())
+            .unwrap_or_else(|| PathBuf::from("/ignored/root.jsonl"));
+        let mut payload = serde_json::json!({"hook_event_name":parts[0],"session_id":parts[1],"turn_id":parts[2],"transcript_path":transcript});
         if parts.get(3) == Some(&"child") {
             payload["agent_id"] = "child".into();
         }
@@ -10364,11 +10407,16 @@ fn harness_session_dropping(
 ) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
     use std::os::unix::fs::PermissionsExt;
     let host = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/pi/pi_host.mjs");
+    let node = std::env::var_os("OVRCR_TEST_NODE_EXECUTABLE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| "node".into());
+    let quote = |path: &Path| format!("'{}'", path.to_str().unwrap().replace('\'', "'\"'\"'"));
     let native = fixture.root.path().join(harness);
     let delay = if slow_version { "sleep 2; " } else { "" };
     std::fs::write(
         &native,
-        format!("#!/bin/sh\nif [ \"$1\" = --version ]; then {delay}printf '{version_line}\\n'; exit; fi\nexec node '{host}' \"$@\"\n"),
+        format!("#!/bin/sh\nif [ \"$1\" = --version ]; then {delay}printf '{version_line}\\n'; exit; fi\nexec {} {} \"$@\"\n",
+            quote(&node), quote(Path::new(host))),
     )
     .unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -11025,6 +11073,16 @@ impl DesktopAlertDashboard {
         sidebar: &str,
         host_status: &str,
     ) -> Self {
+        Self::start_for_with_identity(fixture, settings, sidebar, host_status, None)
+    }
+
+    fn start_for_with_identity(
+        fixture: &ControlFixture,
+        settings: Option<&str>,
+        sidebar: &str,
+        host_status: &str,
+        iterm_identity: Option<&str>,
+    ) -> Self {
         let directory = fixture.root.path().join("desktop-host");
         std::fs::create_dir_all(&directory).unwrap();
         let record = directory.join("calls");
@@ -11062,7 +11120,11 @@ if [ -f "$OVRCR_TEST_DESKTOP_RECORD.permission" ]; then
   IFS= read -r status < "$OVRCR_TEST_DESKTOP_RECORD.permission"
 fi
 case "$request" in
-  *'"type":"status"'*) ;;
+  *'"type":"status"'*)
+    if [ -f "$OVRCR_TEST_DESKTOP_RECORD.control.mode" ]; then
+      printf '%s\n' "$$" > "$OVRCR_TEST_DESKTOP_RECORD.pid"
+      while [ ! -f "$OVRCR_TEST_DESKTOP_RECORD.control.release" ]; do /bin/sleep 0.01; done
+    fi ;;
   *'"type":"authorize"'*)
     if [ "$status" = not_determined ]; then
       status=available
@@ -11074,6 +11136,11 @@ case "$request" in
   *'"type":"settings"'*)
     status=settings_opened
     if [ -f "$OVRCR_TEST_DESKTOP_RECORD.settings.mode" ]; then status=failed; fi ;;
+  *'"type":"iterm_setup"'*|*'"type":"iterm_status"'*)
+    status=iterm_authorized
+    if [ -f "$OVRCR_TEST_DESKTOP_RECORD.iterm.status" ]; then
+      IFS= read -r status < "$OVRCR_TEST_DESKTOP_RECORD.iterm.status"
+    fi ;;
   *'"type":"deliver"'*)
     if [ "$status" = available ]; then
       if [ -f "$OVRCR_TEST_DESKTOP_RECORD.mode" ]; then
@@ -11091,17 +11158,36 @@ case "$request" in
     fi ;;
   *) exit 17 ;;
 esac
-wire=@SERVER_WIRE@
-if [ "$status" = wire_mismatch ]; then wire=@STALE_SERVER_WIRE@; status=available; fi
-printf '{"schema":@BRIDGE_SCHEMA@,"server_wire":%s,"status":"%s"}\n' "$wire" "$status"
+wire=FIXTURE_WIRE
+if [ "$status" = wire_mismatch ]; then wire=FIXTURE_PREVIOUS_WIRE; status=available; fi
+sound_failure=
+if [ "$status" = submitted ] && [ -f "$OVRCR_TEST_DESKTOP_RECORD.sound.unavailable" ]; then
+  IFS= read -r sound_failure < "$OVRCR_TEST_DESKTOP_RECORD.sound.unavailable"
+fi
+if [ -n "$sound_failure" ]; then
+  reply=$(printf '{"schema":FIXTURE_SCHEMA,"server_wire":%s,"status":"%s","sound_unavailable":"%s"}' "$wire" "$status" "$sound_failure")
+else
+  reply=$(printf '{"schema":FIXTURE_SCHEMA,"server_wire":%s,"status":"%s"}' "$wire" "$status")
+fi
+printf '%s\n' "$reply" >> "$OVRCR_TEST_DESKTOP_RECORD.replies"
+printf '%s\n' "$reply"
 "#
-                .replace("@SERVER_WIRE@", &PROTOCOL_VERSION.to_string())
-                .replace("@STALE_SERVER_WIRE@", &(PROTOCOL_VERSION - 1).to_string())
-                .replace("@BRIDGE_SCHEMA@", &BRIDGE_SCHEMA_VERSION.to_string())
             } else {
                 "#!/bin/sh\nif [ -f \"$OVRCR_TEST_DESKTOP_RECORD.mode\" ]; then\n  IFS= read -r mode < \"$OVRCR_TEST_DESKTOP_RECORD.mode\"\n  case \"$mode\" in\n    fail) printf 'PRIVATE_HOST_ERROR' >&2; exit 17 ;;\n    block) printf '%s\\n' \"$$\" > \"$OVRCR_TEST_DESKTOP_RECORD.pid\"; exec /bin/sleep 30 ;;\n  esac\nfi\n{ printf 'BEGIN\\n'; printf '%s\\n' \"$@\"; printf 'END\\n'; } >> \"$OVRCR_TEST_DESKTOP_RECORD\"\n"
-                    .to_owned()
             };
+            let script = script
+                .replace(
+                    "FIXTURE_SCHEMA",
+                    &ovrcr::protocol::BRIDGE_SCHEMA_VERSION.to_string(),
+                )
+                .replace(
+                    "FIXTURE_PREVIOUS_WIRE",
+                    &(ovrcr::protocol::PROTOCOL_VERSION - 1).to_string(),
+                )
+                .replace(
+                    "FIXTURE_WIRE",
+                    &ovrcr::protocol::PROTOCOL_VERSION.to_string(),
+                );
             std::fs::write(&executable, script).unwrap();
             std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
@@ -11117,11 +11203,31 @@ printf '{"schema":@BRIDGE_SCHEMA@,"server_wire":%s,"status":"%s"}\n' "$wire" "$s
         }
         let settings_path = fixture.config.join("dashboard.toml");
         if let Some(settings) = settings {
-            // Keep every Server reload on Live's stand-in auth executable.
+            // These Bridge cases never exercise quota workers. Preserve the
+            // raw alert settings while keeping every reload on explicit quota
+            // opt-out and Live's stand-in auth executable.
+            let document: toml::Table = toml::from_str(settings).unwrap();
+            let quota = document
+                .get("quota")
+                .and_then(toml::Value::as_table)
+                .and_then(|table| table.get("enabled"));
+            assert!(quota.is_none_or(|enabled| enabled.as_bool() == Some(false)));
+            let quota_off = if quota.is_none() {
+                "quota.enabled = false\n"
+            } else {
+                ""
+            };
+            let leading_comments = settings
+                .split_inclusive('\n')
+                .take_while(|line| line.trim().is_empty() || line.trim_start().starts_with('#'))
+                .map(str::len)
+                .sum::<usize>();
             std::fs::write(
                 &settings_path,
                 format!(
-                    "{settings}agents = [{{ name = \"claude\", argv = [{}] }}]\n",
+                    "{}{quota_off}{}agents = [{{ name = \"claude\", argv = [{}] }}]\n",
+                    &settings[..leading_comments],
+                    &settings[leading_comments..],
                     toml::Value::String(fixture.claude.command.display().to_string())
                 ),
             )
@@ -11134,7 +11240,15 @@ printf '{"schema":@BRIDGE_SCHEMA@,"server_wire":%s,"status":"%s"}\n' "$wire" "$s
             pixel_height: 0,
         };
         let pair = portable_pty::native_pty_system().openpty(size).unwrap();
-        let mut command = portable_pty::CommandBuilder::new(env!("CARGO_BIN_EXE_ovrcr"));
+        // Keep the shipped bytes, without startup assets beside the shared
+        // build image. The intended Server identity remains explicit below.
+        let client_directory = fixture.root.path().join("desktop-client");
+        std::fs::create_dir_all(&client_directory).unwrap();
+        let client_executable = client_directory.join("ovrcr");
+        if !client_executable.exists() {
+            std::fs::copy(env!("CARGO_BIN_EXE_ovrcr"), &client_executable).unwrap();
+        }
+        let mut command = portable_pty::CommandBuilder::new(&client_executable);
         // Select the intended image from the fixture's owned server adapter.
         // A binary host runs the CLI; a thread host runs this test executable.
         let server_executable = if fixture.server_pid().is_some() {
@@ -11144,7 +11258,7 @@ printf '{"schema":@BRIDGE_SCHEMA@,"server_wire":%s,"status":"%s"}\n' "$wire" "$s
         };
         command.env("OVRCR_SERVER_EXECUTABLE", server_executable);
         command.env("OVRCR_SOCKET", &fixture.socket);
-        command.env("OVRCR_HOME", fixture.root.path());
+        command.env("OVRCR_HOME", &fixture.config);
         command.env("OVRCR_DASHBOARD_CONFIG", settings_path);
         command.env("OVRCR_TEST_DESKTOP_RECORD", &record);
         command.env("HOME", &home);
@@ -11152,6 +11266,7 @@ printf '{"schema":@BRIDGE_SCHEMA@,"server_wire":%s,"status":"%s"}\n' "$wire" "$s
         // executable is deliberately removed for the unavailable-host test.
         command.env("PATH", directory);
         command.env("TERM", "xterm-256color");
+        command.env("ITERM_SESSION_ID", iterm_identity.unwrap_or(""));
         let child = pair.slave.spawn_command(command).unwrap();
         let process_group = child.process_id().unwrap() as libc::pid_t;
         assert_eq!(unsafe { libc::getpgid(process_group) }, process_group);
@@ -11181,6 +11296,12 @@ printf '{"schema":@BRIDGE_SCHEMA@,"server_wire":%s,"status":"%s"}\n' "$wire" "$s
             #[cfg(target_os = "macos")]
             persistent_host: None,
         };
+        eprintln!(
+            "desktop fixture root={} dashboard_pgid={} session_groups={:?}",
+            fixture.root.path().display(),
+            dashboard.process_group,
+            fixture.session_groups()
+        );
         dashboard.wait_screen(|screen| screen.contains(sidebar));
         dashboard
     }
@@ -11354,6 +11475,7 @@ printf '{"schema":@BRIDGE_SCHEMA@,"server_wire":%s,"status":"%s"}\n' "$wire" "$s
 
     #[cfg(target_os = "macos")]
     fn bridge_requests(&self) -> Vec<serde_json::Value> {
+        assert_eq!(ovrcr::protocol::BRIDGE_SCHEMA_VERSION, 4);
         std::fs::read_to_string(self.record.with_extension("requests"))
             .unwrap_or_default()
             .lines()
@@ -11366,9 +11488,23 @@ printf '{"schema":@BRIDGE_SCHEMA@,"server_wire":%s,"status":"%s"}\n' "$wire" "$s
                 let op = request["op"].as_object().unwrap();
                 assert_eq!(
                     op.len(),
-                    if op["type"] == "deliver" { 4 } else { 1 },
+                    match op["type"].as_str() {
+                        Some("deliver") => 6,
+                        Some("iterm_setup" | "iterm_status") => 2,
+                        _ => 1,
+                    },
                     "{request}"
                 );
+                if op["type"] == "deliver" {
+                    assert!(
+                        op.contains_key("sound"),
+                        "silent delivery must carry sound=null: {request}"
+                    );
+                    assert!(
+                        op.contains_key("navigation"),
+                        "delivery must carry its original-run ticket: {request}"
+                    );
+                }
                 request
             })
             .collect()
@@ -11432,6 +11568,72 @@ printf '{"schema":@BRIDGE_SCHEMA@,"server_wire":%s,"status":"%s"}\n' "$wire" "$s
     }
 
     #[cfg(target_os = "macos")]
+    fn wait_bridge_sounds(&mut self, expected: &[(&str, Option<&str>)]) {
+        let requests = self.wait_bridge_delivery(expected.len());
+        for (request, (title, sound)) in requests.iter().zip(expected) {
+            assert_eq!(request["op"]["title"], *title, "{request}");
+            assert_eq!(
+                request["op"]
+                    .get("sound")
+                    .and_then(serde_json::Value::as_str),
+                *sound,
+                "{request}"
+            );
+            if sound.is_none() {
+                assert!(
+                    request["op"]
+                        .get("sound")
+                        .is_some_and(serde_json::Value::is_null),
+                    "{request}"
+                );
+            }
+        }
+        self.assert_no_independent_audio();
+    }
+
+    #[cfg(target_os = "macos")]
+    fn assert_no_independent_audio(&self) {
+        assert!(
+            !self.record.with_extension("sound").exists(),
+            "macOS must not invoke the independent audio player"
+        );
+        assert!(!self.record.with_extension("sound.pid").exists());
+        assert!(!self.record.with_extension("fallback").exists());
+    }
+
+    #[cfg(target_os = "macos")]
+    fn wait_native_quiet(&mut self, attempts: usize) {
+        // Hold the event eligible while the final host boundary remains quiet;
+        // starting the next turn early could cancel a wrongly queued sound.
+        let deadline = Instant::now() + Duration::from_millis(300);
+        while Instant::now() < deadline {
+            if let Ok(bytes) = self.received.recv_timeout(Duration::from_millis(10)) {
+                self.parser.process(&bytes);
+            }
+            let calls = self
+                .bridge_requests()
+                .into_iter()
+                .filter(|request| request["op"]["type"] == "deliver")
+                .count();
+            assert_eq!(calls, attempts);
+            self.assert_no_independent_audio();
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn open_sound_choices(&mut self) {
+        self.send(b" v,");
+        self.wait_screen(|screen| screen.contains("Settings · Enter edit"));
+        self.send(b"/ready_sound_choice\r\r");
+        self.wait_screen(|screen| {
+            screen.contains("System default")
+                && screen.contains("Tap")
+                && screen.contains("Chime")
+                && screen.contains("Rise")
+        });
+    }
+
+    #[cfg(target_os = "macos")]
     fn wait_host_pid(&mut self) -> libc::pid_t {
         let path = self.record.with_extension("pid");
         let deadline = Instant::now() + Duration::from_secs(3);
@@ -11441,6 +11643,7 @@ printf '{"schema":@BRIDGE_SCHEMA@,"server_wire":%s,"status":"%s"}\n' "$wire" "$s
             {
                 self.host_process_groups.push(pid);
                 assert_eq!(unsafe { libc::getpgid(pid) }, pid);
+                eprintln!("desktop fixture client_pgid={pid}");
                 return pid;
             }
             assert!(
@@ -11469,15 +11672,13 @@ printf '{"schema":@BRIDGE_SCHEMA@,"server_wire":%s,"status":"%s"}\n' "$wire" "$s
         )
         .unwrap();
         self.persistent_host = Some(child);
+        eprintln!("desktop fixture persistent_pgid={pid}");
         pid
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn wait_sound_calls(&mut self, expected: usize) {
-        let file = if cfg!(target_os = "macos") {
-            "/System/Library/Sounds/Glass.aiff"
-        } else {
-            "/usr/share/sounds/freedesktop/stereo/complete.oga"
-        };
+        let file = "/usr/share/sounds/freedesktop/stereo/complete.oga";
         let record = self.record.with_extension("sound");
         self.wait_record(&record, expected, |call| {
             assert_eq!(
@@ -11575,6 +11776,978 @@ fn desktop_codex_callback(
     );
     fixture.wait_terminal_contains(session, &format!("CODEX_CALLBACK={index}"));
     *index += 1;
+}
+
+/// Feed the native host's recorded opaque ticket to the exact connect-only
+/// callback entry used by the shipped Bridge. This does not manufacture a
+/// Dashboard selection request or invoke a native activation API.
+#[cfg(target_os = "macos")]
+fn desktop_navigation_click(
+    fixture: &ControlFixture,
+    ticket: &serde_json::Value,
+    label: &str,
+) -> std::process::Output {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    let directory = fixture.root.path().join("bridge-navigation");
+    std::fs::create_dir_all(&directory).unwrap();
+    let stdout = directory.join(format!("{label}.stdout"));
+    let stderr = directory.join(format!("{label}.stderr"));
+    let output = |path: &Path| {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .unwrap()
+    };
+    let mut child = fixture
+        .command()
+        .args(["bridge", "navigate", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(output(&stdout))
+        .stderr(output(&stderr))
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let group = child.id() as libc::pid_t;
+    assert_eq!(unsafe { libc::getpgid(group) }, group);
+    fixture.own_group(group);
+    println!("BRIDGE_NAVIGATION_CALLBACK_OWNERSHIP label={label} pid={group} pgid={group}");
+    let mut input = child.stdin.take().unwrap();
+    serde_json::to_writer(&mut input, ticket).unwrap();
+    input.write_all(b"\n").unwrap();
+    drop(input);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            // The child has not been reaped; this fixture established its
+            // process-group ownership at spawn, so bounded cleanup is safe.
+            unsafe { libc::kill(-group, libc::SIGKILL) };
+            let status = child.wait().unwrap();
+            panic!(
+                "Bridge callback exceeded its deadline ({status:?}): {}",
+                std::fs::read_to_string(&stderr).unwrap_or_default()
+            );
+        }
+        thread::park_timeout(Duration::from_millis(5));
+    };
+    assert!(live::wait_group_absent(group, Duration::from_secs(2)));
+    fixture.forget_group(group);
+    std::process::Output {
+        status,
+        stdout: std::fs::read(stdout).unwrap(),
+        stderr: std::fs::read(stderr).unwrap(),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn desktop_navigation_ticket(request: &serde_json::Value) -> serde_json::Value {
+    let ticket = request["op"]["navigation"].clone();
+    let fields = ticket
+        .as_object()
+        .expect("delivery must carry a navigation ticket");
+    assert_eq!(fields.len(), 8, "{ticket}");
+    assert_eq!(ticket["schema"], BRIDGE_SCHEMA_VERSION);
+    assert_eq!(ticket["server_wire"], PROTOCOL_VERSION);
+    for field in ["server_socket", "callback_executable"] {
+        assert!(Path::new(ticket[field].as_str().unwrap()).is_absolute());
+    }
+    let digest = ovrcr::server::bridge_executable_sha256(
+        Path::new(ticket["callback_executable"].as_str().unwrap()),
+        Instant::now() + Duration::from_secs(5),
+    )
+    .expect("hash the real callback executable captured by the native host");
+    assert_eq!(ticket["callback_executable_sha256"], digest);
+    assert!(ticket["server_lifetime"].is_string());
+    assert!(ticket["session"].is_u64());
+    assert!(ticket["run"].is_u64());
+    ticket
+}
+
+#[cfg(target_os = "macos")]
+fn desktop_navigation_result(output: std::process::Output) -> serde_json::Value {
+    assert!(
+        output.status.success(),
+        "callback failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("callback must return its typed result");
+    assert_eq!(result["schema"], BRIDGE_SCHEMA_VERSION);
+    assert_eq!(result["server_wire"], PROTOCOL_VERSION);
+    assert_eq!(result.as_object().unwrap().len(), 4);
+    result
+}
+
+#[cfg(target_os = "macos")]
+fn desktop_navigation_applied(output: std::process::Output, dashboard: &DesktopAlertDashboard) {
+    let result = desktop_navigation_result(output);
+    assert_eq!(result["applied"], true, "{result}");
+    assert_eq!(
+        result["activation"]["dashboard_pid"],
+        dashboard.process_group as u32
+    );
+}
+
+#[cfg(target_os = "macos")]
+fn desktop_navigation_ignored(output: std::process::Output) {
+    let result = desktop_navigation_result(output);
+    assert_eq!(result["applied"], false, "{result}");
+    assert_eq!(
+        result["activation"],
+        serde_json::Value::Null,
+        "ignored click must never activate a terminal"
+    );
+}
+
+#[cfg(target_os = "macos")]
+fn desktop_navigation_rows(
+    fixture: &ControlFixture,
+) -> Vec<(SessionId, ovrcr::protocol::SessionRunId, Option<u32>)> {
+    let Response::Hierarchy(hierarchy) = fixture.request(Request::List) else {
+        panic!("session hierarchy unavailable");
+    };
+    hierarchy
+        .projects
+        .into_iter()
+        .flat_map(|project| project.workspaces)
+        .flat_map(|workspace| workspace.sessions)
+        .map(|session| (session.id, session.run, session.pid))
+        .collect()
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_notifications_bridge_click_preserves_queued_wip_shutdown_questions() {
+    let _guard = env_lock();
+    let fixture = bridge_control_fixture();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let server_pid = fixture.server_pid().expect("real binary Server");
+    let mut dashboard = DesktopAlertDashboard::start(
+        &fixture,
+        Some(
+            "desktop_notifications = true\nready_sound = false\niterm_focus = false\nsave_uncommitted_work = false\nautomatic_local_terminals = \"off\"\nquota.enabled = false\nquota.claude.probe = false\n",
+        ),
+    );
+    dashboard.select("setup", "HOOK_READY");
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:wip-click", "Stop:root:wip-click"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let deliveries = dashboard.wait_bridge_delivery(1);
+    let ticket = desktop_navigation_ticket(&deliveries[0]);
+    assert_eq!(deliveries[0]["op"]["title"], "OVRCR · response ready");
+    assert_eq!(deliveries[0]["op"]["sound"], serde_json::Value::Null);
+    assert_eq!(ticket["session"], summary.id.0);
+    assert_eq!(ticket["run"], summary.run.0);
+
+    // The exact captured ticket first succeeds through the real CLI/Server/
+    // Dashboard view handshake, so a later ignored result cannot be explained
+    // by an invalid digest, old lifetime or absent Dashboard owner.
+    desktop_navigation_applied(
+        desktop_navigation_click(&fixture, &ticket, "before-wip-shutdown"),
+        &dashboard,
+    );
+    dashboard
+        .wait_screen(|screen| screen.contains("CODEX_CALLBACK=1") && screen.contains("BROWSE"));
+    eprintln!(
+        "WIP_BRIDGE_SCREEN positive-control\n{}\nWIP_BRIDGE_SCREEN_END",
+        dashboard.parser.screen().contents()
+    );
+    dashboard.select("setup", "HOOK_READY");
+    let before = fixture.session_summary(summary.id);
+    assert_eq!(before.run, summary.run);
+    assert!(before.unread.is_some());
+    let rows = desktop_navigation_rows(&fixture);
+
+    // Only this fixture's local bare origin can receive a WIP ref. Capture
+    // actual workspace IDs/paths and Git HEADs instead of manufacturing events.
+    let origin = fixture.root.path().join("wip-click-origin.git");
+    std::fs::create_dir(&origin).unwrap();
+    live::git(&origin, &["init", "--bare"]);
+    live::git(
+        &fixture.repo,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    assert_eq!(
+        live::git(&fixture.repo, &["remote", "get-url", "origin"]).trim(),
+        origin.to_str().unwrap()
+    );
+    live::git(&fixture.repo, &["push", "origin", "main"]);
+    for (id, branch) in [
+        ("wip-one", "feature/wip-click-one"),
+        ("wip-two", "feature/wip-click-two"),
+    ] {
+        assert_eq!(
+            fixture.request(Request::CreateWorkspace {
+                project: PROJECT.into(),
+                id: id.into(),
+                branch: BranchRequest::New {
+                    branch: branch.into(),
+                    base: "main".into(),
+                },
+            }),
+            Response::Ok
+        );
+    }
+    let Response::Hierarchy(hierarchy) = fixture.request(Request::List) else {
+        panic!("real workspace hierarchy unavailable");
+    };
+    let mut workspaces = hierarchy
+        .projects
+        .into_iter()
+        .filter(|project| project.name == PROJECT)
+        .flat_map(|project| project.workspaces)
+        .collect::<Vec<_>>();
+    for workspace in &workspaces {
+        assert!(
+            live::git(
+                &workspace.path,
+                &["status", "--porcelain", "--untracked-files=all"],
+            )
+            .is_empty(),
+            "only the two explicit writes below may make a worktree dirty: {}",
+            workspace.path.display()
+        );
+    }
+    workspaces.retain(|workspace| matches!(workspace.id.as_str(), "wip-one" | "wip-two"));
+    workspaces.sort_by(|left, right| left.name.cmp(&right.name));
+    assert_eq!(workspaces.len(), 2);
+    assert_ne!(workspaces[0].id, workspaces[1].id);
+    assert_eq!(workspaces[0].name, "feature/wip-click-one");
+    assert_eq!(workspaces[1].name, "feature/wip-click-two");
+    let checkout_state = |path: &Path| {
+        (
+            live::git(path, &["rev-parse", "HEAD"]),
+            live::git(path, &["symbolic-ref", "--short", "HEAD"]),
+            live::git(path, &["status", "--porcelain", "--untracked-files=all"]),
+        )
+    };
+    let mut saved_workspaces = Vec::new();
+    for workspace in &workspaces {
+        assert!(checkout_state(&workspace.path).2.is_empty());
+        let content = format!("unsaved {}\n", workspace.id);
+        std::fs::write(workspace.path.join("wip-question.txt"), &content).unwrap();
+        let state = checkout_state(&workspace.path);
+        assert!(state.2.contains("?? wip-question.txt"));
+        assert_eq!(state.1.trim(), workspace.name);
+        saved_workspaces.push((state, content));
+    }
+    let repo_before = checkout_state(&fixture.repo);
+    let local_refs_before = live::git(&fixture.repo, &["show-ref", "--heads"]);
+    let origin_refs_before = live::git(&origin, &["show-ref", "--heads"]);
+    let no_wip_refs = || {
+        for repo in [&fixture.repo, &origin] {
+            let refs = live::git(
+                repo,
+                &["for-each-ref", "--format=%(refname)", "refs/heads/wip/"],
+            );
+            assert!(refs.is_empty(), "no WIP save was chosen: {refs}");
+        }
+    };
+    no_wip_refs();
+    let first = format!(
+        "Save uncommitted work to origin/wip/{}?",
+        workspaces[0].name
+    );
+    let second = format!(
+        "Save uncommitted work to origin/wip/{}?",
+        workspaces[1].name
+    );
+
+    let socket = fixture.socket.clone();
+    let (sent, received) = std::sync::mpsc::channel();
+    let shutdown = thread::spawn(move || {
+        let response = request_with_timeout(
+            &socket,
+            901,
+            Request::Shutdown { kill: true },
+            Duration::from_secs(20),
+        );
+        let _ = sent.send(response);
+    });
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        dashboard.wait_screen(|screen| screen.contains(&first) && !screen.contains(&second));
+        eprintln!(
+            "WIP_BRIDGE_SCREEN first-question\n{}\nWIP_BRIDGE_SCREEN_END",
+            dashboard.parser.screen().contents()
+        );
+        assert!(matches!(
+            received.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+        desktop_navigation_ignored(desktop_navigation_click(
+            &fixture,
+            &ticket,
+            "queued-wip-shutdown",
+        ));
+
+        // Clear the VT100 model and request an actual new render, rather than
+        // accepting the question's pre-click screen as a visibility assertion.
+        dashboard.resize(179);
+        dashboard.wait_screen(|screen| {
+            screen.contains(&first)
+                && !screen.contains(&second)
+                && screen.contains("HOOK_READY")
+                && !screen.contains("CODEX_CALLBACK=1")
+        });
+        eprintln!(
+            "WIP_BRIDGE_SCREEN rejected-click-fresh-redraw\n{}\nWIP_BRIDGE_SCREEN_END",
+            dashboard.parser.screen().contents()
+        );
+        assert_eq!(fixture.server_pid(), Some(server_pid));
+        assert_eq!(desktop_navigation_rows(&fixture), rows);
+        let after = fixture.session_summary(summary.id);
+        assert_eq!(after.run, before.run);
+        assert_eq!(after.unread, before.unread);
+        assert_eq!(after.agent, before.agent);
+        assert!(
+            matches!(
+                received.try_recv(),
+                Err(std::sync::mpsc::TryRecvError::Empty)
+            ),
+            "click must not answer shutdown"
+        );
+        no_wip_refs();
+        assert!(!dashboard.record.with_extension("sound").exists());
+        assert!(!dashboard.record.with_extension("fallback").exists());
+
+        // Escape sends the ordinary exact AnswerWipSave(save=false). The
+        // production palette advances only on that request's matching Ok.
+        dashboard.send(b"\x1b");
+        dashboard.wait_screen(|screen| screen.contains(&second) && !screen.contains(&first));
+        eprintln!(
+            "WIP_BRIDGE_SCREEN second-question-after-explicit-no\n{}\nWIP_BRIDGE_SCREEN_END",
+            dashboard.parser.screen().contents()
+        );
+        assert!(
+            matches!(
+                received.try_recv(),
+                Err(std::sync::mpsc::TryRecvError::Empty)
+            ),
+            "the second question still requires its own answer"
+        );
+        no_wip_refs();
+        dashboard.send(b"\x1b");
+        assert_eq!(
+            received
+                .recv_timeout(Duration::from_secs(5))
+                .expect("bounded Shutdown response"),
+            Some(Response::Ok)
+        );
+    }));
+    // Release the claimed owner before Server teardown even on a failed screen
+    // or callback assertion, then join the bounded requester instead of leaving
+    // it waiting for a hidden question in the background.
+    drop(dashboard);
+    let deadline = Instant::now() + Duration::from_secs(22);
+    while !shutdown.is_finished() && Instant::now() < deadline {
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    let shutdown_joined = if shutdown.is_finished() {
+        shutdown.join().is_ok()
+    } else {
+        drop(shutdown);
+        false
+    };
+    if let Err(panic) = outcome {
+        if !shutdown_joined {
+            eprintln!("bounded WIP Shutdown requester did not join during failure cleanup");
+        }
+        std::panic::resume_unwind(panic);
+    }
+    assert!(shutdown_joined, "bounded WIP Shutdown requester must join");
+    let stop = fixture.join_within(Duration::from_secs(5));
+    assert!(
+        stop.is_finished(),
+        "explicit declines must complete Shutdown: {stop:?}"
+    );
+    assert!(!fixture.socket.exists());
+    no_wip_refs();
+    assert_eq!(
+        live::git(&fixture.repo, &["show-ref", "--heads"]),
+        local_refs_before
+    );
+    assert_eq!(
+        live::git(&origin, &["show-ref", "--heads"]),
+        origin_refs_before
+    );
+    assert_eq!(checkout_state(&fixture.repo), repo_before);
+    for (workspace, (state, content)) in workspaces.iter().zip(saved_workspaces) {
+        assert_eq!(checkout_state(&workspace.path), state);
+        assert_eq!(
+            std::fs::read_to_string(workspace.path.join("wip-question.txt")).unwrap(),
+            content
+        );
+    }
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_notifications_bridge_click_lands_in_browse_without_reviewing_or_answering() {
+    let _guard = env_lock();
+    let fixture = bridge_control_fixture();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let mut dashboard =
+        DesktopAlertDashboard::start(&fixture, Some("desktop_notifications = true\n"));
+    dashboard.select("setup", "HOOK_READY");
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:ready", "Stop:root:ready"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let ready = desktop_navigation_ticket(&dashboard.wait_bridge_delivery(1)[0]);
+    assert_eq!(ready["session"], summary.id.0);
+    assert_eq!(ready["run"], summary.run.0);
+    let before = fixture.session_summary(summary.id);
+    assert!(before.unread.is_some());
+    let rows = desktop_navigation_rows(&fixture);
+    dashboard.send(b"\r");
+    dashboard.wait_screen(|screen| screen.contains("Terminal mode"));
+    desktop_navigation_applied(
+        desktop_navigation_click(&fixture, &ready, "ready"),
+        &dashboard,
+    );
+    dashboard
+        .wait_screen(|screen| screen.contains("CODEX_CALLBACK=1") && screen.contains("BROWSE"));
+    let after = fixture.session_summary(summary.id);
+    assert_eq!(
+        after.unread, before.unread,
+        "navigation must not mark reviewed"
+    );
+    assert_eq!(
+        after.agent, before.agent,
+        "navigation must not reinterpret reporting"
+    );
+    assert_eq!(
+        desktop_navigation_rows(&fixture),
+        rows,
+        "click must not spawn or replace a process"
+    );
+
+    // An Input banner is the same navigation operation; entering Browse does
+    // not answer the pending request or manufacture review acknowledgement.
+    for command in [
+        "UserPromptSubmit:root:input",
+        "PermissionRequest:root:input",
+    ] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let input = desktop_navigation_ticket(&dashboard.wait_bridge_delivery(2)[1]);
+    let waiting = fixture.session_summary(summary.id);
+    assert_eq!(waiting.agent.as_ref().unwrap().input_requests.len(), 1);
+    dashboard.select("setup", "HOOK_READY");
+    desktop_navigation_applied(
+        desktop_navigation_click(&fixture, &input, "input"),
+        &dashboard,
+    );
+    dashboard
+        .wait_screen(|screen| screen.contains("CODEX_CALLBACK=3") && screen.contains("BROWSE"));
+    let still_waiting = fixture.session_summary(summary.id);
+    assert_eq!(still_waiting.agent, waiting.agent);
+    assert_eq!(still_waiting.unread, waiting.unread);
+    assert_eq!(desktop_navigation_rows(&fixture), rows);
+
+    // macOS retains delivered history. The old Ready event has ended, but
+    // its original lifetime/run ticket still navigates without replaying it.
+    dashboard.select("setup", "HOOK_READY");
+    desktop_navigation_applied(
+        desktop_navigation_click(&fixture, &ready, "historical-ready"),
+        &dashboard,
+    );
+    dashboard
+        .wait_screen(|screen| screen.contains("CODEX_CALLBACK=3") && screen.contains("BROWSE"));
+    assert_eq!(dashboard.wait_bridge_delivery(2).len(), 2);
+    assert_eq!(fixture.session_summary(summary.id).agent, waiting.agent);
+    dashboard.detach();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_notifications_bridge_click_focuses_existing_split_without_duplicating_target() {
+    let _guard = env_lock();
+    let fixture = bridge_control_fixture();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let mut dashboard =
+        DesktopAlertDashboard::start(&fixture, Some("desktop_notifications = true\n"));
+    dashboard.select("setup", "HOOK_READY");
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:split", "Stop:root:split"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let ticket = desktop_navigation_ticket(&dashboard.wait_bridge_delivery(1)[0]);
+    dashboard.select("codex-hooks", "CODEX_CALLBACK=1");
+    dashboard.send(b"v");
+    dashboard.select("setup", "HOOK_READY");
+    dashboard
+        .wait_screen(|screen| screen.contains("HOOK_READY") && screen.contains("CODEX_CALLBACK=1"));
+    let rows = desktop_navigation_rows(&fixture);
+    desktop_navigation_applied(
+        desktop_navigation_click(&fixture, &ticket, "split"),
+        &dashboard,
+    );
+    dashboard.wait_screen(|screen| {
+        screen.contains("BROWSE")
+            && screen.contains("HOOK_READY")
+            && screen.contains("CODEX_CALLBACK=1")
+    });
+    assert_eq!(desktop_navigation_rows(&fixture), rows);
+
+    // Real input after explicit Enter proves the already-present target pane
+    // became focused. Its peer remains assigned and no duplicate pane replaced it.
+    dashboard.send(b"\rUserPromptSubmit:root:focused\r");
+    fixture.wait_terminal_contains(summary.id, "CODEX_CALLBACK=2");
+    dashboard
+        .wait_screen(|screen| screen.contains("CODEX_CALLBACK=2") && screen.contains("HOOK_READY"));
+    dashboard.send(b"\x07");
+    dashboard.detach();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_notifications_bridge_click_discards_transient_drafts_and_releases_capture() {
+    let _guard = env_lock();
+    let fixture = bridge_control_fixture();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let mut dashboard =
+        DesktopAlertDashboard::start(&fixture, Some("desktop_notifications = true\n"));
+    dashboard.select("setup", "HOOK_READY");
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:transient", "Stop:root:transient"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let ticket = desktop_navigation_ticket(&dashboard.wait_bridge_delivery(1)[0]);
+    let rows = desktop_navigation_rows(&fixture);
+    let unread = fixture.session_summary(summary.id).unread;
+
+    for (label, keys, visible) in [
+        (
+            "palette",
+            &b":UNSENT_NAVIGATION_SEARCH"[..],
+            "Command palette",
+        ),
+        (
+            "rename",
+            &b":Rename terminal\r\x15UNSENT_NAVIGATION_TITLE"[..],
+            "Rename terminal",
+        ),
+        ("copy", &b"["[..], "COPY"),
+        ("history", &b"\x1b[5~"[..], "HISTORY"),
+    ] {
+        dashboard.select("setup", "HOOK_READY");
+        dashboard.send(keys);
+        dashboard.wait_screen(|screen| screen.contains(visible));
+        desktop_navigation_applied(
+            desktop_navigation_click(&fixture, &ticket, label),
+            &dashboard,
+        );
+        dashboard.wait_screen(|screen| {
+            screen.contains("BROWSE")
+                && screen.contains("CODEX_CALLBACK=1")
+                && !screen.contains("UNSENT_NAVIGATION")
+                && !screen.contains("Command palette")
+                && !screen.contains("Rename terminal")
+                && !screen.contains("HISTORY")
+                && !screen.contains("COPY")
+        });
+        assert_eq!(
+            desktop_navigation_rows(&fixture),
+            rows,
+            "{label} submitted or spawned work"
+        );
+        assert_eq!(
+            fixture.session_summary(summary.id).unread,
+            unread,
+            "{label} reviewed the target"
+        );
+        assert_eq!(fixture.session_summary(summary.id).manual_title, None);
+    }
+
+    // A newly opened palette must not restore the previous unsent search;
+    // navigation discarded that draft rather than merely hiding its overlay.
+    dashboard.send(b":");
+    dashboard.wait_screen(|screen| {
+        screen.contains("Command palette") && !screen.contains("UNSENT_NAVIGATION")
+    });
+    dashboard.send(b"\x1b");
+    dashboard
+        .wait_screen(|screen| screen.contains("BROWSE") && !screen.contains("Command palette"));
+    dashboard.detach();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_notifications_bridge_click_revalidates_lifetime_run_target_and_current_dashboard() {
+    let _guard = env_lock();
+    let fixture = bridge_control_fixture();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    assert_eq!(
+        summary.kind,
+        ovrcr::protocol::SessionKind::Agent {
+            name: "codex".into()
+        }
+    );
+    let mut dashboard =
+        DesktopAlertDashboard::start(&fixture, Some("desktop_notifications = true\n"));
+    dashboard.select("setup", "HOOK_READY");
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:fences", "Stop:root:fences"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let ticket = desktop_navigation_ticket(&dashboard.wait_bridge_delivery(1)[0]);
+    let rows = desktop_navigation_rows(&fixture);
+    for (label, field, value) in [
+        (
+            "wrong-lifetime",
+            "server_lifetime",
+            serde_json::json!("00000000-0000-4000-8000-000000000000"),
+        ),
+        ("wrong-run", "run", serde_json::json!(summary.run.0 + 1)),
+        ("missing-target", "session", serde_json::json!(u64::MAX)),
+    ] {
+        let mut stale = ticket.clone();
+        assert_ne!(stale[field], value);
+        stale[field] = value;
+        desktop_navigation_ignored(desktop_navigation_click(&fixture, &stale, label));
+        assert_eq!(desktop_navigation_rows(&fixture), rows);
+    }
+
+    // Callback acknowledgement is an application-ordering barrier. A fresh
+    // valid callback after the stale ones proves the live Dashboard still works.
+    desktop_navigation_applied(
+        desktop_navigation_click(&fixture, &ticket, "fence-barrier"),
+        &dashboard,
+    );
+    dashboard
+        .wait_screen(|screen| screen.contains("BROWSE") && screen.contains("CODEX_CALLBACK=1"));
+    dashboard.detach();
+    drop(dashboard);
+    desktop_navigation_ignored(desktop_navigation_click(&fixture, &ticket, "no-dashboard"));
+    assert_eq!(desktop_navigation_rows(&fixture), rows);
+
+    // A banner is tied to its Server/run, not to the old Dashboard process.
+    // A new click targets the current active owner; it never resurrects the old one.
+    let mut replacement = DesktopAlertDashboard::start(&fixture, None);
+    replacement.select("setup", "HOOK_READY");
+    desktop_navigation_applied(
+        desktop_navigation_click(&fixture, &ticket, "replacement-dashboard"),
+        &replacement,
+    );
+    replacement
+        .wait_screen(|screen| screen.contains("BROWSE") && screen.contains("CODEX_CALLBACK=1"));
+    assert_eq!(desktop_navigation_rows(&fixture), rows);
+
+    replacement.select("setup", "HOOK_READY");
+    assert_eq!(
+        fixture.request(Request::CloseTerminal {
+            session: summary.id,
+            expected_run: summary.run
+        }),
+        Response::Ok
+    );
+    // List is the active hierarchy and intentionally hides archived rows.
+    // Inspect proves Close retained this managed Agent rather than deleting it.
+    let Response::Inventory { sessions, .. } = fixture.request(Request::Inspect) else {
+        panic!("retained inventory unavailable");
+    };
+    let archived = sessions
+        .iter()
+        .find(|session| session.id == summary.id)
+        .expect("closed managed Agent must remain in retained inventory");
+    assert_eq!(archived.kind, summary.kind);
+    assert!(archived.archived, "{archived:?}");
+    assert_eq!(archived.run.0, summary.run.0 + 1);
+    assert_eq!(archived.phase, ovrcr::protocol::SessionPhase::Stopped);
+    assert_eq!(archived.pid, None);
+    let archived_rows = desktop_navigation_rows(&fixture);
+    assert!(archived_rows.iter().all(|(id, _, _)| *id != summary.id));
+    desktop_navigation_ignored(desktop_navigation_click(
+        &fixture,
+        &ticket,
+        "archived-target",
+    ));
+    assert_eq!(desktop_navigation_rows(&fixture), archived_rows);
+
+    // Match the retained run too: archival itself must reject the callback,
+    // independently of the old banner's now-stale run identity.
+    let mut archived_ticket = ticket.clone();
+    archived_ticket["run"] = serde_json::json!(archived.run.0);
+    desktop_navigation_ignored(desktop_navigation_click(
+        &fixture,
+        &archived_ticket,
+        "archived-current-run",
+    ));
+    assert_eq!(desktop_navigation_rows(&fixture), archived_rows);
+    replacement.wait_screen(|screen| {
+        screen.contains("BROWSE")
+            && screen.contains("HOOK_READY")
+            && !screen.contains("CODEX_CALLBACK=1")
+    });
+    replacement.detach();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_notifications_bridge_click_can_inspect_exited_original_run_without_recovery() {
+    let _guard = env_lock();
+    let fixture = bridge_control_fixture();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let mut dashboard =
+        DesktopAlertDashboard::start(&fixture, Some("desktop_notifications = true\n"));
+    dashboard.select("setup", "HOOK_READY");
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:exit", "Stop:root:exit"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let ticket = desktop_navigation_ticket(&dashboard.wait_bridge_delivery(1)[0]);
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "CODEX_NATIVE_EXIT=17");
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "finish-owned-wrapper".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_exited(summary.id);
+    let exited = fixture.session_summary(summary.id);
+    assert_eq!(exited.run, summary.run);
+    let rows = desktop_navigation_rows(&fixture);
+    desktop_navigation_applied(
+        desktop_navigation_click(&fixture, &ticket, "exited-original-run"),
+        &dashboard,
+    );
+    dashboard
+        .wait_screen(|screen| screen.contains("BROWSE") && screen.contains("CODEX_NATIVE_EXIT=17"));
+    assert_eq!(
+        fixture.session_summary(summary.id),
+        exited,
+        "navigation must not recover, reopen, acknowledge or review"
+    );
+    assert_eq!(desktop_navigation_rows(&fixture), rows);
+    dashboard.detach();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_notifications_bridge_click_never_starts_missing_server_and_old_lifetime_stays_invalid() {
+    let _guard = env_lock();
+    let fixture = bridge_control_fixture();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let mut dashboard =
+        DesktopAlertDashboard::start(&fixture, Some("desktop_notifications = true\n"));
+    dashboard.select("setup", "HOOK_READY");
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:restart", "Stop:root:restart"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let ticket = desktop_navigation_ticket(&dashboard.wait_bridge_delivery(1)[0]);
+    dashboard.detach();
+    drop(dashboard);
+    fixture.shutdown_kill();
+    assert!(!fixture.socket.exists());
+    desktop_navigation_ignored(desktop_navigation_click(
+        &fixture,
+        &ticket,
+        "missing-server",
+    ));
+    assert!(
+        !fixture.socket.exists(),
+        "a callback must never auto-start a Server"
+    );
+
+    // Explicitly restart only the task-owned Server, retaining its database
+    // and socket path. Session IDs may survive; the Server lifetime must not.
+    fixture.start_binary();
+    fixture.create_hook_child("replacement", "navigation-replacement");
+    let mut replacement = DesktopAlertDashboard::start_for(&fixture, None, "replacement");
+    replacement.select("replacement", "HOOK_READY");
+    let rows = desktop_navigation_rows(&fixture);
+    desktop_navigation_ignored(desktop_navigation_click(
+        &fixture,
+        &ticket,
+        "restarted-server",
+    ));
+    assert_eq!(
+        desktop_navigation_rows(&fixture),
+        rows,
+        "old lifetime must not recover retained work"
+    );
+    replacement.detach();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_notifications_bridge_callback_rejects_malformed_versions_before_connecting() {
+    let _guard = env_lock();
+    let fixture = bridge_control_fixture();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let mut dashboard =
+        DesktopAlertDashboard::start(&fixture, Some("desktop_notifications = true\n"));
+    dashboard.select("setup", "HOOK_READY");
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:invalid", "Stop:root:invalid"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let ticket = desktop_navigation_ticket(&dashboard.wait_bridge_delivery(1)[0]);
+    dashboard.detach();
+    drop(dashboard);
+    fixture.shutdown_kill();
+    for (label, field, value) in [
+        (
+            "wrong-schema",
+            "schema",
+            serde_json::json!(BRIDGE_SCHEMA_VERSION - 1),
+        ),
+        (
+            "wrong-wire",
+            "server_wire",
+            serde_json::json!(PROTOCOL_VERSION - 1),
+        ),
+        (
+            "invalid-lifetime",
+            "server_lifetime",
+            serde_json::json!("not-a-server-lifetime"),
+        ),
+        (
+            "relative-socket",
+            "server_socket",
+            serde_json::json!("server.sock"),
+        ),
+        (
+            "relative-callback",
+            "callback_executable",
+            serde_json::json!("ovrcr"),
+        ),
+    ] {
+        let mut malformed = ticket.clone();
+        malformed[field] = value;
+        let output = desktop_navigation_click(&fixture, &malformed, label);
+        assert!(
+            !output.status.success(),
+            "{label} was accepted: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(
+            output.stdout.is_empty(),
+            "invalid ticket must not claim application or activation"
+        );
+        assert!(
+            !fixture.socket.exists(),
+            "malformed callbacks must not start a Server"
+        );
+    }
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_notifications_bridge_click_old_ticket_cannot_select_an_explicitly_reopened_run() {
+    let _guard = env_lock();
+    let live = Live::idle().bounded();
+    write_bridge_startup_settings(&live);
+    let home = live.root.path().join("codex-hooks-codex-home");
+    std::fs::create_dir(&home).unwrap();
+    // Recovery runs in the production binary Server and compares CODEX_HOME
+    // to the retained reference. Both refer only to this private fixture.
+    live.start_binary_env(&[("CODEX_HOME", home.as_os_str())]);
+    let fixture = ControlFixture(live);
+    let (summary, probe) = codex_session(&fixture, &fixture.socket);
+    let conversation = "50000000-0000-4000-8000-000000000005";
+    std::fs::write(
+        probe.with_extension("history"),
+        serde_json::json!({
+            "type": "session_meta", "payload": { "id": conversation, "source": "cli" }
+        })
+        .to_string()
+            + "\n",
+    )
+    .unwrap();
+    let mut dashboard =
+        DesktopAlertDashboard::start(&fixture, Some("desktop_notifications = true\n"));
+    dashboard.select("setup", "HOOK_READY");
+    let mut index = 0;
+    for command in [
+        format!("UserPromptSubmit:{conversation}:old"),
+        format!("Stop:{conversation}:old"),
+    ] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, &command);
+    }
+    let ticket = desktop_navigation_ticket(&dashboard.wait_bridge_delivery(1)[0]);
+    let retained = fixture.session_summary(summary.id);
+    assert!(
+        retained
+            .recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.unavailable.is_none()),
+        "fixture must have a verified exact recovery reference: {retained:?}"
+    );
+    assert_eq!(
+        fixture.request(Request::KillSession {
+            session: summary.id
+        }),
+        Response::Ok
+    );
+    fixture.wait_exited(summary.id);
+
+    let native = fixture.root.path().join("codex");
+    let spawns = fixture.root.path().join("explicit-reopen-spawns");
+    let quote = |path: &Path| format!("'{}'", path.to_str().unwrap().replace('\'', "'\"'\"'"));
+    std::fs::write(&native, format!(
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'codex-cli 0.153.1\\n'; exit; fi\nprintf 'EXPLICIT_REOPEN\\n' >> {}\nexport OVRCR_TEST_PROBE={}\nexec {} --ignored --exact codex_hook_native_helper --nocapture\n",
+        quote(&spawns), quote(&probe), quote(&std::env::current_exe().unwrap())
+    )).unwrap();
+    let reopened = fixture.request(Request::ReopenSession {
+        session: summary.id,
+        expected_run: summary.run,
+        acknowledge_stopped: true,
+    });
+    let Response::CreatedSession(reopened) = reopened else {
+        panic!("explicit fixture reopen failed: {reopened:?}");
+    };
+    fixture.record_process_group(&reopened);
+    assert_eq!(reopened.id, summary.id);
+    assert_ne!(reopened.run, summary.run);
+    fixture.wait_terminal_contains_until(
+        summary.id,
+        "CODEX_NATIVE_READY",
+        Instant::now() + Duration::from_secs(5),
+    );
+    let rows = desktop_navigation_rows(&fixture);
+    let spawn_record = std::fs::read_to_string(&spawns).unwrap();
+    assert_eq!(spawn_record, "EXPLICIT_REOPEN\n");
+    desktop_navigation_ignored(desktop_navigation_click(
+        &fixture,
+        &ticket,
+        "reopened-old-ticket",
+    ));
+    dashboard.wait_screen(|screen| {
+        screen.contains("BROWSE")
+            && screen.contains("HOOK_READY")
+            && !screen.contains("CODEX_NATIVE_READY")
+    });
+    assert_eq!(
+        desktop_navigation_rows(&fixture),
+        rows,
+        "old click must not select, restart or recover the new run"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&spawns).unwrap(),
+        spawn_record,
+        "click must not invoke the provider again"
+    );
+    dashboard.detach();
 }
 
 #[test]
@@ -16042,12 +17215,14 @@ fn desktop_notifications_bridge_settings_sources_authorize_and_failed_saves_pres
     dashboard.wait_screen(|screen| screen.contains("could not save desktop_notifications"));
     assert_eq!(std::fs::read_to_string(&document).unwrap(), saved_document);
     dashboard.wait_bridge_controls(&[]);
-    // The refused opt-in still allows the separately saved sound-only lane.
+    // The refused opt-in retains the saved sound preference without expanding consent.
     let mut index = 0;
     for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
         desktop_codex_callback(&fixture, summary.id, &mut index, command);
     }
-    dashboard.wait_sound_calls(1);
+    dashboard.select("codex-hooks", "CODEX_CALLBACK=1");
+    dashboard.select("setup", "HOOK_READY");
+    dashboard.wait_native_quiet(0);
     assert!(!dashboard.record.exists());
     dashboard.wait_bridge_controls(&[]);
     std::fs::set_permissions(&document, std::fs::Permissions::from_mode(0o600)).unwrap();
@@ -16134,7 +17309,7 @@ fn desktop_notifications_bridge_settings_sources_authorize_and_failed_saves_pres
         desktop_codex_callback(&fixture, summary.id, &mut index, command);
     }
     dashboard.wait_calls(1, summary.id);
-    dashboard.wait_sound_calls(2);
+    dashboard.wait_bridge_sounds(&[("OVRCR · response ready", Some("default"))]);
     dashboard.wait_bridge_controls(&[
         "status",
         "authorize",
@@ -16436,8 +17611,10 @@ fn desktop_notifications_bridge_cancels_queued_ready_and_input_without_replay() 
     let fixture = ControlFixture::new_bounded();
     let (first, _) = codex_session(&fixture, &fixture.socket);
     let (queued, _) = codex_session_named(&fixture, &fixture.socket, "codex-queued");
-    let mut dashboard =
-        DesktopAlertDashboard::start(&fixture, Some("desktop_notifications = true\n"));
+    let mut dashboard = DesktopAlertDashboard::start(
+        &fixture,
+        Some("desktop_notifications = true\nready_sound = true\nready_sound_choice = \"tap\"\n"),
+    );
     dashboard.wait_bridge_controls(&["status"]);
     dashboard.select("setup", "HOOK_READY");
     std::fs::write(dashboard.record.with_extension("mode"), "gate").unwrap();
@@ -16494,6 +17671,10 @@ fn desktop_notifications_bridge_cancels_queued_ready_and_input_without_replay() 
     assert_eq!(requests[0]["op"]["title"], "OVRCR · response ready");
     assert_eq!(requests[1]["op"]["title"], "OVRCR · input needed");
     assert_eq!(requests[2]["op"]["title"], "OVRCR · response ready");
+    for request in &requests {
+        assert_eq!(request["op"]["sound"], "tap");
+    }
+    dashboard.assert_no_independent_audio();
     assert!(
         requests[0]["op"]["body"]
             .as_str()
@@ -16518,8 +17699,10 @@ fn desktop_notifications_bridge_cancels_each_in_flight_lane_and_preserves_the_pe
     let _guard = env_lock();
     let fixture = ControlFixture::new_bounded();
     let (summary, _) = codex_session(&fixture, &fixture.socket);
-    let mut dashboard =
-        DesktopAlertDashboard::start(&fixture, Some("desktop_notifications = true\n"));
+    let mut dashboard = DesktopAlertDashboard::start(
+        &fixture,
+        Some("desktop_notifications = true\nready_sound = true\nready_sound_choice = \"tap\"\n"),
+    );
     dashboard.wait_bridge_controls(&["status"]);
     let persistent = dashboard.start_persistent_host();
     dashboard.select("setup", "HOOK_READY");
@@ -16578,6 +17761,12 @@ fn desktop_notifications_bridge_cancels_each_in_flight_lane_and_preserves_the_pe
     );
     assert_eq!(fixture.session_phase(summary.id), SessionPhase::Running);
     assert_eq!(fixture.session_phase(local), SessionPhase::Running);
+    let requests = dashboard.wait_bridge_attempts(3);
+    assert_eq!(requests[0]["op"]["title"], "OVRCR · response ready");
+    for request in &requests {
+        assert_eq!(request["op"]["sound"], "tap");
+    }
+    dashboard.assert_no_independent_audio();
 }
 
 #[test]
@@ -16672,8 +17861,12 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"
     )
     .unwrap();
     std::fs::set_permissions(&title_program, std::fs::Permissions::from_mode(0o700)).unwrap();
+    write_bridge_startup_settings(&fixture);
     let settings = "desktop_notifications = true\ntitle_model = 'pi/test'\n";
-    std::fs::write(fixture.config.join("dashboard.toml"), settings).unwrap();
+    let mut startup_document =
+        std::fs::read_to_string(fixture.config.join("dashboard.toml")).unwrap();
+    startup_document.push_str(settings);
+    std::fs::write(fixture.config.join("dashboard.toml"), startup_document).unwrap();
     fixture.start_binary_env(&[
         ("OVRCR_PI_EXECUTABLE", title_program.as_os_str()),
         ("OVRCR_TEST_TITLE_PROMPT", title_prompt.as_os_str()),
@@ -16855,6 +18048,576 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"
 }
 
 #[test]
+#[cfg(target_os = "macos")]
+fn desktop_sound_mac_flag_matrix_preserves_saved_flags_for_ready_and_input() {
+    let _guard = env_lock();
+    for (notifications, sound) in [(false, true), (false, false), (true, false), (true, true)] {
+        let fixture = ControlFixture::new_bounded();
+        let (summary, _) = codex_session(&fixture, &fixture.socket);
+        let saved = format!("desktop_notifications = {notifications}\nready_sound = {sound}\n");
+        let mut dashboard = DesktopAlertDashboard::start(&fixture, Some(&saved));
+        dashboard.select("setup", "HOOK_READY");
+        dashboard.wait_bridge_controls(if notifications { &["status"] } else { &[] });
+        let document = fixture.config.join("dashboard.toml");
+        let original = std::fs::read_to_string(&document).unwrap();
+        assert!(!original.contains("ready_sound_choice"));
+        let mut index = 0;
+        for command in ["UserPromptSubmit:root:ready", "Stop:root:ready"] {
+            desktop_codex_callback(&fixture, summary.id, &mut index, command);
+        }
+        dashboard.wait_screen(|screen| screen.contains('✓'));
+        if notifications {
+            dashboard.wait_bridge_sounds(&[("OVRCR · response ready", sound.then_some("default"))]);
+        } else {
+            dashboard.wait_native_quiet(0);
+        }
+        for command in [
+            "UserPromptSubmit:root:input",
+            "PermissionRequest:root:input",
+        ] {
+            desktop_codex_callback(&fixture, summary.id, &mut index, command);
+        }
+        dashboard.select("codex-hooks", "CODEX_CALLBACK=3");
+        dashboard.select("setup", "HOOK_READY");
+        let row = fixture.session_summary(summary.id);
+        assert_eq!(row.activity, ovrcr::protocol::AgentActivity::WaitingInput);
+        assert_eq!(row.agent.unwrap().input_requests.len(), 1);
+        if notifications {
+            let choice = sound.then_some("default");
+            dashboard.wait_bridge_sounds(&[
+                ("OVRCR · response ready", choice),
+                ("OVRCR · input needed", choice),
+            ]);
+        } else {
+            dashboard.wait_bridge_attempts(0);
+            assert!(!dashboard.record.exists());
+            dashboard.assert_no_independent_audio();
+        }
+        dashboard.wait_native_quiet(if notifications { 2 } else { 0 });
+        assert_eq!(std::fs::read_to_string(&document).unwrap(), original);
+        dashboard.wait_bridge_controls(if notifications { &["status"] } else { &[] });
+        dashboard.detach();
+    }
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_sound_selector_uses_server_settings_without_preview_opt_in_or_replay() {
+    use ovrcr::protocol::ReadySoundChoice;
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let mut dashboard = DesktopAlertDashboard::start(
+        &fixture,
+        Some("# keep this comment\ndesktop_notifications = false\nready_sound = false\n"),
+    );
+    dashboard.select("setup", "HOOK_READY");
+    let document = fixture.config.join("dashboard.toml");
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:disabled", "Stop:root:disabled"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_screen(|screen| screen.contains('✓'));
+
+    // The actual choice list saves just the choice while both flags remain off.
+    dashboard.open_sound_choices();
+    dashboard.send(b"Tap\r");
+    dashboard.wait_screen(|screen| {
+        screen.contains("Ready sound choice")
+            && !screen.contains("filter:")
+            && ovrcr::settings::load_document(&fixture.config, &document)
+                .settings
+                .ready_sound_choice
+                == Some(ReadySoundChoice::Tap)
+    });
+    dashboard.send(b"\x07");
+    dashboard.wait_screen(|screen| !screen.contains("Settings · Enter edit"));
+    let reading = ovrcr::settings::load_document(&fixture.config, &document);
+    assert_eq!(
+        reading.settings.ready_sound_choice,
+        Some(ReadySoundChoice::Tap)
+    );
+    assert!(!reading.settings.desktop_notifications);
+    assert!(!reading.settings.ready_sound);
+    dashboard.wait_bridge_controls(&[]);
+    dashboard.wait_native_quiet(0);
+    assert!(
+        std::fs::read_to_string(&document)
+            .unwrap()
+            .starts_with("# keep this comment\n")
+    );
+
+    dashboard.send(b"NS");
+    dashboard.wait_screen(|screen| screen.contains("Ready sound: on"));
+    dashboard.wait_bridge_controls(&["status"]);
+    dashboard.wait_native_quiet(0);
+    let mut expected = Vec::new();
+    for (id, label, choice) in [
+        ("default", "System default", ReadySoundChoice::Default),
+        ("tap", "Tap", ReadySoundChoice::Tap),
+        ("chime", "Chime", ReadySoundChoice::Chime),
+        ("rise", "Rise", ReadySoundChoice::Rise),
+    ] {
+        dashboard.open_sound_choices();
+        dashboard.send(format!("{label}\r").as_bytes());
+        dashboard.wait_screen(|screen| {
+            screen.contains("Ready sound choice")
+                && !screen.contains("filter:")
+                && ovrcr::settings::load_document(&fixture.config, &document)
+                    .settings
+                    .ready_sound_choice
+                    == Some(choice)
+        });
+        dashboard.send(b"\x07");
+        dashboard.wait_screen(|screen| !screen.contains("Settings · Enter edit"));
+        let reading = ovrcr::settings::load_document(&fixture.config, &document);
+        assert_eq!(reading.settings.ready_sound_choice, Some(choice));
+        assert!(reading.settings.desktop_notifications && reading.settings.ready_sound);
+        dashboard.wait_native_quiet(expected.len());
+        dashboard.wait_bridge_controls(&["status"]);
+        for command in [
+            format!("UserPromptSubmit:root:{id}"),
+            format!("PermissionRequest:root:{id}"),
+        ] {
+            desktop_codex_callback(&fixture, summary.id, &mut index, &command);
+        }
+        expected.push(("OVRCR · input needed", Some(id)));
+        dashboard.wait_bridge_sounds(&expected);
+        for command in [format!("PostToolUse:root:{id}"), format!("Stop:root:{id}")] {
+            desktop_codex_callback(&fixture, summary.id, &mut index, &command);
+        }
+        expected.push(("OVRCR · response ready", Some(id)));
+        dashboard.wait_bridge_sounds(&expected);
+    }
+
+    let saved = std::fs::read_to_string(&document).unwrap();
+    dashboard.detach();
+    for command in [
+        "UserPromptSubmit:root:disconnected",
+        "Stop:root:disconnected",
+    ] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    drop(dashboard);
+    // Reconnect consumes the live baseline without replay, retaining Rise/flags.
+    let mut dashboard = DesktopAlertDashboard::start(&fixture, None);
+    dashboard.select("setup", "HOOK_READY");
+    dashboard.wait_bridge_controls(&["status", "status"]);
+    dashboard.wait_native_quiet(expected.len());
+    assert_eq!(std::fs::read_to_string(&document).unwrap(), saved);
+    for command in [
+        "UserPromptSubmit:root:fresh",
+        "PermissionRequest:root:fresh",
+    ] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    expected.push(("OVRCR · input needed", Some("rise")));
+    dashboard.wait_bridge_sounds(&expected);
+    for command in ["PostToolUse:root:fresh", "Stop:root:fresh"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    expected.push(("OVRCR · response ready", Some("rise")));
+    dashboard.wait_bridge_sounds(&expected);
+    dashboard.detach();
+}
+
+#[cfg(target_os = "macos")]
+fn desktop_sound_settings_cli(fixture: &ControlFixture, args: &[&str]) -> std::process::Output {
+    fixture
+        .command()
+        .arg("settings")
+        .args(args)
+        .env("HOME", fixture.root.path().join("desktop-home"))
+        .env_remove("CODEX_HOME")
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .output()
+        .unwrap()
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_sound_invalid_external_and_cli_changes_keep_banners_and_failed_saves_preserve_choice() {
+    use ovrcr::protocol::ReadySoundChoice;
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let mut dashboard = DesktopAlertDashboard::start(
+        &fixture,
+        Some(
+            "desktop_notifications = true\nready_sound = true\nready_sound_choice = \"tap\" # selected\n",
+        ),
+    );
+    dashboard.select("setup", "HOOK_READY");
+    dashboard.wait_bridge_controls(&["status"]);
+    let document = fixture.config.join("dashboard.toml");
+    let saved = std::fs::read_to_string(&document).unwrap();
+    std::fs::set_permissions(&document, std::fs::Permissions::from_mode(0o400)).unwrap();
+    dashboard.open_sound_choices();
+    dashboard.send(b"Chime\r");
+    dashboard.wait_screen(|screen| screen.contains("could not save ready_sound_choice"));
+    assert_eq!(std::fs::read_to_string(&document).unwrap(), saved);
+    let refused = desktop_sound_settings_cli(&fixture, &["set", "ready_sound_choice", "rise"]);
+    assert!(!refused.status.success(), "{refused:?}");
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("could not save ready_sound_choice"));
+    assert_eq!(std::fs::read_to_string(&document).unwrap(), saved);
+    dashboard.send(b"\x07");
+    dashboard.wait_screen(|screen| !screen.contains("Settings · Enter edit"));
+    let mut index = 0;
+    let mut expected = Vec::new();
+    for command in [
+        "UserPromptSubmit:root:saved",
+        "PermissionRequest:root:saved",
+    ] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    expected.push(("OVRCR · input needed", Some("tap")));
+    dashboard.wait_bridge_sounds(&expected);
+    for command in ["PostToolUse:root:saved", "Stop:root:saved"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    expected.push(("OVRCR · response ready", Some("tap")));
+    dashboard.wait_bridge_sounds(&expected);
+    std::fs::set_permissions(&document, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    for (turn, raw) in [("unknown", "\"glass\""), ("wrong_type", "7")] {
+        if turn == "wrong_type" {
+            // Establish a valid accepted snapshot again so an already-invalid
+            // state cannot mask the wrong-type document transition.
+            assert_eq!(
+                fixture.request(Request::SetSetting {
+                    path: "ready_sound_choice".into(),
+                    value: Some("\"tap\"".into())
+                }),
+                Response::Ok
+            );
+            dashboard.wait_screen(|screen| screen.contains("No settings findings"));
+            dashboard.wait_native_quiet(expected.len());
+        }
+        std::fs::write(
+            &document,
+            saved.replace("\"tap\" # selected", &format!("{raw} # selected")),
+        )
+        .unwrap();
+        dashboard.wait_screen(|screen| {
+            screen.contains("Ready sound choice invalid; banners are silent")
+        });
+        let reading = ovrcr::settings::load_document(&fixture.config, &document);
+        assert_eq!(reading.settings.ready_sound_choice, None);
+        assert!(reading.settings.desktop_notifications && reading.settings.ready_sound);
+        assert!(
+            reading
+                .findings
+                .iter()
+                .any(|finding| finding.key.as_deref() == Some("ready_sound_choice"))
+        );
+        // An unrelated Server edit retains the raw invalid choice and its finding.
+        assert_eq!(
+            fixture.request(Request::SetSetting {
+                path: "branch_prefix".into(),
+                value: Some("\"sound/\"".into())
+            }),
+            Response::Ok
+        );
+        assert!(
+            std::fs::read_to_string(&document)
+                .unwrap()
+                .contains(&format!("ready_sound_choice = {raw} # selected"))
+        );
+        let before = std::fs::read_to_string(&document).unwrap();
+        let refused = desktop_sound_settings_cli(&fixture, &["set", "ready_sound_choice", "glass"]);
+        assert!(!refused.status.success(), "{refused:?}");
+        assert_eq!(std::fs::read_to_string(&document).unwrap(), before);
+        for command in [
+            format!("UserPromptSubmit:root:{turn}"),
+            format!("PermissionRequest:root:{turn}"),
+        ] {
+            desktop_codex_callback(&fixture, summary.id, &mut index, &command);
+        }
+        expected.push(("OVRCR · input needed", None));
+        dashboard.wait_bridge_sounds(&expected);
+        for command in [
+            format!("PostToolUse:root:{turn}"),
+            format!("Stop:root:{turn}"),
+        ] {
+            desktop_codex_callback(&fixture, summary.id, &mut index, &command);
+        }
+        expected.push(("OVRCR · response ready", None));
+        dashboard.wait_bridge_sounds(&expected);
+        assert!(
+            dashboard
+                .parser
+                .screen()
+                .contents()
+                .contains("Ready sound choice invalid")
+        );
+    }
+    let changed = desktop_sound_settings_cli(&fixture, &["set", "ready_sound_choice", "chime"]);
+    assert!(changed.status.success(), "{changed:?}");
+    dashboard.wait_screen(|screen| !screen.contains("Ready sound choice invalid"));
+    let reading = ovrcr::settings::load_document(&fixture.config, &document);
+    assert_eq!(
+        reading.settings.ready_sound_choice,
+        Some(ReadySoundChoice::Chime)
+    );
+    assert!(reading.settings.desktop_notifications && reading.settings.ready_sound);
+    for command in ["UserPromptSubmit:root:cli", "PermissionRequest:root:cli"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    expected.push(("OVRCR · input needed", Some("chime")));
+    dashboard.wait_bridge_sounds(&expected);
+    for command in ["PostToolUse:root:cli", "Stop:root:cli"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    expected.push(("OVRCR · response ready", Some("chime")));
+    dashboard.wait_bridge_sounds(&expected);
+    dashboard.wait_bridge_controls(&["status"]);
+    dashboard.detach();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_sound_submitted_resource_failure_is_actionable_without_fallback_retry_or_flag_change() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let mut dashboard = DesktopAlertDashboard::start(
+        &fixture,
+        Some("desktop_notifications = true\nready_sound = true\nready_sound_choice = \"tap\"\n"),
+    );
+    dashboard.select("setup", "HOOK_READY");
+    dashboard.wait_bridge_controls(&["status"]);
+    let document = fixture.config.join("dashboard.toml");
+    let mut index = 0;
+    let mut expected = Vec::new();
+    for (reason, choice) in [
+        ("missing_resource", "tap"),
+        ("unreadable_resource", "chime"),
+        ("invalid_resource", "rise"),
+        ("lookup_conflict", "tap"),
+    ] {
+        assert_eq!(
+            fixture.request(Request::SetSetting {
+                path: "ready_sound_choice".into(),
+                value: Some(format!("\"{choice}\""))
+            }),
+            Response::Ok
+        );
+        std::fs::write(dashboard.record.with_extension("sound.unavailable"), reason).unwrap();
+        let before = std::fs::read_to_string(&document).unwrap();
+        for command in [
+            format!("UserPromptSubmit:root:{reason}"),
+            format!("PermissionRequest:root:{reason}"),
+        ] {
+            desktop_codex_callback(&fixture, summary.id, &mut index, &command);
+        }
+        expected.push(("OVRCR · input needed", Some(choice)));
+        dashboard.wait_bridge_sounds(&expected);
+        let recovery = if reason == "lookup_conflict" {
+            "Sound name conflict"
+        } else {
+            "Reinstall OVRCR Bridge"
+        };
+        dashboard.wait_screen(|screen| {
+            screen.contains("Ready sound unavailable; banner submitted silently")
+                && screen.contains(recovery)
+        });
+        if reason == "lookup_conflict" {
+            assert!(
+                dashboard
+                    .parser
+                    .screen()
+                    .contents()
+                    .contains("Sound name conflict")
+            );
+        } else {
+            assert!(
+                dashboard
+                    .parser
+                    .screen()
+                    .contents()
+                    .contains("Reinstall OVRCR Bridge")
+            );
+        }
+        for command in [
+            format!("PostToolUse:root:{reason}"),
+            format!("Stop:root:{reason}"),
+        ] {
+            desktop_codex_callback(&fixture, summary.id, &mut index, &command);
+        }
+        expected.push(("OVRCR · response ready", Some(choice)));
+        dashboard.wait_bridge_sounds(&expected);
+        dashboard.wait_native_quiet(expected.len());
+        let replies: Vec<serde_json::Value> =
+            std::fs::read_to_string(dashboard.record.with_extension("replies"))
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+        let submitted: Vec<_> = replies
+            .iter()
+            .filter(|reply| reply["status"] == "submitted")
+            .collect();
+        assert_eq!(submitted.len(), expected.len());
+        for reply in &submitted[submitted.len() - 2..] {
+            serde_json::from_value::<ovrcr::protocol::BridgeReply>((*reply).clone()).unwrap();
+            assert_eq!(reply["sound_unavailable"], reason);
+        }
+        assert_eq!(std::fs::read_to_string(&document).unwrap(), before);
+        let reading = ovrcr::settings::load_document(&fixture.config, &document);
+        assert!(reading.settings.desktop_notifications && reading.settings.ready_sound);
+        dashboard.wait_bridge_controls(&["status"]);
+    }
+    std::fs::remove_file(dashboard.record.with_extension("sound.unavailable")).unwrap();
+    assert_eq!(
+        fixture.request(Request::SetSetting {
+            path: "ready_sound_choice".into(),
+            value: Some("\"default\"".into())
+        }),
+        Response::Ok
+    );
+    dashboard.wait_screen(|screen| !screen.contains("Ready sound unavailable"));
+    for command in ["UserPromptSubmit:root:repaired", "Stop:root:repaired"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    expected.push(("OVRCR · response ready", Some("default")));
+    dashboard.wait_bridge_sounds(&expected);
+    dashboard.detach();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_sound_queued_ready_uses_latest_choice_without_cancelling_the_control_client() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let host = fixture.root.path().join("desktop-host");
+    std::fs::create_dir_all(&host).unwrap();
+    std::fs::write(host.join("calls.control.mode"), "gate").unwrap();
+    let mut dashboard = DesktopAlertDashboard::start(
+        &fixture,
+        Some("desktop_notifications = true\nready_sound = true\nready_sound_choice = \"tap\"\n"),
+    );
+    dashboard.select("setup", "HOOK_READY");
+    let control = dashboard.wait_host_pid();
+    let started = Instant::now();
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:queued", "Stop:root:queued"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_screen(|screen| screen.contains('✓'));
+    assert_eq!(
+        fixture.request(Request::SetSetting {
+            path: "ready_sound_choice".into(),
+            value: Some("\"chime\"".into())
+        }),
+        Response::Ok
+    );
+    dashboard.wait_screen(|screen| screen.contains("Ready sound choice: Chime"));
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "test missed the native client timeout window"
+    );
+    assert!(
+        group_exists(control),
+        "choice change cancelled a permission control job"
+    );
+    assert!(!dashboard.record.exists());
+    dashboard.wait_bridge_attempts(0);
+    std::fs::write(
+        dashboard.record.with_extension("control.release"),
+        "release",
+    )
+    .unwrap();
+    dashboard.wait_bridge_sounds(&[("OVRCR · response ready", Some("chime"))]);
+    assert!(live::wait_group_absent(control, Duration::from_secs(2)));
+    dashboard.wait_native_quiet(1);
+    dashboard.wait_bridge_controls(&["status"]);
+    dashboard.detach();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn desktop_sound_in_flight_preference_changes_cancel_clients_without_replay_and_keep_host_alive() {
+    let _guard = env_lock();
+    for change in ["sound", "choice"] {
+        let fixture = ControlFixture::new_bounded();
+        let (summary, _) = codex_session(&fixture, &fixture.socket);
+        let mut dashboard = DesktopAlertDashboard::start(
+            &fixture,
+            Some(
+                "desktop_notifications = true\nready_sound = true\nready_sound_choice = \"tap\"\n",
+            ),
+        );
+        dashboard.wait_bridge_controls(&["status"]);
+        dashboard.select("setup", "HOOK_READY");
+        let persistent = dashboard.start_persistent_host();
+        std::fs::write(dashboard.record.with_extension("mode"), "gate").unwrap();
+        let mut index = 0;
+        for command in ["UserPromptSubmit:root:cancelled", "Stop:root:cancelled"] {
+            desktop_codex_callback(&fixture, summary.id, &mut index, command);
+        }
+        let client = dashboard.wait_host_pid();
+        let changing = Instant::now();
+        let attempts = dashboard.wait_bridge_attempts(1);
+        assert_eq!(attempts[0]["op"]["sound"], "tap");
+        if change == "sound" {
+            dashboard.send(b"S");
+            dashboard.wait_screen(|screen| screen.contains("Ready sound: off"));
+        } else {
+            assert_eq!(
+                fixture.request(Request::SetSetting {
+                    path: "ready_sound_choice".into(),
+                    value: Some("\"chime\"".into())
+                }),
+                Response::Ok
+            );
+            dashboard.wait_screen(|screen| screen.contains("Ready sound choice: Chime"));
+        }
+        assert!(
+            live::wait_group_absent(client, Duration::from_secs(1)),
+            "preference change did not cancel the started client"
+        );
+        assert!(
+            changing.elapsed() < Duration::from_secs(1),
+            "client ended only at its ordinary timeout"
+        );
+        assert!(group_exists(persistent));
+        assert!(
+            !dashboard.record.exists(),
+            "gate admitted a canceled banner"
+        );
+        dashboard.wait_native_quiet(1);
+        dashboard.wait_bridge_controls(&["status"]);
+        std::fs::remove_file(dashboard.record.with_extension("mode")).unwrap();
+        for command in ["UserPromptSubmit:root:fresh", "Stop:root:fresh"] {
+            desktop_codex_callback(&fixture, summary.id, &mut index, command);
+        }
+        dashboard.wait_calls(1, summary.id);
+        let attempts = dashboard.wait_bridge_attempts(2);
+        assert_eq!(
+            attempts[1]["op"]["sound"].as_str(),
+            (change == "choice").then_some("chime")
+        );
+        if change == "sound" {
+            assert!(
+                attempts[1]["op"]
+                    .get("sound")
+                    .is_some_and(serde_json::Value::is_null)
+            );
+        }
+        dashboard.assert_no_independent_audio();
+        assert!(group_exists(persistent));
+        let document = fixture.config.join("dashboard.toml");
+        let reading = ovrcr::settings::load_document(&fixture.config, &document);
+        assert!(reading.settings.desktop_notifications);
+        assert_eq!(reading.settings.ready_sound, change == "choice");
+        dashboard.detach();
+        assert!(group_exists(persistent));
+    }
+}
+
+#[test]
+#[cfg(not(target_os = "macos"))]
 fn ready_sound_is_independent_of_desktop_notifications_on_the_managed_path() {
     let _guard = env_lock();
     let fixture = ControlFixture::new_bounded();
@@ -17152,10 +18915,28 @@ fn installed_pi_managed_launch_binds_the_real_session_and_stays_idle() {
     );
 }
 
-/// Every Dashboard hello is answered with the hierarchy and then the Server's
-/// reading of the settings document.
+/// Every Dashboard hello is answered with the hierarchy, optional native
+/// navigation context, and then the Server's reading of the settings document.
 fn expect_settings_reading(stream: &mut UnixStream) {
     let message = read_frame::<ServerMessage>(stream).unwrap();
+    let message = if let ServerMessage::Event(ServerEvent::BridgeContext(context)) = message {
+        assert!(Path::new(&context.server_socket).is_absolute());
+        assert!(Path::new(&context.callback_executable).is_absolute());
+        assert_eq!(
+            context.callback_executable_sha256,
+            ovrcr::server::bridge_executable_sha256(
+                Path::new(&context.callback_executable),
+                Instant::now() + Duration::from_secs(5),
+            )
+            .expect("hash the Server's callback executable at the greeting")
+        );
+        assert!(ovrcr::protocol::bridge::canonical_uuid(
+            &context.server_lifetime
+        ));
+        read_frame::<ServerMessage>(stream).unwrap()
+    } else {
+        message
+    };
     assert!(
         matches!(
             message,
@@ -17525,4 +19306,333 @@ fn settings_edit_while_attached_republishes_only_real_changes() {
     )
     .unwrap();
     assert!(next_settings(&mut stream, Duration::from_millis(4500)).is_none());
+}
+
+#[cfg(target_os = "macos")]
+fn write_bridge_startup_settings(live: &Live) {
+    // Disable external quota workers before starting the Server, rather than
+    // after the Dashboard first rewrites its document. Only the fixture's fake
+    // auth executable may be consulted by these application-path cases.
+    std::fs::write(
+        live.config.join("dashboard.toml"),
+        format!(
+            "quota.enabled = false\nagents = [{{ name = \"claude\", argv = [{}] }}]\n",
+            toml::Value::String(live.claude.command.display().to_string())
+        ),
+    )
+    .unwrap();
+}
+
+#[cfg(target_os = "macos")]
+fn bridge_control_fixture() -> ControlFixture {
+    let live = Live::idle();
+    write_bridge_startup_settings(&live);
+    live.start_binary();
+    ControlFixture(live.bounded())
+}
+
+#[cfg(target_os = "macos")]
+fn iterm_setup_palette(dashboard: &mut DesktopAlertDashboard) {
+    dashboard.send(b":");
+    dashboard
+        .wait_screen(|screen| screen.contains("Command palette") && screen.contains("Search:"));
+    dashboard.send(b"Set up iTerm focus");
+    dashboard.wait_screen(|screen| screen.contains("Set up iTerm focus"));
+    dashboard.send(b"\r");
+}
+
+#[cfg(target_os = "macos")]
+fn recorded_iterm_setup(dashboard: &DesktopAlertDashboard) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(dashboard.record.with_extension("requests"))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|request| request["op"]["type"] == "iterm_setup")
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn iterm_owner_cli(
+    fixture: &ControlFixture,
+    owner: &ovrcr::protocol::BridgeOwnerTicket,
+    label: &str,
+) -> ovrcr::protocol::BridgeOwnerResult {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+    let directory = fixture.root.path().join("iterm-owner-cli");
+    std::fs::create_dir_all(&directory).unwrap();
+    let output_path = directory.join(format!("{label}.json"));
+    let output = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&output_path)
+        .unwrap();
+    let error_path = directory.join(format!("{label}.stderr"));
+    let error = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&error_path)
+        .unwrap();
+    let mut child = fixture
+        .command()
+        .args(["bridge", "owner", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(output)
+        .stderr(error)
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let group = child.id() as libc::pid_t;
+    assert_eq!(unsafe { libc::getpgid(group) }, group);
+    fixture.own_group(group);
+    let mut input = child.stdin.take().unwrap();
+    serde_json::to_writer(
+        &mut input,
+        &ovrcr::protocol::BridgeOwnerCall {
+            owner: owner.clone(),
+            outcome: None,
+        },
+    )
+    .unwrap();
+    drop(input);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            unsafe { libc::kill(-group, libc::SIGKILL) };
+            let _ = child.wait();
+            panic!("bounded current-owner CLI exceeded deadline");
+        }
+        thread::park_timeout(Duration::from_millis(5));
+    };
+    assert!(live::wait_group_absent(group, Duration::from_secs(2)));
+    fixture.forget_group(group);
+    assert!(
+        status.success(),
+        "current-owner CLI failed: {status}; {}",
+        std::fs::read_to_string(error_path).unwrap()
+    );
+    let result: ovrcr::protocol::BridgeOwnerResult =
+        serde_json::from_slice(&std::fs::read(output_path).unwrap()).unwrap();
+    assert_eq!(result.schema, BRIDGE_SCHEMA_VERSION);
+    assert_eq!(result.server_wire, PROTOCOL_VERSION);
+    result
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn iterm_setup_real_palette_requires_separate_opt_in_and_uses_current_owned_dashboard() {
+    let _guard = env_lock();
+    let fixture = bridge_control_fixture();
+    fixture.create_hook_child("iterm-shell", "iterm-setup");
+    const IDENTITY: &str = "w0t0p0:12345678-1234-4234-8234-123456789abc";
+    let mut dashboard = DesktopAlertDashboard::start_for_with_identity(
+        &fixture,
+        Some(
+            "desktop_notifications = false\nready_sound = false\niterm_focus = false\nquota.enabled = false\n",
+        ),
+        "iterm-shell",
+        "available",
+        Some(IDENTITY),
+    );
+    iterm_setup_palette(&mut dashboard);
+    dashboard.wait_screen(|screen| screen.contains("iTerm focus off"));
+    assert!(recorded_iterm_setup(&dashboard).is_empty());
+    assert_eq!(
+        fixture.request(Request::PrepareITermFocus),
+        Response::ITermFocusPrepared(None),
+        "control client cannot initiate setup"
+    );
+    assert_eq!(
+        fixture.request(Request::SetSetting {
+            path: "iterm_focus".into(),
+            value: Some("true".into())
+        }),
+        Response::Ok
+    );
+    dashboard.wait_screen(|screen| screen.contains("Exact iTerm focus: on"));
+    iterm_setup_palette(&mut dashboard);
+    dashboard.wait_screen(|screen| screen.contains("iTerm focus authorized"));
+    let requests = recorded_iterm_setup(&dashboard);
+    assert_eq!(requests.len(), 1);
+    let target: ovrcr::protocol::BridgeActivationTarget =
+        serde_json::from_value(requests[0]["op"]["target"].clone()).unwrap();
+    assert_eq!(target.dashboard_pid, dashboard.process_group as u32);
+    assert_eq!(target.iterm_session_id.as_deref(), Some(IDENTITY));
+    assert!(target.iterm_focus);
+    let owner = *target.owner.unwrap();
+    assert!(owner.validate());
+    // The Server publishes its canonical bound socket, including TMPDIR aliases.
+    assert_eq!(
+        owner.context.server_socket,
+        fixture.socket.canonicalize().unwrap().to_str().unwrap()
+    );
+    let Response::BridgeOwner(confirmed) =
+        fixture.request(Request::BridgeOwner(ovrcr::protocol::BridgeOwnerCall {
+            owner: owner.clone(),
+            outcome: None,
+        }))
+    else {
+        panic!("owner confirmation missing");
+    };
+    assert_eq!(
+        confirmed.target.unwrap().dashboard_pid,
+        dashboard.process_group as u32
+    );
+    assert_eq!(
+        iterm_owner_cli(&fixture, &owner, "current")
+            .target
+            .unwrap()
+            .dashboard_pid,
+        dashboard.process_group as u32
+    );
+    assert_eq!(
+        fixture.request(Request::SetSetting {
+            path: "iterm_focus".into(),
+            value: Some("false".into())
+        }),
+        Response::Ok
+    );
+    let Response::BridgeOwner(disabled) =
+        fixture.request(Request::BridgeOwner(ovrcr::protocol::BridgeOwnerCall {
+            owner: owner.clone(),
+            outcome: None,
+        }))
+    else {
+        panic!("disabled owner confirmation missing");
+    };
+    assert!(
+        !disabled.target.unwrap().iterm_focus,
+        "current Server accepted setting replaces the old target's opt-in"
+    );
+    assert!(
+        !iterm_owner_cli(&fixture, &owner, "disabled")
+            .target
+            .unwrap()
+            .iterm_focus
+    );
+    let Response::Inventory {
+        registry: _,
+        sessions: _,
+    } = fixture.request(Request::Inspect)
+    else {
+        panic!("safe navigation remains available");
+    };
+    drop(dashboard);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let response = fixture.request(Request::BridgeOwner(ovrcr::protocol::BridgeOwnerCall {
+            owner: owner.clone(),
+            outcome: None,
+        }));
+        if response == Response::BridgeOwner(ovrcr::protocol::BridgeOwnerResult::unavailable()) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "detached owner's ticket survived"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    assert!(
+        iterm_owner_cli(&fixture, &owner, "detached")
+            .target
+            .is_none()
+    );
+    const REPLACEMENT_IDENTITY: &str = "w2t1p0:12345678-1234-4234-8234-123456789abe";
+    let mut replacement = DesktopAlertDashboard::start_for_with_identity(
+        &fixture,
+        Some(
+            "desktop_notifications = false\nready_sound = false\niterm_focus = true\nquota.enabled = false\n",
+        ),
+        "iterm-shell",
+        "available",
+        Some(REPLACEMENT_IDENTITY),
+    );
+    iterm_setup_palette(&mut replacement);
+    replacement.wait_screen(|screen| screen.contains("iTerm focus authorized"));
+    let requests = recorded_iterm_setup(&replacement);
+    assert_eq!(
+        requests.len(),
+        2,
+        "one setup per explicit owned Dashboard entry"
+    );
+    let replacement_target: ovrcr::protocol::BridgeActivationTarget =
+        serde_json::from_value(requests[1]["op"]["target"].clone()).unwrap();
+    assert_eq!(
+        replacement_target.dashboard_pid,
+        replacement.process_group as u32
+    );
+    assert_eq!(
+        replacement_target.iterm_session_id.as_deref(),
+        Some(REPLACEMENT_IDENTITY)
+    );
+    let replacement_owner = *replacement_target.owner.unwrap();
+    assert_ne!(replacement_owner.dashboard_owner, owner.dashboard_owner);
+    assert!(
+        iterm_owner_cli(&fixture, &owner, "replaced-old")
+            .target
+            .is_none()
+    );
+    assert_eq!(
+        iterm_owner_cli(&fixture, &replacement_owner, "replaced-current")
+            .target
+            .unwrap()
+            .dashboard_pid,
+        replacement.process_group as u32
+    );
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn iterm_setup_real_palette_denial_and_missing_identity_preserve_notification_preferences() {
+    let _guard = env_lock();
+    for missing in [false, true] {
+        let fixture = bridge_control_fixture();
+        fixture.create_hook_child("iterm-shell", "iterm-denied");
+        let identity = (!missing).then_some("w0t0p0:12345678-1234-4234-8234-123456789abc");
+        let mut dashboard = DesktopAlertDashboard::start_for_with_identity(
+            &fixture,
+            Some(
+                "desktop_notifications = false\nready_sound = false\niterm_focus = true\nquota.enabled = false\n",
+            ),
+            "iterm-shell",
+            "available",
+            identity,
+        );
+        std::fs::write(
+            dashboard.record.with_extension("iterm.status"),
+            "iterm_denied",
+        )
+        .unwrap();
+        iterm_setup_palette(&mut dashboard);
+        dashboard.wait_screen(|screen| {
+            screen.contains(if missing {
+                "Exact iTerm focus unavailable"
+            } else {
+                "iTerm control denied"
+            })
+        });
+        assert_eq!(
+            recorded_iterm_setup(&dashboard).len(),
+            usize::from(!missing)
+        );
+        let Response::Hierarchy(hierarchy) = fixture.request(Request::List) else {
+            panic!("sessions unavailable after denied setup");
+        };
+        assert!(
+            hierarchy
+                .projects
+                .iter()
+                .flat_map(|p| &p.workspaces)
+                .flat_map(|w| &w.sessions)
+                .any(|s| s.name == "iterm-shell")
+        );
+        let saved = std::fs::read_to_string(fixture.config.join("dashboard.toml")).unwrap();
+        assert!(saved.contains("desktop_notifications = false"));
+        assert!(saved.contains("ready_sound = false"));
+        assert!(!dashboard.record.with_extension("fallback").exists());
+    }
 }

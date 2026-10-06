@@ -1,5 +1,18 @@
 # Runtime ownership and lifecycle
 
+Notification navigation lives in `server::navigation` and the existing
+`ActiveDashboard` slot. Startup caches a bounded SHA256 identity of the actual
+CLI executable and creates a fresh Server-lifetime token. A connect-only callback
+must match that context and an unarchived retained run. One pending offer is
+stored per current owner with a 1.2-second budget. Lifecycle admission uses
+`try_lock`; a busy or stopping owner yields a no-op instead of deferred work.
+Confirmation is queued on the sole Dashboard writer while the mutation lock
+still excludes lifecycle changes. The Dashboard compares its current hierarchy
+before applying; the Server revalidates owner, deadline, callback connection and
+run again on the applied receipt. Only that receipt may expose current socket
+peer PID/birth/terminal context for native parent activation. This path never
+uses terminal attach/select or launches a managed process.
+
 - Give each piece of state one authority. Avoid parallel stores for selection, geometry, readiness, request completion, or process ownership. Compatibility helpers must delegate to the same implementation.
 - Respect the existing lock order and spawn/registration boundary. Keep owner verification and state publication atomic. `Session::spawn_registered` is the only production spawn; it publishes the session before the PTY reader and child waiter start. The two `cfg(test)` hook constructors publish at that same point with a no-op register, so no spawn skips publication. Delayed cleanup from an old connection must leave a replacement owner's state intact.
 - Preserve the synchronous dispatcher and sole socket writer. Socket writes must not block the parser dispatcher. Bound queues and retained state; preserve control responses and lifecycle events or disconnect explicitly when they cannot be delivered. `reporting_channel` is the only queue constructor; its monitor argument turns the accounting on for the `acceptance-diagnostics` build and for tests that assert on it, and nothing else varies. The `after_send` / `before_wait` ordering hooks belong to that accounting path and fire only on a monitored channel; an unmonitored one is a plain `mpsc::sync_channel`.

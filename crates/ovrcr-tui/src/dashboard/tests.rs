@@ -782,6 +782,211 @@ fn staged_history_copy_dashboard() -> Dashboard {
     dashboard
 }
 
+fn notification_navigation_fixture(
+    target: SessionId,
+) -> (Dashboard, crate::protocol::BridgeNavigationOffer) {
+    let mut dashboard = keymap_dashboard(SessionPhase::Running);
+    dashboard.hierarchy.projects[0].workspaces[0]
+        .sessions
+        .push(keymap_session(13, SessionPhase::Running));
+    dashboard.navigation.context = Some(crate::protocol::BridgeContext {
+        server_socket: "/tmp/owning-navigation.sock".into(),
+        callback_executable: "/tmp/ovrcr".into(),
+        callback_executable_sha256: "0".repeat(64),
+        server_lifetime: "10000000-0000-4000-8000-000000000001".into(),
+    });
+    let offer = crate::protocol::BridgeNavigationOffer {
+        navigation: "20000000-0000-4000-8000-000000000002".into(),
+        ticket: dashboard
+            .navigation_ticket(target, SessionRunId(1))
+            .unwrap(),
+    };
+    (dashboard, offer)
+}
+
+#[test]
+fn notification_navigation_production_boundary_discards_old_input_before_later_messages_and_copy() {
+    use crate::protocol::{ClientMessage, read_frame};
+    use crossterm::event::Event;
+    for target in [SessionId(12), SessionId(13)] {
+        let (mut dashboard, offer) = notification_navigation_fixture(target);
+        let mut history = staged_history_copy_dashboard().history.unwrap();
+        history.opened.session = SessionId(12);
+        history.copy_completion.as_mut().unwrap().range.session = SessionId(12);
+        dashboard.history = Some(history);
+        dashboard.mode = InputMode::History;
+        let confirmation = dashboard
+            .handle_server_message(ServerMessage::Event(ServerEvent::NotificationNavigation(
+                offer.clone(),
+            )))
+            .into_iter()
+            .find(|message| {
+                matches!(
+                    message.request,
+                    Request::ConfirmNotificationNavigation { .. }
+                )
+            })
+            .unwrap();
+        dashboard.push_request(ClientMessage {
+            request_id: 700,
+            request: Request::Input {
+                session: SessionId(12),
+                run: SessionRunId(1),
+                bytes: b"OLD_UNSENT_INPUT".to_vec(),
+            },
+        });
+        dashboard.push_request(ClientMessage {
+            request_id: 701,
+            request: Request::SetSetting {
+                path: "ready_sound".into(),
+                value: Some("false".into()),
+            },
+        });
+        let (mut peer, mut stream) = UnixStream::pair().unwrap();
+        let (sender, receiver) = dashboard_message_channel();
+        sender
+            .send(ServerMessage::Response {
+                request_id: confirmation.request_id,
+                response: Response::NotificationNavigationConfirmed(Some(Box::new(offer))),
+            })
+            .unwrap();
+        sender
+            .send(ServerMessage::Response {
+                request_id: 702,
+                response: Response::Ok,
+            })
+            .unwrap();
+        super::event_loop::next_dashboard_messages(&receiver, &mut dashboard, &mut stream).unwrap();
+        assert!(
+            dashboard.navigation.discard_input,
+            "actual message dispatch must establish an input boundary"
+        );
+        assert_eq!(dashboard.focused_session(), Some(target));
+        assert_eq!(dashboard.mode, InputMode::Browse);
+        assert!(dashboard.history.is_none());
+        assert!(
+            dashboard.take_pending_history_copy().is_none(),
+            "no old clipboard completion survives selection"
+        );
+        assert!(
+            receiver.try_recv().is_ok(),
+            "a later Server receipt must wait behind the old-input drain"
+        );
+        let requests: Vec<ClientMessage> = (0..3).map(|_| read_frame(&mut peer).unwrap()).collect();
+        assert!(
+            requests
+                .iter()
+                .all(|message| !matches!(message.request, Request::Input { .. }))
+        );
+        assert!(requests.iter().any(|message| message.request_id == 701));
+        assert!(requests.iter().any(|message| matches!(
+            message.request,
+            Request::HistoryEnd {
+                session: SessionId(12),
+                ..
+            }
+        )));
+        assert!(requests.iter().any(|message| matches!(
+            message.request,
+            Request::NotificationNavigationApplied { .. }
+        )));
+
+        let mut bytes = Vec::new();
+        let mut terminal = Terminal::with_options(
+            CrosstermBackend::new(&mut bytes),
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 120, 40)),
+            },
+        )
+        .unwrap();
+        let mut mouse = false;
+        let mut processed = 0;
+        let boundary = drain_dashboard_input_then_emit_with(
+            &mut terminal,
+            &mut stream,
+            &mut dashboard,
+            &mut mouse,
+            || Ok(true),
+            |_, _, dashboard, _| {
+                processed += 1;
+                for event in [
+                    Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+                    Event::Paste("OLD_PRIVATE_PASTE".into()),
+                ] {
+                    assert_eq!(dashboard.event_action(event), super::DashboardAction::None);
+                }
+                assert!(
+                    dashboard
+                        .input_request(b"old bytes".to_vec(), 703)
+                        .is_none()
+                );
+                Ok(false)
+            },
+        )
+        .unwrap();
+        assert_eq!(processed, 32);
+        assert_eq!(boundary, super::event_loop::DashboardBoundary::InputPending);
+        assert!(
+            dashboard.navigation.discard_input,
+            "continuation batches retain the fence"
+        );
+        let boundary = drain_dashboard_input_then_emit_with(
+            &mut terminal,
+            &mut stream,
+            &mut dashboard,
+            &mut mouse,
+            || Ok(false),
+            |_, _, _, _| panic!("empty input boundary must process no event"),
+        )
+        .unwrap();
+        assert_ne!(boundary, super::event_loop::DashboardBoundary::InputPending);
+        assert!(!dashboard.navigation.discard_input);
+        drop(terminal);
+        assert!(
+            bytes.is_empty(),
+            "navigation emits no queued OSC52 clipboard bytes"
+        );
+        let view: ClientMessage = read_frame(&mut peer).unwrap();
+        assert!(matches!(view.request, Request::SetView { .. }));
+        assert_eq!(dashboard.mode, InputMode::Browse);
+    }
+}
+
+#[test]
+fn notification_navigation_display_of_interrupted_agent_never_queues_recovery() {
+    let (mut dashboard, offer) = notification_navigation_fixture(SessionId(13));
+    let target = &mut dashboard.hierarchy.projects[0].workspaces[0].sessions[1];
+    target.phase = SessionPhase::Interrupted;
+    target.kind = crate::protocol::SessionKind::Agent {
+        name: "fixture".into(),
+    };
+    target.recovery = Some(crate::protocol::SessionRecovery {
+        conversation: Some("fixture-conversation".into()),
+        attached: false,
+        requires_ack: false,
+        unavailable: None,
+        failure: None,
+    });
+    assert!(target.can_auto_recover());
+    let confirmation = dashboard
+        .handle_server_message(ServerMessage::Event(ServerEvent::NotificationNavigation(
+            offer.clone(),
+        )))
+        .remove(0);
+    let mut outgoing = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: confirmation.request_id,
+        response: Response::NotificationNavigationConfirmed(Some(Box::new(offer))),
+    });
+    dashboard.request_view_at(Rect::new(0, 0, 120, 40));
+    outgoing.extend(dashboard.drain_outbox());
+    assert_eq!(dashboard.focused_session(), Some(SessionId(13)));
+    assert_eq!(dashboard.mode, InputMode::Browse);
+    assert!(outgoing.iter().all(|message| !matches!(
+        message.request,
+        Request::RecoverSession { .. } | Request::ReopenSession { .. } | Request::Input { .. }
+    )));
+}
+
 #[test]
 fn failed_history_copy_writer_preserves_selection_for_retry() {
     let mut dashboard = staged_history_copy_dashboard();
@@ -1977,6 +2182,29 @@ fn ready_sound_action_is_opt_in_and_discoverable() {
     assert!(
         names(&dashboard).contains(&("N".into(), "Enable desktop notifications".into())),
         "sound leaves desktop notifications untouched"
+    );
+    let hints = super::keymap::keymap(&dashboard);
+    let sound = hints
+        .iter()
+        .flat_map(|group| &group.keys)
+        .find(|hint| hint.key == "S")
+        .unwrap();
+    #[cfg(target_os = "macos")]
+    {
+        assert!(
+            sound.description.contains("requires desktop notifications")
+                && sound.description.contains("choose a sound in Settings")
+        );
+        assert_eq!(
+            dashboard.desktop_status_notice(),
+            Some("Ready sound saved; enable desktop notifications to hear it")
+        );
+    }
+    #[cfg(not(target_os = "macos"))]
+    assert!(
+        sound
+            .description
+            .contains("independent of desktop notifications")
     );
 }
 

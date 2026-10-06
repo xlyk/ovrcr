@@ -573,6 +573,9 @@ fn retained_codex_native_helper() {
 #[test]
 fn extension_conversations_switch_and_survive_repeated_restart() {
     use std::os::unix::fs::PermissionsExt;
+    let node = std::env::var_os("OVRCR_TEST_NODE_EXECUTABLE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| "node".into());
     for provider in ["pi", "omp"] {
         let live = Live::idle().bounded();
         let config = live.root.path().join("provider-config");
@@ -599,8 +602,8 @@ fn extension_conversations_switch_and_survive_repeated_restart() {
             format!("'{}'", path.to_str().unwrap().replace('\'', "'\"'\"'"))
         };
         std::fs::write(&native, format!(
-            "#!/bin/sh\nexport OVRCR_TEST_HISTORY={}\nprintf '%s\\n' \"$@\" >> {}\nexec node {} \"$@\"\n",
-            quote(&config), quote(&config.join("argv")), quote(&host),
+            "#!/bin/sh\nexport OVRCR_TEST_HISTORY={}\nprintf '%s\\n' \"$@\" >> {}\nexec {} {} \"$@\"\n",
+            quote(&config), quote(&config.join("argv")), quote(&node), quote(&host),
         )).unwrap();
         std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
         // Capture the initial run's capability before the managed launcher

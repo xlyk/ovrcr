@@ -17,10 +17,61 @@ use std::time::{Duration, Instant};
 fn isolated_command(root: &tempfile::TempDir) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ovrcr"));
     command
+        // Account readers use this fixture's profiles, never the user's.
+        // Callers may still supply explicit task-owned overrides afterward.
+        .env("HOME", root.path())
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("XDG_DATA_HOME")
+        .env_remove("XDG_STATE_HOME")
+        .env_remove("XDG_CACHE_HOME")
+        .env_remove("CODEX_HOME")
+        .env_remove("GROK_HOME")
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("OVRCR_CONFIG")
+        .env_remove("OVRCR_DASHBOARD_CONFIG")
         .env("OVRCR_HOME", root.path())
         .env("OVRCR_SOCKET", root.path().join("server.sock"))
         .env("SHELL", "/bin/sh");
     command
+}
+
+#[test]
+fn cli_fixture_commands_isolate_profiles_and_allow_explicit_overrides() {
+    let root = tempfile::tempdir().unwrap();
+    let mut command = isolated_command(&root);
+    {
+        let value = |key: &str| {
+            command
+                .get_envs()
+                .find_map(|(name, value)| (name == key).then_some(value))
+        };
+        assert_eq!(value("HOME"), Some(Some(root.path().as_os_str())));
+        assert_eq!(value("OVRCR_HOME"), Some(Some(root.path().as_os_str())));
+        let socket = root.path().join("server.sock");
+        assert_eq!(value("OVRCR_SOCKET"), Some(Some(socket.as_os_str())));
+        for key in [
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "XDG_STATE_HOME",
+            "XDG_CACHE_HOME",
+            "CODEX_HOME",
+            "GROK_HOME",
+            "CLAUDE_CONFIG_DIR",
+            "OVRCR_CONFIG",
+            "OVRCR_DASHBOARD_CONFIG",
+        ] {
+            assert_eq!(value(key), Some(None), "inherited {key} was not removed");
+        }
+        assert_eq!(value("PATH"), None, "retain the test runner's PATH");
+    }
+    let codex_home = root.path().join("codex-fixture");
+    command.env("CODEX_HOME", &codex_home);
+    assert_eq!(
+        command
+            .get_envs()
+            .find_map(|(name, value)| (name == "CODEX_HOME").then_some(value)),
+        Some(Some(codex_home.as_os_str()))
+    );
 }
 
 struct CapturedChild {
@@ -1220,6 +1271,16 @@ fn cli_request(socket: &std::path::Path, request: Request) -> Result<Response, S
 }
 
 fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
+    // macOS requires native context: hash before claiming the Dashboard so
+    // greeting validation cannot hold up selection during collector startup.
+    // Elsewhere, only hash if the Server actually supplies optional context.
+    let callback = std::path::Path::new(env!("CARGO_BIN_EXE_ovrcr"))
+        .canonicalize()
+        .unwrap();
+    let expected_callback_sha256 = cfg!(target_os = "macos").then(|| {
+        ovrcr::server::bridge_executable_sha256(&callback, Instant::now() + Duration::from_secs(5))
+            .expect("hash the fixture CLI before the Dashboard greeting")
+    });
     let mut stream = connect_server(socket).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_millis(250)))
@@ -1242,10 +1303,45 @@ fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
         } => {}
         response => panic!("unexpected dashboard hello response: {response:?}"),
     }
-    // The Server's settings reading follows every hello. A quota snapshot
-    // may follow it (the Claude row when `claude auth status` rules an
-    // allowance out), so quota events are skipped from here on.
-    match next_skipping_quota(&mut stream) {
+    // The Server sends native navigation context before its settings reading.
+    // Require it on macOS; elsewhere a hello without context keeps the direct
+    // settings path. A present context must identify this fixture's Server/CLI.
+    let message = next_skipping_quota(&mut stream);
+    #[cfg(target_os = "macos")]
+    assert!(
+        matches!(
+            &message,
+            ServerMessage::Event(ovrcr::protocol::ServerEvent::BridgeContext(_))
+        ),
+        "expected native navigation context after hello: {message:?}"
+    );
+    let message = match message {
+        ServerMessage::Event(ovrcr::protocol::ServerEvent::BridgeContext(context)) => {
+            assert!(context.validate(), "invalid Bridge context: {context:?}");
+            assert_eq!(
+                std::path::Path::new(&context.server_socket),
+                socket.canonicalize().unwrap()
+            );
+            assert_eq!(
+                std::path::Path::new(&context.callback_executable),
+                callback.as_path()
+            );
+            let expected_callback_sha256 = expected_callback_sha256.unwrap_or_else(|| {
+                ovrcr::server::bridge_executable_sha256(
+                    &callback,
+                    Instant::now() + Duration::from_secs(5),
+                )
+                .expect("hash the fixture CLI for the received Bridge context")
+            });
+            assert_eq!(context.callback_executable_sha256, expected_callback_sha256);
+            next_skipping_quota(&mut stream)
+        }
+        message => message,
+    };
+    // The Server's settings reading follows every hello. Quota snapshots and
+    // recorded quota transitions may interleave it and the Select responses,
+    // so skip those telemetry messages while retaining the expected ordering.
+    match message {
         ServerMessage::Event(ovrcr::protocol::ServerEvent::SettingsChanged(_)) => {}
         message => panic!("expected the settings reading after hello: {message:?}"),
     }
@@ -1280,11 +1376,138 @@ fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
 }
 
 fn next_skipping_quota(stream: &mut UnixStream) -> ServerMessage {
+    use ovrcr::protocol::{Event, EventComponent, ServerEvent};
+
     loop {
         match read_frame::<ServerMessage>(stream).unwrap() {
-            ServerMessage::Event(ovrcr::protocol::ServerEvent::QuotaChanged(_)) => {}
+            ServerMessage::Event(ServerEvent::QuotaChanged(_))
+            | ServerMessage::Event(ServerEvent::Recorded(Event {
+                component: EventComponent::Quota,
+                ..
+            })) => {}
             message => return message,
         }
+    }
+}
+
+#[test]
+fn dashboard_selection_frames_skip_only_quota_telemetry() {
+    use ovrcr::protocol::{
+        BridgeContext, Event, EventComponent, ServerEvent, SessionRunId, SettingsReport,
+    };
+
+    let (mut writer, mut reader) = UnixStream::pair().unwrap();
+    writer
+        .set_write_timeout(Some(Duration::from_millis(250)))
+        .unwrap();
+    reader
+        .set_read_timeout(Some(Duration::from_millis(250)))
+        .unwrap();
+    let expected = [
+        ServerMessage::Event(ServerEvent::BridgeContext(BridgeContext {
+            server_socket: "/fixture/server.sock".into(),
+            callback_executable: "/fixture/ovrcr".into(),
+            callback_executable_sha256: "ab".repeat(32),
+            server_lifetime: "12345678-1234-4abc-8abc-123456789abc".into(),
+        })),
+        ServerMessage::Event(ServerEvent::SettingsChanged(Box::new(SettingsReport {
+            path: "/fixture/dashboard.toml".into(),
+            read_unix_ms: 1,
+            settings: Default::default(),
+            rows: Vec::new(),
+            findings: Vec::new(),
+            unparseable: false,
+        }))),
+        ServerMessage::Response {
+            request_id: 2,
+            response: Response::Screen {
+                session: SessionId(7),
+                run: SessionRunId(3),
+                revision: 4,
+                size: ovrcr::session::TerminalSize { rows: 24, cols: 80 },
+                bytes: b"SELECTED_SESSION".to_vec(),
+            },
+        },
+        ServerMessage::Response {
+            request_id: 2,
+            response: Response::Ok,
+        },
+    ];
+    for (index, message) in expected.iter().enumerate() {
+        write_frame(
+            &mut writer,
+            &ServerMessage::Event(ServerEvent::QuotaChanged(Box::default())),
+        )
+        .unwrap();
+        if index >= 2 {
+            // Force the CI ordering: a collector finishes after the settings
+            // reading, before the Screen response or final acknowledgement.
+            write_frame(
+                &mut writer,
+                &ServerMessage::Event(ServerEvent::Recorded(Event {
+                    time_unix_ms: 1,
+                    component: EventComponent::Quota,
+                    subject: Some("Grok".into()),
+                    message: "Checking -> NotSignedIn: not signed in".into(),
+                })),
+            )
+            .unwrap();
+        }
+        write_frame(&mut writer, message).unwrap();
+    }
+    for message in expected {
+        assert_eq!(next_skipping_quota(&mut reader), message);
+    }
+}
+
+#[test]
+fn quota_filter_preserves_other_events_and_responses() {
+    use ovrcr::protocol::{Event, EventComponent, HierarchySnapshot, ServerEvent, SessionRunId};
+
+    let (mut writer, mut reader) = UnixStream::pair().unwrap();
+    writer
+        .set_write_timeout(Some(Duration::from_millis(250)))
+        .unwrap();
+    reader
+        .set_read_timeout(Some(Duration::from_millis(250)))
+        .unwrap();
+    let expected = [
+        ServerMessage::Event(ServerEvent::Recorded(Event {
+            time_unix_ms: 2,
+            component: EventComponent::Titles,
+            subject: Some("7".into()),
+            message: "title changed".into(),
+        })),
+        ServerMessage::Event(ServerEvent::Recorded(Event {
+            time_unix_ms: 3,
+            component: EventComponent::Settings,
+            subject: None,
+            message: "settings changed".into(),
+        })),
+        ServerMessage::Event(ServerEvent::ScreenDirty {
+            session: SessionId(7),
+            run: SessionRunId(3),
+            revision: 5,
+        }),
+        ServerMessage::Event(ServerEvent::Output {
+            session: SessionId(7),
+            run: SessionRunId(3),
+            revision: 5,
+            bytes: b"SESSION_OUTPUT".to_vec(),
+        }),
+        ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+            projects: Vec::new(),
+        })),
+        ServerMessage::Response {
+            request_id: 99,
+            response: Response::Ok,
+        },
+    ];
+    for message in &expected {
+        write_frame(&mut writer, message).unwrap();
+    }
+    for message in expected {
+        assert_eq!(next_skipping_quota(&mut reader), message);
     }
 }
 
@@ -1586,18 +1809,10 @@ fn session_command_keeps_arguments_after_separator() {
     live::init_repo(&repo);
     let config = root.path().to_path_buf();
     let socket = root.path().join("server.sock");
-    let envs = [
-        ("OVRCR_HOME", root.path().as_os_str()),
-        ("OVRCR_SOCKET", socket.as_os_str()),
-    ];
     let bin = env!("CARGO_BIN_EXE_ovrcr");
     let run = |args: &[&str]| {
-        let mut command = Command::new(bin);
+        let mut command = isolated_command(&root);
         command.args(args);
-        for &(key, value) in &envs {
-            command.env(key, value);
-        }
-        command.env("SHELL", "/bin/sh");
         let output = command.output().unwrap();
         assert!(
             output.status.success(),
@@ -2370,10 +2585,8 @@ fn hermes_cli_launch_uses_real_server_pty_and_truthful_lifecycle() {
     let native = fixture.root.path().join("hermes");
     std::fs::write(&native, "#!/bin/sh\nprintf 'HERMES_FIXTURE_READY\\n'\nwhile IFS= read -r line; do [ \"$line\" = quit ] && exit 0; printf 'HERMES_REPLY:%s\\nBusy Ready approval\\n' \"$line\"; done\n").unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let mut create = Command::new(&fixture.executable);
+    let mut create = fixture.command();
     create
-        .env("OVRCR_HOME", &fixture.config)
-        .env("OVRCR_SOCKET", &fixture.socket)
         .args([
             "--json",
             "terminal",
@@ -2621,10 +2834,8 @@ fn cursor_create(
     native: &std::path::Path,
     args: &[&str],
 ) -> ovrcr::session::SessionId {
-    let mut command = Command::new(&fixture.executable);
+    let mut command = fixture.command();
     command
-        .env("OVRCR_HOME", &fixture.config)
-        .env("OVRCR_SOCKET", &fixture.socket)
         .args([
             "terminal",
             "create",
@@ -2998,12 +3209,8 @@ fn stable_titles_rename_reset_and_reopen_through_cli() {
     let fixture = live::Live::binary();
     fixture.ready("feature/cli-titles");
     let run = |args: &[&str]| {
-        let mut command = Command::new(&fixture.executable);
-        command
-            .args(args)
-            .env("OVRCR_HOME", &fixture.config)
-            .env("OVRCR_SOCKET", &fixture.socket)
-            .env("SHELL", "/bin/sh");
+        let mut command = fixture.command();
+        command.args(args);
         let output = run_cli_bounded(command).unwrap();
         assert!(
             output.status.success(),
@@ -3122,7 +3329,39 @@ fn settings_command_reports_document_rows_and_findings_and_json_round_trips() {
         .unwrap();
     assert!(json.status.success(), "{json:?}");
     let report: SettingsReport = serde_json::from_slice(&json.stdout).unwrap();
-    let expected = ovrcr::settings::load_document(root.path(), &root.path().join("dashboard.toml"));
+    let mut expected =
+        ovrcr::settings::load_document(root.path(), &root.path().join("dashboard.toml"));
+    // The loader above expands defaults in this process; isolated_command
+    // gives the CLI a different HOME. Match that child HOME while retaining
+    // the complete settings and row comparisons, as the Server fixture does.
+    expected.settings.picker_roots = [
+        root.path().join("Code"),
+        root.path().join("src"),
+        root.path().to_path_buf(),
+    ]
+    .into_iter()
+    .filter(|path| path.exists())
+    .collect();
+    let picker_roots = Some(
+        toml::Value::try_from(&expected.settings.picker_roots)
+            .unwrap()
+            .to_string(),
+    );
+    let row = expected
+        .rows
+        .iter_mut()
+        .find(|row| row.key == "picker_roots")
+        .unwrap();
+    row.value = picker_roots.clone();
+    row.default = picker_roots;
+    let actual = report
+        .rows
+        .iter()
+        .find(|row| row.key == "picker_roots")
+        .unwrap();
+    assert_eq!(actual.source, SettingSource::Default);
+    assert_eq!(actual.value, row.value);
+    assert_eq!(actual.default, row.default);
     assert_eq!(report.path, root.path().join("dashboard.toml"));
     assert_eq!(report.rows, expected.rows);
     assert_eq!(report.findings, expected.findings);

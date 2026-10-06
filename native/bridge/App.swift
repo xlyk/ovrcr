@@ -1,11 +1,14 @@
 import AppKit
+import Darwin
 import UserNotifications
 
 final class BridgeApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private let center = UNUserNotificationCenter.current()
     private let state = NSLock()
     private var authorizationPending = false
+    private let itermSetup = ITermSetup()
     private var operationBusy = false
+    private var navigationBusy = false
     var onLaunch: (() -> Void)?
 
     override init() {
@@ -44,6 +47,22 @@ final class BridgeApp: NSObject, NSApplicationDelegate, UNUserNotificationCenter
         case .request(let accepted): request = accepted
         case .rejected(let failure): return BridgeReply(failure).data()
         }
+        // Independent explicit setup: notification denial/pending cannot turn
+        // it into a notification authorization operation or disable navigation.
+        if let target = request.op.target {
+            let current = { (requested: BridgeActivationTarget) in
+                currentBridgeOwner(requested, deadline: Deadline(seconds: 1.5))?.iterm_focus == true
+            }
+            let status: BridgeStatus
+            if request.op.type == .itermSetup {
+                status = itermSetup.begin(target, admission: { deadline.remaining > 0 }, current: current, authorize: { requested, valid in
+                    requestITermAuthorization(requested, ownerIsCurrent: valid, admission: { deadline.remaining > 0 })
+                })
+            } else {
+                status = itermSetup.status(target, current: current)
+            }
+            return BridgeReply(status).data()
+        }
         if request.op.type != .settings && pending() { return BridgeReply(.permissionPending).data() }
         state.lock()
         guard !operationBusy else { state.unlock(); return BridgeReply(.failed).data() }
@@ -77,15 +96,23 @@ final class BridgeApp: NSObject, NSApplicationDelegate, UNUserNotificationCenter
                     reply.finish(performed ? .permissionPending : .failed)
                     self.endOperation()
                 } else if request.op.type == .deliver && current == .available {
+                    guard deadline.remaining > 0 else { self.endOperation(); return }
+                    let sound = prepareSound(request.op.sound, bundle: Bundle.main.bundleURL,
+                        lookupDirectories: soundLookupDirectories())
                     let performed = reply.perform {
                         let content = UNMutableNotificationContent()
                         content.title = request.op.title!
                         content.subtitle = request.op.subtitle!
                         content.body = request.op.body!
-                        content.sound = nil // #222 is always silent; no sound/click metadata.
+                        switch sound.plan {
+                        case .silent: content.sound = nil
+                        case .systemDefault: content.sound = .default
+                        case .named(let file): content.sound = UNNotificationSound(named: UNNotificationSoundName(rawValue: file))
+                        }
+                        content.userInfo = request.op.navigation!.userInfo
                         let notification = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
                         self.center.add(notification) { error in
-                            reply.finish(error == nil ? .submitted : .failed)
+                            reply.finish(error == nil ? .submitted : .failed, soundUnavailable: sound.unavailable)
                             self.endOperation()
                         }
                     }
@@ -96,17 +123,70 @@ final class BridgeApp: NSObject, NSApplicationDelegate, UNUserNotificationCenter
                 }
             }
         }
-        return BridgeReply(reply.wait()).data()
+        return reply.wait().data()
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler([.banner, .list])
+        var options: UNNotificationPresentationOptions = [.banner, .list]
+        if notification.request.content.sound != nil { options.insert(.sound) }
+        completionHandler(options)
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void) {
-        completionHandler() // Click navigation/terminal activation belong to later slices.
+        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+              let ticket = BridgeNavigationTicket.decode(userInfo: response.notification.request.content.userInfo) else {
+            completionHandler(); return
+        }
+        state.lock()
+        guard !navigationBusy else { state.unlock(); completionHandler(); return }
+        navigationBusy = true
+        state.unlock()
+        let deadline = Deadline(seconds: 3.8)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = forwardNavigation(ticket, deadline: Deadline(seconds: min(1.8, deadline.remaining)))
+            let parent = result.flatMap { result in
+                result.applied ? result.activation.flatMap { focusITermOrParent($0, deadline: deadline) } : nil
+            }
+            if deadline.remaining > 0, let target = parent {
+                activateDashboardParent(target, deadline: deadline)
+            }
+            DispatchQueue.main.async {
+                self.state.lock(); self.navigationBusy = false; self.state.unlock()
+                completionHandler()
+            }
+        }
+    }
+}
+
+// Parent-app fallback only. AppKit activation sends no Apple Event and does
+// not launch a terminal, prompt for permission or synthesize terminal input.
+func activateDashboardParent(_ target: BridgeActivationTarget, deadline: Deadline) {
+    // NSRunningApplication is SDK-declared Sendable/thread safe; activation has
+    // no main-actor annotation. Keep owner validation and its effect together
+    // off the main thread, with only notification completion queued afterward.
+    guard !Thread.isMainThread,
+          let ancestry = currentDashboardParentAncestry(target, continuing: { deadline.remaining > 0 }),
+          let app = NSRunningApplication(processIdentifier: Int32(ancestry.application.pid)),
+          !app.isTerminated, app.bundleIdentifier != bridgeBundleID else { return }
+    var current = proc_bsdinfo()
+    let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+    let read = withUnsafeMutablePointer(to: &current) {
+        proc_pidinfo(Int32(ancestry.application.pid), PROC_PIDTBSDINFO, 0, $0, size)
+    }
+    guard read == size, current.pbi_uid == getuid(),
+          current.pbi_pid == ancestry.application.pid,
+          current.pbi_start_tvsec == ancestry.application.startSeconds,
+          current.pbi_start_tvusec == ancestry.application.startMicroseconds,
+          currentDashboardHasAncestor(target, ancestor: current, expectedAncestry: ancestry,
+              continuing: { deadline.remaining > 0 }), deadline.remaining > 0 else { return }
+    _ = performCurrentParentActivation(target, deadline: deadline) { accepted in
+        guard !app.isTerminated,
+              currentDashboardHasAncestor(accepted, ancestor: current, expectedAncestry: ancestry,
+                  continuing: { deadline.remaining > 0 }),
+              deadline.remaining > 0 else { return false }
+        return app.activate(options: [])
     }
 }
 
@@ -129,5 +209,5 @@ func launchBridge(_ deadline: Deadline) -> Bool {
     while !result.isFinished && deadline.remaining > 0 {
         RunLoop.current.run(until: Date(timeIntervalSinceNow: min(0.01, deadline.remaining)))
     }
-    return result.wait() == .available
+    return result.wait().status == .available
 }

@@ -302,7 +302,15 @@ impl OuterDashboard {
     ) -> Result<Self> {
         let pty = native_pty_system();
         let pair = pty.openpty(size)?;
-        let mut command = CommandBuilder::new(&fixture.executable);
+        // Isolate startup asset discovery from the shared Cargo target, while
+        // preserving the selected Server image and all real PTY behavior.
+        let directory = fixture.root.path().join("dashboard-client");
+        std::fs::create_dir_all(&directory)?;
+        let executable = directory.join("ovrcr");
+        if !executable.exists() {
+            std::fs::copy(&fixture.executable, &executable)?;
+        }
+        let mut command = CommandBuilder::new(&executable);
         command.env("OVRCR_SOCKET", &fixture.socket);
         command.env("OVRCR_HOME", &fixture.config);
         command.env("OVRCR_SERVER_EXECUTABLE", server_executable);

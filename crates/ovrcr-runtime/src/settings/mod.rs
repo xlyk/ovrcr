@@ -4,11 +4,12 @@
 //! and the findings. A bad value defaults only its own setting; a wrong-typed
 //! element of a list or table drops only that element; an unknown key or
 //! spelling is a finding; only an unparseable document falls back to all
-//! defaults. Nothing here fails: a settings mistake never stops the Server.
+//! defaults. An explicitly invalid sound choice instead suppresses sound.
+//! Nothing here fails: a settings mistake never stops the Server.
 
 use ovrcr_protocol::{
-    AgentOverride, AutomaticLocalTerminals, LaunchChoice, NativeCommand, SettingRow, Settings,
-    SettingsFinding, SettingsReport,
+    AgentOverride, AutomaticLocalTerminals, LaunchChoice, NativeCommand, ReadySoundChoice,
+    SettingRow, Settings, SettingsFinding, SettingsReport,
 };
 #[cfg(test)]
 use ovrcr_protocol::{SettingOwner, SettingSource};
@@ -25,7 +26,7 @@ pub use write::set;
 /// a file only; there is no per-setting environment layer.
 pub const DOCUMENT_ENV: &str = "OVRCR_DASHBOARD_CONFIG";
 
-pub use ovrcr_protocol::{DESKTOP_NOTIFICATIONS_OFF, QUOTA_OFF, TITLES_OFF};
+pub use ovrcr_protocol::{DESKTOP_NOTIFICATIONS_OFF, ITERM_FOCUS_OFF, QUOTA_OFF, TITLES_OFF};
 
 /// `OVRCR_DASHBOARD_CONFIG`, else `dashboard.toml` in the instance directory.
 pub fn document_path(home: &Path) -> PathBuf {
@@ -167,6 +168,27 @@ impl Loader<'_> {
             &mut settings.desktop_notifications,
         );
         self.value(table, "ready_sound", &mut settings.ready_sound);
+        if table.contains_key(ReadySoundChoice::KEY) {
+            self.accept(
+                ReadySoundChoice::KEY,
+                &mut settings.ready_sound_choice,
+                None,
+            );
+            if let Some(raw) = self.take::<String>(table, ReadySoundChoice::KEY) {
+                match ReadySoundChoice::parse(&raw) {
+                    Some(choice) => self.accept(
+                        ReadySoundChoice::KEY,
+                        &mut settings.ready_sound_choice,
+                        Some(choice),
+                    ),
+                    None => self.finding(
+                        ReadySoundChoice::KEY,
+                        format!("unknown value {raw:?}; expected \"default\", \"tap\", \"chime\" or \"rise\""),
+                    ),
+                }
+            }
+        }
+        self.value(table, "iterm_focus", &mut settings.iterm_focus);
         if let Some(raw) = self.take::<String>(table, AutomaticLocalTerminals::KEY) {
             match AutomaticLocalTerminals::parse(&raw) {
                 Some(policy) => self.accept(
@@ -632,6 +654,57 @@ mod tests {
         parse(Path::new("dashboard.toml"), text)
     }
 
+    #[test]
+    fn ready_sound_choice_defaults_or_fails_closed_without_changing_opt_ins() {
+        for notifications in [false, true] {
+            for sound in [false, true] {
+                for (raw, choice) in [
+                    (None, Some(ReadySoundChoice::Default)),
+                    (Some("\"default\""), Some(ReadySoundChoice::Default)),
+                    (Some("\"tap\""), Some(ReadySoundChoice::Tap)),
+                    (Some("\"chime\""), Some(ReadySoundChoice::Chime)),
+                    (Some("\"rise\""), Some(ReadySoundChoice::Rise)),
+                    (Some("\"Glass\""), None),
+                    (Some("\" tap\""), None),
+                    (Some("true"), None),
+                    (Some("7"), None),
+                    (Some("[\"tap\"]"), None),
+                    (Some("{ tap = {} }"), None),
+                ] {
+                    let mut text = format!(
+                        "desktop_notifications = {notifications}\nready_sound = {sound}\nbranch_prefix = 'preserved/'\n"
+                    );
+                    if let Some(raw) = raw {
+                        text.push_str(&format!("ready_sound_choice = {raw}\n"));
+                    }
+                    let report = read(&text);
+                    assert_eq!(report.settings.ready_sound_choice, choice, "{text}");
+                    assert_eq!(report.settings.desktop_notifications, notifications);
+                    assert_eq!(report.settings.ready_sound, sound);
+                    assert_eq!(report.settings.branch_prefix, "preserved/");
+                    let row = row(&report, ReadySoundChoice::KEY);
+                    assert_eq!(row.value.as_deref(), choice.map(ReadySoundChoice::as_str));
+                    assert_eq!(row.default.as_deref(), Some("default"));
+                    assert_eq!(
+                        row.source,
+                        if raw.is_some() {
+                            SettingSource::Document
+                        } else {
+                            SettingSource::Default
+                        }
+                    );
+                    if choice.is_some() {
+                        assert!(report.findings.is_empty(), "{:?}", report.findings);
+                    } else {
+                        assert!(matches!(report.findings.as_slice(), [finding]
+                            if finding.key.as_deref() == Some(ReadySoundChoice::KEY)
+                                && finding.line == Some(4)));
+                    }
+                }
+            }
+        }
+    }
+
     fn row<'a>(report: &'a SettingsReport, key: &str) -> &'a SettingRow {
         report.rows.iter().find(|row| row.key == key).unwrap()
     }
@@ -648,12 +721,14 @@ mod tests {
 
     const FULL: &str = r#"desktop_notifications = true
 ready_sound = true
+iterm_focus = true
 save_uncommitted_work = true
 automatic_local_terminals = "off"
 title_model = "pi/test"
 branch_prefix = "kh/"
 picker_roots = ["/tmp/a", "~/b"]
 agents = [{ name = "claude", argv = ["claude", "--x"] }]
+ready_sound_choice = "chime"
 
 [launch_choices.ovrcr]
 kind = "Agent"
@@ -699,6 +774,9 @@ state_db = "/tmp/cursor/state.vscdb"
         assert_eq!(report.findings, vec![]);
         let settings = &report.settings;
         assert!(settings.desktop_notifications && settings.ready_sound);
+        assert_eq!(settings.ready_sound_choice, Some(ReadySoundChoice::Chime));
+        assert!(settings.iterm_focus);
+        assert!(settings.save_uncommitted_work);
         assert_eq!(
             settings.automatic_local_terminals,
             AutomaticLocalTerminals::Off
@@ -790,6 +868,7 @@ state_db = "/tmp/cursor/state.vscdb"
             off,
             vec![
                 ("desktop_notifications", DESKTOP_NOTIFICATIONS_OFF),
+                ("iterm_focus", ITERM_FOCUS_OFF),
                 (
                     "save_uncommitted_work",
                     ovrcr_protocol::SAVE_UNCOMMITTED_WORK_OFF
@@ -811,6 +890,8 @@ state_db = "/tmp/cursor/state.vscdb"
             [
                 "desktop_notifications",
                 "ready_sound",
+                "ready_sound_choice",
+                "iterm_focus",
                 "automatic_local_terminals",
                 "save_uncommitted_work",
                 "branch_prefix",
@@ -851,7 +932,7 @@ state_db = "/tmp/cursor/state.vscdb"
         let text = FULL.replace("command = \"/opt/codex\"", "command = 7");
         let report = read(&text);
         assert_eq!(report.findings.len(), 1, "{:?}", report.findings);
-        finding("quota.codex.command", 24, "expected path", &report);
+        finding("quota.codex.command", 26, "expected path", &report);
         assert_eq!(report.settings.quota.codex.command, PathBuf::from("codex"));
         assert_eq!(
             report.settings.quota.codex.home,

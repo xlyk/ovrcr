@@ -693,12 +693,14 @@ there; existing sessions stay usable. OVRCR does not switch the checkout.
 ## Dashboard settings
 
 Every setting lives in one settings document, `dashboard.toml` in the instance
-directory selected by `OVRCR_HOME`, including the Server's `title_model`, `automatic_local_terminals`
-and `[quota]`. Override the path with `OVRCR_DASHBOARD_CONFIG`; it chooses a file
-only. Remembered launch choices stay in this file. Do not put settings in
-the preserved legacy `config.toml`; a `[quota]` table there configures nothing
-and is reported as a finding. Project/workspace records live in
-`registry.sqlite3`, and scheduled tasks live in `tasks/`, in the instance directory.
+directory, including the Server's `title_model`, `automatic_local_terminals`
+and `[quota]`. `OVRCR_HOME` chooses that directory, which also holds
+`registry.sqlite3`, `tasks/`, `events.jsonl` and `server.sock`. Override the
+settings document path with `OVRCR_DASHBOARD_CONFIG`; it chooses a file only.
+Remembered launch choices stay in this file. Do not put settings in a preserved
+legacy `config.toml`: a `[quota]` table there configures nothing and is reported
+as a finding. `OVRCR_CONFIG` remains a deprecated file-path alias for one
+release; its parent directory selects the instance and is reported as a finding.
 
 A missing file uses defaults. A symlink at that path whose target does not
 exist is not a missing file: it is one document-level finding naming the path.
@@ -726,8 +728,10 @@ Open **Settings** from the menu (`Space v ,`) or search the command palette for
 It shows the document path and when the Server read it, then findings that belong
 to no setting (unknown keys and document-level problems, each with its line), then
 every setting in one scrolling list under the group headers **Alerts**
-(`desktop_notifications`, `ready_sound`), **Workspaces**
-(`automatic_local_terminals`, `save_uncommitted_work`, `branch_prefix`, `picker_roots`), **Titles**
+(`desktop_notifications`, `ready_sound`, macOS `ready_sound_choice`, and
+`iterm_focus`), **Workspaces**
+(`automatic_local_terminals`, `save_uncommitted_work`, `branch_prefix`,
+`picker_roots`), **Titles**
 (`title_model`), **Usage** (`quota.*`), **Agents** (`[[agents]]`) and
 **Remembered launches** (`launch_choices`, one row per project).
 
@@ -786,6 +790,8 @@ keys that are unset by default.
 ```toml
 desktop_notifications = false        # opt in to background Ready and input-needed alerts
 ready_sound = false                  # opt in to a sound for the same two alert kinds
+ready_sound_choice = "default"        # macOS: default | tap | chime | rise
+iterm_focus = false                  # separate opt-in; explicit macOS Automation setup
 automatic_local_terminals = "default_branch_only"  # on | off | default_branch_only
 # save_uncommitted_work = true       # opt in: push dirty feature worktrees to origin/wip/<branch>
 # title_model = "provider/model"     # optional; unset leaves automatic titles off
@@ -950,11 +956,30 @@ reporter loss cancels a pending or in-flight Ready alert; closing or replacing a
 input request cancels its own. Mark-reviewed does not.
 No active dashboard means no delivery.
 
+Clicking a macOS alert navigates to the original session run in the current
+Dashboard and lands in Browse. If that session already occupies a pane, its pane
+receives focus; otherwise it replaces the focused pane's selection. Unsent
+drafts, dialogs, palette text and History/Copy captures are cancelled, including
+when the clicked session already has focus. Submitted operations keep their
+original targets. Buffered keys and paste are discarded before new terminal
+input can cross the view acknowledgment boundary.
+
+Pending shutdown questions about saving uncommitted work take priority over
+notification navigation. Clicks leave those questions and submitted answers
+intact; they never infer a save choice or hide a question that blocks shutdown.
+
+An exited original run remains selectable. Archived, removed or reopened rows,
+an old Server lifetime, and an absent, draining or replaced Dashboard are ignored.
+A click never starts a Server, opens or recovers a terminal, acknowledges Unread,
+answers an Input request or sends input. Parent-terminal app activation follows
+only a validated current Dashboard's applied receipt; exact window/tab selection
+is a separate capability. Native click and activation acceptance is pending.
+
 Host submission runs outside the input loop with bounded queues and a two-second
-client deadline. Disabling the last enabled alert channel (notifications or the
-[ready sound](#ready-sound)) or detaching cancels pending work.
-On macOS disabling notifications also cancels the running banner client when the
-independent sound remains enabled.
+client deadline. Detaching cancels pending work. On macOS disabling notifications
+cancels pending banners and the running delivery client. A saved sound toggle
+cannot keep macOS delivery enabled without notification consent. Linux retains
+its independent channels; disabling the last channel cancels pending work.
 Delivery is best effort, with no retries. Host failures do not change reporting,
 native approvals, input or process state. A failed host command displays an
 unavailable footer; macOS Bridge failures include installation or update guidance.
@@ -991,32 +1016,61 @@ delivery remains unverified.
 
 ## Ready sound
 
-The ready sound is off by default and independent of desktop notifications:
-either, both or neither can be on. Set `ready_sound = true` in `dashboard.toml`
-to enable it when attaching. In browse mode, press uppercase `S`, or search the
-command palette for **ready sound**, to toggle and save it through the Server
-with the same settings file and failure behavior. In terminal mode `S` remains ordinary
-terminal input; use Ctrl-g first.
+The ready sound is off by default. Set `ready_sound = true` in `dashboard.toml`,
+press uppercase `S` in Browse, or use **ready sound** in the command palette to
+save that opt-in through the Server. In terminal mode `S` remains ordinary input;
+use Ctrl-g first. Notification and sound preferences are saved separately, and
+changing either does not silently enable the other.
+
+On macOS the Bridge attaches sound to an eligible native banner only when both
+notification (`N`) and sound (`S`) opt-ins are on:
+
+| N | S | macOS delivery |
+| --- | --- | --- |
+| Off | Off | None |
+| Off | On | Sound saved; no banner or sound |
+| On | Off | Silent banner |
+| On | On | Banner with the selected sound, subject to native permission and policy |
+
+In Settings choose **Ready sound choice**: **System default**, **Tap**, **Chime**
+or **Rise**. The persisted IDs are `default`, `tap`, `chime` and `rise`;
+`ready_sound_choice` defaults to `"default"`. Saving/resetting a choice does not
+enable N or S, preview audio, request permission or replay an old event. An
+explicit unknown or wrongly typed choice remains a finding, suppresses sound and
+shows recovery guidance when both flags are enabled. Choose a valid value in
+Settings or fix that key in the document; unrelated settings and raw invalid
+values are preserved.
 
 A sound follows exactly the same selection as a desktop alert: a new unread
 identity for one accepted managed root response, or a new input request, with the
 same deduplication and attach/reconnect baseline, including for selected and
 visible sessions. The sound is the same for both kinds.
 Confirmed activity without unread does not play. When both channels are on, one
-response produces one alert and one sound. Nothing about the response or terminal
-is passed to the player.
+response produces one native request carrying its sound on macOS. Requests carry
+only the four fixed choice IDs; no caller path, prompt, response or terminal
+content is passed as a sound resource.
 
-macOS plays `/System/Library/Sounds/Glass.aiff` with `afplay` at the current
-output volume. Linux plays the freedesktop sound theme's
-`/usr/share/sounds/freedesktop/stereo/complete.oga` with `paplay`. Playback uses
-the same bounded host queue as notifications, after the notification when both
-are on, with a five-second deadline. A missing or failing player displays
-**Ready sound unavailable** in the footer and changes nothing else. Neither a
-successful player command nor an unchanged footer proves the sound was audible:
-a muted or absent output device silences it, and OVRCR does not change those
-settings. Real host playback is recorded in the
-[issue 60 evidence](../research/issue-60-ready-sound/README.md) for macOS.
-Linux has automated coverage only; native Linux playback remains unverified.
+macOS uses the native notification default sound or the three original bundled
+WAV assets through [OVRCR Bridge](../native/bridge/README.md). It does not launch
+`afplay`. Missing, unreadable, damaged or conflicting custom resources submit an
+otherwise eligible banner silently and show fixed recovery guidance. There is no
+fallback to another tone/player and no retry. Queued events use the latest
+accepted settings at dispatch. Changing S or the choice best-effort cancels an
+already running owned delivery client; a request already admitted by macOS
+cannot be retracted, and a change does not replay it. Permission/Settings jobs
+and the persistent Bridge are kept separate from that cancellation.
+
+Linux still plays the freedesktop
+`/usr/share/sounds/freedesktop/stereo/complete.oga` with `paplay`, independently
+of notifications. It keeps the five-second playback deadline and
+**Ready sound unavailable** failure notice. The macOS selector has no Linux
+runtime effect.
+
+Submission and an unchanged footer do not prove audible playback. Native policy,
+output volume or an absent device can suppress sound; OVRCR changes none of them.
+Signed installation/update, visible banners and listening to all four choices
+remain unverified for this source slice. The [issue 60 evidence](../research/issue-60-ready-sound/README.md)
+records the prior macOS player path, and native Linux playback remains unverified.
 
 ## Output delivery
 
@@ -1042,3 +1096,34 @@ selectable under their original context. Reopen reports a missing directory
 rather than choosing another working directory. **Delete record** asks for confirmation and removes only OVRCR metadata;
 provider conversation files remain untouched. If old process ownership was
 uncertain before archiving, reopening still requires explicit acknowledgement.
+
+### Exact existing-iTerm-session focus
+
+On macOS, `iterm_focus = false` is a separate default-off preference. Enable
+**Exact iTerm focus** in Settings, then choose **Set up iTerm focus** in the
+command palette (`:`). That explicit action may show a separate macOS Automation
+permission prompt for OVRCR controlling iTerm. Enabling desktop notifications,
+receiving a banner, ordinary clicks and setup-status checks do not request this
+permission. Setup is nonblocking and reports pending, authorized, denied or
+unavailable status. It observes pending status for thirty seconds; afterward the
+same palette action checks that attempt once without starting another prompt.
+
+A valid click navigates to Browse through the Server and its current Dashboard
+unless shutdown WIP-save questions are pending. When the current Server-accepted
+preference is enabled and
+Automation permission is already available, the Bridge may select that
+Dashboard's existing local iTerm session, tab and window. It matches the live
+session GUID and controlling TTY, not remembered window/tab/pane indices or a
+banner's former Dashboard. Every ordinary Apple Event forbids consent prompts.
+Changing the active Dashboard or turning the preference off invalidates an
+in-flight exact-selection attempt.
+
+Denied, missing, revoked or unsupported integration preserves notification
+permission and Dashboard navigation. It falls back to activating the current
+Dashboard's parent app; with several terminal windows this cannot select the
+exact window. Denial guidance points to System Settings → Privacy & Security →
+Automation and another explicit setup action. The Bridge creates no iTerm
+sessions, tabs or panes, changes no layout/color/badge, reads no screen content
+and sends no terminal input. Linux's existing alert and terminal paths continue
+unchanged. API acknowledgements and headless tests do not establish visible focus;
+reviewed native setup/click/fallback acceptance remains required.

@@ -34,6 +34,8 @@ mod dashboard;
 mod dispatch;
 mod event_log;
 mod lifecycle;
+mod navigation;
+pub use navigation::bridge_executable_sha256;
 mod outbound;
 mod quota;
 mod quota_probe;
@@ -233,6 +235,8 @@ struct WipTarget {
 }
 
 pub struct ServerState {
+    server_lifetime: String,
+    callback_executable_sha256: Option<String>,
     pub tasks: Option<Arc<TaskManager>>,
     socket: PathBuf,
     pub registry_path: PathBuf,
@@ -1407,6 +1411,8 @@ impl ServerState {
         let (dispatch, _) = dispatch_channel(None);
         let retained = SessionStore::open(&registry_path).unwrap();
         Arc::new(Self {
+            server_lifetime: navigation::new_identity().unwrap(),
+            callback_executable_sha256: Some("0".repeat(64)),
             tasks: Some(tasks),
             quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
             quota_refresh: Mutex::default(),

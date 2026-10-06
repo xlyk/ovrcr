@@ -4,8 +4,8 @@
 //! It does not hold the effective value. See ADR 0007.
 use crate::{CLAUDE_PROBE_DESCRIPTION, CURSOR_QUOTA_DESCRIPTION};
 use crate::{
-    DESKTOP_NOTIFICATIONS_OFF, LaunchChoice, QUOTA_OFF, SAVE_UNCOMMITTED_WORK_OFF, SettingOwner,
-    SettingRow, SettingSource, Settings, TITLES_OFF,
+    DESKTOP_NOTIFICATIONS_OFF, ITERM_FOCUS_OFF, LaunchChoice, QUOTA_OFF, ReadySoundChoice,
+    SAVE_UNCOMMITTED_WORK_OFF, SettingOwner, SettingRow, SettingSource, Settings, TITLES_OFF,
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
@@ -50,6 +50,22 @@ const NOTIFY_ABOUT: &[&str] = &[
     "Turning this on may show an OS notification permission prompt.",
     #[cfg(target_os = "macos")]
     "macOS uses the installed OVRCR Bridge app. In Browse, O checks unconfirmed permission or opens System Settings when denied; choose Notifications → OVRCR.",
+];
+
+const SOUND_ABOUT: &[&str] = &[
+    #[cfg(target_os = "macos")]
+    "macOS plays the selected sound with new banners only when Desktop notifications and Ready sound are both on.",
+];
+
+const SOUND_CHOICE_ABOUT: &[&str] = &[
+    "Used for new Ready and Input banners when both alert settings are on. Changing this does not preview a sound or replay alerts.",
+    "An invalid saved choice keeps banners silent until you choose a valid sound or reset this setting.",
+];
+
+const ITERM_ABOUT: &[&str] = &[
+    "A separate opt-in for selecting the existing iTerm session hosting the current Dashboard.",
+    "On macOS choose Set up iTerm focus in the palette to request Automation permission explicitly. Banner clicks never request it.",
+    "Unavailable or denied control keeps Dashboard navigation and parent-app activation; that fallback cannot choose an exact window.",
 ];
 
 const QUOTA_ABOUT: &[&str] = &[
@@ -207,6 +223,10 @@ fn value_of(settings: &Settings, path: &str) -> Option<String> {
     match path {
         "desktop_notifications" => display(&settings.desktop_notifications),
         "ready_sound" => display(&settings.ready_sound),
+        ReadySoundChoice::KEY => settings
+            .ready_sound_choice
+            .map(|choice| choice.as_str().into()),
+        "iterm_focus" => display(&settings.iterm_focus),
         "automatic_local_terminals" => Some(settings.automatic_local_terminals.as_str().into()),
         "title_model" => settings.title_model.clone(),
         "branch_prefix" => Some(settings.branch_prefix.clone()),
@@ -226,7 +246,7 @@ fn value_of(settings: &Settings, path: &str) -> Option<String> {
     }
 }
 
-const CATALOG: [Entry; 17] = [
+const CATALOG: [Entry; 19] = [
     Entry {
         path: "desktop_notifications",
         shape: Shape::Toggle,
@@ -245,9 +265,34 @@ const CATALOG: [Entry; 17] = [
         group: "Alerts",
         label: "Ready sound",
         off_state: None,
-        about: &[],
+        about: SOUND_ABOUT,
         value: |settings| value_of(settings, "ready_sound"),
         show_off: |_| false,
+    },
+    Entry {
+        path: ReadySoundChoice::KEY,
+        shape: Shape::Pick {
+            options: &["default", "tap", "chime", "rise"],
+            expected: "\"default\", \"tap\", \"chime\" or \"rise\"",
+        },
+        owner: SettingOwner::Dashboard,
+        group: "Alerts",
+        label: "Ready sound choice",
+        off_state: None,
+        about: SOUND_CHOICE_ABOUT,
+        value: |settings| value_of(settings, ReadySoundChoice::KEY),
+        show_off: |_| false,
+    },
+    Entry {
+        path: "iterm_focus",
+        shape: Shape::Toggle,
+        owner: SettingOwner::Dashboard,
+        group: "Alerts",
+        label: "Exact iTerm focus",
+        off_state: Some(ITERM_FOCUS_OFF),
+        about: ITERM_ABOUT,
+        value: |settings| value_of(settings, "iterm_focus"),
+        show_off: |settings| !settings.iterm_focus,
     },
     Entry {
         path: "automatic_local_terminals",
@@ -436,6 +481,8 @@ mod tests {
             [
                 "desktop_notifications",
                 "ready_sound",
+                "ready_sound_choice",
+                "iterm_focus",
                 "automatic_local_terminals",
                 "save_uncommitted_work",
                 "branch_prefix",
@@ -488,6 +535,16 @@ mod tests {
                 .owner,
             SettingOwner::Server
         );
+        for path in [ReadySoundChoice::KEY, "iterm_focus"] {
+            assert_eq!(
+                entries()
+                    .iter()
+                    .find(|entry| entry.path == path)
+                    .unwrap()
+                    .owner,
+                SettingOwner::Dashboard
+            );
+        }
     }
 
     #[test]
@@ -498,6 +555,22 @@ mod tests {
         assert_eq!(
             rows.iter()
                 .find(|row| row.key == "desktop_notifications")
+                .unwrap()
+                .value
+                .as_deref(),
+            Some("false")
+        );
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.key == ReadySoundChoice::KEY)
+                .unwrap()
+                .value
+                .as_deref(),
+            Some("default")
+        );
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.key == "iterm_focus")
                 .unwrap()
                 .value
                 .as_deref(),
@@ -538,6 +611,7 @@ mod tests {
             off,
             vec![
                 ("desktop_notifications", DESKTOP_NOTIFICATIONS_OFF),
+                ("iterm_focus", ITERM_FOCUS_OFF),
                 ("save_uncommitted_work", SAVE_UNCOMMITTED_WORK_OFF),
                 ("title_model", TITLES_OFF),
                 ("quota.claude.probe", CLAUDE_PROBE_DESCRIPTION),
@@ -580,6 +654,16 @@ mod tests {
 
     #[test]
     fn write_kinds_follow_the_collection_patterns() {
+        assert_eq!(
+            write_of(&dotted(ReadySoundChoice::KEY)),
+            Some(SettingWrite::Text(
+                "\"default\", \"tap\", \"chime\" or \"rise\""
+            ))
+        );
+        assert_eq!(
+            write_of(&dotted("iterm_focus")),
+            Some(SettingWrite::Typed("a boolean"))
+        );
         assert_eq!(
             write_of(&dotted("save_uncommitted_work")),
             Some(SettingWrite::Typed("a boolean"))

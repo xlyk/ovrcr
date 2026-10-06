@@ -66,9 +66,11 @@ pub fn set(document: &Path, path: &str, value: Option<&str>) -> anyhow::Result<(
             let new = !before
                 .iter()
                 .any(|old| old.key == finding.key && old.message == finding.message);
-            if ours && new && finding.message.contains(kind.expected()) {
+            let invalid_sound_choice = root == ovrcr_protocol::ReadySoundChoice::KEY
+                && key == ovrcr_protocol::ReadySoundChoice::KEY;
+            if ours && (new || invalid_sound_choice) && finding.message.contains(kind.expected()) {
                 bail!("{}", finding.message);
-            } else if ours && new {
+            } else if ours && (new || invalid_sound_choice) {
                 bail!("{}; expected {}", finding.message, kind.expected());
             }
         }
@@ -489,7 +491,9 @@ fn save(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ovrcr_protocol::{AgentOverride, AutomaticLocalTerminals, LaunchChoice, Settings};
+    use ovrcr_protocol::{
+        AgentOverride, AutomaticLocalTerminals, LaunchChoice, ReadySoundChoice, Settings,
+    };
     use std::os::unix::fs::{PermissionsExt, symlink};
     use std::path::PathBuf;
 
@@ -509,6 +513,7 @@ mod tests {
     /// launch; `crates/ovrcr-tui` asserts it emits exactly these.
     const N_ON: (&str, &str) = ("desktop_notifications", "true");
     const S_ON: (&str, &str) = ("ready_sound", "true");
+    const C_CHIME: (&str, &str) = ("ready_sound_choice", "\"chime\"");
     const L_ON: (&str, &str) = ("automatic_local_terminals", "\"on\"");
     const AGENT: &str = "{ kind = \"Agent\", preset = \"new\" }";
     const TERMINAL: &str = "{ kind = \"Terminal\" }";
@@ -530,6 +535,10 @@ mod tests {
                 |s| s.desktop_notifications,
             ),
             ("ready_sound", "true", "ready_sound", |s| s.ready_sound),
+            ("ready_sound_choice", "chime", "ready_sound_choice", |s| {
+                s.ready_sound_choice == Some(ReadySoundChoice::Chime)
+            }),
+            ("iterm_focus", "true", "iterm_focus", |s| s.iterm_focus),
             (
                 "automatic_local_terminals",
                 "off",
@@ -783,6 +792,16 @@ branch_prefix = 'kh/' # mine
         for (path, value, expected) in [
             ("ready_sound", "yes", "expected a boolean"),
             ("ready_sound", "\"yes\"", "expected a boolean"),
+            (
+                "ready_sound_choice",
+                "Glass",
+                "expected \"default\", \"tap\", \"chime\" or \"rise\"",
+            ),
+            (
+                "ready_sound_choice",
+                "1",
+                "expected \"default\", \"tap\", \"chime\" or \"rise\"",
+            ),
             ("quota.enabled", "1", "expected a boolean"),
             (
                 "automatic_local_terminals",
@@ -825,6 +844,97 @@ branch_prefix = 'kh/' # mine
             assert!(error.contains(expected), "{path} = {value}: {error}");
             assert_eq!(read(&document), original, "{path} = {value}");
             assert_eq!(files(root.path()), 1);
+        }
+    }
+
+    #[test]
+    fn sound_choices_save_reload_and_reset_without_changing_saved_opt_ins() {
+        for notifications in [false, true] {
+            for sound in [false, true] {
+                for choice in [
+                    ReadySoundChoice::Default,
+                    ReadySoundChoice::Tap,
+                    ReadySoundChoice::Chime,
+                    ReadySoundChoice::Rise,
+                ] {
+                    let root = tempfile::tempdir().unwrap();
+                    let config = root.path().join("config.toml");
+                    let document = root.path().join("dashboard.toml");
+                    let original = format!(
+                        "# Saved preferences\ndesktop_notifications = {notifications} # banner\nready_sound = {sound} # sound\nbranch_prefix = 'keep/' # unrelated\n"
+                    );
+                    std::fs::write(&document, &original).unwrap();
+                    set(&document, ReadySoundChoice::KEY, Some(choice.as_str())).unwrap();
+                    let report = crate::settings::load_document(&config, &document);
+                    assert_eq!(report.settings.ready_sound_choice, Some(choice));
+                    assert_eq!(report.settings.desktop_notifications, notifications);
+                    assert_eq!(report.settings.ready_sound, sound);
+                    assert_eq!(report.settings.branch_prefix, "keep/");
+                    assert!(report.findings.is_empty());
+                    let row = report
+                        .rows
+                        .iter()
+                        .find(|row| row.key == ReadySoundChoice::KEY)
+                        .unwrap();
+                    assert_eq!(row.source, ovrcr_protocol::SettingSource::Document);
+                    assert_eq!(row.value.as_deref(), Some(choice.as_str()));
+                    assert_eq!(row.default.as_deref(), Some("default"));
+                    assert!(read(&document).starts_with(&original));
+
+                    set(&document, ReadySoundChoice::KEY, None).unwrap();
+                    assert_eq!(read(&document), original);
+                    let report = crate::settings::load_document(&config, &document);
+                    assert_eq!(
+                        report.settings.ready_sound_choice,
+                        Some(ReadySoundChoice::Default)
+                    );
+                    assert_eq!(report.settings.desktop_notifications, notifications);
+                    assert_eq!(report.settings.ready_sound, sound);
+                    assert!(report.findings.is_empty());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_sound_choices_survive_unrelated_edits_and_invalid_saves_are_refused() {
+        for raw in ["'Glass'", "' tap'", "true", "7", "['tap']", "{ tap = {} }"] {
+            let root = tempfile::tempdir().unwrap();
+            let config = root.path().join("config.toml");
+            let document = root.path().join("dashboard.toml");
+            let choice_line = format!("ready_sound_choice = {raw} # preserve raw choice\n");
+            let original = format!(
+                "desktop_notifications = true\nready_sound = true\n{choice_line}branch_prefix = 'keep/' # unrelated\n"
+            );
+            std::fs::write(&document, &original).unwrap();
+            let before = crate::settings::load_document(&config, &document);
+            assert_eq!(before.settings.ready_sound_choice, None);
+            assert!(matches!(before.findings.as_slice(), [finding]
+                if finding.key.as_deref() == Some(ReadySoundChoice::KEY)
+                    && finding.line == Some(3)));
+
+            // Even requesting the identical invalid value must not report a successful save.
+            let error = set(&document, ReadySoundChoice::KEY, Some(raw)).unwrap_err();
+            assert!(format!("{error:#}").contains("could not save ready_sound_choice"));
+            assert_eq!(read(&document), original);
+            set(&document, "branch_prefix", Some("edited/")).unwrap();
+            assert!(read(&document).contains(&choice_line));
+            assert!(read(&document).contains("# unrelated"));
+            let after = crate::settings::load_document(&config, &document);
+            assert_eq!(after.settings.ready_sound_choice, None);
+            assert_eq!(after.findings, before.findings);
+            assert!(after.settings.desktop_notifications && after.settings.ready_sound);
+            assert_eq!(after.settings.branch_prefix, "edited/");
+
+            set(&document, ReadySoundChoice::KEY, Some("chime")).unwrap();
+            let fixed = crate::settings::load_document(&config, &document);
+            assert_eq!(
+                fixed.settings.ready_sound_choice,
+                Some(ReadySoundChoice::Chime)
+            );
+            assert!(fixed.findings.is_empty());
+            assert!(fixed.settings.desktop_notifications && fixed.settings.ready_sound);
+            assert_eq!(fixed.settings.branch_prefix, "edited/");
         }
     }
 
@@ -945,7 +1055,7 @@ branch_prefix = 'kh/' # mine
 
     #[test]
     fn edits_refuse_dangling_links_and_read_only_targets_and_keep_links() {
-        for (path, value) in [N_ON, S_ON, ("launch_choices.demo", AGENT)] {
+        for (path, value) in [N_ON, S_ON, C_CHIME, ("launch_choices.demo", AGENT)] {
             for read_only in [false, true] {
                 let root = tempfile::tempdir().unwrap();
                 let document = root.path().join("dashboard.toml");
@@ -1003,7 +1113,7 @@ branch_prefix = 'kh/' # mine
 
     #[test]
     fn publication_failure_preserves_the_target_and_leaves_no_temporary_file() {
-        for (path, value) in [N_ON, S_ON, ("launch_choices.demo", AGENT)] {
+        for (path, value) in [N_ON, S_ON, C_CHIME, ("launch_choices.demo", AGENT)] {
             let root = tempfile::tempdir().unwrap();
             let directory = root.path().join("locked");
             std::fs::create_dir(&directory).unwrap();
