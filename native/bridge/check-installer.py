@@ -36,6 +36,7 @@ FAKE_TOOLS = r"""
 import hashlib
 import json
 import os
+import plistlib
 import shutil
 import stat
 import sys
@@ -75,7 +76,7 @@ def bundle_kind(value):
     require(path.parent.stat().st_uid == os.getuid())
     return "staged"
 
-def remember_failed_stage(bundle, operation):
+def remember_failed_stage(bundle, operation, readback=None):
     require(config["local_development"])
     paths = [bundle, *sorted(bundle.rglob("*"))]
     require(not any(path.is_symlink() for path in paths))
@@ -87,7 +88,10 @@ def remember_failed_stage(bundle, operation):
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None,
             "inode": details.st_ino,
         }
-    receipt = json.dumps({"stage": str(bundle), "operation": operation, "snapshot": snapshot})
+    details = {"stage": str(bundle), "operation": operation, "snapshot": snapshot}
+    if readback is not None:
+        details["readback"] = {"sha256": hashlib.sha256(readback).hexdigest(), "bytes": len(readback)}
+    receipt = json.dumps(details)
     require(len(receipt.encode()) <= 16384)
     (root / "failed-stage.json").write_text(receipt)
 
@@ -97,6 +101,8 @@ try:
     require(Path(config_path) == root / "fake-tools.json")
     require(source.parent == root and destination.parent == root / "home/Applications")
     require(config.get("fail_operation") in (None, "sign", "verify"))
+    require(config.get("entitlements_case", "valid") in
+            ("valid", "malformed", "empty", "not_dictionary", "missing", "extra", "false"))
     if role == "ditto":
         require(Path(executable) == root / "bin/ditto")
         require(len(args) == 2 and Path(args[0]) == source)
@@ -144,7 +150,29 @@ try:
         elif args == ["-d", "--entitlements", "-", str(bundle)]:
             require(kind == "staged")
             record("entitlements")
-            sys.stdout.buffer.write((source / "Contents/Resources/OVRCRBridge.entitlements").read_bytes())
+            # Captured macOS default output is abstract, not a plist. Omitting
+            # --xml must exercise the shipping parser's real failure boundary.
+            abstract = b"[Dict]\n\t[Key] com.apple.security.automation.apple-events\n\t[Value]\n\t\t[Bool] true\n"
+            require(len(abstract) == 80)
+            sys.stdout.buffer.write(abstract)
+        elif args == ["-d", "--entitlements", "-", "--xml", str(bundle)]:
+            require(kind == "staged")
+            record("entitlements")
+            case = config.get("entitlements_case", "valid")
+            if case == "valid":
+                readback = (source / "Contents/Resources/OVRCRBridge.entitlements").read_bytes()
+            else:
+                readback = {
+                    "malformed": b"<?xml version='1.0'?><plist><dict>",
+                    "empty": b"",
+                    "not_dictionary": plistlib.dumps(["com.apple.security.automation.apple-events"]),
+                    "missing": plistlib.dumps({}),
+                    "extra": plistlib.dumps({"com.apple.security.automation.apple-events": True,
+                                             "com.apple.security.unreviewed-fixture": True}),
+                    "false": plistlib.dumps({"com.apple.security.automation.apple-events": False}),
+                }[case]
+                remember_failed_stage(bundle, "entitlements", readback)
+            sys.stdout.buffer.write(readback)
         elif args == ["-d", "-r-", str(bundle)]:
             record("requirement_" + kind)
             print("Executable=" + str(bundle / "Contents/MacOS/OVRCRBridge"), file=sys.stderr)
@@ -308,7 +336,8 @@ class InstallerTests(unittest.TestCase):
         (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
 
     def configure_tools(self, *, existing=False, stream="stderr", installed_requirement=REQUIREMENT,
-                        staged_requirement=REQUIREMENT, competing_destination=False, fail_operation=None):
+                        staged_requirement=REQUIREMENT, competing_destination=False, fail_operation=None,
+                        entitlements_case="valid"):
         self.config_path.write_text(json.dumps({
             "root": str(self.root), "source": str(self.source), "destination": str(self.destination),
             "schema": self.schema, "wire": self.wire, "identity": IDENTITY, "existing": existing,
@@ -316,6 +345,7 @@ class InstallerTests(unittest.TestCase):
             "local_development": self.local_development,
             "competing_destination": competing_destination,
             "fail_operation": fail_operation,
+            "entitlements_case": entitlements_case,
             "requirement_stream": stream,
             "installed_requirement": installed_requirement.format(bundle_id=self.bundle_id),
             "staged_requirement": staged_requirement.format(bundle_id=self.bundle_id),
@@ -379,6 +409,7 @@ class InstallerTests(unittest.TestCase):
         if existing:
             expected += ["verify_installed", "requirement_installed", "requirement_staged"]
         self.assertEqual(operations, expected, repr(calls))
+        self.assert_xml_readback(calls)
         self.assertEqual(bundle_snapshot(self.source, include_inode=True), source_before)
         self.assertEqual(returncode, 65 if error else 0, repr((stdout, stderr, calls)))
         self.assertEqual(stdout.count(b"Bundle metadata/resources valid:"), 2)
@@ -429,6 +460,11 @@ class InstallerTests(unittest.TestCase):
         return ["/bin/sh", str(INSTALLER), "--local-development", "--destination",
                 str(self.destination), *options, str(self.source)]
 
+    def assert_xml_readback(self, calls):
+        staged = Path(next(call for call in calls if call["operation"] == "sign")["args"][-1])
+        readback = next(call for call in calls if call["operation"] == "entitlements")
+        self.assertEqual(readback["args"], ["-d", "--entitlements", "-", "--xml", str(staged)])
+
     def assert_refused_before_staging(self, command, *, returncode, message=None):
         source_before = bundle_snapshot(self.source, include_inode=True)
         result, stdout, stderr, calls = self.run_installer(command)
@@ -447,6 +483,7 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(returncode, 0, repr((stdout, stderr, calls)))
         self.assertEqual([call["operation"] for call in calls],
                          ["copy", "sign", "verify_staged", "entitlements", "bridge_check_contract"])
+        self.assert_xml_readback(calls)
         sign = next(call for call in calls if call["operation"] == "sign")
         staged = Path(sign["args"][-1])
         self.assertEqual(sign["args"], ["--force", "--options", "runtime", "--timestamp=none",
@@ -519,6 +556,68 @@ class InstallerTests(unittest.TestCase):
 
     def test_local_strict_verify_failure_retains_exact_private_stage_without_publishing(self):
         self.failed_local_stage_is_retained("verify")
+
+    def invalid_entitlements_xml_is_refused(self, case):
+        self.prepare_local()
+        self.configure_tools(entitlements_case=case)
+        source_before = bundle_snapshot(self.source, include_inode=True)
+        returncode, stdout, stderr, calls = self.run_installer(self.local_command())
+        self.assertEqual(returncode, 1, repr((stdout, stderr, calls)))
+        self.assertEqual([call["operation"] for call in calls],
+                         ["copy", "sign", "verify_staged", "entitlements"])
+        self.assert_xml_readback(calls)
+        self.assertEqual({call["role"] for call in calls}, {"ditto", "codesign"})
+        sign = next(call for call in calls if call["operation"] == "sign")
+        staged = Path(sign["args"][-1])
+        self.assertEqual(sign["args"], ["--force", "--options", "runtime", "--timestamp=none",
+                                       "--entitlements", str(staged / "Contents/Resources/OVRCRBridge.entitlements"),
+                                       "--sign", "-", str(staged)])
+        self.assertEqual(next(call for call in calls if call["operation"] == "verify_staged")["args"],
+                         ["--verify", "--deep", "--strict", str(staged)])
+        self.assertNotIn("--deep", sign["args"], "Do not re-sign the callback helper")
+        self.assertTrue(staged.is_dir(), "Invalid XML must retain the failed private application stage")
+        self.assertEqual(staged, staged.resolve())
+        self.assertEqual(staged.name, LOCAL_APP_NAME)
+        self.assertEqual(staged.parent.parent, self.destination.parent)
+        self.assertTrue(staged.parent.name.startswith(".ovrcr-bridge-install."))
+        self.assertEqual((stat.S_IMODE(staged.parent.stat().st_mode), staged.parent.stat().st_uid),
+                         (0o700, os.getuid()))
+        receipt = json.loads((self.root / "failed-stage.json").read_text())
+        self.assertEqual((receipt["stage"], receipt["operation"]), (str(staged), "entitlements"))
+        self.assertEqual(bundle_snapshot(staged, include_inode=True), receipt["snapshot"])
+        readback = (staged.parent / "signed-entitlements.plist").read_bytes()
+        self.assertEqual({"sha256": hashlib.sha256(readback).hexdigest(), "bytes": len(readback)},
+                         receipt["readback"], "Preserve the exact rejected XML readback too")
+        self.assertEqual(bundle_snapshot(staged), bundle_snapshot(self.source))
+        self.assertEqual(bundle_snapshot(self.source, include_inode=True), source_before)
+        self.assertFalse(os.path.lexists(self.destination))
+        self.assertFalse(os.path.lexists(self.home / "Applications/OVRCR Bridge.app"))
+        self.assertEqual(list(self.destination.parent.iterdir()), [staged.parent])
+        self.assertIn(("Local staged application retained for inspection: " + str(staged)).encode(), stderr)
+        self.assertIn(b"Traceback", stderr)
+        self.assertNotIn(b"Installed ", stdout)
+        self.assertEqual(stdout.count(b"Bundle metadata/resources valid:"), 1)
+        print(json.dumps({"rejected_xml_case": case, "retained_stage": str(staged),
+                          "readback": receipt["readback"], "source_helper_and_resources_unchanged": True,
+                          "destination_absent": True}), flush=True)
+
+    def test_local_malformed_entitlements_xml_retains_stage_without_publication(self):
+        self.invalid_entitlements_xml_is_refused("malformed")
+
+    def test_local_empty_entitlements_xml_retains_stage_without_publication(self):
+        self.invalid_entitlements_xml_is_refused("empty")
+
+    def test_local_non_dictionary_entitlements_xml_retains_stage_without_publication(self):
+        self.invalid_entitlements_xml_is_refused("not_dictionary")
+
+    def test_local_missing_entitlement_xml_retains_stage_without_publication(self):
+        self.invalid_entitlements_xml_is_refused("missing")
+
+    def test_local_extra_entitlement_xml_retains_stage_without_publication(self):
+        self.invalid_entitlements_xml_is_refused("extra")
+
+    def test_local_false_entitlement_xml_retains_stage_without_publication(self):
+        self.invalid_entitlements_xml_is_refused("false")
 
     def test_local_refuses_legacy_root_entitlements_before_copy_or_signing(self):
         self.prepare_local()
@@ -593,6 +692,7 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual([call["operation"] for call in calls],
                          ["copy", "sign", "create_competing_destination", "verify_staged",
                           "entitlements", "bridge_check_contract"])
+        self.assert_xml_readback(calls)
         competing = json.loads((self.root / "competing-destination.json").read_text())
         self.assertEqual(self.destination.stat().st_ino, competing["inode"])
         self.assertEqual(self.destination.stat().st_mode, competing["mode"])
