@@ -1246,8 +1246,17 @@ fn workspace_created_with_exited_local_shell_closes_palette() {
         request_id: message.request_id,
         response: Response::Ok,
     });
-    assert!(palette_text(&dashboard).contains("Working"));
-    assert!(palette_text(&dashboard).contains("┌ Create workspace"));
+    // Lifecycle accept closes the form; Provisional row + strip wait for hierarchy.
+    let mid = palette_text(&dashboard);
+    assert!(
+        !mid.lines().any(|line| line.contains("┌ Create workspace")),
+        "{mid}"
+    );
+    assert!(
+        mid.contains("Creating") || footer_text(&dashboard).contains("Creating"),
+        "expected Creating… provisional/strip, got palette={mid:?} footer={:?}",
+        footer_text(&dashboard)
+    );
     let mut hierarchy = extra_workspace_hierarchy(created_id);
     let workspace = hierarchy
         .projects
@@ -1388,11 +1397,12 @@ fn workspace_creation_attaches_to_its_local_shell() {
         };
         assert_eq!(dashboard.focused_session(), Some(SessionId(99)));
         assert_eq!(dashboard.key(KeyCode::Char('z')), DashboardAction::Redraw);
-        assert_eq!(outgoing.len(), 1);
-        assert!(
-            matches!(&outgoing[0].request, Request::SetView { view } if view.focused == Some(SessionId(99)))
-        );
-        acknowledge_view_request(&mut dashboard, outgoing[0].clone());
+        let set_view = outgoing
+            .iter()
+            .find(|m| matches!(&m.request, Request::SetView { view } if view.focused == Some(SessionId(99))))
+            .cloned()
+            .expect("attach must send SetView focused on the new local shell");
+        acknowledge_view_request(&mut dashboard, set_view);
         assert_eq!(
             dashboard.key(KeyCode::Char('z')),
             DashboardAction::PtyBytes(b"z".to_vec())

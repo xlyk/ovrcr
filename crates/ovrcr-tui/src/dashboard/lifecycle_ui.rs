@@ -133,6 +133,61 @@ fn branch_label(branch: &crate::protocol::BranchRequest) -> String {
 }
 
 impl Dashboard {
+    /// Select a just-created workspace once it appears in hierarchy (empty or with local shell).
+    pub(super) fn attach_lifecycle_workspace(
+        &mut self,
+        project: String,
+        id: String,
+    ) -> DashboardAction {
+        let Some(workspace) = super::state::find_workspace(self, &project, &id).cloned() else {
+            return DashboardAction::Redraw;
+        };
+        self.provisional = None;
+        self.lifecycle_strip = None;
+        self.dismiss_error_banner();
+        if workspace.sessions.is_empty() {
+            self.select_container(TreeRow::Workspace {
+                project: workspace.project.clone(),
+                id: workspace.id.clone(),
+            });
+            let request_id = self.next_request_id();
+            return match self.view_request(self.outer_area, request_id) {
+                Ok(Some(message)) => DashboardAction::Request(message),
+                _ => DashboardAction::Redraw,
+            };
+        }
+        if let Some(session) = workspace
+            .sessions
+            .iter()
+            .find(|session| {
+                session.name == "local" && session.phase == crate::session::SessionPhase::Running
+            })
+            .map(|session| session.id)
+        {
+            let summary = super::state::find_session(self, session)
+                .cloned()
+                .unwrap_or_else(|| workspace.sessions[0].clone());
+            return self.select_created_session(summary);
+        }
+        DashboardAction::Redraw
+    }
+
+    /// Hierarchy may land before or after LifecycleCompleted; attach when both truth and fiction agree.
+    pub(super) fn try_attach_lifecycle_workspace_from_hierarchy(
+        &mut self,
+    ) -> Option<DashboardAction> {
+        let Some(row) = &self.provisional else {
+            return None;
+        };
+        let ProvisionalKind::CreatingWorkspace { project, id, .. } = &row.kind else {
+            return None;
+        };
+        super::state::find_workspace(self, project, id)?;
+        let project = project.clone();
+        let id = id.clone();
+        Some(self.attach_lifecycle_workspace(project, id))
+    }
+
     /// Id-requiring actions soft-fail while a Provisional row stands in for a real identity.
     pub(super) fn soft_fail_if_provisional(&mut self) -> Option<DashboardAction> {
         let Some(row) = &self.provisional else {
@@ -169,13 +224,12 @@ impl Dashboard {
     }
 
     /// Accept response for a Lifecycle job: show the Provisional row and strip.
-    pub(super) fn accept_lifecycle_job(&mut self, token: u64) {
-        let Some(row) = self.lifecycle_pending.take() else {
-            return;
-        };
+    /// If HierarchyChanged already landed, attach immediately (either-order).
+    pub(super) fn accept_lifecycle_job(&mut self, token: u64) -> Option<DashboardAction> {
+        let row = self.lifecycle_pending.take()?;
         if row.token != token {
             self.lifecycle_pending = Some(row);
-            return;
+            return None;
         }
         // Keep the launch preference across the Provisional wait so success can
         // still ask the Server to remember it (palette closes on accept).
@@ -187,6 +241,7 @@ impl Dashboard {
         self.lifecycle_strip = Some(row.kind.strip_message());
         self.provisional = Some(row);
         self.palette = None;
+        self.try_attach_lifecycle_workspace_from_hierarchy()
     }
 
     pub(super) fn refuse_lifecycle_job(&mut self, message: String) {
@@ -237,7 +292,16 @@ impl Dashboard {
         match outcome {
             LifecycleOutcome::Succeeded => {
                 self.lifecycle_strip = None;
-                DashboardAction::Redraw
+                match &row.kind {
+                    ProvisionalKind::CreatingWorkspace { project, id, .. } => {
+                        let project = project.clone();
+                        let id = id.clone();
+                        // Keep provisional until hierarchy has the row, then attach.
+                        self.provisional = Some(row);
+                        self.attach_lifecycle_workspace(project, id)
+                    }
+                    _ => DashboardAction::Redraw,
+                }
             }
             LifecycleOutcome::CreatedSession(summary) => {
                 self.lifecycle_strip = None;

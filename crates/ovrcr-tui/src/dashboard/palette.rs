@@ -2809,8 +2809,12 @@ impl Dashboard {
         {
             match response {
                 Response::Ok => {
-                    self.accept_lifecycle_job(request_id);
-                    return Some(Vec::new());
+                    let attach = self.accept_lifecycle_job(request_id);
+                    return Some(match attach {
+                        Some(DashboardAction::Request(message)) => vec![message],
+                        Some(DashboardAction::RequestBatch(messages)) => messages,
+                        _ => Vec::new(),
+                    });
                 }
                 Response::Error { code, message }
                     if *code == crate::protocol::ErrorCode::Conflict

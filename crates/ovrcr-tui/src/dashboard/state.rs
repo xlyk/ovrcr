@@ -3381,6 +3381,15 @@ impl Dashboard {
                     for request in self.update_hierarchy(hierarchy) {
                         self.push_request(request);
                     }
+                    if let Some(action) = self.try_attach_lifecycle_workspace_from_hierarchy() {
+                        if let DashboardAction::Request(message) = action {
+                            self.push_request(message);
+                        } else if let DashboardAction::RequestBatch(messages) = action {
+                            for message in messages {
+                                self.push_request(message);
+                            }
+                        }
+                    }
                 }
                 ServerEvent::LifecycleCompleted {
                     client_token,
