@@ -3323,7 +3323,39 @@ fn settings_command_reports_document_rows_and_findings_and_json_round_trips() {
         .unwrap();
     assert!(json.status.success(), "{json:?}");
     let report: SettingsReport = serde_json::from_slice(&json.stdout).unwrap();
-    let expected = ovrcr::settings::load_document(root.path(), &root.path().join("dashboard.toml"));
+    let mut expected =
+        ovrcr::settings::load_document(root.path(), &root.path().join("dashboard.toml"));
+    // The loader above expands defaults in this process; isolated_command
+    // gives the CLI a different HOME. Match that child HOME while retaining
+    // the complete settings and row comparisons, as the Server fixture does.
+    expected.settings.picker_roots = [
+        root.path().join("Code"),
+        root.path().join("src"),
+        root.path().to_path_buf(),
+    ]
+    .into_iter()
+    .filter(|path| path.exists())
+    .collect();
+    let picker_roots = Some(
+        toml::Value::try_from(&expected.settings.picker_roots)
+            .unwrap()
+            .to_string(),
+    );
+    let row = expected
+        .rows
+        .iter_mut()
+        .find(|row| row.key == "picker_roots")
+        .unwrap();
+    row.value = picker_roots.clone();
+    row.default = picker_roots;
+    let actual = report
+        .rows
+        .iter()
+        .find(|row| row.key == "picker_roots")
+        .unwrap();
+    assert_eq!(actual.source, SettingSource::Default);
+    assert_eq!(actual.value, row.value);
+    assert_eq!(actual.default, row.default);
     assert_eq!(report.path, root.path().join("dashboard.toml"));
     assert_eq!(report.rows, expected.rows);
     assert_eq!(report.findings, expected.findings);
