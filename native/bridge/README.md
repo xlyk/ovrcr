@@ -67,10 +67,12 @@ refuses a changed designated signing requirement before replacement. A failed
 rename attempts restoration; unresolved recovery state is preserved.
 Signing/notarization and supported-release acceptance remain separate checks.
 
-`check-installer.py` runs the shipping installer against seven private fixtures
-with fake signing, copy and CLI executables. It checks fresh installation,
+`check-installer.py` runs 23 shipping-installer tests with private fixtures
+and fake signing, copy and CLI executables. The seven production tests check fresh installation,
 matching designated requirements from either output stream, changed requirements
-and empty requirements, preserving exact old-bundle bytes on refusal. It requires
+and empty requirements, preserving exact old-bundle bytes on refusal. The local
+tests cover fixed metadata, fresh-only refusal, signing arguments and concurrent
+destination creation. It requires
 macOS's read-only PlistBuddy; it performs no actual signing, native app launch,
 permission, notification or audio operation.
 
