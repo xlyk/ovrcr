@@ -218,6 +218,16 @@ pub struct Settings {
 /// Shown while `save_uncommitted_work` is off.
 pub const SAVE_UNCOMMITTED_WORK_OFF: &str = "Uncommitted workspace work is not pushed. Set `save_uncommitted_work = true` to save it to origin/wip/<branch> when a workspace is removed or the server shuts down.";
 
+/// Shown while `desktop_notifications` is off.
+pub const DESKTOP_NOTIFICATIONS_OFF: &str = "Desktop alerts off: set `desktop_notifications = true` in dashboard.toml (needs OS notification permission)";
+
+/// Shown while `iterm_focus` is off.
+pub const ITERM_FOCUS_OFF: &str = "Exact iTerm focus off: set `iterm_focus = true`, then choose Set up iTerm focus in the Dashboard palette (separate Automation permission)";
+
+/// Shown while `title_model` is unset.
+pub const TITLES_OFF: &str =
+    "Automatic titles off: set `title_model = \"provider/model\"` in dashboard.toml";
+
 /// Every default except `picker_roots`, which is empty here: the loader
 /// fills it with whichever of `~/Code`, `~/src` and `~` exist.
 impl Default for Settings {

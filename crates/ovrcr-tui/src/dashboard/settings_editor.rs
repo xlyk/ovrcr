@@ -215,259 +215,214 @@ fn items(report: &SettingsReport, presets: &[String]) -> Vec<Row> {
         whole_list: None,
     };
     let settings = &report.settings;
-    let quota = &settings.quota;
     let mut items = Vec::new();
-    items.extend(vec![
-        top(
-            "Alerts",
-            "desktop_notifications",
-            "Desktop notifications",
-            Kind::Toggle(settings.desktop_notifications),
-            &[
-                "Turning this on may show an OS notification permission prompt.",
+    for entry in ovrcr_protocol::entries() {
+        match entry.shape {
+            ovrcr_protocol::Shape::Paths => {
+                let mut parent = top(
+                    entry.group,
+                    entry.path,
+                    entry.label,
+                    Kind::Fixed,
+                    entry.about,
+                );
+                let roots: Vec<String> = settings
+                    .picker_roots
+                    .iter()
+                    .map(|root| root.display().to_string())
+                    .collect();
+                let roots_set = parent.source == Some(SettingSource::Document);
+                parent.value = count(roots.len());
+                items.push(parent);
+                for (index, root) in roots.iter().enumerate() {
+                    let mut row = child(
+                        entry.group,
+                        format!("picker_roots[{index}]"),
+                        String::new(),
+                        root.clone(),
+                        Kind::Path,
+                        format!("picker_roots[{index}]"),
+                    );
+                    if roots_set {
+                        row.reset = Some((row.path.clone(), None));
+                    } else {
+                        // The default list is not in the document: write it whole.
+                        let mut list: Vec<String> = roots.iter().map(|r| toml_string(r)).collect();
+                        list[index] = "{}".into();
+                        row.path = "picker_roots".into();
+                        row.whole_list = Some(list.clone());
+                        list.remove(index);
+                        row.reset = Some((
+                            "picker_roots".into(),
+                            Some(format!("[{}]", list.join(", "))),
+                        ));
+                    }
+                    items.push(row);
+                }
+                let mut add = child(
+                    entry.group,
+                    "picker_roots+".into(),
+                    "+ Add root".into(),
+                    String::new(),
+                    Kind::Path,
+                    format!("picker_roots[{}]", roots.len()),
+                );
+                if !roots_set {
+                    let mut list: Vec<String> = roots.iter().map(|r| toml_string(r)).collect();
+                    list.push("{}".into());
+                    add.path = "picker_roots".into();
+                    add.whole_list = Some(list);
+                }
+                items.push(add);
+            }
+            ovrcr_protocol::Shape::Agents => {
+                let mut parent = top(
+                    entry.group,
+                    entry.path,
+                    entry.label,
+                    Kind::Fixed,
+                    entry.about,
+                );
+                parent.value = count(settings.agents.len());
+                items.push(parent);
+                for (index, agent) in settings.agents.iter().enumerate() {
+                    let mut row = child(
+                        entry.group,
+                        format!("agents[{index}]"),
+                        agent.name.clone(),
+                        toml_array(agent.argv.iter().map(String::as_str)),
+                        Kind::Toml,
+                        format!("agents[{index}].argv"),
+                    );
+                    row.reset = Some((format!("agents[{index}]"), None));
+                    items.push(row);
+                }
+                items.push(child(
+                    entry.group,
+                    "agents+".into(),
+                    "+ Add agent (name)".into(),
+                    String::new(),
+                    Kind::Text,
+                    format!("agents[{}]", settings.agents.len()),
+                ));
+            }
+            ovrcr_protocol::Shape::Launches => {
+                let mut parent = top(
+                    entry.group,
+                    entry.path,
+                    entry.label,
+                    Kind::Fixed,
+                    entry.about,
+                );
+                parent.value = count(settings.launch_choices.len());
+                items.push(parent);
+                for (project, choice) in &settings.launch_choices {
+                    let path = format!("launch_choices.{}", toml_edit::Key::new(project.as_str()));
+                    let mut choices = vec![LaunchChoice::Terminal];
+                    choices.extend(presets.iter().cloned().map(LaunchChoice::Agent));
+                    if !choices.contains(choice) {
+                        choices.push(choice.clone());
+                    }
+                    let mut row = child(
+                        entry.group,
+                        path.clone(),
+                        project.clone(),
+                        choice_text(choice),
+                        Kind::Pick(
+                            choices
+                                .iter()
+                                .map(|choice| PickItem {
+                                    label: choice_text(choice),
+                                    value: choice_value(project, choice),
+                                })
+                                .collect(),
+                        ),
+                        path.clone(),
+                    );
+                    row.reset = Some((path, None));
+                    items.push(row);
+                }
+                items.push(child(
+                    entry.group,
+                    "launch_choices+".into(),
+                    "+ Add project".into(),
+                    String::new(),
+                    Kind::Text,
+                    String::new(),
+                ));
+            }
+            shape => {
+                #[cfg(not(target_os = "macos"))]
+                if entry.path == ovrcr_protocol::ReadySoundChoice::KEY {
+                    continue;
+                }
+                let row = top(
+                    entry.group,
+                    entry.path,
+                    entry.label,
+                    editor_kind(shape, entry, settings),
+                    entry.about,
+                );
                 #[cfg(target_os = "macos")]
-                "macOS uses the installed OVRCR Bridge app. In Browse, O checks unconfirmed permission or opens System Settings when denied; choose Notifications → OVRCR.",
-            ],
-        ),
-        top(
-            "Alerts",
-            "ready_sound",
-            "Ready sound",
-            Kind::Toggle(settings.ready_sound),
-            &[
-                #[cfg(target_os = "macos")]
-                "macOS plays the selected sound with new banners only when Desktop notifications and Ready sound are both on.",
-            ],
-        ),
-    ]);
-    #[cfg(target_os = "macos")]
-    {
-        let mut choice = top(
-            "Alerts",
-            ReadySoundChoice::KEY,
-            "Ready sound choice",
-            Kind::Pick(
-                [
-                    ReadySoundChoice::Default,
-                    ReadySoundChoice::Tap,
-                    ReadySoundChoice::Chime,
-                    ReadySoundChoice::Rise,
-                ]
-                .into_iter()
-                .map(|choice| PickItem {
-                    label: choice.label().into(),
-                    value: toml_string(choice.as_str()),
-                })
-                .collect(),
-            ),
-            &[
-                "Used for new Ready and Input banners when both alert settings are on. Changing this does not preview a sound or replay alerts.",
-                "An invalid saved choice keeps banners silent until you choose a valid sound or reset this setting.",
-            ],
-        );
-        choice.value = settings
+                let row = native_sound_choice_labels(row, settings);
+                items.push(row);
+            }
+        }
+    }
+    items
+}
+
+/// Native labels are a presentation of the shared enum, while catalog paths
+/// and picker values stay the saved setting's stable identifiers.
+#[cfg(target_os = "macos")]
+fn native_sound_choice_labels(mut row: Row, settings: &ovrcr_protocol::Settings) -> Row {
+    if row.id == ReadySoundChoice::KEY {
+        row.value = settings
             .ready_sound_choice
             .map_or("invalid", ReadySoundChoice::label)
             .into();
-        choice.default = row_of(ReadySoundChoice::KEY)
-            .and_then(|row| row.default.as_ref())
-            .map(|_| ReadySoundChoice::Default.label().into());
-        items.push(choice);
+        row.default = row
+            .default
+            .as_deref()
+            .and_then(ReadySoundChoice::parse)
+            .map(|choice| choice.label().into());
     }
-    items.push(top(
-        "Alerts",
-        "iterm_focus",
-        "Exact iTerm focus",
-        Kind::Toggle(settings.iterm_focus),
-        &[
-            "A separate opt-in for selecting the existing iTerm session hosting the current Dashboard.",
-            "On macOS choose Set up iTerm focus in the palette to request Automation permission explicitly. Banner clicks never request it.",
-            "Unavailable or denied control keeps Dashboard navigation and parent-app activation; that fallback cannot choose an exact window.",
-        ],
-    ));
-    let mut workspaces = vec![
-        top(
-            "Workspaces",
-            "automatic_local_terminals",
-            "Automatic local terminals",
-            Kind::Pick(
-                ["on", "off", "default_branch_only"]
-                    .into_iter()
-                    .map(|value| PickItem {
-                        label: value.into(),
+    row
+}
+
+fn editor_kind(
+    shape: ovrcr_protocol::Shape,
+    entry: &ovrcr_protocol::Entry,
+    settings: &ovrcr_protocol::Settings,
+) -> Kind {
+    match shape {
+        ovrcr_protocol::Shape::Toggle => {
+            Kind::Toggle(entry.value(settings).as_deref() == Some("true"))
+        }
+        ovrcr_protocol::Shape::Text(_) => Kind::Text,
+        ovrcr_protocol::Shape::Path(_) => Kind::Path,
+        ovrcr_protocol::Shape::Pick { options, .. } => Kind::Pick(
+            options
+                .iter()
+                .map(|value| {
+                    let label = *value;
+                    #[cfg(target_os = "macos")]
+                    let label = if entry.path == ReadySoundChoice::KEY {
+                        ReadySoundChoice::parse(label).map_or(label, ReadySoundChoice::label)
+                    } else {
+                        label
+                    };
+                    PickItem {
+                        label: label.into(),
                         value: toml_string(value),
-                    })
-                    .collect(),
-            ),
-            &[],
+                    }
+                })
+                .collect(),
         ),
-        top(
-            "Workspaces",
-            "save_uncommitted_work",
-            "Save uncommitted work",
-            Kind::Toggle(settings.save_uncommitted_work),
-            &[ovrcr_protocol::SAVE_UNCOMMITTED_WORK_OFF],
-        ),
-        top(
-            "Workspaces",
-            "branch_prefix",
-            "Branch prefix",
-            Kind::Text,
-            &[],
-        ),
-        top(
-            "Workspaces",
-            "picker_roots",
-            "Picker roots",
-            Kind::Fixed,
-            &[],
-        ),
-    ];
-    let roots: Vec<String> = settings
-        .picker_roots
-        .iter()
-        .map(|root| root.display().to_string())
-        .collect();
-    let roots_set = workspaces[3].source == Some(SettingSource::Document);
-    workspaces[3].value = count(roots.len());
-    for (index, root) in roots.iter().enumerate() {
-        let mut row = child(
-            "Workspaces",
-            format!("picker_roots[{index}]"),
-            String::new(),
-            root.clone(),
-            Kind::Path,
-            format!("picker_roots[{index}]"),
-        );
-        if roots_set {
-            row.reset = Some((row.path.clone(), None));
-        } else {
-            // The default list is not in the document: write it whole.
-            let mut list: Vec<String> = roots.iter().map(|r| toml_string(r)).collect();
-            list[index] = "{}".into();
-            row.path = "picker_roots".into();
-            row.whole_list = Some(list.clone());
-            list.remove(index);
-            row.reset = Some((
-                "picker_roots".into(),
-                Some(format!("[{}]", list.join(", "))),
-            ));
-        }
-        workspaces.push(row);
+        ovrcr_protocol::Shape::Paths
+        | ovrcr_protocol::Shape::Agents
+        | ovrcr_protocol::Shape::Launches => Kind::Fixed,
     }
-    let mut add = child(
-        "Workspaces",
-        "picker_roots+".into(),
-        "+ Add root".into(),
-        String::new(),
-        Kind::Path,
-        format!("picker_roots[{}]", roots.len()),
-    );
-    if !roots_set {
-        let mut list: Vec<String> = roots.iter().map(|r| toml_string(r)).collect();
-        list.push("{}".into());
-        add.path = "picker_roots".into();
-        add.whole_list = Some(list);
-    }
-    workspaces.push(add);
-    items.extend(workspaces);
-    items.extend(vec![top(
-        "Titles",
-        "title_model",
-        "Title model",
-        Kind::Text,
-        &["Setting a model makes paid calls to title sessions."],
-    )]);
-    items.extend(vec![
-            top(
-                "Usage",
-                "quota.enabled",
-                "Native account usage",
-                Kind::Toggle(quota.enabled),
-                &["On by default while a Dashboard is attached. The readers do not rewrite auth files. Set false to turn Codex, Grok and the opt-in Cursor reader off."],
-            ),
-            top(
-                "Usage",
-                "quota.claude.probe",
-                "Claude allowance probe",
-                Kind::Toggle(quota.claude_probe),
-                &[ovrcr_protocol::CLAUDE_PROBE_DESCRIPTION],
-            ),
-            top("Usage", "quota.codex.command", "Codex command", Kind::Path, &[]),
-            top("Usage", "quota.codex.home", "Codex home", Kind::Path, &[]),
-            top("Usage", "quota.grok.command", "Grok command", Kind::Path, &[]),
-            top("Usage", "quota.grok.home", "Grok home", Kind::Path, &[]),
-            top("Usage", "quota.cursor.dashboard", "Cursor dashboard usage", Kind::Toggle(quota.cursor.dashboard), &[ovrcr_protocol::CURSOR_QUOTA_DESCRIPTION]),
-            top("Usage", "quota.cursor.state_db", "Cursor state database", Kind::Path, &["Optional absolute path to Cursor's state.vscdb; otherwise the platform default."]),
-        ],
-    );
-    let mut agents = vec![top("Agents", "agents", "Agent overrides", Kind::Fixed, &[])];
-    agents[0].value = count(settings.agents.len());
-    for (index, agent) in settings.agents.iter().enumerate() {
-        let mut row = child(
-            "Agents",
-            format!("agents[{index}]"),
-            agent.name.clone(),
-            toml_array(agent.argv.iter().map(String::as_str)),
-            Kind::Toml,
-            format!("agents[{index}].argv"),
-        );
-        row.reset = Some((format!("agents[{index}]"), None));
-        agents.push(row);
-    }
-    agents.push(child(
-        "Agents",
-        "agents+".into(),
-        "+ Add agent (name)".into(),
-        String::new(),
-        Kind::Text,
-        format!("agents[{}]", settings.agents.len()),
-    ));
-    items.extend(agents);
-    let mut launches = vec![top(
-        "Remembered launches",
-        "launch_choices",
-        "Remembered launches",
-        Kind::Fixed,
-        &[],
-    )];
-    launches[0].value = count(settings.launch_choices.len());
-    for (project, choice) in &settings.launch_choices {
-        let path = format!("launch_choices.{}", toml_edit::Key::new(project.as_str()));
-        let mut choices = vec![LaunchChoice::Terminal];
-        choices.extend(presets.iter().cloned().map(LaunchChoice::Agent));
-        if !choices.contains(choice) {
-            choices.push(choice.clone());
-        }
-        let mut row = child(
-            "Remembered launches",
-            path.clone(),
-            project.clone(),
-            choice_text(choice),
-            Kind::Pick(
-                choices
-                    .iter()
-                    .map(|choice| PickItem {
-                        label: choice_text(choice),
-                        value: choice_value(project, choice),
-                    })
-                    .collect(),
-            ),
-            path.clone(),
-        );
-        row.reset = Some((path, None));
-        launches.push(row);
-    }
-    launches.push(child(
-        "Remembered launches",
-        "launch_choices+".into(),
-        "+ Add project".into(),
-        String::new(),
-        Kind::Text,
-        String::new(),
-    ));
-    items.extend(launches);
-    items
 }
 
 /// Greedy word wrap to `room` cells; a word longer than `room` stays whole.
@@ -506,8 +461,17 @@ fn loose_findings(report: &SettingsReport) -> Vec<String> {
         .filter(|f| {
             f.key.as_deref().is_none_or(|key| {
                 !keys.iter().any(|row| {
+                    let collection = ovrcr_protocol::entries().iter().any(|entry| {
+                        entry.path == *row
+                            && matches!(
+                                entry.shape,
+                                ovrcr_protocol::Shape::Paths
+                                    | ovrcr_protocol::Shape::Agents
+                                    | ovrcr_protocol::Shape::Launches
+                            )
+                    });
                     key == *row
-                        || (["picker_roots", "agents", "launch_choices"].contains(row)
+                        || (collection
                             && (key.starts_with(&format!("{row}["))
                                 || key.starts_with(&format!("{row}."))))
                 })

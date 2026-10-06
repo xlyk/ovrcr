@@ -9,6 +9,7 @@
 
 use super::{Segment, parse};
 use anyhow::{Context, bail};
+use ovrcr_protocol::{SettingName, SettingWrite};
 use std::path::Path;
 use toml_edit::{InlineTable, Item, Table, TableLike, Value};
 
@@ -80,46 +81,18 @@ pub fn set(document: &Path, path: &str, value: Option<&str>) -> anyhow::Result<(
 
 /// The segments and kind of a declared setting path, or `None`.
 fn declared(path: &str) -> Option<(Vec<Segment>, Kind)> {
-    use Kind::{Entry, Text, Typed};
-    use Segment::{Index as I, Key as K};
     let segments = parse_path(path)?;
-    let names: Vec<Option<&str>> = segments
+    let names: Vec<SettingName> = segments
         .iter()
         .map(|segment| match segment {
-            K(name) => Some(name.as_str()),
-            I(_) => None,
+            Segment::Key(name) => SettingName::Key(name),
+            Segment::Index(index) => SettingName::Index(*index),
         })
         .collect();
-    let kind = match names.as_slice() {
-        [
-            Some("desktop_notifications" | "ready_sound" | "iterm_focus" | "save_uncommitted_work"),
-        ] => Typed("a boolean"),
-        [Some("ready_sound_choice")] => Text("\"default\", \"tap\", \"chime\" or \"rise\""),
-        [Some("automatic_local_terminals")] => Text("\"on\", \"off\" or \"default_branch_only\""),
-        [Some("title_model")] => Text("a \"provider/model\" string"),
-        [Some("branch_prefix")] => Text("a string"),
-        [Some("picker_roots")] => Typed("an array of paths"),
-        [Some("agents")] => Typed("an array of { name, argv } tables"),
-        [Some("launch_choices")] => Typed("a table of { kind, preset } tables"),
-        [Some("quota"), Some("enabled")] => Typed("a boolean"),
-        [Some("quota"), Some("claude"), Some("probe")] => Typed("a boolean"),
-        [Some("quota"), Some("cursor"), Some("dashboard")] => Typed("a boolean"),
-        [Some("quota"), Some("cursor"), Some("state_db")] => Text("an absolute path"),
-        [
-            Some("quota"),
-            Some("codex" | "grok"),
-            Some("command" | "home"),
-        ] => Text("a path"),
-        [Some("picker_roots"), None] => Text("a path"),
-        [Some("agents"), None] => Entry(&["name", "argv"], "an inline table { name, argv }"),
-        [Some("agents"), None, Some("name")] => Text("a string"),
-        [Some("agents"), None, Some("argv")] => Typed("an array of strings"),
-        [Some("launch_choices"), Some(_)] => {
-            Entry(&["kind", "preset"], "an inline table { kind, preset }")
-        }
-        [Some("launch_choices"), Some(_), Some("kind")] => Text("\"Terminal\" or \"Agent\""),
-        [Some("launch_choices"), Some(_), Some("preset")] => Text("a string"),
-        _ => return None,
+    let kind = match ovrcr_protocol::write_of(&names)? {
+        SettingWrite::Text(expected) => Kind::Text(expected),
+        SettingWrite::Typed(expected) => Kind::Typed(expected),
+        SettingWrite::Entry(fields, expected) => Kind::Entry(fields, expected),
     };
     Some((segments, kind))
 }

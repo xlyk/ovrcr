@@ -172,6 +172,10 @@ _Avoid_: the Dashboard's own parse of the document, a per-setting notification
 The dotted address of one setting, one element of a list setting, or one entry of a table setting, such as `quota.codex.command`, `picker_roots[2]` or `launch_choices.myproj.kind`. The editor, the CLI and the Server's write request all name a value this way.
 _Avoid_: a TOML key on its own, a row index in the popup
 
+**Settings catalog**:
+The one declaration of every setting path: its shape, its owner, and what the off state says. The shape is what a write accepts and what the Dashboard editor presents, including the pattern of a list or table of entries. It does not hold the effective value.
+_Avoid_: a second settings document, the settings snapshot, a separate path list for the editor, the writer, and the rows, a value type and an editor kind that can disagree
+
 **Allowance**:
 What a provider's subscription still permits in a window, shown in the Quota left block as the remainder of a percentage. It is never a session's token count, context occupancy or API spend.
 _Avoid_: usage, tokens, cost, quota as a synonym for spend
