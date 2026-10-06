@@ -7,7 +7,11 @@ use std::ffi::OsString;
 pub fn supported(provider: AgentProvider) -> bool {
     matches!(
         provider,
-        AgentProvider::Claude | AgentProvider::Pi | AgentProvider::Omp | AgentProvider::Codex
+        AgentProvider::Claude
+            | AgentProvider::Pi
+            | AgentProvider::Omp
+            | AgentProvider::Codex
+            | AgentProvider::Hermes
     )
 }
 
@@ -41,6 +45,10 @@ pub fn unavailable(
         ),
         Some(reference) if reference.provider() == provider => None,
         Some(_) => Some("Retained conversation provider does not match this session".into()),
+        None if provider == AgentProvider::Hermes => Some(
+            "Native resume is not available for hermes until a managed launch reports a session id"
+                .into(),
+        ),
         None => None,
     }
 }
@@ -56,6 +64,7 @@ pub fn validate(reference: &ConversationReference) -> Result<()> {
             crate::extension_recovery::validate(AgentProvider::Omp, reference)
         }
         ConversationReference::Grok(reference) => crate::grok_recovery::validate(reference),
+        ConversationReference::Hermes(reference) => crate::hermes_recovery::validate(reference),
     }
 }
 
@@ -74,6 +83,7 @@ pub fn resume_argv(name: &str, reference: &ConversationReference) -> Result<Vec<
         }
         // `unavailable` refused it above; a Grok reference names a title source, not a resume.
         ConversationReference::Grok(_) => bail!("Native resume is not available for grok"),
+        ConversationReference::Hermes(reference) => crate::hermes_recovery::resume_argv(reference),
     }
 }
 
@@ -204,7 +214,7 @@ mod tests {
                 .to_string()
                 .contains("not available")
         );
-        for provider in [AgentProvider::Grok, AgentProvider::Hermes] {
+        for provider in [AgentProvider::Grok, AgentProvider::Cursor] {
             assert!(!supported(provider));
             assert!(
                 unavailable(provider.name(), Some(&reference), false)

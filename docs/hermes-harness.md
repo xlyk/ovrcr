@@ -62,17 +62,34 @@ credentials and are outside OVRCR setup. Profile separation is not a sandbox.
 
 ## Current capabilities
 
-The existing OVRCR invocation supervisor forwards terminal input/output and signals,
-preserves native exit status, and cleans up its owned native process group when the
-invocation ends. The Server owns the Agent row and observes Running, Paused and Exited
-process states. These observations do not certify an agent response or completed work.
+The invocation supervisor still forwards terminal input/output and signals, preserves
+native exit status, and cleans up its owned process group. The Server observes
+Running, Paused and Exited. Those process states do not certify an agent response.
 
-Hermes activity stays **unknown**. Native activity/reporting, Ready/Unread, approval
-and question Input requests, metrics, generated titles and conversation recovery
-are unavailable. Terminal text and silence never imply those capabilities. No
-conversation identity is fabricated and no reporting reservation displaces a
-different reporter. Reopen remains unavailable under the existing recovery contract;
-Dashboard detach/reattach keeps a surviving session through ordinary PTY ownership.
+`ovrcr agent setup hermes` appends reporting hooks to the selected Hermes profile
+when `config.yaml` has no `hooks:` key, and allowlists only that command. Set
+`HERMES_HOME` to repeat setup for another profile. The hook process keeps session
+id, turn id, model, approval id and token counts. It drops prompts, transcripts,
+tool arguments and raw provider payloads.
+
+After setup, a managed `hermes` or `hermes chat` launch can report:
+
+- Busy from `pre_api_request`, and Ready from `post_llm_call` when that event
+  includes a turn id. Interrupted turns stay unknown. Ready is not inferred from
+  silence or terminal text.
+- Approval Input requests from `pre_approval_request` / `post_approval_response`.
+  Questions that are not those hooks stay unavailable.
+- Token totals summed from `post_api_request`. Cost stays unavailable because that
+  summary has no USD field.
+- A generated title by reading the `title` column of that session row in `state.db`
+  and showing it as the session title. This does not wait for a Dashboard and does
+  not call another model.
+- Resume with `hermes --resume <session id>`, plus `-p <profile>` when the database
+  is under `profiles/<name>/`. A launch that never reported a session id cannot reopen.
+
+A command that is not interactive Hermes chat keeps process supervision and does
+not bind a conversation. Dashboard detach/reattach still keeps a surviving session
+through ordinary PTY ownership.
 
 Doctor checks executable presence/permissions and, when requested, reads the existing
 Server/offline session inventory. It does not start a Server or execute Hermes,
@@ -94,10 +111,9 @@ defaults a bare `hermes` invocation to interactive chat. Its
 can check updates, so OVRCR diagnostics do not invoke it.
 
 Native [event hooks](https://github.com/NousResearch/hermes-agent/blob/5ef1409f50484dddc38c9665b32a837ff1b191af/website/docs/user-guide/features/hooks.md)
-exist: gateway events are gateway-only, while CLI plugin/shell hooks require native
-configuration and shell-hook consent. This source review does not validate an OVRCR
-root identity/reporting adapter and does not authorize changing those settings.
-Reporting requires a separate verified integration before any capability is promised.
+are the reporting source. Gateway events stay gateway-only. `ovrcr agent setup hermes`
+writes the CLI shell hooks and their allowlist entries; it does not set
+`hooks_auto_accept` and does not pass `--accept-hooks`.
 
 Automated tests use disposable shell executables through the actual managed CLI,
 Server, socket and PTY. They prove OVRCR launch, input/output, argument and exit-status
@@ -109,6 +125,16 @@ Synthetic CUA can prove the Dashboard flow. It does not establish genuine Hermes
 model responses or provider/auth-mode support. The separately authorized
 [2026-10-05 native record](../research/hermes-native-acceptance-2026-10-05/README.md)
 proves bounded Dashboard/CLI responses, process controls and native exit on macOS.
-That run also exposed a GUI-helper close panic and stale post-CLI-control capture;
-normal desktop close remains failed. Native hooks, other configurations and native
-Linux remain unverified. Issue #234 stays open for those remaining gates.
+That run also exposed a GUI-helper close panic and a stale post-CLI-control capture.
+The close path joined the PTY reader inside the egui frame, which holds the context
+lock the reader needs for `request_repaint`. Shutdown now happens from `on_exit`,
+after that frame returns. A 2026-10-06 recheck of this helper showed CLI pause,
+resume and exit in the live window, then a normal close that exited 0 and removed
+the disposable demo.
+
+A managed CLI launch on the default profile bound session id
+`20261006_103930_514583`, went Busy, showed the marker reply, and became
+`response_ready` with Unread set. The session title is the `title` column Hermes
+writes for that row, applied without a Dashboard or another model call.
+Non-approval questions and live replies on the obsidian and researcher profiles
+remain unverified. Hooks are installed for all three profiles.

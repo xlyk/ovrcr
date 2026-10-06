@@ -450,17 +450,11 @@ impl App {
         let open_palette =
             ui.input_mut(|input| input.consume_key(egui::Modifiers::MAC_CMD, egui::Key::K));
         if ui.input(|input| input.viewport().close_requested()) && !self.closing {
-            match self.close() {
-                Ok(()) => self.closing = true,
-                Err(error) => {
-                    ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::CancelClose);
-                    self.error = Some(format!(
-                        "Cleanup failed: {error:#}. Demo retained at {}",
-                        self.demo.root().display()
-                    ));
-                }
-            }
+            // This frame holds the egui context lock. Stopping here joins the
+            // PTY reader, and that reader calls `Context::request_repaint`, so
+            // the join waits until epaint's 10s deadlock panic. `on_exit`
+            // stops the dashboard after the frame returns.
+            self.closing = true;
         }
         egui::Frame::central_panel(ui.style())
             .inner_margin(egui::Margin::ZERO)
@@ -615,6 +609,72 @@ impl eframe::App for App {
             );
         }
     }
+}
+
+#[test]
+fn close_request_leaves_the_dashboard_running_until_outside_the_frame() -> anyhow::Result<()> {
+    let context = egui::Context::default();
+    let executable = std::env::current_exe()?
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("ovrcr");
+    let demo = Demo::start(&executable)?;
+    let root = demo.root().to_owned();
+    let terminal = demo.dashboard(24, 80, context.clone())?;
+    let mut app = App {
+        terminal: Some(terminal),
+        demo,
+        fonts: TerminalFonts::current_monospace(),
+        error: None,
+        closing: false,
+        mouse: Mouse::default(),
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(8);
+    while !app
+        .terminal
+        .as_ref()
+        .unwrap()
+        .screen()
+        .contents()
+        .contains("OVRCR")
+    {
+        anyhow::ensure!(std::time::Instant::now() < deadline, "dashboard never drew");
+        std::thread::yield_now();
+    }
+    let mut input = egui::RawInput::default();
+    input
+        .viewports
+        .entry(egui::ViewportId::ROOT)
+        .or_default()
+        .events
+        .push(egui::ViewportEvent::Close);
+    input.screen_rect = Some(egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        egui::vec2(960.0, 600.0),
+    ));
+    let started = std::time::Instant::now();
+    let mut output = context.run_ui(input, |ui| app.show(ui));
+    output.textures_delta.clear();
+    anyhow::ensure!(
+        started.elapsed() < Duration::from_millis(800),
+        "close inside the egui pass blocked for {:?}",
+        started.elapsed()
+    );
+    anyhow::ensure!(
+        app.terminal.is_some(),
+        "the frame must not join the PTY reader while it still holds the egui context"
+    );
+    anyhow::ensure!(app.closing, "close request must be remembered");
+    anyhow::ensure!(
+        app.error.is_none(),
+        "close request must not surface a cleanup error: {}",
+        app.error.as_deref().unwrap_or("")
+    );
+    app.close()?;
+    assert!(!root.exists());
+    Ok(())
 }
 
 #[test]

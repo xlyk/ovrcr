@@ -1258,6 +1258,16 @@ mod wire_snapshot {
             )),
         ));
         all.push((
+            "ConversationReference::Hermes".into(),
+            encode(&crate::ConversationReference::Hermes(
+                crate::HermesConversation {
+                    conversation: "20261006_101500_ab12cd".into(),
+                    executable: "/bin/hermes".into(),
+                    state_db: "/home/state.db".into(),
+                },
+            )),
+        ));
+        all.push((
             "WorkspaceRecord".into(),
             encode(&crate::WorkspaceRecord {
                 id: "stable".into(),
@@ -1508,6 +1518,10 @@ mod wire_snapshot {
         (
             "ConversationReference::Grok",
             "04066e61746976650e2f686973746f72792e6a736f6e6c",
+        ),
+        (
+            "ConversationReference::Hermes",
+            "051632303236313030365f3130313530305f6162313263640b2f62696e2f6865726d65730e2f686f6d652f73746174652e6462",
         ),
         (
             "WorkspaceRecord",

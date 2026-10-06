@@ -7421,8 +7421,8 @@ fn hermes_supervision_preserves_job_control_failure_and_peer_isolation() {
     };
     assert_eq!(
         fixture.session_summary(summary.id).agent_epoch,
-        0,
-        "Hermes must not reserve reporting"
+        1,
+        "Hermes reserves a reporter; a non-hermes command does not bind a conversation"
     );
     assert_eq!(
         fixture.request(Request::SendTerminal {
@@ -7473,7 +7473,7 @@ fn hermes_supervision_preserves_job_control_failure_and_peer_isolation() {
     );
     let active = fixture.session_summary(summary.id);
     assert_eq!(active.phase, SessionPhase::Running);
-    assert_eq!(active.agent_epoch, 0);
+    assert_eq!(active.agent_epoch, 1);
     assert!(active.agent.is_none() && active.unread.is_none());
     assert_eq!(unsafe { libc::kill(launcher, libc::SIGTERM) }, 0);
     fixture.wait_terminal_contains(summary.id, "HERMES_WRAPPER_FINISHED=23");

@@ -2214,6 +2214,66 @@ fn pause_resume_dashboard_round_trip() -> Result<()> {
 }
 
 #[test]
+fn external_pause_resume_and_exit_redraw_the_live_dashboard() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    // A real terminal stdin makes startup offer native hook edits. Enter keeps
+    // the default decline so this test neither blocks nor writes provider profiles.
+    for _ in 0..4 {
+        dashboard.wait_until(
+            |screen| screen.contains("[y/n]") || screen.contains("agent runtime"),
+            Duration::from_secs(8),
+        )?;
+        if !dashboard.rendered().contains("[y/n]") {
+            break;
+        }
+        dashboard.send(b"\n")?;
+    }
+    dashboard.wait_for(b"mouse", wait_deadline())?;
+    dashboard.wait_for(b"agent runtime", wait_deadline())?;
+    dashboard.click_visible_text("     - mouse")?;
+    dashboard.wait_for(b"MOUSE_READY", wait_deadline())?;
+    dashboard.send(b"k")?;
+    dashboard.wait_for(b"WAITING_READY", wait_deadline())?;
+    dashboard.send(b"\r\x07")?;
+    dashboard.wait_for(b"BROWSE  Space Menu", wait_deadline())?;
+
+    let listed = fixture.list()?;
+    let waiting = listed
+        .projects
+        .iter()
+        .flat_map(|project| project.workspaces.iter())
+        .flat_map(|workspace| workspace.sessions.iter())
+        .find(|session| session.name == "waiting")
+        .context("List did not return waiting session")?;
+    let id = waiting.id.0.to_string();
+
+    let paused = fixture.cli(&["pause", &id])?;
+    require_success(paused, "external pause")?;
+    dashboard.wait_for(b"paused", Duration::from_secs(3))?;
+
+    let resumed = fixture.cli(&["resume", &id])?;
+    require_success(resumed, "external resume")?;
+    dashboard.wait_for_screen(|screen| !screen.contains("paused"), Duration::from_secs(3))?;
+
+    let killed = fixture.cli(&["kill", &id])?;
+    require_success(killed, "external kill")?;
+    dashboard.wait_for(b"closed", Duration::from_secs(3))?;
+    dashboard.detach()?;
+    fixture.shutdown()?;
+    Ok(())
+}
+
+#[test]
 #[ignore]
 fn mouse_fixture_child() {
     mouse_app::run().expect("mouse fixture child");
