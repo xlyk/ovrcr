@@ -50,7 +50,7 @@ EOF
 if [ "$mode" = check ]; then
     # These runners use parser/early guards and injected owner/permission/
     # selector doubles. They cannot establish native consent or visible focus.
-    for runner in headless headless-iterm headless-iterm-setup headless-iterm-workflow; do
+    for runner in headless headless-iterm headless-iterm-setup headless-iterm-workflow headless-iterm-ancestry; do
         sound_checks_source=
         if [ "$runner" = headless ]; then
             sound_checks_source="$repo_dir/native/bridge/headless/SoundChecks.swift"
@@ -58,7 +58,7 @@ if [ "$mode" = check ]; then
         xcrun --sdk macosx swiftc -swift-version 5 -module-cache-path "$stage_dir/cache" \
             "$stage_dir/Version.swift" "$repo_dir/native/bridge/Contract.swift" \
             "$repo_dir/native/bridge/Transport.swift" "$repo_dir/native/bridge/Sounds.swift" \
-            "$repo_dir/native/bridge/Navigation.swift" \
+            "$repo_dir/native/bridge/ProcessAncestry.swift" "$repo_dir/native/bridge/Navigation.swift" \
             "$repo_dir/native/bridge/ITermFocus.swift" "$repo_dir/native/bridge/ITermWorkflow.swift" \
             "$repo_dir/native/bridge/ITermSetup.swift" ${sound_checks_source:+"$sound_checks_source"} \
             "$repo_dir/native/bridge/$runner/main.swift" \
@@ -101,7 +101,7 @@ xcrun --sdk macosx swiftc -swift-version 5 -O -target "$(uname -m)-apple-macosx1
     -module-cache-path "$stage_dir/cache" "$stage_dir/Version.swift" \
     "$repo_dir/native/bridge/Contract.swift" "$repo_dir/native/bridge/Transport.swift" \
     "$repo_dir/native/bridge/Sounds.swift" \
-    "$repo_dir/native/bridge/Navigation.swift" "$repo_dir/native/bridge/ITermFocus.swift" \
+    "$repo_dir/native/bridge/ProcessAncestry.swift" "$repo_dir/native/bridge/Navigation.swift" "$repo_dir/native/bridge/ITermFocus.swift" \
     "$repo_dir/native/bridge/ITermWorkflow.swift" "$repo_dir/native/bridge/ITermSetup.swift" \
     "$repo_dir/native/bridge/App.swift" \
     "$repo_dir/native/bridge/main.swift" \

@@ -240,6 +240,25 @@ revalidates the current Server owner before each operation, verifies the actual
 Dashboard process birth/ancestry and compares the live iTerm GUID's TTY with the
 Dashboard's controlling TTY. Acknowledged selection is not observed keyboard focus.
 
+macOS may put a protected `/usr/bin/login` process between a same-user Dashboard
+shell and iTerm's same-user cached `iTermServer`. Full BSD process queries cannot
+read that effective-UID-zero ancestor. The shared ancestry reader admits exactly
+one such hop only when public kernel snapshots, short BSD metadata and repeated
+executable-path reads agree on its current PID, microsecond birth, effective UID0,
+real UID equal to the Dashboard's user, parent, process group and controlling TTY.
+That TTY must match the Dashboard; the same-user child is freshly rechecked.
+The login's parent must be a same-user `iTermServer-*` in the current account's
+actual Library cache, directly under the exact live iTerm application. Other root
+processes, denied or partial metadata, duplicate/cyclic ancestors, mismatched
+images or changed identities refuse. Dashboard and application ownership remain
+same-user; the walk stops at the first GUI instead of following inherited iTerm
+environment past it. Both ordinary parent activation and explicit iTerm setup use
+this reader and revalidate the complete captured ancestry before their effects.
+This reads process identity metadata only; it changes no permissions and does
+not inspect argv, environments or terminal contents. The injected-metadata runner
+`headless-iterm-ancestry` exercises the same shipping reader and walker; its pass
+does not establish native selection or visible focus.
+
 The future bundle carries `NSAppleEventsUsageDescription` and the single hardened
 Apple Events entitlement in `Contents/Resources/OVRCRBridge.entitlements`. The installer
 uses that file when signing the enclosing app, without re-signing the sealed
@@ -254,7 +273,7 @@ wire 39 builds and independent
 schema 2 / wire 35 and schema 3 / wire 36 slices. Pure
 adapter, setup-state and click-policy runners are under `headless-iterm*`; their
 checks use early guards or injected permission/current-owner/selection doubles.
-`scripts/build-bridge.sh --check` compiles and runs all four pure runners.
+`scripts/build-bridge.sh --check` compiles and runs all five pure runners.
 No such pass proves native consent, session selection or visible focus. Production
 application tests exercise the actual Server, CLI, PTY Dashboard/palette and a
 fake native host. Native screenshots/accessibility acceptance remains unrun.

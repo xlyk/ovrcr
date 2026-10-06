@@ -234,23 +234,26 @@ func currentDashboardProcess(_ target: BridgeActivationTarget) -> proc_bsdinfo? 
     return info
 }
 
-func currentDashboardHasAncestor(_ target: BridgeActivationTarget, ancestor: proc_bsdinfo) -> Bool {
-    guard var current = currentDashboardProcess(target) else { return false }
-    var seen = Set<UInt32>()
-    for _ in 0..<32 {
-        guard current.pbi_uid == getuid(), seen.insert(current.pbi_pid).inserted else { return false }
-        if current.pbi_pid == ancestor.pbi_pid {
-            return current.pbi_start_tvsec == ancestor.pbi_start_tvsec
-                && current.pbi_start_tvusec == ancestor.pbi_start_tvusec
-        }
-        guard current.pbi_ppid > 1, current.pbi_ppid <= UInt32(Int32.max) else { return false }
-        var parent = proc_bsdinfo()
-        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
-        let read = withUnsafeMutablePointer(to: &parent) {
-            proc_pidinfo(Int32(current.pbi_ppid), PROC_PIDTBSDINFO, 0, $0, size)
-        }
-        guard read == size, parent.pbi_pid == current.pbi_ppid else { return false }
-        current = parent
+func currentDashboardParentAncestry(_ target: BridgeActivationTarget,
+                                    continuing: () -> Bool = { true }) -> BridgeParentAncestry? {
+    guard let dashboard = currentDashboardProcess(target) else { return nil }
+    let lookup = BridgeProcessAncestry.liveLookup(userID: getuid())
+    guard let start = lookup.owned(dashboard.pbi_pid), start.uid == dashboard.pbi_uid,
+          start.startSeconds == dashboard.pbi_start_tvsec,
+          start.startMicroseconds == dashboard.pbi_start_tvusec else { return nil }
+    return BridgeProcessAncestry.parentApplication(from: start, userID: getuid(),
+        maximumDepth: 32, lookup: lookup, continuing: continuing)
+}
+
+func currentDashboardHasAncestor(_ target: BridgeActivationTarget, ancestor: proc_bsdinfo,
+                                 expectedAncestry: BridgeParentAncestry? = nil,
+                                 continuing: () -> Bool = { true }) -> Bool {
+    guard ancestor.pbi_uid == getuid(),
+          let proof = currentDashboardParentAncestry(target, continuing: continuing),
+          expectedAncestry.map({ $0 == proof }) ?? true else { return false }
+    return proof.chain.contains { current in
+        current.uid == getuid() && current.pid == ancestor.pbi_pid
+            && current.startSeconds == ancestor.pbi_start_tvsec
+            && current.startMicroseconds == ancestor.pbi_start_tvusec
     }
-    return false
 }

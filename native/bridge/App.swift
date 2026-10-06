@@ -166,41 +166,27 @@ func activateDashboardParent(_ target: BridgeActivationTarget, deadline: Deadlin
     // NSRunningApplication is SDK-declared Sendable/thread safe; activation has
     // no main-actor annotation. Keep owner validation and its effect together
     // off the main thread, with only notification completion queued afterward.
-    guard !Thread.isMainThread, let dashboard = currentDashboardProcess(target) else { return }
-    var process = dashboard
-    var seen = Set<UInt32>()
-    for _ in 0..<32 {
-        guard deadline.remaining > 0, process.pbi_uid == getuid(),
-              process.pbi_pid > 1, seen.insert(process.pbi_pid).inserted else { return }
-        if let app = NSRunningApplication(processIdentifier: Int32(process.pbi_pid)),
-           !app.isTerminated, app.bundleIdentifier != bridgeBundleID {
-            var current = proc_bsdinfo()
-            let size = Int32(MemoryLayout<proc_bsdinfo>.size)
-            let read = withUnsafeMutablePointer(to: &current) {
-                proc_pidinfo(Int32(process.pbi_pid), PROC_PIDTBSDINFO, 0, $0, size)
-            }
-            guard read == size, current.pbi_uid == process.pbi_uid,
-                  current.pbi_pid == process.pbi_pid,
-                  current.pbi_start_tvsec == process.pbi_start_tvsec,
-                  current.pbi_start_tvusec == process.pbi_start_tvusec,
-                  currentDashboardHasAncestor(target, ancestor: current), deadline.remaining > 0 else { return }
-            _ = performCurrentParentActivation(target, deadline: deadline) { accepted in
-                guard !app.isTerminated,
-                      currentDashboardHasAncestor(accepted, ancestor: current),
-                      deadline.remaining > 0 else { return false }
-                return app.activate(options: [])
-            }
-            return
-        }
-        let parent = process.pbi_ppid
-        guard parent > 1, parent <= UInt32(Int32.max) else { return }
-        var info = proc_bsdinfo()
-        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
-        let read = withUnsafeMutablePointer(to: &info) {
-            proc_pidinfo(Int32(parent), PROC_PIDTBSDINFO, 0, $0, size)
-        }
-        guard read == size, info.pbi_pid == parent else { return }
-        process = info
+    guard !Thread.isMainThread,
+          let ancestry = currentDashboardParentAncestry(target, continuing: { deadline.remaining > 0 }),
+          let app = NSRunningApplication(processIdentifier: Int32(ancestry.application.pid)),
+          !app.isTerminated, app.bundleIdentifier != bridgeBundleID else { return }
+    var current = proc_bsdinfo()
+    let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+    let read = withUnsafeMutablePointer(to: &current) {
+        proc_pidinfo(Int32(ancestry.application.pid), PROC_PIDTBSDINFO, 0, $0, size)
+    }
+    guard read == size, current.pbi_uid == getuid(),
+          current.pbi_pid == ancestry.application.pid,
+          current.pbi_start_tvsec == ancestry.application.startSeconds,
+          current.pbi_start_tvusec == ancestry.application.startMicroseconds,
+          currentDashboardHasAncestor(target, ancestor: current, expectedAncestry: ancestry,
+              continuing: { deadline.remaining > 0 }), deadline.remaining > 0 else { return }
+    _ = performCurrentParentActivation(target, deadline: deadline) { accepted in
+        guard !app.isTerminated,
+              currentDashboardHasAncestor(accepted, ancestor: current, expectedAncestry: ancestry,
+                  continuing: { deadline.remaining > 0 }),
+              deadline.remaining > 0 else { return false }
+        return app.activate(options: [])
     }
 }
 

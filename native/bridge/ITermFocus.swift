@@ -137,27 +137,20 @@ enum ITermFocus {
         return info
     }
 
-    private static func parentApplication(_ target: ITermFocusTarget) throws -> NSRunningApplication {
-        var pid = target.dashboardPID
-        var visited = Set<Int32>()
-        for _ in 0..<64 {
-            guard visited.insert(pid).inserted else { throw Failure(.ownerChanged) }
-            let info = try process(pid)
-            if let app = NSRunningApplication(processIdentifier: pid),
-               app.activationPolicy != .prohibited {
-                // A GUI launched from iTerm may inherit its environment. Its own
-                // application is the destination; never walk past it to iTerm.
-                guard !app.isTerminated, app.bundleIdentifier == bundleID else {
-                    throw Failure(.unavailable)
-                }
-                return app
-            }
-            guard info.pbi_ppid > 1, info.pbi_ppid <= UInt32(Int32.max) else {
-                throw Failure(.unavailable)
-            }
-            pid = Int32(info.pbi_ppid)
-        }
-        throw Failure(.unavailable)
+    private static func parentApplication(_ target: ITermFocusTarget)
+        throws -> (application: NSRunningApplication, ancestry: BridgeParentAncestry) {
+        let dashboard = try process(target.dashboardPID)
+        let lookup = BridgeProcessAncestry.liveLookup(userID: getuid())
+        guard let start = lookup.owned(dashboard.pbi_pid),
+              start.startSeconds == target.dashboardStartSeconds,
+              start.startMicroseconds == target.dashboardStartMicroseconds,
+              let ancestry = BridgeProcessAncestry.itermApplication(from: start, userID: getuid(),
+                  maximumDepth: 64, lookup: lookup),
+              let app = NSRunningApplication(processIdentifier: Int32(ancestry.application.pid)),
+              !app.isTerminated, app.activationPolicy != .prohibited,
+              app.bundleIdentifier == bundleID,
+              app.executableURL?.path == ancestry.application.executable else { throw Failure(.unavailable) }
+        return (app, ancestry)
     }
 
     private struct Context {
@@ -168,6 +161,7 @@ enum ITermFocus {
         let applicationStartSeconds: UInt64
         let applicationStartMicroseconds: UInt64
         let ttyDevice: UInt32
+        let ancestry: BridgeParentAncestry
         let ownerIsCurrent: () -> Bool
 
         init(_ target: ITermFocusTarget, ownerIsCurrent: @escaping () -> Bool) throws {
@@ -185,7 +179,9 @@ enum ITermFocus {
                   dashboard.pbi_start_tvusec == target.dashboardStartMicroseconds,
                   dashboard.e_tdev != UInt32.max else { throw Failure(.ownerChanged) }
             ttyDevice = dashboard.e_tdev
-            application = try parentApplication(target)
+            let parent = try parentApplication(target)
+            application = parent.application
+            ancestry = parent.ancestry
             let app = try process(application.processIdentifier)
             applicationStartSeconds = app.pbi_start_tvsec
             applicationStartMicroseconds = app.pbi_start_tvusec
@@ -198,12 +194,14 @@ enum ITermFocus {
             guard ownerIsCurrent() else { throw Failure(.ownerChanged) }
             let dashboard = try process(target.dashboardPID)
             let app = try process(application.processIdentifier)
+            let parent = try parentApplication(target)
             guard dashboard.pbi_start_tvsec == target.dashboardStartSeconds,
                   dashboard.pbi_start_tvusec == target.dashboardStartMicroseconds,
                   dashboard.e_tdev == ttyDevice,
                   app.pbi_start_tvsec == applicationStartSeconds,
                   app.pbi_start_tvusec == applicationStartMicroseconds,
-                  try parentApplication(target).processIdentifier == application.processIdentifier else {
+                  parent.application.processIdentifier == application.processIdentifier,
+                  parent.ancestry == ancestry else {
                 throw Failure(.ownerChanged)
             }
         }
