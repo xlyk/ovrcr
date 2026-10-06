@@ -118,7 +118,7 @@ else
     codesign --force --options runtime --timestamp --entitlements "$staged/Contents/Resources/OVRCRBridge.entitlements" --sign "$identity" "$staged"
 fi
 codesign --verify --deep --strict "$staged"
-codesign -d --entitlements - "$staged" > "$stage_dir/signed-entitlements.plist"
+codesign -d --entitlements - --xml "$staged" > "$stage_dir/signed-entitlements.plist"
 python3 -I - "$stage_dir/signed-entitlements.plist" <<'PY'
 import plistlib, sys
 with open(sys.argv[1], 'rb') as file:

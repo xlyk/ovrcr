@@ -65,6 +65,9 @@ explicit non-ad-hoc identity, checks the strict signature and bundled versions,
 and verifies regular resource bytes/license. The unchanged entitlement plist is
 stored in `Contents/Resources/OVRCRBridge.entitlements`, alongside the other
 non-code resources; validators reject a legacy copy directly under `Contents`.
+Entitlement readback explicitly requests XML because codesign's default display
+uses an abstract representation. The installer parses that plist and requires
+exactly the Apple Events entitlement with Boolean `true`.
 It verifies an existing app and
 refuses a changed designated signing requirement before replacement. A failed
 rename attempts restoration; unresolved recovery state is preserved.
