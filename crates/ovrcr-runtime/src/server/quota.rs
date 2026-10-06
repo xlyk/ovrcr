@@ -6,8 +6,10 @@ use ovrcr_protocol::{
     ProviderQuota, QuotaProvider, QuotaReport, QuotaSnapshot, QuotaSource, QuotaState, QuotaWindow,
 };
 use serde_json::{Value, json};
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -19,6 +21,11 @@ const REQUEST: Duration = Duration::from_secs(20);
 const MAX_RESPONSE: usize = 2 * 1024 * 1024;
 /// Least time between accepted manual refreshes.
 const COOLDOWN_MS: u64 = 30_000;
+/// Refresh a Grok access token this far before `expires_at`.
+const GROK_REFRESH_SKEW_MS: u64 = 5 * 60 * 1000;
+/// Wait for `auth.json.lock` across an IdP refresh (matches Grok CLI budget).
+const GROK_AUTH_LOCK_WAIT: Duration = Duration::from_secs(45);
+const GROK_TOKEN_URL: &str = "https://auth.x.ai/oauth2/token";
 pub struct NativeQuotaUpdate {
     pub(super) provider: QuotaProvider,
     pub(super) generation: u64,
@@ -1369,14 +1376,17 @@ fn read_grok_allowance(program: &NativeCommand) -> Result<(String, Vec<QuotaWind
     Ok((ident, native_windows(QuotaProvider::Grok, &value)?))
 }
 
-fn grok_token(program: &NativeCommand) -> Result<(String, String)> {
-    let path = program
+fn grok_auth_path(program: &NativeCommand) -> PathBuf {
+    program
         .home
         .clone()
         .or_else(|| std::env::var_os("GROK_HOME").map(PathBuf::from))
         .unwrap_or_else(|| home_dir().join(".grok"))
-        .join("auth.json");
-    let bytes = match std::fs::read(&path) {
+        .join("auth.json")
+}
+
+fn read_grok_auth(path: &Path) -> Result<Value> {
+    let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Err(Failure::new(QuotaState::NotSignedIn));
@@ -1388,28 +1398,298 @@ fn grok_token(program: &NativeCommand) -> Result<(String, String)> {
     }
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|_| Failure::unavailable("grok credentials unreadable"))?;
+    if !value.is_object() {
+        return Err(Failure::unavailable("grok credentials unreadable"));
+    }
+    Ok(value)
+}
+
+fn find_grok_entry(value: &Value) -> Result<(&str, &Value)> {
     let entries = value
         .as_object()
         .ok_or_else(|| Failure::unavailable("grok credentials unreadable"))?;
-    let entry = entries
+    entries
         .iter()
         .find(|(scope, _)| scope.starts_with("https://auth.x.ai::"))
         .or_else(|| entries.iter().find(|(scope, _)| scope.contains("sign-in")))
-        .map(|(_, entry)| entry)
-        .ok_or_else(|| Failure::new(QuotaState::NotSignedIn))?;
-    if let Some(expires) = entry["expires_at"].as_str() {
-        let expired = chrono::DateTime::parse_from_rfc3339(expires)
-            .map(|stamp| stamp.timestamp_millis() <= i64::try_from(now_ms()).unwrap_or(i64::MAX))
-            .unwrap_or(false);
-        if expired {
-            return Err(Failure::new(QuotaState::NotSignedIn).because("login expired"));
-        }
-    }
-    let token = entry["key"]
+        .map(|(scope, entry)| (scope.as_str(), entry))
+        .ok_or_else(|| Failure::new(QuotaState::NotSignedIn))
+}
+
+fn grok_access_token(entry: &Value) -> Result<&str> {
+    entry["key"]
         .as_str()
         .filter(|token| !token.is_empty() && token.len() <= 8192)
+        .ok_or_else(|| Failure::new(QuotaState::NotSignedIn))
+}
+
+fn grok_token_near_expiry(entry: &Value) -> bool {
+    let Some(expires) = entry["expires_at"].as_str() else {
+        return false;
+    };
+    let Ok(stamp) = chrono::DateTime::parse_from_rfc3339(expires) else {
+        return false;
+    };
+    let skew = i64::try_from(GROK_REFRESH_SKEW_MS).unwrap_or(i64::MAX);
+    let now = i64::try_from(now_ms()).unwrap_or(i64::MAX);
+    stamp.timestamp_millis() <= now.saturating_add(skew)
+}
+
+fn usable_grok_access_token(entry: &Value) -> Option<&str> {
+    if grok_token_near_expiry(entry) {
+        return None;
+    }
+    grok_access_token(entry).ok()
+}
+
+fn grok_client_id(scope: &str, entry: &Value) -> Result<String> {
+    if let Some(id) = entry["oidc_client_id"]
+        .as_str()
+        .map(str::trim)
+        .filter(|id| !id.is_empty() && id.len() <= 256)
+    {
+        return Ok(id.to_owned());
+    }
+    if let Some((_, suffix)) = scope.rsplit_once("::") {
+        let id = suffix.trim();
+        if !id.is_empty() && id.len() <= 256 {
+            return Ok(id.to_owned());
+        }
+    }
+    Err(Failure::new(QuotaState::NotSignedIn).because("refresh unavailable"))
+}
+
+fn grok_refresh_token(entry: &Value) -> Result<&str> {
+    entry["refresh_token"]
+        .as_str()
+        .map(str::trim)
+        .filter(|token| !token.is_empty() && token.len() <= 8192)
+        .ok_or_else(|| Failure::new(QuotaState::NotSignedIn).because("login expired"))
+}
+
+/// Exclusive advisory lock on the sibling `auth.json.lock` file (Grok CLI).
+struct GrokAuthLock {
+    file: File,
+}
+
+impl GrokAuthLock {
+    fn acquire(auth_path: &Path) -> Result<Self> {
+        let lock_path = auth_path.with_file_name("auth.json.lock");
+        if let Some(parent) = lock_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let deadline = Instant::now() + GROK_AUTH_LOCK_WAIT;
+        loop {
+            let file = OpenOptions::new()
+                .create(true)
+                .read(true)
+                .write(true)
+                .truncate(false)
+                .mode(0o600)
+                .open(&lock_path)
+                .map_err(|_| Failure::unavailable("grok credentials busy"))?;
+            let locked =
+                unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
+            if locked {
+                return Ok(Self { file });
+            }
+            if Instant::now() >= deadline {
+                return Err(Failure::unavailable("grok credentials busy"));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    fn still_live(&self, auth_path: &Path) -> bool {
+        use std::os::unix::fs::MetadataExt;
+        let lock_path = auth_path.with_file_name("auth.json.lock");
+        let (Ok(fd_meta), Ok(path_meta)) = (self.file.metadata(), std::fs::metadata(&lock_path))
+        else {
+            return false;
+        };
+        fd_meta.ino() == path_meta.ino() && fd_meta.dev() == path_meta.dev()
+    }
+}
+
+impl Drop for GrokAuthLock {
+    fn drop(&mut self) {
+        let _ = unsafe { libc::flock(self.file.as_raw_fd(), libc::LOCK_UN) };
+    }
+}
+
+struct GrokTokenRefresh {
+    access_token: String,
+    refresh_token: Option<String>,
+    id_token: Option<String>,
+    expires_in: Option<u64>,
+}
+
+fn redeem_grok_refresh(client_id: &str, refresh_token: &str) -> Result<GrokTokenRefresh> {
+    let url = loopback_or("OVRCR_QUOTA_GROK_TOKEN_URL", GROK_TOKEN_URL);
+    let body = http_post_form(
+        &url,
+        &[
+            ("grant_type", "refresh_token"),
+            ("client_id", client_id),
+            ("refresh_token", refresh_token),
+        ],
+    )?;
+    let value: Value = serde_json::from_str(&body)
+        .map_err(|_| Failure::unavailable("refresh reply unreadable"))?;
+    let access_token = value["access_token"]
+        .as_str()
+        .map(str::trim)
+        .filter(|token| !token.is_empty() && token.len() <= 8192)
+        .ok_or_else(|| Failure::new(QuotaState::NotSignedIn).because("login expired"))?
+        .to_owned();
+    let refresh_token = value["refresh_token"]
+        .as_str()
+        .map(str::trim)
+        .filter(|token| !token.is_empty() && token.len() <= 8192)
+        .map(str::to_owned);
+    let id_token = value["id_token"]
+        .as_str()
+        .map(str::trim)
+        .filter(|token| !token.is_empty() && token.len() <= 16_384)
+        .map(str::to_owned);
+    let expires_in = value["expires_in"].as_u64().or_else(|| {
+        value["expires_in"]
+            .as_f64()
+            .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+            .map(|seconds| seconds as u64)
+    });
+    Ok(GrokTokenRefresh {
+        access_token,
+        refresh_token,
+        id_token,
+        expires_in,
+    })
+}
+
+fn write_grok_auth_atomic(path: &Path, value: &Value) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| Failure::unavailable("grok credentials unwritable"))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|_| Failure::unavailable("grok credentials unwritable"))?;
+    let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+    let write = (|| -> Result<()> {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)
+            .map_err(|_| Failure::unavailable("grok credentials unwritable"))?;
+        serde_json::to_writer_pretty(&mut file, value)
+            .map_err(|_| Failure::unavailable("grok credentials unwritable"))?;
+        file.write_all(b"\n")
+            .map_err(|_| Failure::unavailable("grok credentials unwritable"))?;
+        file.sync_all()
+            .map_err(|_| Failure::unavailable("grok credentials unwritable"))?;
+        Ok(())
+    })();
+    if let Err(error) = write {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(error);
+    }
+    std::fs::rename(&tmp, path).map_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+        Failure::unavailable("grok credentials unwritable")
+    })?;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    Ok(())
+}
+
+fn apply_grok_refresh(entry: &mut Value, refreshed: &GrokTokenRefresh) {
+    let Some(object) = entry.as_object_mut() else {
+        return;
+    };
+    object.insert("key".into(), Value::String(refreshed.access_token.clone()));
+    if let Some(token) = &refreshed.refresh_token {
+        object.insert("refresh_token".into(), Value::String(token.clone()));
+    }
+    if let Some(token) = &refreshed.id_token {
+        object.insert("id_token".into(), Value::String(token.clone()));
+    }
+    let expires_at = refreshed
+        .expires_in
+        .and_then(|seconds| {
+            let millis = now_ms().checked_add(seconds.saturating_mul(1000))?;
+            chrono::DateTime::<chrono::Utc>::from_timestamp_millis(i64::try_from(millis).ok()?)
+        })
+        .unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::hours(1))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    object.insert("expires_at".into(), Value::String(expires_at));
+}
+
+fn refresh_grok_access_token(path: &Path) -> Result<(String, String)> {
+    let lock = match GrokAuthLock::acquire(path) {
+        Ok(lock) => lock,
+        Err(busy) => {
+            // Sibling may have finished while we waited.
+            if let Ok(value) = read_grok_auth(path)
+                && let Ok((_, entry)) = find_grok_entry(&value)
+                && let Some(token) = usable_grok_access_token(entry)
+            {
+                return Ok((fingerprint(token), token.to_owned()));
+            }
+            return Err(busy);
+        }
+    };
+    let value = read_grok_auth(path)?;
+    let (scope, _) = find_grok_entry(&value)?;
+    let scope = scope.to_owned();
+    let entry = value
+        .get(&scope)
         .ok_or_else(|| Failure::new(QuotaState::NotSignedIn))?;
-    Ok((fingerprint(token), token.to_owned()))
+    if let Some(token) = usable_grok_access_token(entry) {
+        return Ok((fingerprint(token), token.to_owned()));
+    }
+    let client_id = grok_client_id(&scope, entry)?;
+    let refresh = grok_refresh_token(entry)?.to_owned();
+    if !lock.still_live(path) {
+        // Lock broken under us: adopt sibling bytes if present.
+        drop(lock);
+        let value = read_grok_auth(path)?;
+        let (_, entry) = find_grok_entry(&value)?;
+        if let Some(token) = usable_grok_access_token(entry) {
+            return Ok((fingerprint(token), token.to_owned()));
+        }
+        return Err(Failure::unavailable("grok credentials busy"));
+    }
+    let refreshed = redeem_grok_refresh(&client_id, &refresh)?;
+    if !lock.still_live(path) {
+        drop(lock);
+        let value = read_grok_auth(path)?;
+        let (_, entry) = find_grok_entry(&value)?;
+        if let Some(token) = usable_grok_access_token(entry) {
+            return Ok((fingerprint(token), token.to_owned()));
+        }
+        return Err(Failure::unavailable("grok credentials busy"));
+    }
+    // Re-read so unknown fields and sibling accounts survive.
+    let mut value = read_grok_auth(path)?;
+    let entry = value
+        .get_mut(&scope)
+        .ok_or_else(|| Failure::new(QuotaState::NotSignedIn))?;
+    apply_grok_refresh(entry, &refreshed);
+    write_grok_auth_atomic(path, &value)?;
+    drop(lock);
+    let token = refreshed.access_token;
+    Ok((fingerprint(&token), token))
+}
+
+fn grok_token(program: &NativeCommand) -> Result<(String, String)> {
+    let path = grok_auth_path(program);
+    let value = read_grok_auth(&path)?;
+    let (_, entry) = find_grok_entry(&value)?;
+    if let Some(token) = usable_grok_access_token(entry) {
+        return Ok((fingerprint(token), token.to_owned()));
+    }
+    // Expired or near expiry: redeem refresh_token under auth.json.lock.
+    // Do not spawn the Grok TUI.
+    refresh_grok_access_token(&path)
 }
 
 fn claude_usage_windows(value: &Value) -> Result<Vec<QuotaWindow>> {
@@ -1543,9 +1823,51 @@ pub(super) fn http_get(url: &str, headers: &[(&str, &str)]) -> Result<String> {
     Ok(body)
 }
 
+fn http_post_form(url: &str, form: &[(&str, &str)]) -> Result<String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout(REQUEST)
+        .timeout_connect(Duration::from_secs(10))
+        .timeout_read(REQUEST)
+        .redirects(0)
+        .build();
+    let response = match agent.post(url).send_form(form) {
+        Ok(response) => response,
+        Err(ureq::Error::Status(status, response)) => {
+            let _ = std::io::copy(
+                &mut response.into_reader().take(MAX_RESPONSE as u64),
+                &mut std::io::sink(),
+            );
+            return Err(match status {
+                400 | 401 | 403 => Failure::new(QuotaState::NotSignedIn).because("login expired"),
+                429 => Failure::unavailable("HTTP 429"),
+                100..=599 => Failure::unavailable(format!("HTTP {status}")),
+                _ => Failure::unavailable("request failed"),
+            });
+        }
+        Err(_) => return Err(Failure::unavailable("request failed")),
+    };
+    if response.status() != 200 {
+        return Err(Failure::unavailable(format!("HTTP {}", response.status())));
+    }
+    let mut body = String::new();
+    response
+        .into_reader()
+        .take(MAX_RESPONSE as u64 + 1)
+        .read_to_string(&mut body)
+        .map_err(|_| Failure::unavailable("reply unreadable"))?;
+    if body.len() > MAX_RESPONSE {
+        return Err(Failure::new(QuotaState::Invalid).because("reply too large"));
+    }
+    Ok(body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// `OVRCR_QUOTA_GROK_TOKEN_URL` is process-wide; serialize tests that set it.
+    static GROK_TOKEN_ENV: Mutex<()> = Mutex::new(());
 
     fn enabled_state(enabled: bool) -> Arc<ServerState> {
         let state = super::super::tests::test_state(None, None);
@@ -1894,5 +2216,231 @@ mod tests {
                 .iter()
                 .all(|event| event.component == ovrcr_protocol::EventComponent::Quota)
         );
+    }
+
+    fn grok_home_program(root: &Path) -> NativeCommand {
+        NativeCommand {
+            command: "/bin/true".into(),
+            home: Some(root.to_path_buf()),
+        }
+    }
+
+    fn write_auth(root: &Path, document: Value) {
+        std::fs::write(
+            root.join("auth.json"),
+            serde_json::to_vec_pretty(&document).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn expired_entry() -> Value {
+        json!({
+            "key": "expired-access-token",
+            "refresh_token": "refresh-secret",
+            "oidc_client_id": "client-fixture",
+            "expires_at": "2020-01-01T00:00:00.000Z",
+            "custom_field": "keep"
+        })
+    }
+
+    /// One-shot loopback HTTP server. Returns the listen URL and a channel of
+    /// request bodies (headers + body) for assertions.
+    fn serve_form_once(
+        status: u16,
+        response_body: &str,
+    ) -> (
+        String,
+        std::sync::mpsc::Receiver<String>,
+        std::thread::JoinHandle<()>,
+    ) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let response_body = response_body.to_owned();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            loop {
+                let mut chunk = [0_u8; 1024];
+                let count = stream.read(&mut chunk).unwrap();
+                if count == 0 {
+                    break;
+                }
+                request.extend_from_slice(&chunk[..count]);
+                let text = String::from_utf8_lossy(&request);
+                let Some(header_end) = text.find("\r\n\r\n") else {
+                    continue;
+                };
+                let content_length = text[..header_end]
+                    .lines()
+                    .find_map(|line| {
+                        line.to_ascii_lowercase()
+                            .strip_prefix("content-length: ")
+                            .and_then(|value| value.parse::<usize>().ok())
+                    })
+                    .unwrap_or(0);
+                if request.len() >= header_end + 4 + content_length {
+                    break;
+                }
+            }
+            let _ = sender.send(String::from_utf8_lossy(&request).into_owned());
+            let response = format!(
+                "HTTP/1.1 {status} OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{response_body}",
+                response_body.len(),
+            );
+            let _ = stream.write_all(response.as_bytes());
+        });
+        (format!("http://{address}/"), receiver, handle)
+    }
+
+    #[test]
+    fn grok_refresh_redeems_expired_access_token_and_rewrites_auth_json() {
+        let _env = GROK_TOKEN_ENV.lock().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        write_auth(
+            root.path(),
+            json!({
+                "https://auth.x.ai::client-fixture": expired_entry(),
+                "other": {"key": "other-token", "nested": {"keep": true}}
+            }),
+        );
+        let (url, requests, handle) = serve_form_once(
+            200,
+            r#"{"access_token":"new-access","refresh_token":"new-refresh","id_token":"new-id","expires_in":3600}"#,
+        );
+        // SAFETY: test-only process env for the loopback token seam.
+        unsafe {
+            std::env::set_var("OVRCR_QUOTA_GROK_TOKEN_URL", &url);
+        }
+        let result = grok_token(&grok_home_program(root.path()));
+        unsafe {
+            std::env::remove_var("OVRCR_QUOTA_GROK_TOKEN_URL");
+        }
+        let (ident, token) = result.expect("refresh should succeed");
+        assert_eq!(token, "new-access");
+        assert_eq!(ident, fingerprint("new-access"));
+        let request = requests.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(request.starts_with("POST "));
+        let body = request.split("\r\n\r\n").nth(1).unwrap_or_default();
+        assert!(body.contains("grant_type=refresh_token"));
+        assert!(body.contains("client_id=client-fixture"));
+        assert!(body.contains("refresh_token=refresh-secret"));
+        assert!(
+            !request.contains("expired-access-token"),
+            "access token must not appear on the token request"
+        );
+        handle.join().unwrap();
+        let saved: Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("auth.json")).unwrap()).unwrap();
+        let entry = &saved["https://auth.x.ai::client-fixture"];
+        assert_eq!(entry["key"], "new-access");
+        assert_eq!(entry["refresh_token"], "new-refresh");
+        assert_eq!(entry["id_token"], "new-id");
+        assert_eq!(entry["custom_field"], "keep");
+        assert_eq!(saved["other"]["nested"]["keep"], true);
+        let expires = entry["expires_at"].as_str().unwrap();
+        let stamp = chrono::DateTime::parse_from_rfc3339(expires).unwrap();
+        assert!(stamp.timestamp_millis() > i64::try_from(now_ms()).unwrap());
+        let mode = std::fs::metadata(root.path().join("auth.json"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn grok_refresh_rejected_token_is_not_signed_in_without_rewriting() {
+        let _env = GROK_TOKEN_ENV.lock().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let before = json!({
+            "https://auth.x.ai::client-fixture": expired_entry()
+        });
+        write_auth(root.path(), before.clone());
+        let (url, requests, handle) = serve_form_once(401, r#"{"error":"invalid_grant"}"#);
+        unsafe {
+            std::env::set_var("OVRCR_QUOTA_GROK_TOKEN_URL", &url);
+        }
+        let err = grok_token(&grok_home_program(root.path())).unwrap_err();
+        unsafe {
+            std::env::remove_var("OVRCR_QUOTA_GROK_TOKEN_URL");
+        }
+        assert_eq!(err.state, QuotaState::NotSignedIn);
+        assert_eq!(err.reason, "login expired");
+        assert!(!err.reason.contains("refresh-secret"));
+        assert!(!err.reason.contains("invalid_grant"));
+        let _ = requests.recv_timeout(Duration::from_secs(2)).unwrap();
+        handle.join().unwrap();
+        let after: Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("auth.json")).unwrap()).unwrap();
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn grok_refresh_missing_refresh_token_stays_not_signed_in() {
+        let root = tempfile::tempdir().unwrap();
+        write_auth(
+            root.path(),
+            json!({
+                "https://auth.x.ai::client-fixture": {
+                    "key": "expired-access-token",
+                    "oidc_client_id": "client-fixture",
+                    "expires_at": "2020-01-01T00:00:00.000Z"
+                }
+            }),
+        );
+        let err = grok_token(&grok_home_program(root.path())).unwrap_err();
+        assert_eq!(err.state, QuotaState::NotSignedIn);
+        assert_eq!(err.reason, "login expired");
+    }
+
+    #[test]
+    fn grok_refresh_adopts_sibling_credentials_under_the_lock() {
+        use std::sync::{Arc, Barrier};
+        let _env = GROK_TOKEN_ENV.lock().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        write_auth(
+            root.path(),
+            json!({
+                "https://auth.x.ai::client-fixture": expired_entry()
+            }),
+        );
+        let auth_path = root.path().join("auth.json");
+        let lock = GrokAuthLock::acquire(&auth_path).unwrap();
+        let barrier = Arc::new(Barrier::new(2));
+        let barrier_reader = Arc::clone(&barrier);
+        let program = grok_home_program(root.path());
+        // Token URL points at a closed port so a mistaken redeem would fail.
+        unsafe {
+            std::env::set_var("OVRCR_QUOTA_GROK_TOKEN_URL", "http://127.0.0.1:1/");
+        }
+        let reader = std::thread::spawn(move || {
+            barrier_reader.wait();
+            grok_token(&program)
+        });
+        barrier.wait();
+        // Give the reader time to block on the lock, then write fresh creds.
+        std::thread::sleep(Duration::from_millis(100));
+        write_auth(
+            root.path(),
+            json!({
+                "https://auth.x.ai::client-fixture": {
+                    "key": "sibling-access",
+                    "refresh_token": "sibling-refresh",
+                    "oidc_client_id": "client-fixture",
+                    "expires_at": "2099-01-01T00:00:00.000Z"
+                }
+            }),
+        );
+        drop(lock);
+        let result = reader.join().unwrap();
+        unsafe {
+            std::env::remove_var("OVRCR_QUOTA_GROK_TOKEN_URL");
+        }
+        let (ident, token) = result.expect("should adopt sibling");
+        assert_eq!(token, "sibling-access");
+        assert_eq!(ident, fingerprint("sibling-access"));
     }
 }
