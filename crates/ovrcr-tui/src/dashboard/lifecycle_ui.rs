@@ -142,10 +142,10 @@ impl Dashboard {
         let Some(workspace) = super::state::find_workspace(self, &project, &id).cloned() else {
             return DashboardAction::Redraw;
         };
-        self.provisional = None;
-        self.lifecycle_strip = None;
-        self.dismiss_error_banner();
         if workspace.sessions.is_empty() {
+            self.provisional = None;
+            self.lifecycle_strip = None;
+            self.dismiss_error_banner();
             self.select_container(TreeRow::Workspace {
                 project: workspace.project.clone(),
                 id: workspace.id.clone(),
@@ -167,12 +167,18 @@ impl Dashboard {
             let summary = super::state::find_session(self, session)
                 .cloned()
                 .unwrap_or_else(|| workspace.sessions[0].clone());
+            self.provisional = None;
+            self.lifecycle_strip = None;
+            self.dismiss_error_banner();
             return self.select_created_session(summary);
         }
+        // Launched first terminal is named after the workspace, not `local`.
+        // Wait for LifecycleCompleted::CreatedSession rather than dropping fiction here.
         DashboardAction::Redraw
     }
 
-    /// Hierarchy may land before or after LifecycleCompleted; attach when both truth and fiction agree.
+    /// Hierarchy may land before LifecycleCompleted. Only auto-attach empty workspaces;
+    /// WithLaunch waits for CreatedSession so we do not drop the Provisional early.
     pub(super) fn try_attach_lifecycle_workspace_from_hierarchy(
         &mut self,
     ) -> Option<DashboardAction> {
@@ -182,7 +188,15 @@ impl Dashboard {
         let ProvisionalKind::CreatingWorkspace { project, id, .. } = &row.kind else {
             return None;
         };
-        super::state::find_workspace(self, project, id)?;
+        let workspace = super::state::find_workspace(self, project, id)?;
+        let ready = workspace.sessions.is_empty()
+            || workspace.sessions.iter().any(|session| {
+                session.name == "local" && session.phase == crate::session::SessionPhase::Running
+            });
+        if !ready {
+            // Named launch session: wait for LifecycleCompleted::CreatedSession.
+            return None;
+        }
         let project = project.clone();
         let id = id.clone();
         Some(self.attach_lifecycle_workspace(project, id))
@@ -280,17 +294,28 @@ impl Dashboard {
         op: LifecycleOp,
         outcome: LifecycleOutcome,
     ) -> DashboardAction {
-        let Some(mut row) = self.provisional.take() else {
-            return DashboardAction::Redraw;
-        };
-        if row.token != client_token {
-            self.provisional = Some(row);
-            return DashboardAction::None;
-        }
         // CreateWorkspaceWithLaunch shares the CreatingWorkspace provisional.
         let _ = op;
         match outcome {
+            LifecycleOutcome::CreatedSession(summary) => {
+                // Hierarchy may have arrived first; still select from the typed outcome.
+                if let Some(row) = &self.provisional
+                    && row.token != client_token
+                {
+                    return DashboardAction::None;
+                }
+                self.provisional = None;
+                self.lifecycle_strip = None;
+                self.select_created_session(*summary)
+            }
             LifecycleOutcome::Succeeded => {
+                let Some(row) = self.provisional.take() else {
+                    return DashboardAction::Redraw;
+                };
+                if row.token != client_token {
+                    self.provisional = Some(row);
+                    return DashboardAction::None;
+                }
                 self.lifecycle_strip = None;
                 match &row.kind {
                     ProvisionalKind::CreatingWorkspace { project, id, .. } => {
@@ -298,16 +323,25 @@ impl Dashboard {
                         let id = id.clone();
                         // Keep provisional until hierarchy has the row, then attach.
                         self.provisional = Some(row);
-                        self.attach_lifecycle_workspace(project, id)
+                        let action = self.attach_lifecycle_workspace(project, id);
+                        if self.provisional.is_some() {
+                            // Job finished but no empty/local attach target (e.g. exited local).
+                            self.provisional = None;
+                            self.lifecycle_strip = None;
+                        }
+                        action
                     }
                     _ => DashboardAction::Redraw,
                 }
             }
-            LifecycleOutcome::CreatedSession(summary) => {
-                self.lifecycle_strip = None;
-                self.select_created_session(*summary)
-            }
             LifecycleOutcome::Failed { code, message } => {
+                let Some(mut row) = self.provisional.take() else {
+                    return DashboardAction::Redraw;
+                };
+                if row.token != client_token {
+                    self.provisional = Some(row);
+                    return DashboardAction::None;
+                }
                 // Preserve the sync remove UX: DirtyWorktree / SessionsRemain reopen as force.
                 if let ProvisionalKind::RemovingWorkspace { project, id } = &row.kind
                     && matches!(code, ErrorCode::DirtyWorktree | ErrorCode::SessionsRemain)
@@ -495,6 +529,52 @@ mod tests {
         assert!(d.dismiss_lifecycle_strip());
         assert!(d.dismiss_failed_provisional());
         assert!(d.provisional.is_none());
+    }
+
+    #[test]
+    fn created_session_selects_even_without_matching_provisional() {
+        use crate::protocol::{
+            LifecycleOp, LifecycleOutcome, SessionKind, SessionPhase, SessionRunId,
+        };
+        use crate::session::{AgentActivity, SessionSummary};
+        use std::path::PathBuf;
+        let mut d =
+            crate::dashboard::Dashboard::new(crate::session::TerminalSize { rows: 24, cols: 80 });
+        let summary = SessionSummary {
+            id: crate::protocol::SessionId(42),
+            archived: false,
+            cwd: PathBuf::from("/tmp"),
+            run: SessionRunId(1),
+            kind: SessionKind::Terminal,
+            recovery: None,
+            project: "p".into(),
+            workspace: "wid".into(),
+            name: "wizard".into(),
+            label: String::new(),
+            pid: None,
+            started_unix_ms: None,
+            phase: SessionPhase::Running,
+            activity: AgentActivity::Idle,
+            agent: None,
+            agent_epoch: 0,
+            unread: None,
+            context_usage: None,
+            title: None,
+            manual_title: None,
+        };
+        let action = d.on_lifecycle_completed(
+            7,
+            LifecycleOp::CreateWorkspaceWithLaunch,
+            LifecycleOutcome::CreatedSession(Box::new(summary)),
+        );
+        assert!(d.provisional.is_none());
+        assert_eq!(d.focused_session(), Some(crate::protocol::SessionId(42)));
+        assert!(matches!(
+            action,
+            DashboardAction::Request(_)
+                | DashboardAction::RequestBatch(_)
+                | DashboardAction::Redraw
+        ));
     }
 
     #[test]

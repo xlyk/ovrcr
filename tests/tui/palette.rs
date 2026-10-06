@@ -1271,9 +1271,17 @@ fn workspace_created_with_exited_local_shell_closes_palette() {
         signal: None,
     };
     workspace.sessions[0].pid = None;
-    let outgoing = dashboard.handle_server_message(ServerMessage::Event(
-        ServerEvent::HierarchyChanged(hierarchy),
-    ));
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy,
+    )));
+    // Hierarchy alone must not attach an exited local; LifecycleCompleted finishes fiction.
+    assert_ne!(dashboard.focused_session(), Some(SessionId(99)));
+    let outgoing =
+        dashboard.handle_server_message(ServerMessage::Event(ServerEvent::LifecycleCompleted {
+            client_token: message.request_id,
+            op: ovrcr::protocol::LifecycleOp::CreateWorkspaceWithLaunch,
+            outcome: ovrcr::protocol::LifecycleOutcome::Succeeded,
+        }));
     let text = palette_text(&dashboard);
     assert!(
         !text.lines().any(|line| line.contains("┌ Create workspace")),
