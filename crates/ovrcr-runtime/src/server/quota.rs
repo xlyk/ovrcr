@@ -33,7 +33,7 @@ pub struct NativeQuotaUpdate {
 pub(super) struct Refresh {
     /// Unix milliseconds of the last accepted manual refresh, on [`clock_ms`].
     last_ms: Option<u64>,
-    due: [bool; 2],
+    due: [bool; 3],
     /// The Claude row's state and reason while `claude auth status` rules an
     /// allowance out; `None` while signed in through claude.ai.
     pub(super) claude_auth: Option<(QuotaState, String)>,
@@ -45,10 +45,15 @@ pub(super) struct Refresh {
     pub(super) claude_account: Option<ProviderQuota>,
 }
 
+pub(super) fn take_cursor_due(state: &ServerState) -> bool {
+    std::mem::take(&mut state.quota_refresh.lock().unwrap().due[2])
+}
+
 fn slot(provider: QuotaProvider) -> Option<usize> {
     match provider {
         QuotaProvider::Codex => Some(0),
         QuotaProvider::Grok => Some(1),
+        QuotaProvider::Cursor => None,
         QuotaProvider::Claude => None,
     }
 }
@@ -61,6 +66,12 @@ fn slot(provider: QuotaProvider) -> Option<usize> {
 pub(super) fn request_refresh(state: &ServerState, provider: Option<QuotaProvider>) -> Response {
     let settings = state.quota_settings();
     let probe = settings.claude_probe;
+    if provider == Some(QuotaProvider::Cursor) && !settings.cursor.dashboard {
+        return Response::Error {
+            code: ErrorCode::InvalidRequest,
+            message: ovrcr_protocol::CURSOR_QUOTA_OFF.into(),
+        };
+    }
     if provider == Some(QuotaProvider::Claude) && !probe {
         return Response::Error {
             code: ErrorCode::InvalidRequest,
@@ -96,11 +107,17 @@ pub(super) fn request_refresh(state: &ServerState, provider: Option<QuotaProvide
         refresh.claude_probe_due = true;
     }
     if settings.enabled {
-        for (index, native) in [QuotaProvider::Codex, QuotaProvider::Grok]
-            .into_iter()
-            .enumerate()
+        for (index, native) in [
+            QuotaProvider::Codex,
+            QuotaProvider::Grok,
+            QuotaProvider::Cursor,
+        ]
+        .into_iter()
+        .enumerate()
         {
-            if provider.is_none_or(|provider| provider == native) {
+            if (native != QuotaProvider::Cursor || settings.cursor.dashboard)
+                && provider.is_none_or(|provider| provider == native)
+            {
                 refresh.due[index] = true;
             }
         }
@@ -119,6 +136,8 @@ pub(super) fn request_refresh(state: &ServerState, provider: Option<QuotaProvide
 fn consent_row(provider: QuotaProvider, enabled: bool) -> ProviderQuota {
     if enabled {
         ProviderQuota::unknown(provider, QuotaState::Checking)
+    } else if provider == QuotaProvider::Cursor {
+        QuotaSnapshot::default().cursor
     } else if provider == QuotaProvider::Grok {
         QuotaSnapshot::default().grok
     } else {
@@ -126,27 +145,56 @@ fn consent_row(provider: QuotaProvider, enabled: bool) -> ProviderQuota {
     }
 }
 
-pub(super) fn initial(enabled: bool) -> QuotaSnapshot {
+fn cursor_consent(settings: &ovrcr_protocol::QuotaSettings) -> ProviderQuota {
+    if !settings.cursor.dashboard {
+        return QuotaSnapshot::default().cursor;
+    }
+    if settings.enabled {
+        return ProviderQuota::unknown(QuotaProvider::Cursor, QuotaState::Checking);
+    }
+    ProviderQuota {
+        reason: Some("Cursor usage off: set `quota.enabled = true` in dashboard.toml".into()),
+        ..ProviderQuota::unknown(QuotaProvider::Cursor, QuotaState::Disabled)
+    }
+}
+
+pub(super) fn initial(settings: &ovrcr_protocol::QuotaSettings) -> QuotaSnapshot {
+    let enabled = settings.enabled;
     QuotaSnapshot {
         codex: consent_row(QuotaProvider::Codex, enabled),
         grok: consent_row(QuotaProvider::Grok, enabled),
+        cursor: cursor_consent(settings),
         ..QuotaSnapshot::default()
     }
 }
 
 /// Follow `quota.enabled` in the Server's stored reading. Returns whether a row changed.
 pub(super) fn sync_consent(state: &ServerState) -> bool {
-    let enabled = state.quota_settings().enabled;
+    let settings = state.quota_settings();
+    let enabled = settings.enabled;
     let mut changed = false;
     let transitions = {
         let mut guard = state.quotas.lock().unwrap();
         let snapshots = &mut *guard;
         let mut transitions = Vec::new();
-        for row in [&mut snapshots.codex, &mut snapshots.grok] {
-            if enabled == (row.state == QuotaState::Disabled) {
+        for row in [
+            &mut snapshots.codex,
+            &mut snapshots.grok,
+            &mut snapshots.cursor,
+        ] {
+            let enabled =
+                enabled && (row.provider != QuotaProvider::Cursor || settings.cursor.dashboard);
+            let desired = if row.provider == QuotaProvider::Cursor {
+                cursor_consent(&settings)
+            } else {
+                consent_row(row.provider, enabled)
+            };
+            if enabled == (row.state == QuotaState::Disabled)
+                || (!enabled && row.reason != desired.reason)
+            {
                 let before_state = row.state;
                 let before_reason = row.reason.clone();
-                *row = consent_row(row.provider, enabled);
+                *row = desired;
                 transitions.push((
                     row.provider,
                     before_state,
@@ -272,7 +320,11 @@ fn claude_auth(state: &ServerState, command: &Path) -> Result<()> {
 const LADDER: [u64; 4] = [1, 2, 5, 10];
 
 /// A provider Retry-After wins; a deterministic failure waits the cap at once.
-fn backoff(failures: u32, deterministic: bool, retry_after: Option<Duration>) -> Duration {
+pub(super) fn backoff(
+    failures: u32,
+    deterministic: bool,
+    retry_after: Option<Duration>,
+) -> Duration {
     retry_after.unwrap_or_else(|| {
         let step = if deterministic {
             LADDER.len() - 1
@@ -311,6 +363,7 @@ pub(super) fn apply(state: &ServerState, update: NativeQuotaUpdate) {
     if update.generation == 0
         || update.report.validate().is_err()
         || !state.quota_settings().enabled
+        || (update.provider == QuotaProvider::Cursor && !state.quota_settings().cursor.dashboard)
     {
         return;
     }
@@ -318,6 +371,7 @@ pub(super) fn apply(state: &ServerState, update: NativeQuotaUpdate) {
     let target = match update.provider {
         QuotaProvider::Codex => &mut snapshots.codex,
         QuotaProvider::Grok => &mut snapshots.grok,
+        QuotaProvider::Cursor => &mut snapshots.cursor,
         QuotaProvider::Claude => return,
     };
     let before_state = target.state;
@@ -595,15 +649,16 @@ pub(super) fn run(state: Arc<ServerState>, provider: QuotaProvider) {
 }
 
 /// A failed read and its Quota reason: OVRCR's own words, never native bytes.
-struct Failure {
-    state: QuotaState,
-    retry_after: Option<Duration>,
-    reason: String,
+#[derive(Debug)]
+pub(super) struct Failure {
+    pub(super) state: QuotaState,
+    pub(super) retry_after: Option<Duration>,
+    pub(super) reason: String,
     /// Retrying soon cannot help: not found, unsupported, not signed in.
-    deterministic: bool,
+    pub(super) deterministic: bool,
 }
 impl Failure {
-    fn new(state: QuotaState) -> Self {
+    pub(super) fn new(state: QuotaState) -> Self {
         Self {
             state,
             retry_after: None,
@@ -611,11 +666,11 @@ impl Failure {
             deterministic: matches!(state, QuotaState::NotSignedIn | QuotaState::Unsupported),
         }
     }
-    fn because(mut self, reason: impl Into<String>) -> Self {
+    pub(super) fn because(mut self, reason: impl Into<String>) -> Self {
         self.reason = reason.into();
         self
     }
-    fn unavailable(reason: impl Into<String>) -> Self {
+    pub(super) fn unavailable(reason: impl Into<String>) -> Self {
         Self::new(QuotaState::Unavailable).because(reason)
     }
 }
@@ -1438,8 +1493,9 @@ fn loopback_or(var: &str, default: &str) -> String {
     }
 }
 
-fn http_get(url: &str, headers: &[(&str, &str)]) -> Result<String> {
+pub(super) fn http_get(url: &str, headers: &[(&str, &str)]) -> Result<String> {
     let agent = ureq::AgentBuilder::new()
+        .timeout(REQUEST)
         .timeout_connect(Duration::from_secs(10))
         .timeout_read(REQUEST)
         .redirects(0)
@@ -1472,12 +1528,18 @@ fn http_get(url: &str, headers: &[(&str, &str)]) -> Result<String> {
         }
         Err(_) => return Err(Failure::unavailable("request failed")),
     };
+    if response.status() != 200 {
+        return Err(Failure::unavailable(format!("HTTP {}", response.status())));
+    }
     let mut body = String::new();
     response
         .into_reader()
-        .take(MAX_RESPONSE as u64)
+        .take(MAX_RESPONSE as u64 + 1)
         .read_to_string(&mut body)
         .map_err(|_| Failure::unavailable("reply unreadable"))?;
+    if body.len() > MAX_RESPONSE {
+        return Err(Failure::new(QuotaState::Invalid).because("reply too large"));
+    }
     Ok(body)
 }
 
@@ -1611,34 +1673,52 @@ mod tests {
             request_refresh(&state, Some(QuotaProvider::Grok)),
             Response::Ok
         );
-        assert_eq!(state.quota_refresh.lock().unwrap().due, [false, true]);
+        assert_eq!(
+            state.quota_refresh.lock().unwrap().due,
+            [false, true, false]
+        );
         match request_refresh(&state, None) {
             Response::QuotaCooldown { remaining_ms } => {
                 assert!((29_000..=30_000).contains(&remaining_ms), "{remaining_ms}")
             }
             other => panic!("refresh inside the cooldown accepted: {other:?}"),
         }
-        assert_eq!(state.quota_refresh.lock().unwrap().due, [false, true]);
+        assert_eq!(
+            state.quota_refresh.lock().unwrap().due,
+            [false, true, false]
+        );
         state.quota_refresh.lock().unwrap().last_ms = Some(clock_ms().saturating_sub(COOLDOWN_MS));
         assert_eq!(request_refresh(&state, None), Response::Ok);
-        assert_eq!(state.quota_refresh.lock().unwrap().due, [true, true]);
+        assert_eq!(state.quota_refresh.lock().unwrap().due, [true, true, false]);
     }
 
     #[test]
     fn disabled_initial_snapshot_is_the_handshake_default() {
         // The hello skips an unchanged snapshot, so the default must say it all.
-        assert_eq!(initial(false), QuotaSnapshot::default());
+        assert_eq!(
+            initial(&ovrcr_protocol::QuotaSettings {
+                enabled: false,
+                ..Default::default()
+            }),
+            QuotaSnapshot::default()
+        );
         assert_eq!(
             QuotaSnapshot::default().grok.reason.as_deref(),
             Some(crate::settings::QUOTA_OFF)
         );
-        assert_ne!(initial(true), QuotaSnapshot::default());
+        assert_ne!(
+            initial(&ovrcr_protocol::QuotaSettings::default()),
+            QuotaSnapshot::default()
+        );
     }
 
     #[test]
     fn consent_rows_follow_quota_enabled() {
         let state = enabled_state(false);
-        *state.quotas.lock().unwrap() = initial(false);
+        *state.quotas.lock().unwrap() = initial(&ovrcr_protocol::QuotaSettings {
+            enabled: false,
+            ..Default::default()
+        });
         assert_eq!(
             state.quotas.lock().unwrap().codex.reason.as_deref(),
             Some(crate::settings::QUOTA_OFF)
@@ -1772,7 +1852,7 @@ mod tests {
     fn quota_events_record_a_transition_a_refresh_and_a_cooldown_refusal() {
         let secret = "secret-body account@example.invalid";
         let state = enabled_state(true);
-        *state.quotas.lock().unwrap() = initial(true);
+        *state.quotas.lock().unwrap() = initial(&ovrcr_protocol::QuotaSettings::default());
         apply(
             &state,
             NativeQuotaUpdate {

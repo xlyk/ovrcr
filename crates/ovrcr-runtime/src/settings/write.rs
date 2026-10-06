@@ -100,6 +100,8 @@ fn declared(path: &str) -> Option<(Vec<Segment>, Kind)> {
         [Some("launch_choices")] => Typed("a table of { kind, preset } tables"),
         [Some("quota"), Some("enabled")] => Typed("a boolean"),
         [Some("quota"), Some("claude"), Some("probe")] => Typed("a boolean"),
+        [Some("quota"), Some("cursor"), Some("dashboard")] => Typed("a boolean"),
+        [Some("quota"), Some("cursor"), Some("state_db")] => Text("an absolute path"),
         [
             Some("quota"),
             Some("codex" | "grok"),

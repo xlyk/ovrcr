@@ -1625,12 +1625,13 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
         })
         .collect::<Vec<_>>();
     assert_eq!(
-        rendered[33],
+        rendered[32],
         format!("▌    - session-50{}sh ", " ".repeat(19))
     );
-    assert!(rendered[34].contains("QUOTA LEFT"), "{:?}", rendered[34]);
+    assert!(rendered[33].contains("QUOTA LEFT"), "{:?}", rendered[33]);
+    assert!(rendered[37].contains("Cursor"), "{:?}", rendered[37]);
     // The last tree row remains selectable; quota cells cannot select/close a session.
-    for (index, row) in (33..=34).enumerate() {
+    for (index, row) in [32, 33, 37].into_iter().enumerate() {
         let action = dashboard.mouse_action(
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),

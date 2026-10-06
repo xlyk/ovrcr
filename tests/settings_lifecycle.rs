@@ -28,6 +28,8 @@ use std::time::{Duration, Instant};
 fn fresh_install_reports_every_default_and_matches_the_cli_byte_for_byte() {
     let live = fresh();
     live.start_binary();
+    // The socket is bound before storage opens; the greeting proves readiness.
+    let mut socket = attach(&live);
     let home = live.home.clone().unwrap();
     let directory = home.join(live::DEFAULT_CONFIG_DIR);
     assert!(
@@ -52,7 +54,6 @@ fn fresh_install_reports_every_default_and_matches_the_cli_byte_for_byte() {
         Some(format!("[{}]", toml::Value::String(home.display().to_string())).as_str())
     );
 
-    let mut socket = attach(&live);
     let hello = settings_event(&mut socket);
     // Both loads stamp the clock. The reading itself is the bytes.
     assert_eq!(

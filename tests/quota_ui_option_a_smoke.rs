@@ -67,6 +67,7 @@ fn quota_left_option_a_linux_dashboard_smoke() {
 
     let now = 1_800_000_000_000u64;
     let snapshot = QuotaSnapshot {
+        cursor: QuotaSnapshot::default().cursor,
         claude: ProviderQuota {
             observed_unix_ms: Some(now),
             checked_unix_ms: Some(now),

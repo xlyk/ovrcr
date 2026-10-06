@@ -371,7 +371,7 @@ fn quota_block_shows_a_stale_value_with_its_age() {
 }
 
 #[test]
-fn quota_block_ladder_gives_three_lines_then_one_then_none() {
+fn quota_block_ladder_gives_four_lines_then_one_then_none() {
     let mut dashboard = dashboard_fixture();
     let mut hierarchy = fixture_hierarchy();
     hierarchy.projects.clear();
@@ -389,12 +389,13 @@ fn quota_block_ladder_gives_three_lines_then_one_then_none() {
             "Claude · checking",
             "Codex 5h 37%",
             "Grok · unavailable · retry 3m",
+            "Cursor · usage off",
         ];
         let state = if rows.iter().any(|row| row.contains("QUOTA LEFT")) {
             "full"
         } else if let Some(at) = rows.iter().position(|row| row == compact[0]) {
-            assert_eq!(rows[at..at + 3], compact, "height {height}: {rows:?}");
-            "three"
+            assert_eq!(rows[at..at + 4], compact, "height {height}: {rows:?}");
+            "four"
         } else if rows.iter().any(|row| row == "Quota: u") {
             "one"
         } else {
@@ -411,7 +412,7 @@ fn quota_block_ladder_gives_three_lines_then_one_then_none() {
             seen.push(state);
         }
     }
-    assert_eq!(seen, ["full", "three", "one", "none"]);
+    assert_eq!(seen, ["full", "four", "one", "none"]);
 }
 
 fn details_text(dashboard: &Dashboard, now: u64) -> String {
@@ -527,11 +528,11 @@ fn palette_refresh_quota_sends_refresh_and_shows_cooldown_in_footer() {
 fn palette_enable_usage_asks_the_server_and_applies_nothing() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char(':'));
-    dashboard.event_action(Event::Paste("enable codex".into()));
+    dashboard.event_action(Event::Paste("enable native".into()));
     let listed = sidebar_rows(&dashboard, 120, NOW).join("\n");
-    assert!(listed.contains("Enable Codex and Grok usage"), "{listed}");
+    assert!(listed.contains("Enable native account usage"), "{listed}");
     dashboard.key(KeyCode::Esc);
-    let message = palette_request(&mut dashboard, "enable codex and grok usage");
+    let message = palette_request(&mut dashboard, "enable native account usage");
     assert_eq!(
         message.request,
         ovrcr::protocol::Request::SetSetting {
@@ -551,9 +552,9 @@ fn palette_enable_usage_asks_the_server_and_applies_nothing() {
     // Once the Server republishes the setting on, the command is gone.
     publish_quota(&mut dashboard, mixed_snapshot());
     dashboard.key(KeyCode::Char(':'));
-    dashboard.event_action(Event::Paste("enable codex".into()));
+    dashboard.event_action(Event::Paste("enable native".into()));
     let rows = sidebar_rows(&dashboard, 120, NOW).join("\n");
-    assert!(!rows.contains("Enable Codex and Grok usage"), "{rows}");
+    assert!(!rows.contains("Enable native account usage"), "{rows}");
 }
 
 #[test]
@@ -654,4 +655,45 @@ fn quota_rows_keep_reported_windows_and_dash_missing_allowance() {
             && !row.contains("7d")),
         "{rows:?}"
     );
+}
+
+#[test]
+fn cursor_details_display_used_remaining_and_unknown_without_fabricated_zero() {
+    let mut dashboard = dashboard_fixture();
+    let mut quota = mixed_snapshot();
+    quota.cursor = ProviderQuota {
+        windows: vec![
+            QuotaWindow {
+                id: "cursor/plan".into(),
+                label: "plan".into(),
+                general: true,
+                used_basis_points: Some(3000),
+                over_limit: false,
+                resets_unix_ms: Some(NOW + 3_600_000),
+            },
+            QuotaWindow {
+                id: "cursor/onDemand".into(),
+                label: "on-demand".into(),
+                general: false,
+                used_basis_points: None,
+                over_limit: false,
+                resets_unix_ms: None,
+            },
+        ],
+        observed_unix_ms: Some(NOW),
+        checked_unix_ms: Some(NOW),
+        ..ProviderQuota::unknown(QuotaProvider::Cursor, QuotaState::Current)
+    };
+    publish_quota(&mut dashboard, quota);
+    dashboard.key(KeyCode::Char('u'));
+    for _ in 0..50 {
+        dashboard.key(KeyCode::Down);
+    }
+    let details = details_text(&dashboard, NOW);
+    assert!(
+        details.contains("used: 30.00% · remaining: 70.00%"),
+        "{details}"
+    );
+    assert!(details.contains("used: — · remaining: —"), "{details}");
+    assert!(details.contains("reset:"), "{details}");
 }

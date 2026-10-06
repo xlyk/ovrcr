@@ -197,7 +197,7 @@ fn settings_opens_from_the_menu_and_has_no_browse_key() {
 /// source badge and the default beside an overridden value.
 #[test]
 fn rows_show_value_source_default_and_findings_with_unknown_keys_first() {
-    let (dashboard, _root, document) = editor(
+    let (mut dashboard, _root, document) = editor(
         "branch_prefix = \"kh/\"\ncolour = \"blue\"\nready_sound = \"loud\"\n\n[[agents]]\nname = \"claude\"\nargv = [\"claude\", \"--verbose\"]\n\n[launch_choices.demo]\nkind = \"Terminal\"\n",
     );
     let text = screen(&dashboard);
@@ -241,9 +241,13 @@ fn rows_show_value_source_default_and_findings_with_unknown_keys_first() {
     // Collections expand into child rows with an Add row.
     assert!(line_with(&dashboard, "claude  [").contains("[\"claude\", \"--verbose\"]"));
     assert!(text.contains("+ Add agent"));
+    assert!(text.contains("+ Add root"));
+    // Added settings can put remembered launches below this viewport. Reach
+    // their child rows through the editor's normal scrolling control.
+    assert_eq!(dashboard.key(KeyCode::End), DashboardAction::Redraw);
+    let text = screen(&dashboard);
     assert!(line_with(&dashboard, "demo  ").contains("Terminal"));
     assert!(text.contains("+ Add project"));
-    assert!(text.contains("+ Add root"));
 }
 
 #[test]

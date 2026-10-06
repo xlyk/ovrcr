@@ -8,6 +8,7 @@ pub enum QuotaProvider {
     Claude,
     Codex,
     Grok,
+    Cursor,
 }
 
 impl QuotaProvider {
@@ -16,6 +17,7 @@ impl QuotaProvider {
             Self::Claude => "Claude",
             Self::Codex => "Codex",
             Self::Grok => "Grok",
+            Self::Cursor => "Cursor",
         }
     }
 }
@@ -147,7 +149,14 @@ pub struct ProviderQuota {
 /// The off-state sentence of the `quota.enabled` consent setting.
 pub const QUOTA_OFF: &str = "Codex/Grok usage off: set `quota.enabled = true` in dashboard.toml";
 
-/// Claude's row while Checking: it is not refreshable and has no native reader.
+/// Cursor personal dashboard collection requires its own opt-in.
+pub const CURSOR_QUOTA_OFF: &str =
+    "Cursor usage off: set `quota.cursor.dashboard = true` in dashboard.toml";
+
+/// Opt-in description for the personal dashboard adapter.
+pub const CURSOR_QUOTA_DESCRIPTION: &str = "Reads the signed-in Cursor desktop account from its local SQLite state and queries Cursor’s internal dashboard usage API. Experimental personal-account support; no token refresh or credential writes. Requires quota.enabled.";
+
+/// Claude's fallback while no native usage or managed response is available.
 pub const CLAUDE_WAITING: &str = "waiting for a managed Claude session's first response";
 
 /// Consent text for `quota.claude.probe`. The setting stays off until this is accepted.
@@ -190,6 +199,7 @@ pub struct QuotaSnapshot {
     pub claude: ProviderQuota,
     pub codex: ProviderQuota,
     pub grok: ProviderQuota,
+    pub cursor: ProviderQuota,
 }
 
 /// The Server's snapshot with `quota.enabled` off and nothing reported. The
@@ -207,6 +217,10 @@ impl Default for QuotaSnapshot {
             },
             codex: off(QuotaProvider::Codex),
             grok: off(QuotaProvider::Grok),
+            cursor: ProviderQuota {
+                reason: Some(CURSOR_QUOTA_OFF.into()),
+                ..ProviderQuota::unknown(QuotaProvider::Cursor, QuotaState::Disabled)
+            },
         }
     }
 }

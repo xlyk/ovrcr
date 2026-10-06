@@ -29,6 +29,7 @@ use std::time::{Duration, Instant};
 
 pub mod build_identity;
 mod connections;
+mod cursor_quota;
 mod dashboard;
 mod dispatch;
 mod event_log;
@@ -132,6 +133,16 @@ fn dispatch_weight(message: &DispatchMessage) -> usize {
         }
         DispatchMessage::NativeQuota(update) => {
             update.report.windows.as_ref().map_or(0, |windows| {
+                windows
+                    .iter()
+                    .map(|window| {
+                        std::mem::size_of_val(window) + window.id.len() + window.label.len()
+                    })
+                    .sum()
+            })
+        }
+        DispatchMessage::CursorQuota(update) => {
+            update.native.report.windows.as_ref().map_or(0, |windows| {
                 windows
                     .iter()
                     .map(|window| {
