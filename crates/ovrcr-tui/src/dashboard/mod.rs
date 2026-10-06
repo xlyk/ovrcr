@@ -7,8 +7,8 @@ mod git_hints;
 mod hints;
 mod input;
 mod keymap;
-mod outbox;
 mod lifecycle_ui;
+mod outbox;
 mod palette;
 pub(crate) mod picker;
 mod quota;
@@ -61,11 +61,21 @@ pub(crate) enum InputMode {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum TreeRow {
-    Project { name: String },
-    Workspace { project: String, id: String },
-    Session { id: SessionId },
+    Project {
+        name: String,
+    },
+    Workspace {
+        project: String,
+        id: String,
+    },
+    Session {
+        id: SessionId,
+    },
     /// Client fiction for a workspace create before the Server publishes it.
-    ProvisionalWorkspace { project: String, id: String },
+    ProvisionalWorkspace {
+        project: String,
+        id: String,
+    },
     /// Client fiction for a session create; never carries a SessionId.
     ProvisionalSession {
         project: String,

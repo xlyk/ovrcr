@@ -1050,9 +1050,7 @@ fn tree_line_text(
         TreeRow::Project { .. }
         | TreeRow::Workspace { .. }
         | TreeRow::ProvisionalWorkspace { .. }
-        | TreeRow::ProvisionalSession { .. } => {
-            dashboard.selected_container.as_ref() == Some(row)
-        }
+        | TreeRow::ProvisionalSession { .. } => dashboard.selected_container.as_ref() == Some(row),
     };
     let style = Style::default()
         .fg(TEXT)

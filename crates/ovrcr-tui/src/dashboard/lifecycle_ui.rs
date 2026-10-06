@@ -96,9 +96,9 @@ impl Provisional {
                 label: session.label.clone(),
                 kind: session.kind.clone(),
             },
-            Request::CloseTerminal { session, .. } => ProvisionalKind::ClosingSession {
-                session: *session,
-            },
+            Request::CloseTerminal { session, .. } => {
+                ProvisionalKind::ClosingSession { session: *session }
+            }
             _ => return None,
         };
         Some(Self {
@@ -133,7 +133,6 @@ fn branch_label(branch: &crate::protocol::BranchRequest) -> String {
 }
 
 impl Dashboard {
-
     /// Id-requiring actions soft-fail while a Provisional row stands in for a real identity.
 
     pub(super) fn soft_fail_if_provisional(&mut self) -> Option<DashboardAction> {
@@ -252,10 +251,7 @@ impl Dashboard {
             LifecycleOutcome::Failed { code, message } => {
                 // Preserve the sync remove UX: DirtyWorktree / SessionsRemain reopen as force.
                 if let ProvisionalKind::RemovingWorkspace { project, id } = &row.kind
-                    && matches!(
-                        code,
-                        ErrorCode::DirtyWorktree | ErrorCode::SessionsRemain
-                    )
+                    && matches!(code, ErrorCode::DirtyWorktree | ErrorCode::SessionsRemain)
                 {
                     let project = project.clone();
                     let id = id.clone();
@@ -329,9 +325,7 @@ impl Dashboard {
                 label,
             )],
             ProvisionalKind::CreatingSession {
-                project,
-                workspace,
-                ..
+                project, workspace, ..
             } => vec![(
                 TreeRow::ProvisionalSession {
                     project: project.clone(),
@@ -354,17 +348,16 @@ impl Dashboard {
     }
 
     #[allow(dead_code)]
-    pub(super) fn handle_lifecycle_event(&mut self, event: &ServerEvent) -> Option<DashboardAction> {
+    pub(super) fn handle_lifecycle_event(
+        &mut self,
+        event: &ServerEvent,
+    ) -> Option<DashboardAction> {
         match event {
             ServerEvent::LifecycleCompleted {
                 client_token,
                 op,
                 outcome,
-            } => Some(self.on_lifecycle_completed(
-                *client_token,
-                op.clone(),
-                outcome.clone(),
-            )),
+            } => Some(self.on_lifecycle_completed(*client_token, op.clone(), outcome.clone())),
             _ => None,
         }
     }
@@ -392,10 +385,7 @@ mod tests {
         });
         let row = Provisional::from_request(9, &request).unwrap();
         assert_eq!(row.token, 9);
-        assert!(matches!(
-            row.kind,
-            ProvisionalKind::CreatingSession { .. }
-        ));
+        assert!(matches!(row.kind, ProvisionalKind::CreatingSession { .. }));
         assert!(row.row_label().contains("Creating"));
     }
 
@@ -413,10 +403,10 @@ mod tests {
         assert!(row.row_label().contains("feature/x"));
     }
 
-
     #[test]
     fn esc_dismisses_strip_then_failed_provisional() {
-        let mut d = crate::dashboard::Dashboard::new(crate::session::TerminalSize { rows: 24, cols: 80 });
+        let mut d =
+            crate::dashboard::Dashboard::new(crate::session::TerminalSize { rows: 24, cols: 80 });
         d.begin_lifecycle_pending(
             3,
             &Request::CreateSession(CreateSessionRequest {
@@ -450,15 +440,14 @@ mod tests {
 
     #[test]
     fn second_lifecycle_op_is_refused_while_busy() {
-        let mut d = crate::dashboard::Dashboard::new(crate::session::TerminalSize { rows: 24, cols: 80 });
+        let mut d =
+            crate::dashboard::Dashboard::new(crate::session::TerminalSize { rows: 24, cols: 80 });
         d.begin_lifecycle_pending(
             1,
             &Request::CreateWorkspace {
                 project: "p".into(),
                 id: "id".into(),
-                branch: BranchRequest::Existing {
-                    branch: "b".into(),
-                },
+                branch: BranchRequest::Existing { branch: "b".into() },
             },
         );
         d.accept_lifecycle_job(1);
@@ -468,6 +457,9 @@ mod tests {
             d.lifecycle_strip.as_deref(),
             Some("a lifecycle job is already running")
         );
-        assert!(d.provisional.is_some(), "provisional stays while strip shows refuse");
+        assert!(
+            d.provisional.is_some(),
+            "provisional stays while strip shows refuse"
+        );
     }
 }

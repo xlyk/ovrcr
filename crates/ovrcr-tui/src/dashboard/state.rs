@@ -981,7 +981,10 @@ impl Dashboard {
             .into_iter()
             .filter_map(|row| match row {
                 TreeRow::Session { id } => Some(id),
-                TreeRow::Project { .. } | TreeRow::Workspace { .. } | TreeRow::ProvisionalWorkspace { .. } | TreeRow::ProvisionalSession { .. } => None,
+                TreeRow::Project { .. }
+                | TreeRow::Workspace { .. }
+                | TreeRow::ProvisionalWorkspace { .. }
+                | TreeRow::ProvisionalSession { .. } => None,
             })
             .collect::<Vec<_>>();
         let Some(current_index) =
@@ -1312,13 +1315,9 @@ impl Dashboard {
         match &self.selected_container {
             Some(TreeRow::Project { name }) => (name.clone(), String::new()),
             Some(TreeRow::Workspace { project, id })
-            | Some(TreeRow::ProvisionalWorkspace { project, id }) => {
-                (project.clone(), id.clone())
-            }
+            | Some(TreeRow::ProvisionalWorkspace { project, id }) => (project.clone(), id.clone()),
             Some(TreeRow::ProvisionalSession {
-                project,
-                workspace,
-                ..
+                project, workspace, ..
             }) => (project.clone(), workspace.clone()),
             _ => self
                 .focused_session()
@@ -1431,7 +1430,9 @@ impl Dashboard {
                 }
                 true
             }
-            TreeRow::Session { .. } | TreeRow::ProvisionalSession { .. } | TreeRow::ProvisionalWorkspace { .. } => false,
+            TreeRow::Session { .. }
+            | TreeRow::ProvisionalSession { .. }
+            | TreeRow::ProvisionalWorkspace { .. } => false,
         }
     }
 
@@ -2405,11 +2406,12 @@ impl Dashboard {
         let heights = tree_row_heights(self, &rows, usize::from(sidebar.width));
         match tree_line_at(&rows, &heights, row_index)?.0 {
             TreeRow::Session { id } => Some(super::HoveredRow::Session(*id)),
-            TreeRow::Workspace { project, id }
-            | TreeRow::ProvisionalWorkspace { project, id } => Some(super::HoveredRow::Workspace {
-                project: project.clone(),
-                id: id.clone(),
-            }),
+            TreeRow::Workspace { project, id } | TreeRow::ProvisionalWorkspace { project, id } => {
+                Some(super::HoveredRow::Workspace {
+                    project: project.clone(),
+                    id: id.clone(),
+                })
+            }
             TreeRow::Project { .. } | TreeRow::ProvisionalSession { .. } => None,
         }
     }
@@ -3646,7 +3648,9 @@ impl Dashboard {
                 .iter()
                 .any(|project| &project.name == name),
             TreeRow::Workspace { project, id } => find_workspace(self, project, id).is_some(),
-            TreeRow::Session { .. } | TreeRow::ProvisionalSession { .. } | TreeRow::ProvisionalWorkspace { .. } => false,
+            TreeRow::Session { .. }
+            | TreeRow::ProvisionalSession { .. }
+            | TreeRow::ProvisionalWorkspace { .. } => false,
         });
         self.cancel_copy_if_session_missing();
         self.update_mode_for_selected_phase();
@@ -3678,7 +3682,10 @@ impl Dashboard {
             if self.panes.iter().all(|pane| pane.session.is_none())
                 && let Some(id) = self.visible_rows().iter().find_map(|row| match row {
                     TreeRow::Session { id } => Some(*id),
-                    TreeRow::Project { .. } | TreeRow::Workspace { .. } | TreeRow::ProvisionalWorkspace { .. } | TreeRow::ProvisionalSession { .. } => None,
+                    TreeRow::Project { .. }
+                    | TreeRow::Workspace { .. }
+                    | TreeRow::ProvisionalWorkspace { .. }
+                    | TreeRow::ProvisionalSession { .. } => None,
                 })
             {
                 self.select_session(id);

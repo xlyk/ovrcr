@@ -85,27 +85,18 @@ pub(super) fn try_accept(state: &ServerState, client_token: u64, kind: JobKind) 
         match guard.as_ref() {
             Some(tx) => tx.clone(),
             None => {
-                return error_response(
-                    ErrorCode::Internal,
-                    "lifecycle worker is not attached",
-                );
+                return error_response(ErrorCode::Internal, "lifecycle worker is not attached");
             }
         }
     };
     {
         let mut slot = state.lifecycle.inflight.lock().unwrap();
         if slot.is_some() {
-            return error_response(
-                ErrorCode::Conflict,
-                "a lifecycle job is already running",
-            );
+            return error_response(ErrorCode::Conflict, "a lifecycle job is already running");
         }
         *slot = Some(client_token);
     }
-    match tx.try_send(Job {
-        client_token,
-        kind,
-    }) {
+    match tx.try_send(Job { client_token, kind }) {
         Ok(()) => Response::Ok,
         Err(_) => {
             *state.lifecycle.inflight.lock().unwrap() = None;
@@ -180,10 +171,7 @@ pub(super) fn run(state: Arc<ServerState>, rx: std::sync::mpsc::Receiver<Job>) {
                 launch,
             } => match state.create_workspace_with_launch(project, id, branch, launch) {
                 Ok(None) => (LifecycleOutcome::Succeeded, true),
-                Ok(Some(summary)) => (
-                    LifecycleOutcome::CreatedSession(Box::new(summary)),
-                    true,
-                ),
+                Ok(Some(summary)) => (LifecycleOutcome::CreatedSession(Box::new(summary)), true),
                 Err(error) => outcome_from_error(error),
             },
             JobKind::RemoveWorkspace {
@@ -195,10 +183,7 @@ pub(super) fn run(state: Arc<ServerState>, rx: std::sync::mpsc::Receiver<Job>) {
                 Err(error) => outcome_from_error(error),
             },
             JobKind::CreateSession(request) => match state.create_session(request) {
-                Ok(summary) => (
-                    LifecycleOutcome::CreatedSession(Box::new(summary)),
-                    true,
-                ),
+                Ok(summary) => (LifecycleOutcome::CreatedSession(Box::new(summary)), true),
                 Err(error) => outcome_from_error(error),
             },
             JobKind::CloseTerminal {
@@ -213,7 +198,6 @@ pub(super) fn run(state: Arc<ServerState>, rx: std::sync::mpsc::Receiver<Job>) {
         clear_inflight(&state, job.client_token);
     }
 }
-
 
 #[cfg(test)]
 mod tests {

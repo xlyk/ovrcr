@@ -1193,7 +1193,6 @@ impl Dashboard {
         field.kind = FieldKind::Pick(list);
     }
 
-
     pub(super) fn open_forced_remove_workspace(
         &mut self,
         project: String,
@@ -2610,7 +2609,8 @@ impl Dashboard {
     }
 
     fn palette_submit(&mut self, palette: &mut Palette, request: Request) -> DashboardAction {
-        if self.lifecycle_busy() && super::lifecycle_ui::Provisional::from_request(0, &request).is_some()
+        if self.lifecycle_busy()
+            && super::lifecycle_ui::Provisional::from_request(0, &request).is_some()
         {
             let message = "a lifecycle job is already running".to_string();
             self.refuse_lifecycle_job(message.clone());
@@ -2802,7 +2802,11 @@ impl Dashboard {
             return None;
         }
         // Lifecycle jobs accept with Ok immediately; Provisional row takes over.
-        if self.lifecycle_pending.as_ref().is_some_and(|row| row.token == request_id) {
+        if self
+            .lifecycle_pending
+            .as_ref()
+            .is_some_and(|row| row.token == request_id)
+        {
             match response {
                 Response::Ok => {
                     self.accept_lifecycle_job(request_id);
