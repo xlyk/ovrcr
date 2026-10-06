@@ -82,7 +82,7 @@ contract = dict(wire=info["OVRCRServerWire"], schema=info["OVRCRBridgeSchema"], 
                 local_development=sys.argv[3] == "local-development",
                 bundle_id=info["CFBundleIdentifier"], display_name=info["CFBundleDisplayName"],
                 callback_sha256=info["OVRCRCallbackSHA256"],
-                entitlements_sha256=hashlib.sha256((bundle / "OVRCRBridge.entitlements").read_bytes()).hexdigest(),
+                entitlements_sha256=hashlib.sha256((resources / "OVRCRBridge.entitlements").read_bytes()).hexdigest(),
                 manifest=json.loads(manifest), manifest_sha256=hashlib.sha256(manifest).hexdigest(),
                 license_sha256=hashlib.sha256((resources / "NotificationSounds-LICENSE").read_bytes()).hexdigest())
 (payload / "native/bridge/expected-contract.json").write_text(json.dumps(contract))

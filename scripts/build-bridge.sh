@@ -133,7 +133,7 @@ cat > "$bundle/Contents/Info.plist" <<EOF
 $profile_marker
 </dict></plist>
 EOF
-cp "$repo_dir/native/bridge/entitlements.plist" "$bundle/Contents/OVRCRBridge.entitlements"
+cp "$repo_dir/native/bridge/entitlements.plist" "$bundle/Contents/Resources/OVRCRBridge.entitlements"
 for tone in tap chime rise; do
     cp "$repo_dir/research/notification-bridge/sounds/ovrcr-$tone-v1.wav" "$bundle/Contents/Resources/"
 done

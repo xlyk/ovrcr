@@ -71,12 +71,19 @@ validate_bundle "$source_bundle"
 parent_dir=$(dirname -- "$destination")
 mkdir -p "$parent_dir"
 stage_dir=$(mktemp -d "$parent_dir/.ovrcr-bridge-install.XXXXXX")
+staged="$stage_dir/$app_name"
 backup="$stage_dir/previous.app"
 installed=false
-retain_stage=false
+# Retain local staging after copy, signing or verification failures.
+# Production keeps its existing backup restoration and cleanup behavior.
+retain_stage=$local_development
 cleanup() {
     if [ "$retain_stage" = true ]; then
-        printf 'Local staged application retained for inspection: %s\n' "$staged" >&2
+        if [ -e "$staged" ] || [ -L "$staged" ]; then
+            printf 'Local staged application retained for inspection: %s\n' "$staged" >&2
+        else
+            printf 'Local installation staging retained for inspection: %s\n' "$stage_dir" >&2
+        fi
     elif [ -e "$backup" ] && [ "$installed" != true ]; then
         printf 'Previous application retained for recovery: %s\n' "$backup" >&2
     else
@@ -104,12 +111,11 @@ if rename(os.fsencode(sys.argv[1]), os.fsencode(sys.argv[2]), 0x00000004) != 0:
     raise OSError(error, os.strerror(error), sys.argv[2])
 PY
 }
-staged="$stage_dir/$app_name"
 ditto "$source_bundle" "$staged"
 if [ "$local_development" = true ]; then
-    codesign --force --options runtime --timestamp=none --entitlements "$staged/Contents/OVRCRBridge.entitlements" --sign - "$staged"
+    codesign --force --options runtime --timestamp=none --entitlements "$staged/Contents/Resources/OVRCRBridge.entitlements" --sign - "$staged"
 else
-    codesign --force --options runtime --timestamp --entitlements "$staged/Contents/OVRCRBridge.entitlements" --sign "$identity" "$staged"
+    codesign --force --options runtime --timestamp --entitlements "$staged/Contents/Resources/OVRCRBridge.entitlements" --sign "$identity" "$staged"
 fi
 codesign --verify --deep --strict "$staged"
 codesign -d --entitlements - "$staged" > "$stage_dir/signed-entitlements.plist"
@@ -147,4 +153,5 @@ elif ! rename_bundle "$staged" "$destination"; then
     echo 'Installation rename failed' >&2; exit 74
 fi
 installed=true
+retain_stage=false
 printf 'Installed %s. Existing Bridge processes are not restarted; no permission or notification operation was run.\n' "$destination"

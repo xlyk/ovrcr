@@ -62,7 +62,10 @@ The default source is `target/bridge/OVRCR Bridge.app`, with identity
 source bundle; `--destination PATH` selects an installation destination.
 The installer copies into a private staging directory, signs there with the
 explicit non-ad-hoc identity, checks the strict signature and bundled versions,
-and verifies regular resource bytes/license. It verifies an existing app and
+and verifies regular resource bytes/license. The unchanged entitlement plist is
+stored in `Contents/Resources/OVRCRBridge.entitlements`, alongside the other
+non-code resources; validators reject a legacy copy directly under `Contents`.
+It verifies an existing app and
 refuses a changed designated signing requirement before replacement. A failed
 rename attempts restoration; unresolved recovery state is preserved.
 Signing/notarization and supported-release acceptance remain separate checks.
@@ -235,7 +238,7 @@ Dashboard process birth/ancestry and compares the live iTerm GUID's TTY with the
 Dashboard's controlling TTY. Acknowledged selection is not observed keyboard focus.
 
 The future bundle carries `NSAppleEventsUsageDescription` and the single hardened
-Apple Events entitlement in `Contents/OVRCRBridge.entitlements`. The installer
+Apple Events entitlement in `Contents/Resources/OVRCRBridge.entitlements`. The installer
 uses that file when signing the enclosing app, without re-signing the sealed
 callback helper or changing its bytes. This is source packaging, not permission
 or signing authority: actual setup, native control, signing and acceptance each
@@ -297,8 +300,12 @@ digest, owner/lifetime/run fencing and all deadlines still apply.
 
 Local installation is fresh-only. It refuses an existing destination, including
 an invalid app or symlink, and publishes exclusively so a concurrent destination
-cannot be replaced. A publication failure retains the owned staging directory
-for investigation. A matching installed app can be used without re-signing;
+cannot be replaced. Once local staging is created, failures during copy, signing,
+strict verification, entitlement readback, bundle validation, the contract guard
+or publication retain the owned staging directory and any partial or signed app
+for investigation. Successful publication clears staging retention and removes
+the temporary directory. The source payload and any existing destination remain
+unchanged on refusal. A matching installed app can be used without re-signing;
 an invalid or changed local app is not repaired or replaced automatically.
 No continuity of permission identity across ad-hoc rebuilds is claimed.
 Production identity selection and designated-requirement update checks retain

@@ -56,7 +56,9 @@ assert info["CFBundleExecutable"] == "OVRCRBridge"
 assert info["CFBundleDisplayName"] == expected_display and info["LSUIElement"] is True
 assert info["CFBundlePackageType"] == "APPL"
 assert info["NSAppleEventsUsageDescription"] == "OVRCR can select the existing iTerm session hosting your current Dashboard after you explicitly set up iTerm focus."
-entitlements = bundle / "Contents/OVRCRBridge.entitlements"
+legacy_entitlements = bundle / "Contents/OVRCRBridge.entitlements"
+assert not legacy_entitlements.exists() and not legacy_entitlements.is_symlink()
+entitlements = bundle / "Contents/Resources/OVRCRBridge.entitlements"
 assert entitlements.is_file() and not entitlements.is_symlink()
 assert hashlib.sha256(entitlements.read_bytes()).hexdigest() == entitlements_hash
 assert plistlib.loads(entitlements.read_bytes()) == {"com.apple.security.automation.apple-events": True}
@@ -77,7 +79,7 @@ assert {path.name for path in (bundle / "Contents/MacOS").iterdir()} == {"OVRCRB
 assert not any(path.is_symlink() for path in bundle.rglob("*"))
 resources = bundle / "Contents/Resources"
 expected_files = {tone["file"] for tone in manifest["tones"]}
-expected_files.update(("NotificationSounds-LICENSE", "NotificationSounds-manifest.json"))
+expected_files.update(("NotificationSounds-LICENSE", "NotificationSounds-manifest.json", "OVRCRBridge.entitlements"))
 assert {path.name for path in resources.iterdir()} == expected_files
 assert hashlib.sha256((resources / "NotificationSounds-LICENSE").read_bytes()).hexdigest() == license_hash
 assert hashlib.sha256((resources / "NotificationSounds-manifest.json").read_bytes()).hexdigest() == manifest_hash
