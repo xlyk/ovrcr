@@ -200,11 +200,12 @@ fn settings_opens_from_the_menu_and_has_no_browse_key() {
 /// source badge and the default beside an overridden value.
 #[test]
 fn rows_show_value_source_default_and_findings_with_unknown_keys_first() {
-    let (dashboard, _root, document) = editor(
+    let (mut dashboard, _root, document) = editor(
         "branch_prefix = \"kh/\"\ncolour = \"blue\"\nready_sound = \"loud\"\n\n[[agents]]\nname = \"claude\"\nargv = [\"claude\", \"--verbose\"]\n\n[launch_choices.demo]\nkind = \"Terminal\"\n",
     );
     // This overview checks every group and collection's Add row. Include the
-    // sound-choice/iTerm rows and explanations without clipping final groups.
+    // Bridge, WIP and Cursor rows and explanations without clipping final groups.
+    // At most 76 inner lines fit in 80 rows after the editor's borders/margins.
     let text = rendered_rows(&dashboard, 120, 80).join("\n");
     let line = |needle: &str| {
         text.lines()
@@ -248,12 +249,20 @@ fn rows_show_value_source_default_and_findings_with_unknown_keys_first() {
     assert!(text.contains("Setting a model makes paid calls to title sessions."));
     assert!(text.contains("may show an OS notification permission prompt."));
     assert!(text.contains("On by default while a Dashboard is attached."));
+    assert!(line("Cursor dashboard usage").contains("off  default"));
+    assert!(line("Cursor state database").contains("unset  default"));
     // Collections expand into child rows with an Add row.
     assert!(line("claude  [").contains("[\"claude\", \"--verbose\"]"));
     assert!(text.contains("+ Add agent"));
     assert!(line("demo  ").contains("Terminal"));
     assert!(text.contains("+ Add project"), "{text}");
     assert!(text.contains("+ Add root"), "{text}");
+    // Added settings can put remembered launches below this viewport. Reach
+    // their child rows through the editor's normal scrolling control.
+    assert_eq!(dashboard.key(KeyCode::End), DashboardAction::Redraw);
+    let text = screen(&dashboard);
+    assert!(line_with(&dashboard, "demo  ").contains("Terminal"));
+    assert!(text.contains("+ Add project"));
 }
 
 #[test]

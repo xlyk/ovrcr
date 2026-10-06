@@ -2878,6 +2878,7 @@ name = "ovrcr-runtime"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "bincode",
  "chrono",
  "directories",

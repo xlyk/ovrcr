@@ -33,7 +33,7 @@ Claude sends a startup status line before its first API response, when `rate_lim
 
 A probe runs on Dashboard attach when the Claude reading is stale, on manual refresh (the same 30-second cooldown as Codex and Grok), and every 30 minutes while a Dashboard stays attached and no managed Claude session has reported inside the stale boundary. It never runs while no Dashboard is attached, and never two at a time. It also waits until `claude auth status` has said an allowance can exist: not signed in, an API-key login, or a missing `claude` stays on that row and does not spend a prompt.
 
-Details for a probe reading say `source: probe; last probe <time> (<age>)`. A live managed Claude session's report keeps precedence over it. `quota.enabled` does not gate the probe; that switch is still only Codex and Grok.
+Details for a probe reading say `source: probe; last probe <time> (<age>)`. A live managed Claude session's report keeps precedence over it. `quota.enabled` does not gate the probe; that switch gates Codex, Grok and the opt-in Cursor reader.
 
 | Probe outcome | Claude row |
 | --- | --- |
@@ -46,7 +46,7 @@ Details for a probe reading say `source: probe; last probe <time> (<age>)`. A li
 
 ## Collection
 
-Claude's account row comes from the oauth usage reader and does not need `quota.enabled`. Codex and Grok collection is on by default while a Dashboard is attached. The readers are read-only: they do not refresh or rewrite auth files, which is why the old opt-in default is no longer required. Set `quota.enabled = false` in the settings document to turn Codex and Grok collection off. The setting remains; only the default changed. `dashboard.toml` sits beside the OVRCR `config.toml` (a `[quota]` table in `config.toml` configures nothing and `ovrcr settings` reports it as a finding). A change applies on the next settings check; a restart is not required.
+Claude's account row comes from the oauth usage reader and does not need `quota.enabled`. Codex and Grok collection is on by default while a Dashboard is attached. The readers are read-only: they do not refresh or rewrite auth files, which is why the old opt-in default is no longer required. Set `quota.enabled = false` in the settings document to turn Codex, Grok and the opt-in Cursor reader off. The setting remains; only the default changed. `dashboard.toml` lives in the OVRCR instance directory selected by `OVRCR_HOME` (a `[quota]` table in a preserved legacy `config.toml` configures nothing and `ovrcr settings` reports it as a finding). A change applies on the next settings check; a restart is not required.
 
 ```toml
 [quota]
@@ -62,9 +62,13 @@ command = "codex"
 [quota.grok]
 command = "grok"
 # home = "/absolute/path/to/grok-profile" # native GROK_HOME
+
+[quota.cursor]
+dashboard = false                 # opt in: experimental personal Cursor dashboard reader
+# state_db = "/absolute/path/to/state.vscdb" # omit for the Cursor desktop default
 ```
 
-Omit `home` to use the native client's existing profile. OVRCR does not provide login, extract tokens, copy credentials, or attach to a shared native client. Unsupported versions fail closed. Native collection runs only while a Dashboard is attached, with one worker per provider, a five-minute cadence, bounded replies and a twenty-second request deadline, and failure backoff (below). The deadline covers native writes and incoming notifications as well as replies. Fifty Sessions do not create fifty account readers. Every `quota.*` setting is live: a change restarts the native client and reads at once. [Native Codex read/UI acceptance](../research/codex-quota-native-acceptance-2026-10-05/README.md) verified the installed 0.155.1 CLI with an existing ChatGPT login on `05adc3d0`. The record keeps unobserved native notifications/profile switching and the combined three-provider lifecycle gate (#231) explicit.
+Omit `home` to use the native client's existing profile. OVRCR does not provide login, copy credentials, or attach to a shared native client. Unsupported versions fail closed. Native collection runs only while a Dashboard is attached, with one worker per provider, a five-minute cadence, bounded replies and a twenty-second request deadline, and failure backoff (below). The deadline covers native writes and incoming notifications as well as replies. Fifty Sessions do not create fifty account readers. Every `quota.*` setting is live: a change restarts the native client and reads at once. [Native Codex read/UI acceptance](../research/codex-quota-native-acceptance-2026-10-05/README.md) verified the installed 0.155.1 CLI with an existing ChatGPT login on `05adc3d0`. The record keeps unobserved native notifications/profile switching and the combined three-provider lifecycle gate (#231) explicit.
 
 ## Interpret the display
 
@@ -95,12 +99,88 @@ A success resets the ladder. Changing any `quota.*` setting also resets it and r
 
 ### Manual refresh
 
-`Request::RefreshQuota { provider }` (both native providers when `provider` is none) marks the worker due now. The Server enforces it:
+`Request::RefreshQuota { provider }` (all enabled native providers when `provider` is none) marks the worker due now. The Server enforces it:
 
 - One read per provider is in flight at a time; a refresh asked for during a read is answered by that read.
 - Accepted refreshes are at least 30 seconds apart. A refresh inside the cooldown is refused with `Response::QuotaCooldown { remaining_ms }`.
 - A refresh skips a failure backoff but never a provider's Retry-After.
 - With `quota.claude.probe` off, Claude is not refreshable. With it on, a refresh runs one probe under the same cooldown, including when `provider` is Claude or omitted. A refresh while `quota.enabled` is off is still refused for Codex and Grok; an omitted provider with the probe on still runs the probe and does not start the native workers.
 
-In the Dashboard, the palette's **Refresh quota** sends this request for both native providers and shows a cooldown refusal's remaining seconds in the footer. **Enable Codex and Grok usage**, listed while collection is off, sends `SetSetting { path: "quota.enabled", value: "true" }`; the Server validates, writes and republishes, and the Dashboard applies nothing until it does.
+In the Dashboard, the palette's **Refresh quota** sends this request for both native providers and shows a cooldown refusal's remaining seconds in the footer. **Enable native account usage**, listed while collection is off, sends `SetSetting { path: "quota.enabled", value: "true" }`; the Server validates, writes and republishes, and the Dashboard applies nothing until it does.
 
+
+## Cursor personal account
+
+Set `quota.cursor.dashboard = true` through Settings or
+`ovrcr settings set quota.cursor.dashboard true`. The global `quota.enabled`
+switch must also be on. Sign in to the **Cursor desktop app** with the personal
+account to monitor; signing in only to Cursor CLI is insufficient for this
+reader. OVRCR supplies no login or token refresh and makes no paid model calls.
+This adapter is off by default because it uses an **internal dashboard API**,
+not a documented stable public personal usage API. Cursor's documented
+[Admin and Analytics APIs](https://cursor.com/docs/api) require an Enterprise
+team; this adapter does not use those APIs or assume a plan allowance.
+
+The observed source is `GET https://cursor.com/api/usage-summary`, using the
+existing desktop `cursorAuth/accessToken` in a `WorkosCursorSessionToken` cookie.
+Authentication and response fields were checked against the public
+[CodexBar personal Cursor adapter](https://github.com/steipete/CodexBar/blob/6a26b2e9b1b60471970deb6fe663f9e5f284e2ce/docs/cursor.md),
+[request/schema implementation](https://github.com/steipete/CodexBar/blob/6a26b2e9b1b60471970deb6fe663f9e5f284e2ce/Sources/CodexBarCore/Providers/Cursor/CursorStatusProbe.swift),
+and [desktop authentication reader](https://github.com/steipete/CodexBar/blob/6a26b2e9b1b60471970deb6fe663f9e5f284e2ce/Sources/CodexBarCore/Providers/Cursor/CursorAppAuth.swift).
+These references establish an observed compatibility source, not a guarantee
+from Cursor. Changes to the dashboard, credentials or response schema can make
+it unavailable or unsupported. A live macOS personal-account check on
+2026-10-05 used an existing desktop login and matched pool percentages, the
+billing reset date and disabled on-demand usage to Cursor's Plan & Usage screen.
+The web dashboard rendered blank in the local Comet browser, so the visual
+comparison used the desktop screen. This verifies that observation, not future
+API compatibility. Native Linux acceptance remains unverified; synthetic
+SQLite/HTTP and real Server/UI tests are separate evidence.
+
+The database is opened read-only, never refreshed, copied or persisted by
+OVRCR. The token stays in the quota worker and is sent only to the fixed Cursor
+HTTPS endpoint, with redirects disabled. It is bounded and rejected if malformed
+or expiring within one minute. Credentials, account IDs, emails and raw bodies
+never enter quota snapshots, reasons or event logs. The source label is generic.
+
+| Platform | Default `state.vscdb` |
+| --- | --- |
+| macOS | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` |
+| Linux | `$XDG_CONFIG_HOME/Cursor/User/globalStorage/state.vscdb` when XDG_CONFIG_HOME is absolute; otherwise `~/.config/Cursor/User/globalStorage/state.vscdb` |
+
+`quota.cursor.state_db` can select an **absolute** database path. An invalid
+explicit path disables the reader rather than falling back to another account.
+An idle WAL-mode database is read without creating sidecars; an active WAL is
+read only when its shared-memory sidecar already exists. A missing sidecar or
+unreadable database is unavailable. The database must remain readable by the
+Server user. Browser-cookie import and CLI-only credential storage are outside
+this adapter's scope.
+
+| Response fields | Display |
+| --- | --- |
+| `individualUsage.plan.totalPercentUsed` | General plan usage in percentage units, rounded down to two decimals; `0.36` means 0.36% used |
+| `individualUsage.plan.used` and positive `limit` | Used/limit ratio when the explicit total percentage is absent; values are reported cents, never inferred plan limits |
+| `autoPercentUsed`, `apiPercentUsed` within `plan` | Separate Auto and API detail windows; never averaged into general allowance |
+| `individualUsage.onDemand.used` and positive `limit` | On-demand capped budget ratio in details; a null/zero/missing cap has unknown remaining quota |
+| `remaining` within a capped bucket | Validated against used/limit when all three exist; disagreement is source conflict |
+| `billingCycleEnd` | RFC3339 billing reset on reported windows; missing means unknown, passed means reset due |
+| `billingCycleStart` | Validated when present; start must precede end |
+| Missing usage or caps | Unknown, never 0% used or a guessed full allowance |
+
+`plan.breakdown.total` is usage, not a cap. No plan price, cap, interval,
+legacy request quota, team budget or unlimited allowance is invented. Team
+usage and legacy-only responses are unsupported. Personal responses may contain
+an empty `teamUsage: {}` placeholder, which is ignored; populated or malformed
+team usage remains unsupported. Details show used and remaining percentages; the sidebar follows the existing
+remaining-allowance convention. Dollar spending is not displayed. Disabled buckets are omitted.
+
+Collection runs only while a Dashboard is attached, every five minutes, with
+one request at a time, a twenty-second timeout, a 2 MiB body limit, and the
+existing 1/2/5/10 minute failure backoff. Not-signed-in and unsupported states
+wait ten minutes. HTTP 401/403 is not signed in; HTTP 429 is unavailable with
+its Retry-After hold. Refresh quota includes Cursor while enabled and shares
+the thirty-second cooldown; it cannot skip Retry-After. The last successful
+reading remains visibly stale on a failed request for the same account.
+Logout, an account/database change or consent off clears old readings; a token
+change while a request is in flight is source conflict. Reset time passing
+never refills a bar locally. Settings changes apply without restarting.

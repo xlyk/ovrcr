@@ -11,6 +11,7 @@ acceptance-diagnostics = []
 
 [dependencies]
 anyhow = { workspace = true }
+base64 = { workspace = true }
 bincode = { workspace = true }
 chrono = { workspace = true }
 directories = { workspace = true }

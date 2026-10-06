@@ -148,7 +148,7 @@ impl Dashboard {
             Some(age) => format!("{} ({} ago)", local_time(stamp), span(age / 60_000)),
             None => format!("{} (unverifiable age)", local_time(stamp)),
         };
-        for provider in [&quota.claude, &quota.codex, &quota.grok] {
+        for provider in [&quota.claude, &quota.codex, &quota.grok, &quota.cursor] {
             lines.push(format!(
                 "{} — {}",
                 provider.provider.name(),
@@ -214,6 +214,23 @@ impl Dashboard {
                     window.id,
                     window_text(provider, window, now)
                 ));
+                if provider.provider == crate::protocol::QuotaProvider::Cursor {
+                    let used = window
+                        .used_basis_points
+                        .map(|points| format!("{:.2}%", f64::from(points) / 100.0))
+                        .unwrap_or_else(|| {
+                            if window.over_limit {
+                                "over limit".into()
+                            } else {
+                                "—".into()
+                            }
+                        });
+                    let remaining = window
+                        .remaining_basis_points()
+                        .map(|points| format!("{:.2}%", f64::from(points) / 100.0))
+                        .unwrap_or_else(|| "—".into());
+                    lines.push(format!("  used: {used} · remaining: {remaining}"));
+                }
             }
             lines.push(String::new());
         }
@@ -253,8 +270,8 @@ impl Dashboard {
             desired
         } else if content > 0 && sidebar.height >= content + 3 {
             content
-        } else if sidebar.height >= 6 {
-            3
+        } else if sidebar.height >= 7 {
+            4
         } else {
             1
         };
@@ -277,8 +294,8 @@ impl Dashboard {
                     area,
                 );
             }
-            3 => {
-                let lines = [&quota.claude, &quota.codex, &quota.grok]
+            4 => {
+                let lines = [&quota.claude, &quota.codex, &quota.grok, &quota.cursor]
                     .map(|provider| compact_line(provider, now));
                 return frame.render_widget(Paragraph::new(Vec::from(lines)), area);
             }
@@ -336,7 +353,7 @@ fn bar_filled(remaining_bp: u16, n: usize) -> usize {
 }
 
 fn any_provider_stale(quota: &QuotaSnapshot, now: u64) -> bool {
-    [&quota.claude, &quota.codex, &quota.grok]
+    [&quota.claude, &quota.codex, &quota.grok, &quota.cursor]
         .into_iter()
         .any(|provider| provider.stale(now) && !provider.windows.is_empty())
 }
@@ -571,7 +588,7 @@ fn sidebar_quota_rows(quota: &QuotaSnapshot, width: u16, now: u64) -> Vec<(Line<
     let reserve_stale = any_provider_stale(quota, now);
     let n = bar_width(width, reserve_stale);
     let mut rows = vec![(header_line(width), 1)];
-    for provider in [&quota.claude, &quota.codex, &quota.grok] {
+    for provider in [&quota.claude, &quota.codex, &quota.grok, &quota.cursor] {
         if !provider.windows.iter().any(|window| window.general) {
             rows.extend(state_row(provider, width, now));
         } else {

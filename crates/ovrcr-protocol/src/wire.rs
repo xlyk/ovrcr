@@ -331,7 +331,7 @@ pub enum Request {
         path: String,
         value: Option<String>,
     },
-    /// Mark the native quota worker (both when `None`) due now. Refused within
+    /// Mark enabled native quota workers (all when `None`) due now. Refused within
     /// 30 s of the last accepted refresh; never skips a provider Retry-After.
     RefreshQuota {
         provider: Option<crate::QuotaProvider>,
@@ -923,6 +923,12 @@ mod wire_snapshot {
                     provider: Some(crate::QuotaProvider::Grok),
                 },
             ),
+            (
+                "RefreshQuotaCursor",
+                Request::RefreshQuota {
+                    provider: Some(crate::QuotaProvider::Cursor),
+                },
+            ),
             ("Events", Request::Events { follow: true }),
             (
                 "NavigateNotification",
@@ -1479,16 +1485,17 @@ mod wire_snapshot {
         ),
         ("Request::AcknowledgeSessionStopped", "240104"),
         ("Request::RefreshQuota", "280102"),
+        ("Request::RefreshQuotaCursor", "280103"),
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0426017301630168016c0104",
+            "2a0427017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0426017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0427017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -1519,18 +1526,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04260000"),
+        ("Response::NotificationNavigation", "0d04270000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0426017301630168016c0104",
+            "0e01016e0427017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010426017301630168016c0164",
+            "0f0107080901016901010427017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004260107080901016901010426017301630168016c0164",
+            "1004270107080901016901010427017301630168016c0164",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -1541,11 +1548,11 @@ mod wire_snapshot {
         ),
         (
             "ServerEvent::QuotaChanged",
-            "04000000000008013577616974696e6720666f722061206d616e6167656420436c617564652073657373696f6e277320666972737420726573706f6e7365000100000000070142436f6465782f47726f6b207573616765206f66663a20736574206071756f74612e656e61626c6564203d20747275656020696e2064617368626f6172642e746f6d6c000200000000070142436f6465782f47726f6b207573616765206f66663a20736574206071756f74612e656e61626c6564203d20747275656020696e2064617368626f6172642e746f6d6c00",
+            "04000000000008013577616974696e6720666f722061206d616e6167656420436c617564652073657373696f6e277320666972737420726573706f6e7365000100000000070142436f6465782f47726f6b207573616765206f66663a20736574206071756f74612e656e61626c6564203d20747275656020696e2064617368626f6172642e746f6d6c000200000000070142436f6465782f47726f6b207573616765206f66663a20736574206071756f74612e656e61626c6564203d20747275656020696e2064617368626f6172642e746f6d6c000300000000070147437572736f72207573616765206f66663a20736574206071756f74612e637572736f722e64617368626f617264203d20747275656020696e2064617368626f6172642e746f6d6c00",
         ),
         (
             "ServerEvent::SettingsChanged",
-            "05072f642e746f6d6c05000001000002010470692f6d08666561747572652f01022f63010161010162020170010161017100000005636f64657801022f680467726f6b0000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
+            "05072f642e746f6d6c05000001000002010470692f6d08666561747572652f01022f63010161010162020170010161017100000005636f64657801022f680467726f6b00000000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
         ),
         (
             "ServerEvent::Recorded",
@@ -1554,7 +1561,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0426017301630168016c0104",
+            "08016e0427017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (

@@ -1596,7 +1596,7 @@ impl Dashboard {
                 .any(|provider| provider.state == crate::protocol::QuotaState::Disabled)
         }) {
             entries.push(Entry {
-                label: "Enable Codex and Grok usage".into(),
+                label: "Enable native account usage".into(),
                 command: Command::EnableQuota,
             });
         }

@@ -29,6 +29,7 @@ const UNSET_KINDS: &[(&str, Kind)] = &[
     ("title_model", Kind::Str),
     ("quota.codex.home", Kind::Str),
     ("quota.grok.home", Kind::Str),
+    ("quota.cursor.state_db", Kind::Str),
 ];
 
 /// Enum settings: how one spelling sits in the document, and the documented
@@ -351,6 +352,8 @@ fn matrix_covers_every_declared_setting() {
             "quota.codex.home",
             "quota.grok.command",
             "quota.grok.home",
+            "quota.cursor.dashboard",
+            "quota.cursor.state_db",
         ]
     );
     let kinds: Vec<_> = settings.iter().map(|setting| setting.kind).collect();
@@ -359,7 +362,7 @@ fn matrix_covers_every_declared_setting() {
         kinds,
         [
             Bool, Bool, Str, Bool, Str, Str, Str, Bool, Array, Array, Table, Bool, Bool, Str, Str,
-            Str, Str
+            Str, Str, Bool, Str
         ]
     );
     // Every test-side table names a declared setting, so none goes stale.
@@ -450,7 +453,7 @@ fn explicit_non_default_takes_effect() {
 }
 
 #[test]
-fn wrong_type_changes_only_that_setting_with_one_finding() {
+fn wrong_type_reports_one_finding_and_disables_invalid_cursor_source() {
     let settings = Setting::all();
     let (mut failures, mut cases) = (Failures::default(), 0);
     for setting in &settings {
@@ -458,9 +461,22 @@ fn wrong_type_changes_only_that_setting_with_one_finding() {
         for (background, mut document) in backgrounds(&settings, &setting.key) {
             cases += 1;
             let case = format!("{} = {value} (wrong type), {background}", setting.key);
-            let baseline = read(&document.text());
+            let mut baseline = read(&document.text());
             let line = document.set(&setting.key, value);
             let report = read(&document.text());
+            if setting.key == "quota.cursor.state_db" {
+                // A malformed explicit path must not select the default account.
+                let dashboard = baseline
+                    .rows
+                    .iter_mut()
+                    .find(|row| row.key == "quota.cursor.dashboard")
+                    .unwrap();
+                dashboard.value = Some("false".into());
+                dashboard.off_state = Some(ovrcr_protocol::CURSOR_QUOTA_DESCRIPTION.into());
+                failures.check(&case, !report.settings.quota.cursor.dashboard, || {
+                    "invalid Cursor database left its reader enabled".into()
+                });
+            }
             failures.one_finding(&case, &report.findings, &setting.key, line, "");
             failures.rows(&case, &report, &baseline, &setting.invalid_row());
         }

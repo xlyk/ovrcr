@@ -1859,3 +1859,437 @@ fn refresh_during_inflight_native_read_does_not_start_another() {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+// Synthetic personal Cursor credentials, never a developer login.
+const CURSOR_TOKEN_A: &str = "e30.eyJzdWIiOiJhdXRofGZpeHR1cmUtYSIsImV4cCI6NDAwMDAwMDAwMH0.sig";
+const CURSOR_TOKEN_B: &str = "e30.eyJzdWIiOiJhdXRofGZpeHR1cmUtYiIsImV4cCI6NDAwMDAwMDAwMH0.sig";
+const CURSOR_BODY: &str = r#"{"billingCycleStart":"2026-01-01T00:00:00Z","billingCycleEnd":"2099-01-01T00:00:00Z","teamUsage":{},"individualUsage":{"plan":{"enabled":true,"used":600,"limit":2000,"remaining":1400},"onDemand":{"enabled":true,"used":50,"limit":100}}}"#;
+
+type CursorReply = (u16, String, Option<u64>);
+struct CursorHttp {
+    url: std::ffi::OsString,
+    reply: std::sync::Arc<std::sync::Mutex<CursorReply>>,
+    hold: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    requests: std::sync::mpsc::Receiver<()>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+impl CursorHttp {
+    fn new() -> Self {
+        use std::sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
+        };
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!(
+            "http://{}/api/usage-summary",
+            listener.local_addr().unwrap()
+        )
+        .into();
+        let reply = Arc::new(Mutex::new((200, CURSOR_BODY.to_owned(), None)));
+        let hold = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tx, requests) = std::sync::mpsc::channel();
+        let (reply_worker, hold_worker, stop_worker) = (reply.clone(), hold.clone(), stop.clone());
+        let thread = std::thread::spawn(move || {
+            while !stop_worker.load(Ordering::Acquire) {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(stream) => stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::park_timeout(Duration::from_millis(10));
+                        continue;
+                    }
+                    Err(error) => panic!("Cursor fixture listener: {error}"),
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut headers = String::new();
+                let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                        break;
+                    }
+                    headers.push_str(&line);
+                }
+                assert!(headers.starts_with("GET /api/usage-summary HTTP/1.1\r\n"));
+                let lower = headers.to_ascii_lowercase();
+                assert!(lower.contains("cookie: workoscursorsessiontoken=fixture-"));
+                assert!(!lower.contains("authorization:"));
+                drop(headers);
+                tx.send(()).unwrap();
+                let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                while hold_worker.load(Ordering::Acquire) && !stop_worker.load(Ordering::Acquire) {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "Cursor fixture hold timed out"
+                    );
+                    std::thread::park_timeout(Duration::from_millis(10));
+                }
+                let (status, body, retry) = reply_worker.lock().unwrap().clone();
+                let retry = retry
+                    .map(|seconds| format!("Retry-After: {seconds}\r\n"))
+                    .unwrap_or_default();
+                let location = if status == 302 {
+                    "Location: /must-not-follow\r\n"
+                } else {
+                    ""
+                };
+                let response = format!(
+                    "HTTP/1.1 {status} Fixture\r\nContent-Length: {}\r\n{retry}{location}Connection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        Self {
+            url,
+            reply,
+            hold,
+            requests,
+            stop,
+            thread: Some(thread),
+        }
+    }
+    fn next_request(&self) {
+        self.requests
+            .recv_timeout(Duration::from_secs(5))
+            .expect("Cursor HTTP request never arrived");
+    }
+    fn respond(&self, status: u16, body: &str, retry: Option<u64>) {
+        *self.reply.lock().unwrap() = (status, body.into(), retry);
+    }
+}
+impl Drop for CursorHttp {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            let result = thread.join();
+            if !std::thread::panicking() {
+                result.unwrap();
+            }
+        }
+    }
+}
+fn cursor_db(path: &std::path::Path, token: &str) {
+    let db = rusqlite::Connection::open(path).unwrap();
+    db.execute_batch("CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value TEXT)")
+        .unwrap();
+    db.execute(
+        "INSERT OR REPLACE INTO ItemTable VALUES ('cursorAuth/accessToken', ?1)",
+        [token],
+    )
+    .unwrap();
+}
+fn cursor_fixture(http: &CursorHttp, enabled: bool) -> (live::Live, std::path::PathBuf) {
+    let fixture = live::Live::idle().bounded();
+    let database = fixture.root.path().join("cursor-state.vscdb");
+    cursor_db(&database, CURSOR_TOKEN_A);
+    std::fs::write(settings_document(&fixture), format!("[quota]\nenabled=true\n[quota.codex]\ncommand='/no-codex-fixture'\n[quota.grok]\ncommand='/no-grok-fixture'\n[quota.cursor]\ndashboard={enabled}\nstate_db={}\n", toml::Value::String(database.display().to_string()))).unwrap();
+    let clock = fixture.root.path().join("quota-clock");
+    std::fs::write(&clock, "1800000000000").unwrap();
+    fixture.start_binary_env(&[
+        ("OVRCR_QUOTA_CURSOR_USAGE_URL", &http.url),
+        ("OVRCR_QUOTA_CLOCK", clock.as_os_str()),
+    ]);
+    (fixture, database)
+}
+fn cursor_refresh(fixture: &live::Live, round: u64) {
+    std::fs::write(
+        fixture.root.path().join("quota-clock"),
+        (1_800_000_000_000 + 30_001 * round).to_string(),
+    )
+    .unwrap();
+    assert_eq!(
+        fixture.request(Request::RefreshQuota {
+            provider: Some(QuotaProvider::Cursor)
+        }),
+        Response::Ok
+    );
+}
+
+#[test]
+fn cursor_personal_read_reaches_real_dashboard_and_errors_retain_only_stale_values() {
+    let http = CursorHttp::new();
+    let (fixture, database) = cursor_fixture(&http, true);
+    let auth_before = std::fs::read(&database).unwrap();
+    let mut socket = attach(&fixture);
+    let current = quota_until(&mut socket, "Cursor never became current", |q| {
+        q.cursor.state == QuotaState::Current
+    });
+    http.next_request();
+    assert_eq!(
+        current.cursor.windows[0].remaining_basis_points(),
+        Some(7000)
+    );
+    assert_eq!(
+        current.cursor.windows[1].remaining_basis_points(),
+        Some(5000)
+    );
+    assert_eq!(
+        current.cursor.windows[0].resets_unix_ms,
+        Some(4_070_908_800_000)
+    );
+    let mut dashboard = ovrcr::tui::Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_area(ratatui::layout::Rect::new(0, 0, 120, 40));
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::QuotaChanged(Box::new(
+        current.clone(),
+    ))));
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard(frame, &dashboard))
+        .unwrap();
+    let screen = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|c| c.symbol())
+        .collect::<String>();
+    assert!(
+        screen.contains("Cursor") && screen.contains("70%"),
+        "{screen}"
+    );
+    assert!(!screen.contains(CURSOR_TOKEN_A) && !screen.contains("fixture-a"));
+    http.respond(503, FIXTURE_BODY, None);
+    cursor_refresh(&fixture, 1);
+    let failed = quota_until(&mut socket, "Cursor 503 not published", |q| {
+        q.cursor.reason.as_deref() == Some("HTTP 503")
+    });
+    http.next_request();
+    assert_eq!(failed.cursor.windows, current.cursor.windows);
+    assert_eq!(
+        failed.cursor.checked_unix_ms,
+        current.cursor.checked_unix_ms
+    );
+    assert!(failed.cursor.stale(1_800_000_030_001));
+    http.respond(401, FIXTURE_BODY, None);
+    cursor_refresh(&fixture, 2);
+    let unauthorized = quota_until(&mut socket, "Cursor unauthorized not published", |q| {
+        q.cursor.state == QuotaState::NotSignedIn
+    });
+    http.next_request();
+    assert_eq!(unauthorized.cursor.windows, current.cursor.windows);
+    assert_eq!(
+        std::fs::read(&database).unwrap(),
+        auth_before,
+        "reader wrote Cursor's auth database"
+    );
+    let public = format!("{current:?}{failed:?}{unauthorized:?}");
+    assert!(
+        !public.contains(CURSOR_TOKEN_A)
+            && !public.contains("fixture-a")
+            && !public.contains(FIXTURE_BODY)
+    );
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    assert!(fixture.join_within(Duration::from_secs(5)).is_finished());
+}
+
+#[test]
+fn cursor_opt_in_auth_changes_and_live_off_switch_clear_other_account_values() {
+    let http = CursorHttp::new();
+    let (fixture, database) = cursor_fixture(&http, false);
+    let mut socket = attach(&fixture);
+    let off = quota_until(&mut socket, "Cursor off missing", |q| {
+        q.cursor.state == QuotaState::Disabled
+    });
+    assert!(off.cursor.windows.is_empty());
+    assert!(http.requests.try_recv().is_err());
+    assert!(matches!(
+        fixture.request(Request::RefreshQuota {
+            provider: Some(QuotaProvider::Cursor)
+        }),
+        Response::Error {
+            code: ErrorCode::InvalidRequest,
+            ..
+        }
+    ));
+    assert_eq!(
+        fixture.request(Request::SetSetting {
+            path: "quota.cursor.dashboard".into(),
+            value: Some("true".into())
+        }),
+        Response::Ok
+    );
+    let current = quota_until(&mut socket, "Cursor opt-in did not read", |q| {
+        q.cursor.state == QuotaState::Current
+    });
+    http.next_request();
+    http.respond(503, FIXTURE_BODY, None);
+    cursor_db(&database, CURSOR_TOKEN_B);
+    cursor_refresh(&fixture, 1);
+    let changed = quota_until(&mut socket, "Cursor account change not published", |q| {
+        q.cursor.reason.as_deref() == Some("HTTP 503")
+    });
+    http.next_request();
+    assert!(
+        changed.cursor.windows.is_empty(),
+        "prior account allowance survived: {changed:?}"
+    );
+    assert_ne!(changed.cursor.source, current.cursor.source);
+    cursor_db(&database, "");
+    cursor_refresh(&fixture, 2);
+    let logout = quota_until(&mut socket, "Cursor logout not published", |q| {
+        q.cursor.state == QuotaState::NotSignedIn
+    });
+    assert!(logout.cursor.windows.is_empty());
+    assert!(http.requests.try_recv().is_err());
+    assert_eq!(
+        fixture.request(Request::SetSetting {
+            path: "quota.enabled".into(),
+            value: Some("false".into())
+        }),
+        Response::Ok
+    );
+    let disabled = quota_until(&mut socket, "Cursor global off not published", |q| {
+        q.cursor.state == QuotaState::Disabled
+    });
+    assert!(
+        disabled
+            .cursor
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("quota.enabled")
+    );
+    assert!(disabled.cursor.windows.is_empty());
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    assert!(fixture.join_within(Duration::from_secs(5)).is_finished());
+}
+
+#[test]
+fn cursor_account_switch_during_http_read_and_rate_limit_never_publish_fabricated_quota() {
+    let http = CursorHttp::new();
+    http.hold.store(true, std::sync::atomic::Ordering::Release);
+    let (fixture, database) = cursor_fixture(&http, true);
+    let mut socket = attach(&fixture);
+    http.next_request();
+    cursor_db(&database, CURSOR_TOKEN_B);
+    http.hold.store(false, std::sync::atomic::Ordering::Release);
+    let conflict = quota_until(
+        &mut socket,
+        "Cursor changed-in-flight read was admitted",
+        |q| q.cursor.state == QuotaState::SourceConflict,
+    );
+    assert!(conflict.cursor.windows.is_empty());
+    http.respond(429, FIXTURE_BODY, Some(900));
+    cursor_refresh(&fixture, 1);
+    let limited = quota_until(&mut socket, "Cursor rate limit not published", |q| {
+        q.cursor.reason.as_deref() == Some("HTTP 429")
+    });
+    http.next_request();
+    assert!(limited.cursor.windows.is_empty());
+    assert_eq!(
+        limited.cursor.next_check_unix_ms,
+        Some(1_800_000_030_001 + 900_000)
+    );
+    cursor_refresh(&fixture, 2);
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    assert!(fixture.join_within(Duration::from_secs(5)).is_finished());
+    assert!(
+        http.requests.try_recv().is_err(),
+        "manual refresh skipped Cursor Retry-After"
+    );
+}
+
+#[test]
+fn cursor_changed_database_clears_current_quota_before_slow_new_read() {
+    let http = CursorHttp::new();
+    let (fixture, _) = cursor_fixture(&http, true);
+    let mut socket = attach(&fixture);
+    let current = quota_until(&mut socket, "Cursor first account not current", |q| {
+        q.cursor.state == QuotaState::Current
+    });
+    http.next_request();
+    let second = fixture.root.path().join("cursor-second.vscdb");
+    cursor_db(&second, CURSOR_TOKEN_B);
+    http.hold.store(true, std::sync::atomic::Ordering::Release);
+    assert_eq!(
+        fixture.request(Request::SetSetting {
+            path: "quota.cursor.state_db".into(),
+            value: Some(toml::Value::String(second.display().to_string()).to_string())
+        }),
+        Response::Ok
+    );
+    http.next_request();
+    let checking = quota_until(
+        &mut socket,
+        "old account stayed visible during new read",
+        |q| q.cursor.state == QuotaState::Checking && q.cursor.source != current.cursor.source,
+    );
+    assert!(checking.cursor.windows.is_empty());
+    assert_eq!(checking.cursor.checked_unix_ms, None);
+    http.hold.store(false, std::sync::atomic::Ordering::Release);
+    quota_until(&mut socket, "Cursor new account not current", |q| {
+        q.cursor.state == QuotaState::Current
+    });
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    assert!(fixture.join_within(Duration::from_secs(5)).is_finished());
+}
+
+#[test]
+fn cursor_redirect_and_invalid_or_unsupported_http_bodies_preserve_stale_reading() {
+    let http = CursorHttp::new();
+    let (fixture, _) = cursor_fixture(&http, true);
+    let mut socket = attach(&fixture);
+    let current = quota_until(&mut socket, "Cursor first reading missing", |q| {
+        q.cursor.state == QuotaState::Current
+    });
+    http.next_request();
+    for (round, status, body, expected, reason) in [
+        (1, 302, CURSOR_BODY, QuotaState::Unavailable, "HTTP 302"),
+        (
+            2,
+            200,
+            "not JSON",
+            QuotaState::Invalid,
+            "Cursor usage summary invalid",
+        ),
+        (
+            3,
+            200,
+            "{}",
+            QuotaState::Unsupported,
+            "Cursor personal usage not reported",
+        ),
+    ] {
+        http.respond(status, body, None);
+        cursor_refresh(&fixture, round);
+        let failed = quota_until(&mut socket, "Cursor response failed open", |q| {
+            q.cursor.state == expected && q.cursor.reason.as_deref() == Some(reason)
+        });
+        http.next_request();
+        assert_eq!(failed.cursor.windows, current.cursor.windows);
+        assert_eq!(
+            failed.cursor.checked_unix_ms,
+            current.cursor.checked_unix_ms
+        );
+        assert!(failed.cursor.stale(1_800_000_000_000 + round * 30_001));
+    }
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    assert!(fixture.join_within(Duration::from_secs(5)).is_finished());
+    assert!(
+        http.requests.try_recv().is_err(),
+        "Cursor redirect was followed"
+    );
+}
