@@ -3159,22 +3159,29 @@ fn shutdown_pending_answer_survives_navigation_and_advances_only_on_its_exact_ok
     });
     assert_eq!(dashboard.focused_session(), Some(fresh.ticket.session));
     // Selection coalesces until the next ordinary render requests its view.
-    let view = outgoing
+    let view = if let Some(view) = outgoing
         .iter()
         .find(|message| matches!(message.request, Request::SetView { .. }))
-        .cloned()
-        .unwrap_or_else(|| {
-            dashboard
-                .request_view_at(Rect::new(0, 0, 88, 38))
-                .expect("fresh navigation must request its acknowledged view")
-        });
-    assert!(dashboard.drain_outbox().is_empty());
+    {
+        assert!(dashboard.drain_outbox().is_empty());
+        view.clone()
+    } else {
+        let view = dashboard
+            .request_view_at(Rect::new(0, 0, 88, 38))
+            .expect("fresh navigation must request its acknowledged view");
+        assert_eq!(dashboard.drain_outbox(), vec![view.clone()]);
+        view
+    };
     let Request::SetView { view: selected } = &view.request else {
         unreachable!()
     };
     assert_eq!(selected.focused, Some(fresh.ticket.session));
     assert!(dashboard.view_revision() > revision);
-    assert!(dashboard.input_request(b"before fresh view ack".to_vec(), 9001).is_none());
+    assert!(
+        dashboard
+            .input_request(b"before fresh view ack".to_vec(), 9001)
+            .is_none()
+    );
     acknowledge_all_view_targets(&mut dashboard, view);
     assert_view_input_allowed(&mut dashboard);
     assert_eq!(

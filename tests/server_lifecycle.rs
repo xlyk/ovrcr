@@ -12046,8 +12046,14 @@ fn desktop_notifications_bridge_click_preserves_queued_wip_shutdown_questions() 
         }
     };
     no_wip_refs();
-    let first = format!("Save uncommitted work to origin/wip/{}?", workspaces[0].name);
-    let second = format!("Save uncommitted work to origin/wip/{}?", workspaces[1].name);
+    let first = format!(
+        "Save uncommitted work to origin/wip/{}?",
+        workspaces[0].name
+    );
+    let second = format!(
+        "Save uncommitted work to origin/wip/{}?",
+        workspaces[1].name
+    );
 
     let socket = fixture.socket.clone();
     let (sent, received) = std::sync::mpsc::channel();

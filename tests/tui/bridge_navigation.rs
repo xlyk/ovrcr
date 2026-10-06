@@ -23,7 +23,10 @@ fn context() -> BridgeContext {
                 callback_executable_sha256: "0".repeat(64),
                 server_lifetime: LIFETIME.into(),
             };
-            assert!(context.validate(), "pure context must remain structurally valid");
+            assert!(
+                context.validate(),
+                "pure context must remain structurally valid"
+            );
             context
         })
         .clone()
