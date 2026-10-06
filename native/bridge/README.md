@@ -106,7 +106,7 @@ misuse also returns typed `failed` with exit 0; non-client CLI misuse exits 64.
 mismatch and 64 for invalid arguments, before any app/notification/IPC lifecycle.
 Both versions are derived from the shared Rust constants at build time.
 
-Schema 4 / wire 40 requests carry `schema`, `server_wire` and an `op` tagged by `type`:
+Schema 4 / wire 41 requests carry `schema`, `server_wire` and an `op` tagged by `type`:
 `status`, `authorize`, `settings`, `iterm_setup`, `iterm_status`, or `deliver`
 with `title`, `subtitle`, `body`
 and nullable `sound`, plus `navigation`. Null sound is silent; the only choices
@@ -267,7 +267,7 @@ or signing authority: actual setup, native control, signing and acceptance each
 retain their explicit approval gates. The accepted #222 bundles are unchanged.
 
 This combined #223/#224/#225 source includes main's workspace WIP-save messages
-and Cursor quota settings plus Hermes reporting and uses schema 4 / wire 40.
+and Cursor quota settings plus Hermes reporting and uses schema 4 / wire 41.
 It is incompatible with the earlier combined schema 4 / wire 37, wire 38 and
 wire 39 builds and independent
 schema 2 / wire 35 and schema 3 / wire 36 slices. Pure
