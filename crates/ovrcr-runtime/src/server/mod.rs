@@ -32,6 +32,7 @@ mod connections;
 mod cursor_quota;
 mod dashboard;
 mod dispatch;
+mod lifecycle;
 mod event_log;
 mod outbound;
 mod quota;
@@ -244,6 +245,7 @@ pub struct ServerState {
     pub(crate) retained: parking_lot::Mutex<SessionStore>,
     observations: parking_lot::Mutex<HashMap<(String, String), CheckoutObservation>>,
     pub mutation_lock: Mutex<()>,
+    pub(crate) lifecycle: lifecycle::Lifecycle,
     pub dispatch: ReportingSender<DispatchMessage>,
     pub shutdown: AtomicBool,
     pub stopping: AtomicBool,
@@ -1417,6 +1419,7 @@ impl ServerState {
             retained: parking_lot::Mutex::new(retained),
             observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
+            lifecycle: lifecycle::Lifecycle::default(),
             dispatch,
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),

@@ -271,8 +271,18 @@ impl Dashboard {
             Action::CreateTerminal => self.open_create_terminal(),
             Action::CreateWorkspace => self.open_create_workspace(),
             Action::RegisterProject => self.open_register_project(),
-            Action::CloseTerminal => self.open_close_terminal(),
-            Action::RemoveWorkspace => self.open_remove_context(true),
+            Action::CloseTerminal => {
+                if let Some(action) = self.soft_fail_if_provisional() {
+                    return action;
+                }
+                self.open_close_terminal()
+            }
+            Action::RemoveWorkspace => {
+                if let Some(action) = self.soft_fail_if_provisional() {
+                    return action;
+                }
+                self.open_remove_context(true)
+            }
             Action::RemoveProject => self.open_remove_context(false),
             Action::Tasks => {
                 if let Some(begin) = self.history_begin_request.as_mut() {
@@ -761,7 +771,9 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             TreeRow::Workspace { project, id } => dashboard
                 .collapsed_workspaces
                 .contains(&(project.clone(), id.clone())),
-            TreeRow::Session { .. } => false,
+            TreeRow::Session { .. }
+            | TreeRow::ProvisionalSession { .. }
+            | TreeRow::ProvisionalWorkspace { .. } => false,
         };
         if collapsed {
             (

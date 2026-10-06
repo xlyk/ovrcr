@@ -40,3 +40,13 @@ file rotates once, to `events.jsonl.1`; the rotation renames the whole file, so
 a line is never split, and older lines are not rewritten. stderr is unchanged.
 `ovrcr events` reads the ring through a Server request. The Dashboard popup that
 shows the same ring is a separate change and is not implemented here.
+
+Dashboard create/remove/close (CreateWorkspace, CreateWorkspaceWithLaunch,
+CreateSession, CloseTerminal) are accepted immediately on the Dashboard
+connection and run as one Server Lifecycle job on a dedicated worker under
+`mutation_lock` (ADR 0010). Input and SetView keep flowing on the reader while
+the job runs. A second Lifecycle job is refused. Completion is a typed
+`LifecycleCompleted` event correlated by the accepting request id, plus
+`HierarchyChanged` as today. CLI-only RemoveSession and DeleteArchived stay
+synchronous on the caller.
+

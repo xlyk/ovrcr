@@ -432,6 +432,27 @@ pub enum Response {
     Events(Vec<crate::Event>),
 }
 
+/// Which create/remove/close a Lifecycle job performed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LifecycleOp {
+    CreateWorkspace,
+    RemoveWorkspace,
+    CreateSession,
+    CloseTerminal,
+    CreateWorkspaceWithLaunch,
+}
+
+/// Result of a finished Lifecycle job, correlated by `client_token`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LifecycleOutcome {
+    Succeeded,
+    CreatedSession(Box<SessionSummary>),
+    Failed {
+        code: ErrorCode,
+        message: String,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServerEvent {
     HierarchyChanged(HierarchySnapshot),
@@ -461,6 +482,13 @@ pub enum ServerEvent {
         project: String,
         workspace: String,
         branch: String,
+    },
+    /// A Lifecycle job finished. `client_token` is the request_id that accepted
+    /// the job on the Dashboard connection.
+    LifecycleCompleted {
+        client_token: u64,
+        op: LifecycleOp,
+        outcome: LifecycleOutcome,
     },
 }
 
@@ -1069,6 +1097,14 @@ mod wire_snapshot {
                     branch: "feature/topic".into(),
                 },
             ),
+            (
+                "LifecycleCompleted",
+                ServerEvent::LifecycleCompleted {
+                    client_token: 7,
+                    op: LifecycleOp::CreateSession,
+                    outcome: LifecycleOutcome::Succeeded,
+                },
+            ),
         ]
     }
 
@@ -1316,22 +1352,13 @@ mod wire_snapshot {
         ("Request::SendTerminal", "1201017401"),
         ("Request::CloseTerminal", "130101"),
         ("Request::Task", "1400"),
-        (
-            "Request::AgentReport",
-            "1501090909090909090909090909090909090909090909090909090909090909090901010002",
-        ),
+        ("Request::AgentReport", "1501090909090909090909090909090909090909090909090909090909090909090901010002"),
         ("Request::HistoryBegin", "1601"),
         ("Request::HistoryPage", "17010203040506"),
         ("Request::HistoryEnd", "180102"),
         ("Request::SetView", "190301010401020101"),
-        (
-            "Request::CreateWorkspaceWithLaunch",
-            "1f016101620101630101000273680000",
-        ),
-        (
-            "Request::CreateWorkspaceWithoutLaunch",
-            "1f0161016201016300",
-        ),
+        ("Request::CreateWorkspaceWithLaunch", "1f016101620101630101000273680000"),
+        ("Request::CreateWorkspaceWithoutLaunch", "1f0161016201016300"),
         ("Request::SetSessionTitle", "200101057469746c65"),
         ("Request::ResetSessionTitle", "200100"),
         ("Request::ReopenSession", "21010400"),
@@ -1339,67 +1366,35 @@ mod wire_snapshot {
         ("Request::DeleteArchivedSession", "220104"),
         ("Request::RecoverSession", "250104"),
         ("Request::Keystroke", "260104033a6a3a"),
-        (
-            "Request::SetSetting",
-            "270f7069636b65725f726f6f74735b325d0105227e2f7822",
-        ),
+        ("Request::SetSetting", "270f7069636b65725f726f6f74735b325d0105227e2f7822"),
         ("Request::AcknowledgeSessionStopped", "240104"),
         ("Request::RefreshQuota", "280102"),
         ("Request::RefreshQuotaCursor", "280103"),
         ("Request::Events", "2901"),
         ("Request::SaveWorkspaceWip", "2a01610162"),
         ("Request::AnswerWipSave", "2b0161016201"),
-        (
-            "Request::MarkReviewed",
-            "1e010103696e7604636f6e760101047475726e02",
-        ),
+        ("Request::MarkReviewed", "1e010103696e7604636f6e760101047475726e02"),
         ("Response::Ok", "00"),
         ("Response::Hierarchy", "0100"),
-        (
-            "Response::CreatedSession",
-            "020100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e020100000001040105060000",
-        ),
+        ("Response::CreatedSession", "020100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e020100000001040105060000"),
         ("Response::Screen", "0301040301020107"),
         ("Response::Error", "0401016d"),
-        (
-            "Response::Inventory",
-            "0500010100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e020100000001040105060000",
-        ),
+        ("Response::Inventory", "0500010100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e020100000001040105060000"),
         ("Response::TerminalText", "060101020174"),
         ("Response::Task", "070601"),
         ("Response::HistoryOpened", "0801020301020405"),
-        (
-            "Response::HistoryRows",
-            "090102030401010101780100020102030000",
-        ),
+        ("Response::HistoryRows", "090102030401010101780100020102030000"),
         ("Response::QuotaCooldown", "0bfb2c01"),
-        (
-            "Response::Events",
-            "0c0101000101370d7469746c65206170706c696564",
-        ),
+        ("Response::Events", "0c0101000101370d7469746c65206170706c696564"),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
         ("ServerEvent::ScreenDirty", "02010403"),
-        (
-            "ServerEvent::SessionChanged",
-            "030100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e020100000001040105060000",
-        ),
-        (
-            "ServerEvent::QuotaChanged",
-            "04000000000008013577616974696e6720666f722061206d616e6167656420436c617564652073657373696f6e277320666972737420726573706f6e7365000100000000070142436f6465782f47726f6b207573616765206f66663a20736574206071756f74612e656e61626c6564203d20747275656020696e2064617368626f6172642e746f6d6c000200000000070142436f6465782f47726f6b207573616765206f66663a20736574206071756f74612e656e61626c6564203d20747275656020696e2064617368626f6172642e746f6d6c000300000000070147437572736f72207573616765206f66663a20736574206071756f74612e637572736f722e64617368626f617264203d20747275656020696e2064617368626f6172642e746f6d6c00",
-        ),
-        (
-            "ServerEvent::SettingsChanged",
-            "05072f642e746f6d6c05000002010470692f6d08666561747572652f01022f63010161010162020170010161017100000005636f64657801022f680467726f6b00000000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
-        ),
-        (
-            "ServerEvent::Recorded",
-            "0601020105436f64657821436865636b696e67202d3e20556e617661696c61626c653a204854545020353033",
-        ),
-        (
-            "ServerEvent::WipSavePrompt",
-            "07016101620d666561747572652f746f706963",
-        ),
+        ("ServerEvent::SessionChanged", "030100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e020100000001040105060000"),
+        ("ServerEvent::QuotaChanged", "04000000000008013577616974696e6720666f722061206d616e6167656420436c617564652073657373696f6e277320666972737420726573706f6e7365000100000000070142436f6465782f47726f6b207573616765206f66663a20736574206071756f74612e656e61626c6564203d20747275656020696e2064617368626f6172642e746f6d6c000200000000070142436f6465782f47726f6b207573616765206f66663a20736574206071756f74612e656e61626c6564203d20747275656020696e2064617368626f6172642e746f6d6c000300000000070147437572736f72207573616765206f66663a20736574206071756f74612e637572736f722e64617368626f617264203d20747275656020696e2064617368626f6172642e746f6d6c00"),
+        ("ServerEvent::SettingsChanged", "05072f642e746f6d6c05000002010470692f6d08666561747572652f01022f63010161010162020170010161017100000005636f64657801022f680467726f6b00000000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300"),
+        ("ServerEvent::Recorded", "0601020105436f64657821436865636b696e67202d3e20556e617661696c61626c653a204854545020353033"),
+        ("ServerEvent::WipSavePrompt", "07016101620d666561747572652f746f706963"),
+        ("ServerEvent::LifecycleCompleted", "08070200"),
         ("QuotaState::Waiting", "00"),
         ("QuotaState::Current", "01"),
         ("QuotaState::Unavailable", "02"),
@@ -1409,82 +1404,31 @@ mod wire_snapshot {
         ("QuotaState::SourceConflict", "06"),
         ("QuotaState::Disabled", "07"),
         ("QuotaState::Checking", "08"),
-        (
-            "QuotaWindow",
-            "0e6e61746976652f7072696d6172790235680101fb68100001fc40420f00",
-        ),
+        ("QuotaWindow", "0e6e61746976652f7072696d6172790235680101fb68100001fc40420f00"),
         ("QuotaSource::NativeProfile", "01066e617469766502"),
         ("QuotaSource::Probe", "02fbe803"),
         ("QuotaSource::Session", "0001040003696e7604636f6e7602"),
         ("ProviderQuota", "0100000000020108485454502035303301fb60ea"),
-        (
-            "AgentObservation::Quota",
-            "0401010e6e61746976652f7072696d6172790235680101fb68100001fc40420f0001",
-        ),
+        ("AgentObservation::Quota", "0401010e6e61746976652f7072696d6172790235680101fb68100001fc40420f0001"),
         ("TaskRequest::ListTasks", "00"),
         ("TaskRequest::GetTask", "0301"),
         ("TaskRequest::Cancel", "0e01"),
         ("TaskRequest::Clean", "0f0101"),
-        (
-            "AgentRequest::0",
-            "1a01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a507726573657276650003696e7600",
-        ),
-        (
-            "AgentRequest::1",
-            "1d01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
-        ),
-        (
-            "AgentRequest::2",
-            "1c01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70",
-        ),
-        (
-            "AgentRequest::3",
-            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70000004636f6e76",
-        ),
-        (
-            "AgentRequest::4",
-            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70010003696e7604636f6e76010300010a01640007666978747572650000010a01050103010201010766697874757265010001010766697874757265",
-        ),
-        (
-            "AgentRequest::5",
-            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f7002010003696e7604636f6e7601",
-        ),
-        (
-            "AgentRequest::6",
-            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70030003696e7604636f6e7601010201010e636f6c6c6563746f725f6c6f7374",
-        ),
-        (
-            "AgentRequest::7",
-            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70040003696e7604636f6e76010004636f6e760b2f62696e2f636c61756465132f686973746f72792f636f6e762e6a736f6e6c0e2f636f6e6669672f636c6175646500",
-        ),
-        (
-            "AgentRequest::8",
-            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f7005",
-        ),
-        (
-            "AgentRequest::9",
-            "1501a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500020003696e7604636f6e76010100020101047475726e",
-        ),
-        (
-            "AgentRequest::10",
-            "1501a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500020003696e7604636f6e7601010100010a01640007666978747572650000010a01050103010201010766697874757265010001010766697874757265",
-        ),
-        (
-            "AgentRequest::11",
-            "1501a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500020003696e7604636f6e7601010201010e636f6c6c6563746f725f6c6f7374",
-        ),
-        (
-            "AgentRequest::12",
-            "1501a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500020003696e7604636f6e76010103010c7175657374696f6e3a72657100",
-        ),
-        (
-            "AgentRequest::13",
-            "1501a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500020003696e7604636f6e7601010300",
-        ),
-        (
-            "AgentResponse::0",
-            "0a0001a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
-        ),
+        ("AgentRequest::0", "1a01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a507726573657276650003696e7600"),
+        ("AgentRequest::1", "1d01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"),
+        ("AgentRequest::2", "1c01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70"),
+        ("AgentRequest::3", "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70000004636f6e76"),
+        ("AgentRequest::4", "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70010003696e7604636f6e76010300010a01640007666978747572650000010a01050103010201010766697874757265010001010766697874757265"),
+        ("AgentRequest::5", "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f7002010003696e7604636f6e7601"),
+        ("AgentRequest::6", "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70030003696e7604636f6e7601010201010e636f6c6c6563746f725f6c6f7374"),
+        ("AgentRequest::7", "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70040003696e7604636f6e76010004636f6e760b2f62696e2f636c61756465132f686973746f72792f636f6e762e6a736f6e6c0e2f636f6e6669672f636c6175646500"),
+        ("AgentRequest::8", "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f7005"),
+        ("AgentRequest::9", "1501a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500020003696e7604636f6e76010100020101047475726e"),
+        ("AgentRequest::10", "1501a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500020003696e7604636f6e7601010100010a01640007666978747572650000010a01050103010201010766697874757265010001010766697874757265"),
+        ("AgentRequest::11", "1501a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500020003696e7604636f6e7601010201010e636f6c6c6563746f725f6c6f7374"),
+        ("AgentRequest::12", "1501a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500020003696e7604636f6e76010103010c7175657374696f6e3a72657100"),
+        ("AgentRequest::13", "1501a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500020003696e7604636f6e7601010300"),
+        ("AgentResponse::0", "0a0001a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"),
         ("AgentResponse::1", "0a010003696e7604636f6e7601"),
         ("AgentResponse::2", "0a02"),
         ("AgentResponse::3", "0a03"),
@@ -1503,34 +1447,13 @@ mod wire_snapshot {
         ("AgentProvider::Hermes", "04"),
         ("AgentProvider::Omp", "05"),
         ("AgentProvider::Cursor", "06"),
-        (
-            "ConversationReference::Pi",
-            "01066e61746976650d2f62696e2f70726f7669646572010e2f686973746f72792e6a736f6e6c072f636f6e66696700",
-        ),
-        (
-            "ConversationReference::Omp",
-            "02066e61746976650d2f62696e2f70726f7669646572010e2f686973746f72792e6a736f6e6c072f636f6e66696700",
-        ),
-        (
-            "ConversationReference::Codex",
-            "03066e61746976650d2f62696e2f70726f7669646572010e2f686973746f72792e6a736f6e6c072f636f6e66696700",
-        ),
-        (
-            "ConversationReference::Grok",
-            "04066e61746976650e2f686973746f72792e6a736f6e6c",
-        ),
-        (
-            "ConversationReference::Hermes",
-            "051632303236313030365f3130313530305f6162313263640b2f62696e2f6865726d65730e2f686f6d652f73746174652e6462",
-        ),
-        (
-            "WorkspaceRecord",
-            "06737461626c65052f776f726b0d666561747572652f746f7069630103313a3200",
-        ),
-        (
-            "WorkspaceSummary",
-            "017006737461626c650d666561747572652f746f706963052f776f726b01010d6578706563746564206d61696e00",
-        ),
+        ("ConversationReference::Pi", "01066e61746976650d2f62696e2f70726f7669646572010e2f686973746f72792e6a736f6e6c072f636f6e66696700"),
+        ("ConversationReference::Omp", "02066e61746976650d2f62696e2f70726f7669646572010e2f686973746f72792e6a736f6e6c072f636f6e66696700"),
+        ("ConversationReference::Codex", "03066e61746976650d2f62696e2f70726f7669646572010e2f686973746f72792e6a736f6e6c072f636f6e66696700"),
+        ("ConversationReference::Grok", "04066e61746976650e2f686973746f72792e6a736f6e6c"),
+        ("ConversationReference::Hermes", "051632303236313030365f3130313530305f6162313263640b2f62696e2f6865726d65730e2f686f6d652f73746174652e6462"),
+        ("WorkspaceRecord", "06737461626c65052f776f726b0d666561747572652f746f7069630103313a3200"),
+        ("WorkspaceSummary", "017006737461626c650d666561747572652f746f706963052f776f726b01010d6578706563746564206d61696e00"),
     ];
 
     #[test]

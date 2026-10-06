@@ -666,6 +666,9 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     }
     let footer = dashboard.error.as_deref().map_or_else(
         || {
+            if let Some(strip) = dashboard.lifecycle_strip.as_deref() {
+                return Line::from(Span::styled(strip, Style::default().fg(PEACH)));
+            }
             if let Some(notice) = dashboard
                 .copy_notice
                 .as_deref()
@@ -966,7 +969,10 @@ pub(super) fn tree_row_heights(
 ) -> Vec<usize> {
     let session = |row: &TreeRow| match row {
         TreeRow::Session { id } => find_session(dashboard, *id),
-        TreeRow::Project { .. } | TreeRow::Workspace { .. } => None,
+        TreeRow::Project { .. }
+        | TreeRow::Workspace { .. }
+        | TreeRow::ProvisionalWorkspace { .. }
+        | TreeRow::ProvisionalSession { .. } => None,
     };
     let stacked = rows
         .iter()
@@ -1041,7 +1047,10 @@ fn tree_line_text(
             .close_confirm_session()
             .map(|closing| closing == *id)
             .unwrap_or_else(|| dashboard.action_session() == Some(*id)),
-        TreeRow::Project { .. } | TreeRow::Workspace { .. } => {
+        TreeRow::Project { .. }
+        | TreeRow::Workspace { .. }
+        | TreeRow::ProvisionalWorkspace { .. }
+        | TreeRow::ProvisionalSession { .. } => {
             dashboard.selected_container.as_ref() == Some(row)
         }
     };
@@ -1082,6 +1091,26 @@ fn tree_line_text(
             )
         }
         TreeRow::Workspace { project, id } => {
+            if let Some(label) = dashboard.provisional_overlay_for(row) {
+                let available = width.saturating_sub(WORKSPACE_INDENT.len() + 1);
+                return (
+                    compose_row(
+                        vec![
+                            Span::raw(WORKSPACE_INDENT),
+                            Span::styled("󰘬", muted),
+                            Span::styled(
+                                clip_text(&format!(" {label}"), available),
+                                Style::default().fg(PEACH).add_modifier(Modifier::BOLD),
+                            ),
+                        ],
+                        Span::raw(" "),
+                        Vec::new(),
+                        width,
+                        selected,
+                    ),
+                    style,
+                );
+            }
             let workspace = find_workspace(dashboard, project, id);
             let collapsed = dashboard.collapsed_workspaces.iter().any(
                 |(collapsed_project, collapsed_workspace)| {
@@ -1127,10 +1156,68 @@ fn tree_line_text(
                 right,
             )
         }
+        TreeRow::ProvisionalWorkspace { id, .. } => {
+            let label = dashboard
+                .provisional_overlay_for(row)
+                .unwrap_or_else(|| format!("Creating… {id}"));
+            let available = width.saturating_sub(WORKSPACE_INDENT.len() + 1);
+            (
+                vec![
+                    Span::raw(WORKSPACE_INDENT),
+                    Span::styled("󰘬", muted),
+                    Span::styled(
+                        clip_text(&format!(" {label}"), available),
+                        Style::default().fg(PEACH).add_modifier(Modifier::BOLD),
+                    ),
+                ],
+                Span::raw(" "),
+                Vec::new(),
+            )
+        }
+        TreeRow::ProvisionalSession { .. } => {
+            let label = dashboard
+                .provisional_overlay_for(row)
+                .unwrap_or_else(|| "Creating…".into());
+            return (
+                compose_row(
+                    vec![
+                        Span::raw(SESSION_INDENT),
+                        Span::styled(
+                            clip_text(&label, width.saturating_sub(SESSION_INDENT.len())),
+                            Style::default().fg(PEACH),
+                        ),
+                    ],
+                    Span::raw(" "),
+                    Vec::new(),
+                    width,
+                    selected,
+                ),
+                style,
+            );
+        }
         TreeRow::Session { id } => {
+            let overlay = dashboard.provisional_overlay_for(row);
             let Some(session) = find_session(dashboard, *id) else {
                 return (
                     Line::from(clip_text(&format!("     session {}", id.0), width)),
+                    style,
+                );
+            };
+            if let Some(label) = overlay {
+                return (
+                    compose_row(
+                        vec![
+                            Span::raw(SESSION_INDENT),
+                            Span::styled(
+                                clip_text(&label, width.saturating_sub(SESSION_INDENT.len())),
+                                Style::default().fg(PEACH),
+                            ),
+                        ],
+                        Span::raw(" "),
+                        Vec::new(),
+                        width,
+                        selected,
+                    ),
                     style,
                 );
             };

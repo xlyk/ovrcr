@@ -607,6 +607,9 @@ impl Dashboard {
             outbox: super::outbox::Outbox::default(),
             wip_prompts: VecDeque::new(),
             ignored_responses: HashSet::new(),
+            lifecycle_pending: None,
+            provisional: None,
+            lifecycle_strip: None,
             settings: Settings::default(),
             config_dir: std::path::PathBuf::new(),
             error_owning_requests: HashSet::new(),
@@ -977,7 +980,7 @@ impl Dashboard {
             .into_iter()
             .filter_map(|row| match row {
                 TreeRow::Session { id } => Some(id),
-                TreeRow::Project { .. } | TreeRow::Workspace { .. } => None,
+                TreeRow::Project { .. } | TreeRow::Workspace { .. } | TreeRow::ProvisionalWorkspace { .. } | TreeRow::ProvisionalSession { .. } => None,
             })
             .collect::<Vec<_>>();
         let Some(current_index) =
@@ -1216,6 +1219,7 @@ impl Dashboard {
         let mut projects = self.hierarchy.projects.iter().collect::<Vec<_>>();
         projects.sort_by(|left, right| left.name.cmp(&right.name));
         let mut rows = Vec::new();
+        let provisionals = self.provisional_tree_rows();
         for project in projects {
             rows.push(TreeRow::Project {
                 name: project.name.clone(),
@@ -1226,7 +1230,9 @@ impl Dashboard {
             let mut workspaces = project.workspaces.iter().collect::<Vec<_>>();
             workspaces
                 .sort_by(|left, right| (!left.root, &left.name).cmp(&(!right.root, &right.name)));
+            let mut seen_workspace_ids = std::collections::HashSet::new();
             for workspace in workspaces {
+                seen_workspace_ids.insert(workspace.id.clone());
                 rows.push(TreeRow::Workspace {
                     project: project.name.clone(),
                     id: workspace.id.clone(),
@@ -1245,6 +1251,26 @@ impl Dashboard {
                         .into_iter()
                         .map(|session| TreeRow::Session { id: session.id }),
                 );
+                for (tree, _) in &provisionals {
+                    if let TreeRow::ProvisionalSession {
+                        project: p,
+                        workspace: w,
+                        ..
+                    } = tree
+                        && p == &project.name
+                        && w == &workspace.id
+                    {
+                        rows.push(tree.clone());
+                    }
+                }
+            }
+            for (tree, _) in &provisionals {
+                if let TreeRow::ProvisionalWorkspace { project: p, id, .. } = tree
+                    && p == &project.name
+                    && !seen_workspace_ids.contains(id)
+                {
+                    rows.push(tree.clone());
+                }
             }
         }
         rows
@@ -1269,7 +1295,10 @@ impl Dashboard {
         };
         match rows[index].clone() {
             TreeRow::Session { id } => self.select_session(id),
-            row @ (TreeRow::Project { .. } | TreeRow::Workspace { .. }) => {
+            row @ (TreeRow::Project { .. }
+            | TreeRow::Workspace { .. }
+            | TreeRow::ProvisionalWorkspace { .. }
+            | TreeRow::ProvisionalSession { .. }) => {
                 self.select_container(row);
                 self.ensure_selection_visible(&rows);
             }
@@ -1281,7 +1310,15 @@ impl Dashboard {
     pub(super) fn creation_context(&self) -> (String, String) {
         match &self.selected_container {
             Some(TreeRow::Project { name }) => (name.clone(), String::new()),
-            Some(TreeRow::Workspace { project, id }) => (project.clone(), id.clone()),
+            Some(TreeRow::Workspace { project, id })
+            | Some(TreeRow::ProvisionalWorkspace { project, id }) => {
+                (project.clone(), id.clone())
+            }
+            Some(TreeRow::ProvisionalSession {
+                project,
+                workspace,
+                ..
+            }) => (project.clone(), workspace.clone()),
             _ => self
                 .focused_session()
                 .and_then(|id| find_session(self, id))
@@ -1393,7 +1430,7 @@ impl Dashboard {
                 }
                 true
             }
-            TreeRow::Session { .. } => false,
+            TreeRow::Session { .. } | TreeRow::ProvisionalSession { .. } | TreeRow::ProvisionalWorkspace { .. } => false,
         }
     }
 
@@ -1408,6 +1445,22 @@ impl Dashboard {
     fn dispatch_key(&mut self, key: KeyEvent) -> DashboardAction {
         if key.kind == KeyEventKind::Press {
             self.desktop.notice = None;
+        }
+        // Esc dismisses the Lifecycle status strip only while a job runs.
+        // After failure, Esc dismisses the strip first, then the failed Provisional row.
+        if key.kind == KeyEventKind::Press
+            && key.code == KeyCode::Esc
+            && self.palette.is_none()
+            && self.whichkey.is_none()
+            && self.details.is_none()
+        {
+            if self.lifecycle_strip.is_some() {
+                self.dismiss_lifecycle_strip();
+                return DashboardAction::Redraw;
+            }
+            if self.dismiss_failed_provisional() {
+                return DashboardAction::Redraw;
+            }
         }
         if let Some(intent) = &mut self.agent_typing {
             if key.kind == KeyEventKind::Release {
@@ -2351,11 +2404,12 @@ impl Dashboard {
         let heights = tree_row_heights(self, &rows, usize::from(sidebar.width));
         match tree_line_at(&rows, &heights, row_index)?.0 {
             TreeRow::Session { id } => Some(super::HoveredRow::Session(*id)),
-            TreeRow::Workspace { project, id } => Some(super::HoveredRow::Workspace {
+            TreeRow::Workspace { project, id }
+            | TreeRow::ProvisionalWorkspace { project, id } => Some(super::HoveredRow::Workspace {
                 project: project.clone(),
                 id: id.clone(),
             }),
-            TreeRow::Project { .. } => None,
+            TreeRow::Project { .. } | TreeRow::ProvisionalSession { .. } => None,
         }
     }
 
@@ -2445,7 +2499,10 @@ impl Dashboard {
                         self.clamp_tree_offset(usize::from(sidebar.height));
                         Some(DashboardAction::Redraw)
                     }
-                    row @ (TreeRow::Project { .. } | TreeRow::Workspace { .. }) => {
+                    row @ (TreeRow::Project { .. }
+                    | TreeRow::Workspace { .. }
+                    | TreeRow::ProvisionalWorkspace { .. }
+                    | TreeRow::ProvisionalSession { .. }) => {
                         self.select_container(row);
                         Some(DashboardAction::Redraw)
                     }
@@ -3125,6 +3182,8 @@ impl Dashboard {
                     remaining_ms.div_ceil(1_000)
                 )),
                 Response::Hierarchy(hierarchy) => {
+                    // Reconnect drops client Provisional fiction; Server hierarchy is truth.
+                    self.drop_provisional_fiction();
                     for request in self.update_hierarchy(hierarchy) {
                         self.push_request(request);
                     }
@@ -3318,6 +3377,20 @@ impl Dashboard {
                 ServerEvent::HierarchyChanged(hierarchy) => {
                     for request in self.update_hierarchy(hierarchy) {
                         self.push_request(request);
+                    }
+                }
+                ServerEvent::LifecycleCompleted {
+                    client_token,
+                    op,
+                    outcome,
+                } => {
+                    let action = self.on_lifecycle_completed(client_token, op, outcome);
+                    if let DashboardAction::Request(message) = action {
+                        self.push_request(message);
+                    } else if let DashboardAction::RequestBatch(messages) = action {
+                        for message in messages {
+                            self.push_request(message);
+                        }
                     }
                 }
                 ServerEvent::Output {
@@ -3572,7 +3645,7 @@ impl Dashboard {
                 .iter()
                 .any(|project| &project.name == name),
             TreeRow::Workspace { project, id } => find_workspace(self, project, id).is_some(),
-            TreeRow::Session { .. } => false,
+            TreeRow::Session { .. } | TreeRow::ProvisionalSession { .. } | TreeRow::ProvisionalWorkspace { .. } => false,
         });
         self.cancel_copy_if_session_missing();
         self.update_mode_for_selected_phase();
@@ -3604,7 +3677,7 @@ impl Dashboard {
             if self.panes.iter().all(|pane| pane.session.is_none())
                 && let Some(id) = self.visible_rows().iter().find_map(|row| match row {
                     TreeRow::Session { id } => Some(*id),
-                    TreeRow::Project { .. } | TreeRow::Workspace { .. } => None,
+                    TreeRow::Project { .. } | TreeRow::Workspace { .. } | TreeRow::ProvisionalWorkspace { .. } | TreeRow::ProvisionalSession { .. } => None,
                 })
             {
                 self.select_session(id);
