@@ -134,7 +134,6 @@ fn branch_label(branch: &crate::protocol::BranchRequest) -> String {
 
 impl Dashboard {
     /// Id-requiring actions soft-fail while a Provisional row stands in for a real identity.
-
     pub(super) fn soft_fail_if_provisional(&mut self) -> Option<DashboardAction> {
         let Some(row) = &self.provisional else {
             return None;
@@ -196,11 +195,7 @@ impl Dashboard {
     }
 
     pub(super) fn dismiss_lifecycle_strip(&mut self) -> bool {
-        if self.lifecycle_strip.take().is_some() {
-            true
-        } else {
-            false
-        }
+        self.lifecycle_strip.take().is_some()
     }
 
     pub(super) fn dismiss_failed_provisional(&mut self) -> bool {
