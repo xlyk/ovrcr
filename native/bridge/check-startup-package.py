@@ -42,12 +42,43 @@ with tempfile.TemporaryDirectory(prefix="ovrcr-startup-package-") as temporary:
     assert result.returncode != 0, "relocated validator accepted a changed helper and matching metadata"
     shutil.copy2(payload / app_name / "Contents/MacOS/ovrcr", helper)
     info_path.write_bytes(info_bytes)
-    entitlements = bundle / "Contents/OVRCRBridge.entitlements"
+    entitlements = bundle / "Contents/Resources/OVRCRBridge.entitlements"
     entitlements_bytes = entitlements.read_bytes()
+    expected_entitlements_hash = hashlib.sha256(
+        (Path(__file__).resolve().parents[2] / "native/bridge/entitlements.plist").read_bytes()).hexdigest()
+    assert entitlements.is_file() and not entitlements.is_symlink()
+    assert hashlib.sha256(entitlements_bytes).hexdigest() == expected_entitlements_hash
+    assert json.loads(validator.with_name("expected-contract.json").read_text())["entitlements_sha256"] == expected_entitlements_hash
+    legacy_entitlements = bundle / "Contents/OVRCRBridge.entitlements"
+    assert not os.path.lexists(legacy_entitlements)
+    layout_checks = 1
     entitlements.unlink()
     result = subprocess.run(validation, capture_output=True, timeout=10)
     assert result.returncode != 0, "relocated validator accepted missing entitlements"
     entitlements.write_bytes(entitlements_bytes)
+    for case in ("changed", "legacy", "legacy_duplicate", "legacy_symlink", "resource_symlink"):
+        try:
+            if case == "changed":
+                # Keep the plist semantics but change its pinned bytes.
+                entitlements.write_bytes(entitlements_bytes + b"\n")
+            elif case == "legacy":
+                entitlements.rename(legacy_entitlements)
+            elif case == "legacy_duplicate":
+                legacy_entitlements.write_bytes(entitlements_bytes)
+            elif case == "legacy_symlink":
+                legacy_entitlements.symlink_to(root / "missing-entitlements")
+            else:
+                entitlements.unlink()
+                entitlements.symlink_to(payload / app_name / "Contents/Resources/OVRCRBridge.entitlements")
+            result = subprocess.run(validation, capture_output=True, timeout=10)
+            assert result.returncode != 0, "relocated validator accepted entitlement layout: " + case
+            layout_checks += 1
+        finally:
+            if os.path.lexists(legacy_entitlements):
+                legacy_entitlements.unlink()
+            if entitlements.is_symlink():
+                entitlements.unlink()
+            entitlements.write_bytes(entitlements_bytes)
     info = plistlib.loads(info_bytes)
     info["NSAppleEventsUsageDescription"] = "changed purpose"
     info_path.write_bytes(plistlib.dumps(info))
@@ -61,7 +92,7 @@ with tempfile.TemporaryDirectory(prefix="ovrcr-startup-package-") as temporary:
     assert result.returncode != 0, "relocated validator accepted a changed sound"
     result = subprocess.run(["sh", str(moved / "scripts/install-bridge.sh"), str(bundle)], capture_output=True, timeout=10)
     assert result.returncode == 64 and b"non-ad-hoc" in result.stderr
-    checks = 6
+    checks = 6 + layout_checks
     if local_development:
         sound.write_bytes(sound_bytes)
         contract_path = moved / "native/bridge/expected-contract.json"
@@ -207,4 +238,4 @@ raise SystemExit(77)
         contract_path.write_text(json.dumps(dict(contract, local_development=False)))
         check_cache(["--local-development"], 77)  # Matching fingerprint cannot bypass the relocated profile pin.
         contract_path.write_bytes(contract_bytes)
-print(f"{checks} relocated startup payload checks passed; no install or app launch")
+print(f"{checks} relocated startup payload checks passed; pinned entitlement SHA256 {expected_entitlements_hash}; no install or app launch")

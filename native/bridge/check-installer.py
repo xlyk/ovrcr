@@ -33,9 +33,11 @@ LOCAL_APP_NAME = "OVRCR Bridge Local.app"
 # This dispatcher has no subprocess or real-tool fallback. Every executable
 # wrapper passes its role, private configuration and actual path explicitly.
 FAKE_TOOLS = r"""
+import hashlib
 import json
 import os
 import shutil
+import stat
 import sys
 from pathlib import Path
 
@@ -73,11 +75,28 @@ def bundle_kind(value):
     require(path.parent.stat().st_uid == os.getuid())
     return "staged"
 
+def remember_failed_stage(bundle, operation):
+    require(config["local_development"])
+    paths = [bundle, *sorted(bundle.rglob("*"))]
+    require(not any(path.is_symlink() for path in paths))
+    snapshot = {}
+    for path in paths:
+        details = path.lstat()
+        snapshot[str(path.relative_to(bundle))] = {
+            "mode": stat.S_IMODE(details.st_mode), "mtime_ns": details.st_mtime_ns,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None,
+            "inode": details.st_ino,
+        }
+    receipt = json.dumps({"stage": str(bundle), "operation": operation, "snapshot": snapshot})
+    require(len(receipt.encode()) <= 16384)
+    (root / "failed-stage.json").write_text(receipt)
+
 try:
     require(root == root.resolve() and root.parent == Path("/private/tmp").resolve())
     require(root.name.startswith("ovrcr-installer-"))
     require(Path(config_path) == root / "fake-tools.json")
     require(source.parent == root and destination.parent == root / "home/Applications")
+    require(config.get("fail_operation") in (None, "sign", "verify"))
     if role == "ditto":
         require(Path(executable) == root / "bin/ditto")
         require(len(args) == 2 and Path(args[0]) == source)
@@ -92,10 +111,20 @@ try:
         timestamp = "--timestamp=none" if config["local_development"] else "--timestamp"
         identity = "-" if config["local_development"] else config["identity"]
         if args == ["--force", "--options", "runtime", timestamp,
-                    "--entitlements", str(bundle / "Contents/OVRCRBridge.entitlements"),
+                    "--entitlements", str(bundle / "Contents/Resources/OVRCRBridge.entitlements"),
                     "--sign", identity, str(bundle)]:
             require(kind == "staged")
             record("sign")
+            if config.get("fail_operation"):
+                require(config["local_development"])
+                signature = bundle / "Contents/_CodeSignature"
+                signature.mkdir(mode=0o700)
+                (signature / "CodeResources").write_bytes(b"FAKE partial enclosing-app signature; never native signing")
+            if config.get("fail_operation") == "sign":
+                record("fail_sign")
+                remember_failed_stage(bundle, "sign")
+                print("Fake enclosing-app signing failed", file=sys.stderr)
+                raise SystemExit(1)
             if config.get("competing_destination"):
                 require(config["local_development"] and not destination.exists())
                 destination.mkdir(mode=0o700)
@@ -106,10 +135,16 @@ try:
                 record("create_competing_destination")
         elif args == ["--verify", "--deep", "--strict", str(bundle)]:
             record("verify_" + kind)
+            if config.get("fail_operation") == "verify":
+                require(kind == "staged")
+                record("fail_verify")
+                remember_failed_stage(bundle, "verify")
+                print("Fake strict deep verification failed", file=sys.stderr)
+                raise SystemExit(1)
         elif args == ["-d", "--entitlements", "-", str(bundle)]:
             require(kind == "staged")
             record("entitlements")
-            sys.stdout.buffer.write((source / "Contents/OVRCRBridge.entitlements").read_bytes())
+            sys.stdout.buffer.write((source / "Contents/Resources/OVRCRBridge.entitlements").read_bytes())
         elif args == ["-d", "-r-", str(bundle)]:
             record("requirement_" + kind)
             print("Executable=" + str(bundle / "Contents/MacOS/OVRCRBridge"), file=sys.stderr)
@@ -251,7 +286,7 @@ class InstallerTests(unittest.TestCase):
         self.write_wrapper(macos / "OVRCRBridge", "bridge", revision)
         self.write_wrapper(macos / "ovrcr", "cli", revision)
         shutil.copyfile(REPO / "native/bridge/entitlements.plist",
-                        bundle / "Contents/OVRCRBridge.entitlements")
+                        resources / "OVRCRBridge.entitlements")
         sounds = REPO / "research/notification-bridge/sounds"
         manifest = json.loads((sounds / "manifest.json").read_text())
         for tone in manifest["tones"]:
@@ -273,13 +308,14 @@ class InstallerTests(unittest.TestCase):
         (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
 
     def configure_tools(self, *, existing=False, stream="stderr", installed_requirement=REQUIREMENT,
-                        staged_requirement=REQUIREMENT, competing_destination=False):
+                        staged_requirement=REQUIREMENT, competing_destination=False, fail_operation=None):
         self.config_path.write_text(json.dumps({
             "root": str(self.root), "source": str(self.source), "destination": str(self.destination),
             "schema": self.schema, "wire": self.wire, "identity": IDENTITY, "existing": existing,
             "app_name": LOCAL_APP_NAME if self.local_development else "OVRCR Bridge.app",
             "local_development": self.local_development,
             "competing_destination": competing_destination,
+            "fail_operation": fail_operation,
             "requirement_stream": stream,
             "installed_requirement": installed_requirement.format(bundle_id=self.bundle_id),
             "staged_requirement": staged_requirement.format(bundle_id=self.bundle_id),
@@ -414,17 +450,87 @@ class InstallerTests(unittest.TestCase):
         sign = next(call for call in calls if call["operation"] == "sign")
         staged = Path(sign["args"][-1])
         self.assertEqual(sign["args"], ["--force", "--options", "runtime", "--timestamp=none",
-                                       "--entitlements", str(staged / "Contents/OVRCRBridge.entitlements"),
+                                       "--entitlements", str(staged / "Contents/Resources/OVRCRBridge.entitlements"),
                                        "--sign", "-", str(staged)])
         self.assertEqual(staged.name, LOCAL_APP_NAME)
         self.assertNotIn("--deep", sign["args"], "Do not re-sign the sealed callback helper")
         self.assertEqual({call["role"] for call in calls}, {"ditto", "codesign", "bridge"})
         self.assertEqual(bundle_snapshot(self.source, include_inode=True), source_before)
         self.assertEqual(bundle_snapshot(self.destination), bundle_snapshot(self.source))
+        self.assertEqual((self.destination / "Contents/Resources/OVRCRBridge.entitlements").read_bytes(),
+                         (REPO / "native/bridge/entitlements.plist").read_bytes())
+        self.assertFalse(os.path.lexists(self.destination / "Contents/OVRCRBridge.entitlements"))
         self.assertEqual(stdout.count(b"Bundle metadata/resources valid:"), 2)
         self.assertIn(("Installed " + str(self.destination)).encode(), stdout)
         self.assertEqual(list(self.destination.parent.iterdir()), [self.destination])
+        self.assertFalse(staged.parent.exists(), "Successful installation must remove its private stage")
         self.assertFalse((self.home / "Applications/OVRCR Bridge.app").exists())
+
+    def failed_local_stage_is_retained(self, operation):
+        self.prepare_local()
+        self.configure_tools(fail_operation=operation)
+        source_before = bundle_snapshot(self.source, include_inode=True)
+        returncode, stdout, stderr, calls = self.run_installer(self.local_command())
+        self.assertEqual(returncode, 1, repr((stdout, stderr, calls)))
+        expected = (["copy", "sign", "fail_sign"] if operation == "sign" else
+                    ["copy", "sign", "verify_staged", "fail_verify"])
+        self.assertEqual([call["operation"] for call in calls], expected)
+        self.assertEqual({call["role"] for call in calls}, {"ditto", "codesign"})
+        sign = next(call for call in calls if call["operation"] == "sign")
+        staged = Path(sign["args"][-1])
+        self.assertEqual(sign["args"], ["--force", "--options", "runtime", "--timestamp=none",
+                                       "--entitlements", str(staged / "Contents/Resources/OVRCRBridge.entitlements"),
+                                       "--sign", "-", str(staged)])
+        self.assertNotIn("--deep", sign["args"], "Failure must not re-sign the callback helper")
+        if operation == "verify":
+            verify = next(call for call in calls if call["operation"] == "verify_staged")
+            self.assertEqual(verify["args"], ["--verify", "--deep", "--strict", str(staged)])
+        receipt = json.loads((self.root / "failed-stage.json").read_text())
+        self.assertEqual((receipt["stage"], receipt["operation"]), (str(staged), operation))
+        self.assertEqual(staged, staged.resolve())
+        self.assertEqual(staged.name, LOCAL_APP_NAME)
+        self.assertEqual(staged.parent.parent, self.destination.parent)
+        self.assertTrue(staged.parent.name.startswith(".ovrcr-bridge-install."))
+        self.assertEqual(stat.S_IMODE(staged.parent.stat().st_mode), 0o700)
+        self.assertEqual(staged.parent.stat().st_uid, os.getuid())
+        self.assertEqual(bundle_snapshot(staged, include_inode=True), receipt["snapshot"],
+                         "Keep every failed-stage byte, mode, mtime and inode from the failure boundary")
+        self.assertEqual((staged / "Contents/MacOS/ovrcr").read_bytes(),
+                         (self.source / "Contents/MacOS/ovrcr").read_bytes())
+        self.assertEqual((staged / "Contents/Resources/OVRCRBridge.entitlements").read_bytes(),
+                         (REPO / "native/bridge/entitlements.plist").read_bytes())
+        self.assertFalse(os.path.lexists(staged / "Contents/OVRCRBridge.entitlements"))
+        self.assertEqual(bundle_snapshot(self.source, include_inode=True), source_before)
+        self.assertFalse(os.path.lexists(self.destination), "Do not publish a failed signed stage")
+        self.assertFalse(os.path.lexists(self.home / "Applications/OVRCR Bridge.app"))
+        self.assertEqual(list(self.destination.parent.iterdir()), [staged.parent])
+        self.assertIn(("Local staged application retained for inspection: " + str(staged)).encode(), stderr)
+        self.assertIn(b"Fake enclosing-app signing failed" if operation == "sign" else
+                      b"Fake strict deep verification failed", stderr)
+        self.assertNotIn(b"Installed ", stdout)
+        self.assertEqual(stdout.count(b"Bundle metadata/resources valid:"), 1)
+        print(json.dumps({"retained_stage": str(staged), "failure_operation": operation,
+                          "failed_stage_sha256": hashlib.sha256(json.dumps(receipt["snapshot"],
+                                                                           sort_keys=True).encode()).hexdigest(),
+                          "destination_absent": True, "source_helper_unchanged": True}), flush=True)
+
+    def test_local_signing_failure_retains_exact_private_stage_without_publishing(self):
+        self.failed_local_stage_is_retained("sign")
+
+    def test_local_strict_verify_failure_retains_exact_private_stage_without_publishing(self):
+        self.failed_local_stage_is_retained("verify")
+
+    def test_local_refuses_legacy_root_entitlements_before_copy_or_signing(self):
+        self.prepare_local()
+        (self.source / "Contents/Resources/OVRCRBridge.entitlements").rename(
+            self.source / "Contents/OVRCRBridge.entitlements")
+        self.assert_refused_before_staging(self.local_command(), returncode=1, message="AssertionError")
+
+    def test_local_refuses_legacy_root_entry_even_with_valid_resource_before_copy_or_signing(self):
+        self.prepare_local()
+        shutil.copy2(self.source / "Contents/Resources/OVRCRBridge.entitlements",
+                     self.source / "Contents/OVRCRBridge.entitlements")
+        self.assert_refused_before_staging(self.local_command(), returncode=1, message="AssertionError")
 
     def existing_local_path_is_preserved(self, kind):
         self.prepare_local()

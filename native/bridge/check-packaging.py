@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Validate disposable bundle copies; never sign, install or launch them."""
+import hashlib
 import os
 import plistlib
 import shutil
@@ -21,6 +22,15 @@ validator = Path(__file__).with_name("validate-bundle.py")
 environment = dict(os.environ, PYTHONOPTIMIZE="1")
 checks = 0
 
+entitlements = source / "Contents/Resources/OVRCRBridge.entitlements"
+expected_entitlements_hash = hashlib.sha256(
+    (Path(__file__).resolve().parents[2] / "native/bridge/entitlements.plist").read_bytes()).hexdigest()
+assert entitlements.is_file() and not entitlements.is_symlink()
+assert hashlib.sha256(entitlements.read_bytes()).hexdigest() == expected_entitlements_hash
+assert plistlib.loads(entitlements.read_bytes()) == {"com.apple.security.automation.apple-events": True}
+assert not os.path.lexists(source / "Contents/OVRCRBridge.entitlements")
+checks += 1
+
 
 def validate(bundle, expected=True, *identity, local=local_development):
     global checks
@@ -34,7 +44,7 @@ def validate(bundle, expected=True, *identity, local=local_development):
 validate(source)
 with tempfile.TemporaryDirectory(prefix="ovrcr-bridge-packaging-") as temporary:
     root = Path(temporary)
-    for case in ["schema", "wire", "schema_bool", "wire_float", "display", "executable", "license", "hash", "missing", "symlink", "extra", "callback_hash", "callback_missing", "callback_symlink", "callback_extra", "purpose", "entitlements", "entitlements_missing"]:
+    for case in ["schema", "wire", "schema_bool", "wire_float", "display", "executable", "license", "hash", "missing", "symlink", "extra", "callback_hash", "callback_missing", "callback_symlink", "callback_extra", "purpose", "entitlements", "entitlements_missing", "entitlements_symlink", "entitlements_legacy", "entitlements_legacy_duplicate", "entitlements_legacy_symlink"]:
         bundle = root / f"{case}.app"
         shutil.copytree(source, bundle)
         info_path = bundle / "Contents/Info.plist"
@@ -70,9 +80,18 @@ with tempfile.TemporaryDirectory(prefix="ovrcr-bridge-packaging-") as temporary:
             info["NSAppleEventsUsageDescription"] = ""
             info_path.write_bytes(plistlib.dumps(info))
         elif case == "entitlements":
-            (bundle / "Contents/OVRCRBridge.entitlements").write_bytes(plistlib.dumps({"com.apple.security.automation.apple-events": False}))
+            (resources / "OVRCRBridge.entitlements").write_bytes(plistlib.dumps({"com.apple.security.automation.apple-events": False}))
         elif case == "entitlements_missing":
-            (bundle / "Contents/OVRCRBridge.entitlements").unlink()
+            (resources / "OVRCRBridge.entitlements").unlink()
+        elif case == "entitlements_symlink":
+            (resources / "OVRCRBridge.entitlements").unlink()
+            (resources / "OVRCRBridge.entitlements").symlink_to(entitlements)
+        elif case == "entitlements_legacy":
+            (resources / "OVRCRBridge.entitlements").rename(bundle / "Contents/OVRCRBridge.entitlements")
+        elif case == "entitlements_legacy_duplicate":
+            shutil.copy2(resources / "OVRCRBridge.entitlements", bundle / "Contents/OVRCRBridge.entitlements")
+        elif case == "entitlements_legacy_symlink":
+            (bundle / "Contents/OVRCRBridge.entitlements").symlink_to(root / "missing-entitlements")
         elif case == "callback_extra":
             (bundle / "Contents/MacOS/unreviewed-helper").write_bytes(b"extra")
         else:
@@ -117,4 +136,4 @@ with tempfile.TemporaryDirectory(prefix="ovrcr-bridge-packaging-") as temporary:
         info_path.write_bytes(plistlib.dumps(info))
         validate(production, False)
         validate(production, True, local=False)
-print(f"{checks} packaging checks passed under PYTHONOPTIMIZE=1; no signing/install/launch.")
+print(f"{checks} packaging checks passed under PYTHONOPTIMIZE=1; pinned entitlement SHA256 {expected_entitlements_hash}; no signing/install/launch.")

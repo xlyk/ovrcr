@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Exercise the compiled app's early guards only; never send an admitted request."""
+import hashlib
 import json
+import os
 import plistlib
 import subprocess
 import sys
@@ -20,6 +22,17 @@ schema, wire = info["OVRCRBridgeSchema"], info["OVRCRServerWire"]
 binary = bundle / "Contents/MacOS/OVRCRBridge"
 checks = 0
 client_arguments = ["--client", "--local-development"] if local_development else ["--client"]
+
+# Pin the uninstalled input bundle before any compiled-entry guard runs. An
+# entitlement file in Contents can be misclassified as unsigned nested code.
+entitlements = bundle / "Contents/Resources/OVRCRBridge.entitlements"
+expected_entitlements_hash = hashlib.sha256(
+    (Path(__file__).resolve().parents[2] / "native/bridge/entitlements.plist").read_bytes()).hexdigest()
+assert entitlements.is_file() and not entitlements.is_symlink()
+assert hashlib.sha256(entitlements.read_bytes()).hexdigest() == expected_entitlements_hash
+assert plistlib.loads(entitlements.read_bytes()) == {"com.apple.security.automation.apple-events": True}
+assert not os.path.lexists(bundle / "Contents/OVRCRBridge.entitlements")
+checks += 1
 
 
 def check(arguments, data, status, code=0):
@@ -134,4 +147,4 @@ try:
         check(client_arguments, b"", "failed")
 finally:
     info_path.write_bytes(original_info)
-print(f"{checks} compiled-entry guard checks passed; no admitted request, IPC or native app lifecycle.")
+print(f"{checks} compiled-entry and bundle-layout guard checks passed; pinned entitlement SHA256 {expected_entitlements_hash}; no admitted request, IPC or native app lifecycle.")
