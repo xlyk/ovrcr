@@ -139,7 +139,7 @@ fn codex_reopen_uses_exact_identity_without_prompt_across_two_restarts() {
                 );
                 assert_eq!(
                     std::fs::read_to_string(live.root.path().join("argv")).unwrap(),
-                    "PRIVATE_CODEX_PROMPT_118\n--full-auto\n"
+                    "PRIVATE_CODEX_PROMPT_118\n--approve-for-me\n"
                 );
             }
         }
@@ -178,8 +178,8 @@ fn codex_reopen_uses_exact_identity_without_prompt_across_two_restarts() {
         assert_eq!(
             std::fs::read_to_string(live.root.path().join("argv")).unwrap(),
             format!(
-                "PRIVATE_CODEX_PROMPT_118\n--full-auto\n{}",
-                format!("resume\n{conversation}\n--full-auto\n").repeat(attempt)
+                "PRIVATE_CODEX_PROMPT_118\n--approve-for-me\n{}",
+                format!("resume\n{conversation}\n--approve-for-me\n").repeat(attempt)
             )
         );
         // Repeated restart before another provider callback must keep the reference.
@@ -291,8 +291,8 @@ fn codex_reopen_uses_exact_identity_without_prompt_across_two_restarts() {
     assert_eq!(
         std::fs::read_to_string(live.root.path().join("argv")).unwrap(),
         format!(
-            "PRIVATE_CODEX_PROMPT_118\n--full-auto\n{}",
-            format!("resume\n{conversation}\n--full-auto\n").repeat(4)
+            "PRIVATE_CODEX_PROMPT_118\n--approve-for-me\n{}",
+            format!("resume\n{conversation}\n--approve-for-me\n").repeat(4)
         )
     );
     assert_eq!(

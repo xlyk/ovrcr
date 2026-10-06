@@ -62,7 +62,10 @@ pub fn run_dashboard(
         .into_iter()
         .find_map(|row| match row {
             TreeRow::Session { id } => Some(id),
-            TreeRow::Project { .. } | TreeRow::Workspace { .. } => None,
+            TreeRow::Project { .. }
+            | TreeRow::Workspace { .. }
+            | TreeRow::ProvisionalWorkspace { .. }
+            | TreeRow::ProvisionalSession { .. } => None,
         });
     if let Some(id) = first_session {
         // Hello and geometry reserve 1 and 2. Context identity may already

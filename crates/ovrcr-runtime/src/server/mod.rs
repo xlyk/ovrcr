@@ -33,6 +33,7 @@ mod cursor_quota;
 mod dashboard;
 mod dispatch;
 mod event_log;
+mod lifecycle;
 mod navigation;
 pub use navigation::bridge_executable_sha256;
 mod outbound;
@@ -248,6 +249,7 @@ pub struct ServerState {
     pub(crate) retained: parking_lot::Mutex<SessionStore>,
     observations: parking_lot::Mutex<HashMap<(String, String), CheckoutObservation>>,
     pub mutation_lock: Mutex<()>,
+    pub(crate) lifecycle: lifecycle::Lifecycle,
     pub dispatch: ReportingSender<DispatchMessage>,
     pub shutdown: AtomicBool,
     pub stopping: AtomicBool,
@@ -1423,6 +1425,7 @@ impl ServerState {
             retained: parking_lot::Mutex::new(retained),
             observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
+            lifecycle: lifecycle::Lifecycle::default(),
             dispatch,
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),

@@ -309,7 +309,7 @@ mod tests {
         };
         let trust = |name: &str| match name {
             "claude" => Some("--dangerously-skip-permissions"),
-            "codex" => Some("--full-auto"),
+            "codex" => Some("--approve-for-me"),
             "pi" => Some("--approve"),
             "omp" => Some("--auto-approve"),
             _ => None,

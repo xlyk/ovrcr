@@ -446,6 +446,17 @@ pub(super) fn handle_request_with_id(
         Request::CloseTerminal {
             session,
             expected_run,
+        } if dashboard && state.lifecycle.async_ready() => lifecycle::try_accept(
+            state,
+            request_id,
+            lifecycle::JobKind::CloseTerminal {
+                session,
+                expected_run,
+            },
+        ),
+        Request::CloseTerminal {
+            session,
+            expected_run,
         } => state
             .close_terminal(session, expected_run, requested_kill_grace())
             .map_or_else(error_for_lifecycle, |_| {
@@ -707,6 +718,19 @@ pub(super) fn handle_request_with_id(
             project,
             id: name,
             branch,
+        } if dashboard && state.lifecycle.async_ready() => lifecycle::try_accept(
+            state,
+            request_id,
+            lifecycle::JobKind::CreateWorkspace {
+                project,
+                id: name,
+                branch,
+            },
+        ),
+        Request::CreateWorkspace {
+            project,
+            id: name,
+            branch,
         } => state.create_workspace(project, name, branch).map_or_else(
             |error| lifecycle_response_with_partial_hierarchy(state, error),
             |_| {
@@ -716,6 +740,21 @@ pub(super) fn handle_request_with_id(
                         state.hierarchy(),
                     )));
                 Response::Ok
+            },
+        ),
+        Request::CreateWorkspaceWithLaunch {
+            project,
+            id: name,
+            branch,
+            launch,
+        } if dashboard && state.lifecycle.async_ready() => lifecycle::try_accept(
+            state,
+            request_id,
+            lifecycle::JobKind::CreateWorkspaceWithLaunch {
+                project,
+                id: name,
+                branch,
+                launch,
             },
         ),
         Request::CreateWorkspaceWithLaunch {
@@ -802,6 +841,19 @@ pub(super) fn handle_request_with_id(
             project,
             name,
             force,
+        } if dashboard && state.lifecycle.async_ready() => lifecycle::try_accept(
+            state,
+            request_id,
+            lifecycle::JobKind::RemoveWorkspace {
+                project,
+                name,
+                force,
+            },
+        ),
+        Request::RemoveWorkspace {
+            project,
+            name,
+            force,
         } => state.remove_workspace(&project, &name, force).map_or_else(
             |error| lifecycle_response_with_partial_hierarchy(state, error),
             |_| {
@@ -813,6 +865,13 @@ pub(super) fn handle_request_with_id(
                 Response::Ok
             },
         ),
+        Request::CreateSession(request) if dashboard && state.lifecycle.async_ready() => {
+            lifecycle::try_accept(
+                state,
+                request_id,
+                lifecycle::JobKind::CreateSession(request),
+            )
+        }
         Request::CreateSession(request) => state.create_session(request).map_or_else(
             |error| lifecycle_response_with_partial_hierarchy(state, error),
             |summary| {
@@ -960,7 +1019,7 @@ pub(super) fn input_error_code(error: &anyhow::Error) -> ErrorCode {
     }
 }
 
-fn lifecycle_code(error: &anyhow::Error) -> ErrorCode {
+pub(super) fn lifecycle_code(error: &anyhow::Error) -> ErrorCode {
     if let Some(failure) = error.downcast_ref::<LifecycleFailure>() {
         return failure.code.clone();
     }

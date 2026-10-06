@@ -29,7 +29,7 @@ pub fn launch_options(argv: &[OsString]) -> Result<Vec<String>> {
         let arg = arg.to_str().context("non-UTF8 Codex option")?;
         match arg {
             "--" => break,
-            "--no-alt-screen" | "--full-auto" => options.push(arg.into()),
+            "--no-alt-screen" | "--approve-for-me" | "--full-auto" => options.push(arg.into()),
             "--model" | "-m" | "--profile" | "-p" | "--sandbox" | "-s" | "--ask-for-approval"
             | "-a" | "--cd" | "-C" => {
                 let value = args
@@ -277,7 +277,7 @@ mod tests {
                 "-a",
                 "on-request",
                 "--no-alt-screen",
-                "--full-auto",
+                "--approve-for-me",
                 "PRIVATE_PROMPT"
             ]))
             .unwrap(),
@@ -291,8 +291,13 @@ mod tests {
                 "-a",
                 "on-request",
                 "--no-alt-screen",
-                "--full-auto"
+                "--approve-for-me"
             ]
+        );
+        // Obsolete --full-auto stays readable for sessions saved before the CLI rename.
+        assert_eq!(
+            launch_options(&args(&["codex", "--full-auto"])).unwrap(),
+            ["--full-auto"]
         );
         assert!(
             launch_options(&args(&["codex", "--", "resume"]))

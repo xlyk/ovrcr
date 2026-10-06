@@ -455,6 +455,24 @@ pub enum Response {
     BridgeOwner(crate::BridgeOwnerResult),
 }
 
+/// Which create/remove/close a Lifecycle job performed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LifecycleOp {
+    CreateWorkspace,
+    RemoveWorkspace,
+    CreateSession,
+    CloseTerminal,
+    CreateWorkspaceWithLaunch,
+}
+
+/// Result of a finished Lifecycle job, correlated by `client_token`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LifecycleOutcome {
+    Succeeded,
+    CreatedSession(Box<SessionSummary>),
+    Failed { code: ErrorCode, message: String },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServerEvent {
     HierarchyChanged(HierarchySnapshot),
@@ -487,6 +505,13 @@ pub enum ServerEvent {
         project: String,
         workspace: String,
         branch: String,
+    },
+    /// A Lifecycle job finished. `client_token` is the request_id that accepted
+    /// the job on the Dashboard connection.
+    LifecycleCompleted {
+        client_token: u64,
+        op: LifecycleOp,
+        outcome: LifecycleOutcome,
     },
 }
 
@@ -1164,6 +1189,14 @@ mod wire_snapshot {
                     branch: "feature/topic".into(),
                 },
             ),
+            (
+                "LifecycleCompleted",
+                ServerEvent::LifecycleCompleted {
+                    client_token: 7,
+                    op: LifecycleOp::CreateSession,
+                    outcome: LifecycleOutcome::Succeeded,
+                },
+            ),
         ]
     }
 
@@ -1578,6 +1611,7 @@ mod wire_snapshot {
             "ServerEvent::WipSavePrompt",
             "0a016101620d666561747572652f746f706963",
         ),
+        ("ServerEvent::LifecycleCompleted", "08070200"),
         ("QuotaState::Waiting", "00"),
         ("QuotaState::Current", "01"),
         ("QuotaState::Unavailable", "02"),

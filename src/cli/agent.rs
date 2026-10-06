@@ -82,7 +82,7 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
     };
     let mut argv = argv;
     // Managed Claude, Codex, Pi, and Oh My Pi auto-trust unless the caller already
-    // passed a permission, approve, full-auto, or dangerously-* flag.
+    // passed a permission, approve, auto-trust, or dangerously-* flag.
     ovrcr::protocol::apply_default_auto_trust(&name, &mut argv);
     let status = ovrcr::agent_runner::run_native(&argv, move |available, native_argv| {
         if name == "hermes" {
