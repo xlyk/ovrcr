@@ -68,6 +68,7 @@ impl Lifecycle {
         *self.tx.lock().unwrap() = None;
     }
 
+    #[cfg(test)]
     pub(super) fn inflight_token(&self) -> Option<u64> {
         *self.inflight.lock().unwrap()
     }
