@@ -361,6 +361,20 @@ pub enum Request {
     /// Connect-only native helper: validate current owner, optionally publish
     /// a bounded typed outcome to that owner's existing Dashboard channel.
     BridgeOwner(crate::BridgeOwnerCall),
+    /// Commit unignored changes onto `refs/heads/wip/<branch>` and push that
+    /// ref to `origin`. Does not move the checkout's branch or remove the
+    /// workspace.
+    SaveWorkspaceWip {
+        project: String,
+        name: String,
+    },
+    /// Answer one shutdown prompt. `workspace` is the workspace id.
+    /// `save` false continues shutdown without pushing that worktree.
+    AnswerWipSave {
+        project: String,
+        workspace: String,
+        save: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -467,6 +481,13 @@ pub enum ServerEvent {
     BridgeContext(crate::BridgeContext),
     NotificationNavigation(crate::BridgeNavigationOffer),
     ITermFocus(crate::ITermFocusStatus),
+    /// One dirty feature worktree the attached Dashboard should ask about
+    /// before server shutdown continues.
+    WipSavePrompt {
+        project: String,
+        workspace: String,
+        branch: String,
+    },
 }
 
 #[cfg(test)]
@@ -935,6 +956,21 @@ mod wire_snapshot {
                     outcome: Some(crate::ITermFocusStatus::Denied),
                 }),
             ),
+            (
+                "SaveWorkspaceWip",
+                Request::SaveWorkspaceWip {
+                    project: "a".into(),
+                    name: "b".into(),
+                },
+            ),
+            (
+                "AnswerWipSave",
+                Request::AnswerWipSave {
+                    project: "a".into(),
+                    workspace: "b".into(),
+                    save: true,
+                },
+            ),
         ]
     }
 
@@ -1113,6 +1149,14 @@ mod wire_snapshot {
             (
                 "ITermFocus",
                 ServerEvent::ITermFocus(crate::ITermFocusStatus::Denied),
+            ),
+            (
+                "WipSavePrompt",
+                ServerEvent::WipSavePrompt {
+                    project: "a".into(),
+                    workspace: "b".into(),
+                    branch: "feature/topic".into(),
+                },
             ),
         ]
     }
@@ -1438,13 +1482,15 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0425017301630168016c0104",
+            "2a0426017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0425017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0426017301630168016c01640103"),
+        ("Request::SaveWorkspaceWip", "3001610162"),
+        ("Request::AnswerWipSave", "310161016201"),
         (
             "Request::MarkReviewed",
             "1e010103696e7604636f6e760101047475726e02",
@@ -1473,18 +1519,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04250000"),
+        ("Response::NotificationNavigation", "0d04260000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0425017301630168016c0104",
+            "0e01016e0426017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010425017301630168016c0164",
+            "0f0107080901016901010426017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004250107080901016901010425017301630168016c0164",
+            "1004260107080901016901010426017301630168016c0164",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -1499,7 +1545,7 @@ mod wire_snapshot {
         ),
         (
             "ServerEvent::SettingsChanged",
-            "05072f642e746f6d6c05000001000002010470692f6d08666561747572652f01022f63010161010162020170010161017100000005636f64657801022f680467726f6b00010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
+            "05072f642e746f6d6c05000001000002010470692f6d08666561747572652f01022f63010161010162020170010161017100000005636f64657801022f680467726f6b0000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
         ),
         (
             "ServerEvent::Recorded",
@@ -1508,9 +1554,13 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0425017301630168016c0104",
+            "08016e0426017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
+        (
+            "ServerEvent::WipSavePrompt",
+            "0a016101620d666561747572652f746f706963",
+        ),
         ("QuotaState::Waiting", "00"),
         ("QuotaState::Current", "01"),
         ("QuotaState::Unavailable", "02"),

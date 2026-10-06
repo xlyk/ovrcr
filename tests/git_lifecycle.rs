@@ -309,6 +309,74 @@ fn inspects_clean_and_dirty_worktrees() {
 }
 
 #[test]
+fn publish_wip_pushes_unignored_files_without_moving_the_branch() {
+    let fixture = GitFixture::new();
+    let bare = fixture.dir.path().join("origin.git");
+    std::fs::create_dir(&bare).unwrap();
+    live::git(&bare, &["init", "--bare"]);
+    fixture.git(&[
+        "remote",
+        "add",
+        "origin",
+        bare.to_str().expect("utf-8 origin path"),
+    ]);
+    fixture.git(&["push", "origin", "main"]);
+    let created = create_worktree(
+        &fixture.project,
+        "wip-save",
+        BranchSpec::New {
+            branch: "feature/wip-save".into(),
+            base: "main".into(),
+        },
+    )
+    .unwrap();
+    let before = live::git(&fixture.project.repo, &["rev-parse", "feature/wip-save"]);
+    let error = ovrcr::git::publish_wip(&created.path, "feature/wip-save")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("no unignored changes"),
+        "a clean tree is not saved: {error}"
+    );
+
+    std::fs::write(created.path.join(".gitignore"), "*.tmp\n").unwrap();
+    std::fs::write(created.path.join("note.txt"), "keep me\n").unwrap();
+    std::fs::write(created.path.join("skip.tmp"), "nope\n").unwrap();
+    ovrcr::git::publish_wip(&created.path, "feature/wip-save").unwrap();
+
+    assert_eq!(
+        live::git(&fixture.project.repo, &["rev-parse", "feature/wip-save"]),
+        before,
+        "the checkout branch is not moved"
+    );
+    assert_eq!(
+        live::git(&created.path, &["rev-parse", "HEAD"]),
+        before,
+        "HEAD stays on the checkout branch"
+    );
+    let tree = live::git(
+        &bare,
+        &[
+            "ls-tree",
+            "-r",
+            "--name-only",
+            "refs/heads/wip/feature/wip-save",
+        ],
+    );
+    assert!(tree.lines().any(|line| line == "note.txt"), "{tree}");
+    assert!(tree.lines().any(|line| line == ".gitignore"), "{tree}");
+    assert!(
+        !tree.lines().any(|line| line == "skip.tmp"),
+        "ignored files stay out: {tree}"
+    );
+    assert_eq!(
+        live::git(&bare, &["show", "refs/heads/wip/feature/wip-save:note.txt"]),
+        "keep me\n"
+    );
+    assert!(inspect_worktree(&fixture.project, &created).unwrap().dirty);
+}
+
+#[test]
 fn refuses_to_remove_worktree_with_tracked_changes() {
     let fixture = GitFixture::new();
     let workspace = create_worktree(

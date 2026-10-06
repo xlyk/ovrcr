@@ -211,6 +211,7 @@ fn run_server_inner(
         stopping: AtomicBool::new(false),
         events: Mutex::new(Some(events)),
         event_log: Mutex::new(event_log),
+        wip: super::WipWait::default(),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         #[cfg(test)]

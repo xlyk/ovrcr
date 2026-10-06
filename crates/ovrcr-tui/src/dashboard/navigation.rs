@@ -41,7 +41,10 @@ impl Dashboard {
     }
 
     fn navigation_offer_valid(&self, offer: &BridgeNavigationOffer) -> bool {
-        ovrcr_protocol::bridge::canonical_uuid(&offer.navigation)
+        // Shutdown questions stay queued until their explicit answers are acknowledged.
+        // Recheck here at both admission and confirmation so a click cannot hide one.
+        self.wip_prompts.is_empty()
+            && ovrcr_protocol::bridge::canonical_uuid(&offer.navigation)
             && self
                 .navigation_ticket(offer.ticket.session, offer.ticket.run)
                 .as_ref()

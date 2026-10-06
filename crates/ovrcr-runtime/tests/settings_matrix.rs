@@ -341,6 +341,7 @@ fn matrix_covers_every_declared_setting() {
             "automatic_local_terminals",
             "title_model",
             "branch_prefix",
+            "save_uncommitted_work",
             "picker_roots",
             "agents",
             "launch_choices",
@@ -357,8 +358,8 @@ fn matrix_covers_every_declared_setting() {
     assert_eq!(
         kinds,
         [
-            Bool, Bool, Str, Bool, Str, Str, Str, Array, Array, Table, Bool, Bool, Str, Str, Str,
-            Str
+            Bool, Bool, Str, Bool, Str, Str, Str, Bool, Array, Array, Table, Bool, Bool, Str, Str,
+            Str, Str
         ]
     );
     // Every test-side table names a declared setting, so none goes stale.

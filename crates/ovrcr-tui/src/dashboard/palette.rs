@@ -1802,6 +1802,23 @@ impl Dashboard {
     fn palette_key_inner(&mut self, key: KeyEvent, submit: bool) -> DashboardAction {
         let mut palette = self.palette.take().unwrap();
         if key.code == KeyCode::Esc || is_browse_key(key) {
+            if let Page::Confirm {
+                request:
+                    Some(Request::AnswerWipSave {
+                        project, workspace, ..
+                    }),
+                ..
+            } = &palette.page
+            {
+                let request = Request::AnswerWipSave {
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    save: false,
+                };
+                let action = self.palette_submit(&mut palette, request);
+                self.palette = Some(palette);
+                return action;
+            }
             // Escape closes even while a request runs; its late response is
             // dropped so it cannot surface after the user has moved on.
             if !palette.workspace_acknowledged
@@ -1812,6 +1829,7 @@ impl Dashboard {
             if let Some(request_id) = palette.suggestions.inspect {
                 self.ignored_responses.insert(request_id);
             }
+            self.present_wip_prompt();
             return DashboardAction::Redraw;
         }
         // Other keys wait for the running request so a submit cannot repeat.
@@ -2814,6 +2832,29 @@ impl Dashboard {
                 palette.error = Some(format!("{code:?}: {message}"));
                 // A refused removal reopens as a forced one; only another
                 // explicit Confirm sends it.
+                let save_wip = match &palette.page {
+                    Page::Confirm {
+                        request:
+                            Some(Request::RemoveWorkspace {
+                                project,
+                                name,
+                                force: false,
+                            }),
+                        ..
+                    } if code == crate::protocol::ErrorCode::DirtyWorktree => {
+                        let branch = find_workspace(self, project, name)
+                            .map(|workspace| workspace.name.clone())
+                            .unwrap_or_default();
+                        (git_ref_branch(&branch)).then(|| {
+                            (
+                                project.clone(),
+                                name.clone(),
+                                format!("Save uncommitted work to origin/wip/{branch}?"),
+                            )
+                        })
+                    }
+                    _ => None,
+                };
                 let forced = match &palette.page {
                     Page::Confirm {
                         request:
@@ -2823,11 +2864,12 @@ impl Dashboard {
                                 force: false,
                             }),
                         ..
-                    } if matches!(
-                        code,
-                        crate::protocol::ErrorCode::SessionsRemain
-                            | crate::protocol::ErrorCode::DirtyWorktree
-                    ) =>
+                    } if save_wip.is_none()
+                        && matches!(
+                            code,
+                            crate::protocol::ErrorCode::SessionsRemain
+                                | crate::protocol::ErrorCode::DirtyWorktree
+                        ) =>
                     {
                         Some(Request::RemoveWorkspace {
                             project: project.clone(),
@@ -2837,6 +2879,12 @@ impl Dashboard {
                     }
                     _ => None,
                 };
+                if let Some((project, name, target)) = save_wip {
+                    palette.page = Page::Confirm {
+                        request: Some(Request::SaveWorkspaceWip { project, name }),
+                        target,
+                    };
+                }
                 if let Some(request) = forced {
                     let display = match &request {
                         Request::RemoveWorkspace { project, name, .. } => {
@@ -2915,6 +2963,45 @@ impl Dashboard {
             }
             _ => {
                 let mut palette = self.palette.take().unwrap();
+                if let Response::Ok = response
+                    && let Page::Confirm {
+                        request: Some(Request::SaveWorkspaceWip { project, name }),
+                        ..
+                    } = &palette.page
+                {
+                    let project = project.clone();
+                    let name = name.clone();
+                    let display = find_workspace(self, &project, &name)
+                        .map(|workspace| workspace_heading(self, workspace))
+                        .unwrap_or_default();
+                    let request = Request::RemoveWorkspace {
+                        project,
+                        name,
+                        force: true,
+                    };
+                    let request_id = self.next_request_id();
+                    palette.pending = Some(request_id);
+                    palette.error = None;
+                    palette.page = Page::Confirm {
+                        request: Some(request.clone()),
+                        target: format!("Saved to origin/wip and removing workspace {display}."),
+                    };
+                    self.palette = Some(palette);
+                    return Some(vec![ClientMessage {
+                        request_id,
+                        request,
+                    }]);
+                }
+                let answered_wip = matches!(
+                    (&palette.page, response),
+                    (
+                        Page::Confirm {
+                            request: Some(Request::AnswerWipSave { .. }),
+                            ..
+                        },
+                        Response::Ok,
+                    )
+                );
                 if let Some(request_id) = palette.suggestions.inspect {
                     self.ignored_responses.insert(request_id);
                 }
@@ -2950,6 +3037,10 @@ impl Dashboard {
                     return Some(outgoing);
                 }
                 self.palette = None;
+                if answered_wip {
+                    self.wip_prompts.pop_front();
+                }
+                self.present_wip_prompt();
             }
         }
         Some(Vec::new())
@@ -3583,6 +3674,44 @@ fn mark_form_edit(
         _ => {}
     }
 }
+fn git_ref_branch(branch: &str) -> bool {
+    !branch.is_empty()
+        && !branch.contains(char::is_whitespace)
+        && !branch.starts_with('/')
+        && !branch.ends_with('/')
+        && !branch.contains("//")
+        && !branch.contains("..")
+        && !branch.starts_with("detached")
+}
+
+impl Dashboard {
+    pub(super) fn queue_wip_prompt(&mut self, project: String, workspace: String, branch: String) {
+        self.wip_prompts.push_back((project, workspace, branch));
+        self.present_wip_prompt();
+    }
+
+    fn present_wip_prompt(&mut self) {
+        if self.palette.is_some() {
+            return;
+        }
+        let Some((project, workspace, branch)) = self.wip_prompts.front().cloned() else {
+            return;
+        };
+        self.mode = InputMode::Browse;
+        self.palette = Some(Palette {
+            page: Page::Confirm {
+                request: Some(Request::AnswerWipSave {
+                    project,
+                    workspace,
+                    save: true,
+                }),
+                target: format!("Save uncommitted work to origin/wip/{branch}?"),
+            },
+            ..Palette::new()
+        });
+    }
+}
+
 fn removal_confirmation(request: Request, display: &str) -> Page {
     let target = match &request {
         Request::RemoveWorkspace { force: false, .. } => format!(

@@ -606,6 +606,7 @@ impl Dashboard {
             configuration_paths: None,
             history_page_error: false,
             outbox: super::outbox::Outbox::default(),
+            wip_prompts: VecDeque::new(),
             ignored_responses: HashSet::new(),
             settings: Settings::default(),
             config_dir: std::path::PathBuf::new(),
@@ -3399,6 +3400,11 @@ impl Dashboard {
                 }
                 ServerEvent::SettingsChanged(report) => self.install_settings_report(*report),
                 ServerEvent::Recorded(event) => self.events_recorded(event),
+                ServerEvent::WipSavePrompt {
+                    project,
+                    workspace,
+                    branch,
+                } => self.queue_wip_prompt(project, workspace, branch),
                 ServerEvent::SessionChanged(summary) => {
                     if find_session(self, summary.id)
                         .is_some_and(|current| current.run.0 > summary.run.0)

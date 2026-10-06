@@ -2695,10 +2695,8 @@ fn reopen_confirm_keeps_captured_run_when_hierarchy_advances() {
 
 #[test]
 fn refused_workspace_removal_offers_force_and_sends_it_only_on_explicit_confirm() {
-    for code in [
-        ovrcr::protocol::ErrorCode::SessionsRemain,
-        ovrcr::protocol::ErrorCode::DirtyWorktree,
-    ] {
+    {
+        let code = ovrcr::protocol::ErrorCode::SessionsRemain;
         let mut dashboard = dashboard_fixture();
         palette_search(&mut dashboard, "remove workspace");
         dashboard.key(KeyCode::Enter);
@@ -2749,6 +2747,444 @@ fn refused_workspace_removal_offers_force_and_sends_it_only_on_explicit_confirm(
             ovrcr::tui::DashboardAction::Request(_)
         ));
     }
+}
+
+#[test]
+fn dirty_workspace_removal_asks_to_save_then_removes_only_after_yes() {
+    let mut dashboard = dashboard_fixture();
+    palette_search(&mut dashboard, "remove workspace");
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    let ovrcr::tui::DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
+        panic!("expected confirmed removal")
+    };
+    let Request::RemoveWorkspace {
+        project,
+        name,
+        force: false,
+    } = request.request.clone()
+    else {
+        panic!("first removal must not force: {:?}", request.request)
+    };
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Error {
+            code: ovrcr::protocol::ErrorCode::DirtyWorktree,
+            message: "worktree has changes".into(),
+        },
+    });
+    let text = palette_text(&dashboard);
+    assert!(
+        text.contains("Save uncommitted work to origin/wip/"),
+        "{text}"
+    );
+    assert!(text.contains("worktree has changes"), "{text}");
+    assert!(!text.contains("Force remove workspace"), "{text}");
+    let ovrcr::tui::DashboardAction::Request(save) = dashboard.key(KeyCode::Enter) else {
+        panic!("yes must send the save")
+    };
+    assert_eq!(
+        save.request,
+        Request::SaveWorkspaceWip {
+            project: project.clone(),
+            name: name.clone(),
+        }
+    );
+    let followed = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: save.request_id,
+        response: Response::Ok,
+    });
+    assert!(
+        followed.iter().any(|message| {
+            message.request
+                == Request::RemoveWorkspace {
+                    project: project.clone(),
+                    name: name.clone(),
+                    force: true,
+                }
+        }),
+        "yes removes the workspace after the save: {followed:?}"
+    );
+}
+
+#[test]
+fn declining_the_save_does_not_remove_the_workspace() {
+    let mut dashboard = dashboard_fixture();
+    palette_search(&mut dashboard, "remove workspace");
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    let ovrcr::tui::DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
+        panic!("expected confirmed removal")
+    };
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Error {
+            code: ovrcr::protocol::ErrorCode::DirtyWorktree,
+            message: "worktree has changes".into(),
+        },
+    });
+    assert!(!matches!(
+        dashboard.key(KeyCode::Esc),
+        ovrcr::tui::DashboardAction::Request(_)
+    ));
+    assert!(
+        !palette_text(&dashboard).contains("Save uncommitted work"),
+        "no leaves the save question"
+    );
+}
+
+#[test]
+fn shutdown_asks_once_per_dirty_worktree() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::WipSavePrompt {
+        project: "consigint".into(),
+        workspace: "one".into(),
+        branch: "feature/one".into(),
+    }));
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::WipSavePrompt {
+        project: "consigint".into(),
+        workspace: "two".into(),
+        branch: "feature/two".into(),
+    }));
+    let text = palette_text(&dashboard);
+    assert!(
+        text.contains("Save uncommitted work to origin/wip/feature/one?"),
+        "{text}"
+    );
+    assert!(!text.contains("feature/two"), "{text}");
+    let ovrcr::tui::DashboardAction::Request(first) = dashboard.key(KeyCode::Enter) else {
+        panic!("first yes")
+    };
+    assert_eq!(
+        first.request,
+        Request::AnswerWipSave {
+            project: "consigint".into(),
+            workspace: "one".into(),
+            save: true,
+        }
+    );
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: first.request_id,
+        response: Response::Ok,
+    });
+    let text = palette_text(&dashboard);
+    assert!(
+        text.contains("Save uncommitted work to origin/wip/feature/two?"),
+        "{text}"
+    );
+    let ovrcr::tui::DashboardAction::Request(second) = dashboard.key(KeyCode::Esc) else {
+        panic!("second no")
+    };
+    assert_eq!(
+        second.request,
+        Request::AnswerWipSave {
+            project: "consigint".into(),
+            workspace: "two".into(),
+            save: false,
+        }
+    );
+}
+
+fn shutdown_navigation_fixture() -> (
+    Dashboard,
+    ovrcr::protocol::BridgeNavigationOffer,
+    tempfile::TempDir,
+) {
+    use ovrcr::protocol::{
+        BRIDGE_SCHEMA_VERSION, BridgeContext, BridgeNavigationOffer, BridgeNavigationTicket,
+        PROTOCOL_VERSION, SessionRunId,
+    };
+
+    let root = tempfile::tempdir().unwrap();
+    // This pure UI fixture checks ticket correlation, not executable-byte admission.
+    // No callback executable, socket, provider or native Bridge is started.
+    let context = BridgeContext {
+        server_socket: root.path().join("server.sock").to_str().unwrap().into(),
+        callback_executable: root.path().join("ovrcr").to_str().unwrap().into(),
+        callback_executable_sha256: "0".repeat(64),
+        server_lifetime: "10000000-0000-4000-8000-000000000001".into(),
+    };
+    assert!(context.validate());
+    let offer = BridgeNavigationOffer {
+        navigation: "20000000-0000-4000-8000-000000000002".into(),
+        ticket: BridgeNavigationTicket {
+            schema: BRIDGE_SCHEMA_VERSION,
+            server_wire: PROTOCOL_VERSION,
+            server_socket: context.server_socket.clone(),
+            callback_executable: context.callback_executable.clone(),
+            callback_executable_sha256: context.callback_executable_sha256.clone(),
+            server_lifetime: context.server_lifetime.clone(),
+            session: SessionId(3),
+            run: SessionRunId(1),
+        },
+    };
+    assert!(offer.ticket.validate());
+    let mut dashboard = dashboard_fixture();
+    if let Some(view) = dashboard.request_view_at(Rect::new(0, 0, 88, 38)) {
+        dashboard.drain_outbox();
+        acknowledge_all_view_targets(&mut dashboard, view);
+    }
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::BridgeContext(context)));
+    assert!(dashboard.drain_outbox().is_empty());
+    (dashboard, offer, root)
+}
+
+fn shutdown_navigation_confirmation(
+    dashboard: &mut Dashboard,
+    offer: &ovrcr::protocol::BridgeNavigationOffer,
+) -> ClientMessage {
+    let mut outgoing = dashboard.handle_server_message(ServerMessage::Event(
+        ServerEvent::NotificationNavigation(offer.clone()),
+    ));
+    assert_eq!(
+        outgoing.len(),
+        1,
+        "a fresh valid offer must only request confirmation"
+    );
+    let confirmation = outgoing.pop().unwrap();
+    assert_eq!(
+        confirmation.request,
+        Request::ConfirmNotificationNavigation {
+            navigation: offer.navigation.clone(),
+        }
+    );
+    confirmation
+}
+
+fn shutdown_question(dashboard: &mut Dashboard, name: &str) {
+    assert!(
+        dashboard
+            .handle_server_message(ServerMessage::Event(ServerEvent::WipSavePrompt {
+                project: "consigint".into(),
+                workspace: name.into(),
+                branch: format!("feature/{name}"),
+            }))
+            .is_empty()
+    );
+}
+
+fn assert_shutdown_question(dashboard: &Dashboard, name: &str, hidden: &str) {
+    let text = palette_text(dashboard);
+    assert!(
+        text.contains(&format!(
+            "Save uncommitted work to origin/wip/feature/{name}?"
+        )),
+        "{text}"
+    );
+    assert!(!text.contains(&format!("feature/{hidden}")), "{text}");
+}
+
+fn answer_shutdown_question(dashboard: &mut Dashboard, name: &str, save: bool) -> ClientMessage {
+    let DashboardAction::Request(answer) =
+        dashboard.key(if save { KeyCode::Enter } else { KeyCode::Esc })
+    else {
+        panic!("shutdown question must require its explicit answer");
+    };
+    assert_eq!(
+        answer.request,
+        Request::AnswerWipSave {
+            project: "consigint".into(),
+            workspace: name.into(),
+            save,
+        }
+    );
+    answer
+}
+
+#[test]
+fn shutdown_question_rejects_notification_offer_without_inferring_an_answer() {
+    for save in [false, true] {
+        let (mut dashboard, offer, _root) = shutdown_navigation_fixture();
+        let focused = dashboard.focused_session();
+        let revision = dashboard.view_revision();
+        shutdown_question(&mut dashboard, "one");
+        let outgoing = dashboard.handle_server_message(ServerMessage::Event(
+            ServerEvent::NotificationNavigation(offer),
+        ));
+        assert!(
+            outgoing.is_empty(),
+            "a shutdown question forbids confirmation, application, input or an inferred answer: {outgoing:?}"
+        );
+        assert_eq!(dashboard.focused_session(), focused);
+        assert_eq!(dashboard.view_revision(), revision);
+        assert!(dashboard.request_view_at(Rect::new(0, 0, 88, 38)).is_none());
+        assert_shutdown_question(&dashboard, "one", "two");
+        assert!(
+            dashboard
+                .input_request(b"hidden-input".to_vec(), 9000)
+                .is_none()
+        );
+        let answer = answer_shutdown_question(&mut dashboard, "one", save);
+        assert!(
+            dashboard
+                .handle_server_message(ServerMessage::Response {
+                    request_id: answer.request_id,
+                    response: Response::Ok,
+                })
+                .is_empty()
+        );
+        assert!(!palette_text(&dashboard).contains("Save uncommitted work"));
+        assert_view_input_allowed(&mut dashboard);
+    }
+}
+
+#[test]
+fn shutdown_question_rejects_already_pending_navigation_confirmation() {
+    let (mut dashboard, offer, _root) = shutdown_navigation_fixture();
+    let focused = dashboard.focused_session();
+    let revision = dashboard.view_revision();
+    let confirmation = shutdown_navigation_confirmation(&mut dashboard, &offer);
+    shutdown_question(&mut dashboard, "one");
+    shutdown_question(&mut dashboard, "two");
+    let outgoing = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: confirmation.request_id,
+        response: Response::NotificationNavigationConfirmed(Some(Box::new(offer.clone()))),
+    });
+    assert!(
+        outgoing.is_empty(),
+        "a late confirmation must not apply, input or infer an answer: {outgoing:?}"
+    );
+    assert_eq!(dashboard.focused_session(), focused);
+    assert_eq!(dashboard.view_revision(), revision);
+    assert!(dashboard.request_view_at(Rect::new(0, 0, 88, 38)).is_none());
+    assert_shutdown_question(&dashboard, "one", "two");
+    let first = answer_shutdown_question(&mut dashboard, "one", false);
+    assert!(
+        dashboard
+            .handle_server_message(ServerMessage::Response {
+                request_id: first.request_id,
+                response: Response::Ok,
+            })
+            .is_empty()
+    );
+    assert_shutdown_question(&dashboard, "two", "one");
+    let second = answer_shutdown_question(&mut dashboard, "two", true);
+    assert!(
+        dashboard
+            .handle_server_message(ServerMessage::Response {
+                request_id: second.request_id,
+                response: Response::Ok,
+            })
+            .is_empty()
+    );
+    // The refused matching confirmation was consumed; clearing the queue cannot replay it.
+    assert!(
+        dashboard
+            .handle_server_message(ServerMessage::Response {
+                request_id: confirmation.request_id,
+                response: Response::NotificationNavigationConfirmed(Some(Box::new(offer))),
+            })
+            .is_empty()
+    );
+    assert_eq!(dashboard.focused_session(), focused);
+    assert_eq!(dashboard.view_revision(), revision);
+    assert_view_input_allowed(&mut dashboard);
+}
+
+#[test]
+fn shutdown_pending_answer_survives_navigation_and_advances_only_on_its_exact_ok() {
+    let (mut dashboard, offer, _root) = shutdown_navigation_fixture();
+    let focused = dashboard.focused_session();
+    let revision = dashboard.view_revision();
+    let confirmation = shutdown_navigation_confirmation(&mut dashboard, &offer);
+    shutdown_question(&mut dashboard, "one");
+    shutdown_question(&mut dashboard, "two");
+    let first = answer_shutdown_question(&mut dashboard, "one", true);
+    let outgoing = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: confirmation.request_id,
+        response: Response::NotificationNavigationConfirmed(Some(Box::new(offer.clone()))),
+    });
+    assert!(
+        outgoing.is_empty(),
+        "navigation must preserve the submitted answer and emit no application/input/answer: {outgoing:?}"
+    );
+    assert_eq!(dashboard.focused_session(), focused);
+    assert_eq!(dashboard.view_revision(), revision);
+    assert!(dashboard.request_view_at(Rect::new(0, 0, 88, 38)).is_none());
+    assert_shutdown_question(&dashboard, "one", "two");
+    for wrong in [confirmation.request_id, first.request_id + 1000] {
+        assert!(
+            dashboard
+                .handle_server_message(ServerMessage::Response {
+                    request_id: wrong,
+                    response: Response::Ok,
+                })
+                .is_empty()
+        );
+        assert_shutdown_question(&dashboard, "one", "two");
+        assert_eq!(
+            dashboard.key(KeyCode::Enter),
+            DashboardAction::Redraw,
+            "an unanswered request must not resubmit"
+        );
+        assert!(dashboard.drain_outbox().is_empty());
+    }
+    assert!(
+        dashboard
+            .handle_server_message(ServerMessage::Response {
+                request_id: first.request_id,
+                response: Response::Ok,
+            })
+            .is_empty()
+    );
+    assert_shutdown_question(&dashboard, "two", "one");
+    // A repeated old answer acknowledgement cannot consume the second question.
+    assert!(
+        dashboard
+            .handle_server_message(ServerMessage::Response {
+                request_id: first.request_id,
+                response: Response::Ok,
+            })
+            .is_empty()
+    );
+    assert_shutdown_question(&dashboard, "two", "one");
+    let second = answer_shutdown_question(&mut dashboard, "two", false);
+    assert!(
+        dashboard
+            .handle_server_message(ServerMessage::Response {
+                request_id: second.request_id,
+                response: Response::Ok,
+            })
+            .is_empty()
+    );
+    assert!(!palette_text(&dashboard).contains("Save uncommitted work"));
+    assert_view_input_allowed(&mut dashboard);
+
+    let mut fresh = offer;
+    fresh.navigation = "30000000-0000-4000-8000-000000000003".into();
+    let confirmation = shutdown_navigation_confirmation(&mut dashboard, &fresh);
+    let outgoing = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: confirmation.request_id,
+        response: Response::NotificationNavigationConfirmed(Some(Box::new(fresh.clone()))),
+    });
+    assert_eq!(dashboard.focused_session(), Some(fresh.ticket.session));
+    assert!(dashboard.view_revision() > revision);
+    assert_eq!(
+        outgoing
+            .iter()
+            .filter(|message| matches!(
+                &message.request,
+                Request::NotificationNavigationApplied { navigation }
+                    if navigation == &fresh.navigation
+            ))
+            .count(),
+        1
+    );
+    assert!(
+        outgoing.iter().all(|message| matches!(
+            message.request,
+            Request::NotificationNavigationApplied { .. } | Request::SetView { .. }
+        )),
+        "fresh navigation must not infer an answer or send input: {outgoing:?}"
+    );
+    assert!(
+        dashboard
+            .handle_server_message(ServerMessage::Response {
+                request_id: confirmation.request_id,
+                response: Response::NotificationNavigationConfirmed(Some(Box::new(fresh))),
+            })
+            .is_empty()
+    );
 }
 
 #[test]

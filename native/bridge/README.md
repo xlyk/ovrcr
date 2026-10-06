@@ -98,7 +98,7 @@ misuse also returns typed `failed` with exit 0; non-client CLI misuse exits 64.
 mismatch and 64 for invalid arguments, before any app/notification/IPC lifecycle.
 Both versions are derived from the shared Rust constants at build time.
 
-Schema 4 / wire 37 requests carry `schema`, `server_wire` and an `op` tagged by `type`:
+Schema 4 / wire 38 requests carry `schema`, `server_wire` and an `op` tagged by `type`:
 `status`, `authorize`, `settings`, `iterm_setup`, `iterm_status`, or `deliver`
 with `title`, `subtitle`, `body`
 and nullable `sound`, plus `navigation`. Null sound is silent; the only choices
@@ -203,6 +203,8 @@ tab/window. Exact existing-iTerm selection follows the separately enabled and
 previously authorized flow below. Ordinary clicks never request terminal-control
 permission, reopen/recover a run or send input. OS activation is best effort and
 does not establish foreground success.
+While shutdown WIP-save questions are queued, the Dashboard ignores offers and
+matching confirmations without hiding the questions or inferring an answer.
 The local same-user transport is not a security boundary against concurrent
 modification by that user; signature/hash checks fail closed when observed
 changes or mismatches occur.
@@ -237,8 +239,10 @@ callback helper or changing its bytes. This is source packaging, not permission
 or signing authority: actual setup, native control, signing and acceptance each
 retain their explicit approval gates. The accepted #222 bundles are unchanged.
 
-This combined #223/#224/#225 source uses schema 4 / wire 37. It is incompatible
-with the earlier independent schema 2 / wire 35 and schema 3 / wire 36 slices. Pure
+This combined #223/#224/#225 source includes main's workspace WIP-save messages
+and uses schema 4 / wire 38. It is incompatible with the earlier combined
+schema 4 / wire 37 build and independent schema 2 / wire 35 and schema 3 / wire 36
+slices. Pure
 adapter, setup-state and click-policy runners are under `headless-iterm*`; their
 checks use early guards or injected permission/current-owner/selection doubles.
 `scripts/build-bridge.sh --check` compiles and runs all four pure runners.

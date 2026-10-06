@@ -287,6 +287,8 @@ pub struct Dashboard {
     history_page_error: bool,
     /// Requests waiting for the event loop's next drain.
     outbox: outbox::Outbox,
+    /// Shutdown questions still to ask, oldest first: project, workspace id, branch.
+    wip_prompts: VecDeque<(String, String, String)>,
     ignored_responses: HashSet<u64>,
     settings: settings::Settings,
     config_dir: std::path::PathBuf,

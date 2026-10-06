@@ -91,7 +91,9 @@ fn declared(path: &str) -> Option<(Vec<Segment>, Kind)> {
         })
         .collect();
     let kind = match names.as_slice() {
-        [Some("desktop_notifications" | "ready_sound" | "iterm_focus")] => Typed("a boolean"),
+        [
+            Some("desktop_notifications" | "ready_sound" | "iterm_focus" | "save_uncommitted_work"),
+        ] => Typed("a boolean"),
         [Some("ready_sound_choice")] => Text("\"default\", \"tap\", \"chime\" or \"rise\""),
         [Some("automatic_local_terminals")] => Text("\"on\", \"off\" or \"default_branch_only\""),
         [Some("title_model")] => Text("a \"provider/model\" string"),
@@ -577,6 +579,12 @@ mod tests {
             ("title_model", "pi/test", "title_model", |s| {
                 s.title_model.as_deref() == Some("pi/test")
             }),
+            (
+                "save_uncommitted_work",
+                "true",
+                "save_uncommitted_work",
+                |s| s.save_uncommitted_work,
+            ),
             (
                 "picker_roots",
                 "[\"/tmp/a\", \"/tmp/b\"]",
