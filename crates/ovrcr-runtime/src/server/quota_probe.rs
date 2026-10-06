@@ -2,8 +2,8 @@
 use super::quota;
 use super::{DispatchMessage, ServerState};
 use ovrcr_protocol::{
-    AgentProvider, PROBE_EXITED, PROBE_MISSING_USAGE, PROBE_TIMED_OUT, QuotaReport,
-    QuotaSource, QuotaState, QuotaWindow,
+    AgentProvider, PROBE_EXITED, PROBE_MISSING_USAGE, PROBE_TIMED_OUT, QuotaReport, QuotaSource,
+    QuotaState, QuotaWindow,
 };
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde_json::{Value, json};
