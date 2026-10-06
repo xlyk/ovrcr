@@ -85,10 +85,10 @@ pub fn eligible_argv(argv: &[OsString]) -> bool {
         if arg == "--" {
             break;
         }
-        if let Some((name, _)) = arg.split_once('=') {
-            if name.starts_with('-') {
-                continue;
-            }
+        if let Some((name, _)) = arg.split_once('=')
+            && name.starts_with('-')
+        {
+            continue;
         }
         if arg.starts_with('-') {
             if VALUE_FLAGS.contains(&arg) {
