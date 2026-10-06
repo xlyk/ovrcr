@@ -17,10 +17,61 @@ use std::time::{Duration, Instant};
 fn isolated_command(root: &tempfile::TempDir) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ovrcr"));
     command
+        // Account readers use this fixture's profiles, never the user's.
+        // Callers may still supply explicit task-owned overrides afterward.
+        .env("HOME", root.path())
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("XDG_DATA_HOME")
+        .env_remove("XDG_STATE_HOME")
+        .env_remove("XDG_CACHE_HOME")
+        .env_remove("CODEX_HOME")
+        .env_remove("GROK_HOME")
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("OVRCR_CONFIG")
+        .env_remove("OVRCR_DASHBOARD_CONFIG")
         .env("OVRCR_HOME", root.path())
         .env("OVRCR_SOCKET", root.path().join("server.sock"))
         .env("SHELL", "/bin/sh");
     command
+}
+
+#[test]
+fn cli_fixture_commands_isolate_profiles_and_allow_explicit_overrides() {
+    let root = tempfile::tempdir().unwrap();
+    let mut command = isolated_command(&root);
+    {
+        let value = |key: &str| {
+            command
+                .get_envs()
+                .find_map(|(name, value)| (name == key).then_some(value))
+        };
+        assert_eq!(value("HOME"), Some(Some(root.path().as_os_str())));
+        assert_eq!(value("OVRCR_HOME"), Some(Some(root.path().as_os_str())));
+        let socket = root.path().join("server.sock");
+        assert_eq!(value("OVRCR_SOCKET"), Some(Some(socket.as_os_str())));
+        for key in [
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "XDG_STATE_HOME",
+            "XDG_CACHE_HOME",
+            "CODEX_HOME",
+            "GROK_HOME",
+            "CLAUDE_CONFIG_DIR",
+            "OVRCR_CONFIG",
+            "OVRCR_DASHBOARD_CONFIG",
+        ] {
+            assert_eq!(value(key), Some(None), "inherited {key} was not removed");
+        }
+        assert_eq!(value("PATH"), None, "retain the test runner's PATH");
+    }
+    let codex_home = root.path().join("codex-fixture");
+    command.env("CODEX_HOME", &codex_home);
+    assert_eq!(
+        command
+            .get_envs()
+            .find_map(|(name, value)| (name == "CODEX_HOME").then_some(value)),
+        Some(Some(codex_home.as_os_str()))
+    );
 }
 
 struct CapturedChild {
@@ -1758,18 +1809,10 @@ fn session_command_keeps_arguments_after_separator() {
     live::init_repo(&repo);
     let config = root.path().to_path_buf();
     let socket = root.path().join("server.sock");
-    let envs = [
-        ("OVRCR_HOME", root.path().as_os_str()),
-        ("OVRCR_SOCKET", socket.as_os_str()),
-    ];
     let bin = env!("CARGO_BIN_EXE_ovrcr");
     let run = |args: &[&str]| {
-        let mut command = Command::new(bin);
+        let mut command = isolated_command(&root);
         command.args(args);
-        for &(key, value) in &envs {
-            command.env(key, value);
-        }
-        command.env("SHELL", "/bin/sh");
         let output = command.output().unwrap();
         assert!(
             output.status.success(),
@@ -2536,10 +2579,8 @@ fn hermes_cli_launch_uses_real_server_pty_and_truthful_lifecycle() {
     let native = fixture.root.path().join("hermes");
     std::fs::write(&native, "#!/bin/sh\nprintf 'HERMES_FIXTURE_READY\\n'\nwhile IFS= read -r line; do [ \"$line\" = quit ] && exit 0; printf 'HERMES_REPLY:%s\\nBusy Ready approval\\n' \"$line\"; done\n").unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let mut create = Command::new(&fixture.executable);
+    let mut create = fixture.command();
     create
-        .env("OVRCR_HOME", &fixture.config)
-        .env("OVRCR_SOCKET", &fixture.socket)
         .args([
             "--json",
             "terminal",
@@ -2787,10 +2828,8 @@ fn cursor_create(
     native: &std::path::Path,
     args: &[&str],
 ) -> ovrcr::session::SessionId {
-    let mut command = Command::new(&fixture.executable);
+    let mut command = fixture.command();
     command
-        .env("OVRCR_HOME", &fixture.config)
-        .env("OVRCR_SOCKET", &fixture.socket)
         .args([
             "terminal",
             "create",
@@ -3164,12 +3203,8 @@ fn stable_titles_rename_reset_and_reopen_through_cli() {
     let fixture = live::Live::binary();
     fixture.ready("feature/cli-titles");
     let run = |args: &[&str]| {
-        let mut command = Command::new(&fixture.executable);
-        command
-            .args(args)
-            .env("OVRCR_HOME", &fixture.config)
-            .env("OVRCR_SOCKET", &fixture.socket)
-            .env("SHELL", "/bin/sh");
+        let mut command = fixture.command();
+        command.args(args);
         let output = run_cli_bounded(command).unwrap();
         assert!(
             output.status.success(),
