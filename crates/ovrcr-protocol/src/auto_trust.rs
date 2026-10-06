@@ -1,24 +1,28 @@
 //! Default auto-trust flags for managed Claude, Codex, Pi, and Oh My Pi launches.
 //!
 //! Callers append one flag only when argv has none of the permission, approve,
-//! full-auto, or dangerously-* family. An existing flag in that family wins.
+//! auto-trust, or dangerously-* family. An existing flag in that family wins.
+//!
+//! Codex defaults to `--approve-for-me` (Codex CLI >=0.155). Obsolete `--full-auto`
+//! remains in the family presence check so a saved argv never gets a second flag.
 use std::ffi::OsString;
 
 /// The flag a managed launch adds when the caller omitted the permission family.
 pub fn default_auto_trust_flag(provider: &str) -> Option<&'static str> {
     match provider {
         "claude" => Some("--dangerously-skip-permissions"),
-        "codex" => Some("--full-auto"),
+        "codex" => Some("--approve-for-me"),
         "pi" => Some("--approve"),
         "omp" => Some("--auto-approve"),
         _ => None,
     }
 }
 
-/// True when `argv` already names a permission, approve, full-auto, or dangerously-* flag.
+/// True when `argv` already names a permission, approve, auto-trust, or dangerously-* flag.
 ///
 /// Codex's short `-a` is `--ask-for-approval`. The same token on another provider is not
-/// that family. `--yolo` is Oh My Pi's alias of `--auto-approve`.
+/// that family. `--yolo` is Oh My Pi's alias of `--auto-approve`. Codex keeps obsolete
+/// `--full-auto` in the family so old saved argv does not also receive `--approve-for-me`.
 fn auto_trust_family_present(provider: &str, argv: &[OsString]) -> bool {
     argv.iter().any(|arg| {
         let Some(text) = arg.to_str() else {
@@ -35,6 +39,7 @@ fn auto_trust_family_present(provider: &str, argv: &[OsString]) -> bool {
                     | "--auto-approve"
                     | "--yolo"
                     | "--approval-mode"
+                    | "--approve-for-me"
                     | "--full-auto"
                     | "--ask-for-approval"
             )
@@ -76,7 +81,7 @@ mod tests {
     fn bare_managed_launches_gain_one_provider_flag() {
         let cases = [
             ("claude", "--dangerously-skip-permissions"),
-            ("codex", "--full-auto"),
+            ("codex", "--approve-for-me"),
             ("pi", "--approve"),
             ("omp", "--auto-approve"),
         ];
@@ -106,6 +111,7 @@ mod tests {
                 "claude",
                 &["claude", "--allow-dangerously-skip-permissions"],
             ),
+            ("codex", &["codex", "--approve-for-me"]),
             ("codex", &["codex", "--full-auto"]),
             ("codex", &["codex", "--ask-for-approval", "on-request"]),
             ("codex", &["codex", "-a", "never"]),
@@ -152,7 +158,7 @@ mod tests {
                 "gpt-5",
                 "--sandbox",
                 "workspace-write",
-                "--full-auto"
+                "--approve-for-me"
             ])
         );
         let mut claude = args(&["claude", "-a"]);

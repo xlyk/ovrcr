@@ -47,7 +47,7 @@ fn eligible_launch(argv: &[OsString]) -> Option<EligibleLaunch> {
     while let Some(arg) = args.next() {
         let arg = arg.to_str()?;
         match arg {
-            "--no-alt-screen" | "--full-auto" | "--dangerously-bypass-hook-trust" => {}
+            "--no-alt-screen" | "--approve-for-me" | "--full-auto" | "--dangerously-bypass-hook-trust" => {}
             "--model" | "-m" | "--profile" | "-p" | "--sandbox" | "-s" | "--ask-for-approval"
             | "-a" | "--cd" | "-C" => {
                 let value = args.next()?;

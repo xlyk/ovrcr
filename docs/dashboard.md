@@ -530,8 +530,8 @@ root workspace shows a warning. Detected `claude`, `codex`, `pi`, `omp`, `grok`,
 entries launch through the managed `agent run` route; an
 `agents` override replaces the command entirely. Detected Claude, Codex, Pi, and Oh My Pi
 launches auto-trust by default: the argv gains `--dangerously-skip-permissions`,
-`--full-auto`, `--approve`, or `--auto-approve` when it does not already contain a
-permission-mode, approve, auto-approve, full-auto, or dangerously-* flag. A flag already
+`--approve-for-me`, `--approve`, or `--auto-approve` when it does not already contain a
+permission-mode, approve, auto-approve, approve-for-me, full-auto, or dangerously-* flag. A flag already
 in that family is left as written; nothing is appended or replaced, and there is no
 global switch. `ovrcr agent run` does the same when its native argv is bare, including
 a `[[agents]]` preset that is itself a bare `agent run`. A preset that already names one
