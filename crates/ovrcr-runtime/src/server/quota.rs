@@ -50,6 +50,8 @@ pub(super) struct Refresh {
     pub(super) claude_probe_due: bool,
     /// Latest Claude account read (`GET /api/oauth/usage`). Not a status-line sample.
     pub(super) claude_account: Option<ProviderQuota>,
+    /// Latest probe signal. The allowance merge decides whether it becomes the row.
+    pub(super) claude_probe: Option<super::claude_allowance::ProbeSignal>,
 }
 
 pub(super) fn take_cursor_due(state: &ServerState) -> bool {

@@ -28,6 +28,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 pub mod build_identity;
+mod claude_allowance;
 mod connections;
 mod cursor_quota;
 mod dashboard;
@@ -268,117 +269,35 @@ pub struct ServerState {
 impl ServerState {
     /// Only the selected native Claude invocation can replace the retained source.
     fn refresh_claude_quota(&self) {
-        use ovrcr_protocol::{
-            AgentProvider, CLAUDE_WAITING, ProviderQuota, QuotaProvider, QuotaSource, QuotaState,
-            ReporterHealth,
-        };
-        const NOT_REPORTING: &str = "managed Claude session not reporting";
-        let focused = self.dashboard.view().and_then(|view| view.focused);
         let old = self.quotas.lock().unwrap().claude.clone();
-        let selected = focused
-            .and_then(|id| self.sessions.lock().unwrap().get(&id).cloned())
-            .filter(|session| {
-                session
-                    .summary()
-                    .agent
-                    .as_ref()
-                    .is_some_and(|agent| agent.binding.provider == AgentProvider::Claude)
-            })
-            .or_else(|| match &old.source {
-                Some(QuotaSource::Session { session, .. }) => {
-                    self.sessions.lock().unwrap().get(session).cloned()
-                }
-                _ => None,
-            });
-        let mut next = match selected {
-            Some(session) => {
-                let summary = session.summary();
-                if let Some(quota) = session.quota_snapshot() {
-                    quota
-                } else if let Some(agent) = summary
-                    .agent
-                    .filter(|agent| agent.binding.provider == AgentProvider::Claude)
-                {
-                    let (state, reason) = if summary.phase.is_live()
-                        && agent.health.state == ReporterHealth::Connected
-                    {
-                        (QuotaState::Checking, CLAUDE_WAITING)
-                    } else {
-                        (QuotaState::Unavailable, NOT_REPORTING)
-                    };
-                    let source = QuotaSource::Session {
-                        session: summary.id,
-                        run: summary.run,
-                        binding: agent.binding,
-                    };
-                    let mut quota = if old.source.as_ref() == Some(&source) {
-                        old.clone()
-                    } else {
-                        let mut quota = ProviderQuota::unknown(QuotaProvider::Claude, state);
-                        quota.source = Some(source);
-                        quota
-                    };
-                    quota.state = state;
-                    quota.reason = Some(reason.into());
-                    quota
-                } else {
-                    let mut quota = old.clone();
-                    quota.state = QuotaState::Unavailable;
-                    quota.reason = Some(NOT_REPORTING.into());
-                    quota
-                }
-            }
-            None if old.source.is_some() => {
-                let mut quota = old.clone();
-                quota.state = QuotaState::Unavailable;
-                quota.reason = Some(NOT_REPORTING.into());
-                quota
-            }
-            None => ovrcr_protocol::QuotaSnapshot::default().claude,
-        };
-        // A hidden probe is not a Session. Turning it off returns the row to
-        // the auth/waiting state instead of "not reporting".
-        if matches!(old.source, Some(QuotaSource::Probe { .. }))
-            && !self.quota_settings().claude_probe
-        {
-            next = ovrcr_protocol::QuotaSnapshot::default().claude;
-        }
+        let session = self.chosen_claude_session(&old);
+        let probe_enabled = self.quota_settings().claude_probe;
         let now = quota::clock_ms();
-        let auth = self.quota_refresh.lock().unwrap().claude_auth.clone();
-        let fresh_session = matches!(next.source, Some(QuotaSource::Session { .. }))
-            && next.state == QuotaState::Current
-            && !next.stale(now);
-        // Until a managed session reports, `claude auth status` may rule the
-        // allowance out: not signed in, not a claude.ai login, or no answer.
-        // A probe reading stays until a fresh managed report or that ruling.
-        if matches!(old.source, Some(QuotaSource::Probe { .. }))
-            && self.quota_settings().claude_probe
-            && !fresh_session
-        {
-            if let Some((state, reason)) = auth {
-                next = ProviderQuota::unknown(QuotaProvider::Claude, state);
-                next.reason = Some(reason);
-            } else {
-                next = old.clone();
+        let fresh_managed = quota_probe::fresh_managed_claude(self, now);
+        let (auth, account, probe) = {
+            let mut refresh = self.quota_refresh.lock().unwrap();
+            if !probe_enabled {
+                refresh.claude_probe = None;
             }
-        } else if next.state == QuotaState::Checking
-            && let Some((state, reason)) = auth
-        {
-            next.state = state;
-            next.reason = Some(reason);
-        }
-        // The account read is the credentials-file usage call. A status-line
-        // sample with windows stays as the in-session extra when the account
-        // read has not produced windows. Waiting for a session does not hide
-        // an account reading, and does not invent a bar.
-        if let Some(account) = self.quota_refresh.lock().unwrap().claude_account.clone() {
-            let session_windows = next.state == QuotaState::Current && !next.windows.is_empty();
-            let account_windows =
-                account.state == QuotaState::Current && !account.windows.is_empty();
-            if account_windows || !session_windows && next.state == QuotaState::Checking {
-                next = account;
-            }
-        }
+            let probe = refresh
+                .claude_probe
+                .clone()
+                .filter(|_| probe_enabled && !fresh_managed);
+            (
+                refresh.claude_auth.clone(),
+                refresh.claude_account.clone(),
+                probe,
+            )
+        };
+        let next = claude_allowance::merge(
+            &old,
+            session.as_ref(),
+            probe.as_ref(),
+            auth.as_ref(),
+            account.as_ref(),
+            probe_enabled,
+            now,
+        );
         if next != old {
             let before_state = old.state;
             let before_reason = old.reason.clone();
@@ -400,6 +319,49 @@ impl ServerState {
                 after_reason.as_deref(),
             );
         }
+    }
+
+    /// The focused Claude session, else the session named on the previous row.
+    fn chosen_claude_session(
+        &self,
+        previous: &ovrcr_protocol::ProviderQuota,
+    ) -> Option<claude_allowance::ChosenSession> {
+        use ovrcr_protocol::{AgentProvider, QuotaSource, ReporterHealth};
+        let focused = self.dashboard.view().and_then(|view| view.focused);
+        let selected = focused
+            .and_then(|id| self.sessions.lock().unwrap().get(&id).cloned())
+            .filter(|session| {
+                session
+                    .summary()
+                    .agent
+                    .as_ref()
+                    .is_some_and(|agent| agent.binding.provider == AgentProvider::Claude)
+            })
+            .or_else(|| match &previous.source {
+                Some(QuotaSource::Session { session, .. }) => {
+                    self.sessions.lock().unwrap().get(session).cloned()
+                }
+                _ => None,
+            })?;
+        let summary = selected.summary();
+        if let Some(quota) = selected.quota_snapshot() {
+            return Some(claude_allowance::ChosenSession::Reported(quota));
+        }
+        if let Some(agent) = summary
+            .agent
+            .filter(|agent| agent.binding.provider == AgentProvider::Claude)
+        {
+            return Some(claude_allowance::ChosenSession::Waiting {
+                source: QuotaSource::Session {
+                    session: summary.id,
+                    run: summary.run,
+                    binding: agent.binding,
+                },
+                live_connected: summary.phase.is_live()
+                    && agent.health.state == ReporterHealth::Connected,
+            });
+        }
+        Some(claude_allowance::ChosenSession::Other)
     }
 
     /// The default (quota off, nothing reported) is what a new Dashboard

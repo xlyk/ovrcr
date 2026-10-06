@@ -2,7 +2,7 @@
 use super::quota;
 use super::{DispatchMessage, ServerState};
 use ovrcr_protocol::{
-    AgentProvider, PROBE_EXITED, PROBE_MISSING_USAGE, PROBE_TIMED_OUT, QuotaProvider, QuotaReport,
+    AgentProvider, PROBE_EXITED, PROBE_MISSING_USAGE, PROBE_TIMED_OUT, QuotaReport,
     QuotaSource, QuotaState, QuotaWindow,
 };
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
@@ -15,7 +15,6 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc::TrySendError;
 use std::time::{Duration, Instant};
 
-const PROBE_EVERY_MS: u64 = 30 * 60 * 1000;
 const PROBE_LIMIT: Duration = Duration::from_secs(60);
 
 pub(super) struct ProbeUpdate {
@@ -50,30 +49,19 @@ pub(super) fn apply(state: &ServerState, update: ProbeUpdate) {
     if update.report.validate().is_err() && update.report.state == QuotaState::Current {
         return;
     }
-    let mut snapshots = state.quotas.lock().unwrap();
-    let target = &mut snapshots.claude;
-    // A managed report that landed first keeps the row.
-    if matches!(target.source, Some(QuotaSource::Session { .. })) && !target.stale(now) {
+    let fresh_session_row = {
+        let claude = &state.quotas.lock().unwrap().claude;
+        matches!(claude.source, Some(QuotaSource::Session { .. })) && !claude.stale(now)
+    };
+    if fresh_session_row {
         return;
     }
-    target.source = Some(QuotaSource::Probe {
+    state.quota_refresh.lock().unwrap().claude_probe = Some(super::claude_allowance::ProbeSignal {
+        report: update.report,
+        reason: update.reason,
         probed_unix_ms: update.probed_unix_ms,
     });
-    target.provider = QuotaProvider::Claude;
-    target.state = update.report.state;
-    target.reason = update.reason;
-    target.checked_unix_ms = None;
-    target.next_check_unix_ms = Some(update.probed_unix_ms.saturating_add(PROBE_EVERY_MS));
-    if let Some(windows) = update.report.windows {
-        target.windows = windows;
-        target.observed_unix_ms = Some(update.probed_unix_ms);
-    } else {
-        target.windows.clear();
-        target.observed_unix_ms = None;
-    }
-    let snapshot = snapshots.clone();
-    drop(snapshots);
-    state.send_quotas(snapshot);
+    state.refresh_claude_quota();
 }
 
 pub(super) fn run(state: Arc<ServerState>) {
@@ -128,7 +116,9 @@ pub(super) fn run(state: Arc<ServerState>) {
         let can = attached && enabled && signed_in && !fresh;
         let manual =
             can && std::mem::take(&mut state.quota_refresh.lock().unwrap().claude_probe_due);
-        let cadence = last_probe.is_some_and(|stamp| now.saturating_sub(stamp) >= PROBE_EVERY_MS);
+        let cadence = last_probe.is_some_and(|stamp| {
+            now.saturating_sub(stamp) >= super::claude_allowance::PROBE_EVERY_MS
+        });
         let due = manual
             || ((rising_attach || rising_enable || last_probe.is_none() || cadence) && row_stale);
         if can && due {
