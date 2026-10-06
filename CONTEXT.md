@@ -195,3 +195,11 @@ _Avoid_: a managed session, a background agent, an OAuth read, polling
 **Event**:
 One dated, OVRCR-written line about a decision the Server made or a state it changed: which component (titles, settings, quota, provisioning), the session or provider concerned, and a one-line message under the same rule as a Quota reason. Never a prompt, a transcript, a credential, an account identifier or a native body.
 _Avoid_: a log line copied from stderr, a Ready or Unread, an alert, a wire message
+
+**Lifecycle job**:
+One in-flight Server-owned create/remove/close of a workspace or session. At most one runs at a time.
+_Avoid_: background task, async request, pending palette request as synonyms
+
+**Provisional row**:
+A Dashboard hierarchy row shown before the Server has accepted the real identity; fiction until success, failure, or dismiss of a failed state.
+_Avoid_: optimistic session, phantom session, client-side SessionId

@@ -7,6 +7,7 @@ mod git_hints;
 mod hints;
 mod input;
 mod keymap;
+mod lifecycle_ui;
 mod outbox;
 mod palette;
 pub(crate) mod picker;
@@ -60,9 +61,27 @@ pub(crate) enum InputMode {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum TreeRow {
-    Project { name: String },
-    Workspace { project: String, id: String },
-    Session { id: SessionId },
+    Project {
+        name: String,
+    },
+    Workspace {
+        project: String,
+        id: String,
+    },
+    Session {
+        id: SessionId,
+    },
+    /// Client fiction for a workspace create before the Server publishes it.
+    ProvisionalWorkspace {
+        project: String,
+        id: String,
+    },
+    /// Client fiction for a session create; never carries a SessionId.
+    ProvisionalSession {
+        project: String,
+        workspace: String,
+        token: u64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -291,6 +310,14 @@ pub struct Dashboard {
     /// Ids of requests that own the error banner, so their plain `Ok` may clear it. Requests the
     /// dashboard sends on its own behalf, such as a synthetic mouse release, are absent.
     error_owning_requests: HashSet<u64>,
+    /// Lifecycle job accepted but not yet shown as a Provisional row (awaiting Response::Ok).
+    lifecycle_pending: Option<lifecycle_ui::Provisional>,
+    /// In-flight or failed Provisional row.
+    provisional: Option<lifecycle_ui::Provisional>,
+    /// Bottom status strip for Lifecycle progress / soft refuse; Esc dismisses this only.
+    lifecycle_strip: Option<String>,
+    /// Remembered launch choice held across Provisional wait until CreatedSession completes.
+    lifecycle_preference: Option<(String, settings::LaunchChoice)>,
 }
 
 thread_local! {

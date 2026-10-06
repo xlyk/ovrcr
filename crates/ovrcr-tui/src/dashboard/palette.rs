@@ -142,7 +142,7 @@ pub(super) struct Palette {
     error: Option<String>,
     workspace_acknowledged: bool,
     workspace_id: Option<String>,
-    launch_preference: Option<(String, super::settings::LaunchChoice)>,
+    pub(super) launch_preference: Option<(String, super::settings::LaunchChoice)>,
     failed_launch: Option<CreateSessionRequest>,
     launch_project: Option<String>,
     suggestions: Suggestions,
@@ -1191,6 +1191,31 @@ impl Dashboard {
             field.value = selected;
         }
         field.kind = FieldKind::Pick(list);
+    }
+
+    pub(super) fn open_forced_remove_workspace(
+        &mut self,
+        project: String,
+        name: String,
+        code: crate::protocol::ErrorCode,
+        message: String,
+    ) {
+        let display = find_workspace(self, &project, &name)
+            .map(|workspace| workspace_heading(self, workspace))
+            .unwrap_or_else(|| format!("{project}/{name}"));
+        let request = Request::RemoveWorkspace {
+            project,
+            name,
+            force: true,
+        };
+        self.cancel_mouse_gesture();
+        self.whichkey = None;
+        self.palette = Some(Palette {
+            page: removal_confirmation(request, &display),
+            error: Some(format!("{code:?}: {message}")),
+            ..Palette::new()
+        });
+        self.mode = InputMode::Browse;
     }
 
     pub(super) fn open_remove_workspace(&mut self, project: String, id: String) -> DashboardAction {
@@ -2584,6 +2609,14 @@ impl Dashboard {
     }
 
     fn palette_submit(&mut self, palette: &mut Palette, request: Request) -> DashboardAction {
+        if self.lifecycle_busy()
+            && super::lifecycle_ui::Provisional::from_request(0, &request).is_some()
+        {
+            let message = "a lifecycle job is already running".to_string();
+            self.refuse_lifecycle_job(message.clone());
+            palette.error = Some(message);
+            return DashboardAction::Redraw;
+        }
         let launch = match &request {
             Request::CreateWorkspaceWithLaunch {
                 project,
@@ -2614,6 +2647,7 @@ impl Dashboard {
         let request_id = self.next_request_id();
         palette.pending = Some(request_id);
         palette.error = None;
+        self.begin_lifecycle_pending(request_id, &request);
         DashboardAction::Request(ClientMessage {
             request_id,
             request,
@@ -2766,6 +2800,39 @@ impl Dashboard {
         }
         if self.palette.as_ref()?.pending != Some(request_id) {
             return None;
+        }
+        // Lifecycle jobs accept with Ok immediately; Provisional row takes over.
+        if self
+            .lifecycle_pending
+            .as_ref()
+            .is_some_and(|row| row.token == request_id)
+        {
+            match response {
+                Response::Ok => {
+                    let attach = self.accept_lifecycle_job(request_id);
+                    return Some(match attach {
+                        Some(DashboardAction::Request(message)) => vec![message],
+                        Some(DashboardAction::RequestBatch(messages)) => messages,
+                        _ => Vec::new(),
+                    });
+                }
+                Response::Error { code, message }
+                    if *code == crate::protocol::ErrorCode::Conflict
+                        && message.contains("lifecycle job") =>
+                {
+                    let message = format!("{code:?}: {message}");
+                    self.refuse_lifecycle_job(message.clone());
+                    if let Some(palette) = self.palette.as_mut() {
+                        palette.pending = None;
+                        palette.error = Some(message);
+                    }
+                    return Some(Vec::new());
+                }
+                Response::Error { .. } => {
+                    self.lifecycle_pending = None;
+                }
+                _ => {}
+            }
         }
         let workspace_form = matches!(
             self.palette.as_ref()?.page,

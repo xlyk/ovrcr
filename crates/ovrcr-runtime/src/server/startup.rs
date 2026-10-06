@@ -198,6 +198,7 @@ fn run_server_inner(
         retained: parking_lot::Mutex::new(retained),
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
+        lifecycle: lifecycle::Lifecycle::default(),
         dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
@@ -283,6 +284,12 @@ fn run_server_inner(
     let title_thread = thread::Builder::new()
         .name("ovrcr-title-worker".into())
         .spawn(move || title::TitleWorker::new(titles_dir).run(title_state))?;
+    let (lifecycle_tx, lifecycle_rx) = mpsc::sync_channel(1);
+    state.lifecycle.attach(lifecycle_tx);
+    let lifecycle_state = Arc::clone(&state);
+    let lifecycle_thread = thread::Builder::new()
+        .name("ovrcr-lifecycle".into())
+        .spawn(move || super::lifecycle::run(lifecycle_state, lifecycle_rx))?;
     let mut signals = signal_hook::iterator::Signals::new([libc::SIGTERM, libc::SIGINT])?;
     let signal_handle = signals.handle();
     let signal_state = Arc::downgrade(&state);
@@ -354,6 +361,9 @@ fn run_server_inner(
     let _ = claude_auth_thread.join();
     let _ = claude_account_thread.join();
     let _ = claude_probe_thread.join();
+    // Drop the Lifecycle job sender so the worker exits its recv loop.
+    state.lifecycle.detach();
+    let _ = lifecycle_thread.join();
     let _ = dispatch.send(DispatchMessage::Stop);
     dispatcher
         .join()
