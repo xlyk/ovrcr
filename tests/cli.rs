@@ -1287,9 +1287,9 @@ fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
         }
         message => message,
     };
-    // The Server's settings reading follows every hello. A quota snapshot
-    // may follow it (the Claude row when `claude auth status` rules an
-    // allowance out), so quota events are skipped from here on.
+    // The Server's settings reading follows every hello. Quota snapshots and
+    // recorded quota transitions may interleave it and the Select responses,
+    // so skip those telemetry messages while retaining the expected ordering.
     match message {
         ServerMessage::Event(ovrcr::protocol::ServerEvent::SettingsChanged(_)) => {}
         message => panic!("expected the settings reading after hello: {message:?}"),
@@ -1325,11 +1325,138 @@ fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
 }
 
 fn next_skipping_quota(stream: &mut UnixStream) -> ServerMessage {
+    use ovrcr::protocol::{Event, EventComponent, ServerEvent};
+
     loop {
         match read_frame::<ServerMessage>(stream).unwrap() {
-            ServerMessage::Event(ovrcr::protocol::ServerEvent::QuotaChanged(_)) => {}
+            ServerMessage::Event(ServerEvent::QuotaChanged(_))
+            | ServerMessage::Event(ServerEvent::Recorded(Event {
+                component: EventComponent::Quota,
+                ..
+            })) => {}
             message => return message,
         }
+    }
+}
+
+#[test]
+fn dashboard_selection_frames_skip_only_quota_telemetry() {
+    use ovrcr::protocol::{
+        BridgeContext, Event, EventComponent, ServerEvent, SessionRunId, SettingsReport,
+    };
+
+    let (mut writer, mut reader) = UnixStream::pair().unwrap();
+    writer
+        .set_write_timeout(Some(Duration::from_millis(250)))
+        .unwrap();
+    reader
+        .set_read_timeout(Some(Duration::from_millis(250)))
+        .unwrap();
+    let expected = [
+        ServerMessage::Event(ServerEvent::BridgeContext(BridgeContext {
+            server_socket: "/fixture/server.sock".into(),
+            callback_executable: "/fixture/ovrcr".into(),
+            callback_executable_sha256: "ab".repeat(32),
+            server_lifetime: "12345678-1234-4abc-8abc-123456789abc".into(),
+        })),
+        ServerMessage::Event(ServerEvent::SettingsChanged(Box::new(SettingsReport {
+            path: "/fixture/dashboard.toml".into(),
+            read_unix_ms: 1,
+            settings: Default::default(),
+            rows: Vec::new(),
+            findings: Vec::new(),
+            unparseable: false,
+        }))),
+        ServerMessage::Response {
+            request_id: 2,
+            response: Response::Screen {
+                session: SessionId(7),
+                run: SessionRunId(3),
+                revision: 4,
+                size: ovrcr::session::TerminalSize { rows: 24, cols: 80 },
+                bytes: b"SELECTED_SESSION".to_vec(),
+            },
+        },
+        ServerMessage::Response {
+            request_id: 2,
+            response: Response::Ok,
+        },
+    ];
+    for (index, message) in expected.iter().enumerate() {
+        write_frame(
+            &mut writer,
+            &ServerMessage::Event(ServerEvent::QuotaChanged(Box::default())),
+        )
+        .unwrap();
+        if index >= 2 {
+            // Force the CI ordering: a collector finishes after the settings
+            // reading, before the Screen response or final acknowledgement.
+            write_frame(
+                &mut writer,
+                &ServerMessage::Event(ServerEvent::Recorded(Event {
+                    time_unix_ms: 1,
+                    component: EventComponent::Quota,
+                    subject: Some("Grok".into()),
+                    message: "Checking -> NotSignedIn: not signed in".into(),
+                })),
+            )
+            .unwrap();
+        }
+        write_frame(&mut writer, message).unwrap();
+    }
+    for message in expected {
+        assert_eq!(next_skipping_quota(&mut reader), message);
+    }
+}
+
+#[test]
+fn quota_filter_preserves_other_events_and_responses() {
+    use ovrcr::protocol::{Event, EventComponent, HierarchySnapshot, ServerEvent, SessionRunId};
+
+    let (mut writer, mut reader) = UnixStream::pair().unwrap();
+    writer
+        .set_write_timeout(Some(Duration::from_millis(250)))
+        .unwrap();
+    reader
+        .set_read_timeout(Some(Duration::from_millis(250)))
+        .unwrap();
+    let expected = [
+        ServerMessage::Event(ServerEvent::Recorded(Event {
+            time_unix_ms: 2,
+            component: EventComponent::Titles,
+            subject: Some("7".into()),
+            message: "title changed".into(),
+        })),
+        ServerMessage::Event(ServerEvent::Recorded(Event {
+            time_unix_ms: 3,
+            component: EventComponent::Settings,
+            subject: None,
+            message: "settings changed".into(),
+        })),
+        ServerMessage::Event(ServerEvent::ScreenDirty {
+            session: SessionId(7),
+            run: SessionRunId(3),
+            revision: 5,
+        }),
+        ServerMessage::Event(ServerEvent::Output {
+            session: SessionId(7),
+            run: SessionRunId(3),
+            revision: 5,
+            bytes: b"SESSION_OUTPUT".to_vec(),
+        }),
+        ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+            projects: Vec::new(),
+        })),
+        ServerMessage::Response {
+            request_id: 99,
+            response: Response::Ok,
+        },
+    ];
+    for message in &expected {
+        write_frame(&mut writer, message).unwrap();
+    }
+    for message in expected {
+        assert_eq!(next_skipping_quota(&mut reader), message);
     }
 }
 
