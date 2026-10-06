@@ -139,7 +139,16 @@ pub struct Settings {
     pub agents: Vec<AgentOverride>,
     pub launch_choices: BTreeMap<String, LaunchChoice>,
     pub quota: QuotaSettings,
+    /// Consent setting, off until set. When on, a dirty feature worktree is
+    /// pushed to `origin/wip/<branch>` when that workspace is removed and when
+    /// the server shuts down, without a prompt. The checkout's own branch is
+    /// not moved. The root workspace is never saved.
+    #[serde(default)]
+    pub save_uncommitted_work: bool,
 }
+
+/// Shown while `save_uncommitted_work` is off.
+pub const SAVE_UNCOMMITTED_WORK_OFF: &str = "Uncommitted workspace work is not pushed. Set `save_uncommitted_work = true` to save it to origin/wip/<branch> when a workspace is removed or the server shuts down.";
 
 /// Every default except `picker_roots`, which is empty here: the loader
 /// fills it with whichever of `~/Code`, `~/src` and `~` exist.
@@ -155,6 +164,7 @@ impl Default for Settings {
             agents: Vec::new(),
             launch_choices: BTreeMap::new(),
             quota: QuotaSettings::default(),
+            save_uncommitted_work: false,
         }
     }
 }

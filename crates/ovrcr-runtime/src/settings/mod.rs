@@ -195,6 +195,11 @@ impl Loader<'_> {
             }
         }
         self.value(table, "branch_prefix", &mut settings.branch_prefix);
+        self.value(
+            table,
+            "save_uncommitted_work",
+            &mut settings.save_uncommitted_work,
+        );
         if let Some(roots) = self.take_array::<String>(table, "picker_roots", "a string") {
             let roots = roots.iter().map(|root| expand_tilde(root)).collect();
             self.accept("picker_roots", &mut settings.picker_roots, roots);
@@ -625,6 +630,12 @@ fn rows(settings: &Settings, set: &HashSet<String>) -> Vec<SettingRow> {
             None,
         ),
         row(
+            "save_uncommitted_work",
+            Server,
+            display(&settings.save_uncommitted_work),
+            (!settings.save_uncommitted_work).then_some(ovrcr_protocol::SAVE_UNCOMMITTED_WORK_OFF),
+        ),
+        row(
             "picker_roots",
             Dashboard,
             display(&settings.picker_roots),
@@ -744,6 +755,7 @@ mod tests {
 
     const FULL: &str = r#"desktop_notifications = true
 ready_sound = true
+save_uncommitted_work = true
 automatic_local_terminals = "off"
 title_model = "pi/test"
 branch_prefix = "kh/"
@@ -770,6 +782,19 @@ home = "/tmp/codex-home"
 [quota.grok]
 command = "/opt/grok"
 "#;
+
+    #[test]
+    fn save_uncommitted_work_defaults_off() {
+        let report = read("");
+        let row = row(&report, "save_uncommitted_work");
+        assert_eq!(row.value.as_deref(), Some("false"));
+        assert_eq!(row.source, SettingSource::Default);
+        assert_eq!(row.owner, SettingOwner::Server);
+        assert_eq!(
+            row.off_state.as_deref(),
+            Some(ovrcr_protocol::SAVE_UNCOMMITTED_WORK_OFF)
+        );
+    }
 
     #[test]
     fn full_document_sets_every_setting_with_document_source() {
@@ -849,6 +874,10 @@ command = "/opt/grok"
                 ("desktop_notifications", DESKTOP_NOTIFICATIONS_OFF),
                 ("title_model", TITLES_OFF),
                 (
+                    "save_uncommitted_work",
+                    ovrcr_protocol::SAVE_UNCOMMITTED_WORK_OFF
+                ),
+                (
                     "quota.claude.probe",
                     ovrcr_protocol::CLAUDE_PROBE_DESCRIPTION
                 ),
@@ -863,6 +892,7 @@ command = "/opt/grok"
                 "automatic_local_terminals",
                 "title_model",
                 "branch_prefix",
+                "save_uncommitted_work",
                 "picker_roots",
                 "agents",
                 "launch_choices",
@@ -897,7 +927,7 @@ command = "/opt/grok"
         let text = FULL.replace("command = \"/opt/codex\"", "command = 7");
         let report = read(&text);
         assert_eq!(report.findings.len(), 1, "{:?}", report.findings);
-        finding("quota.codex.command", 23, "expected path", &report);
+        finding("quota.codex.command", 24, "expected path", &report);
         assert_eq!(report.settings.quota.codex.command, PathBuf::from("codex"));
         assert_eq!(
             report.settings.quota.codex.home,

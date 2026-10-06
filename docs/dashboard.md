@@ -433,10 +433,15 @@ confirmation directly. Existing server removal safeguards
 still apply; repositories and workspace branches are retained. Confirmed workspace
 removal archives stopped records with their original paths. Live or ownership-uncertain
 sessions block removal, even when archived; the Archived sessions page offers
-"Acknowledge stopped" for such rows. A removal refused for uncertain sessions or a
-dirty worktree reopens as a forced removal: confirming it acknowledges the stopped
-processes and discards uncommitted changes, while live sessions and active task
-runs still block. The repository-root workspace cannot be removed. Remove every
+"Acknowledge stopped" for such rows. A removal refused for uncertain sessions
+reopens as a forced removal: confirming it acknowledges the stopped processes,
+while live sessions and active task runs still block. A removal refused because
+the worktree is dirty asks "Save uncommitted work to origin/wip/<branch>?".
+Enter commits the unignored files onto that ref, pushes it to `origin`, and
+then removes the workspace; the checkout's own branch is unchanged. Escape
+leaves the workspace in place. The repository-root workspace is never offered
+the save. With `save_uncommitted_work` on, removal and server shutdown push
+those refs without asking. The repository-root workspace cannot be removed. Remove every
 other workspace first, stop or acknowledge remaining sessions, then unregister
 the project; repository files stay on disk. Archived context is kept. `Space w n`
 creates a terminal, `Space p n` creates a workspace, `Space v t` opens tasks,
@@ -505,9 +510,10 @@ project names remain text fields, and project registration retains its path pick
 Closing live work and deleting records show their current branch target and require confirmation.
 Closing an exited row archives it immediately. A workspace with live sessions or
 active task runs cannot be removed. A refusal for ownership-uncertain stopped
-sessions or a dirty worktree reopens as a forced confirmation that discards
-uncommitted changes and acknowledges those stopped processes. Errors stay in the
-palette with the form values retained.
+sessions reopens as a forced confirmation that acknowledges those stopped
+processes and discards uncommitted changes. A dirty worktree asks whether to
+save that work to `origin/wip/<branch>` first; declining leaves the workspace
+where it is. Errors stay in the palette with the form values retained.
 
 ### Create terminal (`n`)
 
@@ -719,7 +725,7 @@ It shows the document path and when the Server read it, then findings that belon
 to no setting (unknown keys and document-level problems, each with its line), then
 every setting in one scrolling list under the group headers **Alerts**
 (`desktop_notifications`, `ready_sound`), **Workspaces**
-(`automatic_local_terminals`, `branch_prefix`, `picker_roots`), **Titles**
+(`automatic_local_terminals`, `save_uncommitted_work`, `branch_prefix`, `picker_roots`), **Titles**
 (`title_model`), **Usage** (`quota.*`), **Agents** (`[[agents]]`) and
 **Remembered launches** (`launch_choices`, one row per project).
 
@@ -779,6 +785,7 @@ keys that are unset by default.
 desktop_notifications = false        # opt in to background Ready and input-needed alerts
 ready_sound = false                  # opt in to a sound for the same two alert kinds
 automatic_local_terminals = "default_branch_only"  # on | off | default_branch_only
+# save_uncommitted_work = true       # opt in: push dirty feature worktrees to origin/wip/<branch>
 # title_model = "provider/model"     # optional; unset leaves automatic titles off
 branch_prefix = "feature/"            # prefix for new workspace branches
 picker_roots = ["~/Code", "~/src", "~"]
