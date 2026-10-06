@@ -208,6 +208,29 @@ struct CheckoutObservation {
     warning: Option<String>,
 }
 
+#[derive(Default)]
+struct WipWait {
+    pending: Mutex<WipPending>,
+    cv: Condvar,
+}
+
+#[derive(Default)]
+struct WipPending {
+    ask: Option<WipAsk>,
+}
+
+struct WipAsk {
+    left: Vec<(String, String)>,
+    save: Vec<(String, String)>,
+}
+
+struct WipTarget {
+    project: String,
+    id: String,
+    branch: String,
+    path: PathBuf,
+}
+
 pub struct ServerState {
     pub tasks: Option<Arc<TaskManager>>,
     socket: PathBuf,
@@ -226,6 +249,7 @@ pub struct ServerState {
     pub stopping: AtomicBool,
     pub events: Mutex<Option<ReportingSender<SessionEvent>>>,
     event_log: Mutex<event_log::Log>,
+    wip: WipWait,
     #[cfg(test)]
     pub(super) resize_hook: Mutex<Option<ResizeHook>>,
     #[cfg(test)]
@@ -1398,6 +1422,7 @@ impl ServerState {
             stopping: AtomicBool::new(false),
             events: Mutex::new(Some(events)),
             event_log: Mutex::new(event_log::Log::memory()),
+            wip: WipWait::default(),
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
             before_dashboard_write_hook: Mutex::new(None),
@@ -1405,6 +1430,172 @@ impl ServerState {
             dashboard_monitor: None,
         })
     }
+    fn save_uncommitted_work(&self) -> bool {
+        self.settings
+            .lock()
+            .unwrap()
+            .report
+            .settings
+            .save_uncommitted_work
+    }
+
+    /// Dirty feature worktrees that can be saved as `wip/<branch>`. The root
+    /// checkout and a detached checkout are left alone.
+    fn wip_targets(&self) -> Vec<WipTarget> {
+        let registry = self.registry.lock().unwrap().clone();
+        let mut targets = Vec::new();
+        for project in &registry.projects {
+            for workspace in &project.workspaces {
+                if is_root_workspace(project, workspace) || !workspace.path.exists() {
+                    continue;
+                }
+                let Ok(inspection) = git::inspect_worktree(project, workspace) else {
+                    continue;
+                };
+                if !inspection.dirty || git::wip_refname(&inspection.branch).is_err() {
+                    continue;
+                }
+                targets.push(WipTarget {
+                    project: project.name.clone(),
+                    id: workspace.id.clone(),
+                    branch: inspection.branch,
+                    path: inspection.canonical_path,
+                });
+            }
+        }
+        targets.sort_by(|left, right| {
+            (&left.project, &left.branch).cmp(&(&right.project, &right.branch))
+        });
+        targets
+    }
+
+    pub(crate) fn save_workspace_wip(&self, project: &str, name: &str) -> Result<()> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        let (project_record, workspace) = {
+            let registry = self.registry.lock().unwrap();
+            (
+                registry
+                    .project(project)
+                    .map_err(|error| lifecycle_error(ErrorCode::NotFound, error.to_string()))?
+                    .clone(),
+                registry
+                    .workspace(project, name)
+                    .map_err(|error| lifecycle_error(ErrorCode::NotFound, error.to_string()))?
+                    .clone(),
+            )
+        };
+        if is_root_workspace(&project_record, &workspace) {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "cannot save the repository-root workspace",
+            ));
+        }
+        let inspection = git::inspect_worktree(&project_record, &workspace)
+            .map_err(|error| lifecycle_error(ErrorCode::Conflict, error.to_string()))?;
+        if !inspection.dirty {
+            return Ok(());
+        }
+        git::publish_wip(&inspection.canonical_path, &inspection.branch)
+            .map_err(|error| lifecycle_error(ErrorCode::Conflict, error.to_string()))
+    }
+
+    pub(crate) fn answer_wip_save(&self, project: &str, workspace: &str, save: bool) -> bool {
+        let mut pending = self.wip.pending.lock().unwrap();
+        let Some(ask) = pending.ask.as_mut() else {
+            return false;
+        };
+        let Some(index) = ask
+            .left
+            .iter()
+            .position(|(candidate_project, candidate_workspace)| {
+                candidate_project == project && candidate_workspace == workspace
+            })
+        else {
+            return true;
+        };
+        ask.left.remove(index);
+        if save {
+            ask.save.push((project.to_owned(), workspace.to_owned()));
+        }
+        self.wip.cv.notify_all();
+        true
+    }
+
+    /// Save dirty feature worktrees before shutdown. With the consent setting
+    /// on, every one is pushed. Otherwise an attached Dashboard is asked once
+    /// per worktree; a declined worktree is left unsaved. No Dashboard and the
+    /// setting off continues without saving.
+    fn resolve_shutdown_wip(&self) -> Result<(), String> {
+        let targets = self.wip_targets();
+        if targets.is_empty() {
+            return Ok(());
+        }
+        let save = if self.save_uncommitted_work() {
+            targets
+                .iter()
+                .map(|target| (target.project.clone(), target.id.clone()))
+                .collect()
+        } else if self.dashboard.is_claimed() {
+            self.ask_shutdown_wip(&targets)?
+        } else {
+            return Ok(());
+        };
+        for (project, id) in save {
+            let Some(target) = targets
+                .iter()
+                .find(|target| target.project == project && target.id == id)
+            else {
+                continue;
+            };
+            let _mutation = self.mutation_lock.lock().unwrap();
+            if self.stopping.load(Ordering::Acquire) {
+                return Err("server is stopping".into());
+            }
+            git::publish_wip(&target.path, &target.branch).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    fn ask_shutdown_wip(&self, targets: &[WipTarget]) -> Result<Vec<(String, String)>, String> {
+        {
+            let mut pending = self.wip.pending.lock().unwrap();
+            if pending.ask.is_some() {
+                return Err("already confirming uncommitted work".into());
+            }
+            pending.ask = Some(WipAsk {
+                left: targets
+                    .iter()
+                    .map(|target| (target.project.clone(), target.id.clone()))
+                    .collect(),
+                save: Vec::new(),
+            });
+        }
+        for target in targets {
+            self.dashboard
+                .try_send(ServerMessage::Event(ServerEvent::WipSavePrompt {
+                    project: target.project.clone(),
+                    workspace: target.id.clone(),
+                    branch: target.branch.clone(),
+                }));
+        }
+        loop {
+            let pending = self.wip.pending.lock().unwrap();
+            let done = pending.ask.as_ref().is_some_and(|ask| ask.left.is_empty());
+            let claimed = self.dashboard.is_claimed();
+            if done || !claimed {
+                break;
+            }
+            let (_pending, _) = self
+                .wip
+                .cv
+                .wait_timeout(pending, Duration::from_millis(250))
+                .unwrap_or_else(|error| error.into_inner());
+        }
+        let mut pending = self.wip.pending.lock().unwrap();
+        Ok(pending.ask.take().map(|ask| ask.save).unwrap_or_default())
+    }
+
     pub fn request_shutdown(&self, kill: bool) -> Response {
         let admission = self.tasks.as_ref().map(|tasks| tasks.admission_guard());
         if let Some(tasks) = &self.tasks
@@ -1412,6 +1603,25 @@ impl ServerState {
             && tasks.has_active()
         {
             return error_response(ErrorCode::SessionsRemain, "task runs remain");
+        }
+        {
+            let _mutation = self.mutation_lock.lock().unwrap();
+            if self.stopping.load(Ordering::Acquire) {
+                return error_response(ErrorCode::Conflict, "server is stopping");
+            }
+            if !kill
+                && self
+                    .sessions
+                    .lock()
+                    .unwrap()
+                    .values()
+                    .any(|session| session.is_live())
+            {
+                return error_response(ErrorCode::SessionsRemain, "live sessions remain");
+            }
+        }
+        if let Err(error) = self.resolve_shutdown_wip() {
+            return error_response(ErrorCode::Conflict, error);
         }
         let _mutation = self.mutation_lock.lock().unwrap();
         if self.stopping.load(Ordering::Acquire) {
@@ -1913,7 +2123,7 @@ impl ServerState {
         project: &str,
         name: &str,
         cleanup: Option<(&crate::tasks::Run, &Path)>,
-        force: bool,
+        mut force: bool,
     ) -> Result<()> {
         let (project_record, workspace, repository_roots) = {
             let registry = self.registry.lock().unwrap();
@@ -2050,16 +2260,19 @@ impl ServerState {
         // A directory deleted outside OVRCR has nothing left to protect;
         // removal then prunes Git's stale registration (see git.rs).
         let directory_present = fs::symlink_metadata(&workspace.path).is_ok();
-        if directory_present
-            && !force
-            && git::inspect_worktree(&project_record, &workspace)
-                .map_err(|error| lifecycle_error(ErrorCode::Conflict, error.to_string()))?
-                .dirty
-        {
-            return Err(lifecycle_error(
-                ErrorCode::DirtyWorktree,
-                "worktree has changes",
-            ));
+        if directory_present {
+            let inspection = git::inspect_worktree(&project_record, &workspace)
+                .map_err(|error| lifecycle_error(ErrorCode::Conflict, error.to_string()))?;
+            if inspection.dirty && self.save_uncommitted_work() {
+                git::publish_wip(&inspection.canonical_path, &inspection.branch)
+                    .map_err(|error| lifecycle_error(ErrorCode::Conflict, error.to_string()))?;
+                force = true;
+            } else if inspection.dirty && !force {
+                return Err(lifecycle_error(
+                    ErrorCode::DirtyWorktree,
+                    "worktree has changes",
+                ));
+            }
         }
         if let Some((run, _)) = cleanup
             && (run.workspace.as_deref() != Some(workspace.id.as_str())

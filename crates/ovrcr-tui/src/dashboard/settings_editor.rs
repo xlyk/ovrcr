@@ -246,6 +246,13 @@ fn items(report: &SettingsReport, presets: &[String]) -> Vec<Row> {
         ),
         top(
             "Workspaces",
+            "save_uncommitted_work",
+            "Save uncommitted work",
+            Kind::Toggle(settings.save_uncommitted_work),
+            &[ovrcr_protocol::SAVE_UNCOMMITTED_WORK_OFF],
+        ),
+        top(
+            "Workspaces",
             "branch_prefix",
             "Branch prefix",
             Kind::Text,
@@ -264,8 +271,8 @@ fn items(report: &SettingsReport, presets: &[String]) -> Vec<Row> {
         .iter()
         .map(|root| root.display().to_string())
         .collect();
-    let roots_set = workspaces[2].source == Some(SettingSource::Document);
-    workspaces[2].value = count(roots.len());
+    let roots_set = workspaces[3].source == Some(SettingSource::Document);
+    workspaces[3].value = count(roots.len());
     for (index, root) in roots.iter().enumerate() {
         let mut row = child(
             "Workspaces",
@@ -1144,6 +1151,22 @@ mod tests {
         assert_eq!(second.path, "picker_roots[1]");
         assert_eq!(second.reset, Some(("picker_roots[1]".into(), None)));
         assert_eq!(row(&set, "picker_roots+").path, "picker_roots[2]");
+    }
+
+    #[test]
+    fn save_uncommitted_work_row_names_the_consent_sentence() {
+        let row = row(
+            &items(&report(Settings::default(), Vec::new()), &[]),
+            "save_uncommitted_work",
+        );
+        assert_eq!(row.value, "off");
+        assert!(
+            row.about
+                .iter()
+                .any(|line| line == ovrcr_protocol::SAVE_UNCOMMITTED_WORK_OFF),
+            "{:?}",
+            row.about
+        );
     }
 
     #[test]

@@ -342,6 +342,20 @@ pub enum Request {
     Events {
         follow: bool,
     },
+    /// Commit unignored changes onto `refs/heads/wip/<branch>` and push that
+    /// ref to `origin`. Does not move the checkout's branch or remove the
+    /// workspace.
+    SaveWorkspaceWip {
+        project: String,
+        name: String,
+    },
+    /// Answer one shutdown prompt. `workspace` is the workspace id.
+    /// `save` false continues shutdown without pushing that worktree.
+    AnswerWipSave {
+        project: String,
+        workspace: String,
+        save: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -441,6 +455,13 @@ pub enum ServerEvent {
     /// One newly recorded event. The attached Dashboard appends it while
     /// its Events popup is open.
     Recorded(crate::Event),
+    /// One dirty feature worktree the attached Dashboard should ask about
+    /// before server shutdown continues.
+    WipSavePrompt {
+        project: String,
+        workspace: String,
+        branch: String,
+    },
 }
 
 #[cfg(test)]
@@ -883,6 +904,21 @@ mod wire_snapshot {
                 },
             ),
             ("Events", Request::Events { follow: true }),
+            (
+                "SaveWorkspaceWip",
+                Request::SaveWorkspaceWip {
+                    project: "a".into(),
+                    name: "b".into(),
+                },
+            ),
+            (
+                "AnswerWipSave",
+                Request::AnswerWipSave {
+                    project: "a".into(),
+                    workspace: "b".into(),
+                    save: true,
+                },
+            ),
         ]
     }
 
@@ -1024,6 +1060,14 @@ mod wire_snapshot {
                     subject: Some("Codex".into()),
                     message: "Checking -> Unavailable: HTTP 503".into(),
                 }),
+            ),
+            (
+                "WipSavePrompt",
+                ServerEvent::WipSavePrompt {
+                    project: "a".into(),
+                    workspace: "b".into(),
+                    branch: "feature/topic".into(),
+                },
             ),
         ]
     }
@@ -1293,6 +1337,8 @@ mod wire_snapshot {
         ("Request::RefreshQuota", "280102"),
         ("Request::RefreshQuotaCursor", "280103"),
         ("Request::Events", "2901"),
+        ("Request::SaveWorkspaceWip", "2a01610162"),
+        ("Request::AnswerWipSave", "2b0161016201"),
         (
             "Request::MarkReviewed",
             "1e010103696e7604636f6e760101047475726e02",
@@ -1334,11 +1380,15 @@ mod wire_snapshot {
         ),
         (
             "ServerEvent::SettingsChanged",
-            "05072f642e746f6d6c05000002010470692f6d08666561747572652f01022f63010161010162020170010161017100000005636f64657801022f680467726f6b000000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
+            "05072f642e746f6d6c05000002010470692f6d08666561747572652f01022f63010161010162020170010161017100000005636f64657801022f680467726f6b00000000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
         ),
         (
             "ServerEvent::Recorded",
             "0601020105436f64657821436865636b696e67202d3e20556e617661696c61626c653a204854545020353033",
+        ),
+        (
+            "ServerEvent::WipSavePrompt",
+            "07016101620d666561747572652f746f706963",
         ),
         ("QuotaState::Waiting", "00"),
         ("QuotaState::Current", "01"),
