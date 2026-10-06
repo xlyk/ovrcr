@@ -5556,10 +5556,11 @@ fn dashboard_geometry_sizes_connected_empty_and_detached_sessions() {
     wait_for_file_contents(&connected_path, "17 61");
     // A local drop is not a server-side detach acknowledgement. Half-close and
     // drain to EOF: this handler drops its ownership/geometry before its socket.
-    dashboard.shutdown(std::net::Shutdown::Write).unwrap();
+    // Set the drain deadline before half-close can make the peer close its end.
     dashboard
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
+    dashboard.shutdown(std::net::Shutdown::Write).unwrap();
     std::io::copy(&mut dashboard, &mut std::io::sink()).unwrap();
     drop(dashboard);
     let detached_path = fixture.root.path().join("detached-size");
