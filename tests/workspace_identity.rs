@@ -296,12 +296,11 @@ fn root_drift_blocks_new_processes_but_preserves_the_existing_shell() {
 }
 
 #[test]
-fn registration_refuses_dirty_root_on_wrong_default_without_changing_git() {
+fn registration_accepts_dirty_root_on_wrong_default_without_changing_git() {
     let fixture = Live::binary();
     git(&fixture.repo, &["switch", "-c", "feature/not-default"]);
     std::fs::write(fixture.repo.join("keep.txt"), "user changes").unwrap();
-    let response = register(&fixture);
-    assert!(matches!(response, Response::Error { .. }), "{response:?}");
+    assert_eq!(register(&fixture), Response::Ok);
     assert_eq!(
         git(&fixture.repo, &["branch", "--show-current"]).trim(),
         "feature/not-default"
@@ -310,9 +309,19 @@ fn registration_refuses_dirty_root_on_wrong_default_without_changing_git() {
         std::fs::read_to_string(fixture.repo.join("keep.txt")).unwrap(),
         "user changes"
     );
-    git(&fixture.repo, &["switch", "main"]);
-    assert_eq!(register(&fixture), Response::Ok);
-    assert_eq!(root_workspace(&fixture).name, "main");
+    let root = root_workspace(&fixture);
+    assert_eq!(root.name, "feature/not-default");
+    assert!(
+        root.warning
+            .as_deref()
+            .is_some_and(|warning| warning.contains("main")),
+        "off-default root must warn: {:?}",
+        root.warning
+    );
+    assert!(
+        root.sessions.is_empty(),
+        "initial shell is skipped while the root is off the default branch"
+    );
 }
 
 #[test]

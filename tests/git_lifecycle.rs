@@ -149,6 +149,54 @@ fn add_project_refuses_relative_paths_without_creating_anything() {
 }
 
 #[test]
+fn add_project_accepts_the_current_checkout_branch() {
+    let fixture = Live::binary();
+    live::git(
+        &fixture.repo,
+        &["checkout", "-b", "fix/audio-skip-bluetooth-mic"],
+    );
+    assert_eq!(
+        checkout_name(&fixture.repo).unwrap(),
+        "fix/audio-skip-bluetooth-mic"
+    );
+    assert_eq!(default_branch(&fixture.repo).unwrap(), "main");
+
+    assert_eq!(
+        fixture.request(Request::AddProject {
+            name: "demo".into(),
+            repo: fixture.repo.clone(),
+            workspace_root: fixture.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+
+    let registry = load_registry(&fixture.config).unwrap();
+    let project = registry.project("demo").unwrap();
+    let root = project
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.path == project.repo)
+        .expect("protected root workspace");
+    assert_eq!(root.branch, "fix/audio-skip-bluetooth-mic");
+    assert!(!root.setup_pending);
+
+    let Response::Hierarchy(hierarchy) = fixture.request(Request::List) else {
+        panic!("expected hierarchy");
+    };
+    let root = hierarchy.projects[0]
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.root)
+        .expect("root workspace in hierarchy");
+    assert_eq!(root.name, "fix/audio-skip-bluetooth-mic");
+    assert!(
+        root.warning.is_some(),
+        "root off the default branch should warn at launch time: {:?}",
+        root.warning
+    );
+}
+
+#[test]
 fn add_project_leaves_no_workspace_root_when_the_repository_is_invalid() {
     let fixture = Live::thread();
     let workspace_root = fixture.root.path().join("workspaces").join("unvalidated");

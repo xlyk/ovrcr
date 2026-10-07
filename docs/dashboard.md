@@ -678,9 +678,11 @@ appends `/`; `Enter` keeps the typed text and moves on. An empty field lists
 `picker_roots` from `dashboard.toml` in document order, not sorted. Name becomes
 the repository basename once a path is chosen. Workspace root defaults to `<config dir>/workspaces/<name>` until
 you edit it, and is created on registration if missing. Registration creates the
-protected repository-root workspace on the detected default branch. Whether it
+protected repository-root workspace on the current checkout branch. Whether it
 also starts a `local` shell there follows `automatic_local_terminals` (default
-**default branch only**). It does not switch Git.
+**default branch only**); when the root is off the detected default branch,
+registration still succeeds and the initial shell is skipped until that branch is
+restored. It does not switch Git.
 
 ## Empty states
 
