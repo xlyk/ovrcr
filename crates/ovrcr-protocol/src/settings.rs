@@ -59,45 +59,99 @@ impl ReadySoundChoice {
     }
 }
 
-/// Dashboard visual theme: Dark (Mocha, default) or Light (Latte).
+/// Dashboard visual theme (Appearance catalog).
+///
+/// `Dark` / `Light` keep wire indices 0 / 1 and remain aliases of Catppuccin
+/// Mocha / Latte (`dark` / `light` still parse). Canonical pick keys are the
+/// kebab-case names below.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum ThemeId {
+    /// Catppuccin Mocha — product default / README brand. Alias: `dark`.
     #[default]
+    #[serde(rename = "catppuccin-mocha", alias = "dark")]
     Dark,
+    /// Catppuccin Latte. Alias: `light`.
+    #[serde(rename = "catppuccin-latte", alias = "light")]
     Light,
+    #[serde(rename = "tokyo-night")]
+    TokyoNight,
+    #[serde(rename = "dracula")]
+    Dracula,
+    #[serde(rename = "gruvbox-dark")]
+    GruvboxDark,
+    #[serde(rename = "gruvbox-light")]
+    GruvboxLight,
+    #[serde(rename = "nord")]
+    Nord,
+    #[serde(rename = "rose-pine")]
+    RosePine,
 }
 
 impl ThemeId {
     pub const KEY: &'static str = "theme";
 
+    /// Canonical pick / document keys in Appearance catalog order.
+    pub const ALL: &'static [Self] = &[
+        Self::Dark,
+        Self::Light,
+        Self::TokyoNight,
+        Self::Dracula,
+        Self::GruvboxDark,
+        Self::GruvboxLight,
+        Self::Nord,
+        Self::RosePine,
+    ];
+
+    pub const EXPECTED: &'static str = concat!(
+        "\"catppuccin-mocha\", \"catppuccin-latte\", \"tokyo-night\", \"dracula\", ",
+        "\"gruvbox-dark\", \"gruvbox-light\", \"nord\", \"rose-pine\" ",
+        "(or aliases \"dark\" / \"light\")"
+    );
+
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Dark => "dark",
-            Self::Light => "light",
+            Self::Dark => "catppuccin-mocha",
+            Self::Light => "catppuccin-latte",
+            Self::TokyoNight => "tokyo-night",
+            Self::Dracula => "dracula",
+            Self::GruvboxDark => "gruvbox-dark",
+            Self::GruvboxLight => "gruvbox-light",
+            Self::Nord => "nord",
+            Self::RosePine => "rose-pine",
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Dark => "Dark",
-            Self::Light => "Light",
+            Self::Dark => "Catppuccin Mocha",
+            Self::Light => "Catppuccin Latte",
+            Self::TokyoNight => "Tokyo Night",
+            Self::Dracula => "Dracula",
+            Self::GruvboxDark => "Gruvbox Dark",
+            Self::GruvboxLight => "Gruvbox Light",
+            Self::Nord => "Nord",
+            Self::RosePine => "Rosé Pine",
         }
     }
 
     pub fn parse(raw: &str) -> Option<Self> {
         match raw {
-            "dark" => Some(Self::Dark),
-            "light" => Some(Self::Light),
+            "catppuccin-mocha" | "dark" => Some(Self::Dark),
+            "catppuccin-latte" | "light" => Some(Self::Light),
+            "tokyo-night" => Some(Self::TokyoNight),
+            "dracula" => Some(Self::Dracula),
+            "gruvbox-dark" => Some(Self::GruvboxDark),
+            "gruvbox-light" => Some(Self::GruvboxLight),
+            "nord" => Some(Self::Nord),
+            "rose-pine" => Some(Self::RosePine),
             _ => None,
         }
     }
 
     pub fn next(self) -> Self {
-        match self {
-            Self::Dark => Self::Light,
-            Self::Light => Self::Dark,
-        }
+        let all = Self::ALL;
+        let index = all.iter().position(|theme| *theme == self).unwrap_or(0);
+        all[(index + 1) % all.len()]
     }
 }
 
@@ -440,10 +494,18 @@ mod tests {
     #[test]
     fn theme_ids_have_stable_ids_labels_and_default() {
         let choices = [
-            (ThemeId::Dark, "dark", "Dark"),
-            (ThemeId::Light, "light", "Light"),
+            (ThemeId::Dark, "catppuccin-mocha", "Catppuccin Mocha"),
+            (ThemeId::Light, "catppuccin-latte", "Catppuccin Latte"),
+            (ThemeId::TokyoNight, "tokyo-night", "Tokyo Night"),
+            (ThemeId::Dracula, "dracula", "Dracula"),
+            (ThemeId::GruvboxDark, "gruvbox-dark", "Gruvbox Dark"),
+            (ThemeId::GruvboxLight, "gruvbox-light", "Gruvbox Light"),
+            (ThemeId::Nord, "nord", "Nord"),
+            (ThemeId::RosePine, "rose-pine", "Rosé Pine"),
         ];
+        assert_eq!(ThemeId::ALL.len(), choices.len());
         for (index, (choice, id, label)) in choices.iter().enumerate() {
+            assert_eq!(ThemeId::ALL[index], *choice);
             assert_eq!(choice.as_str(), *id);
             assert_eq!(choice.label(), *label);
             assert_eq!(ThemeId::parse(id), Some(*choice));
@@ -454,8 +516,26 @@ mod tests {
                 *choice
             );
         }
+        assert_eq!(ThemeId::parse("dark"), Some(ThemeId::Dark));
+        assert_eq!(ThemeId::parse("light"), Some(ThemeId::Light));
+        assert_eq!(
+            serde_json::from_value::<ThemeId>("dark".into()).unwrap(),
+            ThemeId::Dark
+        );
+        assert_eq!(
+            serde_json::from_value::<ThemeId>("light".into()).unwrap(),
+            ThemeId::Light
+        );
         assert_eq!(Settings::default().theme, ThemeId::Dark);
-        for invalid in ["", "Dark", "LIGHT", " dark", "mocha", "latte"] {
+        for invalid in [
+            "",
+            "Dark",
+            "LIGHT",
+            " dark",
+            "mocha",
+            "latte",
+            "tokyo_night",
+        ] {
             assert_eq!(ThemeId::parse(invalid), None);
         }
     }

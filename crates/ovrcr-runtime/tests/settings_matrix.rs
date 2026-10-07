@@ -40,7 +40,22 @@ const ENUMS: &[(&str, &str, &[&str])] = &[
         "\"{}\"",
         &["default", "tap", "chime", "rise"],
     ),
-    ("theme", "\"{}\"", &["dark", "light"]),
+    (
+        "theme",
+        "\"{}\"",
+        &[
+            "catppuccin-mocha",
+            "catppuccin-latte",
+            "tokyo-night",
+            "dracula",
+            "gruvbox-dark",
+            "gruvbox-light",
+            "nord",
+            "rose-pine",
+            "dark",
+            "light",
+        ],
+    ),
     (
         "automatic_local_terminals",
         "\"{}\"",

@@ -11,7 +11,7 @@ use super::{Dashboard, DashboardAction};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 #[cfg(target_os = "macos")]
 use ovrcr_protocol::ReadySoundChoice;
-use ovrcr_protocol::{ClientMessage, Request, Response, SettingSource, SettingsReport};
+use ovrcr_protocol::{ClientMessage, Request, Response, SettingSource, SettingsReport, ThemeId};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -365,6 +365,7 @@ fn items(report: &SettingsReport, presets: &[String]) -> Vec<Row> {
                 );
                 #[cfg(target_os = "macos")]
                 let row = native_sound_choice_labels(row, settings);
+                let row = theme_choice_labels(row, settings);
                 items.push(row);
             }
         }
@@ -390,6 +391,19 @@ fn native_sound_choice_labels(mut row: Row, settings: &ovrcr_protocol::Settings)
     row
 }
 
+/// Human-readable theme names in the Settings list; pick values stay kebab keys.
+fn theme_choice_labels(mut row: Row, settings: &ovrcr_protocol::Settings) -> Row {
+    if row.id == ThemeId::KEY {
+        row.value = settings.theme.label().into();
+        row.default = row
+            .default
+            .as_deref()
+            .and_then(ThemeId::parse)
+            .map(|choice| choice.label().into());
+    }
+    row
+}
+
 fn editor_kind(
     shape: ovrcr_protocol::Shape,
     entry: &ovrcr_protocol::Entry,
@@ -405,13 +419,15 @@ fn editor_kind(
             options
                 .iter()
                 .map(|value| {
-                    let label = *value;
+                    let mut label: &str = value;
+                    if entry.path == ThemeId::KEY {
+                        label = ThemeId::parse(label).map_or(label, ThemeId::label);
+                    }
                     #[cfg(target_os = "macos")]
-                    let label = if entry.path == ReadySoundChoice::KEY {
-                        ReadySoundChoice::parse(label).map_or(label, ReadySoundChoice::label)
-                    } else {
-                        label
-                    };
+                    if entry.path == ReadySoundChoice::KEY {
+                        label =
+                            ReadySoundChoice::parse(label).map_or(label, ReadySoundChoice::label);
+                    }
                     PickItem {
                         label: label.into(),
                         value: toml_string(value),

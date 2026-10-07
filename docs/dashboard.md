@@ -794,7 +794,7 @@ desktop_notifications = false        # opt in to background Ready and input-need
 ready_sound = false                  # opt in to a sound for the same two alert kinds
 ready_sound_choice = "default"        # macOS: default | tap | chime | rise
 iterm_focus = false                  # separate opt-in; explicit macOS Automation setup
-theme = "dark"                       # dark (Mocha, default) | light (Latte)
+theme = "catppuccin-mocha"            # catppuccin-mocha (default; alias dark) | catppuccin-latte (alias light) | tokyo-night | dracula | gruvbox-dark | gruvbox-light | nord | rose-pine
 automatic_local_terminals = "default_branch_only"  # on | off | default_branch_only
 # save_uncommitted_work = true       # opt in: push dirty feature worktrees to origin/wip/<branch>
 # title_model = "provider/model"     # optional; unset leaves automatic titles off
@@ -1022,13 +1022,27 @@ delivery remains unverified.
 
 ### Theme
 
-`theme` chooses the Dashboard palette. The default is `"dark"` (Catppuccin Mocha),
-which is also the public README brand. `"light"` is Catppuccin Latte with the same
-fifteen token names. Change it in **Settings** (Appearance) or with
-`ovrcr settings set theme light`; the Dashboard hot-switches on the next
-`SettingsChanged` without a restart. Borders use `SURFACE2`, selected rows use
-`SURFACE0` with `TEXT` (not inverted), and the accent rail stays `MAUVE` in both
-themes. Custom CSS, per-session themes, and follow-terminal are out of scope.
+`theme` chooses the Dashboard palette. The default is `"catppuccin-mocha"`
+(Catppuccin Mocha), which is also the public README brand; `"dark"` is accepted
+as an alias. Built-in picks:
+
+| Key | Label | Notes |
+| --- | --- | --- |
+| `catppuccin-mocha` | Catppuccin Mocha | default; alias `dark` |
+| `catppuccin-latte` | Catppuccin Latte | alias `light` |
+| `tokyo-night` | Tokyo Night | |
+| `dracula` | Dracula | |
+| `gruvbox-dark` | Gruvbox Dark | |
+| `gruvbox-light` | Gruvbox Light | |
+| `nord` | Nord | |
+| `rose-pine` | Rosé Pine | |
+
+Every theme shares the same fifteen token names. Change it in **Settings**
+(Appearance) or with `ovrcr settings set theme tokyo-night`; the Dashboard
+hot-switches on the next `SettingsChanged` without a restart. Borders use
+`SURFACE2`, selected rows use `SURFACE0` with `TEXT` (not inverted), and the
+accent rail stays `MAUVE`. Custom CSS, per-session themes, and follow-terminal
+are out of scope.
 
 The ready sound is off by default. Set `ready_sound = true` in `dashboard.toml`,
 press uppercase `S` in Browse, or use **ready sound** in the command palette to

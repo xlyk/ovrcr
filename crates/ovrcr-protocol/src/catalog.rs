@@ -76,7 +76,7 @@ const QUOTA_ABOUT: &[&str] = &[
 const TITLE_ABOUT: &[&str] = &["Setting a model makes paid calls to title sessions."];
 
 const THEME_ABOUT: &[&str] = &[
-    "Dark is Catppuccin Mocha (product default). Light is Catppuccin Latte.",
+    "Built-in palettes: Catppuccin Mocha (default; also dark), Catppuccin Latte (also light), Tokyo Night, Dracula, Gruvbox Dark, Gruvbox Light, Nord, and Rosé Pine.",
     "Changing theme updates the Dashboard immediately; the choice persists in dashboard.toml.",
 ];
 
@@ -304,8 +304,17 @@ const CATALOG: [Entry; 20] = [
     Entry {
         path: ThemeId::KEY,
         shape: Shape::Pick {
-            options: &["dark", "light"],
-            expected: "\"dark\" or \"light\"",
+            options: &[
+                "catppuccin-mocha",
+                "catppuccin-latte",
+                "tokyo-night",
+                "dracula",
+                "gruvbox-dark",
+                "gruvbox-light",
+                "nord",
+                "rose-pine",
+            ],
+            expected: ThemeId::EXPECTED,
         },
         owner: SettingOwner::Dashboard,
         group: "Appearance",

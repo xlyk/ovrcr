@@ -193,7 +193,7 @@ impl Loader<'_> {
                 Some(theme) => self.accept(ThemeId::KEY, &mut settings.theme, theme),
                 None => self.finding(
                     ThemeId::KEY,
-                    format!("unknown value {raw:?}; expected \"dark\" or \"light\""),
+                    format!("unknown value {raw:?}; expected {}", ThemeId::EXPECTED),
                 ),
             }
         }
