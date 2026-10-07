@@ -64,6 +64,25 @@ pub fn read_preamble<R: Read>(reader: &mut R) -> Result<u32> {
     ]))
 }
 
+/// A completed preamble exchange with a peer speaking another protocol
+/// version. Callers can downcast to it to tell an older peer from a newer one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProtocolMismatch {
+    pub peer: u32,
+}
+
+impl std::fmt::Display for ProtocolMismatch {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "protocol version mismatch: the server speaks version {} but this client speaks version {PROTOCOL_VERSION}; stop the old server with `ovrcr shutdown --kill` (or restart the installed service) and retry",
+            self.peer
+        )
+    }
+}
+
+impl std::error::Error for ProtocolMismatch {}
+
 /// Send our preamble, read the peer's, and fail unless the versions match.
 ///
 /// Both sides write before they read, so the exchange cannot deadlock.
@@ -71,9 +90,7 @@ pub fn exchange_preamble<S: Read + Write>(stream: &mut S) -> Result<()> {
     write_preamble(stream)?;
     let peer = read_preamble(stream)?;
     if peer != PROTOCOL_VERSION {
-        bail!(
-            "protocol version mismatch: the server speaks version {peer} but this client speaks version {PROTOCOL_VERSION}; stop the old server with `ovrcr shutdown --kill` (or restart the installed service) and retry"
-        );
+        return Err(ProtocolMismatch { peer }.into());
     }
     Ok(())
 }
@@ -173,7 +190,12 @@ mod tests {
             let mut preamble = Vec::from(*b"OVRC");
             preamble.extend_from_slice(&version.to_be_bytes());
             left.write_all(&preamble).unwrap();
-            let error = exchange_preamble(&mut right).unwrap_err().to_string();
+            let error = exchange_preamble(&mut right).unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<ProtocolMismatch>(),
+                Some(&ProtocolMismatch { peer: version })
+            );
+            let error = error.to_string();
             assert!(error.contains("protocol version mismatch"), "{error}");
             assert!(error.contains(&format!("version {version}")), "{error}");
         }

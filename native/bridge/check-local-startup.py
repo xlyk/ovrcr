@@ -16,14 +16,22 @@ from pathlib import Path
 assert __debug__, "Run python3 -I without -O"
 repo = Path(__file__).resolve().parents[2]
 lines = (repo / "justfile").read_text().splitlines()
-body = []
-for line in lines[lines.index("run *args:") + 1:]:
-    if line and not line.startswith("    "):
-        break
-    body.append(line[4:] if line.startswith("    ") else "")
-recipe = "\n".join(body) + "\n"
-assert recipe.startswith("#!/usr/bin/env bash\n")
-assert "{{" not in recipe, "Fixture needs to account for Just interpolation"
+
+
+def recipe_body(header):
+    body = []
+    for line in lines[lines.index(header) + 1:]:
+        if line and not line.startswith("    "):
+            break
+        body.append(line[4:] if line.startswith("    ") else "")
+    text = "\n".join(body).rstrip("\n") + "\n"
+    assert text.startswith("#!/usr/bin/env bash\n")
+    assert "{{" not in text, "Fixture needs to account for Just interpolation"
+    return text
+
+
+recipe = recipe_body("run *args:")
+assets_recipe = recipe_body("install-startup-assets *args:")
 fixture = Path(tempfile.mkdtemp(prefix="ovrcr-local-startup-"))
 checks = 0
 try:
@@ -31,6 +39,8 @@ try:
     bin_dir.mkdir()
     script = fixture / "run-recipe"
     script.write_text(recipe)
+    assets_script = fixture / "install-startup-assets-recipe"
+    assets_script.write_text(assets_recipe)
     cli_source = (
         f"#!{sys.executable}\n"
         "import json, os, sys\n"
@@ -80,7 +90,7 @@ try:
     (bin_dir / "uname").chmod(0o755)
     arguments = ["--fixture", "a value with spaces", "literal $value"]
 
-    def run(home, target, mode, kernel="Darwin", expected_exit=0):
+    def run(home, target, mode, kernel="Darwin", expected_exit=0, recipe_script=None, args=None):
         home.mkdir(parents=True, exist_ok=True)
         events = fixture / "events.jsonl"
         events.write_text("")
@@ -96,7 +106,8 @@ try:
         if mode is not None:
             env["OVRCR_BRIDGE_LOCAL_DEVELOPMENT"] = mode
         result = subprocess.run(
-            ["/bin/bash", str(script), *arguments], cwd=repo, env=env,
+            ["/bin/bash", str(recipe_script or script), *(arguments if args is None else args)],
+            cwd=repo, env=env,
             capture_output=True, text=True, timeout=20,
         )
         assert result.returncode == expected_exit, (
@@ -174,6 +185,51 @@ try:
     assert len(observed) == 2 and observed[0]["argv"][0] == "cargo"
     assert observed[1]["kind"] == "cli" and observed[1]["argv"] == arguments
     assert not (linux_home / ".local/lib").exists() and not (linux_home / "Applications").exists()
+    checks += 1
+
+    # install-startup-assets packages for an already installed (release) CLI.
+    release_home = fixture / "release home"
+    release_cli = release_home / ".local/bin/ovrcr"
+    release_cli.parent.mkdir(parents=True)
+    release_cli.write_text(cli_source)
+    release_cli.chmod(0o755)
+    release_target = fixture / "release target"
+    result, observed = run(release_home, release_target, None, recipe_script=assets_script, args=[])
+    assert observed == [{"kind": "tool", "argv": [
+        "sh", "scripts/package-startup.sh",
+        str(release_target / "startup-assets/ovrcr-startup"), str(release_cli),
+    ]}], observed
+    assert (release_home / ".local/lib/ovrcr/fixture-profile").read_text() == "production"
+    assert not (release_home / ".local/lib/ovrcr-local-development").exists()
+    assert release_cli.read_text() == cli_source, "asset packaging must not replace the CLI"
+    assert not (release_home / "Applications").exists()
+    checks += 1
+
+    other_cli = fixture / "cli with spaces/ovrcr"
+    other_cli.parent.mkdir()
+    other_cli.write_text(cli_source)
+    other_cli.chmod(0o755)
+    result, observed = run(release_home, release_target, "1", recipe_script=assets_script, args=[str(other_cli)])
+    assert observed[0]["argv"] == [
+        "sh", "scripts/package-startup.sh", "--local-development",
+        str(release_target / "startup-assets/ovrcr-startup-local-development"), str(other_cli),
+    ]
+    assert (release_home / ".local/lib/ovrcr-local-development/fixture-profile").read_text() == "local"
+    assert (release_home / ".local/lib/ovrcr/fixture-profile").read_text() == "production"
+    checks += 1
+
+    for kernel, mode, args in [("Linux", None, []), ("Darwin", "true", []), ("Darwin", None, ["a", "b"])]:
+        result, observed = run(fixture / "refused home", release_target, mode, kernel=kernel,
+                               expected_exit=64, recipe_script=assets_script, args=args)
+        assert observed == [] and not (fixture / "refused home/.local").exists()
+        checks += 1
+
+    unmanaged_release = fixture / "unmanaged release home"
+    (unmanaged_release / ".local/lib/ovrcr").mkdir(parents=True)
+    (unmanaged_release / ".local/lib/ovrcr/owned-by-user").write_bytes(b"do not replace")
+    result, observed = run(unmanaged_release, release_target, None, expected_exit=1,
+                           recipe_script=assets_script, args=[str(other_cli)])
+    assert (unmanaged_release / ".local/lib/ovrcr/owned-by-user").read_bytes() == b"do not replace"
     checks += 1
 except BaseException:
     print(f"Failed private startup fixture retained at {fixture}", file=sys.stderr)

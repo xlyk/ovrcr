@@ -120,6 +120,20 @@ struct BridgePermission {
     poll_until: Option<Instant>,
     next_poll: Option<Instant>,
     check_after_settings: bool,
+    fault: Option<BridgeFault>,
+}
+
+/// Why the Bridge answered `incompatible` or `failed`, so the banner can
+/// name the fix. Startup owns every repair; the Dashboard only reports.
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BridgeFault {
+    /// No app at the selected installation path.
+    NotInstalled,
+    /// The installed app's contract differs from this Dashboard's.
+    AppOutdated,
+    /// The installed app matches, so the running Bridge process is older.
+    ProcessOutdated,
 }
 
 #[cfg(target_os = "macos")]
@@ -143,6 +157,7 @@ impl BridgeControl {
 struct BridgeUpdate {
     operation: BridgeOperation,
     reply: BridgeReply,
+    fault: Option<BridgeFault>,
     state: Arc<AtomicU8>,
     ticket: Option<u64>,
 }
@@ -377,12 +392,22 @@ impl Dashboard {
                 Some(BridgeStatus::NotDetermined) => {
                     Some("OVRCR notification permission needed; checking authorization")
                 }
-                Some(BridgeStatus::Incompatible) => Some(
-                    "OVRCR Bridge needs updating; restart OVRCR to review the Bridge repair offer",
-                ),
-                Some(BridgeStatus::Failed) => Some(
-                    "OVRCR Bridge unavailable; restart OVRCR to review the Bridge install or repair offer",
-                ),
+                Some(BridgeStatus::Incompatible) => Some(match self.desktop.bridge.fault {
+                    Some(BridgeFault::ProcessOutdated) => {
+                        "Running OVRCR Bridge is an older build; restart OVRCR to review the Bridge restart offer"
+                    }
+                    _ => {
+                        "OVRCR Bridge needs updating; restart OVRCR to review the Bridge repair offer"
+                    }
+                }),
+                Some(BridgeStatus::Failed) => Some(match self.desktop.bridge.fault {
+                    Some(BridgeFault::NotInstalled) => {
+                        "OVRCR Bridge not installed; restart OVRCR to review the Bridge install offer"
+                    }
+                    _ => {
+                        "OVRCR Bridge unavailable; restart OVRCR to review the Bridge install or repair offer"
+                    }
+                }),
                 _ => None,
             };
             if permission.is_some() {
@@ -488,6 +513,7 @@ impl Dashboard {
                 continue;
             }
             bridge.check_after_settings = false;
+            bridge.fault = update.fault;
             bridge.status = Some(if status == BridgeStatus::Submitted {
                 BridgeStatus::Available
             } else {
@@ -944,9 +970,11 @@ impl DesktopHost {
                                 &control.operation,
                                 cancelled,
                             );
+                            let fault = bridge_fault(bridge_client.as_deref(), reply.status);
                             let _ = updated.try_send(BridgeUpdate {
                                 operation: control.operation.clone(),
                                 reply,
+                                fault,
                                 state: Arc::clone(&control.state),
                                 ticket: None,
                             });
@@ -998,9 +1026,11 @@ impl DesktopHost {
                         if !cancelled()
                             && worker_channels.load(Ordering::Acquire) & CHANNEL_DESKTOP != 0
                         {
+                            let fault = bridge_fault(bridge_client.as_deref(), reply.status);
                             let _ = updated.try_send(BridgeUpdate {
                                 operation,
                                 reply,
+                                fault,
                                 state: Arc::clone(&delivery.state),
                                 ticket: Some(ticket),
                             });
@@ -1088,7 +1118,6 @@ impl Drop for DesktopHost {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
 fn run_host(mut command: Command, timeout: Duration, cancelled: impl Fn() -> bool) -> bool {
     command
         .stdin(Stdio::null())
@@ -1114,6 +1143,31 @@ fn run_host(mut command: Command, timeout: Duration, cancelled: impl Fn() -> boo
                 return false;
             }
         }
+    }
+}
+
+/// `--check-contract` runs before any app, notification or IPC lifecycle, so
+/// it tells a stale installed app from a stale running process.
+#[cfg(target_os = "macos")]
+fn bridge_fault(client: Option<&std::path::Path>, status: BridgeStatus) -> Option<BridgeFault> {
+    let client = client?;
+    match status {
+        BridgeStatus::Failed if std::fs::symlink_metadata(client).is_err() => {
+            Some(BridgeFault::NotInstalled)
+        }
+        BridgeStatus::Incompatible => {
+            let mut command = Command::new(client);
+            command
+                .arg("--check-contract")
+                .arg(BRIDGE_SCHEMA_VERSION.to_string())
+                .arg(PROTOCOL_VERSION.to_string());
+            Some(if run_host(command, Duration::from_secs(1), || false) {
+                BridgeFault::ProcessOutdated
+            } else {
+                BridgeFault::AppOutdated
+            })
+        }
+        _ => None,
     }
 }
 
@@ -4054,11 +4108,53 @@ printf '{{"schema":{},"server_wire":{},"status":"%s"%s}}\n' "$status" "$extra"
         wait_bridge(&mut d, |d| {
             d.desktop.bridge.status == Some(BridgeStatus::Failed)
         });
-        assert!(
-            d.desktop_status_notice()
-                .unwrap()
-                .contains("Bridge install or repair offer")
+        assert_eq!(
+            d.desktop_status_notice(),
+            Some("OVRCR Bridge not installed; restart OVRCR to review the Bridge install offer")
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn incompatible_bridge_banner_names_the_stale_app_or_the_stale_process() {
+        use std::os::unix::fs::PermissionsExt;
+        // The client answers an older wire. `--check-contract` reports whether
+        // the installed app itself matches (exit 0) or not (exit 78).
+        for (contract_exit, expected) in [
+            (
+                0,
+                "Running OVRCR Bridge is an older build; restart OVRCR to review the Bridge restart offer",
+            ),
+            (
+                78,
+                "OVRCR Bridge needs updating; restart OVRCR to review the Bridge repair offer",
+            ),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let client = root.path().join("client");
+            let checks = root.path().join("checks");
+            std::fs::write(
+                &client,
+                format!(
+                    "#!/bin/sh\nif [ \"$1\" = --check-contract ]; then printf '%s %s\\n' \"$2\" \"$3\" >> '{}'; exit {contract_exit}; fi\ncat >/dev/null\nprintf '{{\"schema\":{},\"server_wire\":{},\"status\":\"available\"}}'\n",
+                    checks.display(),
+                    BRIDGE_SCHEMA_VERSION,
+                    PROTOCOL_VERSION - 1
+                ),
+            )
+            .unwrap();
+            std::fs::set_permissions(&client, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let mut d = dashboard();
+            install_fake_bridge(&mut d, client);
+            wait_bridge(&mut d, |d| {
+                d.desktop.bridge.status == Some(BridgeStatus::Incompatible)
+            });
+            assert_eq!(d.desktop_status_notice(), Some(expected));
+            assert_eq!(
+                std::fs::read_to_string(&checks).unwrap(),
+                format!("{BRIDGE_SCHEMA_VERSION} {PROTOCOL_VERSION}\n")
+            );
+        }
     }
 
     #[cfg(target_os = "macos")]

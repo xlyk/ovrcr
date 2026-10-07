@@ -49,7 +49,14 @@ install -m 755 target/release/ovrcr ~/.local/bin/ovrcr
 ovrcr --version
 ```
 
+On macOS, `just install-release` does the same and also packages the optional
+Bridge's startup assets into `~/.local/lib/ovrcr`. After installing a CLI any
+other way, run `just install-startup-assets` from the checkout so startup can
+install or repair the [Bridge](native/bridge/README.md).
+
 Client and server must match on the wire protocol `ovrcr --version` prints.
+Interactive startup offers to restart an older server (same protocol with a
+different build, or an older protocol); live sessions stop if you accept.
 
 ## Quickstart
 

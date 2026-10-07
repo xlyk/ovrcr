@@ -11334,6 +11334,19 @@ printf '%s\n' "$reply"
         }
     }
 
+    /// The host executable is absent: macOS names the missing Bridge app.
+    fn wait_missing_host_notice(&mut self) {
+        if cfg!(target_os = "macos") {
+            self.wait_screen(|screen| {
+                screen.contains(
+                    "OVRCR Bridge not installed; restart OVRCR to review the Bridge install offer",
+                )
+            });
+        } else {
+            self.wait_unavailable_notice();
+        }
+    }
+
     fn wait_unavailable_notice(&mut self) {
         let notice = if cfg!(target_os = "macos") {
             "OVRCR Bridge unavailable; restart OVRCR to review the Bridge install or repair offer"
@@ -11352,6 +11365,7 @@ printf '%s\n' "$reply"
                 || screen.contains("Desktop notifications unavailable")
                 || screen.contains("Desktop notifications and ready sound unavailable")
                 || screen.contains("OVRCR Bridge unavailable")
+                || screen.contains("OVRCR Bridge not installed")
         });
     }
 
@@ -17120,7 +17134,7 @@ fn desktop_notifications_missing_host_tool_preserves_response_and_dashboard_cont
     for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
         desktop_codex_callback(&fixture, summary.id, &mut index, command);
     }
-    dashboard.wait_unavailable_notice();
+    dashboard.wait_missing_host_notice();
     assert!(
         !dashboard.record.exists(),
         "missing host cannot record delivery"
@@ -17426,7 +17440,7 @@ fn desktop_notifications_bridge_installation_failures_are_actionable_without_set
             status,
         );
         if status == "missing" {
-            dashboard.wait_unavailable_notice();
+            dashboard.wait_missing_host_notice();
         } else {
             dashboard.wait_screen(|screen| {
                 screen.contains(
