@@ -1091,7 +1091,7 @@ mod tests {
 
     fn fake_pi(root: &Path, name: &str, body: &str) -> PathBuf {
         let executable = root.join(name);
-        fs::write(&executable, format!("#!/bin/bash\n{body}")).unwrap();
+        fs::write(&executable, format!("#!/bin/sh\n{body}")).unwrap();
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
         executable
     }
@@ -1130,10 +1130,12 @@ mod tests {
             "eof-shutdown-pi",
             r#"IFS= read -r request || exit 2
 printf '%s\n' '{"id":"title","type":"response","command":"prompt","success":true}' '{"type":"agent_start"}'
-IFS= read -r -t 1 more
-case $? in 0|1) exit 0 ;; esac
+exec 3<&0
+{ cat <&3 >/dev/null; : > stdin-closed; } >/dev/null 2>&1 &
+sleep 1
+[ -f stdin-closed ] && exit 0
 printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":""},{"type":"text","text":"Login page CSS fix"}],"stopReason":"stop"}}' '{"type":"agent_end"}' '{"type":"agent_settled"}'
-while IFS= read -r line; do :; done
+wait
 exit 0
 "#,
         );

@@ -3433,18 +3433,20 @@ fn title_model_set_and_cleared_while_running_starts_and_stops_titling() {
 /// run settles, pass `--no-session`, and a failure must name its reason.
 #[test]
 fn title_call_keeps_pi_stdin_open_until_the_run_settles_and_names_failures() {
-    let script = r#"#!/bin/bash
+    let script = r#"#!/bin/sh
 printf '%s\n' "$*" >> __CALLS__
 IFS= read -r request || exit 2
 printf '%s\n' '{"id":"title","type":"response","command":"prompt","success":true}' '{"type":"agent_start"}'
-IFS= read -r -t 1 more
-case $? in 0|1) exit 0 ;; esac
+exec 3<&0
+{ cat <&3 >/dev/null; : > stdin-closed; } >/dev/null 2>&1 &
+sleep 1
+[ -f stdin-closed ] && exit 0
 if [ -f __CALLS__.fail ]; then
   echo 'Error: No API key found for provider "test"' >&2
   exit 1
 fi
 printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":""},{"type":"text","text":"Settled Topic"}],"stopReason":"stop"}}' '{"type":"agent_end"}' '{"type":"agent_settled"}'
-while IFS= read -r line; do :; done
+wait
 exit 0
 "#
     .to_owned();
