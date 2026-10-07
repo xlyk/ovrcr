@@ -2249,8 +2249,10 @@ fn light_theme_hot_switch_updates_cached_tokens_and_draw_background() {
     let mut dashboard = Dashboard::new(TerminalSize { rows: 12, cols: 40 });
     assert_eq!(dashboard.theme_tokens(), ThemeTokens::dark());
 
-    let mut light = Settings::default();
-    light.theme = ThemeId::Light;
+    let light = Settings {
+        theme: ThemeId::Light,
+        ..Default::default()
+    };
     dashboard.install_settings(light);
     assert_eq!(dashboard.theme_tokens(), ThemeTokens::light());
 
