@@ -331,7 +331,15 @@ impl OuterDashboard {
             reader: Some(reader_handle),
             parser: vt100::Parser::new(size.rows, size.cols, 0),
         };
-        dashboard.wait_for(b"OVRCR", wait_deadline())?;
+        // Startup notices on the main screen can name OVRCR too; ready means
+        // the Dashboard header on its alternate screen.
+        let deadline = Instant::now() + wait_deadline();
+        loop {
+            dashboard.wait_for(b"OVRCR", deadline.saturating_duration_since(Instant::now()))?;
+            if dashboard.parser.screen().alternate_screen() {
+                break;
+            }
+        }
         Ok(dashboard)
     }
 
