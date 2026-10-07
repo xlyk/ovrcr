@@ -323,7 +323,7 @@ impl Dashboard {
         let style = |color| Style::default().fg(color);
         let mut lines = vec![Line::styled(
             format!("Component: {}", component_label(self.events.component)),
-            style(SUBTEXT),
+            style(SUBTEXT()),
         )];
         if self.events.filtering || !self.events.filter.is_empty() {
             let text = if self.events.filtering {
@@ -331,10 +331,10 @@ impl Dashboard {
             } else {
                 self.events.filter.clone()
             };
-            lines.push(Line::styled(format!("Filter: {text}"), style(MAUVE)));
+            lines.push(Line::styled(format!("Filter: {text}"), style(MAUVE())));
         }
         if let Some(error) = &self.events.error {
-            lines.push(Line::styled(error.clone(), style(PEACH)));
+            lines.push(Line::styled(error.clone(), style(PEACH())));
         }
         lines
     }
@@ -344,7 +344,7 @@ impl Dashboard {
         if !self.events.loaded {
             return vec![Line::styled(
                 "Waiting for the Server's events.",
-                style(MUTED),
+                style(MUTED()),
             )];
         }
         let rows = visible(
@@ -358,10 +358,10 @@ impl Dashboard {
             } else {
                 "No events match."
             };
-            return vec![Line::styled(text, style(MUTED))];
+            return vec![Line::styled(text, style(MUTED()))];
         }
         rows.into_iter()
-            .map(|event| Line::styled(event_line(event), style(TEXT)))
+            .map(|event| Line::styled(event_line(event), style(TEXT())))
             .collect()
     }
 
@@ -369,7 +369,7 @@ impl Dashboard {
         let area = popup_area(frame.area());
         let block = Block::bordered()
             .title(TITLE)
-            .style(Style::default().bg(BASE).fg(TEXT));
+            .style(Style::default().bg(BASE()).fg(TEXT()));
         let inner = block.inner(area);
         let header = self.events_header();
         let header_height = (header.len() as u16).min(inner.height);

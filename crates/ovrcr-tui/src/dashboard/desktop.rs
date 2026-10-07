@@ -250,6 +250,8 @@ impl Dashboard {
             });
         let iterm = (before.iterm_focus != self.settings.iterm_focus)
             .then(|| format!("Exact iTerm focus: {}", on_off(self.settings.iterm_focus)));
+        let theme = (before.theme != self.settings.theme)
+            .then(|| format!("Theme: {}", self.settings.theme.label()));
         for notice in [
             automatic,
             sound,
@@ -257,6 +259,7 @@ impl Dashboard {
             choice,
             desktop,
             iterm,
+            theme,
         ]
         .into_iter()
         .flatten()

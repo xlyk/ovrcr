@@ -59,6 +59,54 @@ impl ReadySoundChoice {
     }
 }
 
+/// Dashboard visual theme: Dark (Mocha, default) or Light (Latte).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeId {
+    #[default]
+    Dark,
+    Light,
+}
+
+impl ThemeId {
+    pub const KEY: &'static str = "theme";
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Dark => "dark",
+            Self::Light => "light",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Dark => "Dark",
+            Self::Light => "Light",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "dark" => Some(Self::Dark),
+            "light" => Some(Self::Light),
+            _ => None,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Dark => Self::Light,
+            Self::Light => Self::Dark,
+        }
+    }
+}
+
+impl fmt::Display for ThemeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
 /// When OVRCR automatically creates a terminal named `local`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AutomaticLocalTerminals {
@@ -196,6 +244,8 @@ pub struct Settings {
     /// Absent document choice is `Some(Default)`; an explicit invalid value is
     /// `None` with a finding, so consumers suppress sound without changing flags.
     pub ready_sound_choice: Option<ReadySoundChoice>,
+    /// Dashboard palette: Dark (Mocha) or Light (Latte). Default Dark.
+    pub theme: ThemeId,
     /// Separate consent for exact existing-iTerm-session focus; OS permission
     /// is requested only by the explicit Dashboard setup action.
     pub iterm_focus: bool,
@@ -236,6 +286,7 @@ impl Default for Settings {
             desktop_notifications: false,
             ready_sound: false,
             ready_sound_choice: Some(ReadySoundChoice::Default),
+            theme: ThemeId::Dark,
             iterm_focus: false,
             automatic_local_terminals: AutomaticLocalTerminals::default(),
             title_model: None,
@@ -384,5 +435,28 @@ mod tests {
         );
         assert_eq!(AutomaticLocalTerminals::parse("always"), None);
         assert_eq!(AutomaticLocalTerminals::parse(""), None);
+    }
+
+    #[test]
+    fn theme_ids_have_stable_ids_labels_and_default() {
+        let choices = [
+            (ThemeId::Dark, "dark", "Dark"),
+            (ThemeId::Light, "light", "Light"),
+        ];
+        for (index, (choice, id, label)) in choices.iter().enumerate() {
+            assert_eq!(choice.as_str(), *id);
+            assert_eq!(choice.label(), *label);
+            assert_eq!(ThemeId::parse(id), Some(*choice));
+            assert_eq!(choice.next(), choices[(index + 1) % choices.len()].0);
+            assert_eq!(serde_json::to_value(choice).unwrap(), *id);
+            assert_eq!(
+                serde_json::from_value::<ThemeId>((*id).into()).unwrap(),
+                *choice
+            );
+        }
+        assert_eq!(Settings::default().theme, ThemeId::Dark);
+        for invalid in ["", "Dark", "LIGHT", " dark", "mocha", "latte"] {
+            assert_eq!(ThemeId::parse(invalid), None);
+        }
     }
 }

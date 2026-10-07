@@ -2240,6 +2240,35 @@ fn desktop_notification_action_is_opt_in_and_discoverable() {
 }
 
 #[test]
+fn light_theme_hot_switch_updates_cached_tokens_and_draw_background() {
+    use crate::theme::{ThemeScope, ThemeTokens};
+    use ovrcr_protocol::{Settings, ThemeId};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 12, cols: 40 });
+    assert_eq!(dashboard.theme_tokens(), ThemeTokens::dark());
+
+    let mut light = Settings::default();
+    light.theme = ThemeId::Light;
+    dashboard.install_settings(light);
+    assert_eq!(dashboard.theme_tokens(), ThemeTokens::light());
+
+    let backend = TestBackend::new(40, 12);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| super::render::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    assert_eq!(buffer[(0, 1)].bg, ThemeTokens::light().base);
+
+    // Scope restores after draw; active falls back to dark when no scope is open.
+    assert_eq!(crate::theme::active(), ThemeTokens::dark());
+    let _scope = ThemeScope::enter(dashboard.theme_tokens());
+    assert_eq!(crate::theme::BASE(), ThemeTokens::light().base);
+}
+
+#[test]
 fn render_terminal_copies_text_style_wide_cells_and_cursor() {
     use ratatui::backend::TestBackend;
     use ratatui::style::{Color, Modifier};
@@ -2254,8 +2283,9 @@ fn render_terminal_copies_text_style_wide_cells_and_cursor() {
         .unwrap();
     let buffer = terminal.backend().buffer();
     assert_eq!(buffer[(0, 0)].symbol(), "p");
-    assert_eq!(buffer[(0, 0)].fg, Color::Rgb(205, 214, 244));
-    assert_eq!(buffer[(0, 0)].bg, Color::Rgb(30, 30, 46));
+    let dark = crate::theme::ThemeTokens::dark();
+    assert_eq!(buffer[(0, 0)].fg, dark.text);
+    assert_eq!(buffer[(0, 0)].bg, dark.base);
     assert_eq!(buffer[(6, 0)].fg, Color::Indexed(1));
     assert_eq!(buffer[(6, 1)].symbol(), "界");
     assert_eq!(buffer[(7, 1)].symbol(), " ");

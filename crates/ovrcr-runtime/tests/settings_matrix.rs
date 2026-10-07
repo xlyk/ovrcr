@@ -40,6 +40,7 @@ const ENUMS: &[(&str, &str, &[&str])] = &[
         "\"{}\"",
         &["default", "tap", "chime", "rise"],
     ),
+    ("theme", "\"{}\"", &["dark", "light"]),
     (
         "automatic_local_terminals",
         "\"{}\"",
@@ -339,6 +340,7 @@ fn matrix_covers_every_declared_setting() {
             "ready_sound",
             "ready_sound_choice",
             "iterm_focus",
+            "theme",
             "automatic_local_terminals",
             "save_uncommitted_work",
             "branch_prefix",
@@ -361,7 +363,7 @@ fn matrix_covers_every_declared_setting() {
     assert_eq!(
         kinds,
         [
-            Bool, Bool, Str, Bool, Str, Bool, Str, Array, Str, Bool, Bool, Str, Str, Str, Str,
+            Bool, Bool, Str, Bool, Str, Str, Bool, Str, Array, Str, Bool, Bool, Str, Str, Str, Str,
             Bool, Str, Array, Table,
         ]
     );

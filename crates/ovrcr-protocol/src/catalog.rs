@@ -6,6 +6,7 @@ use crate::{CLAUDE_PROBE_DESCRIPTION, CURSOR_QUOTA_DESCRIPTION};
 use crate::{
     DESKTOP_NOTIFICATIONS_OFF, ITERM_FOCUS_OFF, LaunchChoice, QUOTA_OFF, ReadySoundChoice,
     SAVE_UNCOMMITTED_WORK_OFF, SettingOwner, SettingRow, SettingSource, Settings, TITLES_OFF,
+    ThemeId,
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
@@ -73,6 +74,11 @@ const QUOTA_ABOUT: &[&str] = &[
 ];
 
 const TITLE_ABOUT: &[&str] = &["Setting a model makes paid calls to title sessions."];
+
+const THEME_ABOUT: &[&str] = &[
+    "Dark is Catppuccin Mocha (product default). Light is Catppuccin Latte.",
+    "Changing theme updates the Dashboard immediately; the choice persists in dashboard.toml.",
+];
 
 const STATE_DB_ABOUT: &[&str] =
     &["Optional absolute path to Cursor's state.vscdb; otherwise the platform default."];
@@ -226,6 +232,7 @@ fn value_of(settings: &Settings, path: &str) -> Option<String> {
         ReadySoundChoice::KEY => settings
             .ready_sound_choice
             .map(|choice| choice.as_str().into()),
+        ThemeId::KEY => Some(settings.theme.as_str().into()),
         "iterm_focus" => display(&settings.iterm_focus),
         "automatic_local_terminals" => Some(settings.automatic_local_terminals.as_str().into()),
         "title_model" => settings.title_model.clone(),
@@ -246,7 +253,7 @@ fn value_of(settings: &Settings, path: &str) -> Option<String> {
     }
 }
 
-const CATALOG: [Entry; 19] = [
+const CATALOG: [Entry; 20] = [
     Entry {
         path: "desktop_notifications",
         shape: Shape::Toggle,
@@ -293,6 +300,20 @@ const CATALOG: [Entry; 19] = [
         about: ITERM_ABOUT,
         value: |settings| value_of(settings, "iterm_focus"),
         show_off: |settings| !settings.iterm_focus,
+    },
+    Entry {
+        path: ThemeId::KEY,
+        shape: Shape::Pick {
+            options: &["dark", "light"],
+            expected: "\"dark\" or \"light\"",
+        },
+        owner: SettingOwner::Dashboard,
+        group: "Appearance",
+        label: "Theme",
+        off_state: None,
+        about: THEME_ABOUT,
+        value: |settings| value_of(settings, ThemeId::KEY),
+        show_off: |_| false,
     },
     Entry {
         path: "automatic_local_terminals",
@@ -483,6 +504,7 @@ mod tests {
                 "ready_sound",
                 "ready_sound_choice",
                 "iterm_focus",
+                "theme",
                 "automatic_local_terminals",
                 "save_uncommitted_work",
                 "branch_prefix",
@@ -507,6 +529,7 @@ mod tests {
             headers,
             [
                 "Alerts",
+                "Appearance",
                 "Workspaces",
                 "Titles",
                 "Usage",

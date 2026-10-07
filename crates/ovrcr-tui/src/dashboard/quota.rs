@@ -125,8 +125,8 @@ impl Dashboard {
         };
         let block = Block::bordered().title(title).style(
             Style::default()
-                .bg(super::render::BASE)
-                .fg(super::render::TEXT),
+                .bg(super::render::BASE())
+                .fg(super::render::TEXT()),
         );
         let inner = block.inner(area);
         let paragraph = Paragraph::new(lines.join("\n")).wrap(Wrap { trim: false });
@@ -290,7 +290,7 @@ impl Dashboard {
         match area.height {
             1 => {
                 return frame.render_widget(
-                    Paragraph::new("Quota: u").style(Style::default().fg(TEXT)),
+                    Paragraph::new("Quota: u").style(Style::default().fg(TEXT())),
                     area,
                 );
             }
@@ -369,11 +369,11 @@ fn name_style(provider: &ProviderQuota) -> Style {
 }
 
 fn subtext() -> Style {
-    Style::default().fg(SUBTEXT)
+    Style::default().fg(SUBTEXT())
 }
 
 fn text_style() -> Style {
-    Style::default().fg(TEXT)
+    Style::default().fg(TEXT())
 }
 
 /// Threshold colors on % text only (WCAG 1.4.1 keeps the words).
@@ -382,17 +382,17 @@ fn percent_style(window: &QuotaWindow, now: u64) -> Style {
         return subtext();
     }
     if window.over_limit {
-        return Style::default().fg(RED);
+        return Style::default().fg(RED());
     }
     match window.remaining_basis_points() {
         None => subtext(),
-        Some(0) => Style::default().fg(RED),
+        Some(0) => Style::default().fg(RED()),
         Some(left) => {
             let pct = (u32::from(left) + 50) / 100;
             if pct <= 5 {
-                Style::default().fg(RED)
+                Style::default().fg(RED())
             } else if pct <= 20 {
-                Style::default().fg(YELLOW)
+                Style::default().fg(YELLOW())
             } else {
                 text_style()
             }
@@ -452,9 +452,9 @@ fn header_line(width: u16) -> Line<'static> {
     compose_row(
         vec![Span::styled(
             clipped,
-            Style::default().fg(SUBTEXT).add_modifier(Modifier::BOLD),
+            Style::default().fg(SUBTEXT()).add_modifier(Modifier::BOLD),
         )],
-        Span::styled(rule, Style::default().fg(SURFACE2)),
+        Span::styled(rule, Style::default().fg(SURFACE2())),
         Vec::new(),
         usize::from(width),
         false,
@@ -481,7 +481,7 @@ fn bar_spans(
                 Span::styled(FILL_GLYPH.repeat(filled), Style::default().fg(color)),
                 Span::styled(
                     TRACK_GLYPH.repeat(n.saturating_sub(filled)),
-                    Style::default().fg(SURFACE2),
+                    Style::default().fg(SURFACE2()),
                 ),
             ]
         }
@@ -492,7 +492,7 @@ fn bar_spans(
 fn unknown_track(n: usize) -> Vec<Span<'static>> {
     vec![Span::styled(
         TRACK_GLYPH.repeat(n),
-        Style::default().fg(SURFACE2),
+        Style::default().fg(SURFACE2()),
     )]
 }
 

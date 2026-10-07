@@ -2,6 +2,7 @@
 use crate::TaskRequestFn;
 use crate::dashboard::picker::PickList;
 use crate::dashboard::text_cursor::TextCursor;
+use crate::theme::{self, BASE, MAUVE, SKY, SUBTEXT, SURFACE2, TEXT, ThemeScope, YELLOW};
 use anyhow::{Context, Result, bail};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -13,7 +14,7 @@ use ovrcr_protocol::task::{
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
@@ -1148,7 +1149,7 @@ fn block(title: &str) -> Block<'_> {
     Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .border_style(Style::default().fg(Color::Rgb(108, 112, 134)))
+        .border_style(Style::default().fg(SURFACE2()))
 }
 fn timestamp(at: i64) -> String {
     chrono::DateTime::from_timestamp(at, 0)
@@ -1185,13 +1186,10 @@ fn wrap_transcript(text: &str, width: usize) -> Vec<String> {
 }
 
 pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
+    let _theme = ThemeScope::enter(theme::active());
     let area = frame.area();
     frame.render_widget(
-        Block::default().style(
-            Style::default()
-                .bg(Color::Rgb(30, 30, 46))
-                .fg(Color::Rgb(205, 214, 244)),
-        ),
+        Block::default().style(Style::default().bg(BASE()).fg(TEXT())),
         area,
     );
     let [title, body, concurrency, status, footer] = view.rects(area);
@@ -1200,11 +1198,7 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
             " OVRCR  Tasks  │ concurrency: {}",
             view.concurrency
         ))
-        .style(
-            Style::default()
-                .fg(Color::Rgb(30, 30, 46))
-                .bg(Color::Rgb(203, 166, 247)),
-        ),
+        .style(Style::default().fg(BASE()).bg(MAUVE())),
         title,
     );
     if let Some(editor) = &view.editor {
@@ -1273,7 +1267,7 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
                     );
                     frame.render_widget(
                         Paragraph::new(line).style(if selected {
-                            Style::default().fg(Color::Rgb(137, 220, 235))
+                            Style::default().fg(SKY())
                         } else {
                             Style::default()
                         }),
@@ -1310,7 +1304,7 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
                 let text = format!("{prefix}{value}");
                 frame.render_widget(
                     Paragraph::new(text).style(if selected {
-                        Style::default().fg(Color::Rgb(137, 220, 235))
+                        Style::default().fg(SKY())
                     } else {
                         Style::default()
                     }),
@@ -1347,7 +1341,7 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
                         r.spec.name
                     ),
                     if i == view.selected_run {
-                        Style::default().fg(Color::Rgb(137, 220, 235))
+                        Style::default().fg(SKY())
                     } else {
                         Style::default()
                     },
@@ -1418,7 +1412,7 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
                             t.next_due_at.map(timestamp).unwrap_or_else(|| "—".into())
                         ),
                         if i == view.selected {
-                            Style::default().fg(Color::Rgb(137, 220, 235))
+                            Style::default().fg(SKY())
                         } else {
                             Style::default()
                         },
@@ -1433,12 +1427,12 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
         frame.render_widget(Paragraph::new(rows).block(block(" Scheduled tasks ")), body);
     }
     frame.render_widget(
-        Paragraph::new(view.message.as_str()).style(Style::default().fg(Color::Rgb(249, 226, 175))),
+        Paragraph::new(view.message.as_str()).style(Style::default().fg(YELLOW())),
         status,
     );
     for (rect, hint) in view.controls(footer) {
         frame.render_widget(
-            Paragraph::new(hint).style(Style::default().fg(Color::Rgb(166, 173, 200))),
+            Paragraph::new(hint).style(Style::default().fg(SUBTEXT())),
             rect,
         );
     }
@@ -1454,18 +1448,13 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
             _ => String::new(),
         };
         frame.render_widget(
-            Paragraph::new(text).style(
-                Style::default()
-                    .fg(Color::Rgb(30, 30, 46))
-                    .bg(Color::Rgb(249, 226, 175)),
-            ),
+            Paragraph::new(text).style(Style::default().fg(BASE()).bg(YELLOW())),
             status,
         );
     }
     if let Some(value) = &view.concurrency_input {
         frame.render_widget(
-            Paragraph::new(format!("Concurrency: {value}"))
-                .style(Style::default().fg(Color::Rgb(137, 220, 235))),
+            Paragraph::new(format!("Concurrency: {value}")).style(Style::default().fg(SKY())),
             concurrency,
         );
     }

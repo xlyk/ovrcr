@@ -9,7 +9,7 @@
 
 use ovrcr_protocol::{
     AgentOverride, AutomaticLocalTerminals, LaunchChoice, NativeCommand, ReadySoundChoice,
-    SettingRow, Settings, SettingsFinding, SettingsReport,
+    SettingRow, Settings, SettingsFinding, SettingsReport, ThemeId,
 };
 #[cfg(test)]
 use ovrcr_protocol::{SettingOwner, SettingSource};
@@ -186,6 +186,15 @@ impl Loader<'_> {
                         format!("unknown value {raw:?}; expected \"default\", \"tap\", \"chime\" or \"rise\""),
                     ),
                 }
+            }
+        }
+        if let Some(raw) = self.take::<String>(table, ThemeId::KEY) {
+            match ThemeId::parse(&raw) {
+                Some(theme) => self.accept(ThemeId::KEY, &mut settings.theme, theme),
+                None => self.finding(
+                    ThemeId::KEY,
+                    format!("unknown value {raw:?}; expected \"dark\" or \"light\""),
+                ),
             }
         }
         self.value(table, "iterm_focus", &mut settings.iterm_focus);
@@ -722,6 +731,7 @@ mod tests {
     const FULL: &str = r#"desktop_notifications = true
 ready_sound = true
 iterm_focus = true
+theme = "light"
 save_uncommitted_work = true
 automatic_local_terminals = "off"
 title_model = "pi/test"
@@ -776,6 +786,7 @@ state_db = "/tmp/cursor/state.vscdb"
         assert!(settings.desktop_notifications && settings.ready_sound);
         assert_eq!(settings.ready_sound_choice, Some(ReadySoundChoice::Chime));
         assert!(settings.iterm_focus);
+        assert_eq!(settings.theme, ThemeId::Light);
         assert!(settings.save_uncommitted_work);
         assert_eq!(
             settings.automatic_local_terminals,
@@ -892,6 +903,7 @@ state_db = "/tmp/cursor/state.vscdb"
                 "ready_sound",
                 "ready_sound_choice",
                 "iterm_focus",
+                "theme",
                 "automatic_local_terminals",
                 "save_uncommitted_work",
                 "branch_prefix",
@@ -932,7 +944,7 @@ state_db = "/tmp/cursor/state.vscdb"
         let text = FULL.replace("command = \"/opt/codex\"", "command = 7");
         let report = read(&text);
         assert_eq!(report.findings.len(), 1, "{:?}", report.findings);
-        finding("quota.codex.command", 26, "expected path", &report);
+        finding("quota.codex.command", 27, "expected path", &report);
         assert_eq!(report.settings.quota.codex.command, PathBuf::from("codex"));
         assert_eq!(
             report.settings.quota.codex.home,
