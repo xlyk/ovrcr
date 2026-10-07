@@ -600,6 +600,12 @@ pub(super) fn run(state: Arc<ServerState>, provider: QuotaProvider) {
                     Err(Failure::new(QuotaState::Waiting))
                 }
                 Ok(_) => continue,
+                // A detach or Dashboard handover while idly waiting for a native
+                // update read nothing: drop the client, keep the cached row as is.
+                Err(error) if error.interrupted => {
+                    client = None;
+                    continue;
+                }
                 Err(error) => Err(error),
             }
         } else {
@@ -664,6 +670,8 @@ pub(super) struct Failure {
     pub(super) reason: String,
     /// Retrying soon cannot help: not found, unsupported, not signed in.
     pub(super) deterministic: bool,
+    /// The server stopped or the Dashboard detached mid-wait; nothing was read.
+    pub(super) interrupted: bool,
 }
 impl Failure {
     pub(super) fn new(state: QuotaState) -> Self {
@@ -672,6 +680,7 @@ impl Failure {
             retry_after: None,
             reason: state.label().into(),
             deterministic: matches!(state, QuotaState::NotSignedIn | QuotaState::Unsupported),
+            interrupted: false,
         }
     }
     pub(super) fn because(mut self, reason: impl Into<String>) -> Self {
@@ -688,7 +697,10 @@ fn timed_out() -> Failure {
 }
 
 fn interrupted() -> Failure {
-    Failure::unavailable("read interrupted")
+    Failure {
+        interrupted: true,
+        ..Failure::unavailable("read interrupted")
+    }
 }
 
 /// The native reply does not have the shape OVRCR reads. With no version gate this is
