@@ -1,5 +1,7 @@
 # The Bridge displays alerts; it does not decide them
 
+[ADR 0006](0006-bridge-alerts-preserve-private-names-and-run-boundaries.md) refines this design with user-confirmed privacy, click, sound and permission boundaries. Neither record declares the Bridge implemented.
+
 macOS attributes an `osascript` notification to Script Editor, and a click on that banner cannot select the session. The Bridge is the signed macOS app that displays an alert the Dashboard has already accepted. The Dashboard remains the only decider of Ready and input-needed alerts. The Bridge does not own sessions or panes, and it does not create iTerm sessions.
 
 A click asks the Server to tell the active Dashboard to select that session. That is not the existing terminal `Select` request, which attaches a terminal. If no Dashboard is attached, the click is dropped. A click does not mark the response reviewed. When the Dashboard is inside iTerm, the Bridge may select that existing iTerm session. Otherwise it may activate the parent terminal application. It does not color tabs, send input, or read the iTerm screen.
