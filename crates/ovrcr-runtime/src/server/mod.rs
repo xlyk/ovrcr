@@ -1770,7 +1770,6 @@ impl ServerState {
             }
             return self.complete_root_setup_locked(&name);
         }
-        self.require_root_default(&repo)?;
         if !workspace_root.exists() {
             fs::create_dir_all(&workspace_root)
                 .with_context(|| format!("create workspace root {}", workspace_root.display()))?;
@@ -2384,26 +2383,6 @@ impl ServerState {
         Ok(())
     }
 
-    fn require_root_default(&self, repo: &Path) -> Result<()> {
-        let expected = git::default_branch(repo)
-            .map_err(|error| lifecycle_error(ErrorCode::Conflict, error.to_string()))?;
-        let actual = git::checkout_name(repo).map_err(|error| {
-            lifecycle_error(
-                ErrorCode::Conflict,
-                format!("could not verify repository checkout: {error}"),
-            )
-        })?;
-        if actual != expected {
-            return Err(lifecycle_error(
-                ErrorCode::Conflict,
-                format!(
-                    "repository root must be on {expected} (currently {actual}); check out {expected} manually and retry"
-                ),
-            ));
-        }
-        Ok(())
-    }
-
     fn root_record_for(&self, repo: &Path) -> Result<WorkspaceRecord> {
         let branch =
             git::checkout_name(repo).unwrap_or_else(|_| git::UNAVAILABLE_CHECKOUT.to_owned());
@@ -2481,9 +2460,6 @@ impl ServerState {
             .project(project)
             .map_err(|error| lifecycle_error(ErrorCode::NotFound, error.to_string()))?
             .clone();
-        if let Some(warning) = git::root_warning(&project_record) {
-            return Err(lifecycle_error(ErrorCode::Conflict, warning));
-        }
         let Some(root) = project_record
             .workspaces
             .iter()
@@ -2502,7 +2478,14 @@ impl ServerState {
             self.set_setup_pending(project, &root_id, false)?;
             return Ok(());
         }
-        // Root workspace is the detected default-branch checkout.
+        // Registration may finish while the repository root is off the detected
+        // default branch. Skip the initial shell in that case; refuse_root_launch
+        // still blocks new launches until the default is restored.
+        if git::root_warning(&project_record).is_some() {
+            self.set_setup_pending(project, &root_id, false)?;
+            return Ok(());
+        }
+        // Root workspace is on the detected default branch.
         let policy = crate::settings::load(&self.registry_path)
             .settings
             .automatic_local_terminals;
@@ -2595,7 +2578,6 @@ impl ServerState {
             .iter()
             .any(|workspace| is_root_workspace(&project, workspace));
         if !has_root {
-            self.require_root_default(&project.repo)?;
             let root = self.root_record_for(&project.repo)?;
             let mut registry = self.registry.lock().unwrap();
             let mut next = registry.clone();

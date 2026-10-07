@@ -57,8 +57,8 @@ A project's registered Git checkout. Its user-facing name is the current branch 
 _Avoid_: workspace title, an arbitrary name besides the current branch, treating a branch change as a different workspace
 
 **Root workspace**:
-The workspace that is the repository checkout itself, required to stay on the repository's default branch. It cannot be removed, and OVRCR never changes Git to restore that branch.
-_Avoid_: main, root as a stored name, a removable default worktree
+The workspace that is the repository checkout itself. Registration accepts the current checkout branch; new launches into the root are blocked while it is off the repository's default branch. It cannot be removed, and OVRCR never changes Git to restore that branch.
+_Avoid_: main, root as a stored name, a removable default worktree, requiring checkout of the default branch before register
 
 **Dashboard**:
 The one active TUI for live sessions: the hierarchy, the panes, and browse / terminal / history / copy.

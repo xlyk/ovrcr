@@ -235,9 +235,11 @@ ovrcr project remove example
 Arguments after `--` are passed directly to the executable. With no executable,
 `terminal create` and `new` launch `$SHELL`. Sessions start at the workspace checkout.
 `project add` creates the `--workspace-root` directory if it is missing and registers
-the protected repository-root workspace on the detected default branch. Whether it
+the protected repository-root workspace on the current checkout branch. Whether it
 also starts a `local` shell follows `automatic_local_terminals` in `dashboard.toml`
-(default **default branch only**). It does not switch Git.
+(default **default branch only**); when the root is off the detected default branch,
+registration still succeeds and the initial shell is skipped until that branch is
+restored. It does not switch Git.
 `--label TEXT` sets launch metadata such as the executable or agent label.
 Omit `--name` for a stable workspace-based name, or supply `--name TEXT` to
 choose one. Application title updates are ignored for all sessions.
