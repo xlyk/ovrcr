@@ -390,10 +390,10 @@ fn close_confirm_line_count(text: &CloseConfirmText, width: u16) -> u16 {
 
 fn close_confirm_style(role: CloseConfirmRole) -> Style {
     match role {
-        CloseConfirmRole::Blank | CloseConfirmRole::Place => Style::default().fg(TEXT),
-        CloseConfirmRole::Identity => Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
-        CloseConfirmRole::Meta => Style::default().fg(SUBTEXT),
-        CloseConfirmRole::Consequence => Style::default().fg(PEACH),
+        CloseConfirmRole::Blank | CloseConfirmRole::Place => Style::default().fg(TEXT()),
+        CloseConfirmRole::Identity => Style::default().fg(TEXT()).add_modifier(Modifier::BOLD),
+        CloseConfirmRole::Meta => Style::default().fg(SUBTEXT()),
+        CloseConfirmRole::Consequence => Style::default().fg(PEACH()),
     }
 }
 
@@ -488,7 +488,7 @@ fn paint_close_confirm_title(frame: &mut Frame<'_>, dialog: Rect) {
     for offset in 0..notch {
         if let Some(cell) = buffer.cell_mut((start + u16::try_from(offset).unwrap_or(0), y)) {
             cell.set_symbol(" ");
-            cell.set_style(Style::default().bg(CRUST).fg(MAUVE));
+            cell.set_style(Style::default().bg(CRUST()).fg(MAUVE()));
         }
     }
     for (offset, ch) in CLOSE_TITLE.chars().enumerate().take(room) {
@@ -497,8 +497,8 @@ fn paint_close_confirm_title(frame: &mut Frame<'_>, dialog: Rect) {
             cell.set_symbol(&symbol);
             cell.set_style(
                 Style::default()
-                    .bg(CRUST)
-                    .fg(MAUVE)
+                    .bg(CRUST())
+                    .fg(MAUVE())
                     .add_modifier(Modifier::BOLD),
             );
         }
@@ -3249,9 +3249,9 @@ impl Dashboard {
                     lines.push(Line::styled(
                         format!("{} {}", if index == selected { "›" } else { " " }, label),
                         if index == selected {
-                            Style::default().bg(MAUVE).fg(CRUST)
+                            Style::default().bg(MAUVE()).fg(CRUST())
                         } else {
-                            Style::default().fg(TEXT)
+                            Style::default().fg(TEXT())
                         },
                     ));
                     if let Command::SwitchAgent(id, run) = entry.command {
@@ -3298,7 +3298,7 @@ impl Dashboard {
                         };
                         lines.push(Line::styled(
                             format!("  {detail}"),
-                            Style::default().fg(SUBTEXT),
+                            Style::default().fg(SUBTEXT()),
                         ));
                     } else if let Command::Unarchive(id, _)
                     | Command::DeleteArchived(id, _, _)
@@ -3310,12 +3310,12 @@ impl Dashboard {
                     {
                         lines.push(Line::styled(
                             format!("  {}", row.cwd.display()),
-                            Style::default().fg(MUTED),
+                            Style::default().fg(MUTED()),
                         ));
                     } else if let Some(hint) = self.command_hint(&entry.command) {
                         lines.push(Line::styled(
                             format!("  {} — {}", hint.key, hint.description),
-                            Style::default().fg(MUTED),
+                            Style::default().fg(MUTED()),
                         ));
                     } else {
                         lines.push(Line::from(""));
@@ -3331,7 +3331,7 @@ impl Dashboard {
                         focus_line = lines.len() + 1;
                     }
                     targets.push((lines.len(), PaletteTarget::Field(index, false)));
-                    lines.push(Line::styled(field.label, Style::default().fg(SUBTEXT)));
+                    lines.push(Line::styled(field.label, Style::default().fg(SUBTEXT())));
                     let pick_label;
                     let editing = match &field.kind {
                         FieldKind::Pick(list) if index == *active && !list.query.is_empty() => {
@@ -3361,7 +3361,7 @@ impl Dashboard {
                     targets.push((lines.len(), PaletteTarget::Field(index, true)));
                     lines.push(Line::styled(
                         format!("{} {text}", if index == *active { "›" } else { " " }),
-                        Style::default().fg(if index == *active { MAUVE } else { TEXT }),
+                        Style::default().fg(if index == *active { MAUVE() } else { TEXT() }),
                     ));
                     if index == *active
                         && let FieldKind::Pick(list) = &field.kind
@@ -3394,16 +3394,16 @@ impl Dashboard {
                             lines.push(Line::styled(
                                 format!("  {} {}", if chosen { "›" } else { " " }, item.label),
                                 if chosen {
-                                    Style::default().bg(MAUVE).fg(CRUST)
+                                    Style::default().bg(MAUVE()).fg(CRUST())
                                 } else {
-                                    Style::default().fg(TEXT)
+                                    Style::default().fg(TEXT())
                                 },
                             ));
                         }
                         if listing.omitted > 0 {
                             lines.push(Line::styled(
                                 format!("  … {} more", listing.omitted),
-                                Style::default().fg(MUTED),
+                                Style::default().fg(MUTED()),
                             ));
                         }
                     }
@@ -3505,11 +3505,11 @@ impl Dashboard {
         frame.render_widget(Clear, layout.dialog);
         frame.render_widget(
             Block::bordered()
-                .border_style(Style::default().fg(MAUVE))
-                .style(Style::default().bg(CRUST).fg(TEXT)),
+                .border_style(Style::default().fg(MAUVE()))
+                .style(Style::default().bg(CRUST()).fg(TEXT())),
             layout.dialog,
         );
-        paint_rect(frame, layout.rail, Style::default().bg(PEACH).fg(PEACH));
+        paint_rect(frame, layout.rail, Style::default().bg(PEACH()).fg(PEACH()));
         paint_close_confirm_title(frame, layout.dialog);
         let lines = close_confirm_lines(&text, layout.text.width);
         let max_scroll = lines.len().saturating_sub(usize::from(layout.text.height));
@@ -3524,7 +3524,7 @@ impl Dashboard {
             frame.render_widget(
                 Paragraph::new(close_confirm_action_line())
                     .alignment(Alignment::Right)
-                    .style(Style::default().fg(MAUVE).add_modifier(Modifier::BOLD)),
+                    .style(Style::default().fg(MAUVE()).add_modifier(Modifier::BOLD)),
                 Rect::new(
                     layout.text.x,
                     layout.cancel.y,
@@ -3582,14 +3582,14 @@ impl Dashboard {
         };
         let block = Block::bordered()
             .title(format!(" {title}{launch_banner} "))
-            .border_style(Style::default().fg(MAUVE))
-            .style(Style::default().bg(CRUST).fg(TEXT));
+            .border_style(Style::default().fg(MAUVE()))
+            .style(Style::default().bg(CRUST()).fg(TEXT()));
         frame.render_widget(block, area);
         let footer_height = buttons.y.saturating_sub(body.bottom());
         let (lines, _, scroll) = self.palette_body(body);
         let paragraph = Paragraph::new(lines)
             .scroll((scroll as u16, 0))
-            .style(Style::default().fg(TEXT));
+            .style(Style::default().fg(TEXT()));
         frame.render_widget(
             if matches!(palette.page, Page::Confirm { .. }) {
                 paragraph.wrap(Wrap { trim: false })
@@ -3692,22 +3692,22 @@ impl Dashboard {
                 _ => "Esc cancel",
             };
             frame.render_widget(
-                Paragraph::new(recovery).style(Style::default().fg(SUBTEXT)),
+                Paragraph::new(recovery).style(Style::default().fg(SUBTEXT())),
                 Rect::new(inner.x, status_area.bottom(), inner.width, 1),
             );
         }
         frame.render_widget(
             Paragraph::new(button_text(&palette.page, buttons.width))
-                .style(Style::default().fg(MAUVE)),
+                .style(Style::default().fg(MAUVE())),
             buttons,
         );
         frame.render_widget(
             Paragraph::new(status)
                 .wrap(Wrap { trim: false })
                 .style(Style::default().fg(if palette.error.is_some() {
-                    PEACH
+                    PEACH()
                 } else {
-                    SUBTEXT
+                    SUBTEXT()
                 })),
             status_area,
         );

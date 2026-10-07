@@ -86,8 +86,8 @@ pub fn render_terminal(frame: &mut Frame<'_>, area: Rect, screen: &vt100::Screen
                 continue;
             }
             let (fg, bg) = (
-                color(vt_cell.fgcolor(), TEXT),
-                color(vt_cell.bgcolor(), BASE),
+                color(vt_cell.fgcolor(), TEXT()),
+                color(vt_cell.bgcolor(), BASE()),
             );
             let contents = vt_cell.contents();
             let symbol =
@@ -136,7 +136,7 @@ pub fn render_copy(frame: &mut Frame<'_>, area: Rect, selection: &CopySelection)
         for col in 0..selection.screen.size().1.min(area.width) {
             if selection.contains(CopyPoint { row, col }) {
                 let cell = &mut frame.buffer_mut()[(area.x + col, area.y + row)];
-                cell.set_bg(TEAL).set_fg(BASE);
+                cell.set_bg(TEAL()).set_fg(BASE());
             }
         }
     }
@@ -154,7 +154,7 @@ pub fn render_history(frame: &mut Frame<'_>, area: Rect, view: &HistoryView) {
                 .cell_mut((area.x + col, area.y + row))
                 .expect("history area is in frame");
             cell.reset();
-            cell.set_bg(BASE).set_fg(TEXT).set_symbol(" ");
+            cell.set_bg(BASE()).set_fg(TEXT()).set_symbol(" ");
         }
     }
     for screen_row in 0..bounded.height {
@@ -191,8 +191,8 @@ pub fn render_history(frame: &mut Frame<'_>, area: Rect, view: &HistoryView) {
             } else {
                 &history_cell.text
             });
-            cell.set_fg(history_color(history_cell.fg.clone(), TEXT));
-            cell.set_bg(history_color(history_cell.bg.clone(), BASE));
+            cell.set_fg(history_color(history_cell.fg.clone(), TEXT()));
+            cell.set_bg(history_color(history_cell.bg.clone(), BASE()));
             let mut modifier = Modifier::empty();
             if history_cell.attributes & 1 != 0 {
                 modifier.insert(Modifier::BOLD);
@@ -211,7 +211,7 @@ pub fn render_history(frame: &mut Frame<'_>, area: Rect, view: &HistoryView) {
             }
             cell.modifier = modifier;
             if history_selected(view, absolute_row, absolute_col) {
-                cell.set_fg(BASE).set_bg(TEAL);
+                cell.set_fg(BASE()).set_bg(TEAL());
                 if history_cell.width == 2
                     && screen_col.saturating_add(1) < bounded.width
                     && absolute_col.saturating_add(1) < history_row.width
@@ -223,8 +223,8 @@ pub fn render_history(frame: &mut Frame<'_>, area: Rect, view: &HistoryView) {
                             bounded.y + screen_row,
                         ))
                         .expect("wide history cell is in frame")
-                        .set_fg(BASE)
-                        .set_bg(TEAL);
+                        .set_fg(BASE())
+                        .set_bg(TEAL());
                 }
             }
         }
@@ -424,28 +424,29 @@ pub fn draw_dashboard(frame: &mut Frame<'_>, dashboard: &Dashboard) {
 }
 
 pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_ms: u64) {
+    let _theme = crate::theme::ThemeScope::enter(dashboard.theme_tokens());
     if let Some(tasks) = &dashboard.tasks {
         draw_tasks(frame, tasks);
         return;
     }
     let layout = dashboard_layout(frame.area(), dashboard.sidebar_preference());
     frame.render_widget(
-        Block::default().style(Style::default().bg(BASE)),
+        Block::default().style(Style::default().bg(BASE())),
         frame.area(),
     );
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("󰚩 ", Style::default().fg(CRUST)),
+            Span::styled("󰚩 ", Style::default().fg(CRUST())),
             Span::styled(
                 "OVRCR",
-                Style::default().fg(CRUST).add_modifier(Modifier::BOLD),
+                Style::default().fg(CRUST()).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 "  agent runtime",
-                Style::default().fg(CRUST).add_modifier(Modifier::DIM),
+                Style::default().fg(CRUST()).add_modifier(Modifier::DIM),
             ),
         ]))
-        .style(Style::default().bg(MAUVE)),
+        .style(Style::default().bg(MAUVE())),
         layout.title,
     );
 
@@ -453,8 +454,8 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         frame.render_widget(
             Block::default()
                 .borders(Borders::RIGHT)
-                .border_style(Style::default().fg(MUTED))
-                .style(Style::default().bg(BASE)),
+                .border_style(Style::default().fg(SURFACE2()))
+                .style(Style::default().bg(BASE())),
             layout.sidebar,
         );
     }
@@ -494,7 +495,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 .cell_mut((separator_x, layout.sidebar.y + row))
                 .expect("split separator is in frame");
             cell.reset();
-            cell.set_symbol("│").set_fg(MUTED).set_bg(BASE);
+            cell.set_symbol("│").set_fg(SURFACE2()).set_bg(BASE());
         }
     }
 
@@ -529,7 +530,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
             || {
                 Line::from(Span::styled(
                     "no session selected",
-                    Style::default().fg(MUTED),
+                    Style::default().fg(MUTED()),
                 ))
             },
             |session| {
@@ -538,7 +539,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 if let Some(unread) = &status.unread {
                     return Line::from(Span::styled(
                         clip_text(unread, width),
-                        Style::default().fg(TEAL),
+                        Style::default().fg(TEAL()),
                     ));
                 }
                 if status.ready {
@@ -559,45 +560,45 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                         &dashboard.session_display_name(session),
                         rect.metadata.width,
                     );
-                    return Line::from(Span::styled(text, Style::default().fg(TEAL)));
+                    return Line::from(Span::styled(text, Style::default().fg(TEAL())));
                 }
                 let activity = if status.exited && !status.recovery_diagnostic {
                     Span::raw("")
                 } else if !status.live {
-                    Span::styled(format!(" {}", status.activity), Style::default().fg(TEAL))
+                    Span::styled(format!(" {}", status.activity), Style::default().fg(TEAL()))
                 } else {
                     Span::styled(
                         format!("  agent{}", status.activity),
-                        Style::default().fg(TEAL),
+                        Style::default().fg(TEAL()),
                     )
                 };
                 Line::from(vec![
-                    Span::styled("pid: ", Style::default().fg(MUTED)),
-                    Span::styled(status.pid, Style::default().fg(TEAL)),
+                    Span::styled("pid: ", Style::default().fg(MUTED())),
+                    Span::styled(status.pid, Style::default().fg(TEAL())),
                     Span::styled(
                         if status.elapsed.is_empty() {
                             ""
                         } else {
                             "  elapsed: "
                         },
-                        Style::default().fg(MUTED),
+                        Style::default().fg(MUTED()),
                     ),
-                    Span::styled(status.elapsed, Style::default().fg(TEAL)),
+                    Span::styled(status.elapsed, Style::default().fg(TEAL())),
                     activity,
                     if status.paused {
-                        Span::styled("  paused", Style::default().fg(PEACH))
+                        Span::styled("  paused", Style::default().fg(PEACH()))
                     } else {
                         Span::raw("")
                     },
                     Span::styled(
                         format!("  {}", dashboard.session_display_name(session)),
-                        Style::default().fg(TEXT),
+                        Style::default().fg(TEXT()),
                     ),
                 ])
             },
         );
         frame.render_widget(
-            Paragraph::new(metadata).style(Style::default().bg(BASE)),
+            Paragraph::new(metadata).style(Style::default().bg(BASE())),
             Rect::new(rect.metadata.x, rect.metadata.y, rect.metadata.width, 1),
         );
         if rect.metadata.height > 1 {
@@ -626,7 +627,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 |view| history_hint(view, dashboard.focused_size()),
             );
             frame.render_widget(
-                Paragraph::new(metadata_hint).style(Style::default().fg(MUTED).bg(BASE)),
+                Paragraph::new(metadata_hint).style(Style::default().fg(MUTED()).bg(BASE())),
                 Rect::new(
                     rect.metadata.x,
                     rect.metadata.y.saturating_add(1),
@@ -667,7 +668,9 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     let footer = dashboard.error.as_deref().map_or_else(
         || {
             if let Some(strip) = dashboard.lifecycle_strip.as_deref() {
-                return Line::from(Span::styled(strip, Style::default().fg(PEACH)));
+                // Design #308: PEACH is rail/fill only on light themes; status copy uses TEXT.
+                let fg = if active().is_light() { TEXT() } else { PEACH() };
+                return Line::from(Span::styled(strip, Style::default().fg(fg)));
             }
             if let Some(notice) = dashboard
                 .copy_notice
@@ -678,53 +681,53 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 if split_hidden {
                     return Line::from(Span::styled(
                         format!("{notice}  split hidden: terminal too small"),
-                        Style::default().fg(TEXT),
+                        Style::default().fg(TEXT()),
                     ));
                 }
-                return Line::from(Span::styled(notice, Style::default().fg(TEXT)));
+                return Line::from(Span::styled(notice, Style::default().fg(TEXT())));
             }
             if dashboard.mode != InputMode::Terminal {
                 let prefix = if split_hidden { "split hidden  " } else { "" };
                 let width = layout.footer.width.saturating_sub(prefix.len() as u16);
                 let text = format!("{prefix}{}", super::hints::footer(dashboard, width));
-                return Line::from(Span::styled(text, Style::default().fg(TEXT)));
+                return Line::from(Span::styled(text, Style::default().fg(TEXT())));
             }
             let mut text = super::hints::footer(dashboard, layout.footer.width);
             if split_hidden {
                 text.push_str("  split hidden: terminal too small");
             }
-            Line::from(Span::styled(text, Style::default().fg(TEXT)))
+            Line::from(Span::styled(text, Style::default().fg(TEXT())))
         },
         |error| {
             Line::from(vec![
-                Span::styled("ERROR: ", Style::default().fg(Color::Rgb(243, 139, 168))),
-                Span::styled(error, Style::default().fg(TEXT)),
+                Span::styled("ERROR: ", Style::default().fg(RED())),
+                Span::styled(error, Style::default().fg(TEXT())),
             ])
         },
     );
     frame.render_widget(
-        Paragraph::new(footer).style(Style::default().bg(CRUST)),
+        Paragraph::new(footer).style(Style::default().bg(CRUST())),
         layout.footer,
     );
     if matches!(dashboard.mode, InputMode::Browse | InputMode::Terminal) {
         let (actions, menu) = action_controls(frame.area());
         frame.render_widget(
-            Paragraph::new("[Actions]").style(Style::default().bg(CRUST).fg(MAUVE)),
+            Paragraph::new("[Actions]").style(Style::default().bg(CRUST()).fg(MAUVE())),
             actions,
         );
         frame.render_widget(
-            Paragraph::new("[Menu]").style(Style::default().bg(CRUST).fg(MAUVE)),
+            Paragraph::new("[Menu]").style(Style::default().bg(CRUST()).fg(MAUVE())),
             menu,
         );
     }
     if matches!(dashboard.mode, InputMode::Copy | InputMode::History) {
         let (copy, close) = capture_controls(frame.area());
         frame.render_widget(
-            Paragraph::new("[Copy]").style(Style::default().bg(CRUST).fg(MAUVE)),
+            Paragraph::new("[Copy]").style(Style::default().bg(CRUST()).fg(MAUVE())),
             copy,
         );
         frame.render_widget(
-            Paragraph::new("[Close]").style(Style::default().bg(CRUST).fg(MAUVE)),
+            Paragraph::new("[Close]").style(Style::default().bg(CRUST()).fg(MAUVE())),
             close,
         );
     }
@@ -786,7 +789,7 @@ impl Dashboard {
         frame.render_widget(
             Paragraph::new(lines)
                 .wrap(ratatui::widgets::Wrap { trim: false })
-                .style(Style::default().fg(TEXT)),
+                .style(Style::default().fg(TEXT())),
             rect.terminal,
         );
     }
@@ -881,9 +884,9 @@ fn render_split_metadata(
         text = clip_text(unread, usize::from(rect.metadata.width));
     }
     let style = if focused {
-        Style::default().fg(CRUST).bg(MAUVE)
+        Style::default().fg(CRUST()).bg(MAUVE())
     } else {
-        Style::default().fg(TEXT).bg(BASE)
+        Style::default().fg(TEXT()).bg(BASE())
     };
     frame.render_widget(
         Paragraph::new(clip_text(&text, usize::from(rect.metadata.width))).style(style),
@@ -898,7 +901,7 @@ fn render_split_metadata(
                     })
                     .unwrap_or_else(|| "─".repeat(usize::from(rect.metadata.width))),
             )
-            .style(Style::default().fg(MUTED).bg(BASE)),
+            .style(Style::default().fg(MUTED()).bg(BASE())),
             Rect::new(
                 rect.metadata.x,
                 rect.metadata.y.saturating_add(1),
@@ -1053,15 +1056,15 @@ fn tree_line_text(
         | TreeRow::ProvisionalSession { .. } => dashboard.selected_container.as_ref() == Some(row),
     };
     let style = Style::default()
-        .fg(TEXT)
-        .bg(if selected { SURFACE0 } else { BASE });
-    let muted = Style::default().fg(MUTED);
+        .fg(TEXT())
+        .bg(if selected { SURFACE0() } else { BASE() });
+    let muted = Style::default().fg(MUTED());
     // History and Copy already use the title-bar Close for leaving the capture.
     // The mark replaces the agent label; it does not reflow the title.
     let close_mark = dashboard.row_shows_close_mark(row)
         && width >= 3
         && !matches!(dashboard.mode, InputMode::History | InputMode::Copy);
-    let mark = Span::styled("[x]", Style::default().fg(MAUVE));
+    let mark = Span::styled("[x]", Style::default().fg(MAUVE()));
     let (left, fill, right) = match row {
         TreeRow::Project { name } => {
             let full_title = format!(" {} ", name.to_uppercase());
@@ -1082,9 +1085,9 @@ fn tree_line_text(
             (
                 vec![Span::styled(
                     title,
-                    Style::default().fg(BLUE).add_modifier(Modifier::BOLD),
+                    Style::default().fg(BLUE()).add_modifier(Modifier::BOLD),
                 )],
-                Span::styled(rule, Style::default().fg(SURFACE2)),
+                Span::styled(rule, Style::default().fg(SURFACE2())),
                 right,
             )
         }
@@ -1098,7 +1101,7 @@ fn tree_line_text(
                             Span::styled("󰘬", muted),
                             Span::styled(
                                 clip_text(&format!(" {label}"), available),
-                                Style::default().fg(PEACH).add_modifier(Modifier::BOLD),
+                                Style::default().fg(PEACH()).add_modifier(Modifier::BOLD),
                             ),
                         ],
                         Span::raw(" "),
@@ -1118,7 +1121,7 @@ fn tree_line_text(
             let mut right = Vec::new();
             if let Some(workspace) = workspace {
                 if workspace.warning.is_some() {
-                    right.push(Span::styled("! ", Style::default().fg(PEACH)));
+                    right.push(Span::styled("! ", Style::default().fg(PEACH())));
                 }
                 if workspace.root {
                     right.push(Span::styled("root ", muted));
@@ -1147,7 +1150,7 @@ fn tree_line_text(
                     Span::styled("󰘬", muted),
                     Span::styled(
                         label,
-                        Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+                        Style::default().fg(TEXT()).add_modifier(Modifier::BOLD),
                     ),
                 ],
                 Span::raw(" "),
@@ -1165,7 +1168,7 @@ fn tree_line_text(
                     Span::styled("󰘬", muted),
                     Span::styled(
                         clip_text(&format!(" {label}"), available),
-                        Style::default().fg(PEACH).add_modifier(Modifier::BOLD),
+                        Style::default().fg(PEACH()).add_modifier(Modifier::BOLD),
                     ),
                 ],
                 Span::raw(" "),
@@ -1182,7 +1185,7 @@ fn tree_line_text(
                         Span::raw(SESSION_INDENT),
                         Span::styled(
                             clip_text(&label, width.saturating_sub(SESSION_INDENT.len())),
-                            Style::default().fg(PEACH),
+                            Style::default().fg(PEACH()),
                         ),
                     ],
                     Span::raw(" "),
@@ -1208,7 +1211,7 @@ fn tree_line_text(
                             Span::raw(SESSION_INDENT),
                             Span::styled(
                                 clip_text(&label, width.saturating_sub(SESSION_INDENT.len())),
-                                Style::default().fg(PEACH),
+                                Style::default().fg(PEACH()),
                             ),
                         ],
                         Span::raw(" "),
@@ -1261,10 +1264,10 @@ fn tree_line_text(
             if session.name == "local" && session.display_name() == "local" {
                 // A shell is quiet unless a hook reports real activity inside it.
                 let (glyph, glyph_color) = match (status.glyph, status.color) {
-                    ('-' | ' ', _) => ('$', SUBTEXT),
+                    ('-' | ' ', _) => ('$', SUBTEXT()),
                     reported => reported,
                 };
-                let subtext = Style::default().fg(SUBTEXT);
+                let subtext = Style::default().fg(SUBTEXT());
                 (
                     vec![
                         Span::raw(SESSION_INDENT),
@@ -1283,7 +1286,7 @@ fn tree_line_text(
                 )
             } else {
                 let (exited, glyph, glyph_color) = (status.exited, status.glyph, status.color);
-                let mut name_style = Style::default().fg(TEXT);
+                let mut name_style = Style::default().fg(TEXT());
                 if exited {
                     name_style = name_style.add_modifier(Modifier::DIM);
                 }
@@ -1310,7 +1313,7 @@ fn tree_line_text(
                         Style::default().fg(if exited { faded(color, 65) } else { color }),
                     )];
                     if !model.is_empty() {
-                        spans.push(Span::styled(model, Style::default().fg(MUTED)));
+                        spans.push(Span::styled(model, Style::default().fg(MUTED())));
                     }
                     spans.push(Span::raw(" "));
                     spans
@@ -1358,7 +1361,7 @@ pub(super) fn compose_row(
             rest.remove(0);
         }
         first.content = rest.into();
-        left.insert(0, Span::styled("▌", Style::default().fg(MAUVE)));
+        left.insert(0, Span::styled("▌", Style::default().fg(MAUVE())));
     }
     let mut spans = left;
     spans.push(Span::styled(fill.content.repeat(gap), fill.style));
@@ -1510,25 +1513,25 @@ fn model_without_agent(agent: &str, model: &str) -> String {
 pub(super) fn label_color(label: &str) -> Color {
     let explicit_label = label.split('/').next().unwrap_or(label).trim();
     if explicit_label.eq_ignore_ascii_case("claude") {
-        PEACH
+        PEACH()
     } else if explicit_label.eq_ignore_ascii_case("codex") {
-        GREEN
+        GREEN()
     } else if explicit_label.eq_ignore_ascii_case("pi") {
-        MAUVE
+        MAUVE()
     } else if explicit_label.eq_ignore_ascii_case("omp") {
-        SKY
+        SKY()
     } else if explicit_label.eq_ignore_ascii_case("grok") {
-        BLUE
+        BLUE()
     } else if explicit_label.eq_ignore_ascii_case("terminal") {
-        SUBTEXT
+        SUBTEXT()
     } else {
-        TEXT
+        TEXT()
     }
 }
 
 // Match the mockup's label/metadata opacity against its solid terminal background.
 fn faded(color: Color, percent: u16) -> Color {
-    match (color, BASE) {
+    match (color, BASE()) {
         (Color::Rgb(r, g, b), Color::Rgb(br, bg, bb)) => {
             let blend = |channel, background| {
                 ((u16::from(channel) * percent + u16::from(background) * (100 - percent) + 50)

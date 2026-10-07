@@ -11,7 +11,7 @@ use super::{Dashboard, DashboardAction};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 #[cfg(target_os = "macos")]
 use ovrcr_protocol::ReadySoundChoice;
-use ovrcr_protocol::{ClientMessage, Request, Response, SettingSource, SettingsReport};
+use ovrcr_protocol::{ClientMessage, Request, Response, SettingSource, SettingsReport, ThemeId};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -365,6 +365,7 @@ fn items(report: &SettingsReport, presets: &[String]) -> Vec<Row> {
                 );
                 #[cfg(target_os = "macos")]
                 let row = native_sound_choice_labels(row, settings);
+                let row = theme_choice_labels(row, settings);
                 items.push(row);
             }
         }
@@ -390,6 +391,19 @@ fn native_sound_choice_labels(mut row: Row, settings: &ovrcr_protocol::Settings)
     row
 }
 
+/// Human-readable theme names in the Settings list; pick values stay kebab keys.
+fn theme_choice_labels(mut row: Row, settings: &ovrcr_protocol::Settings) -> Row {
+    if row.id == ThemeId::KEY {
+        row.value = settings.theme.label().into();
+        row.default = row
+            .default
+            .as_deref()
+            .and_then(ThemeId::parse)
+            .map(|choice| choice.label().into());
+    }
+    row
+}
+
 fn editor_kind(
     shape: ovrcr_protocol::Shape,
     entry: &ovrcr_protocol::Entry,
@@ -405,13 +419,15 @@ fn editor_kind(
             options
                 .iter()
                 .map(|value| {
-                    let label = *value;
+                    let mut label: &str = value;
+                    if entry.path == ThemeId::KEY {
+                        label = ThemeId::parse(label).map_or(label, ThemeId::label);
+                    }
                     #[cfg(target_os = "macos")]
-                    let label = if entry.path == ReadySoundChoice::KEY {
-                        ReadySoundChoice::parse(label).map_or(label, ReadySoundChoice::label)
-                    } else {
-                        label
-                    };
+                    if entry.path == ReadySoundChoice::KEY {
+                        label =
+                            ReadySoundChoice::parse(label).map_or(label, ReadySoundChoice::label);
+                    }
                     PickItem {
                         label: label.into(),
                         value: toml_string(value),
@@ -891,7 +907,7 @@ impl Dashboard {
         );
         let block = Block::bordered()
             .title(TITLE)
-            .style(Style::default().bg(BASE).fg(TEXT));
+            .style(Style::default().bg(BASE()).fg(TEXT()));
         let inner = block.inner(area);
         let (lines, selected) = self.editor_lines(now, usize::from(inner.width));
         let room = usize::from(inner.height);
@@ -922,7 +938,7 @@ impl Dashboard {
             .unwrap_or_else(|| "at an unverifiable time".into());
         let mut lines = vec![Line::styled(
             format!("Document: {} · read {read}", report.path.display()),
-            style(SUBTEXT),
+            style(SUBTEXT()),
         )];
         if editor.filtering || !editor.filter.is_empty() {
             let (text, _) = if editor.filtering {
@@ -932,22 +948,22 @@ impl Dashboard {
             } else {
                 (editor.filter.clone(), 0)
             };
-            lines.push(Line::styled(format!("Filter: {text}"), style(MAUVE)));
+            lines.push(Line::styled(format!("Filter: {text}"), style(MAUVE())));
         }
         if let Some(notice) = &editor.notice {
-            lines.push(Line::styled(notice.clone(), style(PEACH)));
+            lines.push(Line::styled(notice.clone(), style(PEACH())));
         }
         let loose = loose_findings(report);
         if !loose.is_empty() || report.unparseable {
             lines.push(Line::styled(
                 format!("Findings: {}", loose.len()),
-                style(YELLOW).add_modifier(Modifier::BOLD),
+                style(YELLOW()).add_modifier(Modifier::BOLD),
             ));
             for finding in loose {
-                lines.push(Line::styled(format!("  ! {finding}"), style(YELLOW)));
+                lines.push(Line::styled(format!("  ! {finding}"), style(YELLOW())));
             }
             if report.unparseable {
-                lines.push(Line::styled(format!("  ! {UNPARSEABLE}"), style(YELLOW)));
+                lines.push(Line::styled(format!("  ! {UNPARSEABLE}"), style(YELLOW())));
             }
         }
         let selected_id = self.selected_row().map(|row| row.id);
@@ -962,7 +978,7 @@ impl Dashboard {
                 lines.push(Line::raw(""));
                 lines.push(Line::styled(
                     row.group,
-                    style(MAUVE).add_modifier(Modifier::BOLD),
+                    style(MAUVE()).add_modifier(Modifier::BOLD),
                 ));
             }
             let chosen = selected_id.as_ref() == Some(&row.id);
@@ -978,7 +994,7 @@ impl Dashboard {
                     } else {
                         format!("{:<27}", row.label)
                     },
-                    style(TEXT),
+                    style(TEXT()),
                 ));
             }
             match editing {
@@ -986,15 +1002,15 @@ impl Dashboard {
                     let room = width
                         .saturating_sub(spans.iter().map(|span| span.width()).sum::<usize>() + 2);
                     let (text, _) = editor.cursor.display(&edit.text, room.max(4));
-                    spans.push(Span::styled(format!("[{text}]"), style(MAUVE)));
+                    spans.push(Span::styled(format!("[{text}]"), style(MAUVE())));
                 }
                 _ => {
-                    spans.push(Span::styled(row.value.clone(), style(TEXT)));
+                    spans.push(Span::styled(row.value.clone(), style(TEXT())));
                     if let Some(source) = row.source {
                         let set = source == SettingSource::Document;
                         spans.push(Span::styled(
                             if set { "  set" } else { "  default" },
-                            style(if set { PEACH } else { MUTED }),
+                            style(if set { PEACH() } else { MUTED() }),
                         ));
                         if set && row.kind != Kind::Fixed {
                             spans.push(Span::styled(
@@ -1002,18 +1018,18 @@ impl Dashboard {
                                     "  (default: {})",
                                     row.default.as_deref().unwrap_or("unset")
                                 ),
-                                style(MUTED),
+                                style(MUTED()),
                             ));
                         }
                     }
                 }
             }
             if editor.pending.values().any(|id| id == &row.id) {
-                spans.push(Span::styled("  saving…", style(MUTED)));
+                spans.push(Span::styled("  saving…", style(MUTED())));
             }
             let mut line = Line::from(spans);
             if chosen {
-                line = line.style(Style::default().bg(SURFACE0));
+                line = line.style(Style::default().bg(SURFACE0()));
             }
             lines.push(line);
             let detail =
@@ -1029,7 +1045,7 @@ impl Dashboard {
             if let Some(edit) = editing {
                 if let Some(list) = &edit.pick {
                     if !list.query.is_empty() {
-                        lines.push(detail(format!("filter: {}", list.query), MAUVE));
+                        lines.push(detail(format!("filter: {}", list.query), MAUVE()));
                     }
                     let (options, _) = list.lines(6);
                     lines.extend(options.into_iter().map(|line| {
@@ -1045,7 +1061,7 @@ impl Dashboard {
                     let picker = edit.picker.as_ref().unwrap();
                     for (index, entry) in listing.entries.iter().enumerate().take(5) {
                         let mark = if index == picker.selected { "›" } else { " " };
-                        lines.push(detail(format!("{mark} {}", entry.label), SUBTEXT));
+                        lines.push(detail(format!("{mark} {}", entry.label), SUBTEXT()));
                     }
                 }
                 lines.push(detail(
@@ -1058,20 +1074,20 @@ impl Dashboard {
                         (Kind::Path, _) => "Tab complete · Enter save · Esc cancel".into(),
                         _ => "Enter save · Esc cancel".into(),
                     },
-                    MUTED,
+                    MUTED(),
                 ));
             }
             if let Some(refused) = editor.refused.get(&row.id) {
-                lines.extend(wrapped(format!("refused: {refused}"), RED));
+                lines.extend(wrapped(format!("refused: {refused}"), RED()));
             }
             if let Some(finding) = &row.finding {
-                lines.extend(wrapped(format!("! {finding}"), YELLOW));
+                lines.extend(wrapped(format!("! {finding}"), YELLOW()));
             }
             for about in &row.about {
-                lines.extend(wrapped(about.clone(), SUBTEXT));
+                lines.extend(wrapped(about.clone(), SUBTEXT()));
             }
             if chosen && !row.child && !row.path.is_empty() {
-                lines.push(detail(format!("key: {}", row.path), MUTED));
+                lines.push(detail(format!("key: {}", row.path), MUTED()));
             }
             if chosen {
                 selected = Some((start, lines.len() - start - 1));
@@ -1079,7 +1095,10 @@ impl Dashboard {
         }
         if header.is_none() {
             lines.push(Line::raw(""));
-            lines.push(Line::styled("No setting matches the filter.", style(MUTED)));
+            lines.push(Line::styled(
+                "No setting matches the filter.",
+                style(MUTED()),
+            ));
         }
         (lines, selected)
     }
@@ -1155,6 +1174,7 @@ mod tests {
             headers,
             [
                 "Alerts",
+                "Appearance",
                 "Workspaces",
                 "Titles",
                 "Usage",

@@ -204,9 +204,10 @@ fn rows_show_value_source_default_and_findings_with_unknown_keys_first() {
         "branch_prefix = \"kh/\"\ncolour = \"blue\"\nready_sound = \"loud\"\n\n[[agents]]\nname = \"claude\"\nargv = [\"claude\", \"--verbose\"]\n\n[launch_choices.demo]\nkind = \"Terminal\"\n",
     );
     // This overview checks every group and collection's Add row. Include the
-    // Bridge, WIP and Cursor rows and explanations without clipping final groups.
-    // At most 76 inner lines fit in 80 rows after the editor's borders/margins.
-    let text = rendered_rows(&dashboard, 120, 80).join("\n");
+    // Bridge, WIP, Cursor and Appearance rows and explanations without clipping
+    // final groups; macOS adds platform explanations beyond Linux's.
+    // At most 86 inner lines fit in 90 rows after the editor's borders/margins.
+    let text = rendered_rows(&dashboard, 120, 90).join("\n");
     let line = |needle: &str| {
         text.lines()
             .find(|line| line.contains(needle))

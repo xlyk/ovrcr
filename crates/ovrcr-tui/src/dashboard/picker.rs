@@ -111,7 +111,7 @@ impl PickList {
         let filtered = self.filtered();
         if filtered.is_empty() {
             return (
-                vec![Line::styled("    No matches", Style::default().fg(TEXT))],
+                vec![Line::styled("    No matches", Style::default().fg(TEXT()))],
                 0,
             );
         }
@@ -130,9 +130,9 @@ impl PickList {
                 Line::styled(
                     format!("  {} {}", if chosen { "›" } else { " " }, item.label),
                     if chosen {
-                        Style::default().bg(MAUVE).fg(CRUST)
+                        Style::default().bg(MAUVE()).fg(CRUST())
                     } else {
-                        Style::default().fg(TEXT)
+                        Style::default().fg(TEXT())
                     },
                 )
             })

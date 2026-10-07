@@ -310,6 +310,8 @@ pub struct Dashboard {
     wip_prompts: VecDeque<(String, String, String)>,
     ignored_responses: HashSet<u64>,
     settings: settings::Settings,
+    /// Cached palette for the current settings theme (hot-switched on SettingsChanged).
+    theme: crate::theme::ThemeTokens,
     config_dir: std::path::PathBuf,
     /// Ids of requests that own the error banner, so their plain `Ok` may clear it. Requests the
     /// dashboard sends on its own behalf, such as a synthetic mouse release, are absent.

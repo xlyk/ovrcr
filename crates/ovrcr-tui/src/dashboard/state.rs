@@ -613,6 +613,7 @@ impl Dashboard {
             lifecycle_strip: None,
             lifecycle_preference: None,
             settings: Settings::default(),
+            theme: crate::theme::ThemeTokens::dark(),
             config_dir: std::path::PathBuf::new(),
             error_owning_requests: HashSet::new(),
         }
@@ -639,7 +640,13 @@ impl Dashboard {
     }
 
     pub fn install_settings(&mut self, settings: Settings) {
+        self.theme = crate::theme::ThemeTokens::for_id(settings.theme);
         self.settings = settings;
+    }
+
+    /// Active Design tokens for the current settings theme.
+    pub(crate) fn theme_tokens(&self) -> crate::theme::ThemeTokens {
+        self.theme
     }
 
     /// Adopt the Server's reading: every setting, including the ones a
@@ -653,6 +660,7 @@ impl Dashboard {
             .map(|report| report.findings.len());
         let count = report.findings.len();
         let before = std::mem::replace(&mut self.settings, report.settings.clone());
+        self.theme = crate::theme::ThemeTokens::for_id(self.settings.theme);
         if previous.is_some() {
             self.settings_changed_notice(&before);
         }

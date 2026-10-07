@@ -430,8 +430,8 @@ impl Dashboard {
                     None => " Which key · Space ".into(),
                 })
                 .title_bottom(navigation_text(layout.area))
-                .style(Style::default().bg(CRUST).fg(TEXT))
-                .border_style(Style::default().fg(MAUVE)),
+                .style(Style::default().bg(CRUST()).fg(TEXT()))
+                .border_style(Style::default().fg(MAUVE())),
             layout.area,
         );
         for row in layout.rows {
@@ -439,15 +439,18 @@ impl Dashboard {
                 frame.set_cursor_position((row.area.x, row.area.y));
             }
             let style = match row.index {
-                None => Style::default().fg(MAUVE).add_modifier(Modifier::BOLD),
+                None => Style::default().fg(MAUVE()).add_modifier(Modifier::BOLD),
                 Some(index) => {
-                    let mut style =
-                        Style::default().fg(if hints[index].enabled() { TEXT } else { MUTED });
+                    let mut style = Style::default().fg(if hints[index].enabled() {
+                        TEXT()
+                    } else {
+                        MUTED()
+                    });
                     if !hints[index].enabled() {
                         style = style.add_modifier(Modifier::DIM);
                     }
                     if index == selected {
-                        style = style.bg(MAUVE).fg(CRUST);
+                        style = style.bg(MAUVE()).fg(CRUST());
                     }
                     style
                 }
@@ -460,7 +463,7 @@ impl Dashboard {
                         if index == selected || !hints[index].enabled() {
                             style
                         } else {
-                            style.fg(SKY)
+                            style.fg(SKY())
                         },
                     ),
                     Span::raw(label),
@@ -476,9 +479,9 @@ impl Dashboard {
         if let Some(hint) = hints.get(selected) {
             frame.render_widget(
                 paragraph(&hint.description).style(Style::default().fg(if hint.enabled() {
-                    TEXT
+                    TEXT()
                 } else {
-                    MUTED
+                    MUTED()
                 })),
                 layout.detail,
             );

@@ -78,14 +78,14 @@ fn write_prompt(output: &mut impl Write, message: &str, color: bool) -> std::io:
             output,
             "{}",
             style(heading)
-                .with(terminal_color(theme::BASE))
-                .on(terminal_color(theme::MAUVE))
+                .with(terminal_color(theme::BASE()))
+                .on(terminal_color(theme::MAUVE()))
                 .bold()
         )?;
         let accent = if title.contains("Restart") {
-            theme::YELLOW
+            theme::YELLOW()
         } else {
-            theme::MAUVE
+            theme::MAUVE()
         };
         writeln!(
             output,
@@ -101,13 +101,13 @@ fn write_prompt(output: &mut impl Write, message: &str, color: bool) -> std::io:
                 writeln!(
                     output,
                     "  {}",
-                    style(line).with(terminal_color(theme::YELLOW)).bold()
+                    style(line).with(terminal_color(theme::YELLOW())).bold()
                 )?;
             } else {
                 writeln!(
                     output,
                     "  {}",
-                    style(line).with(terminal_color(theme::SUBTEXT))
+                    style(line).with(terminal_color(theme::SUBTEXT()))
                 )?;
             }
         } else {
@@ -119,10 +119,10 @@ fn write_prompt(output: &mut impl Write, message: &str, color: bool) -> std::io:
             output,
             "\n  {} {} ",
             style("[y/n]")
-                .with(terminal_color(theme::BLUE))
-                .on(terminal_color(theme::SURFACE0))
+                .with(terminal_color(theme::BLUE()))
+                .on(terminal_color(theme::SURFACE0()))
                 .bold(),
-            style("Enter skips · default n  ›").with(terminal_color(theme::SUBTEXT))
+            style("Enter skips · default n  ›").with(terminal_color(theme::SUBTEXT()))
         )?;
     } else {
         write!(output, "\n  [y/n] Enter skips · default n  > ")?;
@@ -138,7 +138,11 @@ pub(super) fn notice(message: &str, success: bool) {
         .filter(|c| !c.is_control() || *c == '\n')
         .collect();
     if use_color() {
-        let accent = if success { theme::GREEN } else { theme::YELLOW };
+        let accent = if success {
+            theme::GREEN()
+        } else {
+            theme::YELLOW()
+        };
         eprintln!("  {}", style(clean).with(terminal_color(accent)));
     } else {
         eprintln!("  {clean}");
