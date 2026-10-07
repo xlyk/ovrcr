@@ -192,6 +192,14 @@ impl ThemeTokens {
         }
     }
 
+    /// Light-ambiance canvases (body text is dark on BASE).
+    pub fn is_light(self) -> bool {
+        match self.base {
+            Color::Rgb(r, g, b) => u16::from(r) + u16::from(g) + u16::from(b) >= 500,
+            _ => false,
+        }
+    }
+
     pub const fn for_id(id: ThemeId) -> Self {
         match id {
             ThemeId::Dark => Self::dark(),
@@ -372,6 +380,18 @@ mod tests {
                 (172, 176, 190),
             ],
         );
+    }
+
+    #[test]
+    fn is_light_flags_light_canvases() {
+        assert!(ThemeTokens::light().is_light());
+        assert!(ThemeTokens::gruvbox_light().is_light());
+        assert!(!ThemeTokens::dark().is_light());
+        assert!(!ThemeTokens::tokyo_night().is_light());
+        assert!(!ThemeTokens::dracula().is_light());
+        assert!(!ThemeTokens::nord().is_light());
+        assert!(!ThemeTokens::rose_pine().is_light());
+        assert!(!ThemeTokens::gruvbox_dark().is_light());
     }
 
     #[test]

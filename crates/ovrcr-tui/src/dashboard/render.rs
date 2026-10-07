@@ -668,7 +668,9 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     let footer = dashboard.error.as_deref().map_or_else(
         || {
             if let Some(strip) = dashboard.lifecycle_strip.as_deref() {
-                return Line::from(Span::styled(strip, Style::default().fg(PEACH())));
+                // Design #308: PEACH is rail/fill only on light themes; status copy uses TEXT.
+                let fg = if active().is_light() { TEXT() } else { PEACH() };
+                return Line::from(Span::styled(strip, Style::default().fg(fg)));
             }
             if let Some(notice) = dashboard
                 .copy_notice
