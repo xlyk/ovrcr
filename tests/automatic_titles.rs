@@ -3426,3 +3426,84 @@ fn title_model_set_and_cleared_while_running_starts_and_stops_titling() {
         "second-pi"
     );
 }
+
+/// Pi's RPC mode treats stdin EOF as an orderly shutdown and disposes the
+/// in-flight run (#310). This fake does the same: EOF before the reply exits 0
+/// without an assistant frame. The title call must keep stdin open until the
+/// run settles, pass `--no-session`, and a failure must name its reason.
+#[test]
+fn title_call_keeps_pi_stdin_open_until_the_run_settles_and_names_failures() {
+    let script = r#"#!/bin/bash
+printf '%s\n' "$*" >> __CALLS__
+IFS= read -r request || exit 2
+printf '%s\n' '{"id":"title","type":"response","command":"prompt","success":true}' '{"type":"agent_start"}'
+IFS= read -r -t 1 more
+case $? in 0|1) exit 0 ;; esac
+if [ -f __CALLS__.fail ]; then
+  echo 'Error: No API key found for provider "test"' >&2
+  exit 1
+fi
+printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":""},{"type":"text","text":"Settled Topic"}],"stopReason":"stop"}}' '{"type":"agent_end"}' '{"type":"agent_settled"}'
+while IFS= read -r line; do :; done
+exit 0
+"#
+    .to_owned();
+    let (live, fake_pi, calls) = start_title_fixture(script, Some("title_model = 'pi/test'\n"));
+    let _dashboard = dashboard(&live);
+    let open = |name: &str, conversation: &str| {
+        let token = live.root.path().join(format!("{name}.token"));
+        let session = created(
+            &live,
+            Request::CreateSession(CreateSessionRequest {
+                kind: ovrcr_protocol::SessionKind::Agent { name: "pi".into() },
+                project: PROJECT.into(),
+                workspace: WORKSPACE.into(),
+                name: name.into(),
+                label: Some("pi".into()),
+                argv: agent_program(&token),
+            }),
+        );
+        wait_for(&live, session.id, "AGENT_READY");
+        let history = live.root.path().join(format!("{name}.jsonl"));
+        std::fs::write(
+            &history,
+            format!(
+                "{{\"type\":\"session\",\"id\":\"{conversation}\"}}\n{{\"role\":\"user\",\"content\":\"please name it\"}}\n{{\"role\":\"assistant\",\"content\":\"the answer\"}}\n"
+            ),
+        )
+        .unwrap();
+        retain_pi_history(&live, &fake_pi, &session, &token, conversation, history);
+        session
+    };
+
+    let settled = open("settled-pi", "00000000-0000-4000-8000-000000000031");
+    wait_display(&live, settled.id, "Settled Topic");
+    let argv = std::fs::read_to_string(&calls).unwrap();
+    assert!(argv.contains("--mode rpc"), "{argv}");
+    assert!(argv.contains("--no-session"), "{argv}");
+
+    std::fs::write(calls.with_extension("fail"), "").unwrap();
+    let failing = open("failing-pi", "00000000-0000-4000-8000-000000000032");
+    let events = live.config.join("events.jsonl");
+    let expected =
+        "call failed: Pi exited with code 1: Error: No API key found for provider \\\"test\\\"";
+    let deadline = Instant::now() + Duration::from_secs(12);
+    loop {
+        let text = std::fs::read_to_string(&events).unwrap_or_default();
+        if text.contains(expected) {
+            assert!(!text.contains("call failed or timed out"), "{text}");
+            assert!(!text.contains("please name it"), "excerpt leaked: {text}");
+            break;
+        }
+        assert!(Instant::now() < deadline, "missing {expected}: {text}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        sessions(&live)
+            .into_iter()
+            .find(|row| row.id == failing.id)
+            .unwrap()
+            .display_name(),
+        "failing-pi"
+    );
+}
