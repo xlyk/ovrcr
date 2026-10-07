@@ -138,7 +138,11 @@ pub(super) fn notice(message: &str, success: bool) {
         .filter(|c| !c.is_control() || *c == '\n')
         .collect();
     if use_color() {
-        let accent = if success { theme::GREEN() } else { theme::YELLOW() };
+        let accent = if success {
+            theme::GREEN()
+        } else {
+            theme::YELLOW()
+        };
         eprintln!("  {}", style(clean).with(terminal_color(accent)));
     } else {
         eprintln!("  {clean}");
