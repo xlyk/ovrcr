@@ -447,7 +447,7 @@ pub(super) fn setup(path: Option<&Path>) -> AppResult<()> {
         let executable = binary()?;
         let value = compose_value(settings(path)?, &executable)?;
         eprintln!(
-            "Review the printed JSON and merge it into the intended Claude settings file. No file was written. Use synchronous command hooks with stable Claude Code >=2.1.267; supplied settings do not prove effective enterprise/plugin configuration. Fresh launcher inside an OVRCR session: {} agent run --provider claude -- claude. Initial resume launcher throughout the range: {} agent run --provider claude -- claude --resume UUID. Claude Code 2.1.268 and later compatible patches also support the exact separate-token form claude -r UUID",
+            "Review the printed JSON and merge it into the intended Claude settings file. No file was written. Use synchronous command hooks; no Claude Code version is required or refused. Supplied settings do not prove effective enterprise/plugin configuration. Fresh launcher inside an OVRCR session: {} agent run --provider claude -- claude. Initial resume launcher: {} agent run --provider claude -- claude --resume UUID, or the exact separate-token form claude -r UUID",
             quote(&executable),
             quote(&executable)
         );
@@ -586,16 +586,11 @@ pub(super) fn doctor(
     session: Option<u64>,
     executable: &OsStr,
 ) -> AppResult<()> {
-    let probe = with_version_probe(|| ovrcr::report::admission::pinned_version(executable))?;
-    let supported = probe.supported();
+    // Diagnostic only: the version is reported, never used to admit or refuse a launch.
+    let version = with_version_probe(|| ovrcr::report::admission::observed_version(executable))?;
     let mut remediation = Vec::<String>::new();
-    if supported.is_none() {
-        remediation.push(match probe.observed() {
-            Some(version) => format!(
-                "Detected Claude Code {version}; install/select stable Claude Code >=2.1.267 and rerun doctor."
-            ),
-            None => "The bounded executable version probe was unavailable; install/select stable Claude Code >=2.1.267 and rerun doctor.".into(),
-        });
+    if version.is_none() {
+        remediation.push("The bounded --version probe printed no recognizable Claude Code version; check the executable path. Launch admission does not depend on it.".into());
     }
     let mut issues = Vec::<String>::new();
     let configuration = match (path, settings(path)) {
@@ -642,7 +637,7 @@ pub(super) fn doctor(
                         }
                     }
                     None => {
-                        remediation.push("Start Claude through the Dashboard agent picker or `ovrcr agent run claude -- claude` (legacy `--provider claude` also works). Resume a known canonical UUIDv4 with `claude --resume UUID`; 2.1.268+ also accepts `claude -r UUID`. A plain `claude` launch stays untracked.".into());
+                        remediation.push("Start Claude through the Dashboard agent picker or `ovrcr agent run claude -- claude` (legacy `--provider claude` also works). Resume a known canonical UUIDv4 with `claude --resume UUID` or `claude -r UUID`. A plain `claude` launch stays untracked.".into());
                         "unbound"
                     }
                 },
@@ -659,22 +654,17 @@ pub(super) fn doctor(
     } else {
         "not_requested"
     };
-    let probe_status = match &probe {
-        ovrcr::report::admission::ClaudeVersionProbe::Supported(_) => "supported",
-        ovrcr::report::admission::ClaudeVersionProbe::Unsupported(_) => "unsupported",
-        ovrcr::report::admission::ClaudeVersionProbe::Unavailable => "unavailable",
-    };
-    let resume_forms: &[&str] = match supported {
-        Some(ovrcr::report::admission::ClaudeVersion::V2_1_267) => &["--resume"],
-        Some(_) => &["--resume", "-r"],
-        None => &[],
+    let probe_status = if version.is_some() {
+        "probed"
+    } else {
+        "unavailable"
     };
     println!("{}", serde_json::to_string_pretty(&json!({
-        "provider":"claude", "executable":executable.to_string_lossy(), "compatible_versions":ovrcr::report::versions::CLAUDE.range(), "tested_versions":ovrcr::report::versions::CLAUDE.tested, "version_compatible":supported.is_some(), "version_tested":ovrcr::report::versions::CLAUDE.tested(probe.observed().as_deref()), "version":probe.observed(),
-        "probe_status":probe_status,
+        "provider":"claude", "executable":executable.to_string_lossy(), "tested_versions":ovrcr::report::versions::CLAUDE.tested, "version_tested":ovrcr::report::versions::CLAUDE.tested(version.as_deref()), "version":version,
+        "version_gate":"none", "probe_status":probe_status,
         "configuration":{"status":configuration, "effective_configuration":"unverified", "hook_trust":"unverified", "delivery":"unverified", "issues":issues},
         "session_status":session_status, "binding":binding, "source_health":health,
-        "capabilities":{"initial_invocation":{"fresh":supported.is_some(),"resume":"explicit_canonical_lowercase_uuid_v4","resume_forms":resume_forms,"continue":false,"fork":false}, "activity":"observed", "ready":"available", "completion_quality":"observed", "input_requests":"approvals_available","questions":"unavailable_no_distinct_surface", "settled_completion":"unverified", "usage":"recognized_root_transcript_records_partial", "complete_accounting":false, "context":"statusline_source_reported"},
+        "capabilities":{"initial_invocation":{"fresh":true,"resume":"explicit_canonical_lowercase_uuid_v4","resume_forms":["--resume", "-r"],"continue":false,"fork":false}, "activity":"observed", "ready":"available", "completion_quality":"observed", "input_requests":"approvals_available","questions":"unavailable_no_distinct_surface", "settled_completion":"unverified", "usage":"recognized_root_transcript_records_partial", "complete_accounting":false, "context":"statusline_source_reported"},
         "remediation":remediation
     })).map_err(RuntimeError::internal)?);
     Ok(())

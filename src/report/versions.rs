@@ -1,33 +1,30 @@
-//! Stable patch compatibility is policy; recorded native tests are separate evidence.
+//! Recorded native evidence only. OVRCR never gates a harness on its version: launch
+//! admission, reporting and quota all decide support from argv, hooks and the native
+//! protocol itself. Doctors print the observed version beside the releases that have
+//! recorded native tests, so a new release is evidence-free, never refused.
 #[derive(Clone, Copy)]
 pub struct Policy {
-    pub minimum: [u32; 3],
     pub tested: &'static [&'static str],
 }
 
 pub const CLAUDE: Policy = Policy {
-    minimum: [2, 1, 267],
     tested: &["2.1.267", "2.1.268"],
 };
 pub const CODEX: Policy = Policy {
-    minimum: [0, 153, 0],
     tested: &["0.153.0"],
 };
 pub const PI: Policy = Policy {
-    minimum: [0, 85, 1],
     tested: &["0.85.1"],
 };
 pub const OMP: Policy = Policy {
-    minimum: [18, 2, 2],
     tested: &["18.1.19"],
 };
-/// `--session-id` for a new conversation, and the documented session store layout.
 pub const GROK: Policy = Policy {
-    minimum: [1, 0, 40],
     tested: &["1.0.40"],
 };
 
 /// Only canonical stable x.y.z releases, not prereleases, build metadata or leading zeros.
+/// Used to report a version, never to admit or refuse one.
 pub fn parse(version: &str) -> Option<[u32; 3]> {
     let mut parts = version.split('.');
     let mut values = [0; 3];
@@ -45,13 +42,6 @@ pub fn parse(version: &str) -> Option<[u32; 3]> {
 }
 
 impl Policy {
-    pub fn accepts(self, version: &str) -> bool {
-        parse(version).is_some_and(|v| v >= self.minimum)
-    }
-    pub fn range(self) -> String {
-        let [major, minor, patch] = self.minimum;
-        format!(">={major}.{minor}.{patch} (stable only)")
-    }
     pub fn tested(self, version: Option<&str>) -> bool {
         version.is_some_and(|v| self.tested.contains(&v))
     }
@@ -61,30 +51,22 @@ impl Policy {
 mod tests {
     use super::*;
     #[test]
-    fn compatibility_requires_stable_release_at_or_above_floor() {
-        for (policy, good, bad) in [
-            (CLAUDE, "2.1.274", "2.1.266"),
-            (CODEX, "0.153.9", "0.152.9"),
-            (PI, "0.85.9", "0.85.0"),
-            (OMP, "18.2.9", "18.2.1"),
-            (GROK, "1.1.0", "1.0.39"),
+    fn versions_are_parsed_for_reporting_and_tested_is_exact_evidence() {
+        assert_eq!(parse("0.161.0"), Some([0, 161, 0]));
+        assert_eq!(parse("2.1.293"), Some([2, 1, 293]));
+        for version in [
+            "0.161.0-beta",
+            "0.161.0+local",
+            "00.1.0",
+            "1.2",
+            "1.2.3.4",
+            "1.2.4294967296",
         ] {
-            assert!(policy.accepts(good));
-            assert!(!policy.accepts(bad));
-            let [a, b, c] = policy.minimum;
-            assert!(policy.accepts(&format!("{a}.{b}.{c}")));
-            assert!(policy.accepts(&format!("{a}.{}.0", b + 1)));
-            assert!(policy.accepts(&format!("{}.0.0", a + 1)));
-            for version in [
-                format!("{good}-beta"),
-                format!("{good}+local"),
-                format!("0{good}"),
-                "1.2".into(),
-                "1.2.3.4".into(),
-                "1.2.4294967296".into(),
-            ] {
-                assert!(!policy.accepts(&version), "{version}");
-            }
+            assert_eq!(parse(version), None, "{version}");
         }
+        assert!(CODEX.tested(Some("0.153.0")));
+        // Untested is not unsupported: there is no floor and no ceiling.
+        assert!(!CODEX.tested(Some("0.161.0")));
+        assert!(!CODEX.tested(None));
     }
 }

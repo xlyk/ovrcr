@@ -97,29 +97,16 @@ fn codex_native_argv_stdout_and_exit_survive_missing_reporting() {
 }
 
 #[test]
-fn codex_version_probe_accepts_stable_releases_at_or_above_floor_only() {
-    use std::os::unix::fs::PermissionsExt;
-    let root = tempfile::tempdir().unwrap();
-    let executable = root.path().join("codex");
-    for (output, code, accepted) in [
-        ("codex-cli 0.153.0", 0, true),
-        ("codex-cli 0.153.1", 0, true),
-        ("codex-cli 0.154.0", 0, true),
-        ("codex-cli 0.152.9", 0, false),
-        ("codex-cli 0.153.1-beta", 0, false),
-        ("codex-cli 0.153.01", 0, false),
-        ("codex-cli 0.153.0", 1, false),
-        ("unrecognized", 0, false),
+fn codex_version_is_parsed_for_diagnostics_and_never_gates() {
+    // Older than the former 0.153.0 floor and newer than anything tested both parse:
+    // the doctor reports them, and admission never consults them.
+    for (output, parsed) in [
+        ("codex-cli 0.152.9\n", Some("0.152.9")),
+        ("codex-cli 0.161.0\n", Some("0.161.0")),
+        ("codex-cli 0.153.1-beta\n", None),
+        ("codex-cli 0.153.01\n", None),
+        ("unrecognized\n", None),
     ] {
-        std::fs::write(
-            &executable,
-            format!("#!/bin/sh\nprintf '{output}\\n'\nexit {code}\n"),
-        )
-        .unwrap();
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
-        assert_eq!(
-            ovrcr::report::codex::supported_version(executable.as_os_str()),
-            accepted
-        );
+        assert_eq!(ovrcr::report::codex::version(output.as_bytes()), parsed);
     }
 }

@@ -18,24 +18,19 @@ pub fn receiver(
     argv: &mut Vec<OsString>,
 ) -> ovrcr_runtime::agent_runner::HookHandler {
     let reserved = lease.is_some();
-    let launch = if reporter::preflight(
-        reserved,
-        argv,
-        |argv| eligible_argv(argv, ClaudeVersion::V2_1_268),
-        reporter::interactive(),
-    )
-    .is_none()
-        && let Some(version) = pinned_version(&argv[0]).supported()
-    {
-        eligible_launch(argv, version).and_then(|launch| match launch {
-            EligibleLaunch::Fresh => fresh_uuid()
-                .ok()
-                .map(|conversation| (conversation, InitialSource::Startup)),
-            EligibleLaunch::Resume(conversation) => Some((conversation, InitialSource::Resume)),
-        })
-    } else {
-        None
-    };
+    // No version gate: argv decides eligibility; hooks and the conversation identity
+    // check decide whether the launch is actually reported.
+    let launch =
+        if reporter::preflight(reserved, argv, eligible_argv, reporter::interactive()).is_none() {
+            eligible_launch(argv).and_then(|launch| match launch {
+                EligibleLaunch::Fresh => fresh_uuid()
+                    .ok()
+                    .map(|conversation| (conversation, InitialSource::Startup)),
+                EligibleLaunch::Resume(conversation) => Some((conversation, InitialSource::Resume)),
+            })
+        } else {
+            None
+        };
     let recovery = launch.as_ref().and_then(|(conversation, _)| {
         let executable = if Path::new(&argv[0]).is_absolute() {
             Some(std::path::PathBuf::from(&argv[0]))
@@ -90,15 +85,15 @@ pub fn receiver(
     })
 }
 
-fn eligible_argv(argv: &[OsString], version: ClaudeVersion) -> bool {
-    eligible_launch(argv, version).is_some()
+fn eligible_argv(argv: &[OsString]) -> bool {
+    eligible_launch(argv).is_some()
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum EligibleLaunch {
     Fresh,
     Resume(String),
 }
-fn eligible_launch(argv: &[OsString], version: ClaudeVersion) -> Option<EligibleLaunch> {
+fn eligible_launch(argv: &[OsString]) -> Option<EligibleLaunch> {
     if argv.first().and_then(|arg| Path::new(arg).file_name()) != Some(OsStr::new("claude")) {
         return None;
     }
@@ -133,7 +128,7 @@ fn eligible_launch(argv: &[OsString], version: ClaudeVersion) -> Option<Eligible
             let (name, value) = arg
                 .split_once('=')
                 .map_or((arg, None), |(name, value)| (name, Some(value)));
-            if name == "--resume" || (name == "-r" && version != ClaudeVersion::V2_1_267) {
+            if name == "--resume" || name == "-r" {
                 if value.is_some() || resume.is_some() {
                     return None;
                 }
@@ -206,74 +201,22 @@ pub(crate) fn canonical_uuid_v4(value: &str) -> bool {
         && matches!(bytes[19], b'8' | b'9' | b'a' | b'b')
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ClaudeVersion {
-    V2_1_267,
-    V2_1_268,
-    Later([u32; 3]),
+/// The version a Claude executable prints, for diagnostics only. Nothing is admitted
+/// or refused on it.
+fn claude_version(bytes: &[u8]) -> Option<String> {
+    let version = std::str::from_utf8(bytes)
+        .ok()?
+        .strip_suffix(" (Claude Code)\n")?;
+    super::versions::parse(version).map(|_| version.to_owned())
 }
 
-impl ClaudeVersion {
-    pub fn as_str(self) -> String {
-        match self {
-            Self::V2_1_267 => "2.1.267".into(),
-            Self::V2_1_268 => "2.1.268".into(),
-            Self::Later([major, minor, patch]) => format!("{major}.{minor}.{patch}"),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ClaudeVersionProbe {
-    Supported(ClaudeVersion),
-    Unsupported(String),
-    Unavailable,
-}
-
-impl ClaudeVersionProbe {
-    pub fn supported(&self) -> Option<ClaudeVersion> {
-        match self {
-            Self::Supported(version) => Some(*version),
-            Self::Unsupported(_) | Self::Unavailable => None,
-        }
-    }
-
-    pub fn observed(&self) -> Option<String> {
-        match self {
-            Self::Supported(version) => Some(version.as_str()),
-            Self::Unsupported(version) => Some(version.clone()),
-            Self::Unavailable => None,
-        }
-    }
-}
-
-fn classify_version(bytes: &[u8]) -> ClaudeVersionProbe {
-    let Some(version) = std::str::from_utf8(bytes)
-        .ok()
-        .and_then(|s| s.strip_suffix(" (Claude Code)\n"))
-    else {
-        return ClaudeVersionProbe::Unavailable;
-    };
-    let Some(parsed) = super::versions::parse(version) else {
-        return ClaudeVersionProbe::Unavailable;
-    };
-    if !super::versions::CLAUDE.accepts(version) {
-        return ClaudeVersionProbe::Unsupported(version.into());
-    }
-    ClaudeVersionProbe::Supported(match parsed {
-        [2, 1, 267] => ClaudeVersion::V2_1_267,
-        [2, 1, 268] => ClaudeVersion::V2_1_268,
-        later => ClaudeVersion::Later(later),
-    })
-}
-
-pub fn pinned_version(executable: &OsStr) -> ClaudeVersionProbe {
+pub fn observed_version(executable: &OsStr) -> Option<String> {
     probe_version(executable)
         .as_deref()
-        .map_or(ClaudeVersionProbe::Unavailable, classify_version)
+        .and_then(claude_version)
 }
 
-/// Bounded native --version probe, shared by launch admission and diagnostics.
+/// Bounded native --version probe for diagnostics. Launch admission never runs it.
 pub fn probe_version(executable: &OsStr) -> Option<Vec<u8>> {
     let mut command = Command::new(executable);
     command.arg("--version");
@@ -1649,10 +1592,7 @@ mod tests {
             vec!["claude", "--", "doctor"],
             vec!["claude", "-n", "name"],
         ] {
-            assert!(
-                eligible_argv(&args(&arguments), ClaudeVersion::V2_1_267),
-                "{arguments:?}"
-            );
+            assert!(eligible_argv(&args(&arguments)), "{arguments:?}");
         }
         for option in [
             "--session-id=x",
@@ -1685,10 +1625,7 @@ mod tests {
             "--worktree",
             "--add-dir",
         ] {
-            assert!(
-                !eligible_argv(&args(&["claude", option]), ClaudeVersion::V2_1_267),
-                "{option}"
-            );
+            assert!(!eligible_argv(&args(&["claude", option])), "{option}");
         }
         for arguments in [
             vec!["claude", "doctor"],
@@ -1699,10 +1636,7 @@ mod tests {
             vec!["other", "--agent", "root"],
             vec!["claude", "two", "prompts"],
         ] {
-            assert!(
-                !eligible_argv(&args(&arguments), ClaudeVersion::V2_1_267),
-                "{arguments:?}"
-            );
+            assert!(!eligible_argv(&args(&arguments)), "{arguments:?}");
         }
     }
 
@@ -1717,24 +1651,15 @@ mod tests {
             "sonnet",
             "--strict-mcp-config",
         ]);
-        for version in [
-            ClaudeVersion::V2_1_267,
-            ClaudeVersion::V2_1_268,
-            ClaudeVersion::Later([2, 1, 274]),
-        ] {
-            assert_eq!(
-                eligible_launch(&resume, version),
-                Some(EligibleLaunch::Resume(uuid.into()))
-            );
-        }
         assert_eq!(
-            eligible_launch(&args(&["claude", "-r", uuid]), ClaudeVersion::V2_1_268),
+            eligible_launch(&resume),
             Some(EligibleLaunch::Resume(uuid.into()))
         );
-        assert!(!eligible_argv(
-            &args(&["claude", "-r", uuid]),
-            ClaudeVersion::V2_1_267
-        ));
+        // Both resume spellings, with no version gate deciding which one exists.
+        assert_eq!(
+            eligible_launch(&args(&["claude", "-r", uuid])),
+            Some(EligibleLaunch::Resume(uuid.into()))
+        );
 
         for arguments in [
             vec!["claude", "--resume"],
@@ -1762,10 +1687,7 @@ mod tests {
             vec!["claude", "--resume", uuid, "--background"],
             vec!["claude", "--resume", uuid, "--print"],
         ] {
-            assert!(
-                !eligible_argv(&args(&arguments), ClaudeVersion::V2_1_268),
-                "{arguments:?}"
-            );
+            assert!(!eligible_argv(&args(&arguments)), "{arguments:?}");
         }
     }
 
@@ -1805,12 +1727,11 @@ mod tests {
 
     #[test]
     fn initial_admission_probe_cleans_descendants_after_leader_exit() {
-        for (version, exit, expected) in [
-            ("2.1.267", 0, true),
-            ("2.1.268", 0, true),
-            ("2.1.266", 0, false),
-            ("2.1.274", 0, true),
-            ("2.1.268", 1, false),
+        for (version, exit) in [
+            ("2.1.267", 0),
+            ("2.1.266", 0),
+            ("2.1.293", 0),
+            ("2.1.268", 1),
         ] {
             let root = tempfile::tempdir().unwrap();
             let identity = root.path().join("identity");
@@ -1829,10 +1750,10 @@ mod tests {
                 .arg(exit.to_string());
             let probe = probe_command(command, 128)
                 .as_deref()
-                .map_or(ClaudeVersionProbe::Unavailable, classify_version);
-            assert_eq!(probe.supported().is_some(), expected);
+                .and_then(claude_version);
+            // A diagnostic only: older and newer releases are both just observed.
             assert_eq!(
-                probe.observed(),
+                probe,
                 (exit == 0).then(|| version.to_owned()),
                 "version diagnostic"
             );

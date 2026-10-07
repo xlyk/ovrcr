@@ -17,8 +17,8 @@ const HOOKS: &[&str] = &[
     "Interrupt",
     "SessionEnd",
 ];
-const REQUIREMENTS: &str = "Requires stable Codex CLI >=0.153.0 and synchronous direct-exec command hooks. Review and trust these hooks in native Codex before the first tracked prompt; an initial prompt supplied during hook review may run untracked. Configuration presence does not prove hook trust or delivery. Hooks exit successfully with empty stdout (native no-op), never an approval decision. Launch through the Dashboard agent picker or `ovrcr agent run codex -- codex` inside an OVRCR terminal; a plain `codex` launch stays untracked. Exact Codex CLI 0.153.0 hooks-only support passed acceptance. Managed root startup/prompt hooks also retain exact conversation identity for terminal reopen. Recovery uses codex resume UUID without a prompt; exact resume admits reporting after matching SessionStart(source=resume) Root identity, without replaying historical Ready. Keep SessionStart reporting unfiltered so unsupported sources reach the identity guard. Supported in-process clear/resume SessionStart replacements rebind reporting; fork or conflicting startup while bound is identity_transition_unavailable (fork/backtrack gap). Native recovery acceptance is tracked separately in issue #128.";
-const FORMS: &str = "Fresh interactive codex (executable basename codex): optional --no-alt-screen, --approve-for-me, --full-auto, --dangerously-bypass-hook-trust; separate-token --model/-m, --profile/-p, --sandbox/-s, --ask-for-approval/-a, --cd/-C followed by a nonempty value not starting with '-'; at most one prompt (use -- before a prompt matching a subcommand). Exact resume: `codex resume UUID` with the same optional flags and no prompt (UUID must be the exact canonical identity). Fork, picker-without-UUID, exec, remote, unknown options and other versions run natively with reporting unavailable.";
+const REQUIREMENTS: &str = "Requires synchronous direct-exec command hooks; no Codex CLI version is required or refused. Review and trust these hooks in native Codex before the first tracked prompt; an initial prompt supplied during hook review may run untracked. Configuration presence does not prove hook trust or delivery. Hooks exit successfully with empty stdout (native no-op), never an approval decision. Launch through the Dashboard agent picker or `ovrcr agent run codex -- codex` inside an OVRCR terminal; a plain `codex` launch stays untracked. Exact Codex CLI 0.153.0 hooks-only support passed acceptance. Managed root startup/prompt hooks also retain exact conversation identity for terminal reopen. Recovery uses codex resume UUID without a prompt; exact resume admits reporting after matching SessionStart(source=resume) Root identity, without replaying historical Ready. Keep SessionStart reporting unfiltered so unsupported sources reach the identity guard. Supported in-process clear/resume SessionStart replacements rebind reporting; fork or conflicting startup while bound is identity_transition_unavailable (fork/backtrack gap). Native recovery acceptance is tracked separately in issue #128.";
+const FORMS: &str = "Fresh interactive codex (executable basename codex): optional --no-alt-screen, --approve-for-me, --full-auto, --dangerously-bypass-hook-trust; separate-token --model/-m, --profile/-p, --sandbox/-s, --ask-for-approval/-a, --cd/-C followed by a nonempty value not starting with '-'; at most one prompt (use -- before a prompt matching a subcommand). Exact resume: `codex resume UUID` with the same optional flags and no prompt (UUID must be the exact canonical identity). Fork, picker-without-UUID, exec, remote and unknown options run natively with reporting unavailable.";
 
 fn settings(path: Option<&Path>) -> anyhow::Result<Value> {
     let Some(path) = path else {
@@ -275,14 +275,14 @@ pub(super) fn doctor(
     executable: &OsStr,
 ) -> AppResult<()> {
     let probe = with_version_probe(|| ovrcr::report::admission::probe_version(executable))?;
-    // Report only the native version grammar, never arbitrary executable output.
+    // Report only the native version grammar, never arbitrary executable output. The
+    // version is a diagnostic: no launch is admitted or refused on it.
     let policy = ovrcr::report::versions::CODEX;
     let version = probe.as_deref().and_then(ovrcr::report::codex::version);
-    let supported = version.is_some_and(|v| policy.accepts(v));
-    let status = if supported {
-        "supported"
+    let status = if version.is_some() {
+        "probed"
     } else if probe.is_some() {
-        "unsupported"
+        "unrecognized"
     } else {
         "unavailable"
     };
@@ -356,14 +356,14 @@ pub(super) fn doctor(
             },
         },
     };
-    guidance.push_str("Setup verification: run `ovrcr agent setup codex --print --settings PATH`, review the composition and trust hooks through native Codex. Launch through the Dashboard agent picker or `ovrcr agent run codex -- codex`. A plain `codex` launch stays untracked. Select stable codex-cli >=0.153.0. Doctor invokes the provider only for --version and inspects optional session state without starting a server; configuration presence does not prove hook trust or delivery.");
+    guidance.push_str("Setup verification: run `ovrcr agent setup codex --print --settings PATH`, review the composition and trust hooks through native Codex. Launch through the Dashboard agent picker or `ovrcr agent run codex -- codex`. A plain `codex` launch stays untracked. No codex-cli version is required or refused. Doctor invokes the provider only for --version and inspects optional session state without starting a server; configuration presence does not prove hook trust or delivery.");
     println!("{}", serde_json::to_string_pretty(&json!({
         "provider":"codex", "executable":executable.to_string_lossy(), "version":version,
-        "compatible_versions":policy.range(), "tested_versions":policy.tested, "version_compatible":supported, "version_tested":policy.tested(version), "probe_status":status,
-        "release_status":"patch_compatible_hooks_only",
+        "tested_versions":policy.tested, "version_tested":policy.tested(version), "version_gate":"none", "probe_status":status,
+        "release_status":"hooks_only",
         "configuration":{"status":configuration,"effective_configuration":"unverified","hook_trust":"unverified","delivery":"unverified","issues":issues},
         "session_status":session_status,"binding":binding,"source_health":health,
-        "capabilities":{"initial_invocation":{"fresh":supported,"resume":"exact_uuid","fork":false,"picker":false},"conversation_switches":{"clear":"supported","resume":"supported","compact":"same_conversation_no_replacement","startup_while_bound":"identity_transition_unavailable_named_blocker","fork_launch":false},"activity":"last_observed_root_turn","ready":"available_fresh_and_exact_resume","input_requests":"approvals_available","questions":"unavailable_no_distinct_surface","completion_quality":"observed","metrics":"unavailable","task_success":false},
+        "capabilities":{"initial_invocation":{"fresh":true,"resume":"exact_uuid","fork":false,"picker":false},"conversation_switches":{"clear":"supported","resume":"supported","compact":"same_conversation_no_replacement","startup_while_bound":"identity_transition_unavailable_named_blocker","fork_launch":false},"activity":"last_observed_root_turn","ready":"available_fresh_and_exact_resume","input_requests":"approvals_available","questions":"unavailable_no_distinct_surface","completion_quality":"observed","metrics":"unavailable","task_success":false},
         "requirements":REQUIREMENTS, "launch_forms":FORMS,
         "remediation":guidance
     })).map_err(RuntimeError::internal)?);

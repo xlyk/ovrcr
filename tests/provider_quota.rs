@@ -55,6 +55,23 @@ fn native_quota_rpc_fixture() {
                 std::thread::sleep(Duration::from_millis(20));
             }
         }
+        if method == "account/rateLimits/read" && mode == "unknown-method" {
+            // How Codex app-server 0.160.1 / 0.161.0 answer a method they do not know.
+            println!(
+                "{}",
+                serde_json::json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32600, "message":FIXTURE_BODY}})
+            );
+            std::io::stdout().flush().unwrap();
+            continue;
+        }
+        if method == "account/rateLimits/read" && mode == "unrecognized" {
+            println!(
+                "{}",
+                serde_json::json!({"jsonrpc":"2.0", "id":id, "result":{"limits":{"body":FIXTURE_BODY}}})
+            );
+            std::io::stdout().flush().unwrap();
+            continue;
+        }
         if method == "account/rateLimits/read" && matches!(mode.as_str(), "http503" | "retry") {
             // A native error whose body a Quota reason must never echo.
             let mut data = serde_json::json!({"status": 503, "body": FIXTURE_BODY});
@@ -128,7 +145,7 @@ fn codex_native_read_reaches_remaining_bars_through_real_server_and_socket() {
         .unwrap()
         .to_string_lossy()
         .replace('\'', "'\\''");
-    std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-cli 0.155.1'; exit 0; fi\nprintf '%s\\n' \"$*\" >> '{argv}'\nexec '{executable}' --ignored --exact native_quota_rpc_fixture --nocapture --quiet\n", argv = native.with_extension("argv").display())).unwrap();
+    std::fs::write(&native, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{argv}'\nif [ \"$1\" = --version ]; then echo 'codex-cli 0.0.1'; exit 0; fi\nexec '{executable}' --ignored --exact native_quota_rpc_fixture --nocapture --quiet\n", argv = native.with_extension("argv").display())).unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
     let config = serde_json::to_string(&native.to_string_lossy()).unwrap();
     std::fs::write(settings_document(&fixture), format!("[quota]\nenabled = true\n[quota.codex]\ncommand = {config}\n[quota.grok]\ncommand = '/not-a-native-fixture'\n")).unwrap();
@@ -221,6 +238,12 @@ fn codex_native_read_reaches_remaining_bars_through_real_server_and_socket() {
         "codex must keep its own token: {argv}"
     );
     assert!(!argv.contains("wham/usage"), "{argv}");
+    // The stand-in answers `--version` with a release the former 0.155.1 pin refused;
+    // the collector must never ask.
+    assert!(
+        !argv.lines().any(|line| line == "--version"),
+        "quota must not gate on a version probe: {argv}"
+    );
 }
 
 #[test]
@@ -421,7 +444,7 @@ fn grok_native_billing_reaches_actual_monthly_remaining_bar() {
 #[test]
 fn default_settings_publish_current_allowance_without_opt_in() {
     let fixture = live::Live::idle().bounded();
-    let native = native_executable(&fixture, "codex", "codex-cli 0.155.1");
+    let native = native_executable(&fixture, "codex", "codex-cli 0.161.0");
     let command = serde_json::to_string(&native.to_string_lossy()).unwrap();
     let document = settings_document(&fixture);
     // Commands only. The consent switch is absent, so the default applies.
@@ -564,7 +587,7 @@ fn native_executable(fixture: &live::Live, name: &str, version: &str) -> std::pa
         .to_string_lossy()
         .replace('\'', "'\\''");
     let native = fixture.root.path().join(name);
-    std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then echo '{version}'; exit 0; fi\nprintf '%s\\n' \"$*\" >> '{argv}'\nexec '{executable}' --ignored --exact native_quota_rpc_fixture --nocapture --quiet\n", argv = native.with_extension("argv").display())).unwrap();
+    std::fs::write(&native, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{argv}'\nif [ \"$1\" = --version ]; then echo '{version}'; exit 0; fi\nexec '{executable}' --ignored --exact native_quota_rpc_fixture --nocapture --quiet\n", argv = native.with_extension("argv").display())).unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
     native
 }
@@ -572,7 +595,7 @@ fn native_executable(fixture: &live::Live, name: &str, version: &str) -> std::pa
 #[test]
 fn quota_table_in_instance_identity_is_a_finding_and_starts_no_worker() {
     let fixture = live::Live::idle().bounded();
-    let native = native_executable(&fixture, "codex", "codex-cli 0.155.1");
+    let native = native_executable(&fixture, "codex", "codex-cli 0.161.0");
     let command = serde_json::to_string(&native.to_string_lossy()).unwrap();
     // Before the shared settings document this enabled collection.
     std::fs::write(
@@ -635,6 +658,8 @@ fn quota_http(fixture: &live::Live) -> std::ffi::OsString {
     use std::io::{Read, Write};
     let log = fixture.root.path().join("http-quota");
     let hold = fixture.root.path().join("http-quota-hold");
+    // Present only in tests that serve another billing body.
+    let billing_body = fixture.root.path().join("billing-body");
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     std::thread::spawn(move || {
@@ -670,7 +695,12 @@ fn quota_http(fixture: &live::Live) -> std::ffi::OsString {
                 .append(true)
                 .open(&log)
                 .and_then(|mut file| file.write_all(line.as_bytes()));
-            let body = if path.contains("/v1/billing") {
+            let custom = std::fs::read_to_string(&billing_body).ok();
+            let body = if let Some(custom) =
+                custom.as_deref().filter(|_| path.contains("/v1/billing"))
+            {
+                custom
+            } else if path.contains("/v1/billing") {
                 r#"{"config":{"creditUsagePercent":24,"currentPeriod":{"type":"USAGE_PERIOD_TYPE_MONTHLY","start":"2026-01-01T00:00:00Z","end":"2099-01-01T00:00:00Z"},"prepaidBalance":{"val":1},"onDemandUsed":{"val":1}}}"#
             } else if path.contains("/api/oauth/usage") {
                 r#"{"five_hour":{"utilization":42,"resets_at":"2099-01-01T00:00:00Z"},"seven_day":{"utilization":18,"resets_at":"2099-01-02T00:00:00Z"}}"#
@@ -699,8 +729,8 @@ fn native_fixture(mode: &str) -> live::Live {
     let fixture = live::Live::idle().bounded();
     let mut config = "[quota]\nenabled = true\n".to_string();
     for (name, version) in [
-        ("codex", "codex-cli 0.155.1"),
-        ("grok", "1.0.40 (fixture) [stable]"),
+        ("codex", "codex-cli 0.161.0"),
+        ("grok", "grok 1.0.46 (fixture) [stable]"),
     ] {
         let native = native_executable(&fixture, name, version);
         config.push_str(&format!(
@@ -715,6 +745,15 @@ fn native_fixture(mode: &str) -> live::Live {
         quota_http(&fixture).to_string_lossy()
     );
     std::fs::write(fixture.root.path().join("billing-url"), billing.as_bytes()).unwrap();
+    if mode == "period-start" {
+        // Sanitized from the Grok 1.0.46 credits body right after a weekly reset:
+        // proto3 JSON omits the zero `creditUsagePercent`.
+        std::fs::write(
+            fixture.root.path().join("billing-body"),
+            r#"{"config":{"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","start":"2026-01-01T00:00:00Z","end":"2099-01-01T00:00:00Z"},"onDemandCap":{"val":0},"onDemandUsed":{},"prepaidBalance":{},"isUnifiedBillingUser":true},"subscriptionTier":"fixture"}"#,
+        )
+        .unwrap();
+    }
     start_native(&fixture, mode);
     fixture
 }
@@ -1056,7 +1095,7 @@ fn quota_enabled_flips_live_without_restart() {
         .unwrap()
         .to_string_lossy()
         .replace('\'', "'\\''");
-    std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-cli 0.155.1'; exit 0; fi\nprintf '%s\\n' \"$*\" >> '{argv}'\nexec '{executable}' --ignored --exact native_quota_rpc_fixture --nocapture --quiet\n", argv = native.with_extension("argv").display())).unwrap();
+    std::fs::write(&native, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{argv}'\nif [ \"$1\" = --version ]; then echo 'codex-cli 0.0.1'; exit 0; fi\nexec '{executable}' --ignored --exact native_quota_rpc_fixture --nocapture --quiet\n", argv = native.with_extension("argv").display())).unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
     let settings = fixture.config.join("dashboard.toml");
     let quota = |enabled: bool| {
@@ -1223,6 +1262,38 @@ fn disabled_quota_snapshot_carries_the_off_state_reason() {
         fixture.request(Request::RefreshQuota { provider: None }),
         Response::Error { message, .. } if message == ovrcr::settings::QUOTA_OFF
     ));
+}
+
+#[test]
+fn unknown_method_or_unrecognized_reply_not_a_version_is_unsupported() {
+    for (mode, reason) in [
+        ("unknown-method", "method not supported"),
+        ("unrecognized", "unrecognized codex response"),
+    ] {
+        let fixture = native_fixture(mode);
+        let mut socket = attach(&fixture);
+        let snapshot = quota_until(&mut socket, "protocol failure was not reported", |q| {
+            q.codex.state == QuotaState::Unsupported
+        });
+        assert_eq!(snapshot.codex.reason.as_deref(), Some(reason), "{mode}");
+        assert!(snapshot.codex.windows.is_empty(), "{mode}");
+        assert!(!format!("{snapshot:?}").contains("fixture@example.invalid"));
+        // Deterministic: the next try waits for the cap, not the 1-minute rung.
+        assert_next_check(&snapshot.codex, 600);
+    }
+}
+
+#[test]
+fn grok_period_start_without_credit_usage_shows_full_allowance_not_dashes() {
+    let fixture = native_fixture("period-start");
+    let mut socket = attach(&fixture);
+    let snapshot = quota_until(&mut socket, "Grok period start was not published", |q| {
+        q.grok.state == QuotaState::Current
+    });
+    assert_eq!(snapshot.grok.windows.len(), 1);
+    assert_eq!(snapshot.grok.windows[0].label, "wk");
+    assert_eq!(snapshot.grok.windows[0].used_basis_points, Some(0));
+    assert_eq!(remaining(&snapshot.grok, "wk"), 10000);
 }
 
 #[test]

@@ -203,7 +203,8 @@ fn pi_and_omp_doctor_classify_versions_as_evidence_not_an_allowlist() {
             fake_harness(dir.path(), "pi-older", "0.85.0"),
             "probed",
             Some("0.85.0"),
-            "outside_compatible_range",
+            // Below the former 0.85.1 floor: untested evidence, never refused.
+            "untested",
             "\"available\"",
         ),
         (

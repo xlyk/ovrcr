@@ -560,7 +560,7 @@ new task prompt, preserving the row/title and reference before another callback.
 the current invocation certifies the matching conversation. Process launch alone
 is not attachment. Inventory restoration does not run Claude.
 
-The current admission range is stable Claude Code >=2.1.267; native evidence remains version-specific.
+Admission has no Claude Code version gate; native evidence remains version-specific.
 Capture requires managed launch, configured synchronous native hooks and a
 certified root SessionStart with its exact transcript path. Saved configuration
 includes the executable, Claude configuration directory and conservative options:

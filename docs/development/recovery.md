@@ -61,7 +61,7 @@ Grok has no resume adapter: `supported` stays false, `unavailable` keeps answeri
 "Native resume is not available for grok" whatever the row retains, and Reopen
 refuses. What a managed launch retains (#184) is a title source for #175.
 
-`ovrcr agent run grok -- grok` admits a fresh interactive Grok >=1.0.40 launch in
+`ovrcr agent run grok -- grok` admits a fresh interactive Grok launch (no version gate) in
 the current directory: the supervisor binds a fresh UUID, retains
 `ConversationReference::Grok { conversation, history }`, and only then adds
 `--session-id UUID` to the native argv. `history` is the one file Grok's documented

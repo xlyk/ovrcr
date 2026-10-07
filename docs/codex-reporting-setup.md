@@ -1,6 +1,6 @@
 # Codex response readiness setup
 
-**Exact Codex CLI 0.153.0 hooks-only support passed acceptance at reviewed revision `56b84f9`.** The implemented milestone reports the terminal's **last observed root turn** using stable Codex CLI **>=0.153.0** synchronous hooks. It does not track the continuously selected history entry or collect metrics. The broader source investigation remains blocked; see the history below.
+**Exact Codex CLI 0.153.0 hooks-only support passed acceptance at reviewed revision `56b84f9`.** The implemented milestone reports the terminal's **last observed root turn** using Codex CLI synchronous hooks; no Codex version is required or refused. It does not track the continuously selected history entry or collect metrics. The broader source investigation remains blocked; see the history below.
 
 That acceptance used a disposable fixture. It does not establish that your installed OVRCR binary, running server, Codex configuration or native hook trust is ready. Follow [How to install Codex readiness reporting](codex-ready-installation.md) to prepare an exact-revision build, review the configuration change, protect existing sessions during a server transition, and verify the installed result.
 
@@ -152,7 +152,7 @@ Exact `codex resume UUID` (managed Reopen / initial resume) is supported for rep
 
 ## Retained conversation recovery
 
-Managed fresh compatible Codex CLI **0.153.x** launches capture the exact conversation UUID
+Managed fresh Codex CLI launches capture the exact conversation UUID
 and hook-supplied history path at an authenticated root startup or prompt. The
 bounded native `session_meta` header must match the UUID and CLI source. Missing
 or mismatched history leaves that identity unavailable; it never selects an older
@@ -215,4 +215,4 @@ The [history invalidation probe](../research/codex-reporting-acceptance/history-
 
 ## Version compatibility
 
-Doctor reports `compatible_versions`, `tested_versions`, `version_compatible` and `version_tested` separately. The shared policy accepts canonical stable versions at or above 0.153.0, including later minor/major releases; eligibility does not claim new native acceptance. Only the separately recorded tested versions have that evidence. See [provider version policy](agent-versions.md).
+There is no version gate. Doctor reports the observed `version`, `tested_versions`, `version_tested` and `version_gate: "none"`; admission never consults the version. Only the recorded tested versions carry native acceptance evidence. See [agent versions](agent-versions.md).
