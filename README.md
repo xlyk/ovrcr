@@ -8,15 +8,11 @@
 
 ## About
 
-The market is full of agent runtimes and terminal multiplexers. On a feature checklist they all look the same: sessions, splits, maybe a sidebar. Congratulations.
+Agent runtimes and terminal multiplexers are everywhere. On a checklist they all look the same.
 
-OVRCR is what you reach for when “a pile of agent PTYs on a pile of worktrees” stops being a personality trait. Register a Git repo. Create a workspace (it makes the worktree). Start Claude, Codex, Pi, Grok, Hermes, OMP, Cursor Agent, or a shell inside it. One Rust server owns every PTY — detach with `q`, reattach later, agents keep burning tokens without you watching. That’s not a bug; that’s the product.
+OVRCR is for a pile of coding-agent PTYs across a pile of worktrees. Register a Git repo, create a workspace (it makes the worktree), start Claude, Codex, Pi, Grok, Hermes, OMP, Cursor Agent, or a shell. One Rust server owns the sessions.
 
-Busy, waiting, Ready, and context occupancy come from provider hooks. A quiet terminal is not reported idle. We refuse to invent vibes from silence. Your quota chaos is still your problem; we just stop lying about which session caused it.
-
-It is written in Rust (edition 2024, because of course it is). It also ships eight themes so you can doomscroll Appearance settings instead of the agent that is waiting on you: Catppuccin Mocha (default), Catppuccin Latte, Tokyo Night, Dracula, Gruvbox Dark, Gruvbox Light, Nord, Rosé Pine. Functionally irrelevant. Emotionally load-bearing.
-
-Reporting depth varies by provider — see the [support matrix](docs/agent-reporting-support.md).
+Eight themes in Appearance, because your quota crisis deserves better lighting: Catppuccin Mocha (default), Catppuccin Latte, Tokyo Night, Dracula, Gruvbox Dark, Gruvbox Light, Nord, Rosé Pine.
 
 ## Screenshots
 
@@ -35,18 +31,15 @@ Reporting depth varies by provider — see the [support matrix](docs/agent-repor
   </tr>
 </table>
 
-
 ## Why this instead of tmux + coping
 
-- **Organization is Git-shaped.** Registered projects and worktree workspaces, not a flat session list. Creating a workspace creates the branch, the worktree, and (by default) a local shell. Dirty or foreign worktrees are refused — OVRCR will not “helpfully” adopt the mess you made at 2am.
-- **PTYs outlive the UI.** One server owns the process groups. Detach and reattach do not kill agents. Closing the dashboard is not the same as admitting defeat.
-- **Status is reported, not inferred.** Activity and context come from provider hooks. Silence is not idle. If the agent is waiting on you, the dashboard says so — it does not pretend the model is “thinking” because the PTY went quiet.
-- **Rust, so it’s fast.** Also memory-safe, also compile times that build character, also a README badge that makes strangers trust you on GitHub.
-- **Themes, because of course.** Eight built-ins in Appearance (`dashboard.toml` `theme`, or the Settings pick list). Default is Catppuccin Mocha. Switch to Nord when the agents get chaotic. Switch to Dracula when they get worse. None of this fixes your quota.
+- **Git-shaped.** Projects and worktree workspaces, not a flat session list. Creating a workspace creates the branch, the worktree, and (by default) a local shell. Dirty or foreign worktrees are refused.
+- **PTYs outlive the UI.** `q` detaches the dashboard; agents keep running (and burning tokens). Reattach rebuilds from the live process.
+- **Status is reported, not inferred.** Busy / waiting / Ready / context come from provider hooks. Silence is not idle. Reporting depth varies — see the [support matrix](docs/agent-reporting-support.md).
 
 ## Install
 
-Pre-1.0. No package, no brew formula, no “curl | sh” that owns your laptop. Build from source like an adult:
+Pre-1.0. Build from source:
 
 ```sh
 git clone https://github.com/xlyk/ovrcr.git
@@ -56,7 +49,7 @@ install -m 755 target/release/ovrcr ~/.local/bin/ovrcr
 ovrcr --version
 ```
 
-`ovrcr --version` prints package version and wire protocol. Client and server must match. Mismatch is how you invent ghost sessions and then blame Rust.
+Client and server must match on the wire protocol `ovrcr --version` prints.
 
 ## Quickstart
 
@@ -67,26 +60,24 @@ ovrcr new --project myapp --workspace feature/cleanup --name review -- claude
 ovrcr
 ```
 
-Dashboard: `j`/`k` select, `Enter` focus, `Ctrl-g` browse, `q` detach (agents stay up; your denial stays optional).
+Dashboard: `j`/`k` select, `Enter` focus, `Ctrl-g` browse, `q` detach.
 
 ## Features
 
-- Sessions grouped by registered Git project and worktree workspace; create/remove refuse dirty or unregistered worktrees.
 - One or two panes; Browse, Terminal, Copy, and History modes.
-- PTYs survive dashboard detach. After server restart, retained rows reopen a fresh shell in place; certified Claude conversations can resume by UUID. Terminal output is not restored across server restart — the agents remember more than the scrollback does.
-- 512 rows of scrollback per session; keyboard selection; OSC52 clipboard copy.
-- Pause / resume via SIGSTOP / SIGCONT on the session process group (for when four agents decide to `cargo check` at once).
-- Scriptable CLI with `--json` on every resource command — same sessions, zero dashboard, maximum “I’ll automate this later.”
-- Optional: scheduled Pi tasks in fresh worktrees; macOS Bridge notifications for when a run goes Ready and you were busy picking a theme.
-- Eight selectable themes (Catppuccin Mocha/Latte, Tokyo Night, Dracula, Gruvbox Dark/Light, Nord, Rosé Pine). Your agents will not become smarter. Your screenshots will.
+- After server restart, retained rows reopen a fresh shell in place; certified Claude conversations can resume by UUID. Terminal output is not restored across server restart.
+- 512 rows of scrollback; keyboard selection; OSC52 clipboard copy.
+- Pause / resume via SIGSTOP / SIGCONT on the session process group.
+- CLI with `--json` on every resource command.
+- Optional: scheduled Pi tasks in fresh worktrees; macOS Bridge notifications.
+- Theme pick list in Settings (or `theme` in `dashboard.toml`). Hot-swaps without restart. Does not fix your agents.
 
 ## Requirements
 
 - macOS or Linux
-- Rust 1.95 or newer (edition 2024; optional GUI helper’s `eframe` sets the floor — yes, really 1.95)
+- Rust 1.95 or newer (edition 2024; optional GUI helper’s `eframe` sets the floor)
 - Git
 - Optional: [Pi](docs/scheduled-tasks.md) for scheduled tasks; macOS [Bridge](native/bridge/README.md) for notifications
-- A healthy relationship with API quotas (sold separately)
 
 ## Docs
 
@@ -98,7 +89,7 @@ Dashboard: `j`/`k` select, `Enter` focus, `Ctrl-g` browse, `q` detach (agents st
 
 ## Contributing
 
-There is no separate `CONTRIBUTING.md` yet. Start with [`AGENTS.md`](AGENTS.md) for the project’s invariants, then open an issue or PR on GitHub.
+Start with [`AGENTS.md`](AGENTS.md), then open an issue or PR.
 
 ```sh
 cargo test -p ovrcr
