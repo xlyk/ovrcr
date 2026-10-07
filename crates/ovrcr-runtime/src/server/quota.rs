@@ -563,7 +563,7 @@ pub(super) fn run(state: Arc<ServerState>, provider: QuotaProvider) {
                     identity = Some(after);
                     return Err(changed_during_read());
                 }
-                normalize_native_quota(provider, &limits).map_err(Failure::new)
+                native_windows(provider, &limits)
             })()
         } else if let Some(rpc) = client.as_mut() {
             match rpc.message(&state, Instant::now() + Duration::from_millis(100)) {
@@ -584,8 +584,7 @@ pub(super) fn run(state: Arc<ServerState>, provider: QuotaProvider) {
                             if identity.as_ref() == Some(&fresh)
                                 && account_epoch == rpc.account_epoch =>
                         {
-                            normalize_native_quota(QuotaProvider::Codex, &message["params"])
-                                .map_err(Failure::new)
+                            native_windows(QuotaProvider::Codex, &message["params"])
                         }
                         _ => {
                             generation += 1;
@@ -601,6 +600,12 @@ pub(super) fn run(state: Arc<ServerState>, provider: QuotaProvider) {
                     Err(Failure::new(QuotaState::Waiting))
                 }
                 Ok(_) => continue,
+                // A detach or Dashboard handover while idly waiting for a native
+                // update read nothing: drop the client, keep the cached row as is.
+                Err(error) if error.interrupted => {
+                    client = None;
+                    continue;
+                }
                 Err(error) => Err(error),
             }
         } else {
@@ -665,6 +670,8 @@ pub(super) struct Failure {
     pub(super) reason: String,
     /// Retrying soon cannot help: not found, unsupported, not signed in.
     pub(super) deterministic: bool,
+    /// The server stopped or the Dashboard detached mid-wait; nothing was read.
+    pub(super) interrupted: bool,
 }
 impl Failure {
     pub(super) fn new(state: QuotaState) -> Self {
@@ -673,6 +680,7 @@ impl Failure {
             retry_after: None,
             reason: state.label().into(),
             deterministic: matches!(state, QuotaState::NotSignedIn | QuotaState::Unsupported),
+            interrupted: false,
         }
     }
     pub(super) fn because(mut self, reason: impl Into<String>) -> Self {
@@ -689,7 +697,19 @@ fn timed_out() -> Failure {
 }
 
 fn interrupted() -> Failure {
-    Failure::unavailable("read interrupted")
+    Failure {
+        interrupted: true,
+        ..Failure::unavailable("read interrupted")
+    }
+}
+
+/// The native reply does not have the shape OVRCR reads. With no version gate this is
+/// how a changed protocol surfaces: deterministic, never a guess at the values.
+fn unrecognized(provider: QuotaProvider) -> Failure {
+    Failure::new(QuotaState::Unsupported).because(format!(
+        "unrecognized {} response",
+        provider.name().to_lowercase()
+    ))
 }
 
 fn changed_during_read() -> Failure {
@@ -698,6 +718,7 @@ fn changed_during_read() -> Failure {
 type Result<T> = std::result::Result<T, Failure>;
 
 struct Rpc {
+    provider: QuotaProvider,
     child: Child,
     input: ChildStdin,
     output: ChildStdout,
@@ -767,6 +788,7 @@ impl Rpc {
         let input = child.stdin.take().unwrap();
         let output = child.stdout.take().unwrap();
         let rpc = Self {
+            provider,
             child,
             input,
             output,
@@ -890,8 +912,14 @@ impl Rpc {
                 // Only the code and status numbers are read; the message never is.
                 let status = error["data"]["status"].as_u64();
                 let failure = match (error["code"].as_i64(), status) {
-                    (Some(-32601), _) => {
+                    // JSON-RPC method-not-found. Codex app-server answers an unknown
+                    // method with invalid-request (-32600, "unknown variant"), and a
+                    // changed parameter shape with invalid-params (-32602).
+                    (Some(-32601 | -32600), _) => {
                         Failure::new(QuotaState::Unsupported).because("method not supported")
+                    }
+                    (Some(-32602), _) => {
+                        Failure::new(QuotaState::Unsupported).because("request not supported")
                     }
                     (_, Some(401)) => Failure::new(QuotaState::NotSignedIn),
                     (_, Some(status @ 100..=599)) => Failure::unavailable(format!("HTTP {status}")),
@@ -909,7 +937,7 @@ impl Rpc {
             return reply
                 .get("result")
                 .cloned()
-                .ok_or_else(|| Failure::new(QuotaState::Invalid));
+                .ok_or_else(|| unrecognized(self.provider));
         }
         Err(timed_out())
     }
@@ -946,25 +974,9 @@ fn native_client(
 ) -> Result<Rpc> {
     let workspace = tempfile::tempdir()
         .map_err(|_| Failure::unavailable("could not create a native workspace"))?;
-    let mut version = Rpc::spawn(provider, program, &["--version"], workspace.path())?;
-    while version.bytes(state, deadline)? {
-        if Instant::now() >= deadline {
-            return Err(timed_out());
-        }
-    }
-    let name = provider.name().to_lowercase();
-    let version = std::str::from_utf8(&version.buffer).map_err(|_| {
-        Failure::new(QuotaState::Unsupported).because(format!("{name} version unreadable"))
-    })?;
-    let supported = if provider == QuotaProvider::Codex {
-        "0.155.1"
-    } else {
-        "1.0.40"
-    };
-    if !version.split_whitespace().any(|part| part == supported) {
-        return Err(Failure::new(QuotaState::Unsupported)
-            .because(format!("{name} version unsupported (needs {supported})")));
-    }
+    // No `--version` probe and no version allowlist: the installed client is spoken to
+    // directly, and only the protocol itself decides support. An unknown method, a
+    // rejected request or a reply OVRCR cannot read is Unsupported; see `Rpc::call`.
     let args: &[&str] = if provider == QuotaProvider::Codex {
         // Codex keeps the token. Do not read or write auth.json from here.
         &["-s", "read-only", "-a", "never", "app-server"]
@@ -1028,14 +1040,17 @@ fn codex_windows(value: &Value) -> Result<Vec<QuotaWindow>> {
     if !value.is_object()
         || (value.get("rateLimits").is_none() && value.get("rateLimitsByLimitId").is_none())
     {
-        return Err(Failure::new(QuotaState::Invalid));
+        return Err(unrecognized(QuotaProvider::Codex));
     }
     let mut windows = Vec::new();
     let mut add = |bucket: &str, snapshot: &Value, general: bool| -> Result<()> {
         if snapshot.is_null() {
             return Ok(());
         }
-        if !snapshot.is_object() || bucket.len() > 100 {
+        if !snapshot.is_object() {
+            return Err(unrecognized(QuotaProvider::Codex));
+        }
+        if bucket.len() > 100 {
             return Err(Failure::new(QuotaState::Invalid));
         }
         for name in ["primary", "secondary"] {
@@ -1099,7 +1114,20 @@ fn codex_windows(value: &Value) -> Result<Vec<QuotaWindow>> {
     }
     .validate()
     .map_err(|_| Failure::new(QuotaState::Invalid))?;
-    Ok(windows)
+    require_usage(windows)
+}
+
+/// `Current` promises at least one usable value. A well-formed reply whose every window
+/// lacks a percentage would otherwise render a row of dashes that looks like a reading.
+fn require_usage(windows: Vec<QuotaWindow>) -> Result<Vec<QuotaWindow>> {
+    if windows
+        .iter()
+        .any(|window| window.over_limit || window.used_basis_points.is_some())
+    {
+        Ok(windows)
+    } else {
+        Err(Failure::unavailable("no usage reported"))
+    }
 }
 
 fn native_identity(provider: QuotaProvider, value: &Value) -> Result<String> {
@@ -1145,11 +1173,11 @@ fn native_windows(provider: QuotaProvider, value: &Value) -> Result<Vec<QuotaWin
     }
     let config = value["config"]
         .as_object()
-        .ok_or_else(|| Failure::new(QuotaState::Unsupported))?;
+        .ok_or_else(|| unrecognized(QuotaProvider::Grok))?;
     let period = config
         .get("currentPeriod")
         .and_then(Value::as_object)
-        .ok_or_else(|| Failure::new(QuotaState::Unsupported))?;
+        .ok_or_else(|| unrecognized(QuotaProvider::Grok))?;
     let period_type = period
         .get("type")
         .and_then(Value::as_str)
@@ -1157,7 +1185,7 @@ fn native_windows(provider: QuotaProvider, value: &Value) -> Result<Vec<QuotaWin
     let label = match period_type {
         "USAGE_PERIOD_TYPE_WEEKLY" => "wk",
         "USAGE_PERIOD_TYPE_MONTHLY" => "mo",
-        _ => return Err(Failure::new(QuotaState::Unsupported)),
+        _ => return Err(Failure::new(QuotaState::Unsupported).because("unsupported grok period")),
     };
     let reset = period
         .get("end")
@@ -1175,7 +1203,17 @@ fn native_windows(provider: QuotaProvider, value: &Value) -> Result<Vec<QuotaWin
             return Err(Failure::new(QuotaState::Invalid));
         }
     }
-    let (used_basis_points, over_limit) = percent(config.get("creditUsagePercent"))?;
+    // The billing body is proto3 JSON, which omits zero-valued scalars: right after a
+    // period resets, `creditUsagePercent` is absent until usage reaches 1%. Native Grok
+    // (`credit_balance_from_config`) renders that as 0% used; so does OVRCR. A present
+    // but malformed value is still Invalid.
+    let (used_basis_points, over_limit) = match config
+        .get("creditUsagePercent")
+        .filter(|value| !value.is_null())
+    {
+        None => (Some(0), false),
+        some => percent(some)?,
+    };
     let windows = vec![QuotaWindow {
         id: format!("grok/{period_type}"),
         label: label.into(),
@@ -1374,7 +1412,7 @@ fn read_grok_allowance(program: &NativeCommand) -> Result<(String, Vec<QuotaWind
     )?;
     drop(token);
     let value: Value =
-        serde_json::from_str(&body).map_err(|_| Failure::new(QuotaState::Invalid))?;
+        serde_json::from_str(&body).map_err(|_| unrecognized(QuotaProvider::Grok))?;
     Ok((ident, native_windows(QuotaProvider::Grok, &value)?))
 }
 
@@ -1932,6 +1970,21 @@ mod tests {
                 true,
                 None,
             ),
+            // Codex app-server's answer to an unknown method (0.160.1, 0.161.0).
+            (
+                json!({"code":-32600, "message":body}),
+                QuotaState::Unsupported,
+                "method not supported",
+                true,
+                None,
+            ),
+            (
+                json!({"code":-32602, "message":body}),
+                QuotaState::Unsupported,
+                "request not supported",
+                true,
+                None,
+            ),
             (
                 json!({"code":-32000, "message":body}),
                 QuotaState::Unavailable,
@@ -2111,6 +2164,92 @@ mod tests {
             ),
             "a complete buffered reply bypassed the expired request deadline"
         );
+    }
+
+    /// A stand-in native client that logs every argv and answers `initialize`, then
+    /// replies to the next request with `reply` (a JSON-RPC member such as `"result":{}`).
+    fn scripted_native(root: &Path, version: &str, reply: &str) -> NativeCommand {
+        let script = root.join("native");
+        let log = root.join("argv");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{log}'\n\
+                 if [ \"$1\" = --version ]; then echo '{version}'; exit 0; fi\n\
+                 read -r line; printf '{{\"id\":1,\"result\":{{}}}}\\n'\n\
+                 read -r line; read -r line; printf '{{\"id\":2,{reply}}}\\n'\n\
+                 read -r line\n",
+                log = log.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        NativeCommand {
+            command: script,
+            home: None,
+        }
+    }
+
+    #[test]
+    fn native_client_is_not_gated_on_the_harness_version() {
+        let (stream, _dashboard) = std::os::unix::net::UnixStream::pair().unwrap();
+        let state = super::super::tests::test_state(
+            Some(super::super::DashboardSink::new()),
+            Some((Arc::new(()), stream)),
+        );
+        // Older than the former 0.155.1 pin, newer, and unparseable: none matter.
+        for version in ["codex-cli 0.0.1", "codex-cli 0.161.0", "not a version"] {
+            let root = tempfile::tempdir().unwrap();
+            let program = scripted_native(
+                root.path(),
+                version,
+                r#""result":{"rateLimits":{"primary":{"usedPercent":12,"windowDurationMins":10080}}}"#,
+            );
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut rpc = native_client(QuotaProvider::Codex, &program, &state, deadline)
+                .unwrap_or_else(|failure| panic!("{version}: {}", failure.reason));
+            let limits = rpc
+                .call("account/rateLimits/read", json!({}), &state, deadline)
+                .unwrap();
+            let windows = native_windows(QuotaProvider::Codex, &limits).unwrap();
+            assert_eq!(windows[0].remaining_basis_points(), Some(8800));
+            drop(rpc);
+            let argv = std::fs::read_to_string(root.path().join("argv")).unwrap();
+            assert!(!argv.contains("--version"), "{version}: probed {argv}");
+            assert_eq!(argv.trim(), "-s read-only -a never app-server");
+        }
+    }
+
+    #[test]
+    fn protocol_failure_not_version_is_what_reports_unsupported() {
+        let (stream, _dashboard) = std::os::unix::net::UnixStream::pair().unwrap();
+        let state = super::super::tests::test_state(
+            Some(super::super::DashboardSink::new()),
+            Some((Arc::new(()), stream)),
+        );
+        for (reply, reason) in [
+            (
+                r#""error":{"code":-32600,"message":"unknown variant"}"#,
+                "method not supported",
+            ),
+            (r#""result":{"limits":{}}"#, "unrecognized codex response"),
+            (r#""unexpected":true"#, "unrecognized codex response"),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let program = scripted_native(root.path(), "codex-cli 0.161.0", reply);
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut rpc = native_client(QuotaProvider::Codex, &program, &state, deadline)
+                .ok()
+                .unwrap();
+            let failure = rpc
+                .call("account/rateLimits/read", json!({}), &state, deadline)
+                .and_then(|limits| native_windows(QuotaProvider::Codex, &limits))
+                .unwrap_err();
+            assert_eq!(failure.state, QuotaState::Unsupported, "{reply}");
+            assert_eq!(failure.reason, reason, "{reply}");
+            assert!(failure.deterministic);
+            assert!(!failure.reason.contains("version"));
+        }
     }
 
     #[test]

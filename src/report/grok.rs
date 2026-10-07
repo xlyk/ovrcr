@@ -22,13 +22,6 @@ pub fn version(bytes: &[u8]) -> Option<&str> {
     super::versions::parse(value).map(|_| value)
 }
 
-pub fn supported_version(executable: &OsStr) -> bool {
-    super::admission::probe_version(executable)
-        .as_deref()
-        .and_then(version)
-        .is_some_and(|v| super::versions::GROK.accepts(v))
-}
-
 /// A fresh interactive session in the current directory: the only launch whose session
 /// UUID the supervisor may choose and whose history location the store documents.
 /// Resume, continue, fork, an explicit UUID, headless output, another working directory
@@ -113,15 +106,13 @@ pub fn eligible_argv(argv: &[OsString]) -> bool {
 }
 
 pub fn receiver(lease: Option<InvocationLease>, argv: &mut Vec<OsString>) -> HookHandler {
+    // No version gate: argv eligibility alone decides retention.
     let unavailable = reporter::preflight(
         lease.is_some(),
         argv,
         eligible_argv,
         reporter::interactive(),
-    )
-    .or_else(|| {
-        (!supported_version(&argv[0])).then_some("version probe unsupported or unavailable")
-    });
+    );
     let mut reporter = Reporter::new(AgentProvider::Grok, lease, None);
     match unavailable {
         Some(reason) => reporter.unavailable("Grok", reason),
@@ -247,8 +238,6 @@ mod tests {
         );
         assert!(version(b"codex-cli 0.153.0\n").is_none());
         assert!(version(b"grok 1.0.40-beta (x)\n").is_none());
-        assert!(super::super::versions::GROK.accepts("1.0.40"));
-        assert!(!super::super::versions::GROK.accepts("1.0.39"));
     }
 
     #[test]

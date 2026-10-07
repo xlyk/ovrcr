@@ -9168,6 +9168,14 @@ fn agent_admission_later_patch_preserves_resume_identity_and_lifecycle() {
     assert_agent_admission_resume("-r", "2.1.274", false);
 }
 
+/// Admission has no version gate: a release below the former 2.1.267 floor, and one
+/// whose version probe fails outright, are admitted on argv and hooks alone.
+#[test]
+fn agent_admission_is_not_gated_on_the_claude_version() {
+    assert_agent_admission_resume("-r", "2.1.266", false);
+    assert_agent_admission_resume("--resume", "not-a-version", false);
+}
+
 #[test]
 fn agent_admission_ineligible_argv_and_probe_failures_preserve_native_arguments() {
     use std::os::unix::fs::PermissionsExt;
@@ -9198,10 +9206,6 @@ exit 19
         ("-r", "2.1.268", "normal"),
         ("--unknown-mode", "2.1.267", "normal"),
         ("doctor", "2.1.267", "normal"),
-        ("--model=sonnet", "2.1.266", "normal"),
-        ("--model=sonnet", "2.0.9", "normal"),
-        ("--model=sonnet", "fail", "normal"),
-        ("--model=sonnet", "timeout", "normal"),
         ("--model=sonnet", "2.1.267", "blocked"),
         ("--model=sonnet", "2.1.267", "missing"),
     ]
@@ -10309,10 +10313,11 @@ fn codex_session_with_hook_settings(
 ) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
     use std::os::unix::fs::PermissionsExt;
     let native = fixture.root.path().join("codex");
+    // Below the former 0.153.0 floor: admission must not depend on the version.
     let native_version = if settings.is_some() {
-        "0.155.1"
+        "0.0.1"
     } else {
-        "0.153.1"
+        "0.152.9"
     };
     std::fs::write(&native, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'codex-cli {native_version}\\n'; exit; fi\nexec \"$OVRCR_TEST_EXECUTABLE\" --ignored --exact codex_hook_native_helper --nocapture\n")).unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();

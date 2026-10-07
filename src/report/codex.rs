@@ -106,27 +106,16 @@ fn eligible_launch(argv: &[OsString]) -> Option<EligibleLaunch> {
     }
 }
 
-pub fn supported_version(executable: &OsStr) -> bool {
-    super::admission::probe_version(executable)
-        .as_deref()
-        .and_then(version)
-        .is_some_and(|v| super::versions::CODEX.accepts(v))
-}
 pub fn receiver(lease: Option<InvocationLease>, argv: &[OsString]) -> HookHandler {
     let reserved = lease.is_some();
     let preflight = reporter::preflight(reserved, argv, eligible_argv, reporter::interactive());
-    let launch = if preflight.is_none() && supported_version(&argv[0]) {
+    // No version gate: argv decides eligibility, hooks and identity checks decide the rest.
+    let launch = if preflight.is_none() {
         eligible_launch(argv)
     } else {
         None
     };
-    let unavailable = if launch.is_some() {
-        None
-    } else {
-        preflight.or_else(|| {
-            (!supported_version(&argv[0])).then_some("version probe unsupported or unavailable")
-        })
-    };
+    let unavailable = if launch.is_some() { None } else { preflight };
     // Admitted fresh or exact resume: refresh managed daemon so 0.158+ hooks
     // inherit this invocation's private channel.
     if unavailable.is_none() {

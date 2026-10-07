@@ -2205,7 +2205,7 @@ fn agent_run_adds_default_auto_trust_only_when_the_permission_family_is_absent()
 }
 
 #[test]
-fn claude_doctor_reports_exact_version_and_version_specific_resume_forms() {
+fn claude_doctor_reports_exact_version_and_both_resume_forms() {
     let root = tempfile::tempdir().unwrap();
     let executable = root.path().join("claude");
     std::fs::write(
@@ -2230,7 +2230,8 @@ fn claude_doctor_reports_exact_version_and_version_specific_resume_forms() {
         serde_json::json!(["2.1.267", "2.1.268"])
     );
     assert_eq!(value["version"], "2.1.268");
-    assert_eq!(value["probe_status"], "supported");
+    assert_eq!(value["probe_status"], "probed");
+    assert_eq!(value["version_gate"], "none");
     assert_eq!(value["capabilities"]["initial_invocation"]["fresh"], true);
     assert_eq!(
         value["capabilities"]["initial_invocation"]["resume"],
@@ -2255,8 +2256,9 @@ fn claude_doctor_reports_exact_version_and_version_specific_resume_forms() {
     .unwrap();
     assert!(help.status.success());
     let help = String::from_utf8(help.stdout).unwrap();
-    assert!(help.contains("Claude Code >=2.1.267"));
-    assert!(help.contains("2.1.268 and later compatible patches also accept -r UUID"));
+    assert!(help.contains("separate-token --resume UUID or -r UUID"));
+    assert!(help.contains("No harness version is required or refused"));
+    assert!(!help.contains(">="), "no version floor in help");
 }
 
 #[test]

@@ -44,7 +44,7 @@ impl QuotaState {
             Self::Current => "not reported",
             Self::Unavailable => "unavailable",
             Self::NotSignedIn => "not signed in",
-            Self::Unsupported => "unsupported auth/version",
+            Self::Unsupported => "unsupported auth/protocol",
             Self::Invalid => "invalid report",
             Self::SourceConflict => "source conflict",
             Self::Disabled => "off",

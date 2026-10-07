@@ -1,10 +1,9 @@
 # Set up Claude Code reporting
 
-Use stable Claude Code **>=2.1.267** and an interactive foreground
-invocation. OVRCR supports a fresh invocation or an initial resume using the
-separate-token form `--resume UUID`, where `UUID` is the known canonical lowercase
-RFC 4122 UUIDv4. 2.1.268 and later compatible patches also support the separate-token form `-r UUID`.
-The short form remains unavailable on 2.1.267. Equals syntax, picker/name/search
+Use an interactive foreground Claude Code invocation; no Claude Code version is
+required or refused. OVRCR supports a fresh invocation or an initial resume using the
+separate-token form `--resume UUID` or `-r UUID`, where `UUID` is the known canonical lowercase
+RFC 4122 UUIDv4. Equals syntax, picker/name/search
 values, and positional prompts on resume are excluded. Fresh invocations retain
 their existing safe options and single positional prompt. Continue, print mode,
 and background/fork launch flags remain unsupported reporting paths.
@@ -78,17 +77,12 @@ ovrcr agent doctor claude --json --settings ~/.claude/settings.json
 ```
 
 For a nonstandard Claude executable, add `--executable /path/to/claude`. Doctor
-reports `compatible_versions` separately from `tested_versions`, plus
-`version_compatible` and `version_tested`, the detected version when
-the probe returns a recognized Claude version line, and separate `unsupported`
-or `unavailable` probe status. Its `resume_forms` field describes the forms for
-the detected supported version. Doctor never starts a server and does not certify
-all effective settings sources. The probe waits at most one second for the
-executable's version line. When it misses that budget, doctor reports
-`unavailable` and a managed launch prints `agent admission unavailable;
-running native command`, then runs the native command. A heavily loaded host
-can cause this with a supported version, so rerun on a quieter host before
-treating it as a version problem.
+reports the detected version when the probe returns a recognized Claude version
+line (`probe_status` `probed`, otherwise `unavailable`), `tested_versions` and
+`version_tested` as evidence, and `version_gate: "none"`. Its `resume_forms` field
+is `--resume` and `-r` on every release. Doctor never starts a server and does not
+certify all effective settings sources. The probe waits at most one second for the
+executable's version line; a managed launch never runs it.
 
 ## Launch and inspect
 
@@ -115,7 +109,7 @@ recognized assistant rows in that transcript remain partial conversation usage;
 new distinct rows are added once, while estimated status-line cost remains an
 independent measurement.
 
-On 2.1.268 and later compatible patches, the short spelling preserves the same native argv:
+The short spelling preserves the same native argv:
 
 ```sh
 ovrcr new --project demo --workspace hooks --name resumed -- ovrcr agent run --provider claude -- claude -r 5ebc5f9b-54b5-4928-9955-dc81c23743dd

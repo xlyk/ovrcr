@@ -1,6 +1,6 @@
 # How to install Codex readiness reporting
 
-Use the existing hooks-only adapter from PR #56 with stable Codex CLI **>=0.153.0**. This procedure installs the [last observed root turn contract](codex-reporting-setup.md#what-the-indicator-means). It requires no additional reporter, transcript collector, metrics or notification configuration.
+Use the existing hooks-only adapter from PR #56 with Codex CLI; no Codex version is required or refused. This procedure installs the [last observed root turn contract](codex-reporting-setup.md#what-the-indicator-means). It requires no additional reporter, transcript collector, metrics or notification configuration.
 
 The retained acceptance at `56b84f9` used a disposable macOS fixture. A built artifact, printed configuration and passing doctor are preparation evidence. Mark a host installation ready only after its installed binary, server, effective configuration and native hook delivery pass the check below. Keep preparation, installation and native acceptance results separate.
 
@@ -8,7 +8,7 @@ The retained acceptance at `56b84f9` used a disposable macOS fixture. A built ar
 
 Record the full reviewed OVRCR commit, clean tracked worktree state, build command, artifact path and SHA-256. PR #56 merged as `cadb7a3174701e1666fa0562ebb714593f9d84f3`; use the actual reviewed commit for the artifact being installed and record any source-tree equivalence separately. Package version alone cannot identify the revision.
 
-Set these task-specific variables to inspected absolute paths. `OVRCR_PREP` must be a private task-owned directory. `OVRCR_INSTALL` is the proposed permanent executable, for example `$HOME/.local/bin/ovrcr` when that is the user's chosen installation. Inspect an existing file or symlink before choosing how to replace it. `CODEX_BIN` must have basename `codex` and print a stable `codex-cli 0.153.x` version; select the same executable for doctor and the managed launch. Later patches are compatible by policy; native acceptance evidence remains specific to tested versions.
+Set these task-specific variables to inspected absolute paths. `OVRCR_PREP` must be a private task-owned directory. `OVRCR_INSTALL` is the proposed permanent executable, for example `$HOME/.local/bin/ovrcr` when that is the user's chosen installation. Inspect an existing file or symlink before choosing how to replace it. `CODEX_BIN` must have basename `codex`; select the same executable for doctor and the managed launch. Native acceptance evidence remains specific to tested versions.
 
 ```sh
 OVRCR_CHECKOUT='/absolute/path/to/reviewed/ovrcr'
@@ -54,7 +54,7 @@ For exact Codex 0.153.0, keep existing `hooks.json` bytes unchanged and add only
 
 The candidate composition embeds `OVRCR_CANDIDATE`, because setup uses its own absolute executable path. It is a preparation draft. For the proposed permanent configuration, change only those exact newly generated reporter commands to the reviewed `OVRCR_INSTALL` path, using the shell quoting shown by setup. Retain both drafts and review the full semantic change privately. After installation, regenerate from the permanent binary and confirm its reporters match the proposed change before writing live configuration. Never leave a temporary build path in a permanent hook.
 
-Doctor's `probe_status: supported` means the selected executable passed the exact version probe. `supplied_file_supported` means the supplied TOML contains the expected synchronous reporter commands for the OVRCR binary running doctor. Effective configuration, trust and delivery remain `unverified`. Doctor does not inspect the effective hook list or establish that any handler executed. Verify native source paths, declaration order and trust status separately from dispatch. Doctor neither contacts the server nor tests a native prompt, and its accepted `release_status` is an implementation claim. A path-adjusted draft checked by the candidate binary will correctly fail its exact-path configuration check; verify it with the permanent binary after installation.
+Doctor's `probe_status: probed` means the selected executable answered `--version` (evidence only; no release is required or refused). `supplied_file_supported` means the supplied TOML contains the expected synchronous reporter commands for the OVRCR binary running doctor. Effective configuration, trust and delivery remain `unverified`. Doctor does not inspect the effective hook list or establish that any handler executed. Verify native source paths, declaration order and trust status separately from dispatch. Doctor neither contacts the server nor tests a native prompt, and its accepted `release_status` is an implementation claim. A path-adjusted draft checked by the candidate binary will correctly fail its exact-path configuration check; verify it with the permanent binary after installation.
 
 At this point the binary and configuration change are reviewable. Writing live configuration, replacing an installed binary, changing native trust or transitioning an existing server requires the operator's installation authorization. Preparation alone does not grant it.
 
