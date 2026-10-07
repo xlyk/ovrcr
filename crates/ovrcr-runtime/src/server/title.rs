@@ -2,6 +2,7 @@ use super::*;
 use ovrcr_protocol::{AgentProvider, ConversationReference};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
+use std::fs::File;
 use std::io::{Seek, SeekFrom, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
@@ -63,6 +64,8 @@ pub(super) struct TitleWorker {
     pi_executable: Option<PathBuf>,
     #[cfg(test)]
     after_stdout_read: Option<AfterStdoutRead>,
+    #[cfg(test)]
+    timeout: Option<Duration>,
 }
 
 impl TitleWorker {
@@ -83,6 +86,8 @@ impl TitleWorker {
             pi_executable: None,
             #[cfg(test)]
             after_stdout_read: None,
+            #[cfg(test)]
+            timeout: None,
         }
     }
 
@@ -353,8 +358,8 @@ impl TitleWorker {
                     self.noted_missing_pi = true;
                     self.emit(state, Some(record.id), "Pi missing for this model");
                 }
-                CallResult::Failed => {
-                    self.emit(state, Some(record.id), "call failed or timed out");
+                CallResult::Failed(failure) => {
+                    self.emit(state, Some(record.id), &failure.event());
                     let _ = state.retained.lock().record_subject_attempt(
                         record.id,
                         record.run,
@@ -371,8 +376,8 @@ impl TitleWorker {
         let dir = self
             .root
             .join(format!("call-{}-{}", std::process::id(), self.serial));
-        if fs::create_dir_all(&dir).is_err() {
-            return CallResult::Failed;
+        if let Err(error) = fs::create_dir_all(&dir) {
+            return CallFailure::error(format!("could not create call directory: {error}"));
         }
         let result = self.call_in_dir(model, excerpt, &dir, state);
         let _ = fs::remove_dir_all(&dir);
@@ -402,6 +407,24 @@ impl TitleWorker {
                     .unwrap_or_else(|| PathBuf::from("pi"))
             }
         };
+        let timeout = {
+            #[cfg(test)]
+            {
+                self.timeout.unwrap_or(TITLE_TIMEOUT)
+            }
+            #[cfg(not(test))]
+            {
+                TITLE_TIMEOUT
+            }
+        };
+        // Pi's diagnostics go to a file in the call directory (removed after
+        // the call) so a failure can name its reason without parsing stderr
+        // as protocol data.
+        let stderr_path = dir.join(STDERR_FILE);
+        let stderr = match File::create(&stderr_path) {
+            Ok(file) => Stdio::from(file),
+            Err(_) => Stdio::null(),
+        };
         let mut child = match Command::new(&executable)
             .current_dir(dir)
             .args([
@@ -419,55 +442,73 @@ impl TitleWorker {
                 "--no-themes",
                 "--no-approve",
                 "--offline",
+                // A title call is one throwaway prompt: never persist the
+                // excerpt as a Pi session under ~/.pi/agent/sessions.
+                "--no-session",
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(stderr)
             .process_group(0)
             .spawn()
         {
             Ok(child) => child,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return CallResult::MissingPi,
-            Err(_) => return CallResult::Failed,
+            Err(error) => return CallFailure::error(format!("could not start Pi: {error}")),
         };
-        if let Some(mut stdin) = child.stdin.take() {
+        // Pi's RPC mode treats stdin EOF as an orderly shutdown request and
+        // disposes the in-flight run, so stdin stays open until the run
+        // settles (or the call ends for another reason).
+        let mut stdin = child.stdin.take();
+        if let Some(input) = stdin.as_mut() {
             let prompt = format!(
                 "Name this conversation in a few words. Return only the topic. No quotes, status, secrets, or explanation.\n\n{excerpt}"
             );
             let mut request =
                 match serde_json::to_vec(&json!({"type":"prompt","id":"title","message":prompt})) {
                     Ok(request) => request,
-                    Err(_) => return kill_failed(child),
+                    Err(error) => {
+                        return kill_failed(child, CallFailure::Error(error.to_string()));
+                    }
                 };
             request.push(b'\n');
-            if stdin.write_all(&request).is_err() {
-                return kill_failed(child);
+            if let Err(error) = input.write_all(&request).and_then(|()| input.flush()) {
+                let reason = stderr_reason(&stderr_path).map_or_else(
+                    || format!("could not send the prompt: {error}"),
+                    |tail| format!("could not send the prompt: {error}: {tail}"),
+                );
+                return kill_failed(child, CallFailure::Error(reason));
             }
         }
         let mut stdout = match child.stdout.take() {
             Some(stdout) => stdout,
-            None => return kill_failed(child),
+            None => return kill_failed(child, CallFailure::error_text("Pi stdout unavailable")),
         };
-        if nonblocking(stdout.as_raw_fd()).is_err() {
-            return kill_failed(child);
+        if let Err(error) = nonblocking(stdout.as_raw_fd()) {
+            return kill_failed(child, CallFailure::Error(error.to_string()));
         }
-        let deadline = Instant::now() + TITLE_TIMEOUT;
+        let deadline = Instant::now() + timeout;
         let mut pending = Vec::new();
-        let mut title = None;
+        let mut reply = Reply::default();
         let mut exited = false;
         loop {
-            let fail = move |child| {
+            let fail = move |child, failure| {
                 if exited {
-                    CallResult::Failed
+                    CallResult::Failed(failure)
                 } else {
-                    kill_failed(child)
+                    kill_failed(child, failure)
                 }
             };
             if state.shutdown.load(Ordering::Acquire) {
-                return fail(child);
+                return fail(child, CallFailure::error_text("server shutting down"));
             }
             if Instant::now() >= deadline {
-                return fail(child);
+                // A usable title that arrived without a settle marker still counts.
+                if let Some(title) = reply.title.take() {
+                    drop(stdin);
+                    return finish(child, exited, CallResult::Title(title));
+                }
+                return fail(child, CallFailure::TimedOut(timeout));
             }
             let mut bytes = [0; 4096];
             let stdout_done = match stdout.read(&mut bytes) {
@@ -479,27 +520,37 @@ impl TitleWorker {
                         if line.iter().all(u8::is_ascii_whitespace) {
                             continue;
                         }
-                        if let Ok(event) = serde_json::from_slice::<Value>(&line)
-                            && event["type"] == "message_end"
-                            && event["message"]["role"] == "assistant"
-                            && let Some(cleaned) =
-                                message_text(&event["message"]).and_then(clean_title)
-                        {
-                            title = Some(cleaned);
+                        if let Ok(event) = serde_json::from_slice::<Value>(&line) {
+                            reply.observe(&event);
                         }
                     }
+                    if let Some(reason) = reply.rejected.take() {
+                        return fail(child, CallFailure::Error(reason));
+                    }
                     if pending.len() > 1024 * 1024 {
-                        return fail(child);
+                        return fail(
+                            child,
+                            CallFailure::error_text("Pi reply line exceeded 1 MiB"),
+                        );
+                    }
+                    if reply.done() {
+                        drop(stdin);
+                        return finish(child, exited, reply.into_result(None));
                     }
                     false
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => true,
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => false,
-                Err(_) => return fail(child),
+                Err(error) => {
+                    return fail(
+                        child,
+                        CallFailure::Error(format!("reading Pi output: {error}")),
+                    );
+                }
             };
             if exited {
                 if stdout_done {
-                    return title.map_or(CallResult::Failed, CallResult::Title);
+                    return reply.into_result(Some(exit_reason(None, &stderr_path)));
                 }
                 continue;
             }
@@ -510,23 +561,202 @@ impl TitleWorker {
             match child.try_wait() {
                 Ok(Some(status)) => {
                     if !status.success() {
-                        return CallResult::Failed;
+                        return CallResult::Failed(CallFailure::Error(exit_reason(
+                            Some(status),
+                            &stderr_path,
+                        )));
                     }
                     // Successful exit can precede consuming the final pipe
                     // bytes. Drain available frames without waiting on writers.
                     exited = true;
                 }
                 Ok(None) => thread::sleep(Duration::from_millis(10)),
-                Err(_) => return fail(child),
+                Err(error) => {
+                    return fail(child, CallFailure::Error(error.to_string()));
+                }
             }
         }
     }
 }
 
-fn kill_failed(mut child: Child) -> CallResult {
+const STDERR_FILE: &str = "pi-stderr.log";
+/// How long Pi gets to exit on its own after stdin closes.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+/// Upper bound for a reason carried in a titles event.
+const REASON_LIMIT: usize = 160;
+
+/// What the Pi RPC stream said about the title prompt.
+#[derive(Default)]
+struct Reply {
+    title: Option<String>,
+    /// The last assistant reply had text, but not a usable title.
+    unusable: bool,
+    /// Provider or run failure reported in an assistant `message_end`.
+    model_error: Option<String>,
+    /// Pi refused the prompt command itself (`success: false`).
+    rejected: Option<String>,
+    ended: bool,
+    settled: bool,
+}
+
+impl Reply {
+    fn observe(&mut self, event: &Value) {
+        match event["type"].as_str() {
+            Some("response") if event["success"] == false => {
+                let error = event["error"].as_str().unwrap_or("no reason given");
+                self.rejected = Some(format!("Pi rejected the prompt: {error}"));
+            }
+            Some("message_end") if event["message"]["role"] == "assistant" => {
+                let message = &event["message"];
+                if matches!(message["stopReason"].as_str(), Some("error" | "aborted")) {
+                    let error = message["errorMessage"]
+                        .as_str()
+                        .unwrap_or_else(|| message["stopReason"].as_str().unwrap_or("error"));
+                    self.model_error = Some(error.to_owned());
+                    return;
+                }
+                match message_text(message) {
+                    Some(text) if !text.trim().is_empty() => match clean_title(text) {
+                        Some(cleaned) => {
+                            self.title = Some(cleaned);
+                            self.unusable = false;
+                            self.model_error = None;
+                        }
+                        None => self.unusable = true,
+                    },
+                    _ => {}
+                }
+            }
+            Some("agent_end") => self.ended = true,
+            Some("agent_settled") => self.settled = true,
+            _ => {}
+        }
+    }
+
+    /// Pi will not continue on its own, or a run ended with a usable title.
+    fn done(&self) -> bool {
+        self.settled || (self.ended && self.title.is_some())
+    }
+
+    fn into_result(self, exited_early: Option<String>) -> CallResult {
+        if let Some(title) = self.title {
+            return CallResult::Title(title);
+        }
+        if let Some(error) = self.model_error {
+            return CallResult::Failed(CallFailure::Error(format!("model error: {error}")));
+        }
+        if self.unusable {
+            return CallFailure::error("reply was not a usable title (empty or over 60 chars)");
+        }
+        CallFailure::error(
+            exited_early.unwrap_or_else(|| "Pi finished without an assistant reply".into()),
+        )
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum CallFailure {
+    TimedOut(Duration),
+    Error(String),
+}
+
+impl CallFailure {
+    fn error(reason: impl Into<String>) -> CallResult {
+        CallResult::Failed(Self::Error(reason.into()))
+    }
+
+    fn error_text(reason: &str) -> Self {
+        Self::Error(reason.to_owned())
+    }
+
+    /// The titles event line: names the specific failure, never the excerpt.
+    fn event(&self) -> String {
+        match self {
+            Self::TimedOut(after) => format!("call timed out after {}", seconds(*after)),
+            Self::Error(reason) => format!("call failed: {}", short_reason(reason)),
+        }
+    }
+}
+
+fn seconds(duration: Duration) -> String {
+    if duration.subsec_millis() == 0 {
+        format!("{}s", duration.as_secs())
+    } else {
+        format!("{:.1}s", duration.as_secs_f64())
+    }
+}
+
+/// One line, whitespace collapsed, bounded to `REASON_LIMIT` characters.
+fn short_reason(reason: &str) -> String {
+    let line = reason.split_whitespace().collect::<Vec<_>>().join(" ");
+    if line.chars().count() <= REASON_LIMIT {
+        return if line.is_empty() {
+            "no reason given".into()
+        } else {
+            line
+        };
+    }
+    let mut short: String = line.chars().take(REASON_LIMIT - 1).collect();
+    short.push('…');
+    short
+}
+
+/// Last non-empty stderr line Pi wrote, if any.
+fn stderr_reason(path: &Path) -> Option<String> {
+    let mut file = File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(len.saturating_sub(4096))).ok()?;
+    let mut tail = Vec::new();
+    file.read_to_end(&mut tail).ok()?;
+    String::from_utf8_lossy(&tail)
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_owned)
+}
+
+fn exit_reason(status: Option<std::process::ExitStatus>, stderr: &Path) -> String {
+    use std::os::unix::process::ExitStatusExt;
+    let what = match status {
+        None => "Pi exited before replying".to_owned(),
+        Some(status) => match (status.code(), status.signal()) {
+            (Some(code), _) => format!("Pi exited with code {code}"),
+            (None, Some(signal)) => format!("Pi killed by signal {signal}"),
+            (None, None) => format!("Pi exited: {status}"),
+        },
+    };
+    match stderr_reason(stderr) {
+        Some(tail) => format!("{what}: {tail}"),
+        None => what,
+    }
+}
+
+/// Close out a call that already has its answer: let Pi shut down after
+/// stdin closed, then make sure the process group is gone.
+fn finish(mut child: Child, exited: bool, result: CallResult) -> CallResult {
+    if exited {
+        return result;
+    }
+    let deadline = Instant::now() + SHUTDOWN_GRACE;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+            _ => {
+                let _ = unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
+                let _ = child.wait();
+                break;
+            }
+        }
+    }
+    result
+}
+
+fn kill_failed(mut child: Child, failure: CallFailure) -> CallResult {
     let _ = unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
     let _ = child.wait();
-    CallResult::Failed
+    CallResult::Failed(failure)
 }
 
 fn nonblocking(fd: std::os::fd::RawFd) -> io::Result<()> {
@@ -543,7 +773,7 @@ fn nonblocking(fd: std::os::fd::RawFd) -> io::Result<()> {
 enum CallResult {
     Title(String),
     MissingPi,
-    Failed,
+    Failed(CallFailure),
 }
 
 struct Candidate {
@@ -859,6 +1089,165 @@ mod tests {
         );
     }
 
+    fn fake_pi(root: &Path, name: &str, body: &str) -> PathBuf {
+        let executable = root.join(name);
+        fs::write(&executable, format!("#!/bin/sh\n{body}")).unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+        executable
+    }
+
+    fn call_fake(root: &Path, executable: PathBuf, timeout: Option<Duration>) -> CallResult {
+        let dir = root.join("call");
+        fs::create_dir_all(&dir).unwrap();
+        let mut worker = TitleWorker::new(root.to_path_buf());
+        worker.pi_executable = Some(executable);
+        worker.timeout = timeout;
+        let state = super::super::tests::test_state(None, None);
+        worker.call_in_dir(
+            &TitleModel::parse("fake/model").unwrap(),
+            "private fake excerpt",
+            &dir,
+            &state,
+        )
+    }
+
+    fn failure_event(result: CallResult) -> String {
+        match result {
+            CallResult::Failed(failure) => failure.event(),
+            CallResult::Title(title) => panic!("expected a failure, got title {title:?}"),
+            CallResult::MissingPi => panic!("expected a failure, got MissingPi"),
+        }
+    }
+
+    /// Pi's RPC mode disposes the in-flight run when stdin closes. This fake
+    /// does the same: EOF before the reply exits 0 with no assistant frame.
+    /// The title call must hold stdin open until the run settles.
+    #[test]
+    fn stdin_stays_open_until_the_rpc_run_settles() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = fake_pi(
+            root.path(),
+            "eof-shutdown-pi",
+            r#"IFS= read -r request || exit 2
+printf '%s\n' '{"id":"title","type":"response","command":"prompt","success":true}' '{"type":"agent_start"}'
+exec 3<&0
+{ cat <&3 >/dev/null; : > stdin-closed; } >/dev/null 2>&1 &
+sleep 1
+[ -f stdin-closed ] && exit 0
+printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":""},{"type":"text","text":"Login page CSS fix"}],"stopReason":"stop"}}' '{"type":"agent_end"}' '{"type":"agent_settled"}'
+wait
+exit 0
+"#,
+        );
+        let result = call_fake(root.path(), executable, None);
+        assert!(
+            matches!(result, CallResult::Title(ref title) if title == "Login page CSS fix"),
+            "title call must keep stdin open until agent_settled"
+        );
+    }
+
+    #[test]
+    fn pi_exit_before_reply_names_the_reason() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = fake_pi(
+            root.path(),
+            "early-exit-pi",
+            "IFS= read -r request || exit 2\nprintf '%s\\n' '{\"type\":\"agent_start\"}'\nexit 0\n",
+        );
+        assert_eq!(
+            failure_event(call_fake(root.path(), executable, None)),
+            "call failed: Pi exited before replying"
+        );
+    }
+
+    #[test]
+    fn provider_error_reaches_the_event() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = fake_pi(
+            root.path(),
+            "model-error-pi",
+            r#"IFS= read -r request || exit 2
+printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"xai API error (404): model gone\nsecond line"}}' '{"type":"agent_end"}' '{"type":"agent_settled"}'
+while IFS= read -r line; do :; done
+"#,
+        );
+        assert_eq!(
+            failure_event(call_fake(root.path(), executable, None)),
+            "call failed: model error: xai API error (404): model gone second line"
+        );
+    }
+
+    #[test]
+    fn rejected_prompt_and_stderr_are_reported() {
+        let root = tempfile::tempdir().unwrap();
+        let rejected = fake_pi(
+            root.path(),
+            "rejecting-pi",
+            r#"IFS= read -r request || exit 2
+printf '%s\n' '{"id":"title","type":"response","command":"prompt","success":false,"error":"Model not found: fake/model"}'
+while IFS= read -r line; do :; done
+"#,
+        );
+        assert_eq!(
+            failure_event(call_fake(root.path(), rejected, None)),
+            "call failed: Pi rejected the prompt: Model not found: fake/model"
+        );
+
+        let crashing = fake_pi(
+            root.path(),
+            "crashing-pi",
+            "echo 'warming up' >&2\necho 'error: unknown option --no-themes' >&2\nexit 3\n",
+        );
+        assert_eq!(
+            failure_event(call_fake(root.path(), crashing, None)),
+            "call failed: Pi exited with code 3: error: unknown option --no-themes"
+        );
+    }
+
+    #[test]
+    fn timeout_is_distinct_from_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = fake_pi(
+            root.path(),
+            "silent-pi",
+            "while IFS= read -r line; do :; done\n",
+        );
+        let started = Instant::now();
+        assert_eq!(
+            failure_event(call_fake(
+                root.path(),
+                executable,
+                Some(Duration::from_millis(300))
+            )),
+            "call timed out after 0.3s"
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(
+            CallFailure::TimedOut(TITLE_TIMEOUT).event(),
+            "call timed out after 30s"
+        );
+    }
+
+    #[test]
+    fn unusable_reply_and_long_reasons_are_bounded() {
+        let root = tempfile::tempdir().unwrap();
+        let long = "x".repeat(61);
+        let executable = fake_pi(
+            root.path(),
+            "long-title-pi",
+            &format!(
+                "IFS= read -r request || exit 2\nprintf '%s\\n' '{{\"type\":\"message_end\",\"message\":{{\"role\":\"assistant\",\"content\":\"{long}\"}}}}' '{{\"type\":\"agent_settled\"}}'\nwhile IFS= read -r line; do :; done\n"
+            ),
+        );
+        assert_eq!(
+            failure_event(call_fake(root.path(), executable, None)),
+            "call failed: reply was not a usable title (empty or over 60 chars)"
+        );
+        let event = CallFailure::Error("y ".repeat(400)).event();
+        assert!(event.chars().count() <= "call failed: ".len() + REASON_LIMIT);
+        assert!(event.ends_with('…'));
+    }
+
     #[test]
     fn bounded_tail_extracts_provider_messages() {
         let root = tempfile::tempdir().unwrap();
@@ -1092,7 +1481,11 @@ mod tests {
         worker.pi_executable = Some(failing);
         write_history(" v2");
         worker.tick(&state);
-        assert!(messages().contains(&"call failed or timed out".into()));
+        assert!(
+            messages().contains(&"call failed: Pi exited with code 2".into()),
+            "{:?}",
+            messages()
+        );
 
         worker.tick(&state);
         assert!(messages().contains(&"history unchanged".into()));

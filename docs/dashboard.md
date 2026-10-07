@@ -906,6 +906,13 @@ event the Server records is appended. Events recorded while it is closed appear
 the next time it opens. The list opens on the newest line and stays there until
 you scroll up.
 
+A failed automatic title call names its reason: `call timed out after 30s`
+when Pi did not answer in time, or `call failed: <reason>` otherwise, for
+example `Pi exited with code 2: <last stderr line>`, `model error: <provider
+message>`, or `Pi rejected the prompt: <error>`. OVRCR never puts the
+conversation excerpt in the reason. Title calls run `pi --mode rpc
+--no-session`, so they do not add sessions under `~/.pi/agent/sessions`.
+
 | Key | Action |
 | --- | --- |
 | `/` | Word filter, the same rule as Settings: every word is a case-insensitive substring of the component, the subject, and the message. The time is not searched. Enter keeps the filter. |
