@@ -997,9 +997,11 @@ unavailable footer; macOS Bridge failures include installation or update guidanc
 On macOS install the separately built and signed
 [OVRCR Bridge](../native/bridge/README.md) at `~/Applications/OVRCR Bridge.app`.
 The Dashboard starts it when notifications need it and leaves it running after
-detach. Ordinary CLI rebuilds do not replace that installation. A missing Bridge
-shows installation guidance; an incompatible one shows update guidance. There is
-no Script Editor fallback or automatic Server restart.
+detach. Ordinary CLI rebuilds do not replace that installation. The footer
+distinguishes a missing app ("not installed"), a stale installed app ("needs
+updating") and a running Bridge process older than the installed app ("older
+build"); each points at the offer the next interactive startup makes. There is
+no Script Editor fallback. Startup never restarts the Server without approval.
 
 When saved notifications are enabled at startup, or a successful Server reading
 enables them later, the Dashboard checks permission before waiting for an alert.

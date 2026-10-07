@@ -270,7 +270,7 @@ fn socket_replacement_during_consent_never_receives_shutdown() {
 }
 
 #[test]
-fn incompatible_protocol_refuses_without_prompt_or_shutdown_frame() {
+fn newer_protocol_server_refuses_without_prompt_or_shutdown_frame() {
     use std::io::{Read, Write};
     use std::os::unix::net::UnixListener;
     let fixture = Live::idle();
@@ -283,7 +283,7 @@ fn incompatible_protocol_refuses_without_prompt_or_shutdown_frame() {
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
         let mut preamble = Vec::from(*b"OVRC");
-        preamble.extend_from_slice(&(ovrcr::protocol::PROTOCOL_VERSION - 1).to_be_bytes());
+        preamble.extend_from_slice(&(ovrcr::protocol::PROTOCOL_VERSION + 1).to_be_bytes());
         stream.write_all(&preamble).unwrap();
         ovrcr::protocol::read_preamble(&mut stream).unwrap();
         assert_eq!(
@@ -293,17 +293,163 @@ fn incompatible_protocol_refuses_without_prompt_or_shutdown_frame() {
         );
     });
     let error = connect_dashboard(&fixture.paths(), &mut |_| {
-        panic!("incompatible protocol cannot offer automatic restart")
+        panic!("a newer server must not be replaced by an older CLI")
     })
     .unwrap_err();
     let text = format!("{error:#}");
     assert!(
-        text.contains("matching old CLI")
+        text.contains("older than the running server")
+            && text.contains("newer CLI")
             && text.contains("shutdown --kill")
             && text.contains(&fixture.socket.display().to_string()),
         "{text}"
     );
     responder.join().unwrap();
+}
+
+/// Run `older_protocol_server_child` as a separate process: an accepted
+/// restart signals the socket peer, which must never be this test process.
+fn spawn_older_server(fixture: &Live) -> std::process::Child {
+    fs::create_dir_all(fixture.socket.parent().unwrap()).unwrap();
+    let child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "older_protocol_server_child",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env("OVRCR_SOCKET", &fixture.socket)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !fixture.socket.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "older-protocol fixture did not bind"
+        );
+        std::thread::park_timeout(Duration::from_millis(5));
+    }
+    child
+}
+
+struct OlderServer(std::process::Child);
+
+impl Drop for OlderServer {
+    fn drop(&mut self) {
+        // This test spawned the child; its PID cannot have been reused before
+        // this owner reaps it.
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[test]
+fn accepted_restart_stops_older_protocol_server_and_starts_this_build() {
+    let fixture = Live::idle();
+    let _environment = Environment::new(&fixture, &fixture.executable);
+    let _cleanup = RestartCleanup(&fixture);
+    let mut older = OlderServer(spawn_older_server(&fixture));
+    let mut prompts = Vec::new();
+    let mut stream = connect_dashboard(&fixture.paths(), &mut |prompt| {
+        prompts.push(prompt.to_owned());
+        Ok(true)
+    })
+    .unwrap();
+    assert_eq!(prompts.len(), 1);
+    let protocol = ovrcr::protocol::PROTOCOL_VERSION;
+    assert!(
+        prompts[0].starts_with("Restart OVRCR server\n")
+            && prompts[0].contains(&format!(
+                "an older protocol (server {}, this CLI {protocol})",
+                protocol - 1
+            ))
+            && prompts[0].contains("All running sessions will stop.")
+            && prompts[0].contains("terminal output is not kept")
+            && prompts[0].contains("Reopen starts a fresh shell")
+            && prompts[0].contains(&fixture.socket.display().to_string()),
+        "{}",
+        prompts[0]
+    );
+    assert!(older.0.wait().unwrap().success());
+    assert_eq!(
+        fs::read_to_string(fixture.socket.with_extension("sigterm")).unwrap(),
+        "SIGTERM"
+    );
+    let identity: serde_json::Value = serde_json::from_slice(
+        &fs::read(fixture.socket.with_extension("sock.build.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(identity["executable"].as_str(), fixture.executable.to_str());
+    client::list(&mut stream, 1).unwrap();
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: true }),
+        Response::Ok
+    );
+    wait_stopped(&fixture);
+}
+
+#[test]
+fn declined_older_protocol_restart_sends_no_signal() {
+    let fixture = Live::idle();
+    let _environment = Environment::new(&fixture, &fixture.executable);
+    let mut older = OlderServer(spawn_older_server(&fixture));
+    let mut prompts = 0;
+    let error = connect_dashboard(&fixture.paths(), &mut |prompt| {
+        assert!(prompt.contains("an older protocol"), "{prompt}");
+        prompts += 1;
+        Ok(false)
+    })
+    .expect_err("declining must leave the older server running");
+    assert_eq!(prompts, 1);
+    assert!(format!("{error:#}").contains("declined"), "{error:#}");
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(older.0.try_wait().unwrap().is_none());
+    assert!(fixture.socket.exists());
+    assert!(!fixture.socket.with_extension("sigterm").exists());
+}
+
+#[test]
+fn older_protocol_socket_replacement_during_consent_sends_no_signal() {
+    use std::os::unix::net::UnixListener;
+    let fixture = Live::idle();
+    let _environment = Environment::new(&fixture, &fixture.executable);
+    let mut older = OlderServer(spawn_older_server(&fixture));
+    let original_socket = fixture.socket.with_extension("original");
+    let mut replacement = None;
+    let error = connect_dashboard(&fixture.paths(), &mut |_| {
+        fs::rename(&fixture.socket, &original_socket).unwrap();
+        replacement = Some(UnixListener::bind(&fixture.socket).unwrap());
+        Ok(true)
+    })
+    .expect_err("a newly bound socket is outside the approval");
+    assert!(format!("{error:#}").contains("changed"), "{error:#}");
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(older.0.try_wait().unwrap().is_none());
+    assert!(!fixture.socket.with_extension("sigterm").exists());
+    drop(replacement);
+}
+
+#[test]
+fn server_sigterm_runs_kill_shutdown_and_stops_sessions() {
+    // The older-protocol restart relies on this signal contract.
+    let fixture = serving_fixture();
+    fixture.ready("sigterm-restart");
+    let groups = fixture.session_groups();
+    assert!(!groups.is_empty());
+    for group in &groups {
+        fixture.own_group(*group);
+    }
+    let pid = fixture.server_pid().unwrap();
+    assert_eq!(unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) }, 0);
+    assert!(fixture.join_within(Duration::from_secs(10)).is_finished());
+    assert!(!fixture.socket.exists());
+    for group in groups {
+        assert!(!live::group_exists(group));
+        fixture.forget_group(group);
+    }
 }
 
 #[test]
@@ -638,4 +784,40 @@ fn startup_peer_child() {
     );
     drop(listener);
     fs::remove_file(socket).unwrap();
+}
+
+#[test]
+#[ignore = "subprocess fixture for older-protocol restart tests"]
+fn older_protocol_server_child() {
+    use std::io::Write;
+    use std::os::unix::net::UnixListener;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let socket = std::path::PathBuf::from(std::env::var_os("OVRCR_SOCKET").unwrap());
+    let stopped = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(libc::SIGTERM, Arc::clone(&stopped)).unwrap();
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !stopped.load(Ordering::Acquire) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "older-protocol fixture was never stopped"
+        );
+        if let Ok((mut stream, _)) = listener.accept() {
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_millis(200)))
+                .unwrap();
+            let mut preamble = Vec::from(*b"OVRC");
+            preamble.extend_from_slice(&(ovrcr::protocol::PROTOCOL_VERSION - 1).to_be_bytes());
+            let _ = stream.write_all(&preamble);
+            let _ = ovrcr::protocol::read_preamble(&mut stream);
+        }
+        std::thread::park_timeout(Duration::from_millis(5));
+    }
+    // Mirror the server's signal shutdown: remove the socket, then exit cleanly.
+    fs::write(socket.with_extension("sigterm"), "SIGTERM").unwrap();
+    drop(listener);
+    fs::remove_file(&socket).unwrap();
 }

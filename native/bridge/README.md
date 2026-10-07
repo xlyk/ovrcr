@@ -31,6 +31,11 @@ build, callback CLI, entitlement and sound/license hashes. The cache fingerprint
 includes the supplied CLI bytes, so an unchanged native source cannot retain an
 older callback helper after a CLI rebuild. The package command requires the
 reviewed CLI as its second argument; `just run` supplies the CLI it just built.
+For a release or other PATH install, `just install-startup-assets [CLI]` packages
+for that installed CLI (default `~/.local/bin/ovrcr`) and publishes the payload
+to `~/.local/lib/ovrcr`; `just install-release` builds, installs and packages
+in one step. Startup refuses to repair from assets whose wire, schema or callback
+CLI differ from the running CLI and names that command instead.
 The relocated checks preserve installer refusal without an identity and reject
 changed helper metadata, missing entitlements, altered purpose and sound bytes.
 
@@ -89,12 +94,22 @@ installation. Use a unique bundle ID, distinguishable display name and owned
 destination together. These options validate metadata; they do not modify the
 source bundle. The builder retains the fixed production defaults.
 
-Updating the disk bundle leaves an already running Bridge process in place.
-A new client can therefore receive `incompatible` from an older endpoint.
-After an intentional update, use Activity Monitor to inspect the selected
-`OVRCRBridge` process's executable path, confirm it belongs to this installation,
-and quit that exact process. The next opted-in Dashboard request starts the
-installed app. Never terminate unrelated processes by a broad name match.
+The installer leaves an already running Bridge process in place, so a new
+client can receive `incompatible` from an older endpoint. Interactive startup
+looks up running apps with the selected bundle ID through LaunchServices
+(`lsappinfo`). A process whose executable is this installation's and which
+started before the installed executable last changed is stale. After an accepted
+install or repair startup quits it (SIGTERM, after rechecking the PID's start
+time) and relaunches the installed app with `open -g`. With an already valid
+installation it asks first ("Restart OVRCR Bridge", default no). A same-ID app
+running from another path is only reported. Startup never matches processes by
+name and never sends SIGKILL; a process that does not quit within three seconds
+is reported for Activity Monitor.
+
+When the Dashboard receives `incompatible`, it runs the installed client's
+`--check-contract` guard to tell a stale installed app ("needs updating") from
+a stale running process ("Running OVRCR Bridge is an older build"). A missing
+app shows "OVRCR Bridge not installed".
 
 The client executable is
 `~/Applications/OVRCR Bridge.app/Contents/MacOS/OVRCRBridge --client`. Feed one

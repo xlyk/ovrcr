@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use ovrcr_protocol::exchange_preamble;
+use ovrcr_protocol::{PROTOCOL_VERSION, ProtocolMismatch, exchange_preamble};
 use ovrcr_runtime::server::build_identity::{executable_build, read_server_build, socket_identity};
 use ovrcr_runtime::server::{ServerPaths, prepare_socket_directory};
 use std::fs::{File, OpenOptions};
@@ -197,18 +197,37 @@ pub fn connect_dashboard(
     let peer = peer_pid(&stream)?;
     let service = crate::service::dashboard_service(paths, &executable, Some(&stream))?;
     if let Err(error) = handshake(&mut stream, &paths.socket) {
-        let detail = error
+        let mismatch = error
             .chain()
-            .find_map(|cause| {
-                let text = cause.to_string();
-                text.starts_with("protocol version mismatch")
-                    .then(|| text.split(';').next().unwrap().to_owned())
-            })
-            .unwrap_or_else(|| format!("{error:#}"));
-        bail!(
-            "{detail}; automatic restart refused for {}. Use the matching old CLI with OVRCR_SOCKET set to this socket and `shutdown --kill`, or its matching CLI's `service stop`, then retry",
-            paths.socket.display()
-        );
+            .find_map(|cause| cause.downcast_ref::<ProtocolMismatch>())
+            .copied();
+        match mismatch {
+            Some(ProtocolMismatch { peer: wire }) if wire < PROTOCOL_VERSION => {
+                let captured = read_server_build(&paths.socket, peer).ok();
+                drop(stream);
+                return restart_older_protocol(
+                    paths,
+                    confirm,
+                    OlderServer {
+                        peer,
+                        wire,
+                        socket,
+                        captured,
+                        service,
+                        executable,
+                        intended,
+                    },
+                );
+            }
+            Some(ProtocolMismatch { peer: wire }) => bail!(
+                "protocol version mismatch: the server speaks version {wire} but this client speaks version {PROTOCOL_VERSION}; this CLI is older than the running server, so no restart is offered for {}. Use the server's newer CLI, or stop that server with it (`shutdown --kill` or `service stop`), then retry",
+                paths.socket.display()
+            ),
+            None => bail!(
+                "{error:#}; automatic restart refused for {}. Use the matching old CLI with OVRCR_SOCKET set to this socket and `shutdown --kill`, or its matching CLI's `service stop`, then retry",
+                paths.socket.display()
+            ),
+        }
     }
     let captured = read_server_build(&paths.socket, peer).ok();
     if captured
@@ -222,11 +241,7 @@ pub fn connect_dashboard(
     } else {
         "an unknown build (legacy or invalid identity)"
     };
-    if !confirm(&format!(
-        "Restart OVRCR server\nSocket: {}\nRunning build: {reason}\nReplacement: {}\n\nAll running sessions will stop.",
-        paths.socket.display(),
-        executable.display()
-    ))? {
+    if !confirm(&restart_prompt(&paths.socket, reason, &executable))? {
         bail!(
             "server restart declined for {}; running sessions were left untouched. Retry and approve the separate restart offer, or use the matching CLI to stop this server",
             paths.socket.display()
@@ -247,21 +262,12 @@ pub fn connect_dashboard(
     stream.set_write_timeout(Some(STOP_TIMEOUT))?;
     ovrcr_protocol::client::shutdown(&mut stream, 1, true)
         .context("controlled server restart refused or failed; no process signal was sent")?;
-    let deadline = Instant::now() + STOP_TIMEOUT;
-    loop {
-        match std::fs::symlink_metadata(&paths.socket) {
-            Err(error) if error.kind() == io::ErrorKind::NotFound => break,
-            Err(error) => return Err(error).context("wait for checked server socket removal"),
-            Ok(_) if socket_identity(&paths.socket)? != socket => bail!(
-                "a replacement server appeared during controlled shutdown; retry Dashboard startup"
-            ),
-            Ok(_) => {}
-        }
-        if Instant::now() >= deadline {
-            bail!("timed out waiting for controlled server shutdown; no process signal was sent");
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
+    wait_socket_removed(
+        paths,
+        socket,
+        STOP_TIMEOUT,
+        "timed out waiting for controlled server shutdown; no process signal was sent",
+    )?;
     drop(stream);
     if crate::service::dashboard_service(paths, &executable, None)? != service
         || executable_build(&executable)? != intended
@@ -270,6 +276,115 @@ pub fn connect_dashboard(
     }
     let stream = connect_or_start(paths)?;
     check_started_build(paths, stream, &intended)
+}
+
+/// The restart offer shared by stale-build and older-protocol servers. Session
+/// wording follows `request_shutdown(kill = true)` and retained-row recovery.
+fn restart_prompt(socket: &Path, running: &str, replacement: &Path) -> String {
+    format!(
+        "Restart OVRCR server\nSocket: {}\nRunning build: {running}\nReplacement: {}\n\nAll running sessions will stop.\nTheir processes are terminated and terminal output is not kept.\nSession rows stay: Reopen starts a fresh shell, and certified\nagent conversations offer Resume conversation.",
+        socket.display(),
+        replacement.display()
+    )
+}
+
+/// A connected server that completed the preamble with an older protocol
+/// version. No frame can be exchanged with it, so a restart cannot use the
+/// controlled `Shutdown` request.
+struct OlderServer {
+    peer: u32,
+    wire: u32,
+    socket: (u64, u64),
+    captured: Option<ovrcr_runtime::server::build_identity::ServerBuild>,
+    service: Option<String>,
+    executable: PathBuf,
+    intended: ovrcr_runtime::server::build_identity::ExecutableBuild,
+}
+
+/// Restart an older-protocol server only after approval. SIGTERM runs the
+/// server's own `request_shutdown(kill = true)`, the same path as
+/// `shutdown --kill`; that handler predates the protocol preamble, so every
+/// server able to report an older version handles it. The signal goes only to
+/// the kernel-reported peer of a fresh connection to the unchanged socket.
+fn restart_older_protocol(
+    paths: &ServerPaths,
+    confirm: &mut impl FnMut(&str) -> Result<bool>,
+    server: OlderServer,
+) -> Result<UnixStream> {
+    let running = format!(
+        "an older protocol (server {}, this CLI {PROTOCOL_VERSION})",
+        server.wire
+    );
+    if !confirm(&restart_prompt(&paths.socket, &running, &server.executable))? {
+        bail!(
+            "server restart declined for {}; running sessions were left untouched. Retry and approve the separate restart offer, or use the matching old CLI to stop this server",
+            paths.socket.display()
+        );
+    }
+    let Some(check) = connect_raw_if_running(paths)? else {
+        bail!(
+            "server stopped during restart approval; no signal was sent; retry Dashboard startup"
+        );
+    };
+    if socket_identity(&paths.socket)? != server.socket
+        || peer_pid(&check)? != server.peer
+        || read_server_build(&paths.socket, server.peer).ok() != server.captured
+        || executable_build(&server.executable)? != server.intended
+        || crate::service::dashboard_service(paths, &server.executable, Some(&check))?
+            != server.service
+    {
+        bail!(
+            "server, executable or service changed during restart approval; no signal was sent; retry Dashboard startup"
+        );
+    }
+    let pid = libc::pid_t::try_from(server.peer).context("server process identity")?;
+    // SAFETY: kill has no memory effects; the PID is the checked socket peer.
+    if unsafe { libc::kill(pid, libc::SIGTERM) } == -1 {
+        return Err(io::Error::last_os_error())
+            .context("signal older-protocol server for controlled shutdown");
+    }
+    drop(check);
+    // Termination waits up to the server's per-session kill grace (5s) before
+    // removing its socket.
+    wait_socket_removed(
+        paths,
+        server.socket,
+        Duration::from_secs(20),
+        &format!(
+            "timed out waiting for the older server (pid {}) to stop after SIGTERM; check it before retrying",
+            server.peer
+        ),
+    )?;
+    if crate::service::dashboard_service(paths, &server.executable, None)? != server.service
+        || executable_build(&server.executable)? != server.intended
+    {
+        bail!("executable or service changed during server shutdown; retry Dashboard startup");
+    }
+    let stream = connect_or_start(paths)?;
+    check_started_build(paths, stream, &server.intended)
+}
+
+fn wait_socket_removed(
+    paths: &ServerPaths,
+    socket: (u64, u64),
+    timeout: Duration,
+    timed_out: &str,
+) -> Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match std::fs::symlink_metadata(&paths.socket) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error).context("wait for checked server socket removal"),
+            Ok(_) if socket_identity(&paths.socket)? != socket => bail!(
+                "a replacement server appeared during controlled shutdown; retry Dashboard startup"
+            ),
+            Ok(_) => {}
+        }
+        if Instant::now() >= deadline {
+            bail!("{timed_out}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn check_started_build(
