@@ -646,6 +646,13 @@ impl Dashboard {
 
     /// Active Design tokens for the current settings theme.
     pub(crate) fn theme_tokens(&self) -> crate::theme::ThemeTokens {
+        if self
+            .details
+            .is_some_and(|(details, _)| details == super::quota::Details::Settings)
+            && let Some(theme) = self.settings_editor.preview_theme
+        {
+            return crate::theme::ThemeTokens::for_id(theme);
+        }
         self.theme
     }
 
@@ -661,6 +668,14 @@ impl Dashboard {
         let count = report.findings.len();
         let before = std::mem::replace(&mut self.settings, report.settings.clone());
         self.theme = crate::theme::ThemeTokens::for_id(self.settings.theme);
+        if self.settings_editor.preview_request.is_some()
+            && self.settings_editor.preview_theme == Some(self.settings.theme)
+        {
+            // The persisted reading confirms the highlighted preview was
+            // saved. The cached persisted palette now supplies the same colors.
+            self.settings_editor.preview_theme = None;
+            self.settings_editor.preview_request = None;
+        }
         if previous.is_some() {
             self.settings_changed_notice(&before);
         }

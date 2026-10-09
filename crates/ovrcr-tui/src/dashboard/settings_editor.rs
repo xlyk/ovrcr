@@ -11,7 +11,9 @@ use super::{Dashboard, DashboardAction};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 #[cfg(target_os = "macos")]
 use ovrcr_protocol::ReadySoundChoice;
-use ovrcr_protocol::{ClientMessage, Request, Response, SettingSource, SettingsReport, ThemeId};
+use ovrcr_protocol::{
+    ClientMessage, Request, Response, SettingSource, SettingsReport, ThemeAppearance, ThemeId,
+};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -24,6 +26,7 @@ use std::collections::HashMap;
 pub(super) const TITLE: &str =
     "Settings · Enter edit · [ up · ] down · r reset · x remove · / filter · Esc close";
 const UNPARSEABLE: &str = "Editing is off until dashboard.toml is fixed by hand.";
+const PICK_VISIBLE_ROWS: usize = 6;
 
 #[derive(Default)]
 pub(super) struct Editor {
@@ -38,6 +41,12 @@ pub(super) struct Editor {
     /// The Server's refusal, by row id, until that row is edited again.
     refused: HashMap<String, String>,
     notice: Option<String>,
+    /// A transient theme shown while browsing the theme picker. The Server's
+    /// settings remain authoritative and are never changed by previewing.
+    pub(super) preview_theme: Option<ThemeId>,
+    /// A preview committed through SetSetting remains visible until the
+    /// Server publishes the resulting settings report.
+    pub(super) preview_request: Option<u64>,
 }
 
 struct Edit {
@@ -51,6 +60,8 @@ impl Editor {
     pub(super) fn cancel_draft(&mut self) {
         self.edit = None;
         self.filtering = false;
+        self.preview_theme = None;
+        self.preview_request = None;
     }
 }
 
@@ -400,6 +411,13 @@ fn theme_choice_labels(mut row: Row, settings: &ovrcr_protocol::Settings) -> Row
             .as_deref()
             .and_then(ThemeId::parse)
             .map(|choice| choice.label().into());
+        if let Some(about) = row
+            .about
+            .iter_mut()
+            .find(|about| about.starts_with("Changing theme updates the Dashboard"))
+        {
+            *about = "The highlighted choice previews across the Dashboard. Enter saves it; Esc restores the saved theme.".into();
+        }
     }
     row
 }
@@ -444,6 +462,7 @@ fn editor_kind(
 /// Greedy word wrap to `room` cells; a word longer than `room` stays whole.
 fn wrap(text: &str, room: usize) -> Vec<String> {
     use unicode_width::UnicodeWidthStr;
+
     let mut lines = vec![String::new()];
     for word in text.split(' ') {
         let line = lines.last_mut().expect("never empty");
@@ -554,10 +573,13 @@ impl Dashboard {
     }
 
     fn send_setting(&mut self, row: &str, path: String, value: Option<String>) -> DashboardAction {
+        let request_id = self.next_request_id();
         let editor = &mut self.settings_editor;
         editor.refused.remove(row);
         editor.edit = None;
-        let request_id = self.next_request_id();
+        if row == ThemeId::KEY && editor.preview_theme.is_some() {
+            editor.preview_request = Some(request_id);
+        }
         self.settings_editor
             .pending
             .insert(request_id, row.to_string());
@@ -583,6 +605,11 @@ impl Dashboard {
             return DashboardAction::None;
         }
         self.settings_editor.notice = None;
+        if super::input::is_browse_key(key) {
+            self.settings_editor.cancel_draft();
+            self.details = None;
+            return DashboardAction::Redraw;
+        }
         if self.settings_editor.edit.is_some() {
             return self.edit_key(key);
         }
@@ -605,15 +632,14 @@ impl Dashboard {
             }
             return DashboardAction::Redraw;
         }
-        if super::input::is_browse_key(key) {
-            self.details = None;
-            return DashboardAction::Redraw;
-        }
         match key.code {
             KeyCode::Esc if !self.settings_editor.filter.is_empty() => {
                 self.settings_editor.filter.clear();
             }
-            KeyCode::Esc => self.details = None,
+            KeyCode::Esc => {
+                self.settings_editor.cancel_draft();
+                self.details = None;
+            }
             KeyCode::Char('/') => {
                 let editor = &mut self.settings_editor;
                 editor.filtering = true;
@@ -740,7 +766,41 @@ impl Dashboard {
                 return self.send_setting(&row.id, row.path, Some((!on).to_string()));
             }
             Kind::Pick(options) => {
+                let mut options = options;
+                let mut sections = Vec::new();
+                if row.id == ThemeId::KEY {
+                    options.sort_by_key(|item| {
+                        ThemeId::ALL
+                            .iter()
+                            .position(|theme| theme.label() == item.label)
+                            .map(|index| {
+                                let theme = ThemeId::ALL[index];
+                                let appearance = match theme.appearance() {
+                                    ThemeAppearance::Dark => 0,
+                                    ThemeAppearance::Light => 1,
+                                };
+                                (appearance, index)
+                            })
+                            .unwrap_or((usize::MAX, usize::MAX))
+                    });
+                    sections = options
+                        .iter()
+                        .filter_map(|item| {
+                            let theme = ThemeId::ALL
+                                .iter()
+                                .find(|theme| theme.label() == item.label)?;
+                            let section = match theme.appearance() {
+                                ThemeAppearance::Dark => "Dark",
+                                ThemeAppearance::Light => "Light",
+                            };
+                            Some((item.value.clone(), section.to_string()))
+                        })
+                        .collect();
+                }
                 let mut list = PickList::new(options);
+                if !sections.is_empty() {
+                    list = list.with_sections(sections);
+                }
                 if let Some(index) = list.items.iter().position(|item| item.label == row.value) {
                     list.selected = index;
                 }
@@ -752,6 +812,12 @@ impl Dashboard {
         }
         self.settings_editor.cursor = TextCursor::default();
         self.settings_editor.edit = Some(edit);
+        if row.id == ThemeId::KEY {
+            // A new draft owns its preview; older requests still report their
+            // outcome on the row, but cannot clear the new highlight.
+            self.settings_editor.preview_request = None;
+            self.update_theme_preview();
+        }
         DashboardAction::Redraw
     }
 
@@ -764,6 +830,20 @@ impl Dashboard {
             (KeyCode::Enter, ..) => return self.commit_edit(),
             (KeyCode::Up | KeyCode::Down, Some(list), _) => {
                 list.move_selection(if key.code == KeyCode::Up { -1 } else { 1 })
+            }
+            (KeyCode::PageUp | KeyCode::PageDown, Some(list), _) => {
+                list.move_selection(if key.code == KeyCode::PageUp {
+                    -(PICK_VISIBLE_ROWS as isize)
+                } else {
+                    PICK_VISIBLE_ROWS as isize
+                })
+            }
+            (KeyCode::Home | KeyCode::End, Some(list), _) => {
+                list.move_selection(if key.code == KeyCode::Home {
+                    isize::MIN / 2
+                } else {
+                    isize::MAX / 2
+                })
             }
             (KeyCode::Up | KeyCode::Down, None, Some(picker)) => {
                 let listing = picker.listing(&edit.text, &roots).clone();
@@ -801,7 +881,26 @@ impl Dashboard {
         {
             picker.listing(&edit.text, &roots);
         }
+        self.update_theme_preview();
         DashboardAction::Redraw
+    }
+
+    /// Follow the highlighted theme option without sending a settings
+    /// request. No selection means the persisted theme is shown again.
+    fn update_theme_preview(&mut self) {
+        let candidate = self.settings_editor.edit.as_ref().and_then(|edit| {
+            if edit.row != ThemeId::KEY {
+                return None;
+            }
+            let label = &edit.pick.as_ref()?.accepted()?.label;
+            ThemeId::ALL
+                .iter()
+                .copied()
+                .find(|theme| theme.label() == label)
+        });
+        // Keep the saved theme explicit too: submitting it must remain tracked
+        // when an earlier save publishes a different theme afterward.
+        self.settings_editor.preview_theme = candidate;
     }
 
     pub(super) fn settings_editor_paste(&mut self, text: &str) -> DashboardAction {
@@ -821,6 +920,7 @@ impl Dashboard {
             }
             None => return DashboardAction::None,
         }
+        self.update_theme_preview();
         DashboardAction::Redraw
     }
 
@@ -891,6 +991,10 @@ impl Dashboard {
         };
         if let Response::Error { message, .. } = response {
             self.settings_editor.refused.insert(row, message.clone());
+            if self.settings_editor.preview_request == Some(request_id) {
+                self.settings_editor.preview_request = None;
+                self.settings_editor.preview_theme = None;
+            }
         }
         true
     }
@@ -1047,7 +1151,7 @@ impl Dashboard {
                     if !list.query.is_empty() {
                         lines.push(detail(format!("filter: {}", list.query), MAUVE()));
                     }
-                    let (options, _) = list.lines(6);
+                    let (options, _) = list.lines(PICK_VISIBLE_ROWS);
                     lines.extend(options.into_iter().map(|line| {
                         let mut spans = vec![Span::raw(format!("    {indent}"))];
                         spans.extend(
@@ -1064,9 +1168,11 @@ impl Dashboard {
                         lines.push(detail(format!("{mark} {}", entry.label), SUBTEXT()));
                     }
                 }
-                lines.push(detail(
+                lines.extend(wrapped(
                     match (&row.kind, edit.pick.is_some()) {
-                        (_, true) => "↑↓ choose · Enter save · Esc cancel".into(),
+                        (_, true) => {
+                            "↑↓ choose · PgUp/PgDn page · Home/End · Enter save · Esc cancel".into()
+                        }
                         (Kind::Toml, _) => {
                             "TOML array, e.g. [\"claude\", \"--verbose\"] · Enter save · Esc cancel"
                                 .into()
@@ -1299,6 +1405,344 @@ mod tests {
             }) => (path, value),
             other => panic!("expected SetSetting, got {other:?}"),
         }
+    }
+
+    fn choose_next_theme(dashboard: &mut super::super::Dashboard) -> ThemeId {
+        dashboard.settings_editor.selected = Some(ThemeId::KEY.into());
+        dashboard.key(KeyCode::Enter);
+        dashboard.key(KeyCode::Down);
+        dashboard.settings_editor.preview_theme.unwrap()
+    }
+
+    #[test]
+    fn theme_picker_page_and_boundary_keys_preview_without_saving() {
+        let mut d = editor(false);
+        d.settings_editor.selected = Some(ThemeId::KEY.into());
+        d.key(KeyCode::Enter);
+        let list = d
+            .settings_editor
+            .edit
+            .as_ref()
+            .unwrap()
+            .pick
+            .as_ref()
+            .unwrap();
+        let choices: Vec<_> = list
+            .items
+            .iter()
+            .map(|item| {
+                ThemeId::ALL
+                    .iter()
+                    .copied()
+                    .find(|theme| theme.label() == item.label)
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(choices.len(), 80);
+        for (key, index) in [
+            (KeyCode::PageDown, 6),
+            (KeyCode::PageDown, 12),
+            (KeyCode::PageUp, 6),
+            (KeyCode::End, 79),
+            (KeyCode::PageDown, 79),
+            (KeyCode::Home, 0),
+            (KeyCode::PageUp, 0),
+        ] {
+            assert!(matches!(d.key(key), DashboardAction::Redraw));
+            assert_eq!(
+                d.theme_tokens(),
+                crate::theme::ThemeTokens::for_id(choices[index]),
+                "{key:?}"
+            );
+            assert_eq!(d.settings.theme, ThemeId::Dark);
+            assert!(d.settings_editor.pending.is_empty());
+            assert!(d.drain_outbox().is_empty());
+        }
+        d.key(KeyCode::Esc);
+        assert_eq!(d.settings_editor.preview_theme, None);
+        assert_eq!(d.theme_tokens(), crate::theme::ThemeTokens::dark());
+    }
+
+    #[test]
+    fn theme_picker_pasted_filter_previews_and_no_matches_restores_saved_theme() {
+        let mut d = editor(false);
+        d.settings_editor.selected = Some(ThemeId::KEY.into());
+        d.key(KeyCode::Enter);
+        d.settings_editor_paste("Solarized Light");
+        assert_eq!(
+            d.settings_editor.preview_theme,
+            Some(ThemeId::SolarizedLight)
+        );
+        assert_eq!(
+            d.theme_tokens(),
+            crate::theme::ThemeTokens::for_id(ThemeId::SolarizedLight)
+        );
+        assert_eq!(d.settings.theme, ThemeId::Dark);
+        d.settings_editor_paste("no-such-theme");
+        assert_eq!(d.settings_editor.preview_theme, None);
+        assert_eq!(d.theme_tokens(), crate::theme::ThemeTokens::dark());
+        assert!(d.settings_editor.pending.is_empty());
+        assert!(d.drain_outbox().is_empty());
+    }
+
+    #[test]
+    fn theme_picker_groups_dark_then_light_and_mouse_wheel_previews() {
+        use crossterm::event::{MouseEvent, MouseEventKind};
+        use ovrcr_protocol::ThemeAppearance;
+
+        let mut d = editor(false);
+        d.settings_editor.selected = Some(ThemeId::KEY.into());
+        d.key(KeyCode::Enter);
+        let list = d
+            .settings_editor
+            .edit
+            .as_ref()
+            .unwrap()
+            .pick
+            .as_ref()
+            .unwrap();
+        let labels: Vec<_> = list.items.iter().map(|item| item.label.as_str()).collect();
+        let first_light = labels
+            .iter()
+            .position(|label| {
+                ThemeId::ALL
+                    .iter()
+                    .find(|theme| theme.label() == *label)
+                    .is_some_and(|theme| theme.appearance() == ThemeAppearance::Light)
+            })
+            .unwrap();
+        assert_eq!(labels.len(), 80);
+        assert_eq!(first_light, 54);
+        assert_eq!(labels.len() - first_light, 26);
+        assert!(labels[..first_light].iter().all(|label| {
+            ThemeId::ALL
+                .iter()
+                .find(|theme| theme.label() == *label)
+                .is_some_and(|theme| theme.appearance() == ThemeAppearance::Dark)
+        }));
+        assert!(labels[first_light..].iter().all(|label| {
+            ThemeId::ALL
+                .iter()
+                .find(|theme| theme.label() == *label)
+                .is_some_and(|theme| theme.appearance() == ThemeAppearance::Light)
+        }));
+
+        // Settings wheel input follows the same selection path as Down/Up.
+        d.details_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 1,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(d.settings_editor.preview_theme, Some(ThemeId::TokyoNight));
+        d.details_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 1,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(d.settings_editor.preview_theme, Some(ThemeId::Dark));
+        assert_eq!(d.theme_tokens(), crate::theme::ThemeTokens::dark());
+    }
+
+    #[test]
+    fn theme_picker_preview_is_transient_until_server_confirms_the_save() {
+        use ovrcr_protocol::{ServerEvent, ServerMessage};
+
+        let mut d = editor(false);
+        assert_eq!(d.settings.theme, ThemeId::Dark);
+        assert_eq!(d.theme_tokens(), crate::theme::ThemeTokens::dark());
+
+        // Repeated navigation previews the current highlighted option, then
+        // returns to the persisted theme when the user moves back to it.
+        d.settings_editor.selected = Some(ThemeId::KEY.into());
+        d.key(KeyCode::Enter);
+        d.key(KeyCode::Down);
+        let first = d.settings_editor.preview_theme.unwrap();
+        assert_eq!(d.theme_tokens(), crate::theme::ThemeTokens::for_id(first));
+        d.key(KeyCode::Down);
+        let second = d.settings_editor.preview_theme.unwrap();
+        assert_ne!(first, second);
+        d.key(KeyCode::Up);
+        assert_eq!(d.settings_editor.preview_theme, Some(first));
+        d.key(KeyCode::Up);
+        assert_eq!(d.settings_editor.preview_theme, Some(ThemeId::Dark));
+        assert_eq!(d.theme_tokens(), crate::theme::ThemeTokens::dark());
+
+        // Escape cancels a preview; reopening starts clean from the saved value.
+        d.key(KeyCode::Down);
+        d.key(KeyCode::Esc);
+        assert_eq!(d.settings_editor.preview_theme, None);
+        assert_eq!(d.theme_tokens(), crate::theme::ThemeTokens::dark());
+        d.open_details(super::super::quota::Details::Settings);
+        assert_eq!(d.settings_editor.preview_theme, None);
+
+        // Enter sends the ordinary SetSetting request without optimistic
+        // mutation; the transient preview remains until the Server reading.
+        let candidate = choose_next_theme(&mut d);
+        let DashboardAction::Request(ClientMessage {
+            request_id,
+            request: Request::SetSetting { path, value },
+        }) = d.key(KeyCode::Enter)
+        else {
+            panic!("expected theme setting request");
+        };
+        assert_eq!(path, ThemeId::KEY);
+        assert_eq!(value, Some(toml_string(candidate.as_str())));
+        assert_eq!(d.settings.theme, ThemeId::Dark);
+        assert_eq!(
+            d.theme_tokens(),
+            crate::theme::ThemeTokens::for_id(candidate)
+        );
+
+        // Another persisted setting update cannot overwrite an active preview.
+        let mut external = d.settings.clone();
+        external.theme = ThemeId::Light;
+        d.handle_server_message(ServerMessage::Event(ServerEvent::SettingsChanged(
+            Box::new(report(external, Vec::new())),
+        )));
+        assert_eq!(d.settings.theme, ThemeId::Light);
+        assert_eq!(
+            d.theme_tokens(),
+            crate::theme::ThemeTokens::for_id(candidate)
+        );
+
+        // A refused save drops only the preview and restores the latest
+        // persisted value, including an intervening external change.
+        d.handle_server_message(ServerMessage::Response {
+            request_id,
+            response: Response::Error {
+                code: ovrcr_protocol::ErrorCode::InvalidRequest,
+                message: "fixture save refused".into(),
+            },
+        });
+        assert_eq!(d.settings_editor.preview_theme, None);
+        assert_eq!(d.theme_tokens(), crate::theme::ThemeTokens::light());
+
+        // A new successful save is confirmed by the next SettingsChanged.
+        d.open_details(super::super::quota::Details::Settings);
+        d.settings_editor.selected = Some(ThemeId::KEY.into());
+        d.key(KeyCode::Enter);
+        // Select a value other than the persisted Light choice.
+        let light_index = d
+            .settings_editor
+            .edit
+            .as_ref()
+            .unwrap()
+            .pick
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .position(|item| item.label == ThemeId::Light.label())
+            .unwrap();
+        d.key(if light_index > 0 {
+            KeyCode::Up
+        } else {
+            KeyCode::Down
+        });
+        let candidate = d.settings_editor.preview_theme.unwrap();
+        let DashboardAction::Request(ClientMessage { .. }) = d.key(KeyCode::Enter) else {
+            panic!("expected theme setting request");
+        };
+        let mut saved = d.settings.clone();
+        saved.theme = candidate;
+        d.handle_server_message(ServerMessage::Event(ServerEvent::SettingsChanged(
+            Box::new(report(saved, Vec::new())),
+        )));
+        assert_eq!(d.settings.theme, candidate);
+        assert_eq!(d.settings_editor.preview_theme, None);
+        assert_eq!(d.settings_editor.preview_request, None);
+        assert_eq!(
+            d.theme_tokens(),
+            crate::theme::ThemeTokens::for_id(candidate)
+        );
+
+        // Closing Settings also removes any uncommitted preview.
+        d.open_details(super::super::quota::Details::Settings);
+        d.settings_editor.selected = Some(ThemeId::KEY.into());
+        d.key(KeyCode::Enter);
+        d.key(KeyCode::Down);
+        assert!(d.settings_editor.preview_theme.is_some());
+        d.key(KeyCode::Esc);
+        assert!(d.details.is_some(), "first Escape cancels only the picker");
+        assert_eq!(d.settings_editor.preview_theme, None);
+        d.key(KeyCode::Esc);
+        assert!(d.details.is_none());
+        assert_eq!(d.settings_editor.preview_theme, None);
+        assert_eq!(
+            d.theme_tokens(),
+            crate::theme::ThemeTokens::for_id(candidate)
+        );
+    }
+
+    #[test]
+    fn external_theme_update_during_browsing_becomes_the_cancel_restore_target() {
+        use ovrcr_protocol::{ServerEvent, ServerMessage};
+
+        let mut d = editor(false);
+        let candidate = choose_next_theme(&mut d);
+        assert_eq!(d.settings.theme, ThemeId::Dark);
+        assert_eq!(
+            d.theme_tokens(),
+            crate::theme::ThemeTokens::for_id(candidate)
+        );
+
+        let mut external = d.settings.clone();
+        external.theme = ThemeId::Light;
+        d.handle_server_message(ServerMessage::Event(ServerEvent::SettingsChanged(
+            Box::new(report(external, Vec::new())),
+        )));
+        assert_eq!(d.settings.theme, ThemeId::Light);
+        assert_eq!(
+            d.theme_tokens(),
+            crate::theme::ThemeTokens::for_id(candidate),
+            "the in-progress highlight remains the preview"
+        );
+
+        d.key(KeyCode::Esc);
+        assert_eq!(d.settings_editor.preview_theme, None);
+        assert_eq!(d.theme_tokens(), crate::theme::ThemeTokens::light());
+    }
+
+    #[test]
+    fn non_theme_setting_failure_does_not_clear_a_theme_preview_save() {
+        use ovrcr_protocol::ServerMessage;
+
+        let mut d = editor(false);
+        let candidate = choose_next_theme(&mut d);
+        let DashboardAction::Request(ClientMessage {
+            request_id: theme_request,
+            ..
+        }) = d.key(KeyCode::Enter)
+        else {
+            panic!("expected theme setting request");
+        };
+        assert_eq!(d.settings_editor.preview_request, Some(theme_request));
+
+        d.settings_editor.selected = Some("desktop_notifications".into());
+        let DashboardAction::Request(ClientMessage {
+            request_id: other_request,
+            request: Request::SetSetting { path, .. },
+        }) = d.key(KeyCode::Enter)
+        else {
+            panic!("expected non-theme setting request");
+        };
+        assert_eq!(path, "desktop_notifications");
+        d.handle_server_message(ServerMessage::Response {
+            request_id: other_request,
+            response: Response::Error {
+                code: ovrcr_protocol::ErrorCode::InvalidRequest,
+                message: "unrelated setting refused".into(),
+            },
+        });
+        assert_eq!(d.settings_editor.preview_request, Some(theme_request));
+        assert_eq!(d.settings_editor.preview_theme, Some(candidate));
+        assert_eq!(
+            d.theme_tokens(),
+            crate::theme::ThemeTokens::for_id(candidate)
+        );
+        assert!(!d.settings.desktop_notifications);
     }
 
     #[test]

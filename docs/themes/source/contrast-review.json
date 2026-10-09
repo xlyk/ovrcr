@@ -1,0 +1,3826 @@
+{
+  "method": "WCAG sRGB relative luminance contrast ratio. Thresholds are review references for the indicated usage; these checks do not certify a theme or all rendered states.",
+  "summary": {
+    "family_count": 27,
+    "palette_count": 80,
+    "existing_protected_count": 8,
+    "addition_count": 72,
+    "dark_count": 54,
+    "light_count": 26,
+    "high_contrast_variant_count": 4,
+    "palettes_with_derived_tokens": 30,
+    "palettes_with_muted_below_4_5": 73,
+    "palettes_with_primary_below_4_5": 1,
+    "palettes_with_any_flagged_pair": 80,
+    "unresolved_token_provenance_count": 0,
+    "families": [
+      {
+        "id": "catppuccin",
+        "name": "Catppuccin",
+        "variants": 4
+      },
+      {
+        "id": "ros-pine",
+        "name": "Rosé Pine",
+        "variants": 3
+      },
+      {
+        "id": "kanagawa",
+        "name": "Kanagawa",
+        "variants": 3
+      },
+      {
+        "id": "everforest",
+        "name": "Everforest",
+        "variants": 6
+      },
+      {
+        "id": "nightfox",
+        "name": "Nightfox",
+        "variants": 7
+      },
+      {
+        "id": "zenbones-zenwritten",
+        "name": "Zenbones / Zenwritten",
+        "variants": 4
+      },
+      {
+        "id": "flexoki",
+        "name": "Flexoki",
+        "variants": 2
+      },
+      {
+        "id": "synthwave-84",
+        "name": "SynthWave ’84",
+        "variants": 1
+      },
+      {
+        "id": "snazzy",
+        "name": "Snazzy",
+        "variants": 1
+      },
+      {
+        "id": "oxocarbon",
+        "name": "Oxocarbon",
+        "variants": 2
+      },
+      {
+        "id": "poimandres",
+        "name": "Poimandres",
+        "variants": 2
+      },
+      {
+        "id": "horizon",
+        "name": "Horizon",
+        "variants": 2
+      },
+      {
+        "id": "andromeda",
+        "name": "Andromeda",
+        "variants": 2
+      },
+      {
+        "id": "vesper",
+        "name": "Vesper",
+        "variants": 1
+      },
+      {
+        "id": "vs-code-defaults",
+        "name": "VS Code Defaults",
+        "variants": 4
+      },
+      {
+        "id": "github",
+        "name": "GitHub",
+        "variants": 7
+      },
+      {
+        "id": "one-dark-pro",
+        "name": "One Dark Pro / Atom One",
+        "variants": 3
+      },
+      {
+        "id": "monokai",
+        "name": "Monokai Classic",
+        "variants": 1
+      },
+      {
+        "id": "solarized",
+        "name": "Solarized",
+        "variants": 2
+      },
+      {
+        "id": "night-owl",
+        "name": "Night Owl",
+        "variants": 2
+      },
+      {
+        "id": "ayu",
+        "name": "Ayu",
+        "variants": 6
+      },
+      {
+        "id": "cobalt2",
+        "name": "Cobalt2",
+        "variants": 1
+      },
+      {
+        "id": "palenight",
+        "name": "Palenight",
+        "variants": 2
+      },
+      {
+        "id": "tokyo-night",
+        "name": "Tokyo Night",
+        "variants": 3
+      },
+      {
+        "id": "dracula",
+        "name": "Dracula",
+        "variants": 2
+      },
+      {
+        "id": "nord",
+        "name": "Nord",
+        "variants": 1
+      },
+      {
+        "id": "gruvbox",
+        "name": "Gruvbox",
+        "variants": 6
+      }
+    ]
+  },
+  "flagged_pairs": [
+    {
+      "gallery_id": "catppuccin-mocha",
+      "name": "Catppuccin Mocha",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.358,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "catppuccin-mocha",
+      "name": "Catppuccin Mocha",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 2.457,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "catppuccin-macchiato",
+      "name": "Catppuccin Macchiato",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.155,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "catppuccin-macchiato",
+      "name": "Catppuccin Macchiato",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 2.376,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "catppuccin-frappe",
+      "name": "Catppuccin Frappé",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.868,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "catppuccin-frappe",
+      "name": "Catppuccin Frappé",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 2.235,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "catppuccin-latte",
+      "name": "Catppuccin Latte",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.302,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "catppuccin-latte",
+      "name": "Catppuccin Latte",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 4.369,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "catppuccin-latte",
+      "name": "Catppuccin Latte",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 3.734,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "catppuccin-latte",
+      "name": "Catppuccin Latte",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.913,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "catppuccin-latte",
+      "name": "Catppuccin Latte",
+      "purpose": "peach_small_text",
+      "foreground_token": "peach",
+      "background_token": "base",
+      "ratio": 2.637,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "catppuccin-latte",
+      "name": "Catppuccin Latte",
+      "purpose": "green_small_text",
+      "foreground_token": "green",
+      "background_token": "base",
+      "ratio": 2.957,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "catppuccin-latte",
+      "name": "Catppuccin Latte",
+      "purpose": "teal_small_text",
+      "foreground_token": "teal",
+      "background_token": "base",
+      "ratio": 3.311,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "catppuccin-latte",
+      "name": "Catppuccin Latte",
+      "purpose": "blue_small_text",
+      "foreground_token": "blue",
+      "background_token": "base",
+      "ratio": 4.345,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "catppuccin-latte",
+      "name": "Catppuccin Latte",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 2.47,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "catppuccin-latte",
+      "name": "Catppuccin Latte",
+      "purpose": "yellow_small_text",
+      "foreground_token": "yellow",
+      "background_token": "base",
+      "ratio": 2.314,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ros-pine",
+      "name": "Rosé Pine",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.421,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ros-pine",
+      "name": "Rosé Pine",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.688,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ros-pine",
+      "name": "Rosé Pine",
+      "purpose": "blue_small_text",
+      "foreground_token": "blue",
+      "background_token": "base",
+      "ratio": 3.384,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ros-pine-moon",
+      "name": "Rosé Pine Moon",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.031,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ros-pine-moon",
+      "name": "Rosé Pine Moon",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.601,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ros-pine-moon",
+      "name": "Rosé Pine Moon",
+      "purpose": "blue_small_text",
+      "foreground_token": "blue",
+      "background_token": "base",
+      "ratio": 4.292,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ros-pine-dawn",
+      "name": "Rosé Pine Dawn",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.727,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ros-pine-dawn",
+      "name": "Rosé Pine Dawn",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 4.024,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ros-pine-dawn",
+      "name": "Rosé Pine Dawn",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 3.894,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ros-pine-dawn",
+      "name": "Rosé Pine Dawn",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.268,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ros-pine-dawn",
+      "name": "Rosé Pine Dawn",
+      "purpose": "mauve_small_text",
+      "foreground_token": "mauve",
+      "background_token": "base",
+      "ratio": 3.469,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ros-pine-dawn",
+      "name": "Rosé Pine Dawn",
+      "purpose": "peach_small_text",
+      "foreground_token": "peach",
+      "background_token": "base",
+      "ratio": 2.052,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ros-pine-dawn",
+      "name": "Rosé Pine Dawn",
+      "purpose": "green_small_text",
+      "foreground_token": "green",
+      "background_token": "base",
+      "ratio": 3.237,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ros-pine-dawn",
+      "name": "Rosé Pine Dawn",
+      "purpose": "teal_small_text",
+      "foreground_token": "teal",
+      "background_token": "base",
+      "ratio": 3.136,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ros-pine-dawn",
+      "name": "Rosé Pine Dawn",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 3.136,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ros-pine-dawn",
+      "name": "Rosé Pine Dawn",
+      "purpose": "yellow_small_text",
+      "foreground_token": "yellow",
+      "background_token": "base",
+      "ratio": 2.052,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ros-pine-dawn",
+      "name": "Rosé Pine Dawn",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 3.841,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "kanagawa-wave",
+      "name": "Kanagawa Wave",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.859,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "kanagawa-wave",
+      "name": "Kanagawa Wave",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.888,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "kanagawa-wave",
+      "name": "Kanagawa Wave",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 3.218,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "kanagawa-dragon",
+      "name": "Kanagawa Dragon",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.61,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "kanagawa-dragon",
+      "name": "Kanagawa Dragon",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 2.082,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "kanagawa-lotus",
+      "name": "Kanagawa Lotus",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.191,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "kanagawa-lotus",
+      "name": "Kanagawa Lotus",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 3.333,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "kanagawa-lotus",
+      "name": "Kanagawa Lotus",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 3.181,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "kanagawa-lotus",
+      "name": "Kanagawa Lotus",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.352,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "kanagawa-lotus",
+      "name": "Kanagawa Lotus",
+      "purpose": "peach_small_text",
+      "foreground_token": "peach",
+      "background_token": "base",
+      "ratio": 4.149,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "kanagawa-lotus",
+      "name": "Kanagawa Lotus",
+      "purpose": "green_small_text",
+      "foreground_token": "green",
+      "background_token": "base",
+      "ratio": 3.262,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "kanagawa-lotus",
+      "name": "Kanagawa Lotus",
+      "purpose": "teal_small_text",
+      "foreground_token": "teal",
+      "background_token": "base",
+      "ratio": 3.876,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "kanagawa-lotus",
+      "name": "Kanagawa Lotus",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 3.876,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "kanagawa-lotus",
+      "name": "Kanagawa Lotus",
+      "purpose": "yellow_small_text",
+      "foreground_token": "yellow",
+      "background_token": "base",
+      "ratio": 4.149,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "kanagawa-lotus",
+      "name": "Kanagawa Lotus",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 4.056,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-dark-hard",
+      "name": "Everforest Dark Hard",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.541,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-dark-hard",
+      "name": "Everforest Dark Hard",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 4.243,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-dark-hard",
+      "name": "Everforest Dark Hard",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.269,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-dark-medium",
+      "name": "Everforest Dark Medium",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.206,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-dark-medium",
+      "name": "Everforest Dark Medium",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 3.842,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-dark-medium",
+      "name": "Everforest Dark Medium",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 4.487,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-dark-medium",
+      "name": "Everforest Dark Medium",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.233,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-dark-soft",
+      "name": "Everforest Dark Soft",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.89,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-dark-soft",
+      "name": "Everforest Dark Soft",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 3.463,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-dark-soft",
+      "name": "Everforest Dark Soft",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 4.077,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-dark-soft",
+      "name": "Everforest Dark Soft",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.22,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-dark-soft",
+      "name": "Everforest Dark Soft",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 4.101,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-hard",
+      "name": "Everforest Light Hard",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.173,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-hard",
+      "name": "Everforest Light Hard",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 2.668,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-hard",
+      "name": "Everforest Light Hard",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 2.39,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-hard",
+      "name": "Everforest Light Hard",
+      "purpose": "focus_rail",
+      "foreground_token": "mauve",
+      "background_token": "base",
+      "ratio": 2.807,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-hard",
+      "name": "Everforest Light Hard",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.106,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-hard",
+      "name": "Everforest Light Hard",
+      "purpose": "mauve_small_text",
+      "foreground_token": "mauve",
+      "background_token": "base",
+      "ratio": 2.807,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-hard",
+      "name": "Everforest Light Hard",
+      "purpose": "peach_small_text",
+      "foreground_token": "peach",
+      "background_token": "base",
+      "ratio": 2.214,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-hard",
+      "name": "Everforest Light Hard",
+      "purpose": "green_small_text",
+      "foreground_token": "green",
+      "background_token": "base",
+      "ratio": 2.807,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-hard",
+      "name": "Everforest Light Hard",
+      "purpose": "teal_small_text",
+      "foreground_token": "teal",
+      "background_token": "base",
+      "ratio": 2.912,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-hard",
+      "name": "Everforest Light Hard",
+      "purpose": "blue_small_text",
+      "foreground_token": "blue",
+      "background_token": "base",
+      "ratio": 3.262,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-hard",
+      "name": "Everforest Light Hard",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 2.912,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-hard",
+      "name": "Everforest Light Hard",
+      "purpose": "yellow_small_text",
+      "foreground_token": "yellow",
+      "background_token": "base",
+      "ratio": 2.214,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-hard",
+      "name": "Everforest Light Hard",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 3.165,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-medium",
+      "name": "Everforest Light Medium",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.085,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-medium",
+      "name": "Everforest Light Medium",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 2.559,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-medium",
+      "name": "Everforest Light Medium",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 2.301,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-medium",
+      "name": "Everforest Light Medium",
+      "purpose": "focus_rail",
+      "foreground_token": "mauve",
+      "background_token": "base",
+      "ratio": 2.692,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-medium",
+      "name": "Everforest Light Medium",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.116,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-medium",
+      "name": "Everforest Light Medium",
+      "purpose": "mauve_small_text",
+      "foreground_token": "mauve",
+      "background_token": "base",
+      "ratio": 2.692,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-medium",
+      "name": "Everforest Light Medium",
+      "purpose": "peach_small_text",
+      "foreground_token": "peach",
+      "background_token": "base",
+      "ratio": 2.124,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-medium",
+      "name": "Everforest Light Medium",
+      "purpose": "green_small_text",
+      "foreground_token": "green",
+      "background_token": "base",
+      "ratio": 2.692,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-medium",
+      "name": "Everforest Light Medium",
+      "purpose": "teal_small_text",
+      "foreground_token": "teal",
+      "background_token": "base",
+      "ratio": 2.793,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-medium",
+      "name": "Everforest Light Medium",
+      "purpose": "blue_small_text",
+      "foreground_token": "blue",
+      "background_token": "base",
+      "ratio": 3.129,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-medium",
+      "name": "Everforest Light Medium",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 2.793,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-medium",
+      "name": "Everforest Light Medium",
+      "purpose": "yellow_small_text",
+      "foreground_token": "yellow",
+      "background_token": "base",
+      "ratio": 2.124,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-medium",
+      "name": "Everforest Light Medium",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 3.036,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-soft",
+      "name": "Everforest Light Soft",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 1.876,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-soft",
+      "name": "Everforest Light Soft",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 2.303,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-soft",
+      "name": "Everforest Light Soft",
+      "purpose": "sidebar_text",
+      "foreground_token": "text",
+      "background_token": "crust",
+      "ratio": 4.174,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-soft",
+      "name": "Everforest Light Soft",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 2.062,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-soft",
+      "name": "Everforest Light Soft",
+      "purpose": "selected_text",
+      "foreground_token": "text",
+      "background_token": "surface0",
+      "ratio": 4.375,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-soft",
+      "name": "Everforest Light Soft",
+      "purpose": "focus_rail",
+      "foreground_token": "mauve",
+      "background_token": "base",
+      "ratio": 2.423,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-soft",
+      "name": "Everforest Light Soft",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.093,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-soft",
+      "name": "Everforest Light Soft",
+      "purpose": "mauve_small_text",
+      "foreground_token": "mauve",
+      "background_token": "base",
+      "ratio": 2.423,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-soft",
+      "name": "Everforest Light Soft",
+      "purpose": "peach_small_text",
+      "foreground_token": "peach",
+      "background_token": "base",
+      "ratio": 1.912,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-soft",
+      "name": "Everforest Light Soft",
+      "purpose": "green_small_text",
+      "foreground_token": "green",
+      "background_token": "base",
+      "ratio": 2.423,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-soft",
+      "name": "Everforest Light Soft",
+      "purpose": "teal_small_text",
+      "foreground_token": "teal",
+      "background_token": "base",
+      "ratio": 2.514,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-soft",
+      "name": "Everforest Light Soft",
+      "purpose": "blue_small_text",
+      "foreground_token": "blue",
+      "background_token": "base",
+      "ratio": 2.816,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-soft",
+      "name": "Everforest Light Soft",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 2.514,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-soft",
+      "name": "Everforest Light Soft",
+      "purpose": "yellow_small_text",
+      "foreground_token": "yellow",
+      "background_token": "base",
+      "ratio": 1.912,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "everforest-light-soft",
+      "name": "Everforest Light Soft",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 2.732,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "nightfox",
+      "name": "Nightfox",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.945,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "nightfox",
+      "name": "Nightfox",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.395,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "nightfox",
+      "name": "Nightfox",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 3.641,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "dayfox",
+      "name": "Dayfox",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.777,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "dayfox",
+      "name": "Dayfox",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.313,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "dawnfox",
+      "name": "Dawnfox",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.727,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "dawnfox",
+      "name": "Dawnfox",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.326,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "dawnfox",
+      "name": "Dawnfox",
+      "purpose": "peach_small_text",
+      "foreground_token": "peach",
+      "background_token": "base",
+      "ratio": 2.052,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "dawnfox",
+      "name": "Dawnfox",
+      "purpose": "green_small_text",
+      "foreground_token": "green",
+      "background_token": "base",
+      "ratio": 3.679,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "dawnfox",
+      "name": "Dawnfox",
+      "purpose": "teal_small_text",
+      "foreground_token": "teal",
+      "background_token": "base",
+      "ratio": 3.136,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "dawnfox",
+      "name": "Dawnfox",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 3.136,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "dawnfox",
+      "name": "Dawnfox",
+      "purpose": "yellow_small_text",
+      "foreground_token": "yellow",
+      "background_token": "base",
+      "ratio": 2.052,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "dawnfox",
+      "name": "Dawnfox",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 3.841,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "duskfox",
+      "name": "Duskfox",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.946,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "duskfox",
+      "name": "Duskfox",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.512,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "nordfox",
+      "name": "Nordfox",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.54,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "nordfox",
+      "name": "Nordfox",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.389,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "nordfox",
+      "name": "Nordfox",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 3.053,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "terafox",
+      "name": "Terafox",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.812,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "terafox",
+      "name": "Terafox",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.4,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "carbonfox",
+      "name": "Carbonfox",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.261,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "zenbones-dark",
+      "name": "Zenbones Dark",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.258,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "zenbones-dark",
+      "name": "Zenbones Dark",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.882,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "zenbones-light",
+      "name": "Zenbones Light",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.695,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "zenbones-light",
+      "name": "Zenbones Light",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.669,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "zenbones-light",
+      "name": "Zenbones Light",
+      "purpose": "teal_small_text",
+      "foreground_token": "teal",
+      "background_token": "base",
+      "ratio": 3.481,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "zenbones-light",
+      "name": "Zenbones Light",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 3.481,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "zenwritten-dark",
+      "name": "Zenwritten Dark",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.251,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "zenwritten-dark",
+      "name": "Zenwritten Dark",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.863,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "zenwritten-light",
+      "name": "Zenwritten Light",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.682,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "zenwritten-light",
+      "name": "Zenwritten Light",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 4.48,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "zenwritten-light",
+      "name": "Zenwritten Light",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.673,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "zenwritten-light",
+      "name": "Zenwritten Light",
+      "purpose": "teal_small_text",
+      "foreground_token": "teal",
+      "background_token": "base",
+      "ratio": 3.495,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "zenwritten-light",
+      "name": "Zenwritten Light",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 3.495,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "flexoki-dark",
+      "name": "Flexoki Dark",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.608,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "flexoki-dark",
+      "name": "Flexoki Dark",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.797,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "flexoki-dark",
+      "name": "Flexoki Dark",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 4.419,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "flexoki-light",
+      "name": "Flexoki Light",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.0,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "flexoki-light",
+      "name": "Flexoki Light",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.555,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "flexoki-light",
+      "name": "Flexoki Light",
+      "purpose": "mauve_small_text",
+      "foreground_token": "mauve",
+      "background_token": "base",
+      "ratio": 4.435,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "flexoki-light",
+      "name": "Flexoki Light",
+      "purpose": "peach_small_text",
+      "foreground_token": "peach",
+      "background_token": "base",
+      "ratio": 3.392,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "flexoki-light",
+      "name": "Flexoki Light",
+      "purpose": "green_small_text",
+      "foreground_token": "green",
+      "background_token": "base",
+      "ratio": 4.387,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "flexoki-light",
+      "name": "Flexoki Light",
+      "purpose": "teal_small_text",
+      "foreground_token": "teal",
+      "background_token": "base",
+      "ratio": 4.435,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "flexoki-light",
+      "name": "Flexoki Light",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 4.435,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "flexoki-light",
+      "name": "Flexoki Light",
+      "purpose": "yellow_small_text",
+      "foreground_token": "yellow",
+      "background_token": "base",
+      "ratio": 3.392,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "synthwave-84",
+      "name": "SynthWave ’84",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.489,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "synthwave-84",
+      "name": "SynthWave ’84",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 4.48,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "snazzy",
+      "name": "Snazzy",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.556,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "snazzy",
+      "name": "Snazzy",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 2.313,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "oxocarbon-dark",
+      "name": "Oxocarbon Dark",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.316,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "oxocarbon-dark",
+      "name": "Oxocarbon Dark",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.567,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "oxocarbon-light",
+      "name": "Oxocarbon Light",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 4.356,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "oxocarbon-light",
+      "name": "Oxocarbon Light",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 4.173,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "oxocarbon-light",
+      "name": "Oxocarbon Light",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.542,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "oxocarbon-light",
+      "name": "Oxocarbon Light",
+      "purpose": "green_small_text",
+      "foreground_token": "green",
+      "background_token": "base",
+      "ratio": 2.39,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "oxocarbon-light",
+      "name": "Oxocarbon Light",
+      "purpose": "teal_small_text",
+      "foreground_token": "teal",
+      "background_token": "base",
+      "ratio": 2.334,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "oxocarbon-light",
+      "name": "Oxocarbon Light",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 2.334,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "oxocarbon-light",
+      "name": "Oxocarbon Light",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 3.326,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "poimandres",
+      "name": "Poimandres",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.651,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "poimandres",
+      "name": "Poimandres",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.197,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "poimandres-storm",
+      "name": "Poimandres Storm",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.822,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "poimandres-storm",
+      "name": "Poimandres Storm",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 4.056,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "poimandres-storm",
+      "name": "Poimandres Storm",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 4.056,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "poimandres-storm",
+      "name": "Poimandres Storm",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.232,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "poimandres-storm",
+      "name": "Poimandres Storm",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 4.129,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "horizon",
+      "name": "Horizon",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 1.974,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "horizon",
+      "name": "Horizon",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.184,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "horizon-bright",
+      "name": "Horizon Bright",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.779,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "horizon-bright",
+      "name": "Horizon Bright",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.15,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "horizon-bright",
+      "name": "Horizon Bright",
+      "purpose": "mauve_small_text",
+      "foreground_token": "mauve",
+      "background_token": "base",
+      "ratio": 3.337,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "horizon-bright",
+      "name": "Horizon Bright",
+      "purpose": "peach_small_text",
+      "foreground_token": "peach",
+      "background_token": "base",
+      "ratio": 1.537,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "horizon-bright",
+      "name": "Horizon Bright",
+      "purpose": "green_small_text",
+      "foreground_token": "green",
+      "background_token": "base",
+      "ratio": 1.736,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "horizon-bright",
+      "name": "Horizon Bright",
+      "purpose": "teal_small_text",
+      "foreground_token": "teal",
+      "background_token": "base",
+      "ratio": 1.418,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "horizon-bright",
+      "name": "Horizon Bright",
+      "purpose": "blue_small_text",
+      "foreground_token": "blue",
+      "background_token": "base",
+      "ratio": 2.052,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "horizon-bright",
+      "name": "Horizon Bright",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 1.418,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "horizon-bright",
+      "name": "Horizon Bright",
+      "purpose": "yellow_small_text",
+      "foreground_token": "yellow",
+      "background_token": "base",
+      "ratio": 1.537,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "horizon-bright",
+      "name": "Horizon Bright",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 3.109,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "andromeda",
+      "name": "Andromeda",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 4.285,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "andromeda",
+      "name": "Andromeda",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.529,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "andromeda-bordered",
+      "name": "Andromeda Bordered",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 4.125,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "andromeda-bordered",
+      "name": "Andromeda Bordered",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.453,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "andromeda-bordered",
+      "name": "Andromeda Bordered",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 4.299,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "vesper",
+      "name": "Vesper",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.633,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "vesper",
+      "name": "Vesper",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.211,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "vs-code-dark",
+      "name": "VS Code Dark+",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.83,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "vs-code-dark",
+      "name": "VS Code Dark+",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.962,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "vs-code-dark",
+      "name": "VS Code Dark+",
+      "purpose": "mauve_small_text",
+      "foreground_token": "mauve",
+      "background_token": "base",
+      "ratio": 3.959,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "vs-code-dark",
+      "name": "VS Code Dark+",
+      "purpose": "blue_small_text",
+      "foreground_token": "blue",
+      "background_token": "base",
+      "ratio": 3.426,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "vs-code-dark",
+      "name": "VS Code Dark+",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 3.239,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "vs-code-light",
+      "name": "VS Code Light+",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.949,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "vs-code-light",
+      "name": "VS Code Light+",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.517,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "vs-code-light",
+      "name": "VS Code Light+",
+      "purpose": "mauve_small_text",
+      "foreground_token": "mauve",
+      "background_token": "base",
+      "ratio": 3.355,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "vs-code-light",
+      "name": "VS Code Light+",
+      "purpose": "peach_small_text",
+      "foreground_token": "peach",
+      "background_token": "base",
+      "ratio": 3.111,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "vs-code-light",
+      "name": "VS Code Light+",
+      "purpose": "teal_small_text",
+      "foreground_token": "teal",
+      "background_token": "base",
+      "ratio": 3.374,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "vs-code-light",
+      "name": "VS Code Light+",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 3.374,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "vs-code-light",
+      "name": "VS Code Light+",
+      "purpose": "yellow_small_text",
+      "foreground_token": "yellow",
+      "background_token": "base",
+      "ratio": 3.111,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "vs-code-dark-high-contrast",
+      "name": "VS Code Dark High Contrast",
+      "purpose": "blue_small_text",
+      "foreground_token": "blue",
+      "background_token": "base",
+      "ratio": 2.235,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "vs-code-dark-high-contrast",
+      "name": "VS Code Dark High Contrast",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 3.596,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "vs-code-light-high-contrast",
+      "name": "VS Code Light High Contrast",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.033,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "vs-code-light-high-contrast",
+      "name": "VS Code Light High Contrast",
+      "purpose": "peach_small_text",
+      "foreground_token": "peach",
+      "background_token": "base",
+      "ratio": 3.111,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "vs-code-light-high-contrast",
+      "name": "VS Code Light High Contrast",
+      "purpose": "teal_small_text",
+      "foreground_token": "teal",
+      "background_token": "base",
+      "ratio": 3.374,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "vs-code-light-high-contrast",
+      "name": "VS Code Light High Contrast",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 3.374,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "vs-code-light-high-contrast",
+      "name": "VS Code Light High Contrast",
+      "purpose": "yellow_small_text",
+      "foreground_token": "yellow",
+      "background_token": "base",
+      "ratio": 3.111,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "github-dark-default",
+      "name": "GitHub Dark Default",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 4.12,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "github-dark-default",
+      "name": "GitHub Dark Default",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.551,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "github-light-default",
+      "name": "GitHub Light Default",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.037,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "github-light-default",
+      "name": "GitHub Light Default",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.453,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "github-light-default",
+      "name": "GitHub Light Default",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 3.607,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "github-dark-dimmed",
+      "name": "GitHub Dark Dimmed",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.895,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "github-dark-dimmed",
+      "name": "GitHub Dark Dimmed",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 3.878,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "github-dark-dimmed",
+      "name": "GitHub Dark Dimmed",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 4.177,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "github-dark-dimmed",
+      "name": "GitHub Dark Dimmed",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.727,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "github-dark-high-contrast",
+      "name": "GitHub Dark High Contrast",
+      "purpose": "selected_text",
+      "foreground_token": "text",
+      "background_token": "surface0",
+      "ratio": 1.114,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "github-light-high-contrast",
+      "name": "GitHub Light High Contrast",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.16,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "github-light-high-contrast",
+      "name": "GitHub Light High Contrast",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 3.607,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "github-dark-colorblind-beta",
+      "name": "GitHub Dark Colorblind (Beta)",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 4.12,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "github-dark-colorblind-beta",
+      "name": "GitHub Dark Colorblind (Beta)",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.551,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "github-light-colorblind-beta",
+      "name": "GitHub Light Colorblind (Beta)",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.037,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "github-light-colorblind-beta",
+      "name": "GitHub Light Colorblind (Beta)",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.453,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "github-light-colorblind-beta",
+      "name": "GitHub Light Colorblind (Beta)",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 3.607,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "one-dark-pro",
+      "name": "One Dark Pro",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 1.758,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "one-dark-pro",
+      "name": "One Dark Pro",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.436,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "one-dark-pro",
+      "name": "One Dark Pro",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 3.761,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "one-dark-pro-darker",
+      "name": "One Dark Pro Darker",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 1.882,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "one-dark-pro-darker",
+      "name": "One Dark Pro Darker",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.537,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "one-dark-pro-darker",
+      "name": "One Dark Pro Darker",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 4.026,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "one-dark-pro-night-flat",
+      "name": "One Dark Pro Night Flat",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.591,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "one-dark-pro-night-flat",
+      "name": "One Dark Pro Night Flat",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.808,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "monokai",
+      "name": "Monokai",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.477,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "monokai",
+      "name": "Monokai",
+      "purpose": "blue_small_text",
+      "foreground_token": "blue",
+      "background_token": "base",
+      "ratio": 3.844,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "monokai",
+      "name": "Monokai",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 2.68,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "solarized-dark",
+      "name": "Solarized Dark",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.79,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "solarized-dark",
+      "name": "Solarized Dark",
+      "purpose": "selected_text",
+      "foreground_token": "text",
+      "background_token": "surface0",
+      "ratio": 2.467,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "solarized-dark",
+      "name": "Solarized Dark",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.106,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "solarized-dark",
+      "name": "Solarized Dark",
+      "purpose": "mauve_small_text",
+      "foreground_token": "mauve",
+      "background_token": "base",
+      "ratio": 4.079,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "solarized-dark",
+      "name": "Solarized Dark",
+      "purpose": "blue_small_text",
+      "foreground_token": "blue",
+      "background_token": "base",
+      "ratio": 4.079,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "solarized-dark",
+      "name": "Solarized Dark",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 3.246,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "solarized-light",
+      "name": "Solarized Light",
+      "purpose": "primary_text",
+      "foreground_token": "text",
+      "background_token": "base",
+      "ratio": 4.13,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "solarized-light",
+      "name": "Solarized Light",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.479,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "solarized-light",
+      "name": "Solarized Light",
+      "purpose": "sidebar_text",
+      "foreground_token": "text",
+      "background_token": "crust",
+      "ratio": 3.636,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "solarized-light",
+      "name": "Solarized Light",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 4.392,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "solarized-light",
+      "name": "Solarized Light",
+      "purpose": "selected_text",
+      "foreground_token": "text",
+      "background_token": "surface0",
+      "ratio": 2.745,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "solarized-light",
+      "name": "Solarized Light",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.346,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "solarized-light",
+      "name": "Solarized Light",
+      "purpose": "mauve_small_text",
+      "foreground_token": "mauve",
+      "background_token": "base",
+      "ratio": 3.412,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "solarized-light",
+      "name": "Solarized Light",
+      "purpose": "peach_small_text",
+      "foreground_token": "peach",
+      "background_token": "base",
+      "ratio": 2.975,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "solarized-light",
+      "name": "Solarized Light",
+      "purpose": "green_small_text",
+      "foreground_token": "green",
+      "background_token": "base",
+      "ratio": 2.97,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "solarized-light",
+      "name": "Solarized Light",
+      "purpose": "teal_small_text",
+      "foreground_token": "teal",
+      "background_token": "base",
+      "ratio": 2.928,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "solarized-light",
+      "name": "Solarized Light",
+      "purpose": "blue_small_text",
+      "foreground_token": "blue",
+      "background_token": "base",
+      "ratio": 3.412,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "solarized-light",
+      "name": "Solarized Light",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 2.479,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "solarized-light",
+      "name": "Solarized Light",
+      "purpose": "yellow_small_text",
+      "foreground_token": "yellow",
+      "background_token": "base",
+      "ratio": 2.975,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "solarized-light",
+      "name": "Solarized Light",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 4.288,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "night-owl",
+      "name": "Night Owl",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.967,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "night-owl-light",
+      "name": "Night Owl Light",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.429,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "night-owl-light",
+      "name": "Night Owl Light",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.364,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "night-owl-light",
+      "name": "Night Owl Light",
+      "purpose": "mauve_small_text",
+      "foreground_token": "mauve",
+      "background_token": "base",
+      "ratio": 3.02,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "night-owl-light",
+      "name": "Night Owl Light",
+      "purpose": "peach_small_text",
+      "foreground_token": "peach",
+      "background_token": "base",
+      "ratio": 1.97,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "night-owl-light",
+      "name": "Night Owl Light",
+      "purpose": "green_small_text",
+      "foreground_token": "green",
+      "background_token": "base",
+      "ratio": 3.852,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "night-owl-light",
+      "name": "Night Owl Light",
+      "purpose": "teal_small_text",
+      "foreground_token": "teal",
+      "background_token": "base",
+      "ratio": 3.02,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "night-owl-light",
+      "name": "Night Owl Light",
+      "purpose": "blue_small_text",
+      "foreground_token": "blue",
+      "background_token": "base",
+      "ratio": 3.416,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "night-owl-light",
+      "name": "Night Owl Light",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 3.02,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "night-owl-light",
+      "name": "Night Owl Light",
+      "purpose": "yellow_small_text",
+      "foreground_token": "yellow",
+      "background_token": "base",
+      "ratio": 1.97,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "night-owl-light",
+      "name": "Night Owl Light",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 4.196,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-dark",
+      "name": "Ayu Dark",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 1.985,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-dark",
+      "name": "Ayu Dark",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 3.065,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-dark",
+      "name": "Ayu Dark",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 3.163,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-dark",
+      "name": "Ayu Dark",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.119,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-mirage",
+      "name": "Ayu Mirage",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 1.848,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-mirage",
+      "name": "Ayu Mirage",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 3.356,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-mirage",
+      "name": "Ayu Mirage",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 3.585,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-mirage",
+      "name": "Ayu Mirage",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.186,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light",
+      "name": "Ayu Light",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 1.511,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light",
+      "name": "Ayu Light",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 3.239,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light",
+      "name": "Ayu Light",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 3.153,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light",
+      "name": "Ayu Light",
+      "purpose": "focus_rail",
+      "foreground_token": "mauve",
+      "background_token": "base",
+      "ratio": 2.221,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light",
+      "name": "Ayu Light",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.254,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light",
+      "name": "Ayu Light",
+      "purpose": "mauve_small_text",
+      "foreground_token": "mauve",
+      "background_token": "base",
+      "ratio": 2.221,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light",
+      "name": "Ayu Light",
+      "purpose": "peach_small_text",
+      "foreground_token": "peach",
+      "background_token": "base",
+      "ratio": 2.156,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light",
+      "name": "Ayu Light",
+      "purpose": "green_small_text",
+      "foreground_token": "green",
+      "background_token": "base",
+      "ratio": 2.232,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light",
+      "name": "Ayu Light",
+      "purpose": "teal_small_text",
+      "foreground_token": "teal",
+      "background_token": "base",
+      "ratio": 2.293,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light",
+      "name": "Ayu Light",
+      "purpose": "blue_small_text",
+      "foreground_token": "blue",
+      "background_token": "base",
+      "ratio": 2.819,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light",
+      "name": "Ayu Light",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 2.22,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light",
+      "name": "Ayu Light",
+      "purpose": "yellow_small_text",
+      "foreground_token": "yellow",
+      "background_token": "base",
+      "ratio": 2.156,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light",
+      "name": "Ayu Light",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 2.914,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-dark-unbordered",
+      "name": "Ayu Dark Unbordered",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.013,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-dark-unbordered",
+      "name": "Ayu Dark Unbordered",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 3.163,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-dark-unbordered",
+      "name": "Ayu Dark Unbordered",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 3.163,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-dark-unbordered",
+      "name": "Ayu Dark Unbordered",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.155,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-mirage-unbordered",
+      "name": "Ayu Mirage Unbordered",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 1.888,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-mirage-unbordered",
+      "name": "Ayu Mirage Unbordered",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 3.585,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-mirage-unbordered",
+      "name": "Ayu Mirage Unbordered",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 3.585,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-mirage-unbordered",
+      "name": "Ayu Mirage Unbordered",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.11,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light-unbordered",
+      "name": "Ayu Light Unbordered",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 1.5,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light-unbordered",
+      "name": "Ayu Light Unbordered",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 3.153,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light-unbordered",
+      "name": "Ayu Light Unbordered",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 3.153,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light-unbordered",
+      "name": "Ayu Light Unbordered",
+      "purpose": "focus_rail",
+      "foreground_token": "mauve",
+      "background_token": "base",
+      "ratio": 2.162,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light-unbordered",
+      "name": "Ayu Light Unbordered",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.256,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light-unbordered",
+      "name": "Ayu Light Unbordered",
+      "purpose": "mauve_small_text",
+      "foreground_token": "mauve",
+      "background_token": "base",
+      "ratio": 2.162,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light-unbordered",
+      "name": "Ayu Light Unbordered",
+      "purpose": "peach_small_text",
+      "foreground_token": "peach",
+      "background_token": "base",
+      "ratio": 2.098,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light-unbordered",
+      "name": "Ayu Light Unbordered",
+      "purpose": "green_small_text",
+      "foreground_token": "green",
+      "background_token": "base",
+      "ratio": 2.172,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light-unbordered",
+      "name": "Ayu Light Unbordered",
+      "purpose": "teal_small_text",
+      "foreground_token": "teal",
+      "background_token": "base",
+      "ratio": 2.232,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light-unbordered",
+      "name": "Ayu Light Unbordered",
+      "purpose": "blue_small_text",
+      "foreground_token": "blue",
+      "background_token": "base",
+      "ratio": 2.744,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light-unbordered",
+      "name": "Ayu Light Unbordered",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 2.161,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light-unbordered",
+      "name": "Ayu Light Unbordered",
+      "purpose": "yellow_small_text",
+      "foreground_token": "yellow",
+      "background_token": "base",
+      "ratio": 2.098,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "ayu-light-unbordered",
+      "name": "Ayu Light Unbordered",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 2.836,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "cobalt2",
+      "name": "Cobalt2",
+      "purpose": "blue_small_text",
+      "foreground_token": "blue",
+      "background_token": "base",
+      "ratio": 3.623,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "cobalt2",
+      "name": "Cobalt2",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 4.48,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "palenight-theme",
+      "name": "Palenight Theme",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 1.817,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "palenight-theme",
+      "name": "Palenight Theme",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 2.96,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "palenight-theme",
+      "name": "Palenight Theme",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 2.96,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "palenight-theme",
+      "name": "Palenight Theme",
+      "purpose": "selected_text",
+      "foreground_token": "text",
+      "background_token": "surface0",
+      "ratio": 3.064,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "palenight-theme",
+      "name": "Palenight Theme",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.025,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "palenight-theme",
+      "name": "Palenight Theme",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 4.414,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "palenight-mild-contrast",
+      "name": "Palenight (Mild Contrast)",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 1.817,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "palenight-mild-contrast",
+      "name": "Palenight (Mild Contrast)",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 2.96,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "palenight-mild-contrast",
+      "name": "Palenight (Mild Contrast)",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 3.127,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "palenight-mild-contrast",
+      "name": "Palenight (Mild Contrast)",
+      "purpose": "selected_text",
+      "foreground_token": "text",
+      "background_token": "surface0",
+      "ratio": 3.064,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "palenight-mild-contrast",
+      "name": "Palenight (Mild Contrast)",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.032,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "palenight-mild-contrast",
+      "name": "Palenight (Mild Contrast)",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 4.414,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "tokyo-night",
+      "name": "Tokyo Night",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 1.555,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "tokyo-night",
+      "name": "Tokyo Night",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 2.372,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "tokyo-night",
+      "name": "Tokyo Night",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 2.496,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "tokyo-night",
+      "name": "Tokyo Night",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.111,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "tokyo-night-storm",
+      "name": "Tokyo Night Storm",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 1.483,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "tokyo-night-storm",
+      "name": "Tokyo Night Storm",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 2.226,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "tokyo-night-storm",
+      "name": "Tokyo Night Storm",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 2.377,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "tokyo-night-storm",
+      "name": "Tokyo Night Storm",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.134,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "tokyo-night-light",
+      "name": "Tokyo Night Light",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.114,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "tokyo-night-light",
+      "name": "Tokyo Night Light",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 3.861,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "tokyo-night-light",
+      "name": "Tokyo Night Light",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 3.346,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "tokyo-night-light",
+      "name": "Tokyo Night Light",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.441,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "dracula-theme",
+      "name": "Dracula Theme",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.026,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "dracula-theme-soft",
+      "name": "Dracula Theme Soft",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.561,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "nord",
+      "name": "Nord",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 1.693,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "nord",
+      "name": "Nord",
+      "purpose": "selected_text",
+      "foreground_token": "text",
+      "background_token": "surface0",
+      "ratio": 1.481,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "nord",
+      "name": "Nord",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.241,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "nord",
+      "name": "Nord",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 3.053,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-dark",
+      "name": "Gruvbox Dark",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 4.016,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-dark",
+      "name": "Gruvbox Dark",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 2.263,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-dark",
+      "name": "Gruvbox Dark",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 4.286,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light",
+      "name": "Gruvbox Light",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.235,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light",
+      "name": "Gruvbox Light",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 4.29,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light",
+      "name": "Gruvbox Light",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 4.42,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light",
+      "name": "Gruvbox Light",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.92,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light",
+      "name": "Gruvbox Light",
+      "purpose": "green_small_text",
+      "foreground_token": "green",
+      "background_token": "base",
+      "ratio": 4.287,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light",
+      "name": "Gruvbox Light",
+      "purpose": "teal_small_text",
+      "foreground_token": "teal",
+      "background_token": "base",
+      "ratio": 4.401,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light",
+      "name": "Gruvbox Light",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 4.401,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light",
+      "name": "Gruvbox Light",
+      "purpose": "yellow_small_text",
+      "foreground_token": "yellow",
+      "background_token": "base",
+      "ratio": 3.325,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-dark-hard",
+      "name": "Gruvbox Dark Hard",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 4.467,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-dark-hard",
+      "name": "Gruvbox Dark Hard",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 2.517,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-dark-soft",
+      "name": "Gruvbox Dark Soft",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.577,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-dark-soft",
+      "name": "Gruvbox Dark Soft",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 2.016,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-dark-soft",
+      "name": "Gruvbox Dark Soft",
+      "purpose": "red_small_text",
+      "foreground_token": "red",
+      "background_token": "base",
+      "ratio": 3.817,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light-hard",
+      "name": "Gruvbox Light Hard",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 3.333,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light-hard",
+      "name": "Gruvbox Light Hard",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 4.42,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light-hard",
+      "name": "Gruvbox Light Hard",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 4.42,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light-hard",
+      "name": "Gruvbox Light Hard",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.978,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light-hard",
+      "name": "Gruvbox Light Hard",
+      "purpose": "green_small_text",
+      "foreground_token": "green",
+      "background_token": "base",
+      "ratio": 4.417,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light-hard",
+      "name": "Gruvbox Light Hard",
+      "purpose": "yellow_small_text",
+      "foreground_token": "yellow",
+      "background_token": "base",
+      "ratio": 3.426,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light-soft",
+      "name": "Gruvbox Light Soft",
+      "purpose": "muted_text",
+      "foreground_token": "muted",
+      "background_token": "base",
+      "ratio": 2.921,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light-soft",
+      "name": "Gruvbox Light Soft",
+      "purpose": "secondary_text",
+      "foreground_token": "subtext",
+      "background_token": "base",
+      "ratio": 3.873,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light-soft",
+      "name": "Gruvbox Light Soft",
+      "purpose": "sidebar_secondary",
+      "foreground_token": "subtext",
+      "background_token": "crust",
+      "ratio": 4.42,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light-soft",
+      "name": "Gruvbox Light Soft",
+      "purpose": "pane_border",
+      "foreground_token": "surface2",
+      "background_token": "base",
+      "ratio": 1.733,
+      "reference_threshold": 3.0,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light-soft",
+      "name": "Gruvbox Light Soft",
+      "purpose": "green_small_text",
+      "foreground_token": "green",
+      "background_token": "base",
+      "ratio": 3.87,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light-soft",
+      "name": "Gruvbox Light Soft",
+      "purpose": "teal_small_text",
+      "foreground_token": "teal",
+      "background_token": "base",
+      "ratio": 3.973,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light-soft",
+      "name": "Gruvbox Light Soft",
+      "purpose": "sky_small_text",
+      "foreground_token": "sky",
+      "background_token": "base",
+      "ratio": 3.973,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    },
+    {
+      "gallery_id": "gruvbox-light-soft",
+      "name": "Gruvbox Light Soft",
+      "purpose": "yellow_small_text",
+      "foreground_token": "yellow",
+      "background_token": "base",
+      "ratio": 3.002,
+      "reference_threshold": 4.5,
+      "below_reference_threshold": true
+    }
+  ]
+}
