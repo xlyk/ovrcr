@@ -432,6 +432,8 @@ struct App {
     fonts: TerminalFonts,
     error: Option<String>,
     closing: bool,
+    // A restarted Dashboard may still be asking optional setup questions.
+    palette_pending: bool,
     // Wheel distance, held button and last motion outlive a single frame.
     mouse: Mouse,
 }
@@ -449,6 +451,7 @@ impl App {
     fn show(&mut self, ui: &mut egui::Ui) {
         let open_palette =
             ui.input_mut(|input| input.consume_key(egui::Modifiers::MAC_CMD, egui::Key::K));
+        self.palette_pending |= open_palette;
         if ui.input(|input| input.viewport().close_requested()) && !self.closing {
             // This frame holds the egui context lock. Stopping here joins the
             // PTY reader, and that reader calls `Context::request_repaint`, so
@@ -501,9 +504,6 @@ impl App {
                 {
                     response.request_focus();
                 }
-                if open_palette && let Err(error) = terminal.send(b"\x07:") {
-                    self.error = Some(format!("{error:#}"));
-                }
                 ui.memory_mut(|memory| {
                     memory.set_focus_lock_filter(
                         response.id,
@@ -521,6 +521,17 @@ impl App {
                     self.error = Some(format!("{error:#}"));
                 }
                 let screen = terminal.screen();
+                if self.palette_pending
+                    && screen.alternate_screen()
+                    && screen.contents().contains("OVRCR")
+                {
+                    // Keep one Cmd-K intent across startup; never send it to
+                    // a setup prompt or make a setup choice on the user's behalf.
+                    self.palette_pending = false;
+                    if let Err(error) = terminal.send(b"\x07:") {
+                        self.error = Some(format!("{error:#}"));
+                    }
+                }
                 response.widget_info(|| {
                     egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "OVRCR terminal")
                 });
@@ -629,20 +640,10 @@ fn close_request_leaves_the_dashboard_running_until_outside_the_frame() -> anyho
         fonts: TerminalFonts::current_monospace(),
         error: None,
         closing: false,
+        palette_pending: false,
         mouse: Mouse::default(),
     };
-    let deadline = std::time::Instant::now() + Duration::from_secs(8);
-    while !app
-        .terminal
-        .as_ref()
-        .unwrap()
-        .screen()
-        .contents()
-        .contains("OVRCR")
-    {
-        anyhow::ensure!(std::time::Instant::now() < deadline, "dashboard never drew");
-        std::thread::yield_now();
-    }
+    wait_for_test_dashboard(app.terminal.as_mut().unwrap())?;
     let mut input = egui::RawInput::default();
     input
         .viewports
@@ -695,8 +696,10 @@ fn command_palette_opens_when_another_control_has_focus() -> anyhow::Result<()> 
         fonts: TerminalFonts::current_monospace(),
         error: None,
         closing: false,
+        palette_pending: false,
         mouse: Mouse::default(),
     };
+    wait_for_test_dashboard(app.terminal.as_mut().unwrap())?;
     for detached in [false, true] {
         if detached {
             app.terminal.as_mut().unwrap().stop()?;
@@ -704,6 +707,10 @@ fn command_palette_opens_when_another_control_has_focus() -> anyhow::Result<()> 
         let mut other_text = String::new();
         let mut output = context.run_ui(
             egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(960.0, 600.0),
+                )),
                 events: vec![egui::Event::Key {
                     key: egui::Key::K,
                     physical_key: None,
@@ -741,21 +748,100 @@ fn command_palette_opens_when_another_control_has_focus() -> anyhow::Result<()> 
         );
         output.textures_delta.clear();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while !app
-            .terminal
-            .as_ref()
-            .unwrap()
-            .screen()
-            .contents()
-            .contains("Command palette")
-        {
-            anyhow::ensure!(std::time::Instant::now() < deadline, "palette never opened");
+        let mut declined = std::collections::HashSet::new();
+        loop {
+            let screen = app.terminal.as_ref().unwrap().screen();
+            let contents = screen.contents();
+            if contents.contains("Command palette") {
+                break;
+            }
+            anyhow::ensure!(
+                std::time::Instant::now() < deadline,
+                "palette never opened: detached={detached}, executable={}, rows_cols={:?}, app_error={:?}\n{contents}",
+                executable.display(),
+                screen.size(),
+                app.error,
+            );
+            decline_test_startup_prompt(app.terminal.as_mut().unwrap(), &mut declined)?;
+            // Real GUI frames continue while the restarted PTY reaches the
+            // Dashboard. Do not resend Cmd-K: its original intent must survive.
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(960.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| app.show(ui),
+            );
+            output.textures_delta.clear();
             std::thread::yield_now();
         }
     }
     app.close()?;
     assert!(!root.exists());
     Ok(())
+}
+
+#[cfg(test)]
+fn decline_test_startup_prompt(
+    terminal: &mut Terminal,
+    declined: &mut std::collections::HashSet<String>,
+) -> anyhow::Result<()> {
+    let screen = terminal.screen();
+    if screen.alternate_screen() {
+        return Ok(());
+    }
+    let contents = screen.contents();
+    let Some((body, answer)) = contents.rsplit_once("[y/n]") else {
+        return Ok(());
+    };
+    let answer = answer.split_whitespace().collect::<Vec<_>>().join(" ");
+    if !matches!(
+        answer.as_str(),
+        "Enter skips · default n ›" | "Enter skips · default n >"
+    ) {
+        return Ok(());
+    }
+    let title = body
+        .rsplit_once("OVRCR · startup")
+        .and_then(|(_, prompt)| prompt.lines().map(str::trim).find(|line| !line.is_empty()))
+        .unwrap_or("");
+    anyhow::ensure!(
+        matches!(
+            title,
+            "Claude reporting hooks"
+                | "Codex reporting hooks"
+                | "Install OVRCR Bridge"
+                | "Repair or update OVRCR Bridge"
+                | "Install OVRCR Local"
+        ),
+        "unexpected startup decision; left unanswered:\n{contents}"
+    );
+    if declined.insert(title.to_owned()) {
+        terminal.send(b"n\r")?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn wait_for_test_dashboard(terminal: &mut Terminal) -> anyhow::Result<()> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(8);
+    let mut declined = std::collections::HashSet::new();
+    loop {
+        let screen = terminal.screen();
+        if screen.alternate_screen() && screen.contents().contains("BROWSE") {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            std::time::Instant::now() < deadline,
+            "dashboard never became ready:\n{}",
+            screen.contents()
+        );
+        decline_test_startup_prompt(terminal, &mut declined)?;
+        std::thread::yield_now();
+    }
 }
 
 fn paint_terminal(
@@ -929,6 +1015,7 @@ fn main() -> eframe::Result {
                 fonts,
                 error: None,
                 closing: false,
+                palette_pending: false,
                 mouse: Mouse::default(),
             }))
         }),

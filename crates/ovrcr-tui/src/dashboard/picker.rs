@@ -26,6 +26,9 @@ pub struct PickList {
     pub items: Vec<PickItem>,
     pub query: String,
     pub selected: usize,
+    /// Optional nonselectable section labels keyed by the option value.
+    /// Values without a label remain in the list but start no section.
+    sections: std::collections::HashMap<String, String>,
 }
 
 impl PickList {
@@ -34,7 +37,15 @@ impl PickList {
             items,
             query: String::new(),
             selected: 0,
+            sections: std::collections::HashMap::new(),
         }
+    }
+
+    /// Add nonselectable headings to a flat, navigable option list.
+    /// The section labels are nonselectable and follow the option values.
+    pub fn with_sections(mut self, sections: impl IntoIterator<Item = (String, String)>) -> Self {
+        self.sections = sections.into_iter().collect();
+        self
     }
 
     pub fn projects(hierarchy: &HierarchySnapshot, preferred: &str) -> Self {
@@ -120,24 +131,34 @@ impl PickList {
             .selected
             .min(filtered.len() - 1)
             .saturating_sub(count.saturating_sub(1));
-        let lines = filtered
-            .iter()
-            .enumerate()
-            .skip(start)
-            .take(count)
-            .map(|(offset, item)| {
-                let chosen = offset == self.selected;
-                Line::styled(
-                    format!("  {} {}", if chosen { "›" } else { " " }, item.label),
-                    if chosen {
-                        Style::default().bg(MAUVE()).fg(CRUST())
-                    } else {
-                        Style::default().fg(TEXT())
-                    },
-                )
-            })
-            .collect();
-        (lines, self.selected.saturating_sub(start))
+        let mut lines = Vec::with_capacity(count + 2);
+        let mut previous_section: Option<&str> = None;
+        let mut selected_line = 0;
+        for (offset, item) in filtered.iter().enumerate().skip(start).take(count) {
+            let section = self.sections.get(&item.value).map(String::as_str);
+            if let Some(section) = section.filter(|section| Some(*section) != previous_section) {
+                lines.push(Line::styled(
+                    format!("  {section}"),
+                    Style::default()
+                        .fg(TEXT())
+                        .add_modifier(ratatui::style::Modifier::BOLD),
+                ));
+            }
+            previous_section = section;
+            let chosen = offset == self.selected;
+            if chosen {
+                selected_line = lines.len();
+            }
+            lines.push(Line::styled(
+                format!("  {} {}", if chosen { "›" } else { " " }, item.label),
+                if chosen {
+                    Style::default().bg(MAUVE()).fg(CRUST())
+                } else {
+                    Style::default().fg(TEXT())
+                },
+            ));
+        }
+        (lines, selected_line)
     }
 
     pub fn filtered(&self) -> Vec<&PickItem> {
@@ -376,6 +397,46 @@ mod tests {
             unsafe { std::env::remove_var("HOME") };
         }
         result
+    }
+
+    #[test]
+    fn picker_sections_are_headers_not_choices_and_follow_filtered_scrolling() {
+        let items = ["night-a", "night-b", "night-c", "dawn"]
+            .into_iter()
+            .map(|value| PickItem {
+                label: value.into(),
+                value: value.into(),
+            })
+            .collect();
+        let mut picker = PickList::new(items).with_sections([
+            ("night-a".into(), "Dark".into()),
+            ("night-b".into(), "Dark".into()),
+            ("night-c".into(), "Dark".into()),
+            ("dawn".into(), "Light".into()),
+        ]);
+        picker.selected = 2;
+        let (lines, selected) = picker.lines(2);
+        let visible: Vec<_> = lines.iter().map(|line| line.to_string()).collect();
+        assert_eq!(visible, ["  Dark", "    night-b", "  › night-c"]);
+        assert_eq!(selected, 2);
+
+        picker.selected = 3;
+        let (lines, selected) = picker.lines(2);
+        let visible: Vec<_> = lines.iter().map(|line| line.to_string()).collect();
+        assert_eq!(visible, ["  Dark", "    night-c", "  Light", "  › dawn"]);
+        assert_eq!(selected, 3);
+
+        picker.query = "dawn".into();
+        picker.selected = 0;
+        let (lines, selected) = picker.lines(2);
+        assert_eq!(
+            lines
+                .iter()
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>(),
+            ["  Light", "  › dawn"]
+        );
+        assert_eq!(selected, 1);
     }
 
     #[test]

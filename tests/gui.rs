@@ -35,6 +35,53 @@ fn wait_screen(terminal: &Terminal, needle: &str) -> Result<()> {
     }
 }
 
+fn wait_dashboard(terminal: &mut Terminal) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut declined = Vec::<String>::new();
+    loop {
+        let screen = terminal.screen();
+        let text = screen.contents();
+        // Settings notices can replace the Browse footer on a ready Dashboard.
+        if screen.alternate_screen()
+            && text
+                .lines()
+                .next()
+                .is_some_and(|header| header.contains("OVRCR") && header.contains("agent runtime"))
+        {
+            return Ok(());
+        }
+        if !screen.alternate_screen()
+            && let Some((_, prompt)) = text.rsplit_once("OVRCR · startup")
+            && prompt.contains("[y/n] Enter skips · default n")
+        {
+            let title = prompt.lines().map(str::trim).find(|line| !line.is_empty());
+            let Some(
+                title @ ("Claude reporting hooks"
+                | "Codex reporting hooks"
+                | "Install OVRCR Bridge"
+                | "Repair or update OVRCR Bridge"
+                | "Install OVRCR Local"),
+            ) = title
+            else {
+                bail!("unexpected startup confirmation:\n{text}");
+            };
+            // PTY frames can repeat while the answer is consumed. Decline each
+            // recognized optional offer once; never send dashboard keys here.
+            if !declined.iter().any(|previous| previous == title) {
+                terminal.send(b"n\r")?;
+                declined.push(title.to_owned());
+            }
+        }
+        if let Some(status) = terminal.status()? {
+            bail!("dashboard exited before readiness ({status}):\n{text}");
+        }
+        if Instant::now() >= deadline {
+            bail!("dashboard never rendered its header after optional setup:\n{text}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn desktop_alert_environment(root: &Path) -> Result<(std::path::PathBuf, std::ffi::OsString)> {
     use ovrcr::protocol::{BRIDGE_SCHEMA_VERSION, BridgeReply, BridgeStatus, PROTOCOL_VERSION};
@@ -96,6 +143,7 @@ fn palette_creates_switches_and_closes_a_real_terminal() -> Result<()> {
     let root = demo.root().to_owned();
     let mut pgids = demo_session_groups(&root)?;
     let mut terminal = demo.dashboard(40, 120, Default::default())?;
+    wait_dashboard(&mut terminal)?;
     // The complete Demo inventory is established above, but the initial frame
     // arrives in PTY chunks. Wait for the last required sidebar label.
     wait_screen(&terminal, "claude:opus-4")?;
@@ -199,6 +247,7 @@ fn real_dashboard_accepts_input_reattaches_and_cleans_up_demo() -> Result<()> {
     let root = demo.root().to_owned();
     let pgids = demo_session_groups(&root)?;
     let mut terminal = demo.dashboard(40, 120, Default::default())?;
+    wait_dashboard(&mut terminal)?;
     wait_screen(&terminal, "claude:sonnet-4")?;
     select_sidebar_session(&mut terminal, "claude:sonnet-4")?;
     enter_selected_session(&mut terminal, "fixture: lifecycle cleanup")?;
@@ -207,6 +256,7 @@ fn real_dashboard_accepts_input_reattaches_and_cleans_up_demo() -> Result<()> {
     terminal.send(b"\x07q")?;
     terminal.stop()?;
     let mut terminal = demo.dashboard(40, 120, Default::default())?;
+    wait_dashboard(&mut terminal)?;
     wait_screen(&terminal, "claude:sonnet-4")?;
     select_sidebar_session(&mut terminal, "claude:sonnet-4")?;
     enter_selected_session(&mut terminal, "GUI_CHECKPOINT")?;
@@ -235,6 +285,7 @@ fn demo_shells_inherit_paths_and_cli_reaches_fixture() -> Result<()> {
     eprintln!("fixture={} session_pgids={pgids:?}", root.display());
     let mut terminal = demo.dashboard(40, 160, Default::default())?;
     let result = (|| -> Result<()> {
+        wait_dashboard(&mut terminal)?;
         wait_screen(&terminal, "claude:sonnet-4")?;
         for (index, name, ready) in [
             (0, "claude:sonnet-4", "fixture: lifecycle cleanup"),
@@ -655,6 +706,7 @@ fn real_dashboard_initial_selection_survives_quota_events_before_startup_respons
     }
     command.env("TERM", "xterm-256color");
     let mut terminal = Terminal::start(command, 40, 160, Default::default())?;
+    wait_dashboard(&mut terminal)?;
     // The actual first session's child output proves selection, not just rows.
     wait_screen(&terminal, "local (#1)")?;
     wait_screen(&terminal, "Grok")?;
@@ -749,6 +801,7 @@ fn real_dashboard_cycles_local_policy_and_same_server_provisions_from_saved_sett
         Ok(workspace.sessions.clone())
     };
     let mut terminal = demo.dashboard(40, 160, Default::default())?;
+    wait_dashboard(&mut terminal)?;
     wait_screen(&terminal, "claude:sonnet-4")?;
     assert_eq!(saved_policy()?, "on");
     terminal.send(b"L")?;
@@ -781,6 +834,7 @@ fn real_dashboard_cycles_local_policy_and_same_server_provisions_from_saved_sett
     terminal.stop()?;
 
     let mut terminal = demo.dashboard(40, 160, Default::default())?;
+    wait_dashboard(&mut terminal)?;
     wait_screen(&terminal, "claude:sonnet-4")?;
     terminal.send(b"L")?;
     wait_screen(&terminal, "Automatic local terminals: default branch only")?;
@@ -875,6 +929,7 @@ fn real_dashboard_saves_alert_preferences_and_reloads_config() -> Result<()> {
         Terminal::start(command, 40, 160, Default::default())
     };
     let mut terminal = launch()?;
+    wait_dashboard(&mut terminal)?;
     wait_screen(&terminal, "claude:sonnet-4")?;
     terminal.send(b"N")?;
     wait_screen(&terminal, "Desktop notifications: on")?;
@@ -895,6 +950,7 @@ fn real_dashboard_saves_alert_preferences_and_reloads_config() -> Result<()> {
     terminal.stop()?;
 
     let mut terminal = launch()?;
+    wait_dashboard(&mut terminal)?;
     wait_screen(&terminal, "claude:sonnet-4")?;
     terminal.send(b":desktop notifications")?;
     wait_screen(&terminal, "Disable desktop notifications")?;
@@ -912,6 +968,7 @@ fn real_dashboard_saves_alert_preferences_and_reloads_config() -> Result<()> {
         "automatic_local_terminals = \"on\"\ndesktop_notifications = false\nready_sound = true\n",
     )?;
     let mut terminal = launch()?;
+    wait_dashboard(&mut terminal)?;
     wait_screen(&terminal, "claude:sonnet-4")?;
     terminal.send(b"N")?;
     wait_screen(&terminal, "Desktop notifications: on")?;

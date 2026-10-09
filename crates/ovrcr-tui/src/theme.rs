@@ -6,12 +6,15 @@
 //! `&ThemeTokens` (see [`ThemeScope`]).
 pub use ratatui::style::Color;
 
-use ovrcr_protocol::ThemeId;
+use ovrcr_protocol::{ThemeAppearance, ThemeId};
 use std::cell::Cell;
+
+mod catalog;
 
 /// The fifteen Design-locked palette tokens shared by every built-in theme.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ThemeTokens {
+    appearance: ThemeAppearance,
     pub base: Color,
     pub crust: Color,
     pub text: Color,
@@ -33,6 +36,7 @@ impl ThemeTokens {
     /// Catppuccin Mocha — product default / README brand (`ThemeId::Dark`).
     pub const fn dark() -> Self {
         Self {
+            appearance: ThemeAppearance::Dark,
             base: Color::Rgb(30, 30, 46),
             crust: Color::Rgb(17, 17, 27),
             text: Color::Rgb(205, 214, 244),
@@ -54,6 +58,7 @@ impl ThemeTokens {
     /// Catppuccin Latte (`ThemeId::Light`).
     pub const fn light() -> Self {
         Self {
+            appearance: ThemeAppearance::Light,
             base: Color::Rgb(239, 241, 245),
             crust: Color::Rgb(220, 224, 232),
             text: Color::Rgb(76, 79, 105),
@@ -74,6 +79,7 @@ impl ThemeTokens {
 
     pub const fn tokyo_night() -> Self {
         Self {
+            appearance: ThemeAppearance::Dark,
             base: Color::Rgb(26, 27, 38),
             crust: Color::Rgb(22, 22, 30),
             text: Color::Rgb(192, 202, 245),
@@ -94,6 +100,7 @@ impl ThemeTokens {
 
     pub const fn dracula() -> Self {
         Self {
+            appearance: ThemeAppearance::Dark,
             base: Color::Rgb(40, 42, 54),
             crust: Color::Rgb(33, 34, 44),
             text: Color::Rgb(248, 248, 242),
@@ -114,6 +121,7 @@ impl ThemeTokens {
 
     pub const fn gruvbox_dark() -> Self {
         Self {
+            appearance: ThemeAppearance::Dark,
             base: Color::Rgb(40, 40, 40),
             crust: Color::Rgb(29, 32, 33),
             text: Color::Rgb(235, 219, 178),
@@ -134,6 +142,7 @@ impl ThemeTokens {
 
     pub const fn gruvbox_light() -> Self {
         Self {
+            appearance: ThemeAppearance::Light,
             base: Color::Rgb(251, 241, 199),
             crust: Color::Rgb(242, 229, 188),
             text: Color::Rgb(60, 56, 54),
@@ -154,6 +163,7 @@ impl ThemeTokens {
 
     pub const fn nord() -> Self {
         Self {
+            appearance: ThemeAppearance::Dark,
             base: Color::Rgb(46, 52, 64),
             crust: Color::Rgb(36, 41, 51),
             text: Color::Rgb(236, 239, 244),
@@ -174,6 +184,7 @@ impl ThemeTokens {
 
     pub const fn rose_pine() -> Self {
         Self {
+            appearance: ThemeAppearance::Dark,
             base: Color::Rgb(25, 23, 36),
             crust: Color::Rgb(25, 23, 36),
             text: Color::Rgb(224, 222, 244),
@@ -192,12 +203,9 @@ impl ThemeTokens {
         }
     }
 
-    /// Light-ambiance canvases (body text is dark on BASE).
+    /// Source-declared canvas appearance, independent of RGB heuristics.
     pub fn is_light(self) -> bool {
-        match self.base {
-            Color::Rgb(r, g, b) => u16::from(r) + u16::from(g) + u16::from(b) >= 500,
-            _ => false,
-        }
+        self.appearance == ThemeAppearance::Light
     }
 
     pub const fn for_id(id: ThemeId) -> Self {
@@ -210,6 +218,78 @@ impl ThemeTokens {
             ThemeId::GruvboxLight => Self::gruvbox_light(),
             ThemeId::Nord => Self::nord(),
             ThemeId::RosePine => Self::rose_pine(),
+            ThemeId::CatppuccinMacchiato => catalog::CATPPUCCIN_MACCHIATO,
+            ThemeId::CatppuccinFrappe => catalog::CATPPUCCIN_FRAPPE,
+            ThemeId::RosePineMoon => catalog::ROSE_PINE_MOON,
+            ThemeId::RosePineDawn => catalog::ROSE_PINE_DAWN,
+            ThemeId::KanagawaWave => catalog::KANAGAWA_WAVE,
+            ThemeId::KanagawaDragon => catalog::KANAGAWA_DRAGON,
+            ThemeId::KanagawaLotus => catalog::KANAGAWA_LOTUS,
+            ThemeId::EverforestDarkHard => catalog::EVERFOREST_DARK_HARD,
+            ThemeId::EverforestDarkMedium => catalog::EVERFOREST_DARK_MEDIUM,
+            ThemeId::EverforestDarkSoft => catalog::EVERFOREST_DARK_SOFT,
+            ThemeId::EverforestLightHard => catalog::EVERFOREST_LIGHT_HARD,
+            ThemeId::EverforestLightMedium => catalog::EVERFOREST_LIGHT_MEDIUM,
+            ThemeId::EverforestLightSoft => catalog::EVERFOREST_LIGHT_SOFT,
+            ThemeId::Nightfox => catalog::NIGHTFOX,
+            ThemeId::Dayfox => catalog::DAYFOX,
+            ThemeId::Dawnfox => catalog::DAWNFOX,
+            ThemeId::Duskfox => catalog::DUSKFOX,
+            ThemeId::Nordfox => catalog::NORDFOX,
+            ThemeId::Terafox => catalog::TERAFOX,
+            ThemeId::Carbonfox => catalog::CARBONFOX,
+            ThemeId::ZenbonesDark => catalog::ZENBONES_DARK,
+            ThemeId::ZenbonesLight => catalog::ZENBONES_LIGHT,
+            ThemeId::ZenwrittenDark => catalog::ZENWRITTEN_DARK,
+            ThemeId::ZenwrittenLight => catalog::ZENWRITTEN_LIGHT,
+            ThemeId::FlexokiDark => catalog::FLEXOKI_DARK,
+            ThemeId::FlexokiLight => catalog::FLEXOKI_LIGHT,
+            ThemeId::Synthwave84 => catalog::SYNTHWAVE_84,
+            ThemeId::Snazzy => catalog::SNAZZY,
+            ThemeId::OxocarbonDark => catalog::OXOCARBON_DARK,
+            ThemeId::OxocarbonLight => catalog::OXOCARBON_LIGHT,
+            ThemeId::Poimandres => catalog::POIMANDRES,
+            ThemeId::PoimandresStorm => catalog::POIMANDRES_STORM,
+            ThemeId::Horizon => catalog::HORIZON,
+            ThemeId::HorizonBright => catalog::HORIZON_BRIGHT,
+            ThemeId::Andromeda => catalog::ANDROMEDA,
+            ThemeId::AndromedaBordered => catalog::ANDROMEDA_BORDERED,
+            ThemeId::Vesper => catalog::VESPER,
+            ThemeId::VsCodeDark => catalog::VS_CODE_DARK,
+            ThemeId::VsCodeLight => catalog::VS_CODE_LIGHT,
+            ThemeId::VsCodeDarkHighContrast => catalog::VS_CODE_DARK_HIGH_CONTRAST,
+            ThemeId::VsCodeLightHighContrast => catalog::VS_CODE_LIGHT_HIGH_CONTRAST,
+            ThemeId::GithubDarkDefault => catalog::GITHUB_DARK_DEFAULT,
+            ThemeId::GithubLightDefault => catalog::GITHUB_LIGHT_DEFAULT,
+            ThemeId::GithubDarkDimmed => catalog::GITHUB_DARK_DIMMED,
+            ThemeId::GithubDarkHighContrast => catalog::GITHUB_DARK_HIGH_CONTRAST,
+            ThemeId::GithubLightHighContrast => catalog::GITHUB_LIGHT_HIGH_CONTRAST,
+            ThemeId::GithubDarkColorblindBeta => catalog::GITHUB_DARK_COLORBLIND_BETA,
+            ThemeId::GithubLightColorblindBeta => catalog::GITHUB_LIGHT_COLORBLIND_BETA,
+            ThemeId::OneDarkPro => catalog::ONE_DARK_PRO,
+            ThemeId::OneDarkProDarker => catalog::ONE_DARK_PRO_DARKER,
+            ThemeId::OneDarkProNightFlat => catalog::ONE_DARK_PRO_NIGHT_FLAT,
+            ThemeId::Monokai => catalog::MONOKAI,
+            ThemeId::SolarizedDark => catalog::SOLARIZED_DARK,
+            ThemeId::SolarizedLight => catalog::SOLARIZED_LIGHT,
+            ThemeId::NightOwl => catalog::NIGHT_OWL,
+            ThemeId::NightOwlLight => catalog::NIGHT_OWL_LIGHT,
+            ThemeId::AyuDark => catalog::AYU_DARK,
+            ThemeId::AyuMirage => catalog::AYU_MIRAGE,
+            ThemeId::AyuLight => catalog::AYU_LIGHT,
+            ThemeId::AyuDarkUnbordered => catalog::AYU_DARK_UNBORDERED,
+            ThemeId::AyuMirageUnbordered => catalog::AYU_MIRAGE_UNBORDERED,
+            ThemeId::AyuLightUnbordered => catalog::AYU_LIGHT_UNBORDERED,
+            ThemeId::Cobalt2 => catalog::COBALT2,
+            ThemeId::PalenightTheme => catalog::PALENIGHT_THEME,
+            ThemeId::PalenightMildContrast => catalog::PALENIGHT_MILD_CONTRAST,
+            ThemeId::TokyoNightStorm => catalog::TOKYO_NIGHT_STORM,
+            ThemeId::TokyoNightLight => catalog::TOKYO_NIGHT_LIGHT,
+            ThemeId::DraculaSoft => catalog::DRACULA_SOFT,
+            ThemeId::GruvboxDarkHard => catalog::GRUVBOX_DARK_HARD,
+            ThemeId::GruvboxDarkSoft => catalog::GRUVBOX_DARK_SOFT,
+            ThemeId::GruvboxLightHard => catalog::GRUVBOX_LIGHT_HARD,
+            ThemeId::GruvboxLightSoft => catalog::GRUVBOX_LIGHT_SOFT,
         }
     }
 }
@@ -545,5 +625,160 @@ mod tests {
             assert_eq!(TEXT(), ThemeTokens::light().text);
         }
         assert_eq!(active(), ThemeTokens::dark());
+    }
+
+    fn luminance(color: Color) -> f64 {
+        let Color::Rgb(r, g, b) = color else {
+            panic!("catalog tokens must be RGB")
+        };
+        let linear = |value: u8| {
+            let channel = f64::from(value) / 255.0;
+            if channel <= 0.04045 {
+                channel / 12.92
+            } else {
+                ((channel + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+    }
+
+    fn contrast(a: Color, b: Color) -> f64 {
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    #[test]
+    fn all_approved_themes_have_explicit_appearance_and_audited_tokens() {
+        let audit: serde_json::Value =
+            serde_json::from_str(include_str!("../../../docs/themes/semantic-mappings.json"))
+                .unwrap();
+        for id in ThemeId::ALL.iter().copied() {
+            let tokens = ThemeTokens::for_id(id);
+            assert_eq!(
+                tokens.is_light(),
+                id.appearance() == ThemeAppearance::Light,
+                "{id}"
+            );
+            let row = audit["themes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["native_id"] == id.as_str())
+                .unwrap();
+            for (name, color) in [
+                ("base", tokens.base),
+                ("crust", tokens.crust),
+                ("text", tokens.text),
+                ("subtext", tokens.subtext),
+                ("muted", tokens.muted),
+                ("mauve", tokens.mauve),
+                ("peach", tokens.peach),
+                ("green", tokens.green),
+                ("teal", tokens.teal),
+                ("blue", tokens.blue),
+                ("sky", tokens.sky),
+                ("yellow", tokens.yellow),
+                ("red", tokens.red),
+                ("surface0", tokens.surface0),
+                ("surface2", tokens.surface2),
+            ] {
+                let Color::Rgb(r, g, b) = color else {
+                    panic!("{id}: {name}")
+                };
+                assert_eq!(
+                    row["tokens"][name]["value"],
+                    format!("#{r:02X}{g:02X}{b:02X}"),
+                    "{id}: {name}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn added_theme_text_focus_status_and_selection_pairs_are_legible() {
+        // Original palettes remain protected by their RGB snapshot tests.
+        for id in ThemeId::ALL[8..].iter().copied() {
+            let t = ThemeTokens::for_id(id);
+            for (role, color) in [
+                ("primary", t.text),
+                ("secondary", t.subtext),
+                ("muted labels", t.muted),
+                ("focus and accent", t.mauve),
+                ("attention", t.peach),
+                ("success", t.green),
+                ("teal labels", t.teal),
+                ("blue labels", t.blue),
+                ("sky labels", t.sky),
+                ("warning", t.yellow),
+                ("error", t.red),
+            ] {
+                for (surface, bg) in [
+                    ("body", t.base),
+                    ("sidebar", t.crust),
+                    ("selection", t.surface0),
+                ] {
+                    let ratio = contrast(color, bg);
+                    assert!(ratio >= 4.5, "{id}: {role} on {surface}: {ratio:.3}:1");
+                }
+            }
+            for bg in [t.base, t.crust, t.surface0] {
+                assert!(contrast(t.surface2, bg) >= 3.0, "{id}: border");
+            }
+            assert!(
+                contrast(t.surface0, t.base) >= 1.18,
+                "{id}: visible selection"
+            );
+            assert!(
+                contrast(t.crust, t.mauve) >= 4.5,
+                "{id}: inverted focus label"
+            );
+            assert!(
+                contrast(t.base, t.yellow) >= 4.5,
+                "{id}: inverted warning label"
+            );
+        }
+    }
+
+    #[test]
+    fn every_catalog_theme_hot_switches_through_the_dashboard_draw_path() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let mut dashboard =
+            crate::Dashboard::new(ovrcr_protocol::TerminalSize { rows: 12, cols: 40 });
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        for id in ThemeId::ALL.iter().copied() {
+            dashboard.install_settings(ovrcr_protocol::Settings {
+                theme: id,
+                ..Default::default()
+            });
+            terminal
+                .draw(|frame| crate::draw_dashboard_at(frame, &dashboard, 0))
+                .unwrap();
+            assert_eq!(
+                terminal.backend().buffer()[(0, 1)].bg,
+                ThemeTokens::for_id(id).base,
+                "{id}"
+            );
+            assert_eq!(active(), ThemeTokens::dark(), "draw must restore scope");
+        }
+    }
+
+    #[test]
+    fn catalog_switches_preserve_agent_indexed_and_truecolor_cells() {
+        use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+        let mut parser = ovrcr_terminal::vt100::Parser::new(1, 4, 0);
+        parser.process(b"\x1b[31mR\x1b[38;2;11;22;33mX");
+        for id in ThemeId::ALL.iter().copied() {
+            let mut terminal = Terminal::new(TestBackend::new(4, 1)).unwrap();
+            let _scope = ThemeScope::enter(ThemeTokens::for_id(id));
+            terminal
+                .draw(|frame| {
+                    crate::render_terminal(frame, Rect::new(0, 0, 4, 1), parser.screen(), true)
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            assert_eq!(buffer[(0, 0)].symbol(), "R");
+            assert_eq!(buffer[(0, 0)].fg, Color::Indexed(1), "{id}");
+            assert_eq!(buffer[(1, 0)].fg, Color::Rgb(11, 22, 33), "{id}");
+        }
     }
 }

@@ -753,6 +753,7 @@ for no confirmation.
 | `x` / Delete | Remove the selected element of a collection |
 | `/` | Filter rows across groups with the palette's word filter; Enter keeps it, Escape clears it |
 | `Escape` | Cancel the current edit, else clear the filter, else close |
+| `Ctrl-g` | Cancel the current edit and close Settings |
 
 Enter edits with the palette's field kinds: a boolean saves the other value at
 once; `automatic_local_terminals` and a remembered launch open a pick list
@@ -794,7 +795,7 @@ desktop_notifications = false        # opt in to background Ready and input-need
 ready_sound = false                  # opt in to a sound for the same two alert kinds
 ready_sound_choice = "default"        # macOS: default | tap | chime | rise
 iterm_focus = false                  # separate opt-in; explicit macOS Automation setup
-theme = "catppuccin-mocha"            # catppuccin-mocha (default; alias dark) | catppuccin-latte (alias light) | tokyo-night | dracula | gruvbox-dark | gruvbox-light | nord | rose-pine
+theme = "catppuccin-mocha"            # default; alias dark. All 80 keys: docs/themes/catalog.md
 automatic_local_terminals = "default_branch_only"  # on | off | default_branch_only
 # save_uncommitted_work = true       # opt in: push dirty feature worktrees to origin/wip/<branch>
 # title_model = "provider/model"     # optional; unset leaves automatic titles off
@@ -1033,7 +1034,10 @@ delivery remains unverified.
 
 `theme` chooses the Dashboard palette. The default is `"catppuccin-mocha"`
 (Catppuccin Mocha), which is also the public README brand; `"dark"` is accepted
-as an alias. Built-in picks:
+as an alias. There are 80 built-in choices: 54 Dark and 26 Light, classified
+using explicit source metadata. The [complete catalog](themes/catalog.md)
+lists every native ID, approved gallery ID, family, attribution, and semantic
+mapping decision. The original eight keys below retain their values and aliases:
 
 | Key | Label | Notes |
 | --- | --- | --- |
@@ -1052,6 +1056,19 @@ hot-switches on the next `SettingsChanged` without a restart. Borders use
 `SURFACE2`, selected rows use `SURFACE0` with `TEXT` (not inverted), and the
 accent rail stays `MAUVE`. Custom CSS, per-session themes, and follow-terminal
 are out of scope.
+
+The Settings **Theme** picker groups choices under nonselectable **Dark** and
+**Light** headings using the catalog's explicit appearance metadata. Preview the
+highlighted choice across the whole Dashboard with the arrow keys or mouse wheel.
+**Page Up/Down** moves by six choices; **Home/End** jumps to the first/last
+filtered choice. Typing or pasting a search previews its first match immediately;
+an empty result restores the saved theme.
+**Enter** saves through the normal settings flow, while **Esc** cancels the
+preview and restores the latest saved theme. **Ctrl-g** cancels the preview and
+closes Settings. Reopening the picker while a save is pending starts from the
+latest saved choice; a response to the earlier save does not replace the new
+preview. Previewing does not write
+`dashboard.toml` or change embedded agent PTY colors.
 
 The ready sound is off by default. Set `ready_sound = true` in `dashboard.toml`,
 press uppercase `S` in Browse, or use **ready sound** in the command palette to
