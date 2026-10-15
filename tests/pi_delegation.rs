@@ -674,6 +674,217 @@ fn public_pi_research_assignment_launches_collects_and_fences_real_child() {
 }
 
 #[test]
+fn public_pi_preflight_refusal_refunds_execution_but_post_spawn_failure_does_not() {
+    let live = Live::idle();
+    let host = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pi/pi_host.mjs");
+    let pi = live.claude.command.parent().unwrap().join("pi");
+    let probes = live.root.path().join("model-probes");
+    let entered = live.root.path().join("launch-preflight");
+    let release = live.root.path().join("release-preflight");
+    // Public start discovers capabilities, prepares, then checks availability for
+    // Launch. Pause only that third inventory probe: Prepare has committed, but
+    // no native child creation has been attempted.
+    let gate = format!(
+        "#!/bin/sh\ncase \" $* \" in *\" --list-models \"*) n=0; [ ! -f '{0}' ] || n=$(cat '{0}'); n=$((n+1)); echo \"$n\" > '{0}'; if [ \"$n\" = 3 ]; then : > '{1}'; while [ ! -f '{2}' ]; do sleep 0.01; done; fi;; esac\n",
+        probes.display(),
+        entered.display(),
+        release.display(),
+    );
+    fs::write(
+        &pi,
+        format!("{gate}{}", include_str!("fixtures/pi/research_pi.sh")),
+    )
+    .unwrap();
+    fs::set_permissions(&pi, fs::Permissions::from_mode(0o700)).unwrap();
+    live.start_binary_env(&[
+        ("OVRCR_TEST_DELEGATION", "1".as_ref()),
+        ("OVRCR_TEST_PI_HOST", host.as_os_str()),
+    ]);
+    live.ready("preflight-refund");
+    let workspaces = cli_json(&live, &["workspace", "list", "--project", PROJECT]);
+    let workspace = workspaces
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|workspace| workspace["branch"] == "preflight-refund")
+        .unwrap();
+    let workspace_id = workspace["id"].as_str().unwrap();
+    let workspace_path = std::path::PathBuf::from(workspace["path"].as_str().unwrap());
+    let Response::CreatedSession(parent) =
+        live.request(Request::CreateSession(CreateSessionRequest {
+            project: PROJECT.into(),
+            workspace: workspace_id.into(),
+            name: "parent".into(),
+            label: None,
+            argv: vec![
+                env!("CARGO_BIN_EXE_ovrcr").into(),
+                "agent".into(),
+                "run".into(),
+                "pi".into(),
+                "--".into(),
+                "pi".into(),
+                "--model".into(),
+                "fixture-model".into(),
+            ],
+            kind: SessionKind::Agent { name: "pi".into() },
+        }))
+    else {
+        panic!("parent creation");
+    };
+    for group in live.session_groups() {
+        live.own_group(group);
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let Response::Inventory { sessions, .. } = live.request(Request::Inspect) else {
+            panic!("inventory")
+        };
+        if sessions
+            .iter()
+            .any(|s| s.id == parent.id && s.agent.is_some())
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "parent binding");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let output = live.root.path().join("preflight-refused.json");
+    let args = serde_json::json!({"project":PROJECT,"workspace":workspace_id,"scope":"Read README","model_provider":"test","model":"fixture-model","acceptance_evidence":["citation"],"required_limits":{"max_execution_attempts":1}});
+    assert_eq!(
+        live.request(Request::SendTerminal {
+            session: parent.id,
+            text: format!(
+                "tool:{}",
+                serde_json::json!({"name":"ovrcr_start","args":args,"output":output})
+            ),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    wait_file(&entered);
+    let moved = live.root.path().join("temporarily-moved-workspace");
+    fs::rename(&workspace_path, &moved).unwrap();
+    fs::write(&release, "release").unwrap();
+    wait_file(&output);
+    // Restore before any assertion can fail so even RED leaves fixture-owned
+    // resource cleanup on its ordinary path.
+    fs::rename(&moved, &workspace_path).unwrap();
+    let reply: serde_json::Value = serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
+    assert!(reply.get("error").is_none(), "{reply}");
+    let refused: AssignmentSnapshot = serde_json::from_value(reply["details"].clone()).unwrap();
+    assert_eq!(refused.dispatch, DispatchStatus::Refused);
+    assert!(refused.identity.session.is_none());
+    assert_eq!(
+        refused.execution_attempts,
+        Some(0),
+        "pre-allocation workspace refusal has authoritative zero effects"
+    );
+    assert!(
+        !refused.retryable_capacity_refusal,
+        "a workspace error is not capacity retry authorization"
+    );
+    let repeated = tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        serde_json::json!({"handle":refused.handle}),
+        &live.root.path().join("refused-repeat.json"),
+    );
+    assert_eq!(repeated["dispatch"], "Refused");
+    assert_eq!(repeated["execution_attempts"], 0);
+    assert_eq!(repeated["identity"], reply["details"]["identity"]);
+    let retried = tool(
+        &live,
+        parent.id,
+        "ovrcr_retry",
+        serde_json::json!({"handle":refused.handle}),
+        &live.root.path().join("refused-retry.json"),
+    );
+    assert_eq!(retried["dispatch"], "Refused");
+    assert!(
+        retried["reason"]
+            .as_str()
+            .unwrap()
+            .contains("zero-effect capacity")
+    );
+    let Response::Inventory { sessions, .. } = live.request(Request::Inspect) else {
+        panic!("inventory")
+    };
+    assert!(
+        sessions.iter().all(
+            |s| !matches!(&s.kind, SessionKind::Agent { name } if name == "pi")
+                || s.id == parent.id
+        ),
+        "no child allocated on refusal"
+    );
+
+    // A real native managed child is now created, but its provider fails before
+    // it can bind. A later exited/non-live child does not refund that execution.
+    let child_entered = live.root.path().join("provider-started");
+    fs::write(
+        &pi,
+        format!(
+            "#!/bin/sh\ncase \" $* \" in *\" --no-approve \"*) : > '{}'; exit 23;; esac\n{}",
+            child_entered.display(),
+            include_str!("fixtures/pi/research_pi.sh")
+        ),
+    )
+    .unwrap();
+    let failed = tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        args,
+        &live.root.path().join("post-spawn-failed.json"),
+    );
+    wait_file(&child_entered);
+    assert_eq!(
+        failed["execution_attempts"], 1,
+        "a provider startup failure follows native creation"
+    );
+    assert!(!failed["retryable_capacity_refusal"].as_bool().unwrap());
+    let child: SessionId = serde_json::from_value(failed["identity"]["session"].clone()).unwrap();
+    assert_ne!(child, parent.id);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let Response::Inventory { sessions, .. } = live.request(Request::Inspect) else {
+            panic!("inventory")
+        };
+        if sessions
+            .iter()
+            .find(|s| s.id == child)
+            .is_none_or(|s| !s.phase.is_live())
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "failed provider must exit");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let after = tool(
+        &live,
+        parent.id,
+        "ovrcr_inspect",
+        serde_json::json!({"handle":failed["handle"]}),
+        &live.root.path().join("after-provider-exit.json"),
+    );
+    assert_eq!(
+        after["execution_attempts"], 1,
+        "later resource absence is never zero-effect proof"
+    );
+    let retry = tool(
+        &live,
+        parent.id,
+        "ovrcr_retry",
+        serde_json::json!({"handle":failed["handle"]}),
+        &live.root.path().join("post-spawn-retry.json"),
+    );
+    assert_eq!(retry["dispatch"], "Refused");
+    for group in live.session_groups() {
+        live.own_group(group);
+    }
+}
+
+#[test]
 fn ordinary_input_and_view_continue_while_workspace_lifecycle_is_busy() {
     let live = Live::binary();
     live.ready("input-progress");

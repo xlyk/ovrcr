@@ -2585,6 +2585,20 @@ fn lifecycle_response_preserves_error_chain_and_code() {
             message: "spawn session: missing executable".into(),
         }
     );
+    let marked = crate::session::NoProcessStarted::context(
+        lifecycle_error(ErrorCode::NotFound, "missing executable").context("spawn session"),
+    );
+    assert_eq!(marked.to_string(), "spawn session");
+    assert!(marked.is::<crate::session::NoProcessStarted>());
+    assert_eq!(
+        marked.downcast_ref::<LifecycleFailure>().unwrap().code,
+        ErrorCode::NotFound
+    );
+    let Response::Error { code, message } = error_for_lifecycle(marked) else {
+        panic!("lifecycle error")
+    };
+    assert_eq!(code, ErrorCode::NotFound);
+    assert!(message.contains("missing executable"));
 }
 
 #[test]
