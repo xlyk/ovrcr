@@ -1,7 +1,7 @@
 //! The first delegation slice: one read-only Pi assignment and explicit collection.
 use crate::{
-    ActivitySample, AgentActivity, AgentBinding, InputRequest, ReporterHealth, SessionId, SessionPhase,
-    SessionRunId,
+    ActivitySample, AgentActivity, AgentBinding, InputRequest, ReporterHealth, SessionId,
+    SessionPhase, SessionRunId,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

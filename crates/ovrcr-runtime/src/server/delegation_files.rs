@@ -88,10 +88,6 @@ impl Directory {
         }
         Ok(bytes)
     }
-    pub(super) fn sync(&self) -> Result<()> {
-        self.0.sync_all()?;
-        Ok(())
-    }
     /// Parent observation checkpoints have one authenticated Server-side writer.
     pub(super) fn replace(&self, name: &str, bytes: &[u8]) -> Result<()> {
         self.write(name, bytes, true)
