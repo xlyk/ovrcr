@@ -4,6 +4,7 @@ mod args;
 mod bridge;
 mod codex_setup;
 mod cursor;
+mod delegation;
 mod hermes;
 mod managed;
 mod output;
@@ -93,6 +94,7 @@ fn run(cli: Cli) -> AppResult<()> {
             agent_setup::retarget_hooks(&executable, &files)
         }
         Command::Agent { command } => agent::run(command),
+        Command::Delegation => delegation::run(),
         Command::Task(args) => {
             ovrcr::task_cli::run_task(args.command, json_output).map_err(RuntimeError::internal)
         }

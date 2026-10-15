@@ -1467,3 +1467,206 @@ fn manual_titles_are_sanitized_and_bounded() {
         "🦀".repeat(MAX_TITLE_CHARS)
     );
 }
+
+#[test]
+fn delegation_rechecks_a_to_b_to_a_binding_at_the_pty_write_boundary() {
+    use ovrcr_protocol::*;
+    let dir = tempfile::tempdir().unwrap();
+    let spawn = |id| {
+        let (tx, rx) = crate::server::event_channel(None);
+        let session = Session::spawn_registered(
+            SessionId(id),
+            SessionSpec {
+                restore_command: None,
+                run: SessionRunId(1),
+                kind: SessionKind::Agent { name: "pi".into() },
+                project: "p".into(),
+                workspace: "w".into(),
+                name: format!("pi-{id}"),
+                label: "pi".into(),
+                cwd: dir.path().into(),
+                argv: vec!["/bin/sh".into()],
+                hook_env: Some(HookEnvironment {
+                    socket: "/private/test.sock".into(),
+                    session: SessionId(id),
+                    capability: [0x37; 32],
+                }),
+            },
+            TerminalSize { rows: 24, cols: 80 },
+            tx,
+            NO_REGISTER,
+        )
+        .unwrap();
+        let dispatcher = dispatch_test_events(session.clone(), rx);
+        (session, dispatcher)
+    };
+    let (parent, parent_dispatch) = spawn(710);
+    let (child, child_dispatch) = spawn(711);
+    let parent_cleanup = TerminationGuard(parent.clone());
+    let child_cleanup = TerminationGuard(child.clone());
+    let reserve = |session: &Session| {
+        let owner = Arc::new(());
+        let Response::AgentOperation(AgentOperationResult::Reserved(reservation)) = session
+            .agent_command(
+                &Request::ReserveAgent(ReserveAgent {
+                    session: session.id(),
+                    capability: AgentSecret([0x37; 32]),
+                    operation: "reserve".into(),
+                    expected_epoch: 0,
+                    invocation: format!("inv-{}", session.id().0),
+                    provider: AgentProvider::Pi,
+                }),
+                Some(&owner),
+                |_| Ok(()),
+            )
+            .unwrap()
+        else {
+            panic!("reserve");
+        };
+        (
+            SupervisorAuth {
+                session: session.id(),
+                lease: reservation.lease,
+            },
+            owner,
+        )
+    };
+    let bind = |session: &Session,
+                auth: &SupervisorAuth,
+                owner: &Arc<()>,
+                previous: Option<AgentBinding>,
+                conversation: &str,
+                operation: &str| {
+        let Response::AgentOperation(AgentOperationResult::Bound(binding)) = session
+            .agent_command(
+                &Request::Supervisor(SupervisorRequest {
+                    auth: auth.clone(),
+                    operation: operation.into(),
+                    command: AgentCommand::Bind {
+                        expected_binding: previous,
+                        conversation: conversation.into(),
+                    },
+                }),
+                Some(owner),
+                |_| Ok(()),
+            )
+            .unwrap()
+        else {
+            panic!("bind");
+        };
+        let sample: MetricsSample = serde_json::from_value(serde_json::json!({
+            "model":"fixture-model", "context":{"value":{"used_tokens":null,"capacity_tokens":null,"quality":"Observed"},"source":"fixture"},
+            "usage":{"value":{"scope":"Conversation","coverage":"Partial","input_tokens":null,"output_tokens":null,"cache_read_tokens":null,"cache_write_tokens":null,"reasoning_output_tokens":null},"source":"fixture"},
+            "cost":{"value":null,"source":"fixture"}
+        })).unwrap();
+        session
+            .apply_agent_report(&AgentReport {
+                session: session.id(),
+                capability: [0x37; 32],
+                sequence: None,
+                update: AgentUpdate::Provider(ProviderReport {
+                    binding: binding.clone(),
+                    revision: 1,
+                    observation: AgentObservation::Metrics(Box::new(sample)),
+                }),
+            })
+            .unwrap();
+        binding
+    };
+    let (parent_auth, parent_owner) = reserve(&parent);
+    let (child_auth, child_owner) = reserve(&child);
+    let parent_binding = bind(&parent, &parent_auth, &parent_owner, None, "A", "parent-A");
+    let child_binding = bind(&child, &child_auth, &child_owner, None, "A", "child-A");
+    let ready = dir.path().join("ready");
+    assert!(
+        child
+            .send_delegated_text(DelegatedInput {
+                parent: &parent,
+                parent_binding: &parent_binding,
+                capability: &crate::agent_runner::delegation_capability(&capability_hex(
+                    &[0x37; 32]
+                )),
+                child_binding: &child_binding,
+                model: "fixture-model",
+                text: &format!("printf ready > '{}'", ready.display())
+            })
+            .unwrap()
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !ready.exists() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(5));
+    }
+    let entered = Arc::new(Barrier::new(2));
+    let release = Arc::new(Barrier::new(2));
+    *child.before_delegated_input.lock().unwrap() = Some({
+        let entered = entered.clone();
+        let release = release.clone();
+        Arc::new(move || {
+            entered.wait();
+            release.wait();
+        })
+    });
+    let marker = dir.path().join("must-not-exist");
+    let sent = {
+        let parent = parent.clone();
+        let child = child.clone();
+        let parent_binding = parent_binding.clone();
+        let child_binding = child_binding.clone();
+        let marker = marker.clone();
+        thread::spawn(move || {
+            child
+                .send_delegated_text(DelegatedInput {
+                    parent: &parent,
+                    parent_binding: &parent_binding,
+                    capability: &crate::agent_runner::delegation_capability(&capability_hex(
+                        &[0x37; 32],
+                    )),
+                    child_binding: &child_binding,
+                    model: "fixture-model",
+                    text: &format!("printf wrong > '{}'", marker.display()),
+                })
+                .unwrap()
+        })
+    };
+    entered.wait();
+    let b = bind(
+        &child,
+        &child_auth,
+        &child_owner,
+        Some(child_binding.clone()),
+        "B",
+        "child-B",
+    );
+    let a = bind(
+        &child,
+        &child_auth,
+        &child_owner,
+        Some(b),
+        "A",
+        "child-A-again",
+    );
+    assert_ne!(child_binding.generation, a.generation);
+    release.wait();
+    assert!(
+        !sent.join().unwrap(),
+        "stale A generation must never reach the PTY"
+    );
+    let fence = dir.path().join("after-write-fence");
+    child
+        .send_text(&format!("printf fence > '{}'", fence.display()), true)
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !fence.exists() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        !marker.exists(),
+        "rejected input must contribute zero PTY bytes"
+    );
+    drop(child_cleanup);
+    drop(parent_cleanup);
+    child_dispatch.join().unwrap();
+    parent_dispatch.join().unwrap();
+}

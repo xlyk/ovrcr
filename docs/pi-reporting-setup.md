@@ -6,6 +6,9 @@ owned reporting extension into a private per-invocation directory, and adds
 `-e <path>` beside your own extensions. A plain `pi` launch stays untracked. Nothing
 under `~/.pi` is read or written by OVRCR.
 
+Managed Pi also exposes the limited [research assignment flow](pi-research-assignments.md).
+Task contents use that separate control/file path and never enter reporting.
+
 ## What is reported
 
 | Pi event | OVRCR |

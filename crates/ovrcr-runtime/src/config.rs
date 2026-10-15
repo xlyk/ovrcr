@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -338,8 +338,12 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
         migrate_workspace_identity(&transaction)?;
         transaction.pragma_update(None, "user_version", 6)?;
     }
-    if schema_identity(&transaction)?.1 < SCHEMA_VERSION {
+    if schema_identity(&transaction)?.1 < 7 {
         crate::retained::create_conversation_subject_schema(&transaction)?;
+        transaction.pragma_update(None, "user_version", 7)?;
+    }
+    if schema_identity(&transaction)?.1 < SCHEMA_VERSION {
+        crate::retained::create_delegation_schema(&transaction)?;
         transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     transaction.commit().context("commit registry migration")?;
@@ -367,7 +371,9 @@ fn is_uninitialized(connection: &Connection) -> Result<bool> {
 
 pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
     let (application, version) = schema_identity(connection)?;
-    if application != APPLICATION_ID || !matches!(version, 1 | 2 | 3 | 4 | 5 | 6 | SCHEMA_VERSION) {
+    if application != APPLICATION_ID
+        || !matches!(version, 1 | 2 | 3 | 4 | 5 | 6 | 7 | SCHEMA_VERSION)
+    {
         bail!(
             "incompatible registry database (application {application}, schema {version}); \
              expected OVRCR schema {SCHEMA_VERSION}; original storage was not replaced"

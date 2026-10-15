@@ -25,7 +25,11 @@ Schema version 6 persists each workspace as a stable `id`, checkout `path`,
 `git_identity`, and `setup_pending` flag. Schema version 7 adds retained
 conversation subjects keyed by session and conversation id, with topic,
 dismissal, accepted-count and attempt-count fields; offline readers accept it
-read-only. SQLite owns identity, path, and root-setup metadata. The stored
+read-only. Schema version 8 adds the instance identity and non-payload delegation
+receipts, owned by the same SessionStore connection and migration transaction.
+Immutable task contracts, briefs and submissions remain private files outside
+child checkouts; see [Pi research assignments](../pi-research-assignments.md).
+SQLite owns identity, path, and root-setup metadata. The stored
 `branch` is captured metadata: the protected root's setup default (used when
 default-branch detection is only a HEAD fallback or fails), and a feature
 workspace's branch at creation or last explicit mutation—not a promise that

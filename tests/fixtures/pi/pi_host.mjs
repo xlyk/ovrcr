@@ -7,7 +7,7 @@
 // PI_CALLBACK=<n> after each one.
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, appendFileSync } from "node:fs";
 
 export function assistant(stopReason) {
   return { role: "assistant", stopReason, content: [] };
@@ -16,11 +16,13 @@ export function assistant(stopReason) {
 export async function createHost(extensionPath, { mode = "tui", session = "session-a", idle = true, model = undefined } = {}) {
   const handlers = new Map();
   const commands = new Map();
+  const tools = new Map();
   const api = {
     on(event, handler) {
       if (!handlers.has(event)) handlers.set(event, []);
       handlers.get(event).push(handler);
     },
+    registerTool(tool) { tools.set(tool.name, tool); },
     registerCommand(name, options) {
       commands.set(name, options);
     },
@@ -55,6 +57,9 @@ export async function createHost(extensionPath, { mode = "tui", session = "sessi
     state,
     registered: () => [...handlers.keys()].sort(),
     commands: () => [...commands.keys()].sort(),
+    tools: () => [...tools.keys()].sort(),
+    toolDefinition: name => tools.get(name),
+    tool: (name, args) => tools.get(name).execute("host-tool", args, undefined, undefined, ctx),
     run: (name, args = []) => commands.get(name).handler(args, ctx),
     async emit(event) {
       const results = [];
@@ -82,6 +87,11 @@ async function main() {
   const extension = at >= 0 ? args[at + 1] : null;
   let host = extension ? await createHost(extension) : null;
   let retiredHost = null;
+  if (host && process.env.OVRCR_TEST_DELEGATION) {
+    host.state.session = `fixture-${process.pid}`;
+    host.state.model = { id: args[args.indexOf("--model") + 1] || "fixture-model", provider: "test" };
+    await host.emit({ type: "session_start", reason: "startup" });
+  }
   if (process.env.OVRCR_TEST_PROBE) {
     writeFileSync(
       process.env.OVRCR_TEST_PROBE,
@@ -91,7 +101,33 @@ async function main() {
   process.stdout.write("PI_NATIVE_READY\n");
   let index = 0;
   for await (const line of createInterface({ input: process.stdin })) {
-    const [command, a, b, c] = line.split(":");
+    const clean = line.replaceAll("\x1b[200~", "").replaceAll("\x1b[201~", "");
+    const [command, a, b, c] = clean.split(":");
+    if (host && command === "tool") {
+      const request = JSON.parse(clean.slice(5));
+      try { writeFileSync(request.output, JSON.stringify(await host.tool(request.name, request.args))); }
+      catch (error) { writeFileSync(request.output, JSON.stringify({ error: String(error) })); }
+      continue;
+    }
+    if (host && process.env.OVRCR_TEST_DELEGATION && clean.startsWith("Perform the read-only research assignment in ")) {
+      const path = clean.match(/in (.+\/brief-v1\.json)\. Read/)[1];
+      const brief = JSON.parse(readFileSync(path, "utf8"));
+      writeFileSync(`${path}.started`, "CHILD_RESEARCH_STARTED");
+      appendFileSync(`${path}.input-count`, "1\n");
+      process.stdout.write("CHILD_RESEARCH_STARTED\n");
+      await host.emit({ type: "agent_start" });
+      while (!existsSync(process.env.OVRCR_TEST_DELEGATION_RESULT_GATE)) await new Promise(resolve => setTimeout(resolve, 10));
+      const submission = { schema: 1, identity: brief.identity, version: 1, outcome: "success", summary: "Read the assigned repository README.", evidence: ["README:1 fixture"], unresolved: [] };
+      if (brief.contract.scope.includes("STALE_RESULT")) submission.identity.contract += 1;
+      let result;
+      try { result = await host.tool("ovrcr_publish", { handle: brief.handle, submission }); }
+      catch (error) { result = { error: String(error) }; }
+      writeFileSync(`${path}.published`, JSON.stringify(result));
+      process.stdout.write("CHILD_RESULT_PUBLISHED\n");
+      await host.emit({ type: "agent_end", messages: [assistant("stop")] });
+      await host.emit({ type: "agent_settled" });
+      continue;
+    }
     if (command === "exit") process.exit(17);
     if (host) {
       if (command === "mode") host.state.mode = a;
