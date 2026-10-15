@@ -1,3 +1,5 @@
+pub mod delegation;
+pub use delegation::*;
 pub mod agent;
 pub mod auto_trust;
 pub mod bridge;

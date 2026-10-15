@@ -1819,7 +1819,16 @@ fn restore_legacy_claude_schema(live: &Live) {
             rusqlite::params![serde_json::to_string(&tagged["Claude"]).unwrap(), id],
         )
         .unwrap();
-    transaction.execute_batch("ALTER TABLE agent_conversations RENAME TO claude_conversations; ALTER TABLE retained_sessions DROP COLUMN disposition; PRAGMA user_version = 3;").unwrap();
+    transaction
+        .execute_batch(
+            "ALTER TABLE agent_conversations RENAME TO claude_conversations;
+             ALTER TABLE retained_sessions DROP COLUMN disposition;
+             DROP TABLE conversation_subjects;
+             DROP TABLE delegations;
+             DROP TABLE delegation_instance;
+             PRAGMA user_version = 3;",
+        )
+        .unwrap();
     transaction.commit().unwrap();
 }
 

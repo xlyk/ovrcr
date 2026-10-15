@@ -170,6 +170,8 @@ impl Live {
             .env_remove("XDG_DATA_HOME")
             .env_remove("XDG_STATE_HOME")
             .env_remove("XDG_CACHE_HOME")
+            .env_remove("PI_CODING_AGENT_DIR")
+            .env_remove("PI_CODING_AGENT_SESSION_DIR")
             .env_remove("CODEX_HOME")
             .env_remove("GROK_HOME")
             .env_remove("CLAUDE_CONFIG_DIR")

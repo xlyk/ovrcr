@@ -375,6 +375,7 @@ pub enum Request {
         workspace: String,
         save: bool,
     },
+    Delegation(Box<crate::DelegationRequest>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -453,6 +454,7 @@ pub enum Response {
     NotificationNavigationConfirmed(Option<Box<crate::BridgeNavigationOffer>>),
     ITermFocusPrepared(Option<crate::BridgeActivationTarget>),
     BridgeOwner(crate::BridgeOwnerResult),
+    Delegation(Box<crate::AssignmentSnapshot>),
 }
 
 /// Which create/remove/close a Lifecycle job performed.
@@ -1472,6 +1474,113 @@ mod wire_snapshot {
                 sessions: Vec::new(),
             }),
         ));
+        let auth = crate::DelegationAuth {
+            session: SessionId(1),
+            capability: "fixture".into(),
+        };
+        let identity = crate::AssignmentIdentity {
+            instance: "i".into(),
+            workflow: "w".into(),
+            controller: "c".into(),
+            controller_epoch: 1,
+            task: "t".into(),
+            attempt: 1,
+            contract: 1,
+            request: "r".into(),
+            session: Some(SessionId(2)),
+            run: Some(crate::SessionRunId(1)),
+        };
+        let contract = crate::ResearchContract {
+            schema: 1,
+            workflow: "w".into(),
+            controller: "c".into(),
+            task: "t".into(),
+            request: "r".into(),
+            project: "p".into(),
+            workspace: "ws".into(),
+            scope: "read".into(),
+            permitted_actions: vec!["read".into()],
+            provider: "pi".into(),
+            model_provider: "test".into(),
+            model: "m".into(),
+            acceptance_evidence: vec!["cite".into()],
+            mandatory_capabilities: vec!["read".into()],
+        };
+        let submission = crate::ResearchSubmission {
+            schema: 1,
+            identity: identity.clone(),
+            version: 1,
+            outcome: "success".into(),
+            summary: "done".into(),
+            evidence: vec!["citation".into()],
+            unresolved: vec![],
+        };
+        for (name, request) in [
+            (
+                "Prepare",
+                crate::DelegationRequest::Prepare {
+                    auth: auth.clone(),
+                    contract,
+                },
+            ),
+            (
+                "Launch",
+                crate::DelegationRequest::Launch {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                },
+            ),
+            (
+                "SendInitial",
+                crate::DelegationRequest::SendInitial {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                    identity: identity.clone(),
+                },
+            ),
+            (
+                "Inspect",
+                crate::DelegationRequest::Inspect {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                },
+            ),
+            (
+                "Collect",
+                crate::DelegationRequest::Collect {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                },
+            ),
+            (
+                "Publish",
+                crate::DelegationRequest::Publish {
+                    auth,
+                    handle: "r".into(),
+                    submission: submission.clone(),
+                },
+            ),
+        ] {
+            all.push((
+                format!("Delegation::{name}"),
+                encode(&Request::Delegation(Box::new(request))),
+            ));
+        }
+        all.push((
+            "Response::Delegation".into(),
+            encode(&Response::Delegation(Box::new(crate::AssignmentSnapshot {
+                handle: "r".into(),
+                identity,
+                dispatch: crate::DispatchStatus::Applied,
+                reason: None,
+                activity: AgentActivity::ResponseReady,
+                conversation: Some("conv".into()),
+                brief: "/brief".into(),
+                result_path: "/result".into(),
+                submission: Some(submission),
+                acceptance: "pending".into(),
+            }))),
+        ));
         all
     }
 
@@ -1532,13 +1641,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a042a017301630168016c0104",
+            "2a042b017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f042a017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f042b017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -1569,18 +1678,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d042a0000"),
+        ("Response::NotificationNavigation", "0d042b0000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e042a017301630168016c0104",
+            "0e01016e042b017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f010708090101690101042a017301630168016c0164",
+            "0f010708090101690101042b017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "10042a010708090101690101042a017301630168016c0164",
+            "10042b010708090101690101042b017301630168016c0164",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -1604,7 +1713,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e042a017301630168016c0104",
+            "08016e042b017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -1747,6 +1856,25 @@ mod wire_snapshot {
         (
             "WorkspaceSummary",
             "017006737461626c650d666561747572652f746f706963052f776f726b01010d6578706563746564206d61696e00",
+        ),
+        (
+            "Delegation::Prepare",
+            "3200010766697874757265010177016301740172017002777304726561640104726561640270690474657374016d010463697465010472656164",
+        ),
+        ("Delegation::Launch", "32010107666978747572650172"),
+        (
+            "Delegation::SendInitial",
+            "320201076669787475726501720169017701630101740101017201020101",
+        ),
+        ("Delegation::Inspect", "32030107666978747572650172"),
+        ("Delegation::Collect", "32040107666978747572650172"),
+        (
+            "Delegation::Publish",
+            "3205010766697874757265017201016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e00",
+        ),
+        (
+            "Response::Delegation",
+            "11017201690177016301017401010172010201010400050104636f6e76062f6272696566072f726573756c740101016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e000770656e64696e67",
         ),
     ];
 

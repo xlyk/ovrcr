@@ -597,6 +597,30 @@ pub(super) fn handle_request_with_id(
             request_id,
             HistoryRequest::End { session, snapshot },
         ),
+        Request::Delegation(request) => {
+            let launching = matches!(
+                request.as_ref(),
+                ovrcr_protocol::DelegationRequest::Launch { .. }
+            );
+            state.delegation(*request).map_or_else(
+                |error| {
+                    error_response(
+                        error
+                            .downcast_ref::<super::LifecycleFailure>()
+                            .map_or(ErrorCode::Internal, |failure| failure.code.clone()),
+                        error_chain_string(&error),
+                    )
+                },
+                |snapshot| {
+                    if launching && snapshot.identity.session.is_some() {
+                        state.dashboard.try_send(ServerMessage::Event(
+                            ServerEvent::HierarchyChanged(state.hierarchy()),
+                        ));
+                    }
+                    Response::Delegation(Box::new(snapshot))
+                },
+            )
+        }
         Request::Input {
             session,
             run,
@@ -622,6 +646,9 @@ pub(super) fn handle_request_with_id(
                     ErrorCode::InvalidRequest,
                     "input is only accepted for the focused dashboard session",
                 );
+            }
+            if let Err(error) = state.reject_assigned_input(session) {
+                return error_response(ErrorCode::Conflict, error_chain_string(&error));
             }
             let selected_session = state.sessions.lock().unwrap().get(&session).cloned();
             match selected_session {

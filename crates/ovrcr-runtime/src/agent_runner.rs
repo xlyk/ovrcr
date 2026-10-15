@@ -29,6 +29,24 @@ pub fn run_native(
     argv: &[OsString],
     channel_ready: impl FnOnce(bool, &mut Vec<OsString>) -> Option<HookHandler>,
 ) -> Result<ExitStatus> {
+    run_native_with_env(argv, &[], channel_ready)
+}
+
+/// Only the managed Pi wrapper supplies scoped delegation credentials. Raw hook
+/// credentials remain unavailable to the native provider and its extensions.
+pub fn delegation_capability(hook: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!(
+        "{:x}",
+        Sha256::digest(format!("ovrcr-delegation-v1:{hook}"))
+    )
+}
+
+pub fn run_native_with_env(
+    argv: &[OsString],
+    environment: &[(OsString, OsString)],
+    channel_ready: impl FnOnce(bool, &mut Vec<OsString>) -> Option<HookHandler>,
+) -> Result<ExitStatus> {
     argv.first().context("native command is required")?;
     let mut signals = Signals::new([
         libc::SIGINT,
@@ -55,6 +73,11 @@ pub fn run_native(
         .env_remove("OVRCR_HOOK_TOKEN")
         .env_remove("OVRCR_AGENT_SOCKET")
         .env_remove("OVRCR_AGENT_TOKEN")
+        .env_remove("OVRCR_DELEGATION_SESSION")
+        .env_remove("OVRCR_DELEGATION_TOKEN")
+        .env_remove("OVRCR_DELEGATION_HOME")
+        .env_remove("OVRCR_DELEGATION_SOCKET")
+        .envs(environment.iter().cloned())
         .process_group(0);
     if let Some(channel) = &channel {
         command

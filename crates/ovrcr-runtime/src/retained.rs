@@ -10,6 +10,16 @@ use std::ffi::OsString;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
+/// Non-payload assignment authority shares the registry migration/connection owner.
+pub(crate) fn create_delegation_schema(connection: &Connection) -> Result<()> {
+    connection.execute_batch("CREATE TABLE delegation_instance (id TEXT NOT NULL); CREATE TABLE delegations (handle TEXT PRIMARY KEY, workflow TEXT NOT NULL, session INTEGER, metadata TEXT NOT NULL); CREATE INDEX delegations_by_session ON delegations(session); CREATE INDEX delegations_by_workflow ON delegations(workflow);")?;
+    connection.execute(
+        "INSERT INTO delegation_instance (id) VALUES (?1)",
+        [crate::agent_runner::private_identifier()?],
+    )?;
+    Ok(())
+}
+
 pub(crate) fn create_schema(connection: &Connection) -> Result<()> {
     connection.execute_batch(
         "CREATE TABLE retained_sessions (
@@ -242,6 +252,7 @@ impl SessionStore {
     pub(crate) fn in_memory() -> Self {
         let connection = Connection::open_in_memory().unwrap();
         create_schema(&connection).unwrap();
+        create_delegation_schema(&connection).unwrap();
         create_conversation_schema(&connection).unwrap();
         create_conversation_subject_schema(&connection).unwrap();
         Self::from_connection(connection).unwrap()
@@ -303,6 +314,60 @@ impl SessionStore {
         )?;
         self.records.insert(record.id, record);
         Ok(())
+    }
+
+    pub(crate) fn delegation_instance(&self) -> Result<String> {
+        Ok(self
+            .connection
+            .query_row("SELECT id FROM delegation_instance", [], |row| row.get(0))?)
+    }
+
+    pub(crate) fn assignment(
+        &self,
+        handle: &str,
+    ) -> Result<Option<crate::server::delegation::Record>> {
+        use rusqlite::OptionalExtension;
+        let value: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT metadata FROM delegations WHERE handle = ?1",
+                [handle],
+                |row| row.get(0),
+            )
+            .optional()?;
+        value
+            .map(|v| serde_json::from_str(&v).map_err(Into::into))
+            .transpose()
+    }
+
+    pub(crate) fn save_assignment(&self, value: &crate::server::delegation::Record) -> Result<()> {
+        self.connection.execute("INSERT INTO delegations (handle, workflow, session, metadata) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(handle) DO UPDATE SET session=excluded.session, metadata=excluded.metadata", params![value.handle, value.identity.workflow, value.identity.session.map(|id| sql_integer(id.0)).transpose()?, serde_json::to_string(value)?])?;
+        Ok(())
+    }
+
+    pub(crate) fn assigned(&self, id: SessionId) -> Result<bool> {
+        Ok(self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM delegations WHERE session = ?1)",
+            [sql_integer(id.0)?],
+            |row| row.get(0),
+        )?)
+    }
+
+    pub(crate) fn workflow_controller(
+        &self,
+        workflow: &str,
+    ) -> Result<Option<crate::server::delegation::Record>> {
+        let mut query = self
+            .connection
+            .prepare("SELECT metadata FROM delegations WHERE workflow = ?1 LIMIT 1")?;
+        let rows = query.query_map([workflow], |row| row.get::<_, String>(0))?;
+        for row in rows {
+            let record: crate::server::delegation::Record = serde_json::from_str(&row?)?;
+            if record.identity.workflow == workflow {
+                return Ok(Some(record));
+            }
+        }
+        Ok(None)
     }
 
     pub fn boot_id(&self) -> Option<&str> {
@@ -1081,7 +1146,13 @@ mod tests {
         drop(store);
         let connection = Connection::open(crate::config::database_path(&config)).unwrap();
         connection
-            .execute_batch("DROP TABLE agent_conversations; PRAGMA user_version = 3;")
+            .execute_batch(
+                "DROP TABLE agent_conversations;
+                 DROP TABLE conversation_subjects;
+                 DROP TABLE delegations;
+                 DROP TABLE delegation_instance;
+                 PRAGMA user_version = 3;",
+            )
             .unwrap();
         drop(connection);
         assert_eq!(
@@ -1118,7 +1189,12 @@ mod tests {
         let connection = Connection::open(crate::config::database_path(&config)).unwrap();
         connection
             .execute_batch(
-                "ALTER TABLE retained_sessions DROP COLUMN disposition; PRAGMA user_version = 2;",
+                "ALTER TABLE retained_sessions DROP COLUMN disposition;
+                 DROP TABLE agent_conversations;
+                 DROP TABLE conversation_subjects;
+                 DROP TABLE delegations;
+                 DROP TABLE delegation_instance;
+                 PRAGMA user_version = 2;",
             )
             .unwrap();
         drop(connection);

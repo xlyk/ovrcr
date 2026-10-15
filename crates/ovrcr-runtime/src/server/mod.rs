@@ -1,3 +1,5 @@
+pub(crate) mod delegation;
+mod delegation_files;
 use crate::config::{
     ProjectRecord, Registry, WorkspaceRecord, initialize_registry, save_registry_atomic,
 };
@@ -531,6 +533,7 @@ impl ServerState {
     }
 
     pub fn send_terminal(&self, id: SessionId, text: &str, submit: bool) -> Result<()> {
+        self.reject_assigned_input(id)?;
         let session = self.session_for_control(id)?;
         if matches!(session.summary().phase, SessionPhase::Exited { .. }) {
             return Err(lifecycle_error(ErrorCode::Conflict, "session has exited"));
@@ -543,6 +546,7 @@ impl ServerState {
     /// Write one named key to `expected_run`. Focus is read here, at write
     /// time: the Dashboard owns the keyboard of the session it is focused on.
     pub fn keystroke(&self, id: SessionId, expected_run: SessionRunId, key: &str) -> Result<()> {
+        self.reject_assigned_input(id)?;
         let (key, modifiers) = ovrcr_terminal::key::parse_keystroke(key)
             .map_err(|message| lifecycle_error(ErrorCode::InvalidRequest, message))?;
         let session = self.session_for_control(id)?;
@@ -745,7 +749,7 @@ impl ServerState {
     ) -> Result<SessionSummary> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
-        self.create_session_locked(request, None)
+        self.create_session_locked(request, None, None)
     }
 
     #[cfg(test)]
@@ -756,7 +760,7 @@ impl ServerState {
     ) -> Result<SessionSummary> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
-        self.create_session_locked(request, Some(ready))
+        self.create_session_locked(request, Some(ready), None)
     }
 
     /// Admission stays locked from the live-slot check through durable intent and publication.
@@ -764,6 +768,7 @@ impl ServerState {
         &self,
         mut request: ovrcr_protocol::CreateSessionRequest,
         ready: Option<Arc<dyn Fn() + Send + Sync>>,
+        assignment: Option<&str>,
     ) -> Result<SessionSummary> {
         if request.argv.is_empty() {
             return Err(lifecycle_error(
@@ -833,6 +838,9 @@ impl ServerState {
             pinned_title,
             application_title: None,
         })?;
+        if let Some(handle) = assignment {
+            self.bind_assignment(handle, &record)?;
+        }
         let result = self.spawn_record_locked(record.id, record.run, request.argv, ready, None);
         if let Err(error) = &result {
             let removed = {
@@ -903,6 +911,7 @@ impl ServerState {
         }
         self.dashboard.forget_session(id);
         let metadata = &record.metadata;
+        let assigned_input = self.retained.lock().assigned(id)?;
         let spec = SessionSpec {
             restore_command,
             run: record.run,
@@ -924,6 +933,9 @@ impl ServerState {
             cols: 120,
         });
         let register = |session: &Arc<Session>| {
+            if assigned_input {
+                session.assign_controller_input();
+            }
             session.restore_titles(
                 metadata.pinned_title.clone(),
                 metadata.application_title.clone(),
@@ -2018,6 +2030,7 @@ impl ServerState {
                 kind: launch.kind,
             },
             None,
+            None,
         )
         .map(Some)
         .map_err(|error| {
@@ -2448,6 +2461,7 @@ impl ServerState {
                 argv: vec![shell],
                 kind: SessionKind::Terminal,
             },
+            None,
             None,
         )
     }

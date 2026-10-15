@@ -173,6 +173,7 @@ impl std::fmt::Debug for HookEnvironment {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputAdmissionError {
+    Assigned,
     Paused,
     Exited,
 }
@@ -180,6 +181,7 @@ pub enum InputAdmissionError {
 impl std::fmt::Display for InputAdmissionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
+            Self::Assigned => "Pi owns this assignment; generic terminal input is disabled",
             Self::Paused => "session is paused; resume it before sending input",
             Self::Exited => "session has exited",
         })
@@ -280,6 +282,15 @@ type TermResultHook = Arc<dyn Fn() -> Option<bool> + Send + Sync>;
 #[cfg(test)]
 type ListingErrorHook = Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>;
 
+pub(crate) struct DelegatedInput<'a> {
+    pub parent: &'a Session,
+    pub parent_binding: &'a ovrcr_protocol::AgentBinding,
+    pub capability: &'a str,
+    pub child_binding: &'a ovrcr_protocol::AgentBinding,
+    pub model: &'a str,
+    pub text: &'a str,
+}
+
 pub struct Session {
     // Keep startup files alive until the shell has finished using them.
     _shell_startup: Option<tempfile::TempDir>,
@@ -287,6 +298,8 @@ pub struct Session {
     #[cfg(test)]
     pub(crate) initial_cwd: PathBuf,
     state: Mutex<SessionState>,
+    // Set before publication, never cleared for this process run.
+    assigned_input: std::sync::OnceLock<()>,
     state_changed: Condvar,
     terminal: Mutex<TerminalState>,
     parser_changed: Condvar,
@@ -304,6 +317,8 @@ pub struct Session {
     history_capture_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     #[cfg(test)]
     summary_entry_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    #[cfg(test)]
+    before_delegated_input: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     #[cfg(test)]
     listing_error_hook: Mutex<Option<ListingErrorHook>>,
     #[cfg(test)]
@@ -517,6 +532,7 @@ impl Session {
                 unread: None,
                 recovery: None,
             },
+            assigned_input: std::sync::OnceLock::new(),
             state: Mutex::new(SessionState {
                 reporting: reporting::ReportingState::default(),
                 phase: SessionPhase::Running,
@@ -561,6 +577,8 @@ impl Session {
             history_capture_hook: Mutex::new(None),
             #[cfg(test)]
             summary_entry_hook: Mutex::new(None),
+            #[cfg(test)]
+            before_delegated_input: Mutex::new(None),
             #[cfg(test)]
             listing_error_hook: Mutex::new(None),
             #[cfg(test)]
@@ -723,7 +741,18 @@ impl Session {
         Ok(changed)
     }
 
+    pub(crate) fn assign_controller_input(&self) {
+        let _ = self.assigned_input.set(());
+    }
+
+    pub(crate) fn has_assigned_input(&self) -> bool {
+        self.assigned_input.get().is_some()
+    }
+
     fn admit_input(&self) -> std::result::Result<(), InputAdmissionError> {
+        if self.has_assigned_input() {
+            return Err(InputAdmissionError::Assigned);
+        }
         match self.state.lock().unwrap().phase {
             SessionPhase::Running => Ok(()),
             SessionPhase::Paused => Err(InputAdmissionError::Paused),
@@ -838,6 +867,14 @@ impl Session {
         }
     }
 
+    pub(crate) fn authorizes_delegation(&self, capability: &str) -> bool {
+        let state = self.state.lock().unwrap();
+        state.phase.is_live()
+            && state.hook_capability.as_ref().is_some_and(|token| {
+                crate::agent_runner::delegation_capability(&capability_hex(token)) == capability
+            })
+    }
+
     pub fn revoke_hook_capability(&self) {
         let mut state = self.state.lock().unwrap();
         state.reporting.lost("capability_revoked");
@@ -894,6 +931,92 @@ impl Session {
     #[cfg(test)]
     pub(crate) fn set_term_result_hook(&self, hook: Option<TermResultHook>) {
         *self.term_result_hook.lock().unwrap() = hook;
+    }
+
+    /// The caller holds SessionStore before entering here. Reporter binding changes
+    /// share these state mutexes; hold them through the actual PTY write, in ID order.
+    pub(crate) fn send_delegated_text(&self, input: DelegatedInput<'_>) -> Result<bool> {
+        let bracketed = self
+            .terminal
+            .lock()
+            .unwrap()
+            .parser
+            .screen()
+            .bracketed_paste();
+        let bytes = encode_paste(input.text, bracketed);
+        #[cfg(test)]
+        if let Some(hook) = self.before_delegated_input.lock().unwrap().clone() {
+            hook();
+        }
+        if self.id() == input.parent.id() {
+            return Ok(false);
+        }
+        let write = |parent: &SessionState, child: &SessionState| -> Result<bool> {
+            let parent_valid = parent.phase == SessionPhase::Running
+                && parent.hook_capability.as_ref().is_some_and(|token| {
+                    crate::agent_runner::delegation_capability(&capability_hex(token))
+                        == input.capability
+                })
+                && parent.reporting.snapshot.as_ref().is_some_and(|snapshot| {
+                    &snapshot.binding == input.parent_binding
+                        && snapshot.health.state == ovrcr_protocol::ReporterHealth::Connected
+                });
+            let child_valid = child.phase == SessionPhase::Running
+                && child.hook_capability.is_some()
+                && child.reporting.snapshot.as_ref().is_some_and(|snapshot| {
+                    &snapshot.binding == input.child_binding
+                        && snapshot.health.state == ovrcr_protocol::ReporterHealth::Connected
+                        && snapshot
+                            .metrics
+                            .as_ref()
+                            .and_then(|metrics| metrics.sample.model.as_deref())
+                            == Some(input.model)
+                });
+            if !parent_valid || !child_valid {
+                return Ok(false);
+            }
+            let mut writer = self.writer.lock().unwrap();
+            writer
+                .write_all(&bytes)
+                .context("write assigned text to PTY")?;
+            writer
+                .write_all(b"\r")
+                .context("submit assigned text to PTY")?;
+            writer.flush().context("flush assigned PTY")?;
+            Ok(true)
+        };
+        if input.parent.id().0 < self.id().0 {
+            let parent = input.parent.state.lock().unwrap();
+            let child = self.state.lock().unwrap();
+            write(&parent, &child)
+        } else {
+            let child = self.state.lock().unwrap();
+            let parent = input.parent.state.lock().unwrap();
+            write(&parent, &child)
+        }
+    }
+
+    pub(crate) fn with_delegation_binding<T>(
+        &self,
+        capability: &str,
+        binding: &ovrcr_protocol::AgentBinding,
+        action: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        let state = self.state.lock().unwrap();
+        if !state.phase.is_live()
+            || !state.hook_capability.as_ref().is_some_and(|token| {
+                crate::agent_runner::delegation_capability(&capability_hex(token)) == capability
+            })
+            || state
+                .reporting
+                .snapshot
+                .as_ref()
+                .map(|snapshot| &snapshot.binding)
+                != Some(binding)
+        {
+            bail!("child publication binding changed");
+        }
+        action()
     }
 
     pub fn send_text(&self, text: &str, submit: bool) -> Result<()> {

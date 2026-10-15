@@ -59,6 +59,8 @@ pub(super) enum Command {
         #[command(subcommand)]
         command: BridgeCommand,
     },
+    /// Submit one delegation control request as JSON on stdin; connect only.
+    Delegation,
     /// Run a native agent with invocation supervision.
     Agent {
         #[command(subcommand)]
