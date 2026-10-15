@@ -17,11 +17,18 @@ pub use ovrcr_protocol::{
 
 /// Lifecycle preparation or native spawn failed before the requested process started.
 #[derive(Debug)]
-pub(crate) struct NoProcessStarted;
+pub(crate) struct NoProcessStarted(String);
+
+impl NoProcessStarted {
+    pub(crate) fn context(error: anyhow::Error) -> anyhow::Error {
+        let diagnostic = Self(error.to_string());
+        error.context(diagnostic)
+    }
+}
 
 impl std::fmt::Display for NoProcessStarted {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("no process was started")
+        formatter.write_str(&self.0)
     }
 }
 
@@ -486,7 +493,7 @@ impl Session {
             .argv
             .first()
             .context("session command cannot be empty")
-            .context(NoProcessStarted)?
+            .map_err(NoProcessStarted::context)?
             .clone();
         let pty = native_pty_system();
         let pair = pty
@@ -496,7 +503,7 @@ impl Session {
                 pixel_width: 0,
                 pixel_height: 0,
             })
-            .context(NoProcessStarted)?;
+            .map_err(NoProcessStarted::context)?;
         let mut command = CommandBuilder::new(argv0);
         command.args(spec.argv.iter().skip(1));
         #[cfg(test)]
@@ -507,7 +514,7 @@ impl Session {
             command.env("OVRCR_RESTORE_COMMAND", restore_command);
         }
         let shell_startup =
-            shell_prompt::configure(&mut command, &spec.argv).context(NoProcessStarted)?;
+            shell_prompt::configure(&mut command, &spec.argv).map_err(NoProcessStarted::context)?;
         command.env_remove("OVRCR_AGENT_SOCKET");
         command.env_remove("OVRCR_AGENT_TOKEN");
         command.env_remove("OVRCR_HOOK_SOCKET");
@@ -521,7 +528,7 @@ impl Session {
         let mut child = pair
             .slave
             .spawn_command(command)
-            .context(NoProcessStarted)?;
+            .map_err(NoProcessStarted::context)?;
         let pid = child.process_id().context("PTY child has no process ID")?;
 
         let (leader_timeout, leader_probe) = match &leader_wait {
