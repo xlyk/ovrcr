@@ -394,7 +394,7 @@ pub enum DelegationRequest {
         request: String,
         returned_request: String,
         expected_control_epoch: u64,
-        evidence: AssignmentControlEvidence,
+        evidence: Box<AssignmentControlEvidence>,
     },
     Publish {
         auth: DelegationAuth,

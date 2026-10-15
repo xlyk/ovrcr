@@ -381,6 +381,7 @@ fn service_install_refuses_when_sessions_exist() {
                                 cwd: "/work".into(),
                                 title: None,
                                 manual_title: None,
+                                assignment_control: None,
                                 id: SessionId(7),
                                 run: ovrcr_protocol::SessionRunId(1),
                                 kind: ovrcr_protocol::SessionKind::Terminal,

@@ -1690,7 +1690,7 @@ mod wire_snapshot {
                     run: SessionRunId(1),
                     expected_epoch: 2,
                     view_revision: 3,
-                    evidence: evidence.clone(),
+                    evidence: Box::new(evidence.clone()),
                 },
             )),
         ));
@@ -1706,7 +1706,7 @@ mod wire_snapshot {
                     request: "confirm".into(),
                     returned_request: "return".into(),
                     expected_control_epoch: 3,
-                    evidence,
+                    evidence: Box::new(evidence),
                 },
             ))),
         ));

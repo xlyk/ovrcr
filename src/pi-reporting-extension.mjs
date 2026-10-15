@@ -253,8 +253,9 @@ function registerDelegation(pi) {
         snapshot = await call({ Launch: { auth: auth(), handle, identity: receipt("Launch")?.identity ?? snapshot.identity } });
       }
       // Launched is a known no-input state. Polling it does not replay a send.
+      const initialControlEpoch = snapshot.control?.epoch;
       for (let attempt = 0; snapshot.dispatch === "Launched" && (!receipt("InitialInput") || receipt("InitialInput").outcome === "Accepted") && attempt < 100; attempt++) {
-        snapshot = await call({ SendInitial: { auth: auth(), handle, identity: snapshot.identity } });
+        snapshot = await call({ SendInitial: { auth: auth(), handle, identity: snapshot.identity, expected_control_epoch: initialControlEpoch } });
         if (snapshot.dispatch === "Launched") await new Promise(resolve => setTimeout(resolve, 100));
       }
       return snapshot;
@@ -278,7 +279,7 @@ function registerDelegation(pi) {
     const held = await open(directory, "r");
     try { await held.sync(); } finally { await held.close(); }
   };
-  tool("ovrcr_followup", "Send a scoped followup to this assignment's same safe child. Supply expected_identity, expected_result_version and text, plus revised_contract only for explicit changed requirements. Each call expects a new result version. Recover a lost reply with only handle and its original request; unknown/partial input must never be resent under a new request.", { ...object({ handle: string, request: string, expected_identity: { type: "object" }, expected_result_version: { type: "integer", minimum: 1 }, text: string, revised_contract: { type: ["object", "null"] } }, ["handle"]), anyOf: [{ required: ["handle", "request"] }, { required: ["handle", "expected_identity", "expected_result_version", "text"] }] }, async args => {
+  tool("ovrcr_followup", "Send a scoped followup to this assignment's same safe child. Supply expected_identity, expected_result_version, expected_control_epoch and text, plus revised_contract only for explicit changed requirements. Each call expects a new result version. Recover a lost reply with only handle and its original request; unknown/partial input must never be resent under a new request.", { ...object({ handle: string, request: string, expected_identity: { type: "object" }, expected_result_version: { type: "integer", minimum: 1 }, expected_control_epoch: { type: "integer", minimum: 1 }, text: string, revised_contract: { type: ["object", "null"] } }, ["handle"]), anyOf: [{ required: ["handle", "request"] }, { required: ["handle", "expected_identity", "expected_result_version", "expected_control_epoch", "text"] }] }, async args => {
     let request = args.request;
     let attempted = false;
     try {
@@ -288,10 +289,15 @@ function registerDelegation(pi) {
         if (Object.keys(args).some(key => !["handle", "request"].includes(key))) throw new Error("recovery requires only handle and original request");
         intent = await originalIntent(request, "followup-");
         if (intent.handle !== args.handle) throw new Error("original followup belongs to another assignment");
+        if (!Object.hasOwn(intent, "expected_control_epoch")) {
+          // Legacy immutable intent bytes/hash are preserved. Missing authority never adopts a current epoch.
+          const snapshot = await call({ Reconcile: { auth: auth(), request: args.handle } });
+          return { ...snapshot, request, recovery: "Legacy followup has no captured control epoch; inspect the original receipt without replay" };
+        }
       } else {
-        if (!Number.isSafeInteger(args.expected_result_version) || args.expected_result_version < 1 || !args.expected_identity || typeof args.expected_identity !== "object" || Array.isArray(args.expected_identity) || typeof args.text !== "string" || !args.text.trim() || Buffer.byteLength(args.text) > 32768 || Object.keys(args).some(key => !["handle", "expected_identity", "expected_result_version", "text", "revised_contract"].includes(key))) throw new Error("provide expected_identity, expected_result_version and 1..32768 bytes of scoped text");
+        if (!Number.isSafeInteger(args.expected_control_epoch) || args.expected_control_epoch < 1 || !Number.isSafeInteger(args.expected_result_version) || args.expected_result_version < 1 || !args.expected_identity || typeof args.expected_identity !== "object" || Array.isArray(args.expected_identity) || typeof args.text !== "string" || !args.text.trim() || Buffer.byteLength(args.text) > 32768 || Object.keys(args).some(key => !["handle", "expected_identity", "expected_result_version", "expected_control_epoch", "text", "revised_contract"].includes(key))) throw new Error("provide expected_identity, expected_result_version and 1..32768 bytes of scoped text");
         request = randomUUID();
-        intent = { schema: 1, handle: args.handle, request, expected_identity: args.expected_identity, expected_result_version: args.expected_result_version, text: args.text, revised_contract: args.revised_contract ?? null };
+        intent = { schema: 1, handle: args.handle, request, expected_identity: args.expected_identity, expected_result_version: args.expected_result_version, expected_control_epoch: args.expected_control_epoch, text: args.text, revised_contract: args.revised_contract ?? null };
         auth();
         await saveFollowup(intent);
       }
@@ -301,9 +307,13 @@ function registerDelegation(pi) {
       return { ...snapshot, request };
     } catch (error) { return { handle: args.handle, request: request ?? null, dispatch: error.refused || !attempted ? "Refused" : "Unknown", transport: attempted ? "Unknown" : "NotSent", reason: String(error.message), recovery: "Recover with only this handle and original request; do not create another request while input is unknown or partial" }; }
   });
-  tool("ovrcr_accept", "Record the parent's explicit acceptance of the exact current result identity, version and digest. This records your judgment; collection, Ready and child success never accept automatically.", object({ handle: string, identity: { type: "object" }, result_version: { type: "integer", minimum: 1 }, result_digest: string }), async args => {
+  tool("ovrcr_accept", "Record the parent's explicit acceptance of the exact current result identity, version and digest. This records your judgment; collection, Ready and child success never accept automatically.", object({ handle: string, identity: { type: "object" }, result_version: { type: "integer", minimum: 1 }, result_digest: string, expected_control_epoch: { type: "integer", minimum: 1 } }), async args => {
     try { return await call({ RecordAcceptance: { auth: auth(), ...args } }); }
     catch (error) { return { handle: args.handle, dispatch: error.refused ? "Refused" : "Unknown", reason: String(error.message), recovery: "Retry acceptance only with the same exact current result reference" }; }
+  });
+  tool("ovrcr_confirm_return", "Explicitly confirm fresh reconciliation after the person returns an assignment. Use the current control epoch, HumanReturn request and exact control_evidence from inspection. This never clears Unknown/Partial input receipts or uncertain ownership. Human changes still require a fresh followup result version.", object({ handle: string, request: string, returned_request: string, expected_control_epoch: { type: "integer", minimum: 1 }, evidence: { type: "object" } }), async args => {
+    try { return await call({ ConfirmHumanReturn: { auth: auth(), ...args } }); }
+    catch (error) { return { handle: args.handle, request: args.request, dispatch: error.refused ? "Refused" : "Unknown", reason: String(error.message), recovery: "Inspect the original return; repeat only the exact confirmation request after a lost reply" }; }
   });
   tool("ovrcr_inspect", "Inspect an owned assignment without changing it. Activity is not acceptance.", object({ handle: string }), args => call({ Inspect: { auth: auth(), handle: args.handle } }));
   tool("ovrcr_collect", "Collect the current validated submission without accepting it. Optional version explicitly reads historical evidence; historical_submission cannot satisfy current collection or acceptance.", object({ handle: string, version: { type: "integer", minimum: 1 } }, ["handle"]), args => call(args.version === undefined ? { Collect: { auth: auth(), handle: args.handle } } : { CollectVersion: { auth: auth(), handle: args.handle, version: args.version } }));

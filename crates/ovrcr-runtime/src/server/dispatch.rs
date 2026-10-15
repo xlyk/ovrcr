@@ -410,6 +410,9 @@ fn persist_session_exit(state: &ServerState, session: &Session) {
 }
 
 pub(super) fn publish_session_changed(state: &ServerState, id: SessionId) {
+    if let Err(error) = state.refresh_assignment_binding(id) {
+        eprintln!("assignment control observation failed: {error:#}");
+    }
     state.refresh_claude_quota();
     if let Some(summary) = state.session_summary(id) {
         state.delegation_observations.session_changed(&summary);

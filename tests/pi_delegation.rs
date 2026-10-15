@@ -1,4 +1,6 @@
 //! Public Pi tools -> control CLI -> isolated binary Server -> real managed child PTY.
+#[path = "pi_delegation/control.rs"]
+mod assignment_control;
 #[path = "pi_delegation/followups.rs"]
 mod followups;
 #[path = "support/live.rs"]
@@ -715,6 +717,9 @@ impl ControlProxy {
                     DelegationRequest::Followup { request, .. } => ("Followup", request.clone()),
                     DelegationRequest::CollectVersion { handle, .. } => {
                         ("CollectVersion", handle.clone())
+                    }
+                    DelegationRequest::ConfirmHumanReturn { request, .. } => {
+                        ("ConfirmHumanReturn", request.clone())
                     }
                     DelegationRequest::RecordAcceptance { handle, .. } => {
                         ("RecordAcceptance", handle.clone())

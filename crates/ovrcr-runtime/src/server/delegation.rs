@@ -1,4 +1,6 @@
 //! Server-owned assignment control. Task payloads live only in private publications.
+#[path = "delegation_control.rs"]
+pub(crate) mod control;
 #[path = "delegation_followups.rs"]
 mod followups;
 use super::delegation_files::Directory;
@@ -26,6 +28,14 @@ pub(crate) struct PublicationIntent {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Record {
     pub handle: String,
+    #[serde(default)]
+    pub control: AssignmentControl,
+    #[serde(default)]
+    pub takeover_evidence: Option<AssignmentControlEvidence>,
+    #[serde(default)]
+    pub control_intents: Vec<control::ControlIntent>,
+    #[serde(default)]
+    pub initial_control_epoch: Option<u64>,
     pub identity: AssignmentIdentity,
     pub binding: Option<AgentBinding>,
     pub parent_binding: AgentBinding,
@@ -215,7 +225,13 @@ impl Record {
                     }
                     (DispatchOperation::InitialInput, DispatchStatus::Refused) => continue,
                     (DispatchOperation::InitialInput, _) => DispatchOutcome::Unknown,
-                    (DispatchOperation::Followup, _) => {
+                    (
+                        DispatchOperation::Followup
+                        | DispatchOperation::Takeover
+                        | DispatchOperation::HumanReturn
+                        | DispatchOperation::ConfirmHumanReturn,
+                        _,
+                    ) => {
                         unreachable!("legacy dispatch has no followups")
                     }
                 }
@@ -423,6 +439,10 @@ impl ServerState {
                         .join("workflows")
                         .join(&handle);
                     let mut record = Record {
+                        control: AssignmentControl::default(),
+                        takeover_evidence: None,
+                        control_intents: vec![],
+                        initial_control_epoch: None,
                         handle: handle.clone(),
                         identity: AssignmentIdentity {
                             instance: store.delegation_instance()?,
@@ -618,6 +638,7 @@ impl ServerState {
                 auth,
                 handle,
                 identity,
+                expected_control_epoch,
             } => {
                 let mut record = self.owned_assignment(&auth, &handle)?;
                 if record.identity.session.is_none() || record.identity.run.is_none() {
@@ -626,9 +647,31 @@ impl ServerState {
                         "initial input requires the original allocated child run",
                     ));
                 }
+                let legacy_pending_input = record.initial_control_epoch.is_none()
+                    && record
+                        .receipt(DispatchOperation::InitialInput)
+                        .is_some_and(|receipt| receipt.outcome == DispatchOutcome::Accepted);
                 if !record.intent(DispatchOperation::InitialInput, &identity)? {
                     self.validate_allocation(&record)?;
                     return self.reconciliation_snapshot(record);
+                }
+                if legacy_pending_input {
+                    return self.reject_initial(record, "legacy initial input has no captured control epoch; inspect without replay");
+                }
+                if record
+                    .initial_control_epoch
+                    .is_some_and(|epoch| epoch != expected_control_epoch)
+                {
+                    bail!("initial request control epoch changed");
+                }
+                record.initial_control_epoch = Some(expected_control_epoch);
+                if control::require_controller(&record.control, expected_control_epoch).is_err()
+                    || record.control.attribution_invalidated
+                {
+                    return self.reject_initial(
+                        record,
+                        "initial input control authority changed; no bytes written",
+                    );
                 }
                 self.retained.lock().save_assignment(&record)?;
                 if record.dispatch == DispatchStatus::Launched {
@@ -691,6 +734,9 @@ impl ServerState {
                     );
                     match session.send_delegated_text(crate::session::DelegatedInput {
                         request: &handle,
+                        control: &record.control,
+                        control_epoch: expected_control_epoch,
+                        authority: crate::session::DelegatedAuthority::Controller,
                         parent: &parent,
                         parent_binding: &record.parent_binding,
                         capability: &auth.capability,
@@ -727,6 +773,7 @@ impl ServerState {
                 request,
                 expected_identity,
                 expected_result_version,
+                expected_control_epoch,
                 text,
                 revised_contract,
             } => {
@@ -734,7 +781,11 @@ impl ServerState {
                     auth,
                     handle,
                     request,
-                    (expected_identity, expected_result_version),
+                    (
+                        expected_identity,
+                        expected_result_version,
+                        expected_control_epoch,
+                    ),
                     text,
                     revised_contract.map(|contract| *contract),
                 );
@@ -752,6 +803,7 @@ impl ServerState {
                 identity,
                 result_version,
                 result_digest,
+                expected_control_epoch,
             } => {
                 return self.record_acceptance(
                     auth,
@@ -759,7 +811,27 @@ impl ServerState {
                     identity,
                     result_version,
                     result_digest,
+                    expected_control_epoch,
                 );
+            }
+            DelegationRequest::ConfirmHumanReturn {
+                auth,
+                handle,
+                request,
+                returned_request,
+                expected_control_epoch,
+                evidence,
+            } => {
+                return self
+                    .confirm_human_return(
+                        auth,
+                        handle,
+                        request,
+                        returned_request,
+                        expected_control_epoch,
+                        *evidence,
+                    )
+                    .map_err(|error| lifecycle_error(ErrorCode::Conflict, format!("{error:#}")));
             }
             DelegationRequest::Inspect { auth, handle } => {
                 return self.assignment_snapshot(self.owned_assignment(&auth, &handle)?);
@@ -1141,7 +1213,13 @@ impl ServerState {
         let result_path = record
             .root
             .join(format!("submission-v{}.json", record.result_version));
+        let control_evidence = summary
+            .as_ref()
+            .and_then(|summary| summary.agent.as_ref())
+            .and_then(|agent| self.control_evidence(&record, agent).ok());
         Ok(AssignmentSnapshot {
+            control: record.control.clone(),
+            control_evidence,
             handle: record.handle,
             identity: record.identity,
             dispatch: record.dispatch,
@@ -1157,7 +1235,9 @@ impl ServerState {
             brief,
             result_path,
             submission,
-            acceptance: if record.acceptance.is_some() {
+            acceptance: if record.control.attribution_invalidated {
+                "suspended"
+            } else if record.acceptance.is_some() {
                 "accepted"
             } else {
                 "pending"
@@ -1265,6 +1345,10 @@ mod tests {
             .unwrap();
         let allocated = status != DispatchStatus::Prepared;
         Record {
+            control: AssignmentControl::default(),
+            takeover_evidence: None,
+            control_intents: vec![],
+            initial_control_epoch: None,
             handle: "request".into(),
             identity: AssignmentIdentity {
                 instance: "instance".into(),

@@ -4,7 +4,7 @@ A managed Pi parent can start one read-only assignment in an existing OVRCR
 workspace, keep working, and explicitly collect the child's result. Launch Pi
 through `ovrcr agent run pi -- pi` or the Dashboard picker. The managed extension
 registers `ovrcr_start`, `ovrcr_inspect`, `ovrcr_collect`, `ovrcr_followup`,
-`ovrcr_accept`, `ovrcr_publish`, `ovrcr_wait` and `ovrcr_mark_handled`.
+`ovrcr_accept`, `ovrcr_confirm_return`, `ovrcr_publish`, `ovrcr_wait` and `ovrcr_mark_handled`.
 A plain Pi process has no delegation authority.
 
 ## Start and collect
@@ -117,7 +117,7 @@ does not change live-session capacity or introduce a scheduling policy.
 
 Keep the task-owned child and workspace through review and repair. Call
 `ovrcr_followup` with the stable `handle`, the latest `expected_identity`,
-`expected_result_version`, and bounded `text` describing the scoped clarification
+`expected_result_version`, `expected_control_epoch` from `control.epoch`, and bounded `text` describing the scoped clarification
 or repair. Use the identities and version from a fresh snapshot. A valid follow-up
 uses the same child session, run and conversation; it creates a distinct request
 receipt and expects a new result version. It never creates a replacement attempt.
@@ -151,7 +151,7 @@ identities, versions and immutable paths. Stale child publications are refused;
 previously published evidence is preserved.
 
 After judging the deliverable, the parent may explicitly call `ovrcr_accept` with
-`handle`, exact current `identity`, `result_version`, and `result_digest` from
+`handle`, exact current `identity`, `result_version`, `expected_control_epoch`, and `result_digest` from
 the current publication reference. The operation records the parent's judgment
 in an immutable private acceptance file. Only the current parent binding can
 record it, and the child binding must still match. Repeating the same acceptance
@@ -227,11 +227,30 @@ are disabled for the child, and automatic approval is not enabled. This restrict
 the available tool surface; it is not a separate OS-user sandbox. All local
 workflow files follow the same trusted-user boundary as the OVRCR instance.
 
-Viewing or focusing a child does not grant control. While assigned, generic
-terminal send, named keystrokes and Dashboard terminal input are refused. The
-parent can still receive ordinary input. This slice has no takeover/return UI;
-those controls, rich restart recovery, other child
-providers and coding workspace creation are later work.
+Viewing, selecting, focusing, resizing or hiding a child's pane does not grant
+control or interrupt it. The Dashboard shows its authoritative owner. Choose
+**Take control** (`H` in Browse) to enable that focused child's dedicated human
+input. Choose **Return to Pi** (`A`) to revoke human input and install a fresh
+reconciliation barrier. Generic terminal send, paste and named keystrokes stay
+refused for assigned children even during Human control. Ordinary sessions keep
+their normal input behavior.
+
+The parent reads the current `control` and `control_evidence`, then explicitly
+calls `ovrcr_confirm_return` with the original return request, a distinct
+confirmation `request`, the captured `expected_control_epoch`, and exact fresh
+`evidence`. Inspect/Collect/Reconcile never transfer authority or clear barriers.
+Both transitions advance a per-child epoch; old initial/followup/acceptance
+requests remain fenced after Pi-to-human-to-Pi control changes. Sibling assignments
+and the workflow controller epoch are unchanged.
+
+Human changes suspend current result attribution. Confirmation clears only its
+own return barrier; a scoped follow-up must establish a fresh result version
+before further automated effect or acceptance. Unknown/Partial dispatch receipts
+remain unresolved. Previously reserved versions from a rejected stale intent are
+never reused; a later follow-up may skip their version numbers while keeping the
+immutable files and receipts. Unexpected reporting binding changes make control
+Uncertain and require supported recovery rather than ordinary return confirmation.
+See [Human control](pi-human-control.md) for Dashboard steps and lost-reply rules.
 
 ## Storage and diagnostics
 

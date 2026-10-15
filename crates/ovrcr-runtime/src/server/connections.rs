@@ -635,6 +635,50 @@ pub(super) fn handle_request_with_id(
                 },
             )
         }
+        Request::AssignmentControl(transition) => {
+            let Some(owner) = owner.filter(|owner| dashboard && state.dashboard.owns(owner)) else {
+                return error_response(
+                    ErrorCode::Conflict,
+                    "assignment control requires the owning Dashboard",
+                );
+            };
+            state.assignment_control(owner, transition).map_or_else(
+                |error| error_response(ErrorCode::Conflict, error_chain_string(&error)),
+                |_| Response::Ok,
+            )
+        }
+        Request::AssignedHumanInput {
+            session,
+            run,
+            control_epoch,
+            view_revision,
+            bytes,
+        } => {
+            let Some(owner) = owner.filter(|owner| dashboard && state.dashboard.owns(owner)) else {
+                return error_response(
+                    ErrorCode::Conflict,
+                    "human assignment input requires the owning Dashboard",
+                );
+            };
+            state
+                .assigned_human_input(owner, session, run, control_epoch, view_revision, &bytes)
+                .map_or_else(
+                    |error| {
+                        error_response(
+                            if error
+                                .chain()
+                                .any(|cause| cause.downcast_ref::<std::io::Error>().is_some())
+                            {
+                                ErrorCode::Internal
+                            } else {
+                                ErrorCode::Conflict
+                            },
+                            error_chain_string(&error),
+                        )
+                    },
+                    |_| Response::Ok,
+                )
+        }
         Request::Input {
             session,
             run,
