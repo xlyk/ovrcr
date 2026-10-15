@@ -29,7 +29,7 @@ export function createDelegationObserver({ pi, call, auth }) {
     try {
       pi.sendMessage({
         customType: "ovrcr_wake",
-        content: `OVRCR assignment observations changed. Reconcile outstanding assignments with ovrcr_wait; collect available files separately. A wake does not accept work. ${JSON.stringify(metadata)}`,
+        content: `OVRCR assignment observations changed. Reconcile outstanding assignments with ovrcr_wait; collect available files separately. A wake does not accept work or confirm returned control. ${JSON.stringify(metadata)}`,
         display: false,
         details: metadata,
       }, { triggerTurn: true, deliverAs: "followUp" });
@@ -49,6 +49,10 @@ export function createDelegationObserver({ pi, call, auth }) {
       if (item.stalled) facts.stalled = true;
       if (item.publication_issue) facts.publication_issue = item.publication_issue;
       if (!item.current) facts.current = false;
+      if (item.control && (item.control.owner !== "Controller" || item.control.barrier || item.control.attribution_invalidated)) {
+        const { owner, epoch, barrier, attribution_invalidated } = item.control;
+        facts.control = { owner, epoch, barrier, attribution_invalidated };
+      }
       const signal = Object.keys(facts).length ? facts : null;
       const key = JSON.stringify(signal);
       if (seen.get(item.handle) !== key && signal) pending.add(item.handle);

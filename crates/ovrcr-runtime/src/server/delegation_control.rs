@@ -227,19 +227,17 @@ impl ServerState {
         {
             bail!("assignment reporting binding is unavailable or changed");
         }
-        let publication = record
-            .version_reference(&record.version())
-            .publication
-            .map(|state| state.identity);
-        let publication_issue = if record.result_digest.is_some()
-            && read_version_submission(record, &record.version()).is_err()
-        {
-            Some(ControlPublicationIssue::Invalid)
-        } else if record.control.attribution_invalidated {
-            Some(ControlPublicationIssue::Unattributed)
-        } else {
-            None
+        let (publication, mut publication_issue) = match self.assignment_publication(record) {
+            Ok(publication) => (publication, None),
+            Err(PublicationIssue::Unavailable) => (None, Some(ControlPublicationIssue::Missing)),
+            Err(PublicationIssue::Invalid) => (None, Some(ControlPublicationIssue::Invalid)),
+            Err(PublicationIssue::Uncommitted) => {
+                (None, Some(ControlPublicationIssue::Unattributed))
+            }
         };
+        if publication_issue.is_none() && record.control.attribution_invalidated {
+            publication_issue = Some(ControlPublicationIssue::Unattributed);
+        }
         Ok(AssignmentControlEvidence {
             server_lifetime: self.server_lifetime.clone(),
             identity: record.identity.clone(),

@@ -46,3 +46,8 @@ sibling's authority or the workflow controller's own epoch.
 Historical contracts, submissions, dispatch receipts and acceptance references
 remain immutable. Late child results remain evidence and never become automatic
 parent acceptance. No terminal contents are stored in control metadata.
+
+The ordinary assignment observer reports the current control state and wakes the
+parent for takeover, pending return or uncertainty. A wake never confirms return,
+accepts a publication or resets the child's progress deadline. The parent still
+inspects and explicitly reconciles the exact current evidence.

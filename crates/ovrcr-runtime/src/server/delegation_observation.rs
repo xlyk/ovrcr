@@ -27,6 +27,7 @@ struct Source {
     input: u64,
     health: Option<ReporterHealth>,
     phase: SessionPhase,
+    control: Option<ovrcr_protocol::AssignmentControl>,
 }
 impl Source {
     fn of(summary: &SessionSummary) -> Self {
@@ -38,6 +39,10 @@ impl Source {
             input: agent.map_or(0, |a| a.input_revision),
             health: agent.map(|a| a.health.state),
             phase: summary.phase.clone(),
+            control: summary
+                .assignment_control
+                .as_ref()
+                .map(|view| view.control.clone()),
         }
     }
 }
@@ -80,6 +85,7 @@ struct Fingerprint {
     current: bool,
     stalled: bool,
     unresolved: bool,
+    control: ovrcr_protocol::AssignmentControl,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -294,6 +300,7 @@ impl ServerState {
                         current: observed.current,
                         stalled: observed.stalled,
                         unresolved: observed.progress_unresolved,
+                        control: observed.control.clone(),
                     },
                 )?;
                 sessions.push(session);
@@ -302,7 +309,11 @@ impl ServerState {
             let delta = self.delegation_observations.delta(sequence, &sessions);
             let remaining = until.saturating_duration_since(std::time::Instant::now());
             if delta.changed || remaining.is_zero() {
-                let status = if delta.reconcile {
+                let status = if delta.reconcile
+                    || observations.iter().any(|observed| {
+                        observed.control.barrier.is_some()
+                            || observed.control.owner == ovrcr_protocol::ControlOwner::Uncertain
+                    }) {
                     ObservationStatus::ReconcileRequired
                 } else if observations.iter().any(|o| o.stalled) {
                     ObservationStatus::Stalled
@@ -431,6 +442,7 @@ impl ServerState {
             last_progress_unix_ms: progress.progress_unix_ms,
             stalled,
             progress_unresolved: progress.unresolved || future,
+            control: record.control.clone(),
         })
     }
 }
@@ -465,12 +477,24 @@ mod tests {
             input: 3,
             health: Some(ReporterHealth::Connected),
             phase: SessionPhase::Running,
+            control: None,
         };
         observations.source_changed(SessionId(1), source.clone());
         assert_eq!(observations.progress_at(SessionId(1)), None);
         source.health = Some(ReporterHealth::Unavailable);
         observations.source_changed(SessionId(1), source.clone());
         assert_eq!(observations.progress_at(SessionId(1)), None);
+        source.control = Some(ovrcr_protocol::AssignmentControl {
+            epoch: 2,
+            owner: ovrcr_protocol::ControlOwner::Human,
+            ..ovrcr_protocol::AssignmentControl::default()
+        });
+        observations.source_changed(SessionId(1), source.clone());
+        assert_eq!(
+            observations.progress_at(SessionId(1)),
+            None,
+            "control ownership does not certify child progress"
+        );
         source.activity += 1;
         observations.source_changed(SessionId(1), source.clone());
         let progress = observations
@@ -499,6 +523,7 @@ mod tests {
             input: 0,
             health: Some(ReporterHealth::Connected),
             phase: SessionPhase::Running,
+            control: None,
         };
         checkpoint.advance("new", &source, Some(500));
         assert_eq!(

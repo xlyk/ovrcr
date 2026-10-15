@@ -686,6 +686,10 @@ mod tests {
             "acceptance",
             "previous_versions",
             "followups",
+            "control",
+            "takeover_evidence",
+            "control_intents",
+            "initial_control_epoch",
         ] {
             value.as_object_mut().unwrap().remove(field);
         }
@@ -703,6 +707,38 @@ mod tests {
         assert!(restored.acceptance.is_none());
         assert!(restored.publication_intent.is_none());
         assert!(restored.handled_publication.is_none());
+        assert_eq!(restored.control, AssignmentControl::default());
+        assert!(
+            restored.initial_control_epoch.is_none(),
+            "legacy initial intent never adopts a current write epoch"
+        );
+        assert!(restored.control_intents.is_empty());
+    }
+
+    #[test]
+    fn legacy_followup_keeps_original_digest_without_gaining_current_authority() {
+        let dir = tempfile::tempdir().unwrap();
+        let record =
+            super::super::tests::record(dir.path().join("assignment"), DispatchStatus::Applied);
+        let original = serde_json::json!({
+            "request":"legacy-followup", "expected":record.identity, "expected_result_version":1,
+            "target":record.identity, "result_version":2, "digest":"original-payload-digest",
+            "contract_digest":"original-contract", "brief_digest":"original-brief"
+        });
+        let restored: FollowupIntent = serde_json::from_value(original.clone()).unwrap();
+        assert_eq!(restored.expected_control_epoch, 0);
+        assert!(
+            control::require_controller(&record.control, restored.expected_control_epoch).is_err()
+        );
+        let mut saved = serde_json::to_value(restored).unwrap();
+        saved
+            .as_object_mut()
+            .unwrap()
+            .remove("expected_control_epoch");
+        assert_eq!(
+            saved, original,
+            "migration preserves every immutable intent field and original digest"
+        );
     }
 
     #[test]

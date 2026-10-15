@@ -143,3 +143,22 @@ test("handling result1 never suppresses a new result in the same contract", asyn
   assert.deepEqual(d.messages[0].message.details.handles, ["a"]);
   assert(!d.messages[0].message.content.includes("digest2"));
 });
+
+
+test("returned control wakes reconciliation once without accepting or confirming", async t => {
+  const d = driver(t);
+  d.observer.watch("a");
+  const returned = { ...item("a"), publication: null, control: { owner: "Controller", epoch: 3, barrier: { HumanReturn: { request: "return-a" } }, human_input_revision: 1, attribution_invalidated: true } };
+  const message = d.nextMessage();
+  d.push(batch([returned])); await message;
+  assert.deepEqual(d.messages[0].message.details.handles, ["a"]);
+  assert(d.messages[0].message.content.includes("does not accept work or confirm returned control"));
+  assert(!d.messages[0].message.content.includes("return-a"));
+  await d.nextCall();
+  d.observer.acknowledge();
+  d.push(batch([{ ...returned, control: { ...returned.control, human_input_revision: 2 } }]));
+  await d.nextCall();
+  d.observer.acknowledge();
+  assert.equal(d.messages.length, 1, "input revisions do not manufacture another control change");
+  assert(d.calls.every(call => call.Observe), "observer never confirms or accepts control");
+});

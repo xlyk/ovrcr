@@ -261,6 +261,28 @@ fn public_assignment_human_takeover_return_fences_generics_and_preserves_history
         .unwrap(),
         Response::Error { .. }
     ));
+    let observed = fixture.tool(
+        "ovrcr_wait",
+        serde_json::json!({"handles":[returned.handle],"wait_ms":0}),
+    );
+    assert_eq!(
+        observed["observations"][0]["control"],
+        serde_json::to_value(&returned.control).unwrap()
+    );
+    assert_eq!(observed["status"], "ReconcileRequired");
+    let again = fixture.tool(
+        "ovrcr_wait",
+        serde_json::json!({"handles":[returned.handle],"wait_ms":0}),
+    );
+    assert_eq!(
+        again["observations"][0]["control"],
+        observed["observations"][0]["control"]
+    );
+    assert_eq!(
+        fixture.reconcile(&returned.handle).control,
+        returned.control,
+        "observation cannot clear the return barrier"
+    );
     let confirmed = confirm(&fixture, &returned, "return-one", "confirm-one");
     assert_eq!(confirmed.control.epoch, 4);
     assert!(confirmed.control.barrier.is_none());
