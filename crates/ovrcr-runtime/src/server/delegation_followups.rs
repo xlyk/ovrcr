@@ -566,8 +566,18 @@ pub(super) fn read_version_submission(
     let Some(expected) = &version.result_digest else {
         return Ok(None);
     };
-    let bytes = Directory::open(&record.root, false)?
-        .read(&format!("submission-v{}.json", version.result_version))?;
+    let directory = Directory::open(&record.root, false)?;
+    if digest(&directory.read(&format!("contract-v{}.json", version.identity.contract))?)
+        != version.contract_digest
+    {
+        bail!("immutable contract changed");
+    }
+    if let Some(expected) = &version.brief_digest
+        && &digest(&directory.read(&format!("brief-v{}.json", version.result_version))?) != expected
+    {
+        bail!("immutable brief changed");
+    }
+    let bytes = directory.read(&format!("submission-v{}.json", version.result_version))?;
     if &digest(&bytes) != expected {
         bail!("submission publication changed or is partial");
     }
@@ -652,6 +662,45 @@ mod tests {
         assert!(restored.acceptance.is_none());
         assert!(restored.publication_intent.is_none());
         assert!(restored.handled_publication.is_none());
+    }
+
+    #[test]
+    fn historical_collection_rejects_changed_contract_and_brief() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut record =
+            super::super::tests::record(dir.path().join("assignment"), DispatchStatus::Applied);
+        let directory = Directory::open(&record.root, false).unwrap();
+        let result = ResearchSubmission {
+            schema: 1,
+            identity: record.identity.clone(),
+            version: 1,
+            outcome: "success".into(),
+            summary: "original result".into(),
+            evidence: vec!["citation".into()],
+            unresolved: vec![],
+        };
+        let bytes = serde_json::to_vec(&result).unwrap();
+        directory.publish("submission-v1.json", &bytes).unwrap();
+        record.result_digest = Some(digest(&bytes));
+        let brief = b"immutable original brief";
+        directory.publish("brief-v1.json", brief).unwrap();
+        record.brief_digest = Some(digest(brief));
+        assert_eq!(
+            read_version_submission(&record, &record.version()).unwrap(),
+            Some(result)
+        );
+        let contract = directory.read("contract-v1.json").unwrap();
+        std::fs::write(record.root.join("contract-v1.json"), "changed contract").unwrap();
+        assert!(
+            read_version_submission(&record, &record.version()).is_err(),
+            "old result bytes alone cannot authenticate a changed contract"
+        );
+        std::fs::write(record.root.join("contract-v1.json"), contract).unwrap();
+        std::fs::write(record.root.join("brief-v1.json"), "changed brief").unwrap();
+        assert!(
+            read_version_submission(&record, &record.version()).is_err(),
+            "old result bytes alone cannot authenticate a changed brief"
+        );
     }
 
     #[test]
