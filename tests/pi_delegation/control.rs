@@ -747,3 +747,79 @@ fn unexpected_human_conversation_change_suspends_only_that_assignment() {
     assert_eq!(history.historical_submission, original.submission);
     assert_eq!(fs::read(&original.result_path).unwrap(), evidence);
 }
+
+#[test]
+fn pause_resume_preserves_exact_controller_and_human_authority_without_paused_bytes() {
+    let fixture = OwnedFollowup::new();
+    let first: AssignmentSnapshot = serde_json::from_value(fixture.start()).unwrap();
+    let original = complete(&fixture, &first);
+    let child = original.identity.session.unwrap();
+    let run = original.identity.run.unwrap();
+    let mut stream = dashboard(&fixture, &original);
+    for human in [false, true] {
+        if human {
+            transition(&fixture, &mut stream, child, "pause-take", true, 1);
+        }
+        let before = fixture.reconcile(&original.handle);
+        let bytes = fixture.byte_count(&original);
+        assert_eq!(
+            fixture
+                .live
+                .request(Request::PauseSession { session: child }),
+            Response::Ok
+        );
+        let paused = current(&fixture, child);
+        assert_eq!(paused.phase, SessionPhase::Paused);
+        assert_eq!(
+            paused.assignment_control.unwrap().control,
+            before.control,
+            "pause is not an attribution change"
+        );
+        assert!(matches!(
+            dashboard_view(
+                &mut stream,
+                80,
+                Request::AssignedHumanInput {
+                    session: child,
+                    run,
+                    control_epoch: before.control.epoch,
+                    view_revision: 1,
+                    bytes: b"human_marker:PAUSED_FORBIDDEN\r".to_vec(),
+                }
+            )
+            .unwrap(),
+            Response::Error { .. }
+        ));
+        assert_eq!(fixture.byte_count(&original), bytes);
+        assert_eq!(
+            fixture
+                .live
+                .request(Request::ResumeSession { session: child }),
+            Response::Ok
+        );
+        let resumed = current(&fixture, child);
+        assert_eq!(resumed.phase, SessionPhase::Running);
+        assert_eq!(resumed.run, run);
+        assert_eq!(resumed.assignment_control.unwrap().control, before.control);
+    }
+    assert_eq!(
+        dashboard_view(
+            &mut stream,
+            81,
+            Request::AssignedHumanInput {
+                session: child,
+                run,
+                control_epoch: 2,
+                view_revision: 1,
+                bytes: b"human_marker:RESUMED_CONTROL_OK_323\r".to_vec(),
+            }
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    read_marker(&fixture, child, "RECEIVED_HUMAN_RESUMED_CONTROL_OK_323");
+    let returned = transition(&fixture, &mut stream, child, "pause-return", false, 1);
+    let confirmed = confirm(&fixture, &returned, "pause-return", "pause-confirm");
+    assert_eq!(confirmed.control.epoch, 4);
+    assert!(confirmed.control.barrier.is_none());
+}

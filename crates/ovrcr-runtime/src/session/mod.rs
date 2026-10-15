@@ -1094,6 +1094,30 @@ impl Session {
         }
     }
 
+    /// Attribution survives an intentional pause, while input admission remains Running-only.
+    /// Caller owns retained metadata; inspect the exact reporting binding under child state.
+    pub(crate) fn with_assignment_attribution<T>(
+        &self,
+        run: ovrcr_protocol::SessionRunId,
+        binding: &ovrcr_protocol::AgentBinding,
+        action: impl FnOnce(&ovrcr_protocol::AgentSnapshot) -> Result<T>,
+    ) -> Result<T> {
+        let state = self.state.lock().unwrap();
+        let snapshot = state
+            .reporting
+            .snapshot
+            .as_ref()
+            .filter(|snapshot| {
+                self.run() == run
+                    && matches!(state.phase, SessionPhase::Running | SessionPhase::Paused)
+                    && state.hook_capability.is_some()
+                    && &snapshot.binding == binding
+                    && snapshot.health.state == ovrcr_protocol::ReporterHealth::Connected
+            })
+            .context("assigned attribution binding is unavailable or changed")?;
+        action(snapshot)
+    }
+
     /// Caller owns retained metadata; this is the final current-child reporting fence.
     pub(crate) fn with_assignment_context<T>(
         &self,
