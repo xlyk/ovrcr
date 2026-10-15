@@ -1629,6 +1629,7 @@ mod harness_agent_label_tests {
             context_usage: None,
             title: None,
             manual_title: None,
+            assignment_control: None,
         }
     }
 

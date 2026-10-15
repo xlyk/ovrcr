@@ -100,8 +100,32 @@ impl SessionStatus {
                 .started_unix_ms
                 .map(|started| format_elapsed_at(started, now_unix_ms))
                 .unwrap_or_default(),
-            activity: activity_clause(session),
-            compact: compact_agent_clause(session),
+            activity: {
+                let mut clause = activity_clause(session);
+                if let Some(control) = super::assignment_control::control_clause(
+                    session
+                        .assignment_control
+                        .as_ref()
+                        .map(|view| &view.control),
+                ) {
+                    clause.push_str(" · ");
+                    clause.push_str(control);
+                }
+                clause
+            },
+            compact: {
+                let mut clause = compact_agent_clause(session);
+                if let Some(control) = super::assignment_control::control_clause(
+                    session
+                        .assignment_control
+                        .as_ref()
+                        .map(|view| &view.control),
+                ) {
+                    clause.push_str(" · ");
+                    clause.push_str(control);
+                }
+                clause
+            },
             reporting_health: session
                 .agent
                 .as_ref()
@@ -112,7 +136,15 @@ impl SessionStatus {
                     || recovery.failure.is_some()
                     || recovery.requires_ack
             }),
-            unread: session.unread.as_ref().map(|_| unread_clause(session)),
+            unread: session.unread.as_ref().map(|_| {
+                let unread = unread_clause(session);
+                match super::assignment_control::control_clause(
+                    session.assignment_control.as_ref().map(|view| &view.control),
+                ) {
+                    Some(control) => format!("{control} · {unread}"),
+                    None => unread,
+                }
+            }),
         }
     }
 }
@@ -396,6 +428,7 @@ mod tests {
             name: "s".into(),
             title: None,
             manual_title: None,
+            assignment_control: None,
             label: "claude/sonnet".into(),
             pid: Some(42),
             started_unix_ms: Some(0),

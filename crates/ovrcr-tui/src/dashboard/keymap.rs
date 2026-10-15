@@ -26,6 +26,8 @@ pub(super) enum Action {
     Detach,
     Focus,
     Pause,
+    TakeControl,
+    ReturnControl,
     Resume,
     /// Enter on a session that is no longer live: resume the conversation or
     /// reopen a fresh shell in the same row, through the palette's confirmation.
@@ -308,6 +310,8 @@ impl Dashboard {
                     self.refuse_input()
                 }
             }
+            Action::TakeControl => self.assignment_control_request(true),
+            Action::ReturnControl => self.assignment_control_request(false),
             Action::Pause => self.pause_request(true),
             Action::Resume => self.pause_request(false),
             Action::Reopen => self.open_reopen_terminal(),
@@ -823,6 +827,13 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             format!("Send terminal input to {target}"),
             missing
                 .or_else(|| (!running).then_some("session is not running"))
+                .or_else(|| {
+                    super::assignment_control::input_denial(
+                        selected
+                            .and_then(|s| s.assignment_control.as_ref())
+                            .map(|view| &view.control),
+                    )
+                })
                 .or_else(|| (!dashboard.input_is_allowed()).then_some(WAITING)),
             Action::Focus,
         )
@@ -835,6 +846,8 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         ] },
         KeyGroup { title: "Session".into(), keys: vec![
             key_binding("Enter", enter_name, enter_description, Enter, enter_action).unless(enter_disabled).group('t', "Enter"),
+            key_binding("H", "Take control", format!("Take human control of {target}; the child keeps running; does not interrupt or archive"), Char('H'), Action::TakeControl).unless(super::assignment_control::transition_denial(selected, true).or_else(|| (!dashboard.focused_pane().is_some_and(|p| dashboard.pane_ready(p))).then_some(WAITING))).once().group('t', "H"),
+            key_binding("A", "Return to Pi", format!("Return {target} to Pi pending fresh parent reconciliation; human input stops immediately"), Char('A'), Action::ReturnControl).unless(super::assignment_control::transition_denial(selected, false).or_else(|| (!dashboard.focused_pane().is_some_and(|p| dashboard.pane_ready(p))).then_some(WAITING))).once().group('t', "A"),
             key_binding("p", "Pause", format!("Pause the processes of {target}; no confirmation"), Char('p'), Action::Pause).unless(missing.or_else(|| (!running).then_some("not running"))).group('t', "p"),
             key_binding("r", "Resume", format!("Resume the processes of {target}; no confirmation"), Char('r'), Action::Resume).unless(missing.or_else(|| (!paused).then_some("not paused"))).group('t', "r"),
             key_binding("R", "Mark reviewed", format!("Mark the displayed unread agent response from {target} reviewed; activity and reporting health stay unchanged"), Char('R'), Action::MarkReviewed).unless(missing.or_else(|| selected.and_then(|s| s.unread.as_ref()).is_none().then_some("no unread response"))).once().group('t', "R"),
