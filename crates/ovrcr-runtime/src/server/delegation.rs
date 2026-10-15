@@ -118,9 +118,9 @@ impl Record {
             .chain(std::iter::once(&self.version()))
             .cloned()
             .collect();
-        if versions.len() != self.result_version as usize
+        if versions[0].result_version != 1
             || versions.iter().enumerate().any(|(index, v)| {
-                v.result_version as usize != index + 1
+                (index > 0 && v.result_version <= versions[index - 1].result_version)
                     || v.identity.session != self.identity.session
                     || v.identity.run != self.identity.run
                     || {
@@ -130,6 +130,50 @@ impl Record {
                     }
             })
         {
+            return None;
+        }
+        // Reservations are dense; materialized versions need not be. A rejected
+        // stale-control intent retains its files and numbers without advancing
+        // the current version. Validate both histories rather than guessing gaps.
+        let mut reserved_result: u32 = 1;
+        let mut reserved_contract = initial_identity.contract;
+        let mut materialized = 0;
+        for (index, intent) in self.followups.iter().enumerate() {
+            let expected = &versions[materialized];
+            let receipt = self.request_receipt(&intent.request, DispatchOperation::Followup)?;
+            let mut target = intent.expected.clone();
+            target.contract = intent.target.contract;
+            if intent.expected != expected.identity
+                || intent.expected_result_version != expected.result_version
+                || intent.result_version != reserved_result.checked_add(1)?
+                || !(intent.target.contract == intent.expected.contract
+                    || intent.target.contract == reserved_contract.checked_add(1)?)
+                || target != intent.target
+            {
+                return None;
+            }
+            reserved_result = intent.result_version;
+            reserved_contract = reserved_contract.max(intent.target.contract);
+            let next = versions
+                .get(materialized + 1)
+                .filter(|version| version.result_version == intent.result_version);
+            if let Some(next) = next {
+                if receipt.outcome == DispatchOutcome::Accepted
+                    || next.identity != intent.target
+                    || next.contract_digest != intent.contract_digest
+                    || next.brief_digest.as_deref() != Some(intent.brief_digest.as_str())
+                {
+                    return None;
+                }
+                materialized += 1;
+            } else if receipt.outcome != DispatchOutcome::Rejected
+                && !(receipt.outcome == DispatchOutcome::Accepted
+                    && index + 1 == self.followups.len())
+            {
+                return None;
+            }
+        }
+        if materialized + 1 != versions.len() {
             return None;
         }
         let mut prepare_identity = initial_identity.clone();
@@ -170,9 +214,6 @@ impl Record {
                 let mut target = intent.expected.clone();
                 target.contract = intent.target.contract;
                 if intent.expected != expected.identity
-                    || intent.result_version != intent.expected_result_version.checked_add(1)?
-                    || !(intent.target.contract == intent.expected.contract
-                        || intent.target.contract == intent.expected.contract.checked_add(1)?)
                     || target != intent.target
                     || receipt.identity != intent.target
                     || receipt.result_version != intent.result_version
@@ -2250,6 +2291,7 @@ mod tests {
             value.identity = target;
             value.result_version = version;
             value.contract_digest = format!("contract-{version}");
+            value.brief_digest = Some("brief".into());
             assert_eq!(
                 value.spent_execution_attempts(),
                 Some(1),
@@ -2306,6 +2348,114 @@ mod tests {
         assert_eq!(malformed.spent_execution_attempts(), None);
         value.receipts.push(value.receipts.last().unwrap().clone());
         assert_eq!(value.spent_execution_attempts(), None);
+    }
+
+    #[test]
+    fn reserved_gaps_require_rejected_intents_and_exact_materialized_lineage() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut value = record(dir.path().join("assignment"), DispatchStatus::Applied);
+        for op in [
+            DispatchOperation::Prepare,
+            DispatchOperation::Launch,
+            DispatchOperation::InitialInput,
+        ] {
+            operation(&mut value, op, DispatchOutcome::Applied);
+        }
+        value.execution_attempts = Some(1);
+        // Reserve/reject revision2, continue unchanged at result3, then revise
+        // to contract3/result4. Only the actual results enter version history.
+        for (result, contract, outcome, advance) in [
+            (2, 2, DispatchOutcome::Rejected, false),
+            (3, 1, DispatchOutcome::Applied, true),
+            (4, 3, DispatchOutcome::Applied, true),
+        ] {
+            let expected = value.identity.clone();
+            let mut target = expected.clone();
+            target.contract = contract;
+            let request = format!("reserved-{result}");
+            let contract_digest = if contract == expected.contract {
+                value.contract_digest.clone()
+            } else {
+                format!("contract-{contract}")
+            };
+            let brief_digest = format!("brief-{result}");
+            value.followups.push(FollowupIntent {
+                request: request.clone(),
+                expected,
+                expected_result_version: value.result_version,
+                expected_control_epoch: 1,
+                target: target.clone(),
+                result_version: result,
+                digest: "payload".into(),
+                contract_digest: contract_digest.clone(),
+                brief_digest: brief_digest.clone(),
+            });
+            value.receipts.push(DispatchReceipt {
+                request,
+                operation: DispatchOperation::Followup,
+                result_version: result,
+                identity: target.clone(),
+                outcome,
+                input: None,
+                reason: None,
+            });
+            if advance {
+                value.previous_versions.push(value.version());
+                value.identity = target;
+                value.result_version = result;
+                value.contract_digest = contract_digest;
+                value.brief_digest = Some(brief_digest);
+            }
+            assert_eq!(value.spent_execution_attempts(), Some(1));
+        }
+        let mut restored: Record =
+            serde_json::from_slice(&serde_json::to_vec(&value).unwrap()).unwrap();
+        restored.upgrade_legacy();
+        assert_eq!(
+            restored.execution_attempts,
+            Some(1),
+            "retained metadata reload keeps proof"
+        );
+        for case in [
+            "unbacked result",
+            "unbacked contract",
+            "duplicate reservation",
+            "duplicate request",
+            "unknown skipped",
+            "partial skipped",
+            "accepted skipped",
+            "missing materialization",
+            "changed digest",
+            "changed receipt",
+            "zero count",
+        ] {
+            let mut bad = value.clone();
+            match case {
+                "unbacked result" => {
+                    bad.followups.remove(0);
+                    bad.receipts.remove(3);
+                }
+                "unbacked contract" => {
+                    bad.followups[0].target.contract = 1;
+                    bad.receipts[3].identity.contract = 1;
+                }
+                "duplicate reservation" => bad.followups[1].result_version = 2,
+                "duplicate request" => bad.followups[1].request = bad.followups[0].request.clone(),
+                "unknown skipped" => bad.receipts[3].outcome = DispatchOutcome::Unknown,
+                "partial skipped" => bad.receipts[3].outcome = DispatchOutcome::Partial,
+                "accepted skipped" => bad.receipts[3].outcome = DispatchOutcome::Accepted,
+                "missing materialization" => {
+                    bad.previous_versions.remove(1);
+                }
+                "changed digest" => bad.previous_versions[1].brief_digest = Some("foreign".into()),
+                "changed receipt" => bad.receipts[4].identity.contract = 2,
+                "zero count" => bad.execution_attempts = Some(0),
+                _ => unreachable!(),
+            }
+            assert_eq!(bad.spent_execution_attempts(), None, "{case}");
+            bad.upgrade_legacy();
+            assert_eq!(bad.execution_attempts, None, "{case}");
+        }
     }
 
     #[test]
