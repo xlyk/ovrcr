@@ -1,0 +1,508 @@
+//! Registered production Pi tools, materialized extension, binary Server and real PTYs.
+use super::*;
+use std::os::unix::net::UnixStream;
+static TOOL_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+struct Fixture {
+    live: Live,
+    gate: std::path::PathBuf,
+    wakes: std::path::PathBuf,
+    parent: SessionId,
+    workspace: String,
+}
+impl Fixture {
+    fn new(deadline: u64) -> Self {
+        let live = Live::idle();
+        fs::write(
+            live.config.join("dashboard.toml"),
+            format!("[delegation]\nprogress_deadline_ms = {deadline}\n"),
+        )
+        .unwrap();
+        let gate = live.root.path().join("allow-result");
+        let wakes = live.root.path().join("wakes.jsonl");
+        let host = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pi/pi_host.mjs");
+        let pi = live.claude.command.parent().unwrap().join("pi");
+        fs::write(&pi, include_bytes!("../fixtures/pi/research_pi.sh")).unwrap();
+        fs::set_permissions(&pi, fs::Permissions::from_mode(0o700)).unwrap();
+        live.start_binary_env(&[
+            ("OVRCR_TEST_DELEGATION", "1".as_ref()),
+            ("OVRCR_TEST_PI_HOST", host.as_os_str()),
+            ("OVRCR_TEST_DELEGATION_RESULT_GATE", gate.as_os_str()),
+            ("OVRCR_TEST_PI_WAKE_LOG", wakes.as_os_str()),
+        ]);
+        live.ready("observe-fixture");
+        let workspaces = cli_json(&live, &["workspace", "list", "--project", PROJECT]);
+        let workspace = workspaces
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["branch"] == "observe-fixture")
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let Response::CreatedSession(parent) =
+            live.request(Request::CreateSession(CreateSessionRequest {
+                project: PROJECT.into(),
+                workspace: workspace.clone(),
+                name: "parent".into(),
+                label: None,
+                argv: vec![
+                    env!("CARGO_BIN_EXE_ovrcr").into(),
+                    "agent".into(),
+                    "run".into(),
+                    "pi".into(),
+                    "--".into(),
+                    "pi".into(),
+                    "--model".into(),
+                    "fixture-model".into(),
+                ],
+                kind: SessionKind::Agent { name: "pi".into() },
+            }))
+        else {
+            panic!("parent launch");
+        };
+        let fixture = Self {
+            live,
+            gate,
+            wakes,
+            parent: parent.id,
+            workspace,
+        };
+        fixture.until(|| fixture.summary(fixture.parent).agent.is_some());
+        for group in fixture.live.session_groups() {
+            println!("OBSERVATION_OWNED_GROUP={group}");
+            fixture.live.own_group(group);
+        }
+        fixture
+    }
+    fn until(&self, mut condition: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !condition() {
+            assert!(Instant::now() < deadline, "observation fixture deadline");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    fn summary(&self, id: SessionId) -> SessionSummary {
+        let Response::Inventory { sessions, .. } = self.live.request(Request::Inspect) else {
+            panic!("inventory");
+        };
+        sessions.into_iter().find(|s| s.id == id).unwrap()
+    }
+    fn send(&self, text: &str) {
+        assert_eq!(
+            self.live.request(Request::SendTerminal {
+                session: self.parent,
+                text: text.into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+    }
+    fn tool(&self, name: &str, args: serde_json::Value) -> serde_json::Value {
+        let path = self.live.root.path().join(format!(
+            "tool-{}.json",
+            TOOL_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        tool(&self.live, self.parent, name, args, &path)
+    }
+    fn start(&self, scope: &str) -> AssignmentSnapshot {
+        let started: AssignmentSnapshot = serde_json::from_value(self.tool("ovrcr_start", serde_json::json!({"project": PROJECT, "workspace": self.workspace, "scope": scope, "model_provider": "test", "model": "fixture-model", "acceptance_evidence": ["README citation"]}))).unwrap();
+        assert_eq!(started.dispatch, DispatchStatus::Applied, "{started:?}");
+        wait_file(&started.brief.with_extension("json.started"));
+        for group in self.live.session_groups() {
+            if !self.live.owned_groups().contains(&group) {
+                println!("OBSERVATION_OWNED_GROUP={group}");
+            }
+            self.live.own_group(group);
+        }
+        started
+    }
+    fn observe(
+        &self,
+        handles: &[&str],
+        after: Option<&ObservationCursor>,
+        wait_ms: u64,
+    ) -> DelegationObservationBatch {
+        serde_json::from_value(self.tool(
+            "ovrcr_wait",
+            serde_json::json!({"handles": handles, "after": after, "wait_ms": wait_ms}),
+        ))
+        .unwrap()
+    }
+    fn wake_rows(&self) -> Vec<serde_json::Value> {
+        fs::read_to_string(&self.wakes)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect()
+    }
+    fn dashboard(&self) -> UnixStream {
+        let mut stream = connect_server(&self.live.socket).unwrap();
+        assert!(matches!(
+            dashboard_view(&mut stream, 1, Request::DashboardHello).unwrap(),
+            Response::Hierarchy(_)
+        ));
+        stream
+    }
+}
+
+#[test]
+fn production_observer_collects_simultaneous_file_only_results_and_preserves_dashboard() {
+    let f = Fixture::new(10000);
+    let mut dashboard = f.dashboard();
+    let a = f.start("NO_READY first TASK_PAYLOAD_SECRET");
+    let b = f.start("NO_READY REBIND_AFTER_RESULT second TASK_PAYLOAD_SECRET");
+    f.send("idle:false");
+    f.send("agent_start");
+    f.until(|| f.summary(f.parent).activity == AgentActivity::Busy);
+    let initial = f.observe(&[&a.handle, &b.handle], None, 0);
+    fs::write(&f.gate, "publish").unwrap();
+    wait_file(&a.brief.with_extension("json.published"));
+    wait_file(&b.brief.with_extension("json.published"));
+    f.until(|| {
+        f.wake_rows()
+            .iter()
+            .any(|row| row["delivery"] == "followUp")
+    });
+    let found = f.observe(&[&a.handle, &b.handle], Some(&initial.cursor), 0);
+    assert!(
+        found
+            .observations
+            .iter()
+            .all(|o| o.publication.is_some() && !o.publication.as_ref().unwrap().handled)
+    );
+    for assignment in [&a, &b] {
+        let collected: AssignmentSnapshot = serde_json::from_value(f.tool(
+            "ovrcr_collect",
+            serde_json::json!({"handle": assignment.handle}),
+        ))
+        .unwrap();
+        assert!(collected.submission.is_some());
+        assert_eq!(collected.acceptance, "pending");
+        let child = f.summary(assignment.identity.session.unwrap());
+        assert_eq!(
+            child.activity,
+            AgentActivity::Busy,
+            "file result does not require settlement"
+        );
+        assert!(
+            child.unread.is_none(),
+            "file observation must not create Unread"
+        );
+    }
+    let publication = found.observations[0]
+        .publication
+        .as_ref()
+        .unwrap()
+        .identity
+        .clone();
+    for _ in 0..2 {
+        f.tool(
+            "ovrcr_mark_handled",
+            serde_json::json!({"handle": a.handle, "publication": publication}),
+        );
+    }
+    let mut wrong = publication.clone();
+    wrong.digest.push('0');
+    let error_path = f.live.root.path().join("wrong-handled.json");
+    let refused = tool_reply(
+        &f.live,
+        f.parent,
+        "ovrcr_mark_handled",
+        serde_json::json!({"handle": a.handle, "publication": wrong}),
+        &error_path,
+    );
+    assert!(
+        refused.get("error").is_some(),
+        "changed digest cannot inherit handling"
+    );
+    f.send("run_command:ovrcr-observe-reconnect");
+    let reconnected = f.observe(&[&a.handle, &b.handle], None, 0);
+    assert!(
+        reconnected.observations[0]
+            .publication
+            .as_ref()
+            .unwrap()
+            .handled
+    );
+    assert!(
+        !reconnected.observations[1]
+            .publication
+            .as_ref()
+            .unwrap()
+            .handled
+    );
+    let pending_publication = reconnected.observations[1]
+        .publication
+        .as_ref()
+        .unwrap()
+        .identity
+        .clone();
+    fs::write(
+        b.brief.with_extension("json.rebind"),
+        "replace native conversation",
+    )
+    .unwrap();
+    wait_file(&b.brief.with_extension("json.rebound"));
+    let replaced = f.observe(&[&b.handle], None, 0);
+    assert!(!replaced.observations[0].current);
+    assert_eq!(
+        replaced.observations[0]
+            .publication
+            .as_ref()
+            .unwrap()
+            .identity,
+        pending_publication
+    );
+    let stale_output = f.live.root.path().join("stale-handled.json");
+    let refused = tool_reply(
+        &f.live,
+        f.parent,
+        "ovrcr_mark_handled",
+        serde_json::json!({"handle":b.handle,"publication":pending_publication}),
+        &stale_output,
+    );
+    assert!(
+        refused["error"].is_string(),
+        "replaced native binding cannot acknowledge the old publication: {refused}"
+    );
+    let pending = f.observe(&[&b.handle], None, 0);
+    assert!(
+        !pending.observations[0]
+            .publication
+            .as_ref()
+            .unwrap()
+            .handled
+    );
+    assert!(
+        b.result_path.exists(),
+        "refusal preserves original submitted evidence"
+    );
+    assert!(
+        matches!(
+            f.live.request(Request::DashboardHello),
+            Response::Error { .. }
+        ),
+        "observer must leave the existing seat occupied"
+    );
+    assert!(matches!(
+        dashboard_view(&mut dashboard, 3, Request::List).unwrap(),
+        Response::Hierarchy(_)
+    ));
+    let log = fs::read_to_string(&f.wakes).unwrap();
+    assert!(!log.contains("TASK_PAYLOAD_SECRET") && !log.contains("Read the assigned repository"));
+    assert!(
+        f.wake_rows()
+            .iter()
+            .all(|r| r["options"]["deliverAs"] == "followUp" && r["message"]["display"] == false)
+    );
+}
+
+#[test]
+fn production_observer_deadline_reconnect_overflow_and_wait_abort_leave_child_running() {
+    let f = Fixture::new(150);
+    let _dashboard = f.dashboard();
+    let child = f.start("NO_READY silent until explicitly released");
+    let initial = f.observe(&[&child.handle], None, 0);
+    let mut last = initial.clone();
+    let stalled_deadline = Instant::now() + Duration::from_secs(10);
+    while !last.observations[0].stalled {
+        assert!(
+            Instant::now() < stalled_deadline,
+            "silent child did not reach observation deadline"
+        );
+        last = f.observe(&[&child.handle], Some(&last.cursor), 300);
+    }
+    let progress = last.observations[0].last_progress_unix_ms;
+    f.send("run_command:ovrcr-observe-reconnect");
+    let reconnect = f.observe(&[&child.handle], None, 0);
+    assert!(reconnect.observations[0].stalled);
+    assert_eq!(reconnect.observations[0].last_progress_unix_ms, progress);
+    f.until(|| f.wake_rows().iter().any(|row| row["delivery"] == "idle"));
+    let checkpoint_path = child.brief.parent().unwrap().join("observation-v1.json");
+    let mut checkpoint: serde_json::Value =
+        serde_json::from_slice(&fs::read(&checkpoint_path).unwrap()).unwrap();
+    checkpoint["progress_unix_ms"] = serde_json::json!(u64::MAX);
+    fs::write(&checkpoint_path, serde_json::to_vec(&checkpoint).unwrap()).unwrap();
+    let future = f.observe(&[&child.handle], None, 0);
+    assert!(
+        future.observations[0].stalled && future.observations[0].progress_unresolved,
+        "future persisted clocks cannot postpone observation deadlines"
+    );
+    f.send(&"ui_prompt_start:input\nui_prompt_end:input\n".repeat(140));
+    let overflow = f.observe(&[&child.handle], Some(&initial.cursor), 0);
+    assert_eq!(overflow.status, ObservationStatus::ReconcileRequired);
+    let output = f.live.root.path().join("cancelled-wait.json");
+    let stable = f.observe(&[&child.handle], Some(&overflow.cursor), 0);
+    f.send(&format!("tool:{}", serde_json::json!({"name":"ovrcr_wait","args":{"handles":[child.handle],"after":stable.cursor,"wait_ms":20000},"output":output,"background":true})));
+    f.send(&format!("abort_tool:{}", output.display()));
+    wait_file(&output);
+    let cancelled: serde_json::Value = serde_json::from_slice(&fs::read(output).unwrap()).unwrap();
+    assert!(
+        cancelled["error"]
+            .as_str()
+            .unwrap()
+            .contains("observation wait cancelled"),
+        "{cancelled}"
+    );
+    let current = f.summary(child.identity.session.unwrap());
+    assert_eq!(Some(current.run), child.identity.run);
+    assert!(
+        current.phase.is_live(),
+        "wait abort must not interrupt child"
+    );
+    fs::write(&f.gate, "publish").unwrap();
+    wait_file(&child.brief.with_extension("json.published"));
+    let collected: AssignmentSnapshot =
+        serde_json::from_value(f.tool("ovrcr_collect", serde_json::json!({"handle":child.handle})))
+            .unwrap();
+    assert!(
+        collected.submission.is_some(),
+        "child remains collectable after abort"
+    );
+}
+
+#[test]
+fn production_publication_reconciliation_requires_authenticated_intent_and_exact_bytes() {
+    let f = Fixture::new(10000);
+    let child = f.start("NO_READY authenticated file recovery");
+    let submission = ResearchSubmission {
+        schema: 1,
+        identity: child.identity.clone(),
+        version: 1,
+        outcome: "success".into(),
+        summary: "Read the assigned repository README.".into(),
+        evidence: vec!["README:1 fixture".into()],
+        unresolved: vec![],
+    };
+    let bytes = serde_json::to_vec(&submission).unwrap();
+    fs::write(&child.result_path, &bytes).unwrap();
+    fs::set_permissions(&child.result_path, fs::Permissions::from_mode(0o600)).unwrap();
+    let unauthenticated = f.observe(&[&child.handle], None, 0);
+    assert_eq!(
+        unauthenticated.observations[0].publication_issue,
+        Some(PublicationIssue::Uncommitted)
+    );
+    assert!(unauthenticated.observations[0].publication.is_none());
+    // The child's authenticated Publish records its exact intent before discovering
+    // this conflicting file. No parsed file can manufacture the authorization.
+    fs::write(&child.result_path, "corrupt").unwrap();
+    fs::write(&f.gate, "attempt publication").unwrap();
+    wait_file(&child.brief.with_extension("json.published"));
+    let invalid = f.observe(&[&child.handle], Some(&unauthenticated.cursor), 0);
+    assert_eq!(
+        invalid.observations[0].publication_issue,
+        Some(PublicationIssue::Invalid)
+    );
+    let temporary = child.result_path.with_extension("tmp");
+    fs::write(&temporary, &bytes).unwrap();
+    fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::rename(&temporary, &child.result_path).unwrap();
+    let recovered = f.observe(&[&child.handle], Some(&invalid.cursor), 1000);
+    assert!(
+        recovered.observations[0].publication.is_some(),
+        "exact authenticated file is discoverable without Ready or a second Publish"
+    );
+    let collected: AssignmentSnapshot =
+        serde_json::from_value(f.tool("ovrcr_collect", serde_json::json!({"handle":child.handle})))
+            .unwrap();
+    assert_eq!(collected.submission, Some(submission));
+    assert_eq!(collected.acceptance, "pending");
+    fs::write(&child.result_path, "{}").unwrap();
+    let modified = f.observe(&[&child.handle], Some(&recovered.cursor), 0);
+    assert_eq!(
+        modified.observations[0].publication_issue,
+        Some(PublicationIssue::Invalid)
+    );
+    assert!(modified.observations[0].publication.is_none());
+}
+
+#[test]
+fn production_observe_remains_bounded_while_workspace_lifecycle_is_blocked() {
+    let f = Fixture::new(10000);
+    let child = f.start("NO_READY lifecycle observation");
+    let initial = f.observe(&[&child.handle], None, 0);
+    let git = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|p| p.join("git"))
+        .find(|p| p.is_file())
+        .unwrap();
+    let entered = f.live.root.path().join("git-entered");
+    let release = f.live.root.path().join("git-release");
+    struct Release(std::path::PathBuf);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            let _ = fs::write(&self.0, "release");
+        }
+    }
+    let _release = Release(release.clone());
+    let shim = f.live.claude.command.parent().unwrap().join("git");
+    fs::write(&shim, format!("#!/bin/sh\ncase \"$*\" in *\"worktree add\"*\"blocked-observe\"*) : > '{}'; while [ ! -f '{}' ]; do sleep 0.01; done;; esac\nexec '{}' \"$@\"\n", entered.display(), release.display(), git.display())).unwrap();
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut dashboard = f.dashboard();
+    assert_eq!(
+        dashboard_view(
+            &mut dashboard,
+            2,
+            Request::CreateWorkspace {
+                project: PROJECT.into(),
+                id: "blocked-observe".into(),
+                branch: BranchRequest::New {
+                    branch: "blocked-observe".into(),
+                    base: "main".into()
+                }
+            }
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    wait_file(&entered);
+    let start = Instant::now();
+    let observed = f.observe(&[&child.handle], Some(&initial.cursor), 100);
+    assert!(start.elapsed() < Duration::from_secs(3));
+    assert_eq!(observed.observations[0].identity, child.identity);
+    assert!(
+        !release.exists(),
+        "Observe must finish while lifecycle still holds its mutation lock"
+    );
+    fs::write(&release, "release").unwrap();
+}
+
+#[test]
+fn production_ready_and_input_observations_wake_without_submission_or_acceptance() {
+    let f = Fixture::new(10000);
+    let _dashboard = f.dashboard();
+    let ready = f.start("NO_READY READY_WAKE");
+    f.until(|| f.summary(ready.identity.session.unwrap()).activity == AgentActivity::ResponseReady);
+    let unread = f.summary(ready.identity.session.unwrap()).unread;
+    assert!(unread.is_some());
+    let ready_batch = f.observe(&[&ready.handle], None, 0);
+    let activity = ready_batch.observations[0].activity.as_ref().unwrap();
+    assert_eq!(activity.state, AgentActivity::ResponseReady);
+    assert_eq!(activity.quality, SampleQuality::Confirmed);
+    assert!(ready_batch.observations[0].publication.is_none());
+    let collected: AssignmentSnapshot = serde_json::from_value(
+        f.tool("ovrcr_collect", serde_json::json!({"handle": ready.handle})),
+    )
+    .unwrap();
+    assert!(collected.submission.is_none());
+    assert_eq!(collected.acceptance, "pending");
+    assert_eq!(f.summary(ready.identity.session.unwrap()).unread, unread);
+    let input = f.start("NO_READY INPUT_WAKE");
+    f.until(|| f.summary(input.identity.session.unwrap()).activity == AgentActivity::WaitingInput);
+    let input_batch = f.observe(&[&input.handle], None, 0);
+    assert_eq!(input_batch.observations[0].input_requests.len(), 1);
+    assert_eq!(
+        input_batch.observations[0].input_requests[0].kind,
+        InputKind::Input
+    );
+    assert!(input_batch.observations[0].publication.is_none());
+    f.until(|| {
+        f.wake_rows().iter().any(|r| {
+            r["message"]["details"]["handles"]
+                .as_array()
+                .is_some_and(|handles| handles.contains(&serde_json::json!(input.handle)))
+        })
+    });
+    assert!(!ready.result_path.exists() && !input.result_path.exists());
+}

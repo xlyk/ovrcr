@@ -1,5 +1,6 @@
 pub(crate) mod delegation;
 mod delegation_files;
+mod delegation_observation;
 use crate::config::{
     ProjectRecord, Registry, WorkspaceRecord, initialize_registry, save_registry_atomic,
 };
@@ -239,6 +240,7 @@ struct WipTarget {
 
 pub struct ServerState {
     server_lifetime: String,
+    delegation_observations: delegation_observation::Observations,
     callback_executable_sha256: Option<String>,
     pub tasks: Option<Arc<TaskManager>>,
     socket: PathBuf,
@@ -1400,6 +1402,7 @@ impl ServerState {
         let retained = SessionStore::open(&registry_path).unwrap();
         Arc::new(Self {
             server_lifetime: navigation::new_identity().unwrap(),
+            delegation_observations: delegation_observation::Observations::default(),
             callback_executable_sha256: Some("0".repeat(64)),
             tasks: Some(tasks),
             quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),

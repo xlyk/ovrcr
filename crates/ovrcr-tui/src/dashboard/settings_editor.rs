@@ -432,6 +432,7 @@ fn editor_kind(
             Kind::Toggle(entry.value(settings).as_deref() == Some("true"))
         }
         ovrcr_protocol::Shape::Text(_) => Kind::Text,
+        ovrcr_protocol::Shape::Typed(_) => Kind::Toml,
         ovrcr_protocol::Shape::Path(_) => Kind::Path,
         ovrcr_protocol::Shape::Pick { options, .. } => Kind::Pick(
             options
@@ -1285,7 +1286,8 @@ mod tests {
                 "Titles",
                 "Usage",
                 "Agents",
-                "Remembered launches"
+                "Remembered launches",
+                "Delegation"
             ]
         );
     }

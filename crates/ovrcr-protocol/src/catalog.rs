@@ -30,6 +30,7 @@ pub enum SettingWrite {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shape {
     Toggle,
+    Typed(&'static str),
     Text(&'static str),
     Path(&'static str),
     Pick {
@@ -138,6 +139,7 @@ pub fn write_of(path: &[SettingName<'_>]) -> Option<SettingWrite> {
         };
         let rest = &path[index + 1..];
         return Some(match (shape, rest) {
+            (Shape::Typed(expected), []) => SettingWrite::Typed(expected),
             (Shape::Toggle, []) => SettingWrite::Typed("a boolean"),
             (Shape::Text(expected) | Shape::Path(expected), []) => SettingWrite::Text(expected),
             (Shape::Pick { expected, .. }, []) => SettingWrite::Text(expected),
@@ -238,6 +240,7 @@ fn value_of(settings: &Settings, path: &str) -> Option<String> {
         "title_model" => settings.title_model.clone(),
         "branch_prefix" => Some(settings.branch_prefix.clone()),
         "save_uncommitted_work" => display(&settings.save_uncommitted_work),
+        "delegation.progress_deadline_ms" => display(&settings.delegation.progress_deadline_ms),
         "picker_roots" => display(&settings.picker_roots),
         "agents" => display(&settings.agents),
         "launch_choices" => display_choices(&settings.launch_choices),
@@ -253,7 +256,7 @@ fn value_of(settings: &Settings, path: &str) -> Option<String> {
     }
 }
 
-const CATALOG: [Entry; 20] = [
+const CATALOG: [Entry; 21] = [
     Entry {
         path: "desktop_notifications",
         shape: Shape::Toggle,
@@ -483,6 +486,17 @@ const CATALOG: [Entry; 20] = [
         value: |settings| value_of(settings, "launch_choices"),
         show_off: |_| false,
     },
+    Entry {
+        path: "delegation.progress_deadline_ms",
+        shape: Shape::Typed("an integer from 1 to 86400000"),
+        owner: SettingOwner::Server,
+        group: "Delegation",
+        label: "Progress deadline (milliseconds)",
+        off_state: None,
+        about: &["Reports a silent assignment as stalled. Does not interrupt or cancel its child."],
+        value: |settings| value_of(settings, "delegation.progress_deadline_ms"),
+        show_off: |_| false,
+    },
 ];
 
 #[cfg(test)]
@@ -520,6 +534,7 @@ mod tests {
                 "quota.cursor.state_db",
                 "agents",
                 "launch_choices",
+                "delegation.progress_deadline_ms",
             ]
         );
         let groups: Vec<_> = entries().iter().map(|entry| entry.group).collect();
@@ -534,7 +549,8 @@ mod tests {
                 "Titles",
                 "Usage",
                 "Agents",
-                "Remembered launches"
+                "Remembered launches",
+                "Delegation"
             ]
         );
         assert!(groups.windows(2).all(|pair| {

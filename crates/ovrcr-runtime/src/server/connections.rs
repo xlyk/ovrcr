@@ -598,6 +598,20 @@ pub(super) fn handle_request_with_id(
             HistoryRequest::End { session, snapshot },
         ),
         Request::Delegation(request) => {
+            if let ovrcr_protocol::DelegationRequest::Observe {
+                auth,
+                handles,
+                after,
+                wait_ms,
+            } = request.as_ref()
+            {
+                return state
+                    .observe_delegations(auth, handles, after.clone(), *wait_ms)
+                    .map_or_else(
+                        |error| error_response(ErrorCode::Conflict, error_chain_string(&error)),
+                        |batch| Response::DelegationObservation(Box::new(batch)),
+                    );
+            }
             let launching = matches!(
                 request.as_ref(),
                 ovrcr_protocol::DelegationRequest::Launch { .. }
