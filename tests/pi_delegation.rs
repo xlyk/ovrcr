@@ -78,10 +78,10 @@ fn dashboard_view(
             request_id,
             response,
         } = read_frame(stream)?
+            && request_id == id
+            && !matches!(response, Response::Screen { .. })
         {
-            if request_id == id && !matches!(response, Response::Screen { .. }) {
-                return Ok(response);
-            }
+            return Ok(response);
         }
     }
 }
@@ -146,7 +146,8 @@ fn public_pi_research_assignment_launches_collects_and_fences_real_child() {
         serde_json::json!({"project":PROJECT,"workspace":WORKSPACE,"scope":"Read README. Do not change files.","model_provider":"test","model":"fixture-model","acceptance_evidence":["README citation"]}),
         &live.root.path().join("start.json"),
     );
-    let started: AssignmentSnapshot = serde_json::from_value(raw.clone()).expect(&raw.to_string());
+    let started: AssignmentSnapshot =
+        serde_json::from_value(raw.clone()).unwrap_or_else(|_| panic!("{raw}"));
     assert_eq!(started.dispatch, DispatchStatus::Applied, "{started:?}");
     assert!(
         started.submission.is_none(),

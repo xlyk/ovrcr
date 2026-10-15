@@ -85,28 +85,28 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
     // passed a permission, approve, auto-trust, or dangerously-* flag.
     ovrcr::protocol::apply_default_auto_trust(&name, &mut argv);
     let mut delegation_environment = Vec::new();
-    if name == "pi" {
-        if let (Ok(session), Ok(token), Ok(socket)) = (
+    if name == "pi"
+        && let (Ok(session), Ok(token), Ok(socket)) = (
             std::env::var("OVRCR_SESSION_ID"),
             std::env::var("OVRCR_HOOK_TOKEN"),
             std::env::var("OVRCR_HOOK_SOCKET"),
-        ) {
-            delegation_environment = vec![
-                ("OVRCR_DELEGATION_SESSION".into(), session.into()),
-                (
-                    "OVRCR_DELEGATION_TOKEN".into(),
-                    ovrcr::agent_runner::delegation_capability(&token).into(),
-                ),
-                ("OVRCR_DELEGATION_SOCKET".into(), socket.into()),
-                (
-                    "OVRCR_DELEGATION_HOME".into(),
-                    ovrcr::config::RegistryPath::resolve()
-                        .map_err(RuntimeError::internal)?
-                        .0
-                        .into_os_string(),
-                ),
-            ];
-        }
+        )
+    {
+        delegation_environment = vec![
+            ("OVRCR_DELEGATION_SESSION".into(), session.into()),
+            (
+                "OVRCR_DELEGATION_TOKEN".into(),
+                ovrcr::agent_runner::delegation_capability(&token).into(),
+            ),
+            ("OVRCR_DELEGATION_SOCKET".into(), socket.into()),
+            (
+                "OVRCR_DELEGATION_HOME".into(),
+                ovrcr::config::RegistryPath::resolve()
+                    .map_err(RuntimeError::internal)?
+                    .0
+                    .into_os_string(),
+            ),
+        ];
     }
     let status = ovrcr::agent_runner::run_native_with_env(&argv, &delegation_environment, move |available, native_argv| {
         if name == "hermes" {
