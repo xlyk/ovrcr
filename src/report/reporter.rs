@@ -129,6 +129,8 @@ pub struct Reporter {
     paused: Option<String>,
     /// The admitted extension instance and its last accepted source sequence.
     producer: Option<(String, u64)>,
+    workflow_producer: Option<String>,
+    workflow_source_key: Option<ovrcr_protocol::AgentSecret>,
     /// Instances fenced for the life of this reporter: a retired Producer is gone for good.
     fences: HashSet<String>,
     /// Response-cycle identities this reporter has published under the current generation.
@@ -154,6 +156,8 @@ impl Reporter {
             pending: None,
             paused: None,
             producer: None,
+            workflow_producer: None,
+            workflow_source_key: None,
             fences: HashSet::new(),
             cycles: HashSet::new(),
             charged: 0,
@@ -185,7 +189,10 @@ impl Reporter {
                 frames.poll(&mut self, deadline);
                 Vec::new()
             }
-            HookEvent::NativeCompleted { deadline } => {
+            HookEvent::NativeCompleted { deadline, reaped } => {
+                if reaped && self.provider == AgentProvider::Pi {
+                    let _ = self.workflow_departure(true, deadline);
+                }
                 if matches!(
                     self.conversation_invalidation,
                     Some(ConversationInvalidation::Pending(_))
@@ -227,6 +234,30 @@ impl Reporter {
     /// source boundary rebinds — which is why they are the only ones that ask.
     pub fn paused(&self) -> bool {
         self.paused.is_some()
+    }
+
+    pub fn workflow_source(&mut self, producer: &str, reason: &str, source: Option<ovrcr_protocol::AgentSecret>, deadline: Instant) -> bool {
+        if self.provider != AgentProvider::Pi { return true; }
+        let Some(binding) = self.binding().cloned() else { return false; };
+        let Some(source) = source else { return false; };
+        if self.workflow_producer.as_deref() == Some(producer) && self.workflow_source_key.as_ref().is_some_and(|current| current != &source) {
+            return false;
+        }
+        self.workflow_producer = Some(producer.into());
+        self.workflow_source_key = Some(source.clone());
+        self.workflow_command(AgentCommand::WorkflowSource { binding, producer: producer.into(), reason: reason.into(), source }, deadline)
+    }
+    pub fn workflow_departure(&mut self, reaped: bool, deadline: Instant) -> bool {
+        let (Some(binding), Some(producer)) = (self.binding().cloned(), self.workflow_producer.clone()) else { return false; };
+        self.workflow_command(AgentCommand::WorkflowDeparture { binding, producer, reaped }, deadline)
+    }
+    fn workflow_command(&mut self, command: AgentCommand, deadline: Instant) -> bool {
+        let Ok(operation) = private_identifier() else { return false; };
+        let Some(lease) = self.lease.as_mut() else { return false; };
+        let first = Instant::now() + deadline.saturating_duration_since(Instant::now()) / 2;
+        let result = lease.command(operation.clone(), command, first);
+        if matches!(result, Ok(Response::AgentOperation(AgentOperationResult::WorkflowUpdated))) { return true; }
+        matches!(lease.operation_status(operation, deadline), Ok(Response::AgentOperation(AgentOperationResult::WorkflowUpdated)))
     }
 
     /// Stop reporting, keeping the lease so the reservation is released the ordinary way

@@ -81,6 +81,10 @@ pub struct DelegationCapabilities {
 pub struct DelegationAuth {
     pub session: SessionId,
     pub capability: String,
+    #[serde(default)]
+    pub controller: Option<crate::ControllerFence>,
+    #[serde(default)]
+    pub source: Option<crate::AgentSecret>,
 }
 
 impl std::fmt::Debug for DelegationAuth {

@@ -26,6 +26,8 @@ pub(crate) struct FollowupIntent {
     pub expected_result_version: u32,
     #[serde(default)]
     pub expected_control_epoch: u64,
+    #[serde(default)]
+    pub expected_parent_epoch: Option<u64>,
     pub target: AssignmentIdentity,
     pub result_version: u32,
     pub digest: String,
@@ -221,6 +223,7 @@ impl ServerState {
             ));
         }
         let mut record = self.owned_assignment(&auth, &handle)?;
+        let parent_authority = self.current_workflow_authority(&auth, &record.identity.workflow)?;
         let payload = followup_payload(
             &expected,
             expected_result_version,
@@ -339,6 +342,7 @@ impl ServerState {
                 expected: expected.clone(),
                 expected_result_version,
                 expected_control_epoch,
+                expected_parent_epoch: Some(parent_authority.epoch),
                 target: target.clone(),
                 result_version,
                 digest: payload_digest.clone(),
@@ -358,6 +362,10 @@ impl ServerState {
             self.retained.lock().save_assignment(&record)?;
             intent
         };
+        // Completed receipts remain readable. Accepted work never adopts a replacement parent.
+        if intent.expected_parent_epoch.unwrap_or(1) != parent_authority.epoch {
+            return self.reject_followup(record, &request);
+        }
         // Accepted requests keep their captured authority after interrupted publication.
         if control::require_controller(&record.control, intent.expected_control_epoch).is_err() {
             return self.reject_followup(record, &request);
@@ -388,9 +396,13 @@ impl ServerState {
         if digest(&bytes) != intent.contract_digest || digest(&brief) != intent.brief_digest {
             bail!("followup publication does not match durable intent");
         }
+        let publication_guard = self.retained.lock();
+        let authority = self.require_workflow(&publication_guard, &auth, &record)?;
+        if intent.expected_parent_epoch.unwrap_or(1) != authority.epoch { bail!("followup publication parent authority changed"); }
         let directory = Directory::open(&record.root, false)?;
         publish_matching(&directory, &format!("followup-{request}.json"), &payload)?;
         if take_fault("followup-before-files", &request).is_some() {
+            drop(publication_guard);
             return self.reconciliation_snapshot(record);
         }
         publish_matching(
@@ -404,8 +416,10 @@ impl ServerState {
             &brief,
         )?;
         if take_fault("followup-after-files", &request).is_some() {
+            drop(publication_guard);
             return self.reconciliation_snapshot(record);
         }
+        drop(publication_guard);
         hold_before_input(&request)?;
         let session = match self.assignment_session(&record) {
             Ok(session) => session,
@@ -439,6 +453,8 @@ impl ServerState {
             Some("followup input effect is unknown; do not replay"),
         );
         let store = self.retained.lock();
+        let authority = self.require_workflow(&store, &auth, &record)?;
+        if intent.expected_parent_epoch.unwrap_or(1) != authority.epoch { bail!("captured followup parent authority changed"); }
         store.save_assignment(&record)?;
         let prompt = format!(
             "Perform the read-only research assignment in {}. Read that immutable brief with your read tool; this is a scoped followup in the same assignment. Publish the exact requested result version with ovrcr_publish using handle {} and the identity in that brief. Do not modify task or parent records.",
@@ -449,12 +465,14 @@ impl ServerState {
             record.handle
         );
         match session.send_delegated_text(crate::session::DelegatedInput {
+                    parent_producer: Some(&authority.producer),
+                    parent_source: auth.source.as_ref(),
             request: &request,
             control: &record.control,
             control_epoch: intent.expected_control_epoch,
             authority: crate::session::DelegatedAuthority::Controller,
             parent: &parent,
-            parent_binding: &record.parent_binding,
+            parent_binding: &authority.binding,
             capability: &auth.capability,
             child_binding: record
                 .binding
@@ -587,7 +605,6 @@ impl ServerState {
         }
         let parent = self.session_for_control(auth.session)?;
         let session = self.assignment_session(&record)?;
-        let parent_binding = record.parent_binding.clone();
         let child_binding = record
             .binding
             .clone()
@@ -595,10 +612,14 @@ impl ServerState {
         let model = read_contract(&record)?.model;
         // Same retained -> ordered Session -> file/metadata boundary as scoped input.
         let store = self.retained.lock();
+        let authority = self.require_workflow(&store, &auth, &record)?;
+        let parent_binding = authority.binding.clone();
         let captured_control = record.control.clone();
         session
             .with_delegated_context(
                 &crate::session::DelegatedInput {
+                    parent_producer: Some(&authority.producer),
+                    parent_source: auth.source.as_ref(),
                     request: &handle,
                     control: &captured_control,
                     control_epoch: expected_control_epoch,

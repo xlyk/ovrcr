@@ -3351,6 +3351,8 @@ impl Dashboard {
                 // A snapshot this popup did not ask for. The one it did ask
                 // for was claimed above.
                 Response::Events(_)
+                | Response::Workflows(_)
+                | Response::WorkflowCandidates(_)
                 | Response::Delegation(_)
                 | Response::DelegationObservation(_)
                 | Response::DelegationCapabilities(_) => {}

@@ -406,6 +406,7 @@ fn fifty_session_reporting_capacity() {
             let Response::AgentOperation(AgentOperationResult::Reserved(reservation)) = send(
                 &mut s,
                 Request::ReserveAgent(ReserveAgent {
+                    pi_resume: None,
                     session,
                     capability: AgentSecret(capability),
                     operation: "reserve".into(),

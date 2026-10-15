@@ -364,8 +364,10 @@ impl ServerState {
         };
         let parent = self.delegation_auth(auth)?;
         let _checkpoint = self.delegation_observations.checkpoints.lock().unwrap();
+        let store = self.retained.lock();
+        let authority = self.require_workflow(&store, auth, record)?;
         let progress =
-            parent.with_delegation_binding(&auth.capability, &record.parent_binding, || {
+            parent.with_delegation_binding(&auth.capability, &authority.binding, || {
                 let directory = Directory::open(&record.root, false)?;
                 let previous = directory.read("observation-v1.json");
                 let mut checkpoint: Checkpoint = match previous {

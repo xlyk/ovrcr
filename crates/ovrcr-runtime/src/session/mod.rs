@@ -65,6 +65,7 @@ fn discovery_error(error: anyhow::Error) -> anyhow::Error {
 mod io;
 mod process;
 mod reporting;
+pub(crate) use reporting::AgentPersistence;
 use io::{read_pty, wait_for_child};
 use process::*;
 
@@ -301,6 +302,8 @@ pub(crate) struct DelegatedInput<'a> {
     pub control_epoch: u64,
     pub authority: DelegatedAuthority,
     pub parent: &'a Session,
+    pub parent_producer: Option<&'a str>,
+    pub parent_source: Option<&'a ovrcr_protocol::AgentSecret>,
     pub parent_binding: &'a ovrcr_protocol::AgentBinding,
     pub capability: &'a str,
     pub child_binding: &'a ovrcr_protocol::AgentBinding,
@@ -1050,6 +1053,9 @@ impl Session {
         }
         let apply = |parent: &SessionState, child: &SessionState| -> Result<Option<T>> {
             let parent_valid = parent.phase == SessionPhase::Running
+                && parent.reporting.active()
+                && parent.reporting.source.as_ref() == input.parent_source
+                && input.parent_producer.is_none_or(|producer| parent.reporting.producer.as_deref() == Some(producer))
                 && parent.hook_capability.as_ref().is_some_and(|token| {
                     crate::agent_runner::delegation_capability(&capability_hex(token))
                         == input.capability
