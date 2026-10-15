@@ -1515,6 +1515,82 @@ fn public_dispatch_storage_exhaustion_preserves_unresolved_obligations() {
 }
 
 #[test]
+fn public_dispatch_root_drift_after_allocation_is_rejected_without_replay() {
+    let fixture = RecoveryFixture::new();
+    let root = cli_json(
+        &fixture.live,
+        &[
+            "workspace",
+            "get",
+            "--project",
+            PROJECT,
+            "--path",
+            fixture.live.repo.to_str().unwrap(),
+        ],
+    );
+    let root_id = root["id"].as_str().unwrap();
+    live::git(
+        &fixture.live.repo,
+        &["switch", "-c", "feature/dispatch-root-drift"],
+    );
+    let started = fixture.tool(
+        "ovrcr_start",
+        serde_json::json!({
+            "project": PROJECT, "workspace": root_id, "scope": "Read README",
+            "model_provider": "test", "model": "fixture-model", "acceptance_evidence": ["citation"],
+        }),
+    );
+    let snapshot = fixture.reconcile(started["handle"].as_str().unwrap());
+    assert!(
+        snapshot.identity.session.is_some(),
+        "the failure must occur after allocation"
+    );
+    assert_eq!(snapshot.identity.run, Some(SessionRunId(1)));
+    assert!(
+        snapshot.resources.current_session.is_none(),
+        "the unstarted row is removed"
+    );
+    assert!(snapshot.resources.workspace_present);
+    assert_eq!(snapshot.resources.workspace.as_deref(), Some(root_id));
+    assert_eq!(fixture.child_count(), 0);
+    assert_eq!(started["dispatch"], "Refused", "{started}");
+    let receipt = snapshot
+        .receipts
+        .iter()
+        .find(|r| r.operation == DispatchOperation::Launch)
+        .unwrap();
+    assert_eq!(receipt.outcome, DispatchOutcome::Rejected);
+    let allocated = snapshot.identity.session.unwrap();
+    let db = rusqlite::Connection::open(fixture.live.config.join("registry.sqlite3")).unwrap();
+    let rows: i64 = db
+        .query_row(
+            "SELECT count(*) FROM retained_sessions WHERE id=?1",
+            [allocated.0 as i64],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(rows, 0);
+
+    live::git(&fixture.live.repo, &["switch", "main"]);
+    for _ in 0..2 {
+        let recovered: AssignmentSnapshot =
+            serde_json::from_value(fixture.recover(&snapshot.handle)).unwrap();
+        assert_eq!(recovered.dispatch, DispatchStatus::Refused);
+        assert_eq!(recovered.identity, snapshot.identity);
+        assert_eq!(recovered.receipts, snapshot.receipts);
+        assert_eq!(recovered.resources, snapshot.resources);
+        let repeated = fixture.control(fixture.proxy.original(DispatchOperation::Launch));
+        assert_eq!(repeated.identity, snapshot.identity);
+        assert_eq!(repeated.receipts, snapshot.receipts);
+        assert_eq!(
+            fixture.child_count(),
+            0,
+            "restoring the root must not replay the rejected operation"
+        );
+    }
+}
+
+#[test]
 fn public_dispatch_retired_parent_a_to_b_to_a_cannot_replay_control() {
     let fixture = RecoveryFixture::new();
     let initial: AssignmentSnapshot = serde_json::from_value(fixture.start()).unwrap();

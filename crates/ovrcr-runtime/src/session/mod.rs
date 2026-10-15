@@ -15,7 +15,7 @@ pub use ovrcr_protocol::{
     AgentActivity, SessionId, SessionKind, SessionPhase, SessionRunId, SessionSummary, TerminalSize,
 };
 
-/// The native spawn primitive failed before the requested program could execute.
+/// Lifecycle preparation or native spawn failed before the requested process started.
 #[derive(Debug)]
 pub(crate) struct NoProcessStarted;
 
