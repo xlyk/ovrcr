@@ -561,6 +561,7 @@ mod tests {
             context_usage: None,
             title: None,
             manual_title: None,
+            assignment_control: None,
         };
         let action = d.on_lifecycle_completed(
             7,
