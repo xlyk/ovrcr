@@ -3,6 +3,9 @@
 pub(crate) mod control;
 #[path = "delegation_followups.rs"]
 mod followups;
+#[path = "delegation_policy.rs"]
+mod policy;
+
 use super::delegation_files::Directory;
 use super::{ServerState, lifecycle_error};
 use anyhow::{Context, Result, bail};
@@ -67,6 +70,14 @@ pub(crate) struct Record {
     pub receipts: Vec<DispatchReceipt>,
     #[serde(default)]
     pub request_digests: Vec<(DispatchOperation, String)>,
+    #[serde(default)]
+    pub previous_request: Option<String>,
+    #[serde(default)]
+    pub successor_request: Option<String>,
+    #[serde(default)]
+    pub execution_attempts: Option<u32>,
+    #[serde(default)]
+    pub retryable_capacity_refusal: bool,
 }
 
 // Three fixed receipt slots per assignment; never evict unresolved obligations.
@@ -363,6 +374,32 @@ impl ServerState {
         Ok(())
     }
 
+    pub(crate) fn delegation_capabilities(
+        &self,
+        auth: &DelegationAuth,
+        selection: &DelegationSelection,
+    ) -> Result<DelegationCapabilities> {
+        self.delegation_auth(auth)?;
+        self.reject_assigned_input(auth.session)?;
+        let (settings, invalid) = self.policy_snapshot();
+        let (inventory, unavailable) = match available_models() {
+            Ok(inventory) => (inventory, invalid),
+            Err(_) => (
+                Vec::new(),
+                Some("Pi model inventory is unavailable; no substitute selected".into()),
+            ),
+        };
+        let (live, children) = self.delegation_live_counts()?;
+        Ok(policy::resolve(
+            &settings,
+            selection,
+            inventory,
+            live,
+            children,
+            unavailable,
+        ))
+    }
+
     pub(crate) fn delegation(&self, request: DelegationRequest) -> Result<AssignmentSnapshot> {
         // Capability discovery is outside lifecycle serialization. A concurrent launch
         // still rechecks its durable status under the lock before creating anything.
@@ -370,6 +407,21 @@ impl ServerState {
             let record = self.owned_assignment(auth, handle)?;
             if record.dispatch == DispatchStatus::Prepared {
                 Some(available_model(&read_contract(&record)?).is_ok())
+            } else {
+                None
+            }
+        } else if let DelegationRequest::Prepare { auth, contract } = &request {
+            contract
+                .validate()
+                .map_err(|reason| lifecycle_error(ErrorCode::InvalidRequest, reason))?;
+            self.delegation_auth(auth)?;
+            if self
+                .retained
+                .lock()
+                .assignment(&contract.request)?
+                .is_none()
+            {
+                Some(available_model(contract).is_ok())
             } else {
                 None
             }
@@ -381,6 +433,12 @@ impl ServerState {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
         let record = match request {
+            DelegationRequest::Capabilities { .. } => {
+                return Err(lifecycle_error(
+                    ErrorCode::InvalidRequest,
+                    "capabilities require the discovery response path",
+                ));
+            }
             DelegationRequest::Prepare { auth, contract } => {
                 contract
                     .validate()
@@ -398,6 +456,12 @@ impl ServerState {
                 let handle = contract.request.clone();
                 let bytes = serde_json::to_vec(&contract)?;
                 let contract_digest = digest(&bytes);
+                let is_new = self.retained.lock().assignment(&handle)?.is_none();
+                let prepared_policy = if is_new {
+                    Some(self.contract_policy(&contract, availability == Some(true))?)
+                } else {
+                    None
+                };
                 let previous = self.retained.lock().assignment(&handle)?;
                 let mut record = if let Some(mut record) = previous {
                     if record.parent != auth.session
@@ -424,6 +488,81 @@ impl ServerState {
                             "delegation receipt storage is full (4096 assignments); existing assignments remain recoverable; new admission requires supported retention maintenance",
                         ));
                     }
+                    let policy = prepared_policy
+                        .as_ref()
+                        .context("new assignment policy unavailable")?;
+                    if let Some(reason) = &policy.reason {
+                        return Err(lifecycle_error(ErrorCode::Conflict, reason));
+                    }
+                    if contract.previous_request.is_none()
+                        && contract.limits != policy.effective_limits
+                    {
+                        return Err(lifecycle_error(
+                            ErrorCode::Conflict,
+                            "resolve effective delegation limits before Prepare",
+                        ));
+                    }
+                    let previous = if let Some(previous_request) = &contract.previous_request {
+                        let previous = store
+                            .assignment(previous_request)?
+                            .context("previous assignment not found")?;
+                        if previous.parent != auth.session
+                            || previous.parent_run != parent.run()
+                            || previous.parent_binding != parent_binding
+                        {
+                            return Err(lifecycle_error(
+                                ErrorCode::Conflict,
+                                "retry controller changed",
+                            ));
+                        }
+                        if previous.dispatch != DispatchStatus::Refused
+                            || !previous.retryable_capacity_refusal
+                            || previous.identity.session.is_some()
+                            || previous.identity.run.is_some()
+                        {
+                            return Err(lifecycle_error(
+                                ErrorCode::Conflict,
+                                "only an authoritative zero-effect capacity refusal can be retried",
+                            ));
+                        }
+                        let old_contract = read_contract(&previous)?;
+                        let mut comparable = contract.clone();
+                        comparable.request = old_contract.request.clone();
+                        comparable.previous_request = old_contract.previous_request.clone();
+                        if comparable != old_contract
+                            || previous.spent_execution_attempts().is_none()
+                        {
+                            return Err(lifecycle_error(
+                                ErrorCode::Conflict,
+                                "retry must preserve the exact logical task and effective contract",
+                            ));
+                        }
+                        if previous
+                            .successor_request
+                            .as_ref()
+                            .is_some_and(|request| request != &contract.request)
+                            || store
+                                .assignment_successor(previous_request)?
+                                .is_some_and(|record| record.handle != contract.request)
+                        {
+                            return Err(lifecycle_error(
+                                ErrorCode::Conflict,
+                                "capacity refusal already has a successor; reconcile that request",
+                            ));
+                        }
+                        Some(previous)
+                    } else {
+                        if store
+                            .task_assignment(&contract.workflow, &contract.task)?
+                            .is_some()
+                        {
+                            return Err(lifecycle_error(
+                                ErrorCode::Conflict,
+                                "logical task already exists; reconcile its original request",
+                            ));
+                        }
+                        None
+                    };
                     if let Some(previous) = store.workflow_controller(&contract.workflow)?
                         && (previous.identity.controller != contract.controller
                             || previous.parent != auth.session
@@ -448,10 +587,21 @@ impl ServerState {
                             instance: store.delegation_instance()?,
                             workflow: contract.workflow.clone(),
                             controller: contract.controller.clone(),
-                            controller_epoch: 1,
+                            controller_epoch: previous
+                                .as_ref()
+                                .map_or(1, |record| record.identity.controller_epoch),
                             task: contract.task.clone(),
-                            attempt: 1,
-                            contract: 1,
+                            attempt: match &previous {
+                                Some(record) => record
+                                    .identity
+                                    .attempt
+                                    .checked_add(1)
+                                    .context("attempt identity exhausted")?,
+                                None => 1,
+                            },
+                            contract: previous
+                                .as_ref()
+                                .map_or(1, |record| record.identity.contract),
                             request: contract.request.clone(),
                             session: None,
                             run: None,
@@ -476,9 +626,22 @@ impl ServerState {
                         workspace: contract.workspace.clone(),
                         receipts: Vec::new(),
                         request_digests: Vec::new(),
+                        previous_request: contract.previous_request.clone(),
+                        successor_request: None,
+                        execution_attempts: Some(
+                            previous
+                                .as_ref()
+                                .and_then(Record::spent_execution_attempts)
+                                .unwrap_or(0),
+                        ),
+                        retryable_capacity_refusal: false,
                     };
                     record.intent(DispatchOperation::Prepare, &record.identity.clone())?;
-                    store.save_assignment(&record)?;
+                    if let Some(previous) = &previous {
+                        store.save_assignment_successor(previous, &record)?;
+                    } else {
+                        store.save_assignment(&record)?;
+                    }
                     record
                 };
                 if record
@@ -536,31 +699,57 @@ impl ServerState {
                 }
                 if record.dispatch == DispatchStatus::Prepared {
                     let contract = read_contract(&record)?;
-                    // The real provider inventory is checked before creating a session.
-                    if availability != Some(true) {
+                    let policy = self.contract_policy(&contract, availability == Some(true))?;
+                    if let Some(reason) = policy.reason {
                         record.dispatch = DispatchStatus::Refused;
-                        record.reason =
-                            Some("requested Pi/model unavailable; no substitute launched".into());
                         record.outcome(
                             DispatchOperation::Launch,
                             DispatchOutcome::Rejected,
                             None,
-                            Some("requested Pi/model unavailable; no substitute launched"),
+                            Some(&reason),
                         );
                         self.retained.lock().save_assignment(&record)?;
                     } else {
-                        if self.check_live_capacity().is_err() {
+                        if self.check_live_capacity().is_err() || policy.available_slots == 0 {
                             record.dispatch = DispatchStatus::Refused;
-                            record.reason = Some("all 50 live process slots are occupied".into());
+                            record.reason = Some(if policy.live_sessions >= 50 {
+                                "all 50 live process slots are occupied".into()
+                            } else {
+                                "delegation live-child limit or minimum free slots after launch prevents admission".into()
+                            });
+                            record.retryable_capacity_refusal = true;
+                            let reason = record.reason.clone();
                             record.outcome(
                                 DispatchOperation::Launch,
                                 DispatchOutcome::Rejected,
                                 None,
-                                Some("all 50 live process slots are occupied"),
+                                reason.as_deref(),
                             );
                             self.retained.lock().save_assignment(&record)?;
                             return self.assignment_snapshot(record);
                         }
+                        let spent = record.spent_execution_attempts().ok_or_else(|| {
+                            lifecycle_error(
+                                ErrorCode::Conflict,
+                                "execution-attempt history is unknown; reconcile without replay",
+                            )
+                        })?;
+                        if policy
+                            .effective_limits
+                            .max_execution_attempts
+                            .is_some_and(|limit| spent >= limit)
+                        {
+                            record.dispatch = DispatchStatus::Refused;
+                            record.reason =
+                                Some("logical task execution-attempt limit reached".into());
+                            self.retained.lock().save_assignment(&record)?;
+                            return self.assignment_snapshot(record);
+                        }
+                        record.execution_attempts = Some(
+                            spent
+                                .checked_add(1)
+                                .context("execution-attempt count exhausted")?,
+                        );
                         record.dispatch = DispatchStatus::LaunchUnknown;
                         record.outcome(
                             DispatchOperation::Launch,
@@ -620,6 +809,9 @@ impl ServerState {
                                 );
                             }
                             Err(error) => {
+                                if error.is::<crate::session::NoProcessStarted>() {
+                                    record.execution_attempts = Some(spent);
+                                }
                                 record.reason = Some("launch did not complete; inspect retained session before taking further action".into());
                                 if error.is::<crate::session::NoProcessStarted>()
                                     || record.identity.session.is_none()
@@ -1265,6 +1457,9 @@ impl ServerState {
             historical_submission: None,
             receipts: record.receipts,
             resources,
+            retryable_capacity_refusal: record.retryable_capacity_refusal,
+            successor_request: record.successor_request,
+            execution_attempts: record.execution_attempts,
         })
     }
 }
@@ -1287,7 +1482,7 @@ fn read_contract(record: &Record) -> Result<ResearchContract> {
     Ok(serde_json::from_slice(&bytes)?)
 }
 
-fn available_model(contract: &ResearchContract) -> Result<()> {
+fn available_models() -> Result<Vec<DelegationChoice>> {
     // Provider inventory is local to the same inherited profile as the eventual child.
     // File-backed bounded output avoids a full pipe blocking the probe at exit.
     let mut output = tempfile::tempfile()?;
@@ -1318,10 +1513,33 @@ fn available_model(contract: &ResearchContract) -> Result<()> {
     output.seek(SeekFrom::Start(0))?;
     let mut text = String::new();
     output.take(512 * 1024).read_to_string(&mut text)?;
-    if !text.lines().any(|line| {
+    let mut choices = Vec::new();
+    for line in text.lines() {
         let mut fields = line.split_whitespace();
-        fields.next() == Some(contract.model_provider.as_str())
-            && fields.next() == Some(contract.model.as_str())
+        let (Some(backend), Some(model)) = (fields.next(), fields.next()) else {
+            continue;
+        };
+        if backend == "provider" && model == "model" {
+            continue;
+        }
+        if !DelegationSettings::valid_model(&format!("{backend}/{model}")) {
+            continue;
+        }
+        choices.push(DelegationChoice {
+            provider: DelegationHarness::Pi,
+            model_provider: backend.into(),
+            model: model.into(),
+        });
+    }
+    if serde_json::to_vec(&choices)?.len() > 512 * 1024 {
+        bail!("provider inventory exceeds response bound");
+    }
+    Ok(choices)
+}
+
+fn available_model(contract: &ResearchContract) -> Result<()> {
+    if !available_models()?.iter().any(|choice| {
+        choice.model_provider == contract.model_provider && choice.model == contract.model
     }) {
         bail!("requested exact model is unavailable");
     }

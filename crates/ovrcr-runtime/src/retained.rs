@@ -20,6 +20,14 @@ pub(crate) fn create_delegation_schema(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn save_assignment_on(
+    connection: &Connection,
+    value: &crate::server::delegation::Record,
+) -> Result<()> {
+    connection.execute("INSERT INTO delegations (handle, workflow, session, metadata) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(handle) DO UPDATE SET session=excluded.session, metadata=excluded.metadata", params![value.handle, value.identity.workflow, value.identity.session.map(|id| sql_integer(id.0)).transpose()?, serde_json::to_string(value)?])?;
+    Ok(())
+}
+
 pub(crate) fn create_schema(connection: &Connection) -> Result<()> {
     connection.execute_batch(
         "CREATE TABLE retained_sessions (
@@ -348,8 +356,60 @@ impl SessionStore {
             .transpose()
     }
 
+    /// Task identity is Server-owned metadata, not a second task-file parser.
+    pub(crate) fn task_assignment(
+        &self,
+        workflow: &str,
+        task: &str,
+    ) -> Result<Option<crate::server::delegation::Record>> {
+        use rusqlite::OptionalExtension;
+        let value: Option<String> = self.connection.query_row(
+            "SELECT metadata FROM delegations WHERE workflow = ?1 AND json_extract(metadata, '$.identity.task') = ?2 LIMIT 1",
+            params![workflow, task], |row| row.get(0),
+        ).optional()?;
+        value
+            .map(|value| serde_json::from_str(&value).map_err(Into::into))
+            .transpose()
+    }
+
+    pub(crate) fn assignment_successor(
+        &self,
+        previous_request: &str,
+    ) -> Result<Option<crate::server::delegation::Record>> {
+        use rusqlite::OptionalExtension;
+        let value: Option<String> = self.connection.query_row(
+            "SELECT metadata FROM delegations WHERE json_extract(metadata, '$.previous_request') = ?1 LIMIT 1",
+            [previous_request], |row| row.get(0),
+        ).optional()?;
+        value
+            .map(|value| serde_json::from_str(&value).map_err(Into::into))
+            .transpose()
+    }
+
     pub(crate) fn save_assignment(&self, value: &crate::server::delegation::Record) -> Result<()> {
-        self.connection.execute("INSERT INTO delegations (handle, workflow, session, metadata) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(handle) DO UPDATE SET session=excluded.session, metadata=excluded.metadata", params![value.handle, value.identity.workflow, value.identity.session.map(|id| sql_integer(id.0)).transpose()?, serde_json::to_string(value)?])?;
+        save_assignment_on(&self.connection, value)
+    }
+
+    /// Link and publish a retry in the same transaction. The lifecycle lock
+    /// excludes competing creators; this also closes the two-write crash gap.
+    pub(crate) fn save_assignment_successor(
+        &self,
+        previous: &crate::server::delegation::Record,
+        successor: &crate::server::delegation::Record,
+    ) -> Result<()> {
+        let mut previous = previous.clone();
+        if previous
+            .successor_request
+            .as_ref()
+            .is_some_and(|request| request != &successor.handle)
+        {
+            bail!("capacity refusal already has a different successor request");
+        }
+        previous.successor_request = Some(successor.handle.clone());
+        let transaction = self.connection.unchecked_transaction()?;
+        save_assignment_on(&transaction, successor)?;
+        save_assignment_on(&transaction, &previous)?;
+        transaction.commit()?;
         Ok(())
     }
 

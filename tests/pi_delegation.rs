@@ -177,6 +177,61 @@ fn public_pi_research_assignment_launches_collects_and_fences_real_child() {
         assert!(Instant::now() < deadline, "parent binding missing");
         std::thread::sleep(Duration::from_millis(10));
     }
+    let capabilities = tool(
+        &live,
+        parent.id,
+        "ovrcr_capabilities",
+        serde_json::json!({}),
+        &live.root.path().join("capabilities.json"),
+    );
+    assert_eq!(capabilities["choices"].as_array().unwrap().len(), 2);
+    assert!(
+        capabilities["resolved_choice"].is_null(),
+        "multiple models need a parent selection"
+    );
+    assert_eq!(capabilities["native_helpers"], false);
+    assert_eq!(capabilities["native_descendant_usage"], false);
+    let omitted = tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        serde_json::json!({"project":PROJECT,"workspace":workspace_id,"scope":"Read README","acceptance_evidence":["citation"]}),
+        &live.root.path().join("needs-choice.json"),
+    );
+    assert_eq!(omitted["dispatch"], "Refused");
+    assert!(omitted["handle"].is_null());
+    let set = live
+        .command()
+        .args([
+            "settings",
+            "set",
+            "delegation.default_model",
+            "test/alternate-model",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        set.status.success(),
+        "{}",
+        String::from_utf8_lossy(&set.stderr)
+    );
+    let defaulted = tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        serde_json::json!({"project":PROJECT,"workspace":workspace_id,"scope":"Read README using the configured default","acceptance_evidence":["citation"]}),
+        &live.root.path().join("default-choice.json"),
+    );
+    assert_eq!(defaulted["dispatch"], "Applied", "{defaulted}");
+    for group in live.session_groups() {
+        live.own_group(group);
+    }
+    let default_brief: serde_json::Value =
+        serde_json::from_slice(&fs::read(defaulted["brief"].as_str().unwrap()).unwrap()).unwrap();
+    assert_eq!(default_brief["contract"]["provider"], "pi");
+    assert_eq!(default_brief["contract"]["model_provider"], "test");
+    assert_eq!(default_brief["contract"]["model"], "alternate-model");
+    assert_eq!(default_brief["contract"]["limits"]["max_live_children"], 50);
     let raw = tool(
         &live,
         parent.id,
@@ -393,6 +448,20 @@ fn public_pi_research_assignment_launches_collects_and_fences_real_child() {
             .unwrap()
             .contains("unsupported mandatory capability")
     );
+    let helper_gap = tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        serde_json::json!({"project":PROJECT,"workspace":workspace_id,"scope":"Read README","model_provider":"test","model":"fixture-model","acceptance_evidence":["citation"],"mandatory_capabilities":["native_helpers"]}),
+        &live.root.path().join("native-helper-gap.json"),
+    );
+    assert_eq!(helper_gap["dispatch"], "Refused");
+    assert!(
+        helper_gap["reason"]
+            .as_str()
+            .unwrap()
+            .contains("unsupported mandatory capability")
+    );
     // The parent can collect but cannot impersonate the child publisher.
     let forged = tool_reply(
         &live,
@@ -470,6 +539,89 @@ fn public_pi_research_assignment_launches_collects_and_fences_real_child() {
     wait_file(&live.root.path().join("partial.json"));
     let partial = fs::read_to_string(live.root.path().join("partial.json")).unwrap();
     assert!(partial.contains("changed or is partial"), "{partial}");
+    // The same public production path enforces typed policy without changing child flags.
+    let unsupported_limit = tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        serde_json::json!({"project":PROJECT,"workspace":workspace_id,"scope":"Read README","model_provider":"test","model":"fixture-model","acceptance_evidence":["citation"],"required_limits":{"max_output_tokens":1}}),
+        &live.root.path().join("unsupported-limit.json"),
+    );
+    assert_eq!(unsupported_limit["dispatch"], "Refused");
+    assert!(
+        unsupported_limit["reason"]
+            .as_str()
+            .unwrap()
+            .contains("unsupported mandatory")
+    );
+    for (key, value) in [
+        ("delegation.enabled", "false"),
+        ("delegation.max_live_children", "1"),
+        ("delegation.max_execution_attempts", "1"),
+    ] {
+        let output = live
+            .command()
+            .args(["settings", "set", key, value])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let disabled = tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        serde_json::json!({"project":PROJECT,"workspace":workspace_id,"scope":"Read README","model_provider":"test","model":"fixture-model","acceptance_evidence":["citation"]}),
+        &live.root.path().join("disabled.json"),
+    );
+    assert_eq!(disabled["dispatch"], "Refused");
+    assert!(disabled["reason"].as_str().unwrap().contains("disabled"));
+    let output = live
+        .command()
+        .args(["settings", "set", "delegation.enabled", "true"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let limited = tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        serde_json::json!({"project":PROJECT,"workspace":workspace_id,"scope":"Read README","model_provider":"test","model":"fixture-model","acceptance_evidence":["citation"]}),
+        &live.root.path().join("child-limit.json"),
+    );
+    assert_eq!(limited["dispatch"], "Refused", "{limited}");
+    assert_eq!(limited["retryable_capacity_refusal"], true);
+    assert_eq!(limited["execution_attempts"], 0);
+    let output = live
+        .command()
+        .args(["settings", "set", "delegation.max_live_children", "50"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let limited_retry = tool(
+        &live,
+        parent.id,
+        "ovrcr_retry",
+        serde_json::json!({"handle":limited["handle"]}),
+        &live.root.path().join("immutable-limit-retry.json"),
+    );
+    assert_eq!(
+        limited_retry["dispatch"], "Refused",
+        "retry cannot loosen the original effective child limit"
+    );
+    assert_eq!(limited_retry["execution_attempts"], 0);
+    let minimum_free = tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        serde_json::json!({"project":PROJECT,"workspace":workspace_id,"scope":"Read README","model_provider":"test","model":"fixture-model","acceptance_evidence":["citation"],"required_limits":{"min_free_slots_after_launch":49}}),
+        &live.root.path().join("minimum-free.json"),
+    );
+    assert_eq!(minimum_free["dispatch"], "Refused");
+    assert_eq!(minimum_free["retryable_capacity_refusal"], true);
     // Delegation uses the existing shared fifty-live-session admission rule.
     let Response::Inventory { sessions, .. } = live.request(Request::Inspect) else {
         panic!("inventory");

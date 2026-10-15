@@ -465,6 +465,7 @@ pub enum Response {
     BridgeOwner(crate::BridgeOwnerResult),
     Delegation(Box<crate::AssignmentSnapshot>),
     DelegationObservation(Box<crate::DelegationObservationBatch>),
+    DelegationCapabilities(Box<crate::DelegationCapabilities>),
 }
 
 /// Which create/remove/close a Lifecycle job performed.
@@ -1516,6 +1517,13 @@ mod wire_snapshot {
             model: "m".into(),
             acceptance_evidence: vec!["cite".into()],
             mandatory_capabilities: vec!["read".into()],
+            limits: crate::DelegationLimits {
+                max_live_children: Some(6),
+                max_execution_attempts: Some(2),
+                min_free_slots_after_launch: 1,
+                ..Default::default()
+            },
+            previous_request: Some("prev".into()),
         };
         let submission = crate::ResearchSubmission {
             schema: 1,
@@ -1711,6 +1719,45 @@ mod wire_snapshot {
             ))),
         ));
         all.push((
+            "Delegation::Capabilities".into(),
+            encode(&Request::Delegation(Box::new(
+                crate::DelegationRequest::Capabilities {
+                    auth,
+                    selection: crate::DelegationSelection {
+                        provider: Some(crate::DelegationHarness::Pi),
+                        model_provider: Some("test".into()),
+                        model: Some("m".into()),
+                        required_limits: crate::DelegationLimits::default(),
+                    },
+                },
+            ))),
+        ));
+        all.push((
+            "Response::DelegationCapabilities".into(),
+            encode(&Response::DelegationCapabilities(Box::new(
+                crate::DelegationCapabilities {
+                    choices: vec![crate::DelegationChoice {
+                        provider: crate::DelegationHarness::Pi,
+                        model_provider: "test".into(),
+                        model: "m".into(),
+                    }],
+                    resolved_choice: None,
+                    effective_limits: crate::DelegationLimits {
+                        max_live_children: Some(50),
+                        ..Default::default()
+                    },
+                    live_sessions: 3,
+                    live_children: 1,
+                    available_slots: 47,
+                    capabilities: vec!["read".into(), "result_file".into()],
+                    enforceable_limits: vec!["max_live_children".into()],
+                    native_helpers: false,
+                    native_descendant_usage: false,
+                    reason: None,
+                },
+            ))),
+        ));
+        all.push((
             "Response::Delegation".into(),
             encode(&Response::Delegation(Box::new(crate::AssignmentSnapshot {
                 handle: "r".into(),
@@ -1738,6 +1785,9 @@ mod wire_snapshot {
                     workspace_present: true,
                     current_session: None,
                 },
+                retryable_capacity_refusal: false,
+                successor_request: Some("next".into()),
+                execution_attempts: Some(1),
             }))),
         ));
         all.push((
@@ -2056,7 +2106,7 @@ mod wire_snapshot {
         ),
         (
             "Delegation::Prepare",
-            "3200010766697874757265010177016301740172017002777304726561640104726561640270690474657374016d010463697465010472656164",
+            "3200010766697874757265010177016301740172017002777304726561640104726561640270690474657374016d0104636974650104726561640106010201000000010470726576",
         ),
         (
             "Delegation::Launch",
@@ -2099,6 +2149,14 @@ mod wire_snapshot {
         (
             "Delegation::ConfirmHumanReturn",
             "3209010766697874757265017207636f6e6669726d0672657475726e03016c01690177016301017401010172010201010303696e7604636f6e7601010203000004",
+        ),
+        (
+            "Delegation::Capabilities",
+            "3206010766697874757265010301047465737401016d000000000000",
+        ),
+        (
+            "Response::DelegationCapabilities",
+            "1201030474657374016d000132000000000003012f0204726561640b726573756c745f66696c6501116d61785f6c6976655f6368696c6472656e000000",
         ),
         (
             "Response::Delegation",

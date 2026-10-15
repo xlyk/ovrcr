@@ -8,8 +8,9 @@
 //! Nothing here fails: a settings mistake never stops the Server.
 
 use ovrcr_protocol::{
-    AgentOverride, AutomaticLocalTerminals, LaunchChoice, NativeCommand, ReadySoundChoice,
-    SettingRow, Settings, SettingsFinding, SettingsReport, ThemeId,
+    AgentOverride, AutomaticLocalTerminals, DelegationHarness, DelegationSettings, LaunchChoice,
+    NativeCommand, ReadySoundChoice, SettingRow, Settings, SettingsFinding, SettingsReport,
+    ThemeId,
 };
 #[cfg(test)]
 use ovrcr_protocol::{SettingOwner, SettingSource};
@@ -304,6 +305,93 @@ impl Loader<'_> {
                     self.finding(
                         "delegation.progress_deadline_ms",
                         "expected an integer from 1 to 86400000".into(),
+                    );
+                }
+            }
+            self.value(
+                &mut delegation,
+                "delegation.enabled",
+                &mut settings.delegation.enabled,
+            );
+            if let Some(harnesses) =
+                self.take::<Vec<DelegationHarness>>(&mut delegation, "delegation.allowed_harnesses")
+            {
+                if harnesses.len() <= 4 {
+                    self.accept(
+                        "delegation.allowed_harnesses",
+                        &mut settings.delegation.allowed_harnesses,
+                        harnesses,
+                    );
+                } else {
+                    self.finding(
+                        "delegation.allowed_harnesses",
+                        "expected at most four harness names".into(),
+                    );
+                }
+            }
+            if let Some(models) =
+                self.take::<Vec<String>>(&mut delegation, "delegation.allowed_models")
+            {
+                if models.len() <= 256 && models.iter().all(|v| DelegationSettings::valid_model(v))
+                {
+                    self.accept(
+                        "delegation.allowed_models",
+                        &mut settings.delegation.allowed_models,
+                        models,
+                    );
+                } else {
+                    self.finding(
+                        "delegation.allowed_models",
+                        "expected at most 256 backend/model strings".into(),
+                    );
+                }
+            }
+            self.value(
+                &mut delegation,
+                "delegation.default_harness",
+                &mut settings.delegation.default_harness,
+            );
+            if let Some(model) = self.take::<String>(&mut delegation, "delegation.default_model") {
+                if DelegationSettings::valid_model(&model) {
+                    self.accept(
+                        "delegation.default_model",
+                        &mut settings.delegation.default_model,
+                        Some(model),
+                    );
+                } else {
+                    self.finding(
+                        "delegation.default_model",
+                        "expected a backend/model string".into(),
+                    );
+                }
+            }
+            if let Some(limit) = self.take::<u16>(&mut delegation, "delegation.max_live_children") {
+                if (1..=50).contains(&limit) {
+                    self.accept(
+                        "delegation.max_live_children",
+                        &mut settings.delegation.max_live_children,
+                        limit,
+                    );
+                } else {
+                    self.finding(
+                        "delegation.max_live_children",
+                        "expected an integer from 1 to 50".into(),
+                    );
+                }
+            }
+            if let Some(limit) =
+                self.take::<u32>(&mut delegation, "delegation.max_execution_attempts")
+            {
+                if limit > 0 {
+                    self.accept(
+                        "delegation.max_execution_attempts",
+                        &mut settings.delegation.max_execution_attempts,
+                        Some(limit),
+                    );
+                } else {
+                    self.finding(
+                        "delegation.max_execution_attempts",
+                        "expected a positive integer".into(),
                     );
                 }
             }
@@ -784,6 +872,13 @@ state_db = "/tmp/cursor/state.vscdb"
 
 [delegation]
 progress_deadline_ms = 12345
+enabled = true
+allowed_harnesses = ["pi", "codex"]
+allowed_models = ["test/model"]
+default_harness = "pi"
+default_model = "test/model"
+max_live_children = 6
+max_execution_attempts = 2
 "#;
 
     #[test]
@@ -857,6 +952,19 @@ progress_deadline_ms = 12345
         assert_eq!(settings.quota.grok.command, PathBuf::from("/opt/grok"));
         assert_eq!(settings.quota.grok.home, None);
         assert_eq!(settings.delegation.progress_deadline_ms, 12345);
+        assert!(settings.delegation.enabled);
+        assert_eq!(
+            settings.delegation.allowed_harnesses,
+            [DelegationHarness::Pi, DelegationHarness::Codex]
+        );
+        assert_eq!(settings.delegation.allowed_models, ["test/model"]);
+        assert_eq!(settings.delegation.default_harness, DelegationHarness::Pi);
+        assert_eq!(
+            settings.delegation.default_model.as_deref(),
+            Some("test/model")
+        );
+        assert_eq!(settings.delegation.max_live_children, 6);
+        assert_eq!(settings.delegation.max_execution_attempts, Some(2));
         for row in &report.rows {
             let expected = if row.key == "quota.grok.home" {
                 SettingSource::Default
@@ -960,6 +1068,13 @@ progress_deadline_ms = 12345
                 "agents",
                 "launch_choices",
                 "delegation.progress_deadline_ms",
+                "delegation.enabled",
+                "delegation.allowed_harnesses",
+                "delegation.allowed_models",
+                "delegation.default_harness",
+                "delegation.default_model",
+                "delegation.max_live_children",
+                "delegation.max_execution_attempts",
             ]
         );
     }

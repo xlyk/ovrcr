@@ -612,6 +612,21 @@ pub(super) fn handle_request_with_id(
                         |batch| Response::DelegationObservation(Box::new(batch)),
                     );
             }
+            if let ovrcr_protocol::DelegationRequest::Capabilities { auth, selection } =
+                request.as_ref()
+            {
+                return state.delegation_capabilities(auth, selection).map_or_else(
+                    |error| {
+                        error_response(
+                            error
+                                .downcast_ref::<super::LifecycleFailure>()
+                                .map_or(ErrorCode::Internal, |failure| failure.code.clone()),
+                            error_chain_string(&error),
+                        )
+                    },
+                    |capabilities| Response::DelegationCapabilities(Box::new(capabilities)),
+                );
+            }
             let launching = matches!(
                 request.as_ref(),
                 ovrcr_protocol::DelegationRequest::Launch { .. }

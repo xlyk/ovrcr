@@ -9,6 +9,73 @@ use std::path::PathBuf;
 
 pub const DELEGATION_SCHEMA: u32 = 1;
 
+/// One exact advertised child selection; configuration alone is not availability.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DelegationChoice {
+    pub provider: crate::DelegationHarness,
+    pub model_provider: String,
+    pub model: String,
+}
+
+/// Mandatory per-assignment bounds. Unsupported bounds are refused, never
+/// represented as enforced estimates. Zero-effect refusal consumes no execution.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DelegationLimits {
+    pub max_live_children: Option<u16>,
+    pub max_execution_attempts: Option<u32>,
+    /// Admission leaves this many shared slots free; it does not reserve them.
+    pub min_free_slots_after_launch: u16,
+    pub max_cost_microusd: Option<u64>,
+    pub max_output_tokens: Option<u64>,
+    pub max_native_children: Option<u16>,
+}
+
+impl DelegationLimits {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self
+            .max_live_children
+            .is_some_and(|limit| !(1..=50).contains(&limit))
+            || self.max_execution_attempts == Some(0)
+            || self.min_free_slots_after_launch >= 50
+        {
+            return Err("invalid mandatory delegation limit");
+        }
+        if self.max_cost_microusd.is_some()
+            || self.max_output_tokens.is_some()
+            || self.max_native_children.is_some()
+        {
+            return Err("unsupported mandatory cost, token or native-descendant limit");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DelegationSelection {
+    pub provider: Option<crate::DelegationHarness>,
+    pub model_provider: Option<String>,
+    pub model: Option<String>,
+    pub required_limits: DelegationLimits,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DelegationCapabilities {
+    pub choices: Vec<DelegationChoice>,
+    pub resolved_choice: Option<DelegationChoice>,
+    pub effective_limits: DelegationLimits,
+    pub live_sessions: u16,
+    pub live_children: u16,
+    pub available_slots: u16,
+    pub capabilities: Vec<String>,
+    pub enforceable_limits: Vec<String>,
+    pub native_helpers: bool,
+    pub native_descendant_usage: bool,
+    pub reason: Option<String>,
+}
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DelegationAuth {
@@ -42,6 +109,10 @@ pub struct ResearchContract {
     pub model: String,
     pub acceptance_evidence: Vec<String>,
     pub mandatory_capabilities: Vec<String>,
+    #[serde(default)]
+    pub limits: DelegationLimits,
+    #[serde(default)]
+    pub previous_request: Option<String>,
 }
 
 impl ResearchContract {
@@ -49,7 +120,14 @@ impl ResearchContract {
         if self.schema != DELEGATION_SCHEMA {
             return Err("unsupported contract schema");
         }
-        for id in [&self.workflow, &self.controller, &self.task, &self.request] {
+        self.limits.validate()?;
+        if self.previous_request.as_ref() == Some(&self.request) {
+            return Err("retry cannot refer to itself");
+        }
+        for id in [&self.workflow, &self.controller, &self.task, &self.request]
+            .into_iter()
+            .chain(self.previous_request.iter())
+        {
             if id.is_empty()
                 || id.len() > 128
                 || !id
@@ -284,6 +362,9 @@ pub struct AssignmentSnapshot {
     pub resources: AssignmentResources,
     pub control: AssignmentControl,
     pub control_evidence: Option<AssignmentControlEvidence>,
+    pub retryable_capacity_refusal: bool,
+    pub successor_request: Option<String>,
+    pub execution_attempts: Option<u32>,
 }
 
 /// A hint cursor is valid only for one Server lifetime. It is not task completion.
@@ -414,11 +495,62 @@ pub enum DelegationRequest {
         handle: String,
         publication: PublicationIdentity,
     },
+    Capabilities {
+        auth: DelegationAuth,
+        selection: DelegationSelection,
+    },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mandatory_limits_refuse_unsupported_budgets_and_out_of_range_admission() {
+        assert!(DelegationLimits::default().validate().is_ok());
+        for limit in [
+            DelegationLimits {
+                max_live_children: Some(0),
+                ..Default::default()
+            },
+            DelegationLimits {
+                max_live_children: Some(51),
+                ..Default::default()
+            },
+            DelegationLimits {
+                max_execution_attempts: Some(0),
+                ..Default::default()
+            },
+            DelegationLimits {
+                min_free_slots_after_launch: 50,
+                ..Default::default()
+            },
+            DelegationLimits {
+                max_cost_microusd: Some(1),
+                ..Default::default()
+            },
+            DelegationLimits {
+                max_output_tokens: Some(1),
+                ..Default::default()
+            },
+            DelegationLimits {
+                max_native_children: Some(0),
+                ..Default::default()
+            },
+        ] {
+            assert!(limit.validate().is_err(), "{limit:?}");
+        }
+        assert!(
+            DelegationLimits {
+                max_live_children: Some(50),
+                max_execution_attempts: Some(1),
+                min_free_slots_after_launch: 49,
+                ..Default::default()
+            }
+            .validate()
+            .is_ok()
+        );
+    }
+
     #[test]
     fn research_contract_rejects_unenforceable_permissions_and_capabilities() {
         let mut c = ResearchContract {
@@ -436,6 +568,8 @@ mod tests {
             model: "model".into(),
             acceptance_evidence: vec!["README citation".into()],
             mandatory_capabilities: vec!["result_file".into()],
+            limits: DelegationLimits::default(),
+            previous_request: None,
         };
         assert!(c.validate().is_ok());
         c.permitted_actions.push("write".into());

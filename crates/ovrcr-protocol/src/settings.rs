@@ -1485,16 +1485,84 @@ impl Default for QuotaSettings {
     }
 }
 
-/// Observation stall reporting only; a deadline never interrupts child work.
+/// Harness choices that can be requested by delegation policy. Availability is
+/// advertised separately: a configured choice does not install an adapter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DelegationHarness {
+    Claude,
+    Codex,
+    Grok,
+    Pi,
+}
+
+impl DelegationHarness {
+    pub const NAMES: &'static [&'static str] = &["claude", "codex", "grok", "pi"];
+
+    pub fn parse(name: &str) -> Option<Self> {
+        Some(match name {
+            "claude" => Self::Claude,
+            "codex" => Self::Codex,
+            "grok" => Self::Grok,
+            "pi" => Self::Pi,
+            _ => return None,
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::Grok => "grok",
+            Self::Pi => "pi",
+        }
+    }
+}
+
+/// Server-owned delegation policy; no extension-local settings document.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DelegationSettings {
+    /// Observation stall reporting only; never interrupts child work.
     pub progress_deadline_ms: u64,
+    pub enabled: bool,
+    pub allowed_harnesses: Vec<DelegationHarness>,
+    /// Exact backend/model selections. Empty adds no restriction to inventory.
+    pub allowed_models: Vec<String>,
+    pub default_harness: DelegationHarness,
+    pub default_model: Option<String>,
+    pub max_live_children: u16,
+    /// Per logical task. Known zero-effect refusals do not consume this budget;
+    /// launches that started or may have started consume one execution attempt.
+    pub max_execution_attempts: Option<u32>,
 }
+
 impl Default for DelegationSettings {
     fn default() -> Self {
         Self {
             progress_deadline_ms: 300_000,
+            enabled: true,
+            allowed_harnesses: vec![DelegationHarness::Pi],
+            allowed_models: Vec::new(),
+            default_harness: DelegationHarness::Pi,
+            default_model: None,
+            max_live_children: 50,
+            max_execution_attempts: None,
         }
+    }
+}
+
+impl DelegationSettings {
+    pub fn valid_model(selection: &str) -> bool {
+        selection.len() <= 513
+            && !selection.chars().any(char::is_control)
+            && selection.split_once('/').is_some_and(|(backend, model)| {
+                !backend.is_empty()
+                    && !model.is_empty()
+                    && backend.trim() == backend
+                    && model.trim() == model
+                    && backend.len() <= 256
+                    && model.len() <= 256
+            })
     }
 }
 

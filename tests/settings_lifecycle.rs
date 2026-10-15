@@ -111,6 +111,67 @@ fn settings_set_survives_a_restart_and_changes_nothing_else() {
 }
 
 #[test]
+fn delegation_policy_is_published_and_survives_server_restart() {
+    let live = fresh();
+    live.start_binary();
+    for (path, value) in [
+        ("delegation.enabled", "false"),
+        ("delegation.allowed_harnesses", "[\"pi\", \"codex\"]"),
+        ("delegation.allowed_models", "[\"test/model\"]"),
+        ("delegation.default_harness", "pi"),
+        ("delegation.default_model", "test/model"),
+        ("delegation.max_live_children", "6"),
+        ("delegation.max_execution_attempts", "2"),
+    ] {
+        let output = live
+            .command()
+            .args(["settings", "set", path, value])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{path}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let before = settings_event(&mut attach(&live));
+    assert!(before.findings.is_empty(), "{:?}", before.findings);
+    assert!(!before.settings.delegation.enabled);
+    assert_eq!(before.settings.delegation.max_live_children, 6);
+    assert_eq!(before.settings.delegation.max_execution_attempts, Some(2));
+    assert_eq!(
+        before.settings.delegation.default_model.as_deref(),
+        Some("test/model")
+    );
+    restart(&live);
+    let after = settings_event(&mut attach(&live));
+    assert_eq!(after.settings.delegation, before.settings.delegation);
+    for row in after
+        .rows
+        .iter()
+        .filter(|row| row.key.starts_with("delegation."))
+    {
+        assert_eq!(row.source, SettingSource::Document);
+        assert_eq!(row, before_row(&before, &row.key));
+    }
+    let cli = cli_settings(&live).1;
+    assert_eq!(cli.settings.delegation, after.settings.delegation);
+    let output = live
+        .command()
+        .args(["settings", "reset", "delegation.max_execution_attempts"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let reset = settings_event(&mut attach(&live));
+    assert_eq!(reset.settings.delegation.max_execution_attempts, None);
+    assert_eq!(reset.settings.delegation.max_live_children, 6);
+}
+
+#[test]
 fn quota_enabled_flipped_in_the_file_starts_and_stops_the_collector() {
     let live = fresh();
     let script = codex_fixture_script(&live);

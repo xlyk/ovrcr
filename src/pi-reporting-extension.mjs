@@ -155,6 +155,7 @@ function registerDelegation(pi) {
           const error = new Error(failure?.message ?? "control outcome unknown");
           error.code = failure?.code;
           error.refused = failure && failure.code !== "Internal";
+          error.code = failure?.code;
           throw error;
         }
         const response = JSON.parse(output);
@@ -168,30 +169,6 @@ function registerDelegation(pi) {
   pi.registerCommand("ovrcr-observe-reconnect", { description: "Reconnect assignment observations without changing child work", handler: () => observer.reconnect() });
   const object = (properties, required = Object.keys(properties)) => ({ type: "object", properties, required, additionalProperties: false });
   const string = { type: "string" };
-  const originalIntent = async (handle, prefix = "") => {
-    if (!/^[A-Za-z0-9_-]{1,128}$/.test(handle)) throw new Error("invalid original request identity");
-    const directory = join(process.env.OVRCR_DELEGATION_HOME ?? "", "parent-intents");
-    const parent = await lstat(directory);
-    if (!parent.isDirectory() || parent.isSymbolicLink() || (parent.mode & 0o077) || parent.uid !== process.getuid()) throw new Error("original intent directory is not private");
-    const file = await open(join(directory, `${prefix}${handle}.json`), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    try {
-      const stat = await file.stat();
-      if (!stat.isFile() || stat.size > 262144 || (stat.mode & 0o077) || stat.uid !== process.getuid()) throw new Error("invalid original intent file");
-      const buffer = Buffer.alloc(262145);
-      let length = 0;
-      while (length < buffer.length) {
-        const { bytesRead } = await file.read(buffer, length, buffer.length - length, null);
-        if (!bytesRead) break;
-        length += bytesRead;
-      }
-      const bytes = buffer.subarray(0, length);
-      const after = await lstat(directory);
-      if (bytes.length > 262144 || after.ino !== parent.ino || after.dev !== parent.dev || after.isSymbolicLink()) throw new Error("original intent directory changed");
-      const contract = JSON.parse(bytes);
-      if (contract.request !== handle || contract.schema !== 1) throw new Error("original intent identity changed");
-      return contract;
-    } finally { await file.close(); }
-  };
   const tool = (name, description, parameters, run) => pi.registerTool({ name, label: name, description, parameters, async execute(_id, args, signal, _onUpdate, ctx) {
     try {
       if (!args || typeof args !== "object") throw new Error("tool arguments must be an object");
@@ -203,63 +180,130 @@ function registerDelegation(pi) {
       observer.acknowledge();
     }
   }});
-  tool("ovrcr_start", "Start one read-only Pi research assignment in an existing workspace. Returns a stable handle without waiting for completion. Use handle to finish an initial delivery still waiting for Pi startup; unknown sends are never replayed.", { ...object({ handle: string, project: string, workspace: string, scope: string, provider: string, model_provider: string, model: string, permitted_actions: { type: "array", items: string }, acceptance_evidence: { type: "array", items: string }, mandatory_capabilities: { type: "array", items: string } }, []), anyOf: [{ required: ["handle"] }, { required: ["project", "workspace", "scope", "model_provider", "model", "acceptance_evidence"] }] }, async args => {
+  const identity = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+  const directory = async () => {
+    const root = process.env.OVRCR_DELEGATION_HOME;
+    if (!root) throw new Error("managed instance directory unavailable");
+    const path = join(root, "parent-intents");
+    await mkdir(path, { mode: 0o700, recursive: true });
+    const stat = await lstat(path);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) || stat.uid !== process.getuid()) throw new Error("intent directory must be private and owned");
+    return path;
+  };
+  const readPrivate = async name => {
+    const path = await directory();
+    const parent = await lstat(path);
+    const file = await open(join(path, name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const stat = await file.stat();
+      if (!stat.isFile() || (stat.mode & 0o077) || stat.uid !== process.getuid() || stat.size > 262144) throw new Error("intent must be a regular bounded private owned file");
+      const bytes = Buffer.alloc(262145);
+      let length = 0;
+      while (length < bytes.length) {
+        const { bytesRead } = await file.read(bytes, length, bytes.length - length, null);
+        if (!bytesRead) break;
+        length += bytesRead;
+      }
+      const after = await lstat(path);
+      if (length > 262144) throw new Error("intent exceeds supported bound");
+      if (after.ino !== parent.ino || after.dev !== parent.dev || after.isSymbolicLink()) throw new Error("original intent directory changed");
+      return JSON.parse(bytes.subarray(0, length).toString("utf8"));
+    } finally { await file.close(); }
+  };
+  const writePrivate = async (name, value) => {
+    const path = await directory();
+    const bytes = JSON.stringify(value);
+    if (Buffer.byteLength(bytes) > 262144) throw new Error("intent exceeds supported bound");
+    const temporary = join(path, `.${name}.${randomUUID()}.tmp`);
+    const file = await open(temporary, "wx", 0o600);
+    try { await file.writeFile(bytes); await file.sync(); } finally { await file.close(); }
+    try {
+      try { await link(temporary, join(path, name)); }
+      catch (error) {
+        if (error.code !== "EEXIST" || JSON.stringify(await readPrivate(name)) !== bytes) throw error;
+      }
+      const held = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      try { await held.sync(); } finally { await held.close(); }
+    } finally { await unlink(temporary); }
+  };
+  const originalIntent = async (handle, prefix = "") => {
+    if (!identity(handle)) throw new Error("invalid original request identity");
+    const intent = await readPrivate(`${prefix}${handle}.json`);
+    if (intent.request !== handle || intent.schema !== 1) throw new Error("original intent identity changed");
+    return intent;
+  };
+  const readIntent = handle => originalIntent(handle);
+  const advance = async (handle, contract) => {
+    let snapshot;
+    try { snapshot = await call({ Reconcile: { auth: auth(), request: handle } }); }
+    catch (error) { if (error.code !== "NotFound") throw error; }
+    // Exact saved intent repairs only Prepare publication; receipts decide
+    // whether a launch or input is still known unsent.
+    snapshot = await call({ Prepare: { auth: auth(), contract } });
+    const receipt = operation => snapshot.receipts?.find(value => value.operation === operation);
+    if (receipt("Prepare")?.outcome !== "Applied") snapshot = await call({ Prepare: { auth: auth(), contract } });
+    if (receipt("Prepare")?.outcome !== "Applied") return snapshot;
+    if (snapshot.dispatch === "Prepared" && (!receipt("Launch") || receipt("Launch").outcome === "Accepted")) {
+      snapshot = await call({ Launch: { auth: auth(), handle, identity: receipt("Launch")?.identity ?? snapshot.identity } });
+    }
+    const initialControlEpoch = snapshot.control?.epoch;
+    for (let attempt = 0; snapshot.dispatch === "Launched" && (!receipt("InitialInput") || receipt("InitialInput").outcome === "Accepted") && attempt < 100; attempt++) {
+      snapshot = await call({ SendInitial: { auth: auth(), handle, identity: snapshot.identity, expected_control_epoch: initialControlEpoch } });
+      if (snapshot.dispatch === "Launched") await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return snapshot;
+  };
+  const limits = object({ max_live_children: { type: "integer" }, max_execution_attempts: { type: "integer" }, min_free_slots_after_launch: { type: "integer" }, max_cost_microusd: { type: "integer" }, max_output_tokens: { type: "integer" }, max_native_children: { type: "integer" } }, []);
+  const selections = { provider: string, model_provider: string, model: string, required_limits: limits };
+  tool("ovrcr_capabilities", "Discover installed, advertised and allowed delegation choices and current capacity. Defaults never substitute for an explicit unavailable choice. Capacity is advisory until serialized admission.", object(selections, []), args => call({ Capabilities: { auth: auth(), selection: args } }));
+  tool("ovrcr_start", "Start one read-only research assignment with an advertised allowed selection or configured default. Returns immediately after dispatch. Keep a capacity-refused handle pending; reconcile then use ovrcr_retry. Unknown effects must never be replaced.", { ...object({ handle: string, project: string, workspace: string, scope: string, ...selections, permitted_actions: { type: "array", items: string }, acceptance_evidence: { type: "array", items: string }, mandatory_capabilities: { type: "array", items: string } }, []), anyOf: [{ required: ["handle"] }, { required: ["project", "workspace", "scope", "acceptance_evidence"] }] }, async args => {
     let handle = args.handle;
-    const required = ["project", "workspace", "scope", "model_provider", "model"];
-    if (handle !== undefined ? (typeof handle !== "string" || !handle || Object.keys(args).some(key => key !== "handle")) : required.some(key => typeof args[key] !== "string" || !args[key].trim()) || !Array.isArray(args.acceptance_evidence) || !args.acceptance_evidence.length) {
-      return { handle: handle ?? null, dispatch: "Refused", reason: "Provide only handle to continue, or project, workspace, scope, model_provider, model and acceptance_evidence to start" };
+    const required = ["project", "workspace", "scope"];
+    if (handle !== undefined ? (!identity(handle) || Object.keys(args).some(key => key !== "handle")) : required.some(key => typeof args[key] !== "string" || !args[key].trim()) || !Array.isArray(args.acceptance_evidence) || !args.acceptance_evidence.length) {
+      return { handle: handle ?? null, dispatch: "Refused", reason: "Provide only handle to reconcile, or project, workspace, scope and acceptance_evidence to start" };
     }
     let attempted = false;
     try {
-      let snapshot;
-      let contract;
       if (handle) {
-        contract = await originalIntent(handle);
+        const contract = await readIntent(handle);
         attempted = true;
-        try { snapshot = await call({ Reconcile: { auth: auth(), request: handle } }); }
-        catch (error) {
-          if (error.code !== "NotFound") throw error;
-        }
-        // Verify the exact saved contract even when its Server record already exists.
-        // Prepare only repairs its authenticated immutable publication, never a launch/input.
-        snapshot = await call({ Prepare: { auth: auth(), contract } });
+        return await advance(handle, contract);
       }
-      else {
+      const report = await call({ Capabilities: { auth: auth(), selection: Object.fromEntries(Object.keys(selections).filter(key => args[key] !== undefined).map(key => [key, args[key]])) } });
+      if (args.mandatory_capabilities !== undefined && (!Array.isArray(args.mandatory_capabilities) || args.mandatory_capabilities.some(capability => !report.capabilities.includes(capability)))) return { handle: null, dispatch: "Refused", identity: { session: null, run: null }, reason: "unsupported mandatory capability" };
+      if (!report.resolved_choice || report.reason) return { handle: null, dispatch: "Refused", identity: { session: null, run: null }, reason: report.reason, choices: report.choices };
+      handle = randomUUID();
+      const contract = { schema: 1, workflow, controller, task: randomUUID(), request: handle, project: args.project, workspace: args.workspace, scope: args.scope, ...report.resolved_choice, permitted_actions: args.permitted_actions ?? ["read"], acceptance_evidence: args.acceptance_evidence ?? [], mandatory_capabilities: args.mandatory_capabilities ?? ["read", "result_file"], limits: report.effective_limits, previous_request: null };
+      if (contract.scope.length > 32768 || contract.acceptance_evidence.length > 32 || contract.acceptance_evidence.some(value => typeof value !== "string" || !value || value.length > 4096)) return { handle, dispatch: "Refused", reason: "contract exceeds supported content limits" };
+      await writePrivate(`${handle}.json`, contract);
+      attempted = true;
+      return await advance(handle, contract);
+    } catch (error) { return { handle, dispatch: (error.refused || !attempted) ? "Refused" : "Unknown", transport: attempted ? "Unknown" : "NotSent", reason: String(error.message), recovery: "Call ovrcr_start with only this original handle; do not start a replacement assignment" }; }
+  });
+  tool("ovrcr_retry", "Retry a reconciled zero-effect capacity refusal with the exact original task and effective choices. Persists and reuses one successor request; unknown/partial effects never qualify. If that successor is capacity-refused, retry its returned handle after capacity changes.", object({ handle: string }), async args => {
+    let handle;
+    let attempted = false;
+    try {
+      const original = await readIntent(args.handle);
+      const prior = await call({ Inspect: { auth: auth(), handle: args.handle } });
+      if (!prior.retryable_capacity_refusal || prior.dispatch !== "Refused") return { handle: args.handle, dispatch: "Refused", reason: "only an authoritative zero-effect capacity refusal can be retried" };
+      let pointer;
+      try { pointer = await readPrivate(`retry-${args.handle}.json`); } catch (error) { if (error.code !== "ENOENT") throw error; }
+      if (!pointer) {
         handle = randomUUID();
-        contract = { schema: 1, workflow, controller, task: randomUUID(), request: handle, project: args.project, workspace: args.workspace, scope: args.scope, provider: args.provider ?? "pi", model_provider: args.model_provider, model: args.model, permitted_actions: args.permitted_actions ?? ["read"], acceptance_evidence: args.acceptance_evidence ?? [], mandatory_capabilities: args.mandatory_capabilities ?? ["read", "result_file"] };
-        if (JSON.stringify(contract).length > 262144 || contract.scope.length > 32768 || contract.acceptance_evidence.length > 32 || contract.acceptance_evidence.some(value => typeof value !== "string" || !value || value.length > 4096)) {
-          return { handle, dispatch: "Refused", reason: "contract exceeds supported content limits" };
-        }
-        auth();
-        const root = process.env.OVRCR_DELEGATION_HOME;
-        if (!root) throw new Error("managed instance directory unavailable");
-        const directory = join(root, "parent-intents");
-        await mkdir(directory, { mode: 0o700, recursive: true });
-        const stat = await lstat(directory);
-        if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077)) throw new Error("intent directory must be private");
-        const temporary = join(directory, `.${handle}.tmp`);
-        const file = await open(temporary, "wx", 0o600);
-        try { await file.writeFile(JSON.stringify(contract)); await file.sync(); } finally { await file.close(); }
-        await rename(temporary, join(directory, `${handle}.json`));
-        const directoryHandle = await open(directory, "r");
-        try { await directoryHandle.sync(); } finally { await directoryHandle.close(); }
-        attempted = true;
-        snapshot = await call({ Prepare: { auth: auth(), contract } });
+        const contract = { ...original, request: handle, previous_request: args.handle };
+        await writePrivate(`${handle}.json`, contract);
+        try { await writePrivate(`retry-${args.handle}.json`, { previous_request: args.handle, request: handle }); }
+        catch (error) { if (error.code !== "EEXIST") throw error; }
+        pointer = await readPrivate(`retry-${args.handle}.json`);
       }
-      const receipt = operation => snapshot.receipts?.find(value => value.operation === operation);
-      if (receipt("Prepare")?.outcome !== "Applied") snapshot = await call({ Prepare: { auth: auth(), contract } });
-      if (receipt("Prepare")?.outcome !== "Applied") return snapshot;
-      if (snapshot.dispatch === "Prepared" && (!receipt("Launch") || receipt("Launch").outcome === "Accepted")) {
-        snapshot = await call({ Launch: { auth: auth(), handle, identity: receipt("Launch")?.identity ?? snapshot.identity } });
-      }
-      // Launched is a known no-input state. Polling it does not replay a send.
-      const initialControlEpoch = snapshot.control?.epoch;
-      for (let attempt = 0; snapshot.dispatch === "Launched" && (!receipt("InitialInput") || receipt("InitialInput").outcome === "Accepted") && attempt < 100; attempt++) {
-        snapshot = await call({ SendInitial: { auth: auth(), handle, identity: snapshot.identity, expected_control_epoch: initialControlEpoch } });
-        if (snapshot.dispatch === "Launched") await new Promise(resolve => setTimeout(resolve, 100));
-      }
-      return snapshot;
-    } catch (error) { return { handle, dispatch: error.refused || !attempted ? "Refused" : "Unknown", transport: attempted ? "Unknown" : "NotSent", reason: String(error.message), recovery: "Call ovrcr_start with only this original handle; do not start a replacement assignment" }; }
+      if (pointer.previous_request !== args.handle || !identity(pointer.request)) throw new Error("retry pointer identity changed");
+      handle = pointer.request;
+      const contract = await readIntent(handle);
+      if (contract.previous_request !== args.handle) throw new Error("retry intent changed");
+      attempted = true;
+      return await advance(handle, contract);
+    } catch (error) { return { handle: handle ?? args.handle, dispatch: (error.refused || !attempted) ? "Refused" : "Unknown", reason: String(error.message), recovery: "Repeat retry with the original predecessor handle to reconcile its persisted successor; never create a replacement" }; }
   });
   // Followups retain their original private request even if the first reply is lost.
   const saveFollowup = async intent => {
