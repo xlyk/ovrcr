@@ -210,6 +210,10 @@ async function main() {
         await host.emit({ type: "session_start", reason: "new" });
         writeFileSync(`${path}.rebound`, "REBOUND");
       }
+      if (existsSync(`${path}.hold-settlement`)) {
+        writeFileSync(`${path}.settlement-held`, "HELD");
+        while (existsSync(`${path}.hold-settlement`)) await new Promise(resolve => setTimeout(resolve, 10));
+      }
       if (!brief.contract.scope.includes("NO_READY")) {
         await host.emit({ type: "agent_end", messages: [assistant("stop")] });
         await host.emit({ type: "agent_settled" });
