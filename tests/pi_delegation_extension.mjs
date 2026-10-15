@@ -9,6 +9,7 @@ import { createHost } from "./fixtures/pi/pi_host.mjs";
 test("managed Pi exposes research assignment and explicit collection tools", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ovrcr-delegation-"));
   const before = { ...process.env };
+  let host;
   try {
     process.env.OVRCR_AGENT_SOCKET = "/fixture/socket";
     process.env.OVRCR_AGENT_TOKEN = "fixture-token";
@@ -16,7 +17,7 @@ test("managed Pi exposes research assignment and explicit collection tools", asy
     writeFileSync(join(dir, "reporting.mjs"), source);
     writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(new URL("../src/ovrcr-reporting-transport.mjs", import.meta.url)));
     writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
-    const host = await createHost(join(dir, "reporting.mjs"));
+    host = await createHost(join(dir, "reporting.mjs"));
     assert.deepEqual(host.tools(), ["ovrcr_accept", "ovrcr_collect", "ovrcr_followup", "ovrcr_inspect", "ovrcr_mark_handled", "ovrcr_publish", "ovrcr_start", "ovrcr_wait"]);
     assert.deepEqual(host.toolDefinition("ovrcr_publish").parameters.required, ["handle", "submission"]);
     assert.deepEqual(host.toolDefinition("ovrcr_collect").parameters.required, ["handle"]);
@@ -40,6 +41,7 @@ test("managed Pi exposes research assignment and explicit collection tools", asy
 for (const loss of ["before", "after"]) test(`original intent recovers a lost Prepare ${loss} persistence`, async () => {
   const dir = mkdtempSync(join(tmpdir(), "ovrcr-original-intent-"));
   const before = { ...process.env };
+  let host;
   try {
     const binary = join(dir, "control.mjs");
     const state = join(dir, "state.json");
@@ -74,7 +76,8 @@ writeFileSync(${JSON.stringify(state)}, JSON.stringify(value)); console.log(JSON
     const source = readFileSync(process.env.OVRCR_TEST_EXTENSION_SOURCE ?? new URL("../src/pi-reporting-extension.mjs", import.meta.url), "utf8").replace("__OVRCR_BINARY__", JSON.stringify(binary));
     writeFileSync(join(dir, "reporting.mjs"), source);
     writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(new URL("../src/ovrcr-reporting-transport.mjs", import.meta.url)));
-    const host = await createHost(join(dir, "reporting.mjs"));
+    writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
+    host = await createHost(join(dir, "reporting.mjs"));
     const first = (await host.tool("ovrcr_start", {project:"p",workspace:"w",scope:"Read",model_provider:"test",model:"fixture-model",acceptance_evidence:["citation"]})).details;
     assert.equal(first.dispatch, "Unknown");
     assert.equal(first.receipts, undefined, "transport failure must not fabricate Server receipts");
@@ -117,7 +120,7 @@ writeFileSync(${JSON.stringify(state)}, JSON.stringify(value)); console.log(JSON
       assert.ok(grew);
       assert.equal(readBytes,262145,"a file growing after stat must not escape the actual read budget");
     } finally { prototype.stat=stat; prototype.read=read; prototype.readFile=readFile; }
-  } finally { process.env = before; rmSync(dir, {recursive:true,force:true}); }
+  } finally { await host?.emit({type:"session_shutdown",reason:"quit"}); process.env = before; rmSync(dir, {recursive:true,force:true}); }
 });
 
 test("followup recovery retains exact private request after a lost reply", async () => {

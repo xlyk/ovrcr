@@ -689,7 +689,14 @@ impl ControlProxy {
                 if exchange_preamble(&mut stream).is_err() {
                     continue;
                 }
-                let message: ClientMessage = read_frame(&mut stream).unwrap();
+                let mut message: ClientMessage = read_frame(&mut stream).unwrap();
+                // This serial fault proxy tests mutation ordering. Keep observer reads
+                // nonblocking here; dedicated observation tests use the real wait path.
+                if let Request::Delegation(request) = &mut message.request
+                    && let DelegationRequest::Observe { wait_ms, .. } = request.as_mut()
+                {
+                    *wait_ms = 0;
+                }
                 let Request::Delegation(request) = &message.request else {
                     panic!("only delegation uses proxy")
                 };
@@ -711,6 +718,10 @@ impl ControlProxy {
                     }
                     DelegationRequest::RecordAcceptance { handle, .. } => {
                         ("RecordAcceptance", handle.clone())
+                    }
+                    DelegationRequest::Observe { .. } => ("Observe", String::new()),
+                    DelegationRequest::MarkHandled { handle, .. } => {
+                        ("MarkHandled", handle.clone())
                     }
                 };
                 worker_requests
