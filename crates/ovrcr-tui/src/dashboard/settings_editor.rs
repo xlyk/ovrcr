@@ -1461,6 +1461,59 @@ mod tests {
         }
     }
 
+    #[test]
+    fn delegation_toml_editor_sends_typed_values_and_waits_for_server_publication() {
+        use ovrcr_protocol::{ErrorCode, ServerEvent, ServerMessage};
+        for (path, value) in [
+            ("delegation.max_live_children", "6"),
+            ("delegation.max_execution_attempts", "2"),
+            ("delegation.allowed_models", "[\"test/model\"]"),
+        ] {
+            let mut d = editor(false);
+            let before = d.settings.clone();
+            let mut reading = report(before.clone(), Vec::new());
+            reading.rows =
+                ovrcr_protocol::setting_rows(&before, &Settings::default(), &Default::default());
+            d.handle_server_message(ServerMessage::Event(ServerEvent::SettingsChanged(
+                Box::new(reading),
+            )));
+            assert_eq!(d.editor_rows()[0].id, "desktop_notifications");
+            d.settings_editor.selected = Some(path.into());
+            d.key(KeyCode::Enter);
+            let length = d.settings_editor.edit.as_ref().unwrap().text.len();
+            d.key(KeyCode::End);
+            for _ in 0..length {
+                d.key(KeyCode::Backspace);
+            }
+            d.settings_editor_paste(value);
+            let DashboardAction::Request(message) = d.key(KeyCode::Enter) else {
+                panic!("typed edit must send request")
+            };
+            let Request::SetSetting {
+                path: requested,
+                value: written,
+            } = message.request
+            else {
+                panic!("SetSetting")
+            };
+            assert_eq!(requested, path);
+            assert_eq!(written.as_deref(), Some(value));
+            assert_eq!(d.settings, before, "no optimistic policy change");
+            assert!(d.settings_editor_response(
+                message.request_id,
+                &Response::Error {
+                    code: ErrorCode::InvalidRequest,
+                    message: "fixture save refused".into()
+                }
+            ));
+            assert_eq!(d.settings, before);
+            assert_eq!(
+                d.settings_editor.refused.get(path).map(String::as_str),
+                Some("fixture save refused")
+            );
+        }
+    }
+
     fn choose_next_theme(dashboard: &mut super::super::Dashboard) -> ThemeId {
         dashboard.settings_editor.selected = Some(ThemeId::KEY.into());
         dashboard.key(KeyCode::Enter);

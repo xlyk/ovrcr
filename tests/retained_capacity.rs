@@ -11,6 +11,7 @@ use serde_json::Value;
 use std::os::unix::net::UnixStream;
 use std::process::{Command, Output};
 use std::time::{Duration, Instant};
+use std::{fs, os::unix::fs::PermissionsExt, path::Path};
 
 fn cli(live: &Live, args: &[&str]) -> Output {
     Command::new(&live.executable)
@@ -350,6 +351,373 @@ fn exited_row_does_not_reduce_live_capacity_and_overflow_publishes_nothing() {
     assert!(reopened["pid"].as_u64().is_some());
     assert_eq!(live_count(&live), 50);
     assert_eq!(summaries(&live).len(), 52);
+}
+
+// Public tools use the existing Pi host and binary Live fixture. Only the model
+// executable is deterministic; admission still crosses the production dispatcher.
+fn delegation_tool(
+    live: &Live,
+    parent: SessionId,
+    name: &str,
+    args: Value,
+    output: &Path,
+) -> Value {
+    assert_eq!(
+        live.request(Request::SendTerminal {
+            session: parent,
+            text: format!(
+                "tool:{}",
+                serde_json::json!({"name":name,"args":args,"output":output})
+            ),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    let deadline = Instant::now() + wait_deadline();
+    while !output.exists() {
+        assert!(Instant::now() < deadline, "missing {}", output.display());
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let reply: Value = serde_json::from_slice(&fs::read(output).unwrap()).unwrap();
+    assert!(reply.get("error").is_none(), "{reply}");
+    reply["details"].clone()
+}
+
+#[test]
+fn public_pi_admission_uses_final_slot_and_allows_more_than_four_children() {
+    let live = Live::idle();
+    let bin = live.claude.command.parent().unwrap();
+    let pi = bin.join("pi");
+    fs::write(&pi, include_bytes!("fixtures/pi/research_pi.sh")).unwrap();
+    fs::set_permissions(&pi, fs::Permissions::from_mode(0o700)).unwrap();
+    let host = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pi/pi_host.mjs");
+    let gate = live.root.path().join("hold-child-results");
+    live.start_binary_env(&[
+        ("OVRCR_TEST_DELEGATION", "1".as_ref()),
+        ("OVRCR_TEST_PI_HOST", host.as_os_str()),
+        ("OVRCR_TEST_DELEGATION_RESULT_GATE", gate.as_os_str()),
+    ]);
+    live.ready("feature/delegation-capacity");
+    let workspaces = json(&live, &["workspace", "list", "--project", PROJECT]);
+    let workspace = workspaces
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["branch"] == "feature/delegation-capacity")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_ne!(workspace, "feature/delegation-capacity");
+    let Response::CreatedSession(parent) =
+        live.request(Request::CreateSession(CreateSessionRequest {
+            project: PROJECT.into(),
+            workspace: workspace.clone(),
+            name: "capacity-parent".into(),
+            label: None,
+            argv: vec![
+                env!("CARGO_BIN_EXE_ovrcr").into(),
+                "agent".into(),
+                "run".into(),
+                "pi".into(),
+                "--".into(),
+                "pi".into(),
+                "--model".into(),
+                "fixture-model".into(),
+            ],
+            kind: SessionKind::Agent { name: "pi".into() },
+        }))
+    else {
+        panic!("managed parent")
+    };
+    track_groups(&live);
+    wait_until(&live, parent.id, wait_deadline(), |row| row.agent.is_some());
+    let exited = create_named(
+        &live,
+        "nonlive-exited",
+        vec!["/bin/sh".into(), "-c".into(), "exit 0".into()],
+    );
+    wait_until(&live, exited.id, wait_deadline(), |row| {
+        !row.phase.is_live()
+    });
+    let archived = create_named(&live, "nonlive-archived", waiter_argv());
+    track_groups(&live);
+    let archived_group = pgid_of(archived.pid.unwrap());
+    let closed = cli(&live, &["terminal", "close", &archived.id.0.to_string()]);
+    assert!(
+        closed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&closed.stderr)
+    );
+    assert!(wait_group_absent(archived_group, Duration::from_secs(10)));
+    live.forget_group(archived_group);
+    assert!(
+        json(&live, &["terminal", "list", "--archived"])
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == archived.id.0)
+    );
+    let args = serde_json::json!({"project":PROJECT,"workspace":workspace,"scope":"Read README. Do not change files.","model_provider":"test","model":"fixture-model","acceptance_evidence":["README citation"],"required_limits":{"max_execution_attempts":1}});
+    let mut children = Vec::new();
+    for index in 0..5 {
+        let result = delegation_tool(
+            &live,
+            parent.id,
+            "ovrcr_start",
+            args.clone(),
+            &live.root.path().join(format!("child-{index}.json")),
+        );
+        track_groups(&live);
+        assert_eq!(result["dispatch"], "Applied", "{result}");
+        children.push(result["identity"]["session"].as_u64().unwrap());
+    }
+    assert_eq!(children.len(), 5);
+    assert_eq!(
+        live_count(&live),
+        7,
+        "parent, ordinary local shell and five live children"
+    );
+    let mut fillers = Vec::new();
+    while live_count(&live) < 49 {
+        let row = create_named(&live, &format!("ordinary-{}", fillers.len()), waiter_argv());
+        fillers.push(row.id);
+        track_groups(&live);
+    }
+    assert_eq!(
+        live.request(Request::PauseSession {
+            session: fillers[2]
+        }),
+        Response::Ok
+    );
+    assert!(matches!(
+        find(&live, fillers[2]).phase,
+        SessionPhase::Paused
+    ));
+    assert_eq!(
+        live_count(&live),
+        49,
+        "Paused sessions still consume a live slot"
+    );
+    let before = summaries(&live);
+    let last = delegation_tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        args.clone(),
+        &live.root.path().join("final-slot.json"),
+    );
+    track_groups(&live);
+    assert_eq!(last["dispatch"], "Applied", "{last}");
+    assert_eq!(live_count(&live), 50);
+    let refused = delegation_tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        args.clone(),
+        &live.root.path().join("full.json"),
+    );
+    assert_eq!(refused["dispatch"], "Refused", "{refused}");
+    assert!(refused["identity"]["session"].is_null());
+    assert!(
+        refused["reason"]
+            .as_str()
+            .unwrap()
+            .contains("50 live process slots")
+    );
+    assert_eq!(live_count(&live), 50);
+    let intents = live.config.join("parent-intents");
+    let original_intent: Value = serde_json::from_slice(
+        &fs::read(intents.join(format!("{}.json", refused["handle"].as_str().unwrap()))).unwrap(),
+    )
+    .unwrap();
+    let mut conflicting = original_intent.clone();
+    conflicting["request"] = "conflicting_retry".into();
+    conflicting["previous_request"] = refused["handle"].clone();
+    conflicting["scope"] = "A different task must not reuse this capacity refusal".into();
+    let conflicting_file = intents.join("conflicting_retry.json");
+    fs::write(&conflicting_file, serde_json::to_vec(&conflicting).unwrap()).unwrap();
+    fs::set_permissions(&conflicting_file, fs::Permissions::from_mode(0o600)).unwrap();
+    let changed_retry = delegation_tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        serde_json::json!({"handle":"conflicting_retry"}),
+        &live.root.path().join("conflicting-retry.json"),
+    );
+    assert_eq!(changed_retry["dispatch"], "Refused");
+    assert!(
+        changed_retry["reason"]
+            .as_str()
+            .unwrap()
+            .contains("exact logical task"),
+        "{changed_retry}"
+    );
+    assert_eq!(live_count(&live), 50);
+    kill_release(&live, fillers[0]);
+    assert_eq!(live_count(&live), 49);
+    let immutable = delegation_tool(
+        &live,
+        parent.id,
+        "ovrcr_inspect",
+        serde_json::json!({"handle":refused["handle"]}),
+        &live.root.path().join("refusal-after-release.json"),
+    );
+    assert_eq!(
+        immutable["dispatch"], "Refused",
+        "capacity release cannot reopen the old operation"
+    );
+    assert_eq!(
+        immutable["execution_attempts"], 0,
+        "zero-effect refusal consumes no execution budget"
+    );
+    assert_eq!(immutable["retryable_capacity_refusal"], true);
+    let output = live
+        .command()
+        .args(["settings", "set", "delegation.max_live_children", "1"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let pending_retry = delegation_tool(
+        &live,
+        parent.id,
+        "ovrcr_retry",
+        serde_json::json!({"handle":refused["handle"]}),
+        &live.root.path().join("retry-under-tightened-policy.json"),
+    );
+    assert_eq!(
+        pending_retry["dispatch"], "Refused",
+        "current tighter policy still governs the immutable contract"
+    );
+    assert_eq!(pending_retry["retryable_capacity_refusal"], true);
+    assert_eq!(pending_retry["execution_attempts"], 0);
+    let output = live
+        .command()
+        .args(["settings", "set", "delegation.max_live_children", "50"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let retry = delegation_tool(
+        &live,
+        parent.id,
+        "ovrcr_retry",
+        serde_json::json!({"handle":pending_retry["handle"]}),
+        &live.root.path().join("retry-after-release.json"),
+    );
+    track_groups(&live);
+    assert_eq!(retry["dispatch"], "Applied", "{retry}");
+    assert_ne!(retry["handle"], refused["handle"]);
+    assert_eq!(retry["identity"]["task"], refused["identity"]["task"]);
+    assert_eq!(
+        retry["identity"]["attempt"],
+        pending_retry["identity"]["attempt"].as_u64().unwrap() + 1
+    );
+    assert_eq!(retry["execution_attempts"], 1);
+    let repeated = delegation_tool(
+        &live,
+        parent.id,
+        "ovrcr_retry",
+        serde_json::json!({"handle":pending_retry["handle"]}),
+        &live.root.path().join("retry-repeated.json"),
+    );
+    assert_eq!(
+        repeated["handle"], retry["handle"],
+        "repeat retry reconciles its persisted successor"
+    );
+    assert_eq!(repeated["identity"], retry["identity"]);
+    let count = Path::new(retry["brief"].as_str().unwrap()).with_extension("json.input-count");
+    let deadline = Instant::now() + wait_deadline();
+    while !count.exists() {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        fs::read_to_string(count).unwrap(),
+        "1\n",
+        "retry must not replay the applied initial prompt"
+    );
+    assert_eq!(live_count(&live), 50);
+    let mut competing = original_intent;
+    competing["request"] = "competing_successor".into();
+    competing["previous_request"] = refused["handle"].clone();
+    let competing_file = intents.join("competing_successor.json");
+    fs::write(&competing_file, serde_json::to_vec(&competing).unwrap()).unwrap();
+    fs::set_permissions(&competing_file, fs::Permissions::from_mode(0o600)).unwrap();
+    let competing = delegation_tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        serde_json::json!({"handle":"competing_successor"}),
+        &live.root.path().join("competing-successor.json"),
+    );
+    assert_eq!(competing["dispatch"], "Refused");
+    assert!(
+        competing["reason"].as_str().unwrap().contains("successor"),
+        "{competing}"
+    );
+    let applied_retry = delegation_tool(
+        &live,
+        parent.id,
+        "ovrcr_retry",
+        serde_json::json!({"handle":retry["handle"]}),
+        &live.root.path().join("applied-not-retryable.json"),
+    );
+    assert_eq!(applied_retry["dispatch"], "Refused");
+    assert_eq!(live_count(&live), 50);
+    kill_release(&live, fillers[1]);
+    assert_eq!(live_count(&live), 49);
+    let barrier = std::sync::Barrier::new(3);
+    let (ordinary, delegated) = std::thread::scope(|scope| {
+        let ordinary = scope.spawn(|| {
+            barrier.wait();
+            live.request(Request::CreateSession(CreateSessionRequest {
+                project: PROJECT.into(),
+                workspace: workspace.clone(),
+                name: "capacity-race".into(),
+                label: None,
+                argv: waiter_argv(),
+                kind: SessionKind::Terminal,
+            }))
+        });
+        let delegated = scope.spawn(|| {
+            barrier.wait();
+            delegation_tool(
+                &live,
+                parent.id,
+                "ovrcr_start",
+                args.clone(),
+                &live.root.path().join("racing-child.json"),
+            )
+        });
+        barrier.wait();
+        (ordinary.join().unwrap(), delegated.join().unwrap())
+    });
+    track_groups(&live);
+    let ordinary_admitted = matches!(ordinary, Response::CreatedSession(_));
+    let delegated_admitted = delegated["dispatch"] == "Applied";
+    assert_ne!(
+        ordinary_admitted, delegated_admitted,
+        "exactly one creator may take the remaining slot: {ordinary:?} {delegated}"
+    );
+    if !ordinary_admitted {
+        assert!(conflict(ordinary).contains("50 live process slots"));
+    }
+    if !delegated_admitted {
+        assert_eq!(delegated["dispatch"], "Refused");
+    }
+    assert_eq!(live_count(&live), 50);
+    for original in before
+        .iter()
+        .filter(|row| row.id != fillers[0] && row.id != fillers[1])
+    {
+        let current = find(&live, original.id);
+        assert_eq!(
+            (current.run, current.pid, current.phase),
+            (original.run, original.pid, original.phase.clone()),
+            "admission altered existing session {}",
+            original.id.0
+        );
+    }
 }
 
 #[test]

@@ -24,6 +24,9 @@ pub(super) fn run() -> AppResult<()> {
         Response::DelegationObservation(batch) => {
             super::print_json(&serde_json::to_value(batch).map_err(RuntimeError::internal)?)
         }
+        Response::DelegationCapabilities(capabilities) => {
+            super::print_json(&serde_json::to_value(capabilities).map_err(RuntimeError::internal)?)
+        }
         Response::Error { code, message } => Err(RuntimeError::new(code, message)),
         _ => Err(RuntimeError::new(
             ErrorCode::Internal,
