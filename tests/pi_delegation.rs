@@ -641,3 +641,1003 @@ fn ordinary_input_and_view_continue_while_workspace_lifecycle_is_busy() {
         live.own_group(group);
     }
 }
+
+#[derive(Clone)]
+struct ControlRule {
+    operation: &'static str,
+    // 0: drop before forwarding; 1: discard real reply; 2: forward with fault.
+    loss: u8,
+    fault: Option<(&'static str, usize)>,
+}
+
+struct ControlProxy {
+    path: std::path::PathBuf,
+    rules: std::sync::Arc<std::sync::Mutex<Vec<ControlRule>>>,
+    requests: std::sync::Arc<std::sync::Mutex<Vec<DelegationRequest>>>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl ControlProxy {
+    fn new(
+        path: std::path::PathBuf,
+        server: std::path::PathBuf,
+        fault: std::path::PathBuf,
+    ) -> Self {
+        use std::sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
+        };
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let rules = Arc::new(Mutex::new(Vec::<ControlRule>::new()));
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_rules = rules.clone();
+        let worker_requests = requests.clone();
+        let worker_stop = stop.clone();
+        let thread = std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                if worker_stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                let mut stream = stream.unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(30)))
+                    .unwrap();
+                if exchange_preamble(&mut stream).is_err() {
+                    continue;
+                }
+                let message: ClientMessage = read_frame(&mut stream).unwrap();
+                let Request::Delegation(request) = &message.request else {
+                    panic!("only delegation uses proxy")
+                };
+                let (operation, handle) = match request.as_ref() {
+                    DelegationRequest::Prepare { contract, .. } => {
+                        ("Prepare", contract.request.clone())
+                    }
+                    DelegationRequest::Launch { handle, .. } => ("Launch", handle.clone()),
+                    DelegationRequest::SendInitial { handle, .. } => {
+                        ("InitialInput", handle.clone())
+                    }
+                    DelegationRequest::Reconcile { request, .. } => ("Reconcile", request.clone()),
+                    DelegationRequest::Inspect { handle, .. } => ("Inspect", handle.clone()),
+                    DelegationRequest::Collect { handle, .. } => ("Collect", handle.clone()),
+                    DelegationRequest::Publish { handle, .. } => ("Publish", handle.clone()),
+                };
+                worker_requests
+                    .lock()
+                    .unwrap()
+                    .push(request.as_ref().clone());
+                let rule = {
+                    let mut rules = worker_rules.lock().unwrap();
+                    rules
+                        .iter()
+                        .position(|rule| rule.operation == operation)
+                        .map(|index| rules.remove(index))
+                };
+                if rule.as_ref().is_some_and(|rule| rule.loss == 0) {
+                    continue;
+                }
+                if let Some((point, value)) = rule.as_ref().and_then(|rule| rule.fault) {
+                    if point == "await-rebind" {
+                        wait_file(&fault.with_extension("rebind.done"));
+                    } else {
+                        if point == "input-target-captured" || point == "input-before-write" {
+                            let DelegationRequest::SendInitial { identity, .. } = request.as_ref()
+                            else {
+                                unreachable!()
+                            };
+                            let deadline = Instant::now() + Duration::from_secs(10);
+                            loop {
+                                let mut control = connect_server(&server).unwrap();
+                                let Response::Inventory { sessions, .. } =
+                                    client::request(&mut control, 1, Request::Inspect).unwrap()
+                                else {
+                                    panic!("inventory")
+                                };
+                                if sessions
+                                    .iter()
+                                    .find(|s| Some(s.id) == identity.session)
+                                    .and_then(|s| s.agent.as_ref())
+                                    .is_some_and(|a| {
+                                        a.health.state == ReporterHealth::Connected
+                                            && (point != "input-before-write"
+                                                || a.metrics
+                                                    .as_ref()
+                                                    .and_then(|m| m.sample.model.as_deref())
+                                                    == Some("fixture-model"))
+                                    })
+                                {
+                                    break;
+                                }
+                                assert!(
+                                    Instant::now() < deadline,
+                                    "child binding not ready at fault boundary"
+                                );
+                                std::thread::sleep(Duration::from_millis(5));
+                            }
+                        }
+                        fs::write(&fault, format!("{point}|{handle}|{value}")).unwrap();
+                    }
+                }
+                let mut upstream = connect_server(&server).unwrap();
+                upstream
+                    .set_read_timeout(Some(Duration::from_secs(30)))
+                    .unwrap();
+                let response =
+                    client::request(&mut upstream, message.request_id, message.request).unwrap();
+                if rule.as_ref().is_some_and(|rule| rule.loss == 1) {
+                    continue;
+                }
+                let _ = write_frame(
+                    &mut stream,
+                    &ServerMessage::Response {
+                        request_id: message.request_id,
+                        response,
+                    },
+                );
+            }
+        });
+        Self {
+            path,
+            rules,
+            requests,
+            stop,
+            thread: Some(thread),
+        }
+    }
+
+    fn arm(&self, rule: ControlRule) {
+        self.rules.lock().unwrap().push(rule);
+    }
+
+    fn original(&self, operation: DispatchOperation) -> DelegationRequest {
+        self.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|request| {
+                matches!(
+                    (operation, request),
+                    (
+                        DispatchOperation::Prepare,
+                        DelegationRequest::Prepare { .. }
+                    ) | (DispatchOperation::Launch, DelegationRequest::Launch { .. })
+                        | (
+                            DispatchOperation::InitialInput,
+                            DelegationRequest::SendInitial { .. }
+                        )
+                )
+            })
+            .unwrap()
+            .clone()
+    }
+}
+
+impl Drop for ControlProxy {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        let _ = std::os::unix::net::UnixStream::connect(&self.path);
+        self.thread.take().unwrap().join().unwrap();
+    }
+}
+
+struct RecoveryFixture {
+    proxy: ControlProxy,
+    live: Live,
+    parent: SessionId,
+    workspace: String,
+    files: std::cell::Cell<u32>,
+    bytes: std::path::PathBuf,
+}
+
+impl RecoveryFixture {
+    fn new() -> Self {
+        Self::with_model(None)
+    }
+
+    fn with_model(initial_model: Option<&str>) -> Self {
+        let live = Live::idle().bounded();
+        let fault = live.root.path().join("fault");
+        let proxy = ControlProxy::new(
+            live.root.path().join("proxy.sock"),
+            live.socket.clone(),
+            fault.clone(),
+        );
+        let gate = live.root.path().join("allow-result");
+        let bytes = live.root.path().join("input-bytes");
+        fs::create_dir(&bytes).unwrap();
+        let history = live.root.path().join("history");
+        fs::create_dir(&history).unwrap();
+        fs::create_dir_all(live.root.path().join(".pi/agent")).unwrap();
+        let bin = live.claude.command.parent().unwrap();
+        let pi = bin.join("pi");
+        fs::write(&pi, include_bytes!("fixtures/pi/research_pi.sh")).unwrap();
+        fs::set_permissions(&pi, fs::Permissions::from_mode(0o700)).unwrap();
+        let host = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pi/pi_host.mjs");
+        let rebind = fault.with_extension("rebind");
+        let mut environment = vec![
+            ("OVRCR_TEST_DELEGATION", "1".as_ref()),
+            ("OVRCR_TEST_PI_HOST", host.as_os_str()),
+            ("OVRCR_TEST_DELEGATION_RESULT_GATE", gate.as_os_str()),
+            (
+                "OVRCR_TEST_DELEGATION_CONTROL_SOCKET",
+                proxy.path.as_os_str(),
+            ),
+            ("OVRCR_TEST_DELEGATION_FAULT", fault.as_os_str()),
+            ("OVRCR_TEST_DELEGATION_BYTES", bytes.as_os_str()),
+            ("OVRCR_TEST_HISTORY", history.as_os_str()),
+        ];
+        if let Some(model) = initial_model {
+            environment.push(("OVRCR_TEST_DELEGATION_INITIAL_MODEL", model.as_ref()));
+            environment.push(("OVRCR_TEST_DELEGATION_REBIND_GATE", rebind.as_os_str()));
+        }
+        live.start_binary_env(&environment);
+        live.ready("recovery");
+        let workspace = cli_json(
+            &live,
+            &[
+                "workspace",
+                "get",
+                "--project",
+                PROJECT,
+                "--branch",
+                "recovery",
+            ],
+        )["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let Response::CreatedSession(parent) =
+            live.request(Request::CreateSession(CreateSessionRequest {
+                project: PROJECT.into(),
+                workspace: workspace.clone(),
+                name: "parent".into(),
+                label: None,
+                argv: vec![
+                    env!("CARGO_BIN_EXE_ovrcr").into(),
+                    "agent".into(),
+                    "run".into(),
+                    "pi".into(),
+                    "--".into(),
+                    "pi".into(),
+                    "--model".into(),
+                    "fixture-model".into(),
+                ],
+                kind: SessionKind::Agent { name: "pi".into() },
+            }))
+        else {
+            panic!("create parent")
+        };
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let Response::Inventory { sessions, .. } = live.request(Request::Inspect) else {
+                panic!("inventory")
+            };
+            if sessions
+                .iter()
+                .any(|s| s.id == parent.id && s.agent.is_some())
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "parent binding");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Self {
+            proxy,
+            live,
+            parent: parent.id,
+            workspace,
+            files: std::cell::Cell::new(0),
+            bytes,
+        }
+    }
+
+    fn tool(&self, name: &str, args: serde_json::Value) -> serde_json::Value {
+        let id = self.files.get();
+        self.files.set(id + 1);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            tool(
+                &self.live,
+                self.parent,
+                name,
+                args,
+                &self.live.root.path().join(format!("reply-{id}.json")),
+            )
+        }));
+        match result {
+            Ok(result) => result,
+            Err(panic) => {
+                let db =
+                    rusqlite::Connection::open(self.live.config.join("registry.sqlite3")).unwrap();
+                let mut query = db.prepare("SELECT metadata FROM delegations").unwrap();
+                for raw in query.query_map([], |row| row.get::<_, String>(0)).unwrap() {
+                    let value: serde_json::Value = serde_json::from_str(&raw.unwrap()).unwrap();
+                    eprintln!(
+                        "pending dispatch={} binding={} receipts={}",
+                        value["dispatch"], value["binding"], value["receipts"]
+                    );
+                }
+                std::panic::resume_unwind(panic)
+            }
+        }
+    }
+    fn start(&self) -> serde_json::Value {
+        self.tool("ovrcr_start",serde_json::json!({"project":PROJECT,"workspace":self.workspace,"scope":"Read README", "model_provider":"test","model":"fixture-model","acceptance_evidence":["citation"]}))
+    }
+    fn recover(&self, handle: &str) -> serde_json::Value {
+        self.tool("ovrcr_start", serde_json::json!({"handle":handle}))
+    }
+    fn control(&self, request: DelegationRequest) -> AssignmentSnapshot {
+        match self.live.request(Request::Delegation(Box::new(request))) {
+            Response::Delegation(snapshot) => *snapshot,
+            response => panic!("unexpected control response: {response:?}"),
+        }
+    }
+    fn reconcile(&self, handle: &str) -> AssignmentSnapshot {
+        let DelegationRequest::Prepare { auth, .. } =
+            self.proxy.original(DispatchOperation::Prepare)
+        else {
+            unreachable!()
+        };
+        self.control(DelegationRequest::Reconcile {
+            auth,
+            request: handle.into(),
+        })
+    }
+    fn input_count(&self, snapshot: &AssignmentSnapshot) -> usize {
+        fs::read_to_string(snapshot.brief.with_extension("json.input-count"))
+            .map(|s| s.lines().count())
+            .unwrap_or(0)
+    }
+    fn byte_count(&self, snapshot: &AssignmentSnapshot) -> u64 {
+        fs::read_to_string(
+            self.bytes
+                .join(snapshot.identity.session.unwrap().0.to_string()),
+        )
+        .map(|s| s.lines().map(|v| v.parse::<u64>().unwrap()).sum())
+        .unwrap_or(0)
+    }
+    fn child_count(&self) -> usize {
+        let Response::Inventory { sessions, .. } = self.live.request(Request::Inspect) else {
+            panic!("inventory")
+        };
+        sessions
+            .iter()
+            .filter(|s| s.kind == SessionKind::Agent { name: "pi".into() } && s.id != self.parent)
+            .count()
+    }
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+#[test]
+fn public_dispatch_freezes_fresh_child_target_before_metrics_and_write() {
+    for stage in ["before-first", "after-capture", "before-write"] {
+        let fixture = RecoveryFixture::with_model(Some(if stage == "after-capture" {
+            "waiting-model"
+        } else {
+            "fixture-model"
+        }));
+        let gate = fixture.live.root.path().join("fault.rebind");
+        let release = fixture.live.root.path().join("fault.release");
+        struct Release(std::path::PathBuf);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                let _ = fs::write(&self.0, "release");
+            }
+        }
+        let _release = Release(release.clone());
+        let point = match stage {
+            "before-first" => "await-rebind",
+            "after-capture" => "input-target-captured",
+            _ => "input-before-write",
+        };
+        fixture.proxy.arm(ControlRule {
+            operation: "InitialInput",
+            loss: if stage == "after-capture" { 1 } else { 2 },
+            fault: Some((point, 0)),
+        });
+        if stage == "before-first" {
+            fs::write(&gate, "rebind").unwrap();
+        }
+        let output = fixture.live.root.path().join("gated-start.json");
+        let first = if stage == "before-write" {
+            let args = serde_json::json!({"project":PROJECT,"workspace":fixture.workspace,"scope":"Read README", "model_provider":"test","model":"fixture-model","acceptance_evidence":["citation"]});
+            assert_eq!(
+                fixture.live.request(Request::SendTerminal {
+                    session: fixture.parent,
+                    text: format!(
+                        "tool:{}",
+                        serde_json::json!({"name":"ovrcr_start","args":args,"output":output})
+                    ),
+                    submit: true
+                }),
+                Response::Ok
+            );
+            wait_file(&fixture.live.root.path().join("fault.hit"));
+            serde_json::Value::Null
+        } else {
+            fixture.start()
+        };
+        let DelegationRequest::Prepare { contract, .. } =
+            fixture.proxy.original(DispatchOperation::Prepare)
+        else {
+            unreachable!()
+        };
+        let handle = contract.request;
+        if stage != "before-first" {
+            let db =
+                rusqlite::Connection::open(fixture.live.config.join("registry.sqlite3")).unwrap();
+            let metadata: String = db
+                .query_row(
+                    "SELECT metadata FROM delegations WHERE handle=?1",
+                    [&handle],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let record: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+            assert_eq!(
+                record["binding"]["generation"], 1,
+                "target must be frozen before waiting"
+            );
+            if stage == "after-capture" {
+                assert_eq!(first["dispatch"], "Unknown");
+                let saved = fixture.reconcile(&handle);
+                assert_eq!(
+                    saved
+                        .receipts
+                        .iter()
+                        .find(|r| r.operation == DispatchOperation::InitialInput)
+                        .unwrap()
+                        .outcome,
+                    DispatchOutcome::Accepted
+                );
+            }
+            fs::write(&gate, "rebind").unwrap();
+        }
+        wait_file(&gate.with_extension("rebind.done"));
+        let DelegationRequest::SendInitial { identity, .. } =
+            fixture.proxy.original(DispatchOperation::InitialInput)
+        else {
+            unreachable!()
+        };
+        let child = identity.session.unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect)
+            else {
+                panic!("inventory")
+            };
+            let binding = sessions
+                .iter()
+                .find(|s| s.id == child)
+                .unwrap()
+                .agent
+                .as_ref()
+                .unwrap()
+                .binding
+                .clone();
+            if binding.generation == 3 {
+                assert!(binding.conversation.starts_with("fixture-"));
+                break;
+            }
+            assert!(Instant::now() < deadline, "child A→B→A not observed");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let rejected = if stage == "before-write" {
+            fs::write(&release, "release").unwrap();
+            wait_file(&output);
+            serde_json::from_slice::<serde_json::Value>(&fs::read(&output).unwrap()).unwrap()["details"].clone()
+        } else if stage == "after-capture" {
+            fixture.recover(&handle)
+        } else {
+            first
+        };
+        assert_eq!(rejected["dispatch"], "Refused", "{stage}: {rejected}");
+        let current = fixture.reconcile(&handle);
+        assert_eq!(
+            current
+                .receipts
+                .iter()
+                .find(|r| r.operation == DispatchOperation::InitialInput)
+                .unwrap()
+                .outcome,
+            DispatchOutcome::Rejected
+        );
+        assert_eq!(fixture.input_count(&current), 0);
+        assert_eq!(fixture.byte_count(&current), 0);
+    }
+}
+
+impl Drop for RecoveryFixture {
+    fn drop(&mut self) {
+        for group in self.live.session_groups() {
+            self.live.own_group(group);
+        }
+    }
+}
+
+#[test]
+fn public_dispatch_recovers_lost_requests_and_replies_without_duplicate_effects() {
+    for operation in ["Prepare", "Launch", "InitialInput"] {
+        for loss in [0, 1] {
+            let fixture = RecoveryFixture::new();
+            fixture.proxy.arm(ControlRule {
+                operation,
+                loss,
+                fault: None,
+            });
+            let first = fixture.start();
+            assert_eq!(first["dispatch"], "Unknown", "{operation}/{loss}: {first}");
+            assert!(
+                first.get("receipts").is_none(),
+                "a lost reply must not fabricate Server receipts"
+            );
+            let handle = first["handle"].as_str().unwrap();
+            let recovered = fixture.recover(handle);
+            assert_eq!(
+                recovered["dispatch"], "Applied",
+                "{operation}/{loss}: {recovered}"
+            );
+            let recovered: AssignmentSnapshot = serde_json::from_value(recovered).unwrap();
+            wait_file(&recovered.brief.with_extension("json.started"));
+            assert_eq!(fixture.input_count(&recovered), 1);
+            assert_eq!(fixture.child_count(), 1);
+            assert!(
+                recovered
+                    .receipts
+                    .iter()
+                    .all(|r| r.outcome == DispatchOutcome::Applied)
+            );
+            // Replay the exact original pre-allocation Launch and input directly.
+            for kind in [DispatchOperation::Launch, DispatchOperation::InitialInput] {
+                let same = fixture.control(fixture.proxy.original(kind));
+                assert_eq!(same.identity, recovered.identity);
+            }
+            assert_eq!(fixture.input_count(&recovered), 1);
+            assert_eq!(fixture.child_count(), 1);
+            let mut conflicting = fixture.proxy.original(DispatchOperation::Prepare);
+            let DelegationRequest::Prepare { contract, .. } = &mut conflicting else {
+                unreachable!()
+            };
+            contract.scope.push_str(" changed");
+            assert!(matches!(
+                fixture
+                    .live
+                    .request(Request::Delegation(Box::new(conflicting))),
+                Response::Error {
+                    code: ErrorCode::Conflict,
+                    ..
+                }
+            ));
+        }
+    }
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+#[test]
+fn public_dispatch_partial_and_uncertain_input_is_never_replayed() {
+    for (point, limit, expected) in [
+        ("input", 0, DispatchOutcome::Rejected),
+        ("input", 7, DispatchOutcome::Partial),
+        ("input", usize::MAX, DispatchOutcome::Unknown),
+        ("input-after-effect", 0, DispatchOutcome::Unknown),
+    ] {
+        eprintln!("input failure case {point}/{limit}");
+        let fixture = RecoveryFixture::new();
+        // usize::MAX injects an unconfirmed flush after all real bytes are written.
+        fixture.proxy.arm(ControlRule {
+            operation: "InitialInput",
+            loss: 2,
+            fault: Some((point, limit)),
+        });
+        let first = fixture.start();
+        let handle = first["handle"].as_str().unwrap();
+        let snapshot = fixture.reconcile(handle);
+        let input = snapshot
+            .receipts
+            .iter()
+            .find(|r| r.operation == DispatchOperation::InitialInput)
+            .unwrap();
+        assert_eq!(input.outcome, expected, "{point}/{limit}: {first}");
+        if limit == usize::MAX || point == "input-after-effect" {
+            wait_file(&snapshot.brief.with_extension("json.started"));
+            assert_eq!(fixture.input_count(&snapshot), 1);
+        }
+        if limit == 7 {
+            assert_eq!(input.input.as_ref().unwrap().written_bytes, 7);
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while fixture.byte_count(&snapshot) < 7 {
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert_eq!(fixture.byte_count(&snapshot), 7);
+            assert_eq!(fixture.input_count(&snapshot), 0);
+        }
+        let before = fixture.byte_count(&snapshot);
+        let _ = fixture.recover(handle);
+        let same = fixture.control(fixture.proxy.original(DispatchOperation::InitialInput));
+        assert_eq!(same.receipts, snapshot.receipts);
+        assert_eq!(fixture.byte_count(&snapshot), before);
+        assert_eq!(fixture.child_count(), 1);
+    }
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+#[test]
+fn public_dispatch_reconciles_publication_and_launch_failure_boundaries() {
+    for point in [
+        "prepare-before-file",
+        "prepare-after-file",
+        "launch-before-effect",
+        "launch-after-effect",
+    ] {
+        let fixture = RecoveryFixture::new();
+        let prepare = point.starts_with("prepare");
+        fixture.proxy.arm(ControlRule {
+            operation: if prepare { "Prepare" } else { "Launch" },
+            loss: 1,
+            fault: Some((point, 0)),
+        });
+        let first = fixture.start();
+        assert_eq!(first["dispatch"], "Unknown");
+        let handle = first["handle"].as_str().unwrap();
+        let durable = fixture.reconcile(handle);
+        let operation = if prepare {
+            DispatchOperation::Prepare
+        } else {
+            DispatchOperation::Launch
+        };
+        assert_eq!(
+            durable
+                .receipts
+                .iter()
+                .find(|r| r.operation == operation)
+                .unwrap()
+                .outcome,
+            DispatchOutcome::Unknown
+        );
+        assert_eq!(
+            fixture.child_count(),
+            usize::from(point == "launch-after-effect")
+        );
+        let recovered = fixture.recover(handle);
+        if prepare {
+            assert_eq!(recovered["dispatch"], "Applied", "{point}: {recovered}");
+            let recovered: AssignmentSnapshot = serde_json::from_value(recovered).unwrap();
+            wait_file(&recovered.brief.with_extension("json.started"));
+            assert_eq!(fixture.input_count(&recovered), 1);
+        } else {
+            assert_eq!(recovered["dispatch"], "LaunchUnknown");
+            let same = fixture.control(fixture.proxy.original(DispatchOperation::Launch));
+            assert_eq!(same.identity, durable.identity);
+            assert_eq!(same.receipts, durable.receipts);
+            assert_eq!(fixture.input_count(&same), 0);
+            assert_eq!(
+                same.resources.current_session.is_some(),
+                point == "launch-after-effect"
+            );
+        }
+        assert_eq!(
+            fixture.child_count(),
+            usize::from(prepare || point == "launch-after-effect")
+        );
+    }
+}
+
+#[test]
+fn public_dispatch_recovery_preserves_receipts_when_result_is_corrupt_and_run_replaced() {
+    let fixture = RecoveryFixture::new();
+    let started: AssignmentSnapshot = serde_json::from_value(fixture.start()).unwrap();
+    wait_file(&started.brief.with_extension("json.started"));
+    fs::write(fixture.live.root.path().join("allow-result"), "continue").unwrap();
+    wait_file(&started.brief.with_extension("json.published"));
+    let valid = fixture.tool(
+        "ovrcr_collect",
+        serde_json::json!({"handle":started.handle}),
+    );
+    assert!(valid["submission"].is_object());
+    fs::write(&started.result_path, b"{malformed").unwrap();
+    let recovered: AssignmentSnapshot =
+        serde_json::from_value(fixture.recover(&started.handle)).unwrap();
+    assert_eq!(recovered.receipts, started.receipts);
+    assert_eq!(
+        recovered.resources.current_session.as_ref().unwrap().run,
+        started.identity.run.unwrap()
+    );
+    let strict = tool_reply(
+        &fixture.live,
+        fixture.parent,
+        "ovrcr_collect",
+        serde_json::json!({"handle":started.handle}),
+        &fixture.live.root.path().join("corrupt-collect.json"),
+    );
+    assert!(
+        strict["error"]
+            .as_str()
+            .unwrap()
+            .contains("changed or is partial")
+    );
+    let child = started.identity.session.unwrap();
+    assert_eq!(
+        fixture
+            .live
+            .request(Request::KillSession { session: child }),
+        Response::Ok
+    );
+    let reopened = fixture.live.request(Request::ReopenSession {
+        session: child,
+        expected_run: started.identity.run.unwrap(),
+        acknowledge_stopped: false,
+    });
+    assert!(
+        matches!(reopened, Response::CreatedSession(_)),
+        "{reopened:?}"
+    );
+    let current = fixture.reconcile(&started.handle);
+    assert_eq!(current.identity, started.identity);
+    assert_ne!(
+        current.resources.current_session.as_ref().unwrap().run,
+        started.identity.run.unwrap()
+    );
+    assert_eq!(current.receipts, started.receipts);
+    assert!(matches!(
+        fixture.live.request(Request::Delegation(Box::new(
+            fixture.proxy.original(DispatchOperation::InitialInput)
+        ))),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn public_dispatch_preprocess_refusal_preserves_workspace_and_rejects_conflicting_identity() {
+    let fixture = RecoveryFixture::new();
+    fixture.proxy.arm(ControlRule {
+        operation: "Launch",
+        loss: 0,
+        fault: None,
+    });
+    let first = fixture.start();
+    let handle = first["handle"].as_str().unwrap();
+    let row = cli_json(
+        &fixture.live,
+        &[
+            "workspace",
+            "get",
+            "--project",
+            PROJECT,
+            "--branch",
+            "recovery",
+        ],
+    );
+    let workspace = std::path::PathBuf::from(row["path"].as_str().unwrap());
+    let absent = workspace.with_extension("temporarily-unavailable");
+    fs::rename(&workspace, &absent).unwrap();
+    let refused = fixture.recover(handle);
+    fs::rename(&absent, &workspace).unwrap();
+    assert_eq!(refused["dispatch"], "Refused", "{refused}");
+    let snapshot = fixture.reconcile(handle);
+    assert!(snapshot.identity.session.is_none());
+    assert!(snapshot.resources.workspace_present);
+    assert_eq!(
+        snapshot.resources.workspace.as_deref(),
+        Some(fixture.workspace.as_str())
+    );
+    assert_eq!(
+        snapshot
+            .receipts
+            .iter()
+            .find(|r| r.operation == DispatchOperation::Launch)
+            .unwrap()
+            .outcome,
+        DispatchOutcome::Rejected
+    );
+    let mut wrong = fixture.proxy.original(DispatchOperation::Launch);
+    let DelegationRequest::Launch { identity, .. } = &mut wrong else {
+        unreachable!()
+    };
+    identity.controller_epoch += 1;
+    assert!(matches!(
+        fixture.live.request(Request::Delegation(Box::new(wrong))),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+    let _ = fixture.control(fixture.proxy.original(DispatchOperation::Launch));
+    assert_eq!(fixture.child_count(), 0);
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+#[test]
+fn public_dispatch_storage_exhaustion_preserves_unresolved_obligations() {
+    let fixture = RecoveryFixture::new();
+    fixture.proxy.arm(ControlRule {
+        operation: "Launch",
+        loss: 2,
+        fault: Some(("launch-before-effect", 0)),
+    });
+    let original = fixture.start();
+    let handle = original["handle"].as_str().unwrap();
+    let unresolved = fixture.reconcile(handle);
+    let mut db = rusqlite::Connection::open(fixture.live.config.join("registry.sqlite3")).unwrap();
+    let metadata: String = db
+        .query_row(
+            "SELECT metadata FROM delegations WHERE handle=?1",
+            [handle],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        !metadata.contains("Read README"),
+        "registry must contain correlation, not scope payload"
+    );
+    let transaction = db.transaction().unwrap();
+    for index in 1..4096 {
+        let mut value: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+        let id = format!("capacity-{index}");
+        value["handle"] = id.clone().into();
+        value["identity"]["request"] = id.clone().into();
+        transaction
+            .execute(
+                "INSERT INTO delegations(handle,workflow,session,metadata) VALUES(?1,?2,NULL,?3)",
+                rusqlite::params![
+                    id,
+                    value["identity"]["workflow"].as_str().unwrap(),
+                    value.to_string()
+                ],
+            )
+            .unwrap();
+    }
+    transaction.commit().unwrap();
+    let refused = fixture.start();
+    assert_eq!(refused["dispatch"], "Refused", "{refused}");
+    assert!(refused["reason"].as_str().unwrap().contains("4096"));
+    assert!(
+        !fixture
+            .live
+            .config
+            .join("workflows")
+            .join(refused["handle"].as_str().unwrap())
+            .exists()
+    );
+    assert_eq!(fixture.child_count(), 0);
+    let recovered = fixture.reconcile(handle);
+    assert_eq!(recovered.receipts, unresolved.receipts);
+    assert_eq!(recovered.identity, unresolved.identity);
+    let count: i64 = db
+        .query_row("SELECT count(*) FROM delegations", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(count, 4096);
+}
+
+#[test]
+fn public_dispatch_root_drift_after_allocation_is_rejected_without_replay() {
+    let fixture = RecoveryFixture::new();
+    let root = cli_json(
+        &fixture.live,
+        &[
+            "workspace",
+            "get",
+            "--project",
+            PROJECT,
+            "--path",
+            fixture.live.repo.to_str().unwrap(),
+        ],
+    );
+    let root_id = root["id"].as_str().unwrap();
+    live::git(
+        &fixture.live.repo,
+        &["switch", "-c", "feature/dispatch-root-drift"],
+    );
+    let started = fixture.tool(
+        "ovrcr_start",
+        serde_json::json!({
+            "project": PROJECT, "workspace": root_id, "scope": "Read README",
+            "model_provider": "test", "model": "fixture-model", "acceptance_evidence": ["citation"],
+        }),
+    );
+    let snapshot = fixture.reconcile(started["handle"].as_str().unwrap());
+    assert!(
+        snapshot.identity.session.is_some(),
+        "the failure must occur after allocation"
+    );
+    assert_eq!(snapshot.identity.run, Some(SessionRunId(1)));
+    assert!(
+        snapshot.resources.current_session.is_none(),
+        "the unstarted row is removed"
+    );
+    assert!(snapshot.resources.workspace_present);
+    assert_eq!(snapshot.resources.workspace.as_deref(), Some(root_id));
+    assert_eq!(fixture.child_count(), 0);
+    assert_eq!(started["dispatch"], "Refused", "{started}");
+    let receipt = snapshot
+        .receipts
+        .iter()
+        .find(|r| r.operation == DispatchOperation::Launch)
+        .unwrap();
+    assert_eq!(receipt.outcome, DispatchOutcome::Rejected);
+    let allocated = snapshot.identity.session.unwrap();
+    let db = rusqlite::Connection::open(fixture.live.config.join("registry.sqlite3")).unwrap();
+    let rows: i64 = db
+        .query_row(
+            "SELECT count(*) FROM retained_sessions WHERE id=?1",
+            [allocated.0 as i64],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(rows, 0);
+
+    live::git(&fixture.live.repo, &["switch", "main"]);
+    for _ in 0..2 {
+        let recovered: AssignmentSnapshot =
+            serde_json::from_value(fixture.recover(&snapshot.handle)).unwrap();
+        assert_eq!(recovered.dispatch, DispatchStatus::Refused);
+        assert_eq!(recovered.identity, snapshot.identity);
+        assert_eq!(recovered.receipts, snapshot.receipts);
+        assert_eq!(recovered.resources, snapshot.resources);
+        let repeated = fixture.control(fixture.proxy.original(DispatchOperation::Launch));
+        assert_eq!(repeated.identity, snapshot.identity);
+        assert_eq!(repeated.receipts, snapshot.receipts);
+        assert_eq!(
+            fixture.child_count(),
+            0,
+            "restoring the root must not replay the rejected operation"
+        );
+    }
+}
+
+#[test]
+fn public_dispatch_retired_parent_a_to_b_to_a_cannot_replay_control() {
+    let fixture = RecoveryFixture::new();
+    let initial: AssignmentSnapshot = serde_json::from_value(fixture.start()).unwrap();
+    let inventory = || {
+        let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect) else {
+            panic!("inventory")
+        };
+        sessions
+            .into_iter()
+            .find(|s| s.id == fixture.parent)
+            .unwrap()
+            .agent
+            .unwrap()
+            .binding
+    };
+    let original = inventory();
+    for conversation in ["replacement-B", original.conversation.as_str()] {
+        assert_eq!(
+            fixture.live.request(Request::SendTerminal {
+                session: fixture.parent,
+                text: format!("session_start:{conversation}:new"),
+                submit: true
+            }),
+            Response::Ok
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let binding = inventory();
+            if binding.conversation == conversation && binding.generation > original.generation {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "replacement binding not observed"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    assert_ne!(inventory().generation, original.generation);
+    let retired = fixture.recover(&initial.handle);
+    assert_eq!(retired["dispatch"], "Refused", "{retired}");
+    assert!(
+        retired["reason"]
+            .as_str()
+            .unwrap()
+            .contains("controller changed")
+    );
+    assert_eq!(fixture.input_count(&initial), 1);
+    assert_eq!(fixture.child_count(), 1);
+}

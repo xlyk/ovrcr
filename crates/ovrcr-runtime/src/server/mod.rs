@@ -839,25 +839,33 @@ impl ServerState {
             application_title: None,
         })?;
         if let Some(handle) = assignment {
-            self.bind_assignment(handle, &record)?;
+            self.bind_assignment(handle, &record)
+                .map_err(crate::session::NoProcessStarted::context)?;
         }
-        let result = self.spawn_record_locked(record.id, record.run, request.argv, ready, None);
-        if let Err(error) = &result {
-            let removed = {
-                let mut retained = self.retained.lock();
-                let current = retained.get(record.id).map(|record| record.run);
-                match current {
-                    Some(run) if run.0 == 0 || error.is::<crate::session::NoProcessStarted>() => {
-                        retained.remove(record.id, run)?
-                    }
-                    _ => false,
+        let error = match self.spawn_record_locked(record.id, record.run, request.argv, ready, None)
+        {
+            Ok(summary) => return Ok(summary),
+            Err(error) => error,
+        };
+        let cleanup = {
+            let mut retained = self.retained.lock();
+            let current = retained.get(record.id).map(|record| record.run);
+            match current {
+                Some(run) if run.0 == 0 || error.is::<crate::session::NoProcessStarted>() => {
+                    retained.remove(record.id, run)
                 }
-            };
-            if removed {
-                self.dashboard.forget_session(record.id);
+                _ => Ok(false),
             }
+        };
+        match cleanup {
+            Ok(removed) => {
+                if removed {
+                    self.dashboard.forget_session(record.id);
+                }
+                Err(error)
+            }
+            Err(cleanup) => Err(error.context(format!("session cleanup failed: {cleanup:#}"))),
         }
-        result
     }
 
     fn check_live_capacity(&self) -> Result<()> {
@@ -887,31 +895,37 @@ impl ServerState {
         ready: Option<Arc<dyn Fn() + Send + Sync>>,
         restore_command: Option<String>,
     ) -> Result<SessionSummary> {
-        self.check_live_capacity()?;
-        let cwd = self
-            .retained
-            .lock()
-            .get(id)
-            .map(|record| record.metadata.cwd.clone());
-        if let Some(cwd) = cwd {
-            self.refuse_root_launch(&cwd)?;
-        }
-        let socket = validate_bound_socket(&self.socket)?;
-        let capability = generate_hook_capability()?;
-        let events = self
-            .events
-            .lock()
-            .unwrap()
-            .as_ref()
-            .context("server event channel closed")?
-            .clone();
-        let record = self.retained.lock().begin_run(id, expected_run)?;
-        if let Some(old) = self.sessions.lock().unwrap().remove(&id) {
-            old.revoke_hook_capability();
-        }
-        self.dashboard.forget_session(id);
+        // Every failure in this preparation is provably before native spawn.
+        // Keep that proof across allocation; later row/process absence proves nothing.
+        let (record, socket, capability, events, assigned_input) = (|| -> Result<_> {
+            self.check_live_capacity()?;
+            let cwd = self
+                .retained
+                .lock()
+                .get(id)
+                .map(|record| record.metadata.cwd.clone());
+            if let Some(cwd) = cwd {
+                self.refuse_root_launch(&cwd)?;
+            }
+            let socket = validate_bound_socket(&self.socket)?;
+            let capability = generate_hook_capability()?;
+            let events = self
+                .events
+                .lock()
+                .unwrap()
+                .as_ref()
+                .context("server event channel closed")?
+                .clone();
+            let record = self.retained.lock().begin_run(id, expected_run)?;
+            if let Some(old) = self.sessions.lock().unwrap().remove(&id) {
+                old.revoke_hook_capability();
+            }
+            self.dashboard.forget_session(id);
+            let assigned_input = self.retained.lock().assigned(id)?;
+            Ok((record, socket, capability, events, assigned_input))
+        })()
+        .map_err(crate::session::NoProcessStarted::context)?;
         let metadata = &record.metadata;
-        let assigned_input = self.retained.lock().assigned(id)?;
         let spec = SessionSpec {
             restore_command,
             run: record.run,
@@ -981,7 +995,7 @@ impl ServerState {
                 true,
             );
             return Err(if no_process {
-                failure.context(crate::session::NoProcessStarted)
+                crate::session::NoProcessStarted::context(failure)
             } else {
                 failure
             });

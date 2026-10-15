@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, chmodSync, symlinkSync, appendFileSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHost } from "./fixtures/pi/pi_host.mjs";
@@ -27,4 +28,87 @@ test("managed Pi exposes research assignment and explicit collection tools", asy
     process.env = before;
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+for (const loss of ["before", "after"]) test(`original intent recovers a lost Prepare ${loss} persistence`, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ovrcr-original-intent-"));
+  const before = { ...process.env };
+  try {
+    const binary = join(dir, "control.mjs");
+    const state = join(dir, "state.json");
+    const calls = join(dir, "calls");
+    writeFileSync(binary, `#!/usr/bin/env node
+import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'node:fs';
+let input = ''; for await (const bytes of process.stdin) input += bytes;
+const request = JSON.parse(input); const operation = Object.keys(request)[0];
+appendFileSync(${JSON.stringify(calls)}, operation + '\\n');
+let value = existsSync(${JSON.stringify(state)}) ? JSON.parse(readFileSync(${JSON.stringify(state)})) : null;
+if (operation === 'Prepare') {
+  const contract = request.Prepare.contract;
+  value ??= { handle: contract.request, identity: {instance:'i',workflow:contract.workflow,controller:contract.controller,controller_epoch:1,task:contract.task,attempt:1,contract:1,request:contract.request,session:null,run:null}, dispatch:'Prepared', receipts:[] };
+  if (!existsSync(${JSON.stringify(join(dir, "lost"))})) {
+    writeFileSync(${JSON.stringify(join(dir, "lost"))}, 'lost');
+    if (${JSON.stringify(loss)} === 'after') writeFileSync(${JSON.stringify(state)}, JSON.stringify(value));
+    process.exit(1);
+  }
+  value.receipts = [{operation:'Prepare',outcome:'Applied'}];
+} else if (!value) { console.error(JSON.stringify({error:{code:'NotFound',message:'assignment not found'}})); process.exit(1); }
+if (operation === 'Launch') { value.identity.session = 41; value.identity.run = 1; value.dispatch = 'Launched'; value.receipts.push({operation:'Launch',outcome:'Applied'}); }
+if (operation === 'SendInitial') { value.dispatch = 'Applied'; value.receipts.push({operation:'InitialInput',outcome:'Applied'}); }
+writeFileSync(${JSON.stringify(state)}, JSON.stringify(value)); console.log(JSON.stringify(value));
+`);
+    chmodSync(binary, 0o700);
+    process.env.OVRCR_AGENT_SOCKET = "/fixture/reporting";
+    process.env.OVRCR_AGENT_TOKEN = "fixture-reporting";
+    process.env.OVRCR_DELEGATION_SESSION = "1";
+    process.env.OVRCR_DELEGATION_TOKEN = "fixture-delegation";
+    process.env.OVRCR_DELEGATION_SOCKET = "/fixture/control";
+    process.env.OVRCR_DELEGATION_HOME = dir;
+    const source = readFileSync(process.env.OVRCR_TEST_EXTENSION_SOURCE ?? new URL("../src/pi-reporting-extension.mjs", import.meta.url), "utf8").replace("__OVRCR_BINARY__", JSON.stringify(binary));
+    writeFileSync(join(dir, "reporting.mjs"), source);
+    writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(new URL("../src/ovrcr-reporting-transport.mjs", import.meta.url)));
+    const host = await createHost(join(dir, "reporting.mjs"));
+    const first = (await host.tool("ovrcr_start", {project:"p",workspace:"w",scope:"Read",model_provider:"test",model:"fixture-model",acceptance_evidence:["citation"]})).details;
+    assert.equal(first.dispatch, "Unknown");
+    assert.equal(first.receipts, undefined, "transport failure must not fabricate Server receipts");
+    const recovered = (await host.tool("ovrcr_start", {handle:first.handle})).details;
+    assert.equal(recovered.dispatch, "Applied");
+    assert.equal(recovered.identity.session, 41);
+    const operations = readFileSync(calls, "utf8").trim().split("\n");
+    assert.equal(operations.filter(v => v === "Launch").length, 1);
+    assert.equal(operations.filter(v => v === "SendInitial").length, 1);
+    // A symlinked original intent cannot acquire authority from its contents.
+    const bad = (await host.tool("ovrcr_start", {handle:"../escape"})).details;
+    assert.equal(bad.dispatch, "Refused");
+    const intent = join(dir,"parent-intents",`${first.handle}.json`);
+    const originalBytes = readFileSync(intent);
+    rmSync(intent);
+    symlinkSync(state,intent);
+    const unsafe = (await host.tool("ovrcr_start", {handle:first.handle})).details;
+    assert.equal(unsafe.dispatch,"Refused");
+    assert.equal(readFileSync(calls,"utf8").trim().split("\n").length,operations.length,"unsafe intent must not contact the Server");
+    rmSync(intent);
+    writeFileSync(intent,originalBytes,{mode:0o600});
+    const probe = await open(intent,"r");
+    const prototype = Object.getPrototypeOf(probe);
+    await probe.close();
+    const stat = prototype.stat, read = prototype.read, readFile = prototype.readFile;
+    let grew = false, readBytes = 0;
+    try {
+      prototype.stat = async function(...args) {
+        const value = await stat.apply(this,args);
+        if (!grew && value.isFile() && value.size === originalBytes.length) {
+          grew = true;
+          appendFileSync(intent,Buffer.alloc(524288,32));
+        }
+        return value;
+      };
+      prototype.read = async function(...args) { const result=await read.apply(this,args); readBytes+=result.bytesRead; return result; };
+      prototype.readFile = async function(...args) { const result=await readFile.apply(this,args); readBytes+=result.length; return result; };
+      const growing = (await host.tool("ovrcr_start",{handle:first.handle})).details;
+      assert.equal(growing.dispatch,"Refused");
+      assert.ok(grew);
+      assert.equal(readBytes,262145,"a file growing after stat must not escape the actual read budget");
+    } finally { prototype.stat=stat; prototype.read=read; prototype.readFile=readFile; }
+  } finally { process.env = before; rmSync(dir, {recursive:true,force:true}); }
 });

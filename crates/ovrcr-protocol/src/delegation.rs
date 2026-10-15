@@ -1,5 +1,5 @@
 //! The first delegation slice: one read-only Pi assignment and explicit collection.
-use crate::{AgentActivity, SessionId, SessionRunId};
+use crate::{AgentActivity, SessionId, SessionPhase, SessionRunId};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -118,6 +118,56 @@ pub enum DispatchStatus {
     Refused,
 }
 
+/// Delivery of one operation, never provider completion or parent acceptance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DispatchOperation {
+    Prepare,
+    Launch,
+    InitialInput,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DispatchOutcome {
+    Accepted,
+    Applied,
+    Rejected,
+    Partial,
+    Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InputDelivery {
+    pub written_bytes: u64,
+    pub total_bytes: u64,
+    pub submit_written: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DispatchReceipt {
+    pub request: String,
+    pub operation: DispatchOperation,
+    pub identity: AssignmentIdentity,
+    pub outcome: DispatchOutcome,
+    pub input: Option<InputDelivery>,
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CurrentAssignmentSession {
+    pub session: SessionId,
+    pub run: SessionRunId,
+    pub phase: SessionPhase,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssignmentResources {
+    pub project: Option<String>,
+    pub workspace: Option<String>,
+    pub workspace_present: bool,
+    /// May identify a replacement run; compare it with the allocated identity.
+    pub current_session: Option<CurrentAssignmentSession>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchSubmission {
@@ -174,6 +224,8 @@ pub struct AssignmentSnapshot {
     pub submission: Option<ResearchSubmission>,
     /// A child submission never changes parent acceptance. This slice only collects.
     pub acceptance: String,
+    pub receipts: Vec<DispatchReceipt>,
+    pub resources: AssignmentResources,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -185,6 +237,7 @@ pub enum DelegationRequest {
     Launch {
         auth: DelegationAuth,
         handle: String,
+        identity: AssignmentIdentity,
     },
     SendInitial {
         auth: DelegationAuth,
@@ -194,6 +247,10 @@ pub enum DelegationRequest {
     Inspect {
         auth: DelegationAuth,
         handle: String,
+    },
+    Reconcile {
+        auth: DelegationAuth,
+        request: String,
     },
     Collect {
         auth: DelegationAuth,
