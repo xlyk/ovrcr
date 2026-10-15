@@ -290,6 +290,25 @@ impl Loader<'_> {
             }
             self.unknown(quota, "quota.");
         }
+        if let Some(mut delegation) = self.take::<toml::Table>(table, "delegation") {
+            if let Some(value) =
+                self.take::<u64>(&mut delegation, "delegation.progress_deadline_ms")
+            {
+                if (1..=86_400_000).contains(&value) {
+                    self.accept(
+                        "delegation.progress_deadline_ms",
+                        &mut settings.delegation.progress_deadline_ms,
+                        value,
+                    );
+                } else {
+                    self.finding(
+                        "delegation.progress_deadline_ms",
+                        "expected an integer from 1 to 86400000".into(),
+                    );
+                }
+            }
+            self.unknown(delegation, "delegation.");
+        }
         self.unknown(std::mem::take(table), "");
     }
 
@@ -762,7 +781,28 @@ command = "/opt/grok"
 [quota.cursor]
 dashboard = true
 state_db = "/tmp/cursor/state.vscdb"
+
+[delegation]
+progress_deadline_ms = 12345
 "#;
+
+    #[test]
+    fn progress_deadline_accepts_only_bounded_positive_milliseconds() {
+        for value in [1, 86_400_000] {
+            let report = read(&format!("[delegation]\nprogress_deadline_ms = {value}\n"));
+            assert!(report.findings.is_empty());
+            assert_eq!(report.settings.delegation.progress_deadline_ms, value);
+        }
+        for value in ["0", "86400001", "-1", "\"soon\""] {
+            let report = read(&format!("[delegation]\nprogress_deadline_ms = {value}\n"));
+            assert_eq!(report.findings.len(), 1);
+            assert_eq!(
+                report.findings[0].key.as_deref(),
+                Some("delegation.progress_deadline_ms")
+            );
+            assert_eq!(report.settings.delegation.progress_deadline_ms, 300000);
+        }
+    }
 
     #[test]
     fn save_uncommitted_work_defaults_off() {
@@ -816,6 +856,7 @@ state_db = "/tmp/cursor/state.vscdb"
         );
         assert_eq!(settings.quota.grok.command, PathBuf::from("/opt/grok"));
         assert_eq!(settings.quota.grok.home, None);
+        assert_eq!(settings.delegation.progress_deadline_ms, 12345);
         for row in &report.rows {
             let expected = if row.key == "quota.grok.home" {
                 SettingSource::Default
@@ -918,6 +959,7 @@ state_db = "/tmp/cursor/state.vscdb"
                 "quota.cursor.state_db",
                 "agents",
                 "launch_choices",
+                "delegation.progress_deadline_ms",
             ]
         );
     }

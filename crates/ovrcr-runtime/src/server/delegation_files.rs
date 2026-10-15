@@ -88,7 +88,18 @@ impl Directory {
         }
         Ok(bytes)
     }
+    pub(super) fn sync(&self) -> Result<()> {
+        self.0.sync_all()?;
+        Ok(())
+    }
+    /// Parent observation checkpoints have one authenticated Server-side writer.
+    pub(super) fn replace(&self, name: &str, bytes: &[u8]) -> Result<()> {
+        self.write(name, bytes, true)
+    }
     pub(super) fn publish(&self, name: &str, bytes: &[u8]) -> Result<()> {
+        self.write(name, bytes, false)
+    }
+    fn write(&self, name: &str, bytes: &[u8], replace: bool) -> Result<()> {
         if bytes.len() > 512 * 1024 {
             bail!("publication exceeds write bound");
         }
@@ -109,17 +120,28 @@ impl Directory {
         let result = (|| -> Result<()> {
             file.write_all(bytes)?;
             file.sync_all()?;
-            // linkat refuses replacement, unlike rename; discovery sees complete bytes only.
-            if unsafe {
-                libc::linkat(
-                    self.0.as_raw_fd(),
-                    temporary.as_ptr(),
-                    self.0.as_raw_fd(),
-                    name.as_ptr(),
-                    0,
-                )
-            } != 0
-            {
+            // Both operations expose complete bytes; child publications refuse replacement.
+            let result = if replace {
+                unsafe {
+                    libc::renameat(
+                        self.0.as_raw_fd(),
+                        temporary.as_ptr(),
+                        self.0.as_raw_fd(),
+                        name.as_ptr(),
+                    )
+                }
+            } else {
+                unsafe {
+                    libc::linkat(
+                        self.0.as_raw_fd(),
+                        temporary.as_ptr(),
+                        self.0.as_raw_fd(),
+                        name.as_ptr(),
+                        0,
+                    )
+                }
+            };
+            if result != 0 {
                 return Err(std::io::Error::last_os_error().into());
             }
             self.0.sync_all()?;

@@ -1653,3 +1653,6 @@ fn public_dispatch_retired_parent_a_to_b_to_a_cannot_replay_control() {
     assert_eq!(fixture.input_count(&initial), 1);
     assert_eq!(fixture.child_count(), 1);
 }
+
+#[path = "pi_delegation/observation.rs"]
+mod observation;

@@ -455,6 +455,7 @@ pub enum Response {
     ITermFocusPrepared(Option<crate::BridgeActivationTarget>),
     BridgeOwner(crate::BridgeOwnerResult),
     Delegation(Box<crate::AssignmentSnapshot>),
+    DelegationObservation(Box<crate::DelegationObservationBatch>),
 }
 
 /// Which create/remove/close a Lifecycle job performed.
@@ -1593,9 +1594,34 @@ mod wire_snapshot {
             (
                 "Publish",
                 crate::DelegationRequest::Publish {
-                    auth,
+                    auth: auth.clone(),
                     handle: "r".into(),
                     submission: submission.clone(),
+                },
+            ),
+            (
+                "Observe",
+                crate::DelegationRequest::Observe {
+                    auth: auth.clone(),
+                    handles: vec!["r".into()],
+                    after: Some(crate::ObservationCursor {
+                        server_epoch: "epoch".into(),
+                        sequence: 3,
+                    }),
+                    wait_ms: 1000,
+                },
+            ),
+            (
+                "MarkHandled",
+                crate::DelegationRequest::MarkHandled {
+                    auth,
+                    handle: "r".into(),
+                    publication: crate::PublicationIdentity {
+                        assignment: identity.clone(),
+                        kind: crate::PublicationKind::Submission,
+                        version: 1,
+                        digest: "digest".into(),
+                    },
                 },
             ),
         ] {
@@ -1608,7 +1634,7 @@ mod wire_snapshot {
             "Response::Delegation".into(),
             encode(&Response::Delegation(Box::new(crate::AssignmentSnapshot {
                 handle: "r".into(),
-                identity,
+                identity: identity.clone(),
                 dispatch: crate::DispatchStatus::Applied,
                 reason: None,
                 activity: AgentActivity::ResponseReady,
@@ -1631,6 +1657,43 @@ mod wire_snapshot {
                     current_session: None,
                 },
             }))),
+        ));
+        all.push((
+            "Response::DelegationObservation".into(),
+            encode(&Response::DelegationObservation(Box::new(
+                crate::DelegationObservationBatch {
+                    cursor: crate::ObservationCursor {
+                        server_epoch: "epoch".into(),
+                        sequence: 3,
+                    },
+                    status: crate::ObservationStatus::ReconcileRequired,
+                    progress_deadline_ms: 300000,
+                    observations: vec![crate::DelegationObservation {
+                        handle: "r".into(),
+                        identity: identity.clone(),
+                        binding: None,
+                        activity: None,
+                        activity_revision: 1,
+                        input_requests: vec![],
+                        input_revision: 2,
+                        health: Some(crate::ReporterHealth::Connected),
+                        current: true,
+                        publication: Some(crate::PublicationState {
+                            identity: crate::PublicationIdentity {
+                                assignment: identity,
+                                kind: crate::PublicationKind::Submission,
+                                version: 1,
+                                digest: "digest".into(),
+                            },
+                            handled: false,
+                        }),
+                        publication_issue: Some(crate::PublicationIssue::Invalid),
+                        last_progress_unix_ms: 100,
+                        stalled: false,
+                        progress_unresolved: true,
+                    }],
+                },
+            ))),
         ));
         all
     }
@@ -1755,7 +1818,7 @@ mod wire_snapshot {
         ),
         (
             "ServerEvent::SettingsChanged",
-            "05072f642e746f6d6c0500000100000002010470692f6d08666561747572652f01022f63010161010162020170010161017100000005636f64657801022f680467726f6b00000000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
+            "05072f642e746f6d6c0500000100000002010470692f6d08666561747572652f01022f63010161010162020170010161017100000005636f64657801022f680467726f6b000000fce093040000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
         ),
         (
             "ServerEvent::Recorded",
@@ -1937,8 +2000,20 @@ mod wire_snapshot {
             "3209010766697874757265017201016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e00",
         ),
         (
+            "Delegation::Observe",
+            "3206010766697874757265010172010565706f636803fbe803",
+        ),
+        (
+            "Delegation::MarkHandled",
+            "320701076669787475726501720169017701630101740101017201020101000106646967657374",
+        ),
+        (
             "Response::Delegation",
             "11017201690177016301017401010172010201010400050104636f6e76062f6272696566072f726573756c740101016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e000770656e64696e6701000000000000010170010277730100",
+        ),
+        (
+            "Response::DelegationObservation",
+            "120565706f63680302fce093040001017201690177016301017401010172010201010000010002010001010169017701630101740101017201020101000106646967657374000102640001",
         ),
     ];
 

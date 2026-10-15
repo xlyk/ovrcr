@@ -30,6 +30,7 @@ function materialize({ hang = false } = {}) {
   chmodSync(helper, 0o700);
   // The receiver materializes the shared transport beside the extension that imports it.
   writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(TRANSPORT, "utf8"));
+  writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
   const extension = join(dir, "ovrcr-pi-reporting.mjs");
   writeFileSync(extension, readFileSync(SOURCE, "utf8").replace("__OVRCR_BINARY__", JSON.stringify(helper)));
   return { extension, record };
@@ -74,7 +75,7 @@ test("one response cycle: start, end, settled carry run, outcome and ordered seq
   const { extension, record } = materialize();
   const host = await createHost(extension, { session: "sess-a" });
   assert.deepEqual(host.registered(), ["agent_end", "agent_settled", "agent_start", "model_select", "session_shutdown", "session_start", "session_tree", "ui_prompt_end", "ui_prompt_start"]);
-  assert.deepEqual(host.commands(), ["ovrcr-reattach"]);
+  assert.deepEqual(host.commands(), ["ovrcr-observe-reconnect", "ovrcr-reattach"]);
   await host.emit({ type: "session_start", reason: "startup" });
   await host.emit({ type: "agent_start" });
   await host.emit({ type: "agent_end", messages: [{ role: "user", content: "secret prompt" }, assistant("stop")] });
