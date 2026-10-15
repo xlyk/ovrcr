@@ -773,78 +773,85 @@ impl ServerState {
         ready: Option<Arc<dyn Fn() + Send + Sync>>,
         assignment: Option<&str>,
     ) -> Result<SessionSummary> {
-        if request.argv.is_empty() {
-            return Err(lifecycle_error(
-                ErrorCode::InvalidRequest,
-                "session command cannot be empty",
-            ));
-        }
-        let workspace_record = self
-            .registry
-            .lock()
-            .unwrap()
-            .workspace(&request.project, &request.workspace)
-            .map_err(|error| lifecycle_error(ErrorCode::NotFound, error.to_string()))?
-            .clone();
-        let cwd = workspace_record.path.clone();
-        if !cwd.is_dir() {
-            return Err(lifecycle_error(
-                ErrorCode::NotFound,
-                "working directory is unavailable",
-            ));
-        }
-        let display =
-            git::checkout_name(&cwd).unwrap_or_else(|_| git::UNAVAILABLE_CHECKOUT.to_owned());
-        let automatic = request.name.is_empty();
-        {
-            let retained = self.retained.lock();
-            let used: std::collections::HashSet<_> = retained
-                .records()
-                .filter(|record| {
-                    record.metadata.project == request.project
-                        && record.metadata.workspace == request.workspace
-                })
-                .map(|record| record.metadata.name.as_str())
-                .collect();
-            if automatic {
-                request.name = display.clone();
-                let mut suffix = 2u64;
-                while used.contains(request.name.as_str()) {
-                    request.name = format!("{display}-{suffix}");
-                    suffix += 1;
-                }
-            } else if used.contains(request.name.as_str()) {
+        // Every error in this preflight precedes the sole native spawn call.
+        let record = (|| -> Result<_> {
+            if request.argv.is_empty() {
                 return Err(lifecycle_error(
-                    ErrorCode::AlreadyExists,
-                    "duplicate session name",
+                    ErrorCode::InvalidRequest,
+                    "session command cannot be empty",
                 ));
             }
-        }
-        let pinned_title = if automatic || matches!(request.kind, SessionKind::Agent { .. }) {
-            None
-        } else {
-            Some(
-                crate::session::sanitize_title(&request.name).ok_or_else(|| {
-                    lifecycle_error(ErrorCode::InvalidRequest, "title must contain visible text")
-                })?,
-            )
-        };
-        self.check_live_capacity()?;
-        let label = default_session_label(&request.kind, request.label, &request.argv);
-        let record = self.retained.lock().create(SessionMetadata {
-            project: request.project,
-            workspace: request.workspace,
-            name: request.name,
-            label,
-            cwd,
-            kind: request.kind,
-            pinned_title,
-            application_title: None,
-        })?;
-        if let Some(handle) = assignment {
-            self.bind_assignment(handle, &record)
-                .map_err(crate::session::NoProcessStarted::context)?;
-        }
+            let workspace_record = self
+                .registry
+                .lock()
+                .unwrap()
+                .workspace(&request.project, &request.workspace)
+                .map_err(|error| lifecycle_error(ErrorCode::NotFound, error.to_string()))?
+                .clone();
+            let cwd = workspace_record.path.clone();
+            if !cwd.is_dir() {
+                return Err(lifecycle_error(
+                    ErrorCode::NotFound,
+                    "working directory is unavailable",
+                ));
+            }
+            let display =
+                git::checkout_name(&cwd).unwrap_or_else(|_| git::UNAVAILABLE_CHECKOUT.to_owned());
+            let automatic = request.name.is_empty();
+            {
+                let retained = self.retained.lock();
+                let used: std::collections::HashSet<_> = retained
+                    .records()
+                    .filter(|record| {
+                        record.metadata.project == request.project
+                            && record.metadata.workspace == request.workspace
+                    })
+                    .map(|record| record.metadata.name.as_str())
+                    .collect();
+                if automatic {
+                    request.name = display.clone();
+                    let mut suffix = 2u64;
+                    while used.contains(request.name.as_str()) {
+                        request.name = format!("{display}-{suffix}");
+                        suffix += 1;
+                    }
+                } else if used.contains(request.name.as_str()) {
+                    return Err(lifecycle_error(
+                        ErrorCode::AlreadyExists,
+                        "duplicate session name",
+                    ));
+                }
+            }
+            let pinned_title = if automatic || matches!(request.kind, SessionKind::Agent { .. }) {
+                None
+            } else {
+                Some(
+                    crate::session::sanitize_title(&request.name).ok_or_else(|| {
+                        lifecycle_error(
+                            ErrorCode::InvalidRequest,
+                            "title must contain visible text",
+                        )
+                    })?,
+                )
+            };
+            self.check_live_capacity()?;
+            let label = default_session_label(&request.kind, request.label, &request.argv);
+            let record = self.retained.lock().create(SessionMetadata {
+                project: request.project,
+                workspace: request.workspace,
+                name: request.name,
+                label,
+                cwd,
+                kind: request.kind,
+                pinned_title,
+                application_title: None,
+            })?;
+            if let Some(handle) = assignment {
+                self.bind_assignment(handle, &record)?;
+            }
+            Ok(record)
+        })()
+        .map_err(crate::session::NoProcessStarted::context)?;
         let error = match self.spawn_record_locked(record.id, record.run, request.argv, ready, None)
         {
             Ok(summary) => return Ok(summary),

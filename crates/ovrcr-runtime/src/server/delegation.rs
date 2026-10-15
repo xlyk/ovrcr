@@ -745,6 +745,9 @@ impl ServerState {
                             self.retained.lock().save_assignment(&record)?;
                             return self.assignment_snapshot(record);
                         }
+                        // Resolve the executable before charging: lookup cannot create
+                        // a process, and an error here must leave Prepared unspent.
+                        let executable = std::env::current_exe()?;
                         record.execution_attempts = Some(
                             spent
                                 .checked_add(1)
@@ -762,7 +765,7 @@ impl ServerState {
                             return self.reconciliation_snapshot(record);
                         }
                         let argv = vec![
-                            std::env::current_exe()?.into_os_string(),
+                            executable.into_os_string(),
                             "agent".into(),
                             "run".into(),
                             "pi".into(),

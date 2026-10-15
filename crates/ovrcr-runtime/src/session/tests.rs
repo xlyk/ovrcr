@@ -1768,3 +1768,16 @@ fn delegated_counted_writes_preserve_zero_partial_and_uncertain_effects() {
     ));
     assert_eq!(bytes, b"hello\r");
 }
+
+#[test]
+fn no_process_marker_preserves_diagnostic_and_typed_cause() {
+    let error = std::io::Error::new(std::io::ErrorKind::NotFound, "preflight diagnostic");
+    let marked = NoProcessStarted::context(anyhow::Error::new(error).context("session preflight"));
+    assert_eq!(marked.to_string(), "session preflight");
+    assert!(marked.is::<NoProcessStarted>());
+    assert_eq!(
+        marked.downcast_ref::<std::io::Error>().unwrap().kind(),
+        std::io::ErrorKind::NotFound
+    );
+    assert!(format!("{marked:#}").contains("preflight diagnostic"));
+}
