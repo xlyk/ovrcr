@@ -67,7 +67,12 @@ persists a content-free human-input revision before bytes. It never takes the
 lifecycle mutation lock. Takeover/return use the same durable per-child control
 record; neither changes immutable assigned membership. Scoped delegation input
 checks its captured control epoch and current parent/child bindings under their
-Session state locks through the PTY write. A second Lifecycle job is refused. Completion is a typed
+Session state locks through the PTY write. Parent effects additionally hold the
+retained workflow owner through the final publication/spawn/write fence, validate
+the captured controller epoch, and authenticate the current in-memory source key.
+Source registration and Reporter disconnect retirement follow retained → Session
+lock order. Explicit parent transfers use the same retained row and never reset
+child control or immutable assignment identity. A second Lifecycle job is refused. Completion is a typed
 `LifecycleCompleted` event correlated by the accepting request id, plus
 `HierarchyChanged` as today. CLI-only RemoveSession and DeleteArchived stay
 synchronous on the caller.

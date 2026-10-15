@@ -73,7 +73,10 @@ fn materialize_extension(harness: &Harness) -> std::io::Result<(PathBuf, PathBuf
     write(TRANSPORT_FILE, TRANSPORT_SOURCE)?;
     if harness.provider == AgentProvider::Pi {
         write("ovrcr-delegation-observer.mjs", DELEGATION_OBSERVER_SOURCE)?;
-        write("ovrcr-delegation-continuation.mjs", DELEGATION_CONTINUATION_SOURCE)?;
+        write(
+            "ovrcr-delegation-continuation.mjs",
+            DELEGATION_CONTINUATION_SOURCE,
+        )?;
     }
     let path = write(harness.extension_file, &source)?;
     Ok((dir, path))
@@ -246,7 +249,12 @@ impl reporter::Frames for Events {
                     return unavailable;
                 }
                 // Source authority is certified only after the rooted frame binds successfully.
-                let _ = reporter.workflow_source(instance, payload["reason"].as_str().unwrap_or("startup"), serde_json::from_value(payload["source_key"].clone()).ok(), deadline);
+                let _ = reporter.workflow_source(
+                    instance,
+                    payload["reason"].as_str().unwrap_or("startup"),
+                    serde_json::from_value(payload["source_key"].clone()).ok(),
+                    deadline,
+                );
                 // A fresh binding starts without a published model: inventing one from a
                 // previous generation or from the launch argv is not this receiver's job.
                 self.model = None;
@@ -320,7 +328,11 @@ impl reporter::Frames for Events {
                     )
                 });
                 if reason == Some("quit") {
-                    if self.harness.provider == AgentProvider::Pi { reporter.close(); } else { reporter.disable(); }
+                    if self.harness.provider == AgentProvider::Pi {
+                        reporter.close();
+                    } else {
+                        reporter.disable();
+                    }
                 } else {
                     // Replacement or reload: the harness re-runs factories; the next
                     // session_start admits them. The lease and binding are still live here, so

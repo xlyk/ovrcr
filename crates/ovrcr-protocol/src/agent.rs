@@ -283,7 +283,7 @@ pub struct ReserveAgent {
     pub operation: String,
     pub expected_epoch: u64,
     #[serde(default)]
-    pub pi_resume: Option<ExtensionConversation>,
+    pub pi_resume: Option<Box<ExtensionConversation>>,
     pub invocation: String,
     pub provider: AgentProvider,
 }
@@ -300,8 +300,17 @@ pub struct SupervisorAuth {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AgentCommand {
     /// Sent by the native-root-authenticated Reporter, never a task tool.
-    WorkflowSource { binding: AgentBinding, producer: String, reason: String, source: AgentSecret },
-    WorkflowDeparture { binding: AgentBinding, producer: String, reaped: bool },
+    WorkflowSource {
+        binding: Box<AgentBinding>,
+        producer: String,
+        reason: String,
+        source: AgentSecret,
+    },
+    WorkflowDeparture {
+        binding: AgentBinding,
+        producer: String,
+        reaped: bool,
+    },
 
     Bind {
         expected_binding: Option<AgentBinding>,

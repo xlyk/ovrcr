@@ -1,5 +1,5 @@
 use super::{AppResult, RuntimeError};
-use ovrcr::protocol::{DelegationRequest, WorkflowRequest, ErrorCode, Request, Response};
+use ovrcr::protocol::{DelegationRequest, ErrorCode, Request, Response, WorkflowRequest};
 use std::io::Read;
 
 pub(super) fn run() -> AppResult<()> {
@@ -16,12 +16,23 @@ pub(super) fn run() -> AppResult<()> {
     }
     let request = match serde_json::from_slice::<WorkflowRequest>(&bytes) {
         Ok(request) => Request::Workflow(Box::new(request)),
-        Err(_) => Request::Delegation(Box::new(serde_json::from_slice::<DelegationRequest>(&bytes)
-            .map_err(|_| RuntimeError::new(ErrorCode::InvalidRequest, "invalid delegation request"))?)),
+        Err(_) => Request::Delegation(Box::new(
+            serde_json::from_slice::<DelegationRequest>(&bytes).map_err(|_| {
+                RuntimeError::new(ErrorCode::InvalidRequest, "invalid delegation request")
+            })?,
+        )),
     };
     let response = super::request_without_start(request)?;
     match response {
-        Response::Workflows(workflows) => super::print_json(&serde_json::to_value(workflows).map_err(RuntimeError::internal)?),
+        Response::WorkflowRecovery(recovery) => {
+            super::print_json(&serde_json::to_value(recovery).map_err(RuntimeError::internal)?)
+        }
+        Response::WorkflowParents(parents) => {
+            super::print_json(&serde_json::to_value(parents).map_err(RuntimeError::internal)?)
+        }
+        Response::Workflows(workflows) => {
+            super::print_json(&serde_json::to_value(workflows).map_err(RuntimeError::internal)?)
+        }
         Response::Delegation(snapshot) => {
             super::print_json(&serde_json::to_value(snapshot).map_err(RuntimeError::internal)?)
         }

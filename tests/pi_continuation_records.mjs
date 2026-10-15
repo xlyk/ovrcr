@@ -73,3 +73,23 @@ test("a late startup reply cannot restore a retired factory", async () => {
   assert.match(f.continuation.gap, /retired/);
   assert.equal(f.appended.length, 0);
 });
+
+test("current continuation and scoped legacy gaps both reach startup context", async () => {
+  const gaps = [{ workflow: "legacy", identity: { request: "original-request" }, brief: "/original/brief-v1.json", reason: "missing certified authority" }];
+  const f = fixture(async () => ({ workflows: [snapshot()], gaps }));
+  await f.emit("session_start", { reason: "startup" });
+  const context = (await f.emit("before_agent_start")).message.content;
+  assert.match(context, /objective-v1.json/);
+  assert.match(context, /survivor/);
+  assert.match(context, /original-request/);
+  assert.match(context, /missing certified authority/);
+  assert.equal(f.continuation.state.authority.epoch, 4);
+});
+test("a pointer with only legacy gaps preserves the real gap without invented authority", async () => {
+  const f = fixture(async () => ({ workflows: [], gaps: [{ workflow: "workflow", reason: "transfer unavailable for older record" }] }));
+  await f.emit("session_start", { reason: "startup" });
+  assert.equal(f.continuation.state, null);
+  assert.match(f.continuation.gap, /transfer unavailable/);
+  assert.doesNotMatch(f.continuation.gap, /TypeError|undefined/);
+  assert.match((await f.emit("before_agent_start")).message.content, /transfer unavailable/);
+});

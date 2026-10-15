@@ -1582,8 +1582,8 @@ fn delegation_rechecks_a_to_b_to_a_binding_at_the_pty_write_boundary() {
     assert!(matches!(
         child
             .send_delegated_text(DelegatedInput {
-                    parent_producer: None,
-                    parent_source: None,
+                parent_producer: None,
+                parent_source: None,
                 control: &ovrcr_protocol::AssignmentControl::default(),
                 control_epoch: 1,
                 authority: DelegatedAuthority::Controller,
@@ -1670,8 +1670,8 @@ fn delegation_rechecks_a_to_b_to_a_binding_at_the_pty_write_boundary() {
     let acceptance = dir.path().join("must-not-accept");
     let capability = crate::agent_runner::delegation_capability(&capability_hex(&[0x37; 32]));
     let stale_context = DelegatedInput {
-                    parent_producer: None,
-                    parent_source: None,
+        parent_producer: None,
+        parent_source: None,
         control: &ovrcr_protocol::AssignmentControl::default(),
         control_epoch: 1,
         authority: DelegatedAuthority::Controller,
@@ -1710,8 +1710,8 @@ fn delegation_rechecks_a_to_b_to_a_binding_at_the_pty_write_boundary() {
     );
     assert_ne!(parent_a.generation, parent_binding.generation);
     let stale_parent = DelegatedInput {
-                    parent_producer: None,
-                    parent_source: None,
+        parent_producer: None,
+        parent_source: None,
         control: &ovrcr_protocol::AssignmentControl::default(),
         control_epoch: 1,
         authority: DelegatedAuthority::Controller,

@@ -1,12 +1,12 @@
 //! Public Pi tools -> control CLI -> isolated binary Server -> real managed child PTY.
-#[path = "pi_delegation/recovery.rs"]
-mod parent_recovery;
 #[path = "pi_delegation/control.rs"]
 mod assignment_control;
 #[path = "pi_delegation/followups.rs"]
 mod followups;
 #[path = "support/live.rs"]
 mod live;
+#[path = "pi_delegation/recovery.rs"]
+mod parent_recovery;
 use live::{Live, PROJECT};
 use ovrcr::protocol::*;
 use std::{
@@ -1066,9 +1066,19 @@ impl ControlProxy {
                 }
                 if matches!(&message.request, Request::Workflow(_)) {
                     let mut upstream = connect_server(&server).unwrap();
-                    upstream.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
-                    let response = client::request(&mut upstream, message.request_id, message.request).unwrap();
-                    let _ = write_frame(&mut stream, &ServerMessage::Response { request_id: message.request_id, response });
+                    upstream
+                        .set_read_timeout(Some(Duration::from_secs(30)))
+                        .unwrap();
+                    let response =
+                        client::request(&mut upstream, message.request_id, message.request)
+                            .unwrap();
+                    let _ = write_frame(
+                        &mut stream,
+                        &ServerMessage::Response {
+                            request_id: message.request_id,
+                            response,
+                        },
+                    );
                     continue;
                 }
                 let Request::Delegation(request) = &message.request else {
@@ -1260,7 +1270,10 @@ impl RecoveryFixture {
         let mut environment = vec![
             ("OVRCR_TEST_DELEGATION", "1".as_ref()),
             ("OVRCR_TEST_PI_HOST", host.as_os_str()),
-            ("OVRCR_TEST_CONTROL_BINARY", std::ffi::OsStr::new(env!("CARGO_BIN_EXE_ovrcr"))),
+            (
+                "OVRCR_TEST_CONTROL_BINARY",
+                std::ffi::OsStr::new(env!("CARGO_BIN_EXE_ovrcr")),
+            ),
             ("OVRCR_TEST_DELEGATION_RESULT_GATE", gate.as_os_str()),
             (
                 "OVRCR_TEST_DELEGATION_CONTROL_SOCKET",

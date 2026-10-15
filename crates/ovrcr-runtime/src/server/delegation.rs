@@ -717,7 +717,9 @@ impl ServerState {
                     .validate()
                     .map_err(|reason| lifecycle_error(ErrorCode::InvalidRequest, reason))?;
                 let parent = self.delegation_auth(&auth)?;
-                if !parent.authorizes_workflow_source(auth.source.as_ref()) { bail!("parent Pi source capability is missing or retired"); }
+                if !parent.authorizes_workflow_source(auth.source.as_ref()) {
+                    bail!("parent Pi source capability is missing or retired");
+                }
                 self.reject_assigned_input(auth.session)?;
                 let parent_binding = parent
                     .summary()
@@ -750,10 +752,10 @@ impl ServerState {
                 let mut record = if let Some(mut record) = previous {
                     self.current_workflow_authority(&auth, &record.identity.workflow)?;
                     if record
-                            .previous_versions
-                            .first()
-                            .map_or(&record.contract_digest, |version| &version.contract_digest)
-                            != &contract_digest
+                        .previous_versions
+                        .first()
+                        .map_or(&record.contract_digest, |version| &version.contract_digest)
+                        != &contract_digest
                     {
                         return Err(lifecycle_error(
                             ErrorCode::Conflict,
@@ -764,6 +766,14 @@ impl ServerState {
                     record
                 } else {
                     let store = self.retained.lock();
+                    // Reservation/source replacement also takes retained before Session state.
+                    // Capture the secret-authenticated source atomically at this publication fence.
+                    let (binding, producer) = parent
+                        .authenticated_workflow_source(&auth)
+                        .context("parent Pi source capability is missing or retired")?;
+                    if binding != parent_binding {
+                        bail!("parent binding changed before Prepare");
+                    }
                     if store.assignment_count()? >= MAX_DELEGATION_RECORDS {
                         return Err(lifecycle_error(
                             ErrorCode::Conflict,
@@ -789,9 +799,8 @@ impl ServerState {
                             .assignment(previous_request)?
                             .context("previous assignment not found")?;
                         previous.upgrade_legacy();
-                        if previous.parent != auth.session
-                            || previous.parent_run != parent.run()
-                            || previous.parent_binding != parent_binding
+                        if previous.identity.workflow != contract.workflow
+                            || previous.identity.controller != contract.controller
                         {
                             return Err(lifecycle_error(
                                 ErrorCode::Conflict,
@@ -858,16 +867,50 @@ impl ServerState {
                         None
                     };
                     if let Some(workflow) = store.workflow(&contract.workflow)? {
-                        let (binding, producer) = parent.workflow_source().context("parent Pi source is not certified")?;
-                        workflow.require(&auth, parent.run(), &binding, &producer, &self.server_lifetime)?;
-                        if workflow.authority.controller != contract.controller { bail!("workflow logical controller changed"); }
+                        workflow.require(
+                            &auth,
+                            parent.run(),
+                            &binding,
+                            &producer,
+                            &self.server_lifetime,
+                        )?;
+                        if workflow.authority.controller != contract.controller {
+                            bail!("workflow logical controller changed");
+                        }
                     } else {
-                        if store.workflow_controller(&contract.workflow)?.is_some() { bail!("legacy workflow has no current authority; explicit recovery is required"); }
-                        if store.workflows()?.len() >= super::delegation_recovery::MAX_WORKFLOWS { bail!("workflow storage is full"); }
-                        let (binding, producer) = parent.workflow_source().context("parent Pi source is not certified")?;
-                        let authority = WorkflowAuthority { instance: store.delegation_instance()?, workflow: contract.workflow.clone(), controller: contract.controller.clone(), epoch: 1, parent: auth.session, parent_run: parent.run(), binding, producer, server_lifetime: self.server_lifetime.clone() };
-                        if let Some(fence) = &auth.controller { if fence != &authority.fence() { bail!("new workflow authority fence changed"); } }
-                        store.save_workflow(&super::delegation_recovery::WorkflowRecord { schema: 1, authority, departure: None, admission: None, reopen_run: None, pointer: None, transfers: Vec::new() })?;
+                        if store.workflow_controller(&contract.workflow)?.is_some() {
+                            bail!(
+                                "legacy workflow has no current authority; explicit recovery is required"
+                            );
+                        }
+                        if store.workflows()?.len() >= super::delegation_recovery::MAX_WORKFLOWS {
+                            bail!("workflow storage is full");
+                        }
+                        let authority = WorkflowAuthority {
+                            instance: store.delegation_instance()?,
+                            workflow: contract.workflow.clone(),
+                            controller: contract.controller.clone(),
+                            epoch: 1,
+                            parent: auth.session,
+                            parent_run: parent.run(),
+                            binding,
+                            producer,
+                            server_lifetime: self.server_lifetime.clone(),
+                        };
+                        if let Some(fence) = &auth.controller
+                            && fence != &authority.fence()
+                        {
+                            bail!("new workflow authority fence changed");
+                        }
+                        store.save_workflow(&super::delegation_recovery::WorkflowRecord {
+                            schema: 1,
+                            authority,
+                            departure: None,
+                            admission: None,
+                            reopen_run: None,
+                            pointer: None,
+                            transfers: Vec::new(),
+                        })?;
                     }
                     let root = std::fs::canonicalize(&self.registry_path)?
                         .join("workflows")
@@ -883,7 +926,11 @@ impl ServerState {
                             instance: store.delegation_instance()?,
                             workflow: contract.workflow.clone(),
                             controller: contract.controller.clone(),
-                            controller_epoch: store.workflow(&contract.workflow)?.context("workflow disappeared")?.authority.epoch,
+                            controller_epoch: store
+                                .workflow(&contract.workflow)?
+                                .context("workflow disappeared")?
+                                .authority
+                                .epoch,
                             task: contract.task.clone(),
                             attempt: match &previous {
                                 Some(record) => record
@@ -981,7 +1028,12 @@ impl ServerState {
                     self.validate_allocation(&record)?;
                     return self.reconciliation_snapshot(record);
                 }
-                if authority.epoch != identity.controller_epoch { return Err(lifecycle_error(ErrorCode::Conflict, "launch belongs to a retired parent epoch; reconcile without replay")); }
+                if authority.epoch != identity.controller_epoch {
+                    return Err(lifecycle_error(
+                        ErrorCode::Conflict,
+                        "launch belongs to a retired parent epoch; reconcile without replay",
+                    ));
+                }
                 self.retained.lock().save_assignment(&record)?;
                 if !record
                     .receipt(DispatchOperation::Prepare)
@@ -1146,6 +1198,7 @@ impl ServerState {
                         "initial input requires the original allocated child run",
                     ));
                 }
+                let had_initial_intent = record.receipt(DispatchOperation::InitialInput).is_some();
                 let legacy_pending_input = record.initial_control_epoch.is_none()
                     && record
                         .receipt(DispatchOperation::InitialInput)
@@ -1177,9 +1230,19 @@ impl ServerState {
                         "initial request control epoch changed",
                     ));
                 }
-                let authority = self.current_workflow_authority(&auth, &record.identity.workflow)?;
-                if record.initial_parent_epoch.is_some_and(|epoch| epoch != authority.epoch) || (record.initial_parent_epoch.is_none() && authority.epoch != 1 && record.receipt(DispatchOperation::InitialInput).is_some()) {
-                    return self.reject_initial(record, "captured parent authority changed; old Accepted input is suspended without replay");
+                let authority =
+                    self.current_workflow_authority(&auth, &record.identity.workflow)?;
+                if record
+                    .initial_parent_epoch
+                    .is_some_and(|epoch| epoch != authority.epoch)
+                    || (record.initial_parent_epoch.is_none()
+                        && authority.epoch != 1
+                        && had_initial_intent)
+                {
+                    return Err(lifecycle_error(
+                        ErrorCode::Conflict,
+                        "captured parent authority changed; old Accepted input is suspended without replay",
+                    ));
                 }
                 record.initial_parent_epoch = Some(authority.epoch);
                 record.initial_control_epoch = Some(expected_control_epoch);
@@ -1245,7 +1308,9 @@ impl ServerState {
                     let parent = self.session_for_control(auth.session)?;
                     let store = self.retained.lock();
                     let authority = self.require_workflow(&store, &auth, &record)?;
-                    if record.initial_parent_epoch != Some(authority.epoch) { bail!("captured parent authority changed before input"); }
+                    if record.initial_parent_epoch != Some(authority.epoch) {
+                        bail!("captured parent authority changed before input");
+                    }
                     store.save_assignment(&record)?;
                     let text = format!(
                         "Perform the read-only research assignment in {}. Read that immutable brief with your read tool; publish the complete result with ovrcr_publish using handle {} and the exact identity in the brief. Do not modify task or parent records. A terminal success line is not a submission.",
@@ -2288,6 +2353,7 @@ mod tests {
                 expected,
                 expected_result_version: version - 1,
                 expected_control_epoch: 1,
+                expected_parent_epoch: None, // Legacy fixture retains the original epoch-one provenance.
                 target: target.clone(),
                 result_version: version,
                 digest: "payload".into(),
@@ -2400,6 +2466,7 @@ mod tests {
                 expected,
                 expected_result_version: value.result_version,
                 expected_control_epoch: 1,
+                expected_parent_epoch: None, // Legacy fixture retains the original epoch-one provenance.
                 target: target.clone(),
                 result_version: result,
                 digest: "payload".into(),

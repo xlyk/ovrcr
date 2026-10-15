@@ -206,7 +206,9 @@ impl ActiveDashboard {
 
     /// Keep the real person-owned slot through a durable workflow transfer.
     pub(super) fn with_workflow_owner<T>(
-        &self, owner: &Arc<()>, action: impl FnOnce() -> T,
+        &self,
+        owner: &Arc<()>,
+        action: impl FnOnce() -> T,
     ) -> Option<T> {
         self.with_owned(owner, |current| {
             if current.sink.is_closing() || peer_has_closed(&current.stream) {
@@ -214,7 +216,8 @@ impl ActiveDashboard {
             } else {
                 Some(action())
             }
-        }).flatten()
+        })
+        .flatten()
     }
 
     /// Caller has acquired retained, child state and writer before this slot.

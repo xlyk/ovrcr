@@ -25,7 +25,11 @@ pub struct WorkflowAuthority {
 }
 impl WorkflowAuthority {
     pub fn fence(&self) -> ControllerFence {
-        ControllerFence { workflow: self.workflow.clone(), epoch: self.epoch, producer: self.producer.clone() }
+        ControllerFence {
+            workflow: self.workflow.clone(),
+            epoch: self.epoch,
+            producer: self.producer.clone(),
+        }
     }
 }
 
@@ -44,11 +48,35 @@ pub struct ContinuationIndex {
 }
 impl ContinuationIndex {
     pub fn validate(&self) -> Result<(), &'static str> {
-        if self.schema != 1 || self.objective.len() > 4096 || self.objective.chars().any(|c| c == '\0') { return Err("invalid continuation schema or objective"); }
-        for list in [&self.decisions, &self.unresolved_assignments, &self.questions, &self.receipts, &self.accepted_evidence, &self.next_actions] {
-            if list.len() > 256 || list.iter().any(|v| v.is_empty() || v.len() > 4096 || v.contains('\0')) { return Err("continuation index exceeds bounds"); }
+        if self.schema != 1
+            || self.objective.len() > 4096
+            || self.objective.chars().any(|c| c == '\0')
+        {
+            return Err("invalid continuation schema or objective");
         }
-        if serde_json::to_vec(self).map_err(|_| "invalid continuation")?.len() > 65536 { return Err("continuation index exceeds 65536 bytes"); }
+        for list in [
+            &self.decisions,
+            &self.unresolved_assignments,
+            &self.questions,
+            &self.receipts,
+            &self.accepted_evidence,
+            &self.next_actions,
+        ] {
+            if list.len() > 256
+                || list
+                    .iter()
+                    .any(|v| v.is_empty() || v.len() > 4096 || v.contains('\0'))
+            {
+                return Err("continuation index exceeds bounds");
+            }
+        }
+        if serde_json::to_vec(self)
+            .map_err(|_| "invalid continuation")?
+            .len()
+            > 65536
+        {
+            return Err("continuation index exceeds 65536 bytes");
+        }
         Ok(())
     }
 }
@@ -95,17 +123,64 @@ pub struct WorkflowTransfer {
     pub producer: String,
 }
 
+/// Public certified target identity. This is never a source credential.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowParent {
+    pub session: SessionId,
+    pub run: SessionRunId,
+    pub binding: AgentBinding,
+    pub producer: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorkflowRequest {
+    Parents {
+        auth: DelegationAuth,
+    },
     /// Omitting workflow discovers only workflows already owned by this exact source.
-    Recover { auth: DelegationAuth, workflow: Option<String> },
-    Save { auth: DelegationAuth, workflow: String, expected_version: u64, index: ContinuationIndex },
-    Transfer { auth: DelegationAuth, transfer: WorkflowTransfer },
+    Recover {
+        auth: DelegationAuth,
+        workflow: Option<String>,
+    },
+    Save {
+        auth: DelegationAuth,
+        workflow: String,
+        expected_version: u64,
+        index: ContinuationIndex,
+    },
+    Transfer {
+        auth: DelegationAuth,
+        transfer: WorkflowTransfer,
+    },
 }
 
 /// Only the real active Dashboard can list or apply these transfers.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DashboardWorkflowRequest {
-    Candidates { parent: SessionId, run: SessionRunId },
-    Transfer(WorkflowTransfer),
+    Candidates {
+        parent: SessionId,
+        run: SessionRunId,
+    },
+    Transfer(Box<WorkflowTransfer>),
+}
+
+/// Evidence of retained work without certified current authority. Never a transfer target.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowRecoveryGap {
+    pub workflow: String,
+    pub identity: crate::AssignmentIdentity,
+    pub brief: std::path::PathBuf,
+    pub result_path: std::path::PathBuf,
+    pub reason: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowRecovery {
+    pub workflows: Vec<WorkflowSnapshot>,
+    pub gaps: Vec<WorkflowRecoveryGap>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowCandidates {
+    pub candidates: Vec<WorkflowTransfer>,
+    pub gaps: Vec<WorkflowRecoveryGap>,
 }

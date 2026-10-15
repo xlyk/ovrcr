@@ -398,7 +398,9 @@ impl ServerState {
         }
         let publication_guard = self.retained.lock();
         let authority = self.require_workflow(&publication_guard, &auth, &record)?;
-        if intent.expected_parent_epoch.unwrap_or(1) != authority.epoch { bail!("followup publication parent authority changed"); }
+        if intent.expected_parent_epoch.unwrap_or(1) != authority.epoch {
+            bail!("followup publication parent authority changed");
+        }
         let directory = Directory::open(&record.root, false)?;
         publish_matching(&directory, &format!("followup-{request}.json"), &payload)?;
         if take_fault("followup-before-files", &request).is_some() {
@@ -454,7 +456,9 @@ impl ServerState {
         );
         let store = self.retained.lock();
         let authority = self.require_workflow(&store, &auth, &record)?;
-        if intent.expected_parent_epoch.unwrap_or(1) != authority.epoch { bail!("captured followup parent authority changed"); }
+        if intent.expected_parent_epoch.unwrap_or(1) != authority.epoch {
+            bail!("captured followup parent authority changed");
+        }
         store.save_assignment(&record)?;
         let prompt = format!(
             "Perform the read-only research assignment in {}. Read that immutable brief with your read tool; this is a scoped followup in the same assignment. Publish the exact requested result version with ovrcr_publish using handle {} and the identity in that brief. Do not modify task or parent records.",
@@ -465,8 +469,8 @@ impl ServerState {
             record.handle
         );
         match session.send_delegated_text(crate::session::DelegatedInput {
-                    parent_producer: Some(&authority.producer),
-                    parent_source: auth.source.as_ref(),
+            parent_producer: Some(&authority.producer),
+            parent_source: auth.source.as_ref(),
             request: &request,
             control: &record.control,
             control_epoch: intent.expected_control_epoch,

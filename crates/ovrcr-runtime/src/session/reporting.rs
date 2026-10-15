@@ -246,13 +246,25 @@ pub(crate) enum AgentPersistence<'a> {
 
 impl Session {
     /// Authenticate secret and capture public source identity under the same state lock.
-    pub(crate) fn authenticated_workflow_source(&self, auth: &DelegationAuth) -> Option<(AgentBinding, String)> {
+    pub(crate) fn authenticated_workflow_source(
+        &self,
+        auth: &DelegationAuth,
+    ) -> Option<(AgentBinding, String)> {
         let state = self.state.lock().unwrap();
         let reporting = &state.reporting;
-        if auth.session != self.id() || !state.phase.is_live() || !reporting.active()
-            || auth.source.is_none() || reporting.source.as_ref() != auth.source.as_ref()
-            || !state.hook_capability.as_ref().is_some_and(|token| crate::agent_runner::delegation_capability(&capability_hex(token)) == auth.capability)
-            || reporting.snapshot.as_ref()?.health.state != ReporterHealth::Connected { return None; }
+        if auth.session != self.id()
+            || !state.phase.is_live()
+            || !reporting.active()
+            || auth.source.is_none()
+            || reporting.source.as_ref() != auth.source.as_ref()
+            || !state.hook_capability.as_ref().is_some_and(|token| {
+                crate::agent_runner::delegation_capability(&capability_hex(token))
+                    == auth.capability
+            })
+            || reporting.snapshot.as_ref()?.health.state != ReporterHealth::Connected
+        {
+            return None;
+        }
         Some((reporting.binding()?.clone(), reporting.producer.clone()?))
     }
     pub(crate) fn authorizes_workflow_source(&self, source: Option<&AgentSecret>) -> bool {
@@ -262,7 +274,12 @@ impl Session {
     pub(crate) fn workflow_source(&self) -> Option<(AgentBinding, String)> {
         let state = self.state.lock().unwrap();
         let reporting = &state.reporting;
-        if !state.phase.is_live() || !reporting.active() || reporting.snapshot.as_ref()?.health.state != ReporterHealth::Connected { return None; }
+        if !state.phase.is_live()
+            || !reporting.active()
+            || reporting.snapshot.as_ref()?.health.state != ReporterHealth::Connected
+        {
+            return None;
+        }
         Some((reporting.binding()?.clone(), reporting.producer.clone()?))
     }
 
@@ -394,11 +411,23 @@ impl Session {
             bail!("operation receipt is unavailable or stale");
         };
         let result = match &r.command {
-            AgentCommand::WorkflowSource { binding, producer, source, .. } => {
+            AgentCommand::WorkflowSource {
+                binding,
+                producer,
+                source,
+                ..
+            } => {
                 reporting.expected(Some(binding))?;
-                if binding.provider != AgentProvider::Pi { bail!("workflow source requires Pi"); }
+                if binding.provider != AgentProvider::Pi {
+                    bail!("workflow source requires Pi");
+                }
                 validate_agent_id(producer)?;
-                if reporting.producer.as_ref() == Some(producer) && reporting.source.as_ref().is_some_and(|current| current != source) {
+                if reporting.producer.as_ref() == Some(producer)
+                    && reporting
+                        .source
+                        .as_ref()
+                        .is_some_and(|current| current != source)
+                {
                     bail!("current Producer source capability cannot be replaced");
                 }
                 persist(AgentPersistence::Command(&r.command))?;
@@ -406,9 +435,15 @@ impl Session {
                 reporting.source = Some(source.clone());
                 AgentOperationResult::WorkflowUpdated
             }
-            AgentCommand::WorkflowDeparture { binding, producer, .. } => {
+            AgentCommand::WorkflowDeparture {
+                binding, producer, ..
+            } => {
                 reporting.expected(Some(binding))?;
-                if binding.provider != AgentProvider::Pi || reporting.producer.as_ref() != Some(producer) { bail!("workflow departure source changed"); }
+                if binding.provider != AgentProvider::Pi
+                    || reporting.producer.as_ref() != Some(producer)
+                {
+                    bail!("workflow departure source changed");
+                }
                 persist(AgentPersistence::Command(&r.command))?;
                 AgentOperationResult::WorkflowUpdated
             }

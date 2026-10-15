@@ -3353,6 +3353,8 @@ impl Dashboard {
                 Response::Events(_)
                 | Response::Workflows(_)
                 | Response::WorkflowCandidates(_)
+                | Response::WorkflowParents(_)
+                | Response::WorkflowRecovery(_)
                 | Response::Delegation(_)
                 | Response::DelegationObservation(_)
                 | Response::DelegationCapabilities(_) => {}
