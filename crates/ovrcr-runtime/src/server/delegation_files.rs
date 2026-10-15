@@ -14,6 +14,10 @@ use std::{
 
 pub(super) struct Directory(File);
 impl Directory {
+    pub(super) fn sync(&self) -> Result<()> {
+        self.0.sync_all().map_err(Into::into)
+    }
+
     pub(super) fn open(path: &Path, create: bool) -> Result<Self> {
         if !path.is_absolute() {
             bail!("assignment root must be absolute");

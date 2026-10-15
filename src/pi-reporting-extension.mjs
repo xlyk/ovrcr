@@ -11,6 +11,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, open, lstat, rename } from "node:fs/promises";
+import { constants } from "node:fs";
 import { join } from "node:path";
 import { createReporter, idOf, modelId, outcomeOf } from "./ovrcr-reporting-transport.mjs";
 
@@ -142,6 +143,7 @@ function registerDelegation(pi) {
           let failure;
           try { failure = JSON.parse(stderr).error; } catch {}
           const error = new Error(failure?.message ?? "control outcome unknown");
+          error.code = failure?.code;
           error.refused = failure && failure.code !== "Internal";
           throw error;
         }
@@ -154,6 +156,30 @@ function registerDelegation(pi) {
   });
   const object = (properties, required = Object.keys(properties)) => ({ type: "object", properties, required, additionalProperties: false });
   const string = { type: "string" };
+  const originalIntent = async handle => {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(handle)) throw new Error("invalid original request identity");
+    const directory = join(process.env.OVRCR_DELEGATION_HOME ?? "", "parent-intents");
+    const parent = await lstat(directory);
+    if (!parent.isDirectory() || parent.isSymbolicLink() || (parent.mode & 0o077) || parent.uid !== process.getuid()) throw new Error("original intent directory is not private");
+    const file = await open(join(directory, `${handle}.json`), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const stat = await file.stat();
+      if (!stat.isFile() || stat.size > 262144 || (stat.mode & 0o077) || stat.uid !== process.getuid()) throw new Error("invalid original intent file");
+      const buffer = Buffer.alloc(262145);
+      let length = 0;
+      while (length < buffer.length) {
+        const { bytesRead } = await file.read(buffer, length, buffer.length - length, null);
+        if (!bytesRead) break;
+        length += bytesRead;
+      }
+      const bytes = buffer.subarray(0, length);
+      const after = await lstat(directory);
+      if (bytes.length > 262144 || after.ino !== parent.ino || after.dev !== parent.dev || after.isSymbolicLink()) throw new Error("original intent directory changed");
+      const contract = JSON.parse(bytes);
+      if (contract.request !== handle || contract.schema !== 1) throw new Error("original intent identity changed");
+      return contract;
+    } finally { await file.close(); }
+  };
   const tool = (name, description, parameters, run) => pi.registerTool({ name, label: name, description, parameters, async execute(_id, args, _signal, _onUpdate, ctx) {
     if (!args || typeof args !== "object") throw new Error("tool arguments must be an object");
     for (const key of parameters.required ?? []) if (!(key in args)) throw new Error(`missing required argument: ${key}`);
@@ -169,10 +195,21 @@ function registerDelegation(pi) {
     let attempted = false;
     try {
       let snapshot;
-      if (handle) { attempted = true; snapshot = await call({ Inspect: { auth: auth(), handle } }); }
+      let contract;
+      if (handle) {
+        contract = await originalIntent(handle);
+        attempted = true;
+        try { snapshot = await call({ Reconcile: { auth: auth(), request: handle } }); }
+        catch (error) {
+          if (error.code !== "NotFound") throw error;
+        }
+        // Verify the exact saved contract even when its Server record already exists.
+        // Prepare only repairs its authenticated immutable publication, never a launch/input.
+        snapshot = await call({ Prepare: { auth: auth(), contract } });
+      }
       else {
         handle = randomUUID();
-        const contract = { schema: 1, workflow, controller, task: randomUUID(), request: handle, project: args.project, workspace: args.workspace, scope: args.scope, provider: args.provider ?? "pi", model_provider: args.model_provider, model: args.model, permitted_actions: args.permitted_actions ?? ["read"], acceptance_evidence: args.acceptance_evidence ?? [], mandatory_capabilities: args.mandatory_capabilities ?? ["read", "result_file"] };
+        contract = { schema: 1, workflow, controller, task: randomUUID(), request: handle, project: args.project, workspace: args.workspace, scope: args.scope, provider: args.provider ?? "pi", model_provider: args.model_provider, model: args.model, permitted_actions: args.permitted_actions ?? ["read"], acceptance_evidence: args.acceptance_evidence ?? [], mandatory_capabilities: args.mandatory_capabilities ?? ["read", "result_file"] };
         if (JSON.stringify(contract).length > 262144 || contract.scope.length > 32768 || contract.acceptance_evidence.length > 32 || contract.acceptance_evidence.some(value => typeof value !== "string" || !value || value.length > 4096)) {
           return { handle, dispatch: "Refused", reason: "contract exceeds supported content limits" };
         }
@@ -191,15 +228,20 @@ function registerDelegation(pi) {
         try { await directoryHandle.sync(); } finally { await directoryHandle.close(); }
         attempted = true;
         snapshot = await call({ Prepare: { auth: auth(), contract } });
-        snapshot = await call({ Launch: { auth: auth(), handle } });
+      }
+      const receipt = operation => snapshot.receipts?.find(value => value.operation === operation);
+      if (receipt("Prepare")?.outcome !== "Applied") snapshot = await call({ Prepare: { auth: auth(), contract } });
+      if (receipt("Prepare")?.outcome !== "Applied") return snapshot;
+      if (snapshot.dispatch === "Prepared" && (!receipt("Launch") || receipt("Launch").outcome === "Accepted")) {
+        snapshot = await call({ Launch: { auth: auth(), handle, identity: receipt("Launch")?.identity ?? snapshot.identity } });
       }
       // Launched is a known no-input state. Polling it does not replay a send.
-      for (let attempt = 0; snapshot.dispatch === "Launched" && attempt < 100; attempt++) {
+      for (let attempt = 0; snapshot.dispatch === "Launched" && (!receipt("InitialInput") || receipt("InitialInput").outcome === "Accepted") && attempt < 100; attempt++) {
         snapshot = await call({ SendInitial: { auth: auth(), handle, identity: snapshot.identity } });
         if (snapshot.dispatch === "Launched") await new Promise(resolve => setTimeout(resolve, 100));
       }
       return snapshot;
-    } catch (error) { return { handle, dispatch: (error.refused || !attempted) ? "Refused" : "Unknown", reason: String(error.message), recovery: "Inspect this original handle; do not start a replacement assignment" }; }
+    } catch (error) { return { handle, dispatch: error.refused || !attempted ? "Refused" : "Unknown", transport: attempted ? "Unknown" : "NotSent", reason: String(error.message), recovery: "Call ovrcr_start with only this original handle; do not start a replacement assignment" }; }
   });
   tool("ovrcr_inspect", "Inspect an owned assignment without changing it. Activity is not acceptance.", object({ handle: string }), args => call({ Inspect: { auth: auth(), handle: args.handle } }));
   tool("ovrcr_collect", "Collect a complete validated submission. Parent acceptance remains pending.", object({ handle: string }), args => call({ Collect: { auth: auth(), handle: args.handle } }));
