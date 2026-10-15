@@ -658,6 +658,17 @@ impl ServerState {
                 if legacy_pending_input {
                     return self.reject_initial(record, "legacy initial input has no captured control epoch; inspect without replay");
                 }
+                // Accepted initial intents retain their original authority through recovery.
+                // Terminalize only a durably stale captured intent, never a caller-only mismatch.
+                if record.initial_control_epoch.is_some_and(|captured| {
+                    control::require_controller(&record.control, captured).is_err()
+                        || record.control.attribution_invalidated
+                }) {
+                    return self.reject_initial(
+                        record,
+                        "captured initial input control authority changed; no bytes written",
+                    );
+                }
                 if record
                     .initial_control_epoch
                     .is_some_and(|epoch| epoch != expected_control_epoch)
