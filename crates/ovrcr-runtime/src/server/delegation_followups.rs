@@ -178,11 +178,12 @@ fn matching_legacy_brief(
 fn followup_payload(
     expected: &AssignmentIdentity,
     version: u32,
+    control_epoch: u64,
     text: &str,
     revised: &Option<ResearchContract>,
     saved_digest: Option<&str>,
 ) -> Result<Vec<u8>> {
-    let mut payload = serde_json::to_vec(&(expected, version, text, revised))?;
+    let mut payload = serde_json::to_vec(&(expected, version, control_epoch, text, revised))?;
     // Reconstruct only the old canonical nested shape, and only under its exact
     // durable digest. Changed semantics cannot inherit a prior request identity.
     if let Some(saved) = saved_digest
@@ -190,7 +191,7 @@ fn followup_payload(
         && let Some(revised) = revised.as_ref()
         && let Some(legacy) = legacy_contract_bytes(revised)?
     {
-        let mut candidate = serde_json::to_vec(&(expected, version, text))?;
+        let mut candidate = serde_json::to_vec(&(expected, version, control_epoch, text))?;
         candidate.pop();
         candidate.push(b',');
         candidate.extend_from_slice(&legacy);
@@ -700,7 +701,7 @@ mod tests {
             super::super::tests::record(dir.path().join("assignment"), DispatchStatus::Applied);
         let contract = read_contract(&record).unwrap();
         let text = "scoped clarification";
-        let mut old = serde_json::to_vec(&(&record.identity, 1_u32, text)).unwrap();
+        let mut old = serde_json::to_vec(&(&record.identity, 1_u32, 1_u64, text)).unwrap();
         old.pop();
         old.push(b',');
         old.extend_from_slice(&legacy_contract_bytes(&contract).unwrap().unwrap());
@@ -709,6 +710,7 @@ mod tests {
         assert_eq!(
             followup_payload(
                 &record.identity,
+                1,
                 1,
                 text,
                 &Some(contract.clone()),
@@ -726,7 +728,7 @@ mod tests {
         }] {
             assert_ne!(
                 digest(
-                    &followup_payload(&record.identity, 1, text, &Some(revised), Some(&hash))
+                    &followup_payload(&record.identity, 1, 1, text, &Some(revised), Some(&hash))
                         .unwrap()
                 ),
                 hash
@@ -736,6 +738,7 @@ mod tests {
             digest(
                 &followup_payload(
                     &record.identity,
+                    1,
                     1,
                     "changed text",
                     &Some(contract),

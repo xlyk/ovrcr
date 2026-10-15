@@ -1642,6 +1642,7 @@ fn public_legacy_accounting_migration_preserves_effects_and_original_contract_by
     let mut payload = serde_json::to_vec(&(
         &pending.identity,
         pending.result_version,
+        saved["expected_control_epoch"].as_u64().unwrap(),
         saved["text"].as_str().unwrap(),
     ))
     .unwrap();
