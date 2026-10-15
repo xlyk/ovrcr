@@ -403,7 +403,7 @@ fn matrix_covers_every_declared_setting() {
         kinds,
         [
             Bool, Bool, Str, Bool, Str, Str, Bool, Str, Array, Str, Bool, Bool, Str, Str, Str, Str,
-            Bool, Str, Array, Table, Bool, Array, Array, Str, Str, Integer, Integer, Integer,
+            Bool, Str, Array, Table, Integer, Bool, Array, Array, Str, Str, Integer, Integer,
         ]
     );
     // Every test-side table names a declared setting, so none goes stale.

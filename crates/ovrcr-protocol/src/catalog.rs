@@ -30,7 +30,6 @@ pub enum SettingWrite {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shape {
     Toggle,
-    Typed(&'static str),
     Text(&'static str),
     Path(&'static str),
     /// A TOML value edited as a whole (numbers and simple lists).
@@ -143,7 +142,6 @@ pub fn write_of(path: &[SettingName<'_>]) -> Option<SettingWrite> {
         return Some(match (shape, rest) {
             (Shape::Typed(expected), []) => SettingWrite::Typed(expected),
             (Shape::Toggle, []) => SettingWrite::Typed("a boolean"),
-            (Shape::Typed(expected), []) => SettingWrite::Typed(expected),
             (Shape::Text(expected) | Shape::Path(expected), []) => SettingWrite::Text(expected),
             (Shape::Pick { expected, .. }, []) => SettingWrite::Text(expected),
             (Shape::Paths, []) => SettingWrite::Typed("an array of paths"),

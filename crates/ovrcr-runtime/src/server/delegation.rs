@@ -80,7 +80,7 @@ pub(crate) struct Record {
     pub retryable_capacity_refusal: bool,
 }
 
-// Three fixed receipt slots per assignment; never evict unresolved obligations.
+// Three initial operation slots plus bounded same-child followups; never evict evidence.
 const MAX_DELEGATION_RECORDS: u64 = 4096;
 
 impl Record {
@@ -89,7 +89,8 @@ impl Record {
     fn spent_execution_attempts(&self) -> Option<u32> {
         if self.identity.session.is_some() != self.identity.run.is_some()
             || self.handle != self.identity.request
-            || self.receipts.len() > 3
+            || self.receipts.len() > 3 + followups::MAX_FOLLOWUPS
+            || self.followups.len() > followups::MAX_FOLLOWUPS
             || self.request_digests.len() > 3
         {
             return None;
@@ -107,16 +108,65 @@ impl Record {
         if !consistent {
             return None;
         }
-        let mut prepare_identity = self.identity.clone();
+        let first = self.previous_versions.first();
+        let initial_identity = first.map_or(&self.identity, |v| &v.identity);
+        let initial_digest = first.map_or(&self.contract_digest, |v| &v.contract_digest);
+        let versions: Vec<_> = self
+            .previous_versions
+            .iter()
+            .chain(std::iter::once(&self.version()))
+            .cloned()
+            .collect();
+        if versions.len() != self.result_version as usize
+            || versions.iter().enumerate().any(|(index, v)| {
+                v.result_version as usize != index + 1
+                    || v.identity.session != self.identity.session
+                    || v.identity.run != self.identity.run
+                    || {
+                        let mut identity = v.identity.clone();
+                        identity.contract = initial_identity.contract;
+                        identity != *initial_identity
+                    }
+            })
+        {
+            return None;
+        }
+        let mut prepare_identity = initial_identity.clone();
         prepare_identity.session = None;
         prepare_identity.run = None;
         for (index, receipt) in self.receipts.iter().enumerate() {
+            if receipt.operation == DispatchOperation::Followup {
+                let intent = self
+                    .followups
+                    .iter()
+                    .find(|f| f.request == receipt.request)?;
+                let expected = versions
+                    .iter()
+                    .find(|v| v.result_version == intent.expected_result_version)?;
+                let mut target = intent.expected.clone();
+                target.contract = intent.target.contract;
+                if intent.expected != expected.identity
+                    || intent.result_version != intent.expected_result_version.checked_add(1)?
+                    || !(intent.target.contract == intent.expected.contract
+                        || intent.target.contract == intent.expected.contract.checked_add(1)?)
+                    || target != intent.target
+                    || receipt.identity != intent.target
+                    || receipt.result_version != intent.result_version
+                    || self.receipts[..index]
+                        .iter()
+                        .any(|old| old.request == receipt.request)
+                {
+                    return None;
+                }
+                continue;
+            }
             let expected = if receipt.operation == DispatchOperation::InitialInput {
-                &self.identity
+                initial_identity
             } else {
                 &prepare_identity
             };
             if receipt.request != self.identity.request
+                || receipt.result_version != 1
                 || &receipt.identity != expected
                 || self.receipts[..index]
                     .iter()
@@ -125,12 +175,22 @@ impl Record {
                 return None;
             }
         }
+        if self.followups.iter().enumerate().any(|(index, f)| {
+            self.request_receipt(&f.request, DispatchOperation::Followup)
+                .is_none()
+                || self.followups[..index]
+                    .iter()
+                    .any(|old| old.request == f.request)
+        }) {
+            return None;
+        }
         for (index, (operation, saved)) in self.request_digests.iter().enumerate() {
+            if *operation == DispatchOperation::Followup {
+                return None;
+            }
             let receipt = self.receipt(*operation)?;
-            let expected = digest(
-                &serde_json::to_vec(&(*operation, &self.contract_digest, &receipt.identity))
-                    .ok()?,
-            );
+            let expected =
+                digest(&serde_json::to_vec(&(*operation, initial_digest, &receipt.identity)).ok()?);
             if saved != &expected
                 || self.request_digests[..index]
                     .iter()
@@ -145,6 +205,8 @@ impl Record {
             launch,
             Some(DispatchOutcome::Applied | DispatchOutcome::Unknown | DispatchOutcome::Partial)
         ) || initial.is_some()
+            || !self.followups.is_empty()
+            || !self.previous_versions.is_empty()
             || self.binding.is_some()
             || matches!(
                 self.dispatch,
@@ -578,9 +640,14 @@ impl ServerState {
                 let previous = self.retained.lock().assignment(&handle)?;
                 let bytes = contract_bytes(
                     &contract,
-                    previous
-                        .as_ref()
-                        .map(|record| record.contract_digest.as_str()),
+                    previous.as_ref().map(|record| {
+                        record
+                            .previous_versions
+                            .first()
+                            .map_or(record.contract_digest.as_str(), |v| {
+                                v.contract_digest.as_str()
+                            })
+                    }),
                 )?;
                 let contract_digest = digest(&bytes);
                 let is_new = previous.is_none();
@@ -644,6 +711,12 @@ impl ServerState {
                         }
                         if previous.dispatch != DispatchStatus::Refused
                             || !previous.retryable_capacity_refusal
+                            || previous.result_version != 1
+                            || !previous.previous_versions.is_empty()
+                            || !previous.followups.is_empty()
+                            || previous.publication_intent.is_some()
+                            || previous.result_digest.is_some()
+                            || previous.unresolved_input()
                             || previous.identity.session.is_some()
                             || previous.identity.run.is_some()
                             || !previous
@@ -1613,24 +1686,30 @@ fn publication_error(issue: PublicationIssue) -> anyhow::Error {
 
 /// Preserve the exact older canonical bytes when the only added fields were
 /// absent defaults. A different contract never acquires the old digest.
+fn legacy_contract_bytes(contract: &ResearchContract) -> Result<Option<Vec<u8>>> {
+    if contract.limits != DelegationLimits::default() || contract.previous_request.is_some() {
+        return Ok(None);
+    }
+    let bytes = serde_json::to_vec(contract)?;
+    let suffix = format!(
+        ",\"limits\":{},\"previous_request\":null}}",
+        serde_json::to_string(&DelegationLimits::default())?
+    );
+    Ok(bytes.strip_suffix(suffix.as_bytes()).map(|prefix| {
+        let mut legacy = prefix.to_vec();
+        legacy.push(b'}');
+        legacy
+    }))
+}
+
 fn contract_bytes(contract: &ResearchContract, expected: Option<&str>) -> Result<Vec<u8>> {
     let bytes = serde_json::to_vec(contract)?;
     if let Some(expected) = expected
         && digest(&bytes) != expected
-        && contract.limits == DelegationLimits::default()
-        && contract.previous_request.is_none()
+        && let Some(legacy) = legacy_contract_bytes(contract)?
+        && digest(&legacy) == expected
     {
-        let suffix = format!(
-            ",\"limits\":{},\"previous_request\":null}}",
-            serde_json::to_string(&DelegationLimits::default())?
-        );
-        if let Some(prefix) = bytes.strip_suffix(suffix.as_bytes()) {
-            let mut legacy = prefix.to_vec();
-            legacy.push(b'}');
-            if digest(&legacy) == expected {
-                return Ok(legacy);
-            }
-        }
+        return Ok(legacy);
     }
     Ok(bytes)
 }
@@ -1901,6 +1980,7 @@ mod tests {
         value.receipts.push(DispatchReceipt {
             request: value.handle.clone(),
             operation,
+            result_version: 1,
             identity: identity.clone(),
             outcome,
             input: None,
@@ -2071,6 +2151,85 @@ mod tests {
                 "derive before synthesized receipts: {name}"
             );
         }
+    }
+
+    #[test]
+    fn same_child_versions_keep_one_execution_and_initial_receipt_anchors() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut value = record(dir.path().join("assignment"), DispatchStatus::Applied);
+        for op in [
+            DispatchOperation::Prepare,
+            DispatchOperation::Launch,
+            DispatchOperation::InitialInput,
+        ] {
+            operation(&mut value, op, DispatchOutcome::Applied);
+        }
+        value.execution_attempts = Some(1);
+        let initial_receipts = value.receipts.clone();
+        let initial_digests = value.request_digests.clone();
+        for version in 2..=65 {
+            let expected = value.identity.clone();
+            let mut target = expected.clone();
+            if version % 2 == 0 {
+                target.contract += 1;
+            }
+            let request = format!("followup-{version}");
+            value.followups.push(FollowupIntent {
+                request: request.clone(),
+                expected,
+                expected_result_version: version - 1,
+                target: target.clone(),
+                result_version: version,
+                digest: "payload".into(),
+                contract_digest: format!("contract-{version}"),
+                brief_digest: "brief".into(),
+            });
+            value.receipts.push(DispatchReceipt {
+                request,
+                operation: DispatchOperation::Followup,
+                result_version: version,
+                identity: target.clone(),
+                outcome: DispatchOutcome::Applied,
+                input: None,
+                reason: None,
+            });
+            value.previous_versions.push(value.version());
+            value.identity = target;
+            value.result_version = version;
+            value.contract_digest = format!("contract-{version}");
+            assert_eq!(
+                value.spent_execution_attempts(),
+                Some(1),
+                "version {version}"
+            );
+            value.upgrade_legacy();
+            assert_eq!(value.execution_attempts, Some(1));
+            assert_eq!(&value.receipts[..3], initial_receipts.as_slice());
+            assert_eq!(value.request_digests, initial_digests);
+        }
+        for outcome in [
+            DispatchOutcome::Unknown,
+            DispatchOutcome::Partial,
+            DispatchOutcome::Rejected,
+        ] {
+            value.receipts.last_mut().unwrap().outcome = outcome;
+            value.dispatch = DispatchStatus::Refused;
+            assert_eq!(value.spent_execution_attempts(), Some(1));
+        }
+        let mut zero = value.clone();
+        zero.execution_attempts = Some(0);
+        assert_eq!(zero.spent_execution_attempts(), None);
+        let mut malformed = value.clone();
+        malformed.receipts.last_mut().unwrap().identity.contract += 1;
+        assert_eq!(malformed.spent_execution_attempts(), None);
+        let mut malformed = value.clone();
+        malformed.previous_versions[0].result_version = 9;
+        assert_eq!(malformed.spent_execution_attempts(), None);
+        let mut malformed = value.clone();
+        malformed.request_digests[0].1 = value.contract_digest.clone();
+        assert_eq!(malformed.spent_execution_attempts(), None);
+        value.receipts.push(value.receipts.last().unwrap().clone());
+        assert_eq!(value.spent_execution_attempts(), None);
     }
 
     #[test]
