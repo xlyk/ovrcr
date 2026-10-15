@@ -1,4 +1,6 @@
 //! Public Pi tools -> control CLI -> isolated binary Server -> real managed child PTY.
+#[path = "pi_delegation/followups.rs"]
+mod followups;
 #[path = "support/live.rs"]
 mod live;
 use live::{Live, PROJECT};
@@ -703,6 +705,13 @@ impl ControlProxy {
                     DelegationRequest::Inspect { handle, .. } => ("Inspect", handle.clone()),
                     DelegationRequest::Collect { handle, .. } => ("Collect", handle.clone()),
                     DelegationRequest::Publish { handle, .. } => ("Publish", handle.clone()),
+                    DelegationRequest::Followup { request, .. } => ("Followup", request.clone()),
+                    DelegationRequest::CollectVersion { handle, .. } => {
+                        ("CollectVersion", handle.clone())
+                    }
+                    DelegationRequest::RecordAcceptance { handle, .. } => {
+                        ("RecordAcceptance", handle.clone())
+                    }
                 };
                 worker_requests
                     .lock()
@@ -723,9 +732,12 @@ impl ControlProxy {
                         wait_file(&fault.with_extension("rebind.done"));
                     } else {
                         if point == "input-target-captured" || point == "input-before-write" {
-                            let DelegationRequest::SendInitial { identity, .. } = request.as_ref()
-                            else {
-                                unreachable!()
+                            let identity = match request.as_ref() {
+                                DelegationRequest::SendInitial { identity, .. } => identity,
+                                DelegationRequest::Followup {
+                                    expected_identity, ..
+                                } => expected_identity,
+                                _ => unreachable!(),
                             };
                             let deadline = Instant::now() + Duration::from_secs(10);
                             loop {

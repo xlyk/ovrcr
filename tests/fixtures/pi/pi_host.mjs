@@ -118,6 +118,7 @@ async function main() {
   process.stdout.write("PI_NATIVE_READY\n");
   let index = 0;
   let toolPublication = 0;
+  let previousSubmission = null;
   const toolOutput = (path, value) => {
     const temporary = `${path}.${process.pid}.${toolPublication++}.tmp`;
     writeFileSync(temporary, JSON.stringify(value));
@@ -141,18 +142,27 @@ async function main() {
       continue;
     }
     if (host && process.env.OVRCR_TEST_DELEGATION && clean.startsWith("Perform the read-only research assignment in ")) {
-      const path = clean.match(/in (.+\/brief-v1\.json)\. Read/)[1];
+      const path = clean.match(/in (.+\/brief-v[1-9][0-9]*\.json)\. Read/)[1];
       const brief = JSON.parse(readFileSync(path, "utf8"));
       writeFileSync(`${path}.started`, "CHILD_RESEARCH_STARTED");
       appendFileSync(`${path}.input-count`, "1\n");
       process.stdout.write("CHILD_RESEARCH_STARTED\n");
       await host.emit({ type: "agent_start" });
       while (!existsSync(process.env.OVRCR_TEST_DELEGATION_RESULT_GATE)) await new Promise(resolve => setTimeout(resolve, 10));
-      const submission = { schema: 1, identity: brief.identity, version: 1, outcome: "success", summary: "Read the assigned repository README.", evidence: ["README:1 fixture"], unresolved: [] };
+      const submission = { schema: 1, identity: brief.identity, version: brief.result_version ?? 1, outcome: "success", summary: "Read the assigned repository README.", evidence: ["README:1 fixture"], unresolved: [] };
       if (brief.contract.scope.includes("STALE_RESULT")) submission.identity.contract += 1;
+      if (previousSubmission) {
+        let late;
+        try { late = await host.tool("ovrcr_publish", { handle: brief.handle, submission: previousSubmission }); }
+        catch (error) { late = {error:String(error)}; }
+        writeFileSync(`${path}.late-result`,JSON.stringify(late));
+      }
+      previousSubmission = structuredClone(submission);
       let result;
       try { result = await host.tool("ovrcr_publish", { handle: brief.handle, submission }); }
       catch (error) { result = { error: String(error) }; }
+      const childAcceptance = await host.tool("ovrcr_accept", {handle:brief.handle, identity:brief.identity, result_version:brief.result_version ?? 1, result_digest:"child-cannot-accept"});
+      writeFileSync(`${path}.child-acceptance`, JSON.stringify(childAcceptance));
       writeFileSync(`${path}.published`, JSON.stringify(result));
       process.stdout.write("CHILD_RESULT_PUBLISHED\n");
       await host.emit({ type: "agent_end", messages: [assistant("stop")] });

@@ -3,7 +3,8 @@
 A managed Pi parent can start one read-only assignment in an existing OVRCR
 workspace, keep working, and explicitly collect the child's result. Launch Pi
 through `ovrcr agent run pi -- pi` or the Dashboard picker. The managed extension
-registers `ovrcr_start`, `ovrcr_inspect`, `ovrcr_collect` and `ovrcr_publish`.
+registers `ovrcr_start`, `ovrcr_inspect`, `ovrcr_collect`, `ovrcr_followup`,
+`ovrcr_accept` and `ovrcr_publish`.
 A plain Pi process has no delegation authority.
 
 ## Start and collect
@@ -60,7 +61,8 @@ facts:
 - `dispatch` describes launch and initial input delivery.
 - `activity` is the provider's current observation. Ready is not task success.
 - `submission` is the child's versioned result, or null when none is published.
-- `acceptance` remains `pending`; collection does not accept the child's claim.
+- `acceptance` stays `pending` until the parent explicitly calls `ovrcr_accept`
+  for the exact current result. Collection never accepts the child's claim.
 
 `Refused` means this operation is known not to have taken effect. `LaunchUnknown`,
 `InputUnknown`, or a tool response with `Unknown` requires inspection of the
@@ -103,20 +105,67 @@ child. Collection still strictly validates result bytes and current attribution.
 
 Pre-receipt records are interpreted conservatively using their saved status and
 validated contract. Missing receipts alone never mean an operation was unsent.
-Unclassifiable records remain unknown. Storage is bounded to 4096 assignments
-and three initial-dispatch receipt slots each (at most 12,288 receipts). New
-admission fails before effects when full; existing and unresolved records remain
-recoverable. No receipt is silently evicted to make room. This technical bound
+Unclassifiable records remain unknown. Storage is bounded to 4096 assignments, three initial-dispatch receipt slots and
+64 follow-up slots per assignment. This permits the initial result plus 64 new
+result versions, with at most one immutable acceptance per result version. These
+are storage ceilings, not a scheduling or repair policy. New admission fails
+before changing current references or causing effects when full; existing and
+unresolved records remain recoverable. No receipt is silently evicted to make room. This technical bound
 does not change live-session capacity or introduce a scheduling policy.
+
+## Scoped follow-ups and changed requirements
+
+Keep the task-owned child and workspace through review and repair. Call
+`ovrcr_followup` with the stable `handle`, the latest `expected_identity`,
+`expected_result_version`, and bounded `text` describing the scoped clarification
+or repair. Use the identities and version from a fresh snapshot. A valid follow-up
+uses the same child session, run and conversation; it creates a distinct request
+receipt and expects a new result version. It never creates a replacement attempt.
+A changed run, conversation or reporting generation suspends automatic input;
+returning to an old conversation name does not restore its earlier authority.
+
+For changed requirements, additionally supply `revised_contract`: the complete
+original contract with the revised scope and acceptance evidence. The same-child
+operation preserves the task, workflow, provider, model, workspace and allowed
+actions. It publishes a new immutable contract and explicitly sends the revised
+brief. Editing a local file does not dispatch it. Both a clarification and a
+revision clear only this assignment's current result and acceptance references;
+previous contracts, results, receipts and acceptance references remain available.
+The `contract` identity changes only for an explicit revision. A new task or
+execution choice needs its own assignment; follow-ups do not reuse a specialist
+for unrelated work.
+
+The response includes the follow-up `request`. If a reply is lost, call
+`ovrcr_followup` with **only** the original `handle` and `request`. The extension
+reads its private saved intent and submits the same operation. A repeated request
+returns its existing receipt; changing the payload or expected version is refused.
+An Accepted receipt can finish interrupted immutable publication before input.
+Partial or Unknown input blocks further sends, including a fresh request ID.
+It does not authorize retrying the bytes or starting a replacement assignment.
+
+`ovrcr_collect` returns only the current validated result. To inspect previous
+evidence, supply `version` with the handle: the result appears separately as
+`historical_submission` with `selected_version`. It cannot populate the current
+submission or satisfy current acceptance. Snapshot `history` records exact
+identities, versions and immutable paths. Stale child publications are refused;
+previously published evidence is preserved.
+
+After judging the deliverable, the parent may explicitly call `ovrcr_accept` with
+`handle`, exact current `identity`, `result_version`, and `result_digest` from
+the current publication reference. The operation records the parent's judgment
+in an immutable private acceptance file. Only the current parent binding can
+record it, and the child binding must still match. Repeating the same acceptance
+is idempotent. A child report, Ready signal, delivery receipt, local edit or
+collection never accepts work. No dependency or review engine is added here.
 
 ## Child result and control
 
 The child reads the assigned brief and calls `ovrcr_publish` with its `handle`
 and a `submission` containing `schema: 1`, the exact `identity` object from the
-brief, `version: 1`, `outcome` (`success`, `failed`, or `blocked`), `summary`,
+brief, `version` equal to that brief's `result_version`, `outcome` (`success`, `failed`, or `blocked`), `summary`,
 `evidence`, and `unresolved` arrays. Success requires evidence. The Server checks
 the child's current session, run and provider conversation before publishing a
-complete, immutable `submission-v1.json`. A parent or sibling cannot publish for
+complete, immutable `submission-v<version>.json`. A parent or sibling cannot publish for
 it. A modified, partial, foreign, stale or symlinked publication cannot satisfy
 collection.
 
@@ -129,7 +178,7 @@ workflow files follow the same trusted-user boundary as the OVRCR instance.
 Viewing or focusing a child does not grant control. While assigned, generic
 terminal send, named keystrokes and Dashboard terminal input are refused. The
 parent can still receive ordinary input. This slice has no takeover/return UI;
-those controls, follow-ups, automatic wake, rich restart recovery, other child
+those controls, automatic wake, rich restart recovery, other child
 providers and coding workspace creation are later work.
 
 ## Storage and diagnostics

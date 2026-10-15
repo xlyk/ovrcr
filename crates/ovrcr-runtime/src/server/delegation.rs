@@ -1,7 +1,10 @@
 //! Server-owned assignment control. Task payloads live only in private publications.
+#[path = "delegation_followups.rs"]
+mod followups;
 use super::delegation_files::Directory;
 use super::{ServerState, lifecycle_error};
 use anyhow::{Context, Result, bail};
+use followups::{FollowupIntent, VersionState, initial_result_version, read_version_submission};
 use ovrcr_protocol::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -12,6 +15,13 @@ use std::{
     process::{Command, Stdio},
     time::{Duration, Instant},
 };
+
+// Interface shared with the publication/wake slice. A missing intent is not evidence.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct PublicationIntent {
+    pub identity: PublicationIdentity,
+    pub binding: AgentBinding,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Record {
@@ -25,6 +35,18 @@ pub(crate) struct Record {
     pub contract_digest: String,
     pub brief_digest: Option<String>,
     pub result_digest: Option<String>,
+    #[serde(default = "initial_result_version")]
+    pub result_version: u32,
+    #[serde(default)]
+    pub publication_intent: Option<PublicationIntent>,
+    #[serde(default)]
+    pub handled_publication: Option<PublicationIdentity>,
+    #[serde(default)]
+    pub acceptance: Option<AcceptanceReference>,
+    #[serde(default)]
+    pub previous_versions: Vec<VersionState>,
+    #[serde(default)]
+    pub followups: Vec<FollowupIntent>,
     pub dispatch: DispatchStatus,
     pub reason: Option<String>,
     #[serde(default)]
@@ -52,11 +74,11 @@ impl Record {
         operation: DispatchOperation,
         identity: &AssignmentIdentity,
     ) -> Result<bool> {
-        let expected = digest(&serde_json::to_vec(&(
-            operation,
-            &self.contract_digest,
-            identity,
-        ))?);
+        let initial_digest = self
+            .previous_versions
+            .first()
+            .map_or(&self.contract_digest, |version| &version.contract_digest);
+        let expected = digest(&serde_json::to_vec(&(operation, initial_digest, identity))?);
         if let Some((_, saved)) = self
             .request_digests
             .iter()
@@ -92,6 +114,7 @@ impl Record {
         self.receipts.push(DispatchReceipt {
             request: self.identity.request.clone(),
             operation,
+            result_version: 1,
             identity: identity.clone(),
             outcome: DispatchOutcome::Accepted,
             input: None,
@@ -192,6 +215,9 @@ impl Record {
                     }
                     (DispatchOperation::InitialInput, DispatchStatus::Refused) => continue,
                     (DispatchOperation::InitialInput, _) => DispatchOutcome::Unknown,
+                    (DispatchOperation::Followup, _) => {
+                        unreachable!("legacy dispatch has no followups")
+                    }
                 }
             };
             let identity = if operation == DispatchOperation::InitialInput {
@@ -205,6 +231,7 @@ impl Record {
                 self.receipts.push(DispatchReceipt {
                     request: self.identity.request.clone(),
                     operation,
+                    result_version: 1,
                     identity,
                     outcome,
                     input: None,
@@ -360,7 +387,11 @@ impl ServerState {
                     if record.parent != auth.session
                         || record.parent_run != parent.run()
                         || record.parent_binding != parent_binding
-                        || record.contract_digest != contract_digest
+                        || record
+                            .previous_versions
+                            .first()
+                            .map_or(&record.contract_digest, |version| &version.contract_digest)
+                            != &contract_digest
                     {
                         return Err(lifecycle_error(
                             ErrorCode::Conflict,
@@ -413,6 +444,12 @@ impl ServerState {
                         contract_digest,
                         brief_digest: None,
                         result_digest: None,
+                        result_version: 1,
+                        publication_intent: None,
+                        handled_publication: None,
+                        acceptance: None,
+                        previous_versions: Vec::new(),
+                        followups: Vec::new(),
                         dispatch: DispatchStatus::Prepared,
                         reason: None,
                         project: contract.project.clone(),
@@ -684,6 +721,46 @@ impl ServerState {
                 }
                 record
             }
+            DelegationRequest::Followup {
+                auth,
+                handle,
+                request,
+                expected_identity,
+                expected_result_version,
+                text,
+                revised_contract,
+            } => {
+                return self.followup(
+                    auth,
+                    handle,
+                    request,
+                    (expected_identity, expected_result_version),
+                    text,
+                    revised_contract.map(|contract| *contract),
+                );
+            }
+            DelegationRequest::CollectVersion {
+                auth,
+                handle,
+                version,
+            } => {
+                return self.collect_version(auth, handle, version);
+            }
+            DelegationRequest::RecordAcceptance {
+                auth,
+                handle,
+                identity,
+                result_version,
+                result_digest,
+            } => {
+                return self.record_acceptance(
+                    auth,
+                    handle,
+                    identity,
+                    result_version,
+                    result_digest,
+                );
+            }
             DelegationRequest::Inspect { auth, handle }
             | DelegationRequest::Collect { auth, handle } => {
                 return self.assignment_snapshot(self.owned_assignment(&auth, &handle)?);
@@ -719,6 +796,9 @@ impl ServerState {
                 {
                     bail!("initial assignment has not been delivered");
                 }
+                if submission.version != record.result_version {
+                    bail!("submission belongs to a stale result version");
+                }
                 let bytes = serde_json::to_vec(&submission)?;
                 let hash = digest(&bytes);
                 if record
@@ -735,8 +815,14 @@ impl ServerState {
                 let store = self.retained.lock();
                 session.with_delegation_binding(&auth.capability, &binding, || {
                     let directory = Directory::open(&record.root, false)?;
-                    if let Err(error) = directory.publish("submission-v1.json", &bytes)
-                        && directory.read("submission-v1.json").ok().as_ref() != Some(&bytes)
+                    if let Err(error) = directory.publish(
+                        &format!("submission-v{}.json", record.result_version),
+                        &bytes,
+                    ) && directory
+                        .read(&format!("submission-v{}.json", record.result_version))
+                        .ok()
+                        .as_ref()
+                        != Some(&bytes)
                     {
                         return Err(error);
                     }
@@ -757,13 +843,16 @@ impl ServerState {
         let id = record.identity.session.context("assignment has no child")?;
         let session = self.session_for_control(id)?;
         if Some(session.run()) != record.identity.run {
-            bail!("assigned run changed");
+            return Err(lifecycle_error(ErrorCode::Conflict, "assigned run changed"));
         }
         let summary = session.summary();
         if let Some(binding) = &record.binding
             && summary.agent.as_ref().map(|agent| &agent.binding) != Some(binding)
         {
-            bail!("child conversation binding changed");
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "child conversation binding changed",
+            ));
         }
         Ok(session)
     }
@@ -825,7 +914,7 @@ impl ServerState {
         self.retained.lock().save_assignment(&record)?;
         let contract = read_contract(&record)?;
         let brief = serde_json::to_vec_pretty(
-            &serde_json::json!({"schema": 1, "handle": handle, "identity": record.identity, "contract": contract, "output": record.root.join("submission-v1.json"), "publication": "Call ovrcr_publish. Only this child can publish; it cannot accept the result. Research tools are read-only."}),
+            &serde_json::json!({"schema": 1, "handle": handle, "identity": record.identity, "contract": contract, "result_version": 1, "output": record.root.join("submission-v1.json"), "publication": "Call ovrcr_publish. Only this child can publish; it cannot accept the result. Research tools are read-only."}),
         )?;
         Directory::open(&record.root, false)?.publish("brief-v1.json", &brief)?;
         record.brief_digest = Some(digest(&brief));
@@ -854,18 +943,12 @@ impl ServerState {
                 {
                     bail!("submission belongs to a changed conversation");
                 }
-                let bytes = Directory::open(&record.root, false)?.read("submission-v1.json")?;
-                if &digest(&bytes) != expected {
-                    bail!("submission publication changed or is partial");
-                }
-                let result: ResearchSubmission = serde_json::from_slice(&bytes)?;
-                result
-                    .validate(&record.identity)
-                    .map_err(anyhow::Error::msg)?;
-                Some(result)
+                let _ = expected;
+                read_version_submission(&record, &record.version())?
             }
             None => None,
         };
+        followups::verify_acceptance(&record, &record.version())?;
         self.snapshot_with_submission(record, submission)
     }
 
@@ -913,6 +996,23 @@ impl ServerState {
                 phase: s.phase.clone(),
             }),
         };
+        let version = record.version();
+        let publication = if submission.is_some() {
+            record.version_reference(&version).publication
+        } else {
+            None
+        };
+        let history = record
+            .previous_versions
+            .iter()
+            .map(|v| record.version_reference(v))
+            .collect();
+        let brief = record
+            .root
+            .join(format!("brief-v{}.json", record.result_version));
+        let result_path = record
+            .root
+            .join(format!("submission-v{}.json", record.result_version));
         Ok(AssignmentSnapshot {
             handle: record.handle,
             identity: record.identity,
@@ -926,10 +1026,21 @@ impl ServerState {
                 .as_ref()
                 .and_then(|s| s.agent.as_ref())
                 .map(|a| a.binding.conversation.clone()),
-            brief: record.root.join("brief-v1.json"),
-            result_path: record.root.join("submission-v1.json"),
+            brief,
+            result_path,
             submission,
-            acceptance: "pending".into(),
+            acceptance: if record.acceptance.is_some() {
+                "accepted"
+            } else {
+                "pending"
+            }
+            .into(),
+            result_version: record.result_version,
+            publication,
+            acceptance_ref: record.acceptance,
+            history,
+            selected_version: None,
+            historical_submission: None,
             receipts: record.receipts,
             resources,
         })
@@ -937,7 +1048,8 @@ impl ServerState {
 }
 
 fn read_contract(record: &Record) -> Result<ResearchContract> {
-    let bytes = Directory::open(&record.root, false)?.read("contract-v1.json")?;
+    let bytes = Directory::open(&record.root, false)?
+        .read(&format!("contract-v{}.json", record.identity.contract))?;
     if digest(&bytes) != record.contract_digest {
         bail!("immutable contract changed");
     }
@@ -989,7 +1101,7 @@ fn available_model(contract: &ResearchContract) -> Result<()> {
 mod tests {
     use super::*;
 
-    fn record(root: PathBuf, status: DispatchStatus) -> Record {
+    pub(super) fn record(root: PathBuf, status: DispatchStatus) -> Record {
         let root = std::fs::canonicalize(root.parent().unwrap())
             .unwrap()
             .join(root.file_name().unwrap());
@@ -1051,6 +1163,12 @@ mod tests {
             contract_digest: digest(&bytes),
             brief_digest: None,
             result_digest: None,
+            result_version: 1,
+            publication_intent: None,
+            handled_publication: None,
+            acceptance: None,
+            previous_versions: Vec::new(),
+            followups: Vec::new(),
             dispatch: status,
             reason: None,
             project: String::new(),

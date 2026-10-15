@@ -1520,7 +1520,7 @@ mod wire_snapshot {
                 "Prepare",
                 crate::DelegationRequest::Prepare {
                     auth: auth.clone(),
-                    contract,
+                    contract: contract.clone(),
                 },
             ),
             (
@@ -1561,6 +1561,36 @@ mod wire_snapshot {
                 },
             ),
             (
+                "Followup",
+                crate::DelegationRequest::Followup {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                    request: "f".into(),
+                    expected_identity: identity.clone(),
+                    expected_result_version: 1,
+                    text: "clarify".into(),
+                    revised_contract: Some(Box::new(contract)),
+                },
+            ),
+            (
+                "CollectVersion",
+                crate::DelegationRequest::CollectVersion {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                    version: 1,
+                },
+            ),
+            (
+                "RecordAcceptance",
+                crate::DelegationRequest::RecordAcceptance {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                    identity: identity.clone(),
+                    result_version: 1,
+                    result_digest: "digest".into(),
+                },
+            ),
+            (
                 "Publish",
                 crate::DelegationRequest::Publish {
                     auth,
@@ -1587,6 +1617,12 @@ mod wire_snapshot {
                 result_path: "/result".into(),
                 submission: Some(submission),
                 acceptance: "pending".into(),
+                result_version: 1,
+                publication: None,
+                acceptance_ref: None,
+                history: vec![],
+                selected_version: None,
+                historical_submission: None,
                 receipts: vec![],
                 resources: crate::AssignmentResources {
                     project: Some("p".into()),
@@ -1656,13 +1692,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a042c017301630168016c0104",
+            "2a042e017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f042c017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f042e017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -1693,18 +1729,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d042c0000"),
+        ("Response::NotificationNavigation", "0d042e0000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e042c017301630168016c0104",
+            "0e01016e042e017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f010708090101690101042c017301630168016c0164",
+            "0f010708090101690101042e017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "10042c010708090101690101042c017301630168016c0164",
+            "10042e010708090101690101042e017301630168016c0164",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -1728,7 +1764,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e042c017301630168016c0104",
+            "08016e042e017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -1888,12 +1924,21 @@ mod wire_snapshot {
         ("Delegation::Collect", "32050107666978747572650172"),
         ("Delegation::Reconcile", "32040107666978747572650172"),
         (
+            "Delegation::Followup",
+            "32060107666978747572650172016601690177016301017401010172010201010107636c617269667901010177016301740172017002777304726561640104726561640270690474657374016d010463697465010472656164",
+        ),
+        ("Delegation::CollectVersion", "3207010766697874757265017201"),
+        (
+            "Delegation::RecordAcceptance",
+            "3208010766697874757265017201690177016301017401010172010201010106646967657374",
+        ),
+        (
             "Delegation::Publish",
-            "3206010766697874757265017201016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e00",
+            "3209010766697874757265017201016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e00",
         ),
         (
             "Response::Delegation",
-            "11017201690177016301017401010172010201010400050104636f6e76062f6272696566072f726573756c740101016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e000770656e64696e6700010170010277730100",
+            "11017201690177016301017401010172010201010400050104636f6e76062f6272696566072f726573756c740101016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e000770656e64696e6701000000000000010170010277730100",
         ),
     ];
 
