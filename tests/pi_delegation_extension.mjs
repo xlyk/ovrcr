@@ -264,6 +264,7 @@ test("retry rejects a FIFO intent before a blocking open can wait for a writer",
     const source = readFileSync(new URL("../src/pi-reporting-extension.mjs", import.meta.url), "utf8").replace("__OVRCR_BINARY__", JSON.stringify("/fixture/ovrcr"));
     writeFileSync(join(dir, "reporting.mjs"), source);
     writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(new URL("../src/ovrcr-reporting-transport.mjs", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
     const host = await createHost(join(dir, "reporting.mjs"));
     let waitedForWriter = false;
     // Release the original defect so a failed regression cannot hang Node's
