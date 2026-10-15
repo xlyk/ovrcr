@@ -10,7 +10,7 @@
 // Bounded delivery lives in the transport module materialized beside this file.
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, open, lstat, rename } from "node:fs/promises";
+import { mkdir, open, lstat, rename, link, unlink } from "node:fs/promises";
 import { constants } from "node:fs";
 import { join } from "node:path";
 import { createReporter, idOf, modelId, outcomeOf } from "./ovrcr-reporting-transport.mjs";
@@ -156,12 +156,12 @@ function registerDelegation(pi) {
   });
   const object = (properties, required = Object.keys(properties)) => ({ type: "object", properties, required, additionalProperties: false });
   const string = { type: "string" };
-  const originalIntent = async handle => {
+  const originalIntent = async (handle, prefix = "") => {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(handle)) throw new Error("invalid original request identity");
     const directory = join(process.env.OVRCR_DELEGATION_HOME ?? "", "parent-intents");
     const parent = await lstat(directory);
     if (!parent.isDirectory() || parent.isSymbolicLink() || (parent.mode & 0o077) || parent.uid !== process.getuid()) throw new Error("original intent directory is not private");
-    const file = await open(join(directory, `${handle}.json`), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const file = await open(join(directory, `${prefix}${handle}.json`), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const stat = await file.stat();
       if (!stat.isFile() || stat.size > 262144 || (stat.mode & 0o077) || stat.uid !== process.getuid()) throw new Error("invalid original intent file");
@@ -243,7 +243,52 @@ function registerDelegation(pi) {
       return snapshot;
     } catch (error) { return { handle, dispatch: error.refused || !attempted ? "Refused" : "Unknown", transport: attempted ? "Unknown" : "NotSent", reason: String(error.message), recovery: "Call ovrcr_start with only this original handle; do not start a replacement assignment" }; }
   });
+  // Followups retain their original private request even if the first reply is lost.
+  const saveFollowup = async intent => {
+    const root = process.env.OVRCR_DELEGATION_HOME;
+    if (!root) throw new Error("managed instance directory unavailable");
+    const directory = join(root, "parent-intents");
+    await mkdir(directory, { mode: 0o700, recursive: true });
+    const stat = await lstat(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) || stat.uid !== process.getuid()) throw new Error("intent directory must be private");
+    const bytes = JSON.stringify(intent);
+    if (Buffer.byteLength(bytes) > 262144) throw new Error("followup intent exceeds supported content limits");
+    const temporary = join(directory, `.${intent.request}.tmp`);
+    const file = await open(temporary, "wx", 0o600);
+    try { await file.writeFile(bytes); await file.sync(); } finally { await file.close(); }
+    try { await link(temporary, join(directory, `followup-${intent.request}.json`)); }
+    finally { await unlink(temporary); }
+    const held = await open(directory, "r");
+    try { await held.sync(); } finally { await held.close(); }
+  };
+  tool("ovrcr_followup", "Send a scoped followup to this assignment's same safe child. Supply expected_identity, expected_result_version and text, plus revised_contract only for explicit changed requirements. Each call expects a new result version. Recover a lost reply with only handle and its original request; unknown/partial input must never be resent under a new request.", { ...object({ handle: string, request: string, expected_identity: { type: "object" }, expected_result_version: { type: "integer", minimum: 1 }, text: string, revised_contract: { type: ["object", "null"] } }, ["handle"]), anyOf: [{ required: ["handle", "request"] }, { required: ["handle", "expected_identity", "expected_result_version", "text"] }] }, async args => {
+    let request = args.request;
+    let attempted = false;
+    try {
+      if (typeof args.handle !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(args.handle)) throw new Error("invalid assignment handle");
+      let intent;
+      if (request !== undefined) {
+        if (Object.keys(args).some(key => !["handle", "request"].includes(key))) throw new Error("recovery requires only handle and original request");
+        intent = await originalIntent(request, "followup-");
+        if (intent.handle !== args.handle) throw new Error("original followup belongs to another assignment");
+      } else {
+        if (!Number.isSafeInteger(args.expected_result_version) || args.expected_result_version < 1 || !args.expected_identity || typeof args.expected_identity !== "object" || Array.isArray(args.expected_identity) || typeof args.text !== "string" || !args.text.trim() || Buffer.byteLength(args.text) > 32768 || Object.keys(args).some(key => !["handle", "expected_identity", "expected_result_version", "text", "revised_contract"].includes(key))) throw new Error("provide expected_identity, expected_result_version and 1..32768 bytes of scoped text");
+        request = randomUUID();
+        intent = { schema: 1, handle: args.handle, request, expected_identity: args.expected_identity, expected_result_version: args.expected_result_version, text: args.text, revised_contract: args.revised_contract ?? null };
+        auth();
+        await saveFollowup(intent);
+      }
+      attempted = true;
+      const { schema: _schema, ...fields } = intent;
+      const snapshot = await call({ Followup: { auth: auth(), ...fields } });
+      return { ...snapshot, request };
+    } catch (error) { return { handle: args.handle, request: request ?? null, dispatch: error.refused || !attempted ? "Refused" : "Unknown", transport: attempted ? "Unknown" : "NotSent", reason: String(error.message), recovery: "Recover with only this handle and original request; do not create another request while input is unknown or partial" }; }
+  });
+  tool("ovrcr_accept", "Record the parent's explicit acceptance of the exact current result identity, version and digest. This records your judgment; collection, Ready and child success never accept automatically.", object({ handle: string, identity: { type: "object" }, result_version: { type: "integer", minimum: 1 }, result_digest: string }), async args => {
+    try { return await call({ RecordAcceptance: { auth: auth(), ...args } }); }
+    catch (error) { return { handle: args.handle, dispatch: error.refused ? "Refused" : "Unknown", reason: String(error.message), recovery: "Retry acceptance only with the same exact current result reference" }; }
+  });
   tool("ovrcr_inspect", "Inspect an owned assignment without changing it. Activity is not acceptance.", object({ handle: string }), args => call({ Inspect: { auth: auth(), handle: args.handle } }));
-  tool("ovrcr_collect", "Collect a complete validated submission. Parent acceptance remains pending.", object({ handle: string }), args => call({ Collect: { auth: auth(), handle: args.handle } }));
-  tool("ovrcr_publish", "Publish the assigned child's immutable version 1 research result. Use the exact identity from the brief. This does not accept the work.", object({ handle: string, submission: { type: "object" } }), args => call({ Publish: { auth: auth(), handle: args.handle, submission: args.submission } }));
+  tool("ovrcr_collect", "Collect the current validated submission without accepting it. Optional version explicitly reads historical evidence; historical_submission cannot satisfy current collection or acceptance.", object({ handle: string, version: { type: "integer", minimum: 1 } }, ["handle"]), args => call(args.version === undefined ? { Collect: { auth: auth(), handle: args.handle } } : { CollectVersion: { auth: auth(), handle: args.handle, version: args.version } }));
+  tool("ovrcr_publish", "Publish the assigned child's immutable research result. Use the exact identity and result_version from the current brief (result_version is submission.version). This does not accept the work.", object({ handle: string, submission: { type: "object" } }), args => call({ Publish: { auth: auth(), handle: args.handle, submission: args.submission } }));
 }

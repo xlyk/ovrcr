@@ -118,12 +118,17 @@ pub enum DispatchStatus {
     Refused,
 }
 
+fn initial_receipt_version() -> u32 {
+    1
+}
+
 /// Delivery of one operation, never provider completion or parent acceptance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DispatchOperation {
     Prepare,
     Launch,
     InitialInput,
+    Followup,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,6 +151,8 @@ pub struct InputDelivery {
 pub struct DispatchReceipt {
     pub request: String,
     pub operation: DispatchOperation,
+    #[serde(default = "initial_receipt_version")]
+    pub result_version: u32,
     pub identity: AssignmentIdentity,
     pub outcome: DispatchOutcome,
     pub input: Option<InputDelivery>,
@@ -182,7 +189,7 @@ pub struct ResearchSubmission {
 
 impl ResearchSubmission {
     pub fn validate(&self, identity: &AssignmentIdentity) -> Result<(), &'static str> {
-        if self.schema != DELEGATION_SCHEMA || self.version != 1 {
+        if self.schema != DELEGATION_SCHEMA || self.version == 0 {
             return Err("unsupported or stale submission version");
         }
         if &self.identity != identity {
@@ -211,6 +218,41 @@ impl ResearchSubmission {
     }
 }
 
+/// Exact immutable submission reference; handling never implies acceptance.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PublicationKind {
+    Submission,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicationIdentity {
+    pub assignment: AssignmentIdentity,
+    pub kind: PublicationKind,
+    pub version: u32,
+    pub digest: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicationState {
+    pub identity: PublicationIdentity,
+    pub handled: bool,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AcceptanceReference {
+    pub identity: AssignmentIdentity,
+    pub result_version: u32,
+    pub result_digest: String,
+    pub path: PathBuf,
+    pub digest: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssignmentVersion {
+    pub identity: AssignmentIdentity,
+    pub result_version: u32,
+    pub contract: PathBuf,
+    pub brief: PathBuf,
+    pub publication: Option<PublicationState>,
+    pub acceptance: Option<AcceptanceReference>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssignmentSnapshot {
     pub handle: String,
@@ -222,8 +264,14 @@ pub struct AssignmentSnapshot {
     pub brief: PathBuf,
     pub result_path: PathBuf,
     pub submission: Option<ResearchSubmission>,
-    /// A child submission never changes parent acceptance. This slice only collects.
+    /// Only an explicit parent RecordAcceptance changes acceptance.
     pub acceptance: String,
+    pub result_version: u32,
+    pub publication: Option<PublicationState>,
+    pub acceptance_ref: Option<AcceptanceReference>,
+    pub history: Vec<AssignmentVersion>,
+    pub selected_version: Option<u32>,
+    pub historical_submission: Option<ResearchSubmission>,
     pub receipts: Vec<DispatchReceipt>,
     pub resources: AssignmentResources,
 }
@@ -255,6 +303,27 @@ pub enum DelegationRequest {
     Collect {
         auth: DelegationAuth,
         handle: String,
+    },
+    Followup {
+        auth: DelegationAuth,
+        handle: String,
+        request: String,
+        expected_identity: AssignmentIdentity,
+        expected_result_version: u32,
+        text: String,
+        revised_contract: Option<Box<ResearchContract>>,
+    },
+    CollectVersion {
+        auth: DelegationAuth,
+        handle: String,
+        version: u32,
+    },
+    RecordAcceptance {
+        auth: DelegationAuth,
+        handle: String,
+        identity: AssignmentIdentity,
+        result_version: u32,
+        result_digest: String,
     },
     Publish {
         auth: DelegationAuth,

@@ -1655,6 +1655,61 @@ fn delegation_rechecks_a_to_b_to_a_binding_at_the_pty_write_boundary() {
         matches!(sent.join().unwrap(), DelegatedDelivery::Rejected(_)),
         "stale A generation must never reach the PTY"
     );
+    *child.before_delegated_input.lock().unwrap() = None;
+    let acceptance = dir.path().join("must-not-accept");
+    let capability = crate::agent_runner::delegation_capability(&capability_hex(&[0x37; 32]));
+    let stale_context = DelegatedInput {
+        request: "acceptance",
+        parent: &parent,
+        parent_binding: &parent_binding,
+        capability: &capability,
+        child_binding: &child_binding,
+        model: "fixture-model",
+        text: "",
+    };
+    assert!(
+        child
+            .with_delegated_context(&stale_context, || {
+                std::fs::write(&acceptance, "stale acceptance")?;
+                Ok(())
+            })
+            .unwrap()
+            .is_none()
+    );
+    let parent_b = bind(
+        &parent,
+        &parent_auth,
+        &parent_owner,
+        Some(parent_binding.clone()),
+        "B",
+        "parent-B",
+    );
+    let parent_a = bind(
+        &parent,
+        &parent_auth,
+        &parent_owner,
+        Some(parent_b),
+        "A",
+        "parent-A-again",
+    );
+    assert_ne!(parent_a.generation, parent_binding.generation);
+    let stale_parent = DelegatedInput {
+        child_binding: &a,
+        ..stale_context
+    };
+    assert!(
+        child
+            .with_delegated_context(&stale_parent, || {
+                std::fs::write(&acceptance, "stale parent acceptance")?;
+                Ok(())
+            })
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        !acceptance.exists(),
+        "a stale child or parent cannot publish acceptance"
+    );
     let fence = dir.path().join("after-write-fence");
     child
         .send_text(&format!("printf fence > '{}'", fence.display()), true)

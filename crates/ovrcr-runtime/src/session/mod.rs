@@ -1008,18 +1008,37 @@ impl Session {
             .screen()
             .bracketed_paste();
         let bytes = encode_paste(input.text, bracketed);
+        let rejected = || {
+            DelegatedDelivery::Rejected(ovrcr_protocol::InputDelivery {
+                written_bytes: 0,
+                total_bytes: bytes.len() as u64 + 1,
+                submit_written: false,
+            })
+        };
+        Ok(self
+            .with_delegated_context(&input, || {
+                let mut writer = self.writer.lock().unwrap();
+                let failure = crate::server::delegation::take_fault("input", input.request);
+                Ok(write_delegated(&mut **writer, &bytes, failure))
+            })?
+            .unwrap_or_else(rejected))
+    }
+
+    /// Caller holds SessionStore before these Session locks (ascending ID order).
+    /// The action must use that held store and must not reenter Session state.
+    pub(crate) fn with_delegated_context<T>(
+        &self,
+        input: &DelegatedInput<'_>,
+        action: impl FnOnce() -> Result<T>,
+    ) -> Result<Option<T>> {
         #[cfg(test)]
         if let Some(hook) = self.before_delegated_input.lock().unwrap().clone() {
             hook();
         }
         if self.id() == input.parent.id() {
-            return Ok(DelegatedDelivery::Rejected(ovrcr_protocol::InputDelivery {
-                written_bytes: 0,
-                total_bytes: bytes.len() as u64 + 1,
-                submit_written: false,
-            }));
+            return Ok(None);
         }
-        let write = |parent: &SessionState, child: &SessionState| -> Result<DelegatedDelivery> {
+        let apply = |parent: &SessionState, child: &SessionState| -> Result<Option<T>> {
             let parent_valid = parent.phase == SessionPhase::Running
                 && parent.hook_capability.as_ref().is_some_and(|token| {
                     crate::agent_runner::delegation_capability(&capability_hex(token))
@@ -1041,24 +1060,18 @@ impl Session {
                             == Some(input.model)
                 });
             if !parent_valid || !child_valid {
-                return Ok(DelegatedDelivery::Rejected(ovrcr_protocol::InputDelivery {
-                    written_bytes: 0,
-                    total_bytes: bytes.len() as u64 + 1,
-                    submit_written: false,
-                }));
+                return Ok(None);
             }
-            let mut writer = self.writer.lock().unwrap();
-            let failure = crate::server::delegation::take_fault("input", input.request);
-            Ok(write_delegated(&mut **writer, &bytes, failure))
+            action().map(Some)
         };
         if input.parent.id().0 < self.id().0 {
             let parent = input.parent.state.lock().unwrap();
             let child = self.state.lock().unwrap();
-            write(&parent, &child)
+            apply(&parent, &child)
         } else {
             let child = self.state.lock().unwrap();
             let parent = input.parent.state.lock().unwrap();
-            write(&parent, &child)
+            apply(&parent, &child)
         }
     }
 
