@@ -2587,6 +2587,31 @@ fn lifecycle_response_preserves_error_chain_and_code() {
     );
 }
 
+#[test]
+fn no_process_evidence_preserves_preparation_diagnostic_and_code() {
+    let error =
+        lifecycle_error(ErrorCode::NotFound, "missing executable").context("prepare session");
+    let error = crate::session::NoProcessStarted::context(error);
+    assert_eq!(error.to_string(), "prepare session");
+    assert!(error.is::<crate::session::NoProcessStarted>());
+    assert_eq!(
+        error.downcast_ref::<LifecycleFailure>().unwrap().code,
+        ErrorCode::NotFound
+    );
+    assert!(
+        error
+            .chain()
+            .any(|cause| cause.to_string() == "missing executable")
+    );
+    assert_eq!(
+        error_for_lifecycle(error),
+        Response::Error {
+            code: ErrorCode::NotFound,
+            message: "prepare session: missing executable".into(),
+        }
+    );
+}
+
 pub(super) fn test_state(
     dashboard: Option<Arc<DashboardSink>>,
     stream: Option<(Arc<()>, UnixStream)>,

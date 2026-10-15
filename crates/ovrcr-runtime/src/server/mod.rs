@@ -840,7 +840,7 @@ impl ServerState {
         })?;
         if let Some(handle) = assignment {
             self.bind_assignment(handle, &record)
-                .context(crate::session::NoProcessStarted)?;
+                .map_err(crate::session::NoProcessStarted::context)?;
         }
         let error = match self.spawn_record_locked(record.id, record.run, request.argv, ready, None)
         {
@@ -924,7 +924,7 @@ impl ServerState {
             let assigned_input = self.retained.lock().assigned(id)?;
             Ok((record, socket, capability, events, assigned_input))
         })()
-        .context(crate::session::NoProcessStarted)?;
+        .map_err(crate::session::NoProcessStarted::context)?;
         let metadata = &record.metadata;
         let spec = SessionSpec {
             restore_command,
@@ -995,7 +995,7 @@ impl ServerState {
                 true,
             );
             return Err(if no_process {
-                failure.context(crate::session::NoProcessStarted)
+                crate::session::NoProcessStarted::context(failure)
             } else {
                 failure
             });
