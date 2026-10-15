@@ -484,7 +484,7 @@ const CATALOG: [Entry; 21] = [
         shape: Shape::Typed("an integer from 1 to 86400000"),
         owner: SettingOwner::Server,
         group: "Delegation",
-        label: "Progress deadline (milliseconds)",
+        label: "Progress deadline (ms)",
         off_state: None,
         about: &["Reports a silent assignment as stalled. Does not interrupt or cancel its child."],
         value: |settings| display(&settings.delegation.progress_deadline_ms),
