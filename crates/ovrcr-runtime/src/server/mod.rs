@@ -533,7 +533,6 @@ impl ServerState {
     }
 
     pub fn send_terminal(&self, id: SessionId, text: &str, submit: bool) -> Result<()> {
-        let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_assigned_input(id)?;
         let session = self.session_for_control(id)?;
         if matches!(session.summary().phase, SessionPhase::Exited { .. }) {
@@ -547,7 +546,6 @@ impl ServerState {
     /// Write one named key to `expected_run`. Focus is read here, at write
     /// time: the Dashboard owns the keyboard of the session it is focused on.
     pub fn keystroke(&self, id: SessionId, expected_run: SessionRunId, key: &str) -> Result<()> {
-        let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_assigned_input(id)?;
         let (key, modifiers) = ovrcr_terminal::key::parse_keystroke(key)
             .map_err(|message| lifecycle_error(ErrorCode::InvalidRequest, message))?;
@@ -913,6 +911,7 @@ impl ServerState {
         }
         self.dashboard.forget_session(id);
         let metadata = &record.metadata;
+        let assigned_input = self.retained.lock().assigned(id)?;
         let spec = SessionSpec {
             restore_command,
             run: record.run,
@@ -934,6 +933,9 @@ impl ServerState {
             cols: 120,
         });
         let register = |session: &Arc<Session>| {
+            if assigned_input {
+                session.assign_controller_input();
+            }
             session.restore_titles(
                 metadata.pinned_title.clone(),
                 metadata.application_title.clone(),

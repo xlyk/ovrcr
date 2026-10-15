@@ -173,6 +173,7 @@ impl std::fmt::Debug for HookEnvironment {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputAdmissionError {
+    Assigned,
     Paused,
     Exited,
 }
@@ -180,6 +181,7 @@ pub enum InputAdmissionError {
 impl std::fmt::Display for InputAdmissionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
+            Self::Assigned => "Pi owns this assignment; generic terminal input is disabled",
             Self::Paused => "session is paused; resume it before sending input",
             Self::Exited => "session has exited",
         })
@@ -296,6 +298,8 @@ pub struct Session {
     #[cfg(test)]
     pub(crate) initial_cwd: PathBuf,
     state: Mutex<SessionState>,
+    // Set before publication, never cleared for this process run.
+    assigned_input: std::sync::OnceLock<()>,
     state_changed: Condvar,
     terminal: Mutex<TerminalState>,
     parser_changed: Condvar,
@@ -528,6 +532,7 @@ impl Session {
                 unread: None,
                 recovery: None,
             },
+            assigned_input: std::sync::OnceLock::new(),
             state: Mutex::new(SessionState {
                 reporting: reporting::ReportingState::default(),
                 phase: SessionPhase::Running,
@@ -736,7 +741,18 @@ impl Session {
         Ok(changed)
     }
 
+    pub(crate) fn assign_controller_input(&self) {
+        let _ = self.assigned_input.set(());
+    }
+
+    pub(crate) fn has_assigned_input(&self) -> bool {
+        self.assigned_input.get().is_some()
+    }
+
     fn admit_input(&self) -> std::result::Result<(), InputAdmissionError> {
+        if self.has_assigned_input() {
+            return Err(InputAdmissionError::Assigned);
+        }
         match self.state.lock().unwrap().phase {
             SessionPhase::Running => Ok(()),
             SessionPhase::Paused => Err(InputAdmissionError::Paused),

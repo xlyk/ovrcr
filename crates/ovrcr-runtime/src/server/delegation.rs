@@ -71,7 +71,7 @@ impl ServerState {
     }
 
     pub(crate) fn reject_assigned_input(&self, id: SessionId) -> Result<()> {
-        if self.retained.lock().assigned(id)? {
+        if self.session_for_control(id)?.has_assigned_input() {
             return Err(lifecycle_error(
                 ErrorCode::Conflict,
                 "Pi owns this assignment; generic terminal input is disabled",
@@ -185,7 +185,12 @@ impl ServerState {
                             Some("requested Pi/model unavailable; no substitute launched".into());
                         self.retained.lock().save_assignment(&record)?;
                     } else {
-                        self.check_live_capacity()?;
+                        if self.check_live_capacity().is_err() {
+                            record.dispatch = DispatchStatus::Refused;
+                            record.reason = Some("all 50 live process slots are occupied".into());
+                            self.retained.lock().save_assignment(&record)?;
+                            return self.assignment_snapshot(record);
+                        }
                         record.dispatch = DispatchStatus::LaunchUnknown;
                         self.retained.lock().save_assignment(&record)?;
                         let argv = vec![

@@ -58,7 +58,10 @@ Dashboard create/remove/close (CreateWorkspace, CreateWorkspaceWithLaunch,
 CreateSession, CloseTerminal) are accepted immediately on the Dashboard
 connection and run as one Server Lifecycle job on a dedicated worker under
 `mutation_lock` (ADR 0010). Input and SetView keep flowing on the reader while
-the job runs. A second Lifecycle job is refused. Completion is a typed
+the job runs. Assigned runs receive an immutable input-ownership marker before
+Session publication; generic input checks that marker without taking the
+lifecycle mutation lock. Scoped delegation input checks the current parent and
+child bindings under their Session state locks through the PTY write. A second Lifecycle job is refused. Completion is a typed
 `LifecycleCompleted` event correlated by the accepting request id, plus
 `HierarchyChanged` as today. CLI-only RemoveSession and DeleteArchived stay
 synchronous on the caller.

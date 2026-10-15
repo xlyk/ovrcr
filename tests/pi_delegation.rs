@@ -431,7 +431,177 @@ fn public_pi_research_assignment_launches_collects_and_fences_real_child() {
     wait_file(&live.root.path().join("partial.json"));
     let partial = fs::read_to_string(live.root.path().join("partial.json")).unwrap();
     assert!(partial.contains("changed or is partial"), "{partial}");
+    // Delegation uses the existing shared fifty-live-session admission rule.
+    let Response::Inventory { sessions, .. } = live.request(Request::Inspect) else {
+        panic!("inventory");
+    };
+    let count = sessions
+        .iter()
+        .filter(|session| session.phase.is_live())
+        .count();
+    for index in count..50 {
+        let Response::CreatedSession(session) =
+            live.request(Request::CreateSession(CreateSessionRequest {
+                project: PROJECT.into(),
+                workspace: WORKSPACE.into(),
+                name: format!("capacity-{index}"),
+                label: None,
+                argv: vec!["/bin/sh".into()],
+                kind: SessionKind::Terminal,
+            }))
+        else {
+            panic!("fill existing live capacity");
+        };
+        live.own_group(unsafe { libc::getpgid(session.pid.unwrap() as i32) });
+    }
+    let capacity = tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        serde_json::json!({"project":PROJECT,"workspace":WORKSPACE,"scope":"Read README","model_provider":"test","model":"fixture-model","acceptance_evidence":["README citation"]}),
+        &live.root.path().join("capacity.json"),
+    );
+    assert_eq!(capacity["dispatch"], "Refused");
+    assert!(
+        capacity["reason"]
+            .as_str()
+            .unwrap()
+            .contains("50 live process slots")
+    );
+    let refused = snapshot(
+        &live,
+        parent.id,
+        capacity["handle"].as_str().unwrap(),
+        &live.root.path().join("capacity-collected.json"),
+    );
+    assert_eq!(refused.dispatch, DispatchStatus::Refused);
+    assert!(refused.identity.session.is_none());
     live.own_group(unsafe { libc::getpgid(parent.pid.unwrap() as i32) });
+    for group in live.session_groups() {
+        live.own_group(group);
+    }
+}
+
+#[test]
+fn ordinary_input_and_view_continue_while_workspace_lifecycle_is_busy() {
+    let live = Live::binary();
+    live.ready("input-progress");
+    let Response::Inventory { sessions, .. } = live.request(Request::Inspect) else {
+        panic!("inventory")
+    };
+    let ordinary = sessions.iter().find(|s| s.name == "local").unwrap();
+    let git = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|p| p.join("git"))
+        .find(|p| p.is_file())
+        .unwrap();
+    let entered = live.root.path().join("git-entered");
+    let release = live.root.path().join("git-release");
+    struct Release(std::path::PathBuf);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            let _ = fs::write(&self.0, "release");
+        }
+    }
+    let _release = Release(release.clone());
+    let shim = live.claude.command.parent().unwrap().join("git");
+    fs::write(&shim,format!("#!/bin/sh\ncase \"$*\" in *\"worktree add\"*\"blocked-lifecycle\"*) : > '{}'; while [ ! -f '{}' ]; do sleep 0.01; done;; esac\nexec '{}' \"$@\"\n", entered.display(),release.display(),git.display())).unwrap();
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut dashboard = connect_server(&live.socket).unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
+    client::request(&mut dashboard, 1, Request::DashboardHello).unwrap();
+    assert_eq!(
+        client::request(
+            &mut dashboard,
+            2,
+            Request::CreateWorkspace {
+                project: PROJECT.into(),
+                id: "blocked-lifecycle".into(),
+                branch: BranchRequest::New {
+                    branch: "blocked-lifecycle".into(),
+                    base: "main".into()
+                }
+            }
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    wait_file(&entered);
+    assert_eq!(
+        dashboard_view(
+            &mut dashboard,
+            3,
+            Request::SetView {
+                view: DashboardView {
+                    revision: 1,
+                    panes: vec![PaneTarget {
+                        session: ordinary.id,
+                        run: ordinary.run,
+                        size: TerminalSize {
+                            rows: 24,
+                            cols: 120
+                        }
+                    }],
+                    focused: Some(ordinary.id)
+                }
+            }
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    let marker = live.root.path().join("input-during-lifecycle");
+    assert_eq!(
+        client::request(
+            &mut dashboard,
+            4,
+            Request::Input {
+                session: ordinary.id,
+                run: ordinary.run,
+                bytes: format!("printf delivered > '{}'\r", marker.display()).into_bytes()
+            }
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    wait_file(&marker);
+    assert_eq!(fs::read_to_string(marker).unwrap(), "delivered");
+    assert!(
+        !release.exists(),
+        "the workspace lifecycle must still be blocked"
+    );
+    let pasted = live.root.path().join("paste-during-lifecycle");
+    assert_eq!(
+        live::request_with_timeout(
+            &live.socket,
+            5,
+            Request::SendTerminal {
+                session: ordinary.id,
+                text: format!("printf pasted > '{}'", pasted.display()),
+                submit: true
+            },
+            Duration::from_secs(1)
+        ),
+        Some(Response::Ok)
+    );
+    wait_file(&pasted);
+    assert!(matches!(
+        live::request_with_timeout(
+            &live.socket,
+            6,
+            Request::Keystroke {
+                session: ordinary.id,
+                expected_run: ordinary.run,
+                key: ":enter:".into()
+            },
+            Duration::from_secs(1)
+        ),
+        Some(Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        })
+    ));
+    fs::write(&release, "release").unwrap();
     for group in live.session_groups() {
         live.own_group(group);
     }

@@ -647,7 +647,6 @@ pub(super) fn handle_request_with_id(
                     "input is only accepted for the focused dashboard session",
                 );
             }
-            let _mutation = state.mutation_lock.lock().unwrap();
             if let Err(error) = state.reject_assigned_input(session) {
                 return error_response(ErrorCode::Conflict, error_chain_string(&error));
             }
