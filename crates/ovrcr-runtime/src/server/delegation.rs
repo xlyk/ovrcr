@@ -89,7 +89,8 @@ impl Record {
     fn spent_execution_attempts(&self) -> Option<u32> {
         if self.identity.session.is_some() != self.identity.run.is_some()
             || self.handle != self.identity.request
-            || self.receipts.len() > 3 + followups::MAX_FOLLOWUPS
+            || self.receipts.len() > 3 + followups::MAX_FOLLOWUPS + 64
+            || self.control_intents.len() > 64
             || self.followups.len() > followups::MAX_FOLLOWUPS
             || self.request_digests.len() > 3
         {
@@ -135,6 +136,29 @@ impl Record {
         prepare_identity.session = None;
         prepare_identity.run = None;
         for (index, receipt) in self.receipts.iter().enumerate() {
+            if matches!(
+                receipt.operation,
+                DispatchOperation::Takeover
+                    | DispatchOperation::HumanReturn
+                    | DispatchOperation::ConfirmHumanReturn
+            ) {
+                let intent = self
+                    .control_intents
+                    .iter()
+                    .find(|intent| intent.request == receipt.request)?;
+                let version = versions
+                    .iter()
+                    .find(|v| v.result_version == receipt.result_version)?;
+                if intent.operation != receipt.operation
+                    || receipt.identity != version.identity
+                    || self.receipts[..index]
+                        .iter()
+                        .any(|old| old.request == receipt.request)
+                {
+                    return None;
+                }
+                continue;
+            }
             if receipt.operation == DispatchOperation::Followup {
                 let intent = self
                     .followups
@@ -184,8 +208,33 @@ impl Record {
         }) {
             return None;
         }
+        if self
+            .control_intents
+            .iter()
+            .enumerate()
+            .any(|(index, intent)| {
+                !matches!(
+                    intent.operation,
+                    DispatchOperation::Takeover
+                        | DispatchOperation::HumanReturn
+                        | DispatchOperation::ConfirmHumanReturn
+                ) || self
+                    .request_receipt(&intent.request, intent.operation)
+                    .is_none()
+                    || self.control_intents[..index]
+                        .iter()
+                        .any(|old| old.request == intent.request)
+            })
+        {
+            return None;
+        }
         for (index, (operation, saved)) in self.request_digests.iter().enumerate() {
-            if *operation == DispatchOperation::Followup {
+            if !matches!(
+                operation,
+                DispatchOperation::Prepare
+                    | DispatchOperation::Launch
+                    | DispatchOperation::InitialInput
+            ) {
                 return None;
             }
             let receipt = self.receipt(*operation)?;
@@ -206,6 +255,7 @@ impl Record {
             Some(DispatchOutcome::Applied | DispatchOutcome::Unknown | DispatchOutcome::Partial)
         ) || initial.is_some()
             || !self.followups.is_empty()
+            || !self.control_intents.is_empty()
             || !self.previous_versions.is_empty()
             || self.binding.is_some()
             || matches!(
@@ -714,6 +764,8 @@ impl ServerState {
                             || previous.result_version != 1
                             || !previous.previous_versions.is_empty()
                             || !previous.followups.is_empty()
+                            || !previous.control_intents.is_empty()
+                            || previous.control != AssignmentControl::default()
                             || previous.publication_intent.is_some()
                             || previous.result_digest.is_some()
                             || previous.unresolved_input()
@@ -2178,6 +2230,7 @@ mod tests {
                 request: request.clone(),
                 expected,
                 expected_result_version: version - 1,
+                expected_control_epoch: 1,
                 target: target.clone(),
                 result_version: version,
                 digest: "payload".into(),
@@ -2207,12 +2260,35 @@ mod tests {
             assert_eq!(&value.receipts[..3], initial_receipts.as_slice());
             assert_eq!(value.request_digests, initial_digests);
         }
+        for index in 0..64 {
+            value
+                .record_control(
+                    &format!("control-{index}"),
+                    match index % 3 {
+                        0 => DispatchOperation::Takeover,
+                        1 => DispatchOperation::HumanReturn,
+                        _ => DispatchOperation::ConfirmHumanReturn,
+                    },
+                    &index,
+                )
+                .unwrap();
+            assert_eq!(
+                value.spent_execution_attempts(),
+                Some(1),
+                "control operation {index}"
+            );
+        }
+        let last_followup = value
+            .receipts
+            .iter()
+            .rposition(|r| r.operation == DispatchOperation::Followup)
+            .unwrap();
         for outcome in [
             DispatchOutcome::Unknown,
             DispatchOutcome::Partial,
             DispatchOutcome::Rejected,
         ] {
-            value.receipts.last_mut().unwrap().outcome = outcome;
+            value.receipts[last_followup].outcome = outcome;
             value.dispatch = DispatchStatus::Refused;
             assert_eq!(value.spent_execution_attempts(), Some(1));
         }
