@@ -376,6 +376,15 @@ pub enum Request {
         save: bool,
     },
     Delegation(Box<crate::DelegationRequest>),
+    AssignmentControl(crate::AssignmentControlRequest),
+    /// Human authority is captured when enqueued and checked at the final PTY fence.
+    AssignedHumanInput {
+        session: SessionId,
+        run: SessionRunId,
+        control_epoch: u64,
+        view_revision: u64,
+        bytes: Vec<u8>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -661,6 +670,7 @@ mod wire_snapshot {
             }),
             title: None,
             manual_title: None,
+            assignment_control: None,
         }
     }
 
@@ -1538,6 +1548,7 @@ mod wire_snapshot {
                     auth: auth.clone(),
                     handle: "r".into(),
                     identity: identity.clone(),
+                    expected_control_epoch: 1,
                 },
             ),
             (
@@ -1569,6 +1580,7 @@ mod wire_snapshot {
                     request: "f".into(),
                     expected_identity: identity.clone(),
                     expected_result_version: 1,
+                    expected_control_epoch: 1,
                     text: "clarify".into(),
                     revised_contract: Some(Box::new(contract)),
                 },
@@ -1589,6 +1601,7 @@ mod wire_snapshot {
                     identity: identity.clone(),
                     result_version: 1,
                     result_digest: "digest".into(),
+                    expected_control_epoch: 1,
                 },
             ),
             (
@@ -1630,10 +1643,79 @@ mod wire_snapshot {
                 encode(&Request::Delegation(Box::new(request))),
             ));
         }
+        let evidence = crate::AssignmentControlEvidence {
+            server_lifetime: "l".into(),
+            identity: identity.clone(),
+            binding: crate::AgentBinding {
+                provider: crate::AgentProvider::Pi,
+                invocation: "inv".into(),
+                conversation: "conv".into(),
+                generation: 1,
+            },
+            result_version: 1,
+            activity_revision: 2,
+            input_revision: 3,
+            publication: None,
+            publication_issue: None,
+            human_input_revision: 4,
+        };
+        all.push((
+            "Request::AssignedHumanInput".into(),
+            encode(&Request::AssignedHumanInput {
+                session: SessionId(2),
+                run: SessionRunId(1),
+                control_epoch: 2,
+                view_revision: 3,
+                bytes: vec![7],
+            }),
+        ));
+        all.push((
+            "Request::AssignmentTakeover".into(),
+            encode(&Request::AssignmentControl(
+                crate::AssignmentControlRequest::Takeover {
+                    request: "take".into(),
+                    session: SessionId(2),
+                    run: SessionRunId(1),
+                    expected_epoch: 1,
+                    view_revision: 3,
+                },
+            )),
+        ));
+        all.push((
+            "Request::AssignmentReturn".into(),
+            encode(&Request::AssignmentControl(
+                crate::AssignmentControlRequest::Return {
+                    request: "return".into(),
+                    session: SessionId(2),
+                    run: SessionRunId(1),
+                    expected_epoch: 2,
+                    view_revision: 3,
+                    evidence: evidence.clone(),
+                },
+            )),
+        ));
+        all.push((
+            "Delegation::ConfirmHumanReturn".into(),
+            encode(&Request::Delegation(Box::new(
+                crate::DelegationRequest::ConfirmHumanReturn {
+                    auth: crate::DelegationAuth {
+                        session: SessionId(1),
+                        capability: "fixture".into(),
+                    },
+                    handle: "r".into(),
+                    request: "confirm".into(),
+                    returned_request: "return".into(),
+                    expected_control_epoch: 3,
+                    evidence,
+                },
+            ))),
+        ));
         all.push((
             "Response::Delegation".into(),
             encode(&Response::Delegation(Box::new(crate::AssignmentSnapshot {
                 handle: "r".into(),
+                control: crate::AssignmentControl::default(),
+                control_evidence: None,
                 identity: identity.clone(),
                 dispatch: crate::DispatchStatus::Applied,
                 reason: None,
@@ -1755,13 +1837,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a042f017301630168016c0104",
+            "2a0430017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f042f017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0430017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -1772,13 +1854,13 @@ mod wire_snapshot {
         ("Response::Hierarchy", "0100"),
         (
             "Response::CreatedSession",
-            "020100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e020100000001040105060000",
+            "020100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e02010000000104010506000000",
         ),
         ("Response::Screen", "0301040301020107"),
         ("Response::Error", "0401016d"),
         (
             "Response::Inventory",
-            "0500010100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e020100000001040105060000",
+            "0500010100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e02010000000104010506000000",
         ),
         ("Response::TerminalText", "060101020174"),
         ("Response::Task", "070601"),
@@ -1792,25 +1874,25 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d042f0000"),
+        ("Response::NotificationNavigation", "0d04300000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e042f017301630168016c0104",
+            "0e01016e0430017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f010708090101690101042f017301630168016c0164",
+            "0f0107080901016901010430017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "10042f010708090101690101042f017301630168016c0164",
+            "1004300107080901016901010430017301630168016c0164",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
         ("ServerEvent::ScreenDirty", "02010403"),
         (
             "ServerEvent::SessionChanged",
-            "030100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e020100000001040105060000",
+            "030100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e02010000000104010506000000",
         ),
         (
             "ServerEvent::QuotaChanged",
@@ -1827,7 +1909,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e042f017301630168016c0104",
+            "08016e0430017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -1981,23 +2063,33 @@ mod wire_snapshot {
         ),
         (
             "Delegation::SendInitial",
-            "320201076669787475726501720169017701630101740101017201020101",
+            "32020107666978747572650172016901770163010174010101720102010101",
         ),
         ("Delegation::Inspect", "32030107666978747572650172"),
         ("Delegation::Collect", "32050107666978747572650172"),
         ("Delegation::Reconcile", "32040107666978747572650172"),
         (
             "Delegation::Followup",
-            "32060107666978747572650172016601690177016301017401010172010201010107636c617269667901010177016301740172017002777304726561640104726561640270690474657374016d010463697465010472656164",
+            "3206010766697874757265017201660169017701630101740101017201020101010107636c617269667901010177016301740172017002777304726561640104726561640270690474657374016d010463697465010472656164",
         ),
         ("Delegation::CollectVersion", "3207010766697874757265017201"),
         (
             "Delegation::RecordAcceptance",
-            "3208010766697874757265017201690177016301017401010172010201010106646967657374",
+            "320801076669787475726501720169017701630101740101017201020101010664696765737401",
         ),
         (
             "Delegation::Publish",
-            "3209010766697874757265017201016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e00",
+            "320a010766697874757265017201016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e00",
+        ),
+        ("Request::AssignedHumanInput", "34020102030107"),
+        ("Request::AssignmentTakeover", "33000474616b6502010103"),
+        (
+            "Request::AssignmentReturn",
+            "33010672657475726e02010203016c01690177016301017401010172010201010303696e7604636f6e7601010203000004",
+        ),
+        (
+            "Delegation::ConfirmHumanReturn",
+            "3209010766697874757265017207636f6e6669726d0672657475726e03016c01690177016301017401010172010201010303696e7604636f6e7601010203000004",
         ),
         (
             "Delegation::Observe",
@@ -2009,7 +2101,7 @@ mod wire_snapshot {
         ),
         (
             "Response::Delegation",
-            "11017201690177016301017401010172010201010400050104636f6e76062f6272696566072f726573756c740101016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e000770656e64696e6701000000000000010170010277730100",
+            "11017201690177016301017401010172010201010400050104636f6e76062f6272696566072f726573756c740101016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e000770656e64696e6701000000000000010170010277730100010000000000",
         ),
         (
             "Response::DelegationObservation",

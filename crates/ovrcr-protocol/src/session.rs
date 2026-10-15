@@ -87,6 +87,9 @@ pub struct SessionSummary {
     /// conversation subjects and application titles are never manual titles.
     #[serde(default)]
     pub manual_title: Option<String>,
+    /// Durable assignment owner, separate from passive Dashboard selection.
+    #[serde(default)]
+    pub assignment_control: Option<crate::AssignmentControlView>,
 }
 
 impl SessionSummary {
