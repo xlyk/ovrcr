@@ -286,7 +286,7 @@ impl ServerState {
         };
         if record.control.owner != ControlOwner::Uncertain
             && session
-                .with_assignment_context(
+                .with_assignment_attribution(
                     record.identity.run.context("assigned run missing")?,
                     &binding,
                     |_| Ok(()),
