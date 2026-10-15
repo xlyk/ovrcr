@@ -3,6 +3,7 @@ use crate::{
     ActivitySample, AgentActivity, AgentBinding, InputRequest, ReporterHealth, SessionId,
     SessionPhase, SessionRunId,
 };
+use crate::{AssignmentControl, AssignmentControlEvidence};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -132,6 +133,9 @@ pub enum DispatchOperation {
     Launch,
     InitialInput,
     Followup,
+    Takeover,
+    HumanReturn,
+    ConfirmHumanReturn,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -278,6 +282,8 @@ pub struct AssignmentSnapshot {
     pub historical_submission: Option<ResearchSubmission>,
     pub receipts: Vec<DispatchReceipt>,
     pub resources: AssignmentResources,
+    pub control: AssignmentControl,
+    pub control_evidence: Option<AssignmentControlEvidence>,
 }
 
 /// A hint cursor is valid only for one Server lifetime. It is not task completion.
@@ -345,6 +351,7 @@ pub enum DelegationRequest {
         auth: DelegationAuth,
         handle: String,
         identity: AssignmentIdentity,
+        expected_control_epoch: u64,
     },
     Inspect {
         auth: DelegationAuth,
@@ -364,6 +371,7 @@ pub enum DelegationRequest {
         request: String,
         expected_identity: AssignmentIdentity,
         expected_result_version: u32,
+        expected_control_epoch: u64,
         text: String,
         revised_contract: Option<Box<ResearchContract>>,
     },
@@ -378,6 +386,15 @@ pub enum DelegationRequest {
         identity: AssignmentIdentity,
         result_version: u32,
         result_digest: String,
+        expected_control_epoch: u64,
+    },
+    ConfirmHumanReturn {
+        auth: DelegationAuth,
+        handle: String,
+        request: String,
+        returned_request: String,
+        expected_control_epoch: u64,
+        evidence: AssignmentControlEvidence,
     },
     Publish {
         auth: DelegationAuth,
