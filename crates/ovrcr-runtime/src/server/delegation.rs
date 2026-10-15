@@ -662,7 +662,10 @@ impl ServerState {
                     .initial_control_epoch
                     .is_some_and(|epoch| epoch != expected_control_epoch)
                 {
-                    bail!("initial request control epoch changed");
+                    return Err(lifecycle_error(
+                        ErrorCode::Conflict,
+                        "initial request control epoch changed",
+                    ));
                 }
                 record.initial_control_epoch = Some(expected_control_epoch);
                 if control::require_controller(&record.control, expected_control_epoch).is_err()
