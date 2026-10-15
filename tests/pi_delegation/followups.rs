@@ -225,6 +225,52 @@ fn public_followup_versions_contract_results_and_parent_acceptance_in_one_child(
         other_now.acceptance_ref, other.acceptance_ref,
         "unaffected assignment approval survives"
     );
+    let prior_acceptance = fs::read(root.join("acceptance-v1.json")).unwrap();
+    for (name, reason) in [
+        ("contract-v1.json", "immutable contract changed"),
+        ("brief-v1.json", "immutable brief changed"),
+    ] {
+        let path = root.join(name);
+        let bytes = fs::read(&path).unwrap();
+        fs::write(&path, "tampered historical bytes").unwrap();
+        let rejected = tool_reply(
+            &fixture.live,
+            fixture.parent,
+            "ovrcr_collect",
+            serde_json::json!({"handle":revised.handle,"version":1}),
+            &fixture.live.root.path().join(format!("tampered-{name}")),
+        );
+        assert!(
+            rejected["error"].as_str().unwrap().contains(reason),
+            "production historical collection must validate {name}: {rejected}"
+        );
+        let current: AssignmentSnapshot = serde_json::from_value(fixture.tool(
+            "ovrcr_collect",
+            serde_json::json!({"handle":revised.handle}),
+        ))
+        .unwrap();
+        assert_eq!(
+            current.submission, revised.submission,
+            "unaffected current version remains collectable"
+        );
+        assert_eq!(current.history[0].acceptance, original.acceptance_ref);
+        assert_eq!(
+            fs::read(root.join("acceptance-v1.json")).unwrap(),
+            prior_acceptance
+        );
+        fs::write(path, bytes).unwrap();
+    }
+    let database =
+        rusqlite::Connection::open(fixture.live.config.join("registry.sqlite3")).unwrap();
+    let metadata: String = database
+        .query_row(
+            "SELECT metadata FROM delegations WHERE handle=?1",
+            [&revised.handle],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(!metadata.contains("Clarify the README conclusion"));
+    assert!(!metadata.contains("specifically explain its installation prerequisites"));
     let stale = fixture.tool("ovrcr_accept", serde_json::json!({"handle":revised.handle,"identity":original.identity,"result_version":1,"result_digest":original.publication.unwrap().identity.digest}));
     assert_eq!(stale["dispatch"], "Refused");
 }
