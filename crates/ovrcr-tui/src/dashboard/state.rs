@@ -3312,7 +3312,9 @@ impl Dashboard {
                 }
                 // A snapshot this popup did not ask for. The one it did ask
                 // for was claimed above.
-                Response::Events(_) | Response::Delegation(_) => {}
+                Response::Events(_)
+                | Response::Delegation(_)
+                | Response::DelegationObservation(_) => {}
                 Response::HistoryOpened(opened) => {
                     self.accept_history_opened(request_id, opened);
                 }

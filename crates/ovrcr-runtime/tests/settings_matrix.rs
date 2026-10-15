@@ -19,6 +19,7 @@ use std::path::Path;
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Kind {
     Bool,
+    Integer,
     Str,
     Array,
     Table,
@@ -95,6 +96,7 @@ impl Setting {
         let kind = match &default.value {
             Some(text) => match toml_value(text) {
                 Some(toml::Value::Boolean(_)) => Kind::Bool,
+                Some(toml::Value::Integer(_)) => Kind::Integer,
                 Some(toml::Value::Array(_)) => Kind::Array,
                 Some(toml::Value::Table(_)) => Kind::Table,
                 _ => Kind::Str,
@@ -131,6 +133,13 @@ impl Setting {
         }
         match self.kind {
             Kind::Bool => (current != Some("true")).to_string(),
+            Kind::Integer => current
+                .unwrap()
+                .parse::<u64>()
+                .unwrap()
+                .saturating_sub(1)
+                .max(1)
+                .to_string(),
             Kind::Str => {
                 let text = match current {
                     Some(text) => format!("{text}-matrix"),
@@ -146,7 +155,7 @@ impl Setting {
 
     fn wrong_type(&self) -> &'static str {
         match self.kind {
-            Kind::Bool => "\"matrix\"",
+            Kind::Bool | Kind::Integer => "\"matrix\"",
             Kind::Str | Kind::Array | Kind::Table => "7",
         }
     }
@@ -371,6 +380,7 @@ fn matrix_covers_every_declared_setting() {
             "quota.cursor.state_db",
             "agents",
             "launch_choices",
+            "delegation.progress_deadline_ms",
         ]
     );
     let kinds: Vec<_> = settings.iter().map(|setting| setting.kind).collect();
@@ -379,7 +389,7 @@ fn matrix_covers_every_declared_setting() {
         kinds,
         [
             Bool, Bool, Str, Bool, Str, Str, Bool, Str, Array, Str, Bool, Bool, Str, Str, Str, Str,
-            Bool, Str, Array, Table,
+            Bool, Str, Array, Table, Integer,
         ]
     );
     // Every test-side table names a declared setting, so none goes stale.

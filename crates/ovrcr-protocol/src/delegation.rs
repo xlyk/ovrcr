@@ -1,5 +1,8 @@
 //! The first delegation slice: one read-only Pi assignment and explicit collection.
-use crate::{AgentActivity, SessionId, SessionPhase, SessionRunId};
+use crate::{
+    ActivitySample, AgentActivity, AgentBinding, InputRequest, ReporterHealth, SessionId,
+    SessionPhase, SessionRunId,
+};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -118,12 +121,17 @@ pub enum DispatchStatus {
     Refused,
 }
 
+fn initial_receipt_version() -> u32 {
+    1
+}
+
 /// Delivery of one operation, never provider completion or parent acceptance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DispatchOperation {
     Prepare,
     Launch,
     InitialInput,
+    Followup,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,6 +154,8 @@ pub struct InputDelivery {
 pub struct DispatchReceipt {
     pub request: String,
     pub operation: DispatchOperation,
+    #[serde(default = "initial_receipt_version")]
+    pub result_version: u32,
     pub identity: AssignmentIdentity,
     pub outcome: DispatchOutcome,
     pub input: Option<InputDelivery>,
@@ -182,7 +192,7 @@ pub struct ResearchSubmission {
 
 impl ResearchSubmission {
     pub fn validate(&self, identity: &AssignmentIdentity) -> Result<(), &'static str> {
-        if self.schema != DELEGATION_SCHEMA || self.version != 1 {
+        if self.schema != DELEGATION_SCHEMA || self.version == 0 {
             return Err("unsupported or stale submission version");
         }
         if &self.identity != identity {
@@ -211,6 +221,42 @@ impl ResearchSubmission {
     }
 }
 
+/// Exact immutable submission reference; handling never implies acceptance.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PublicationKind {
+    Submission,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublicationIdentity {
+    pub assignment: AssignmentIdentity,
+    pub kind: PublicationKind,
+    pub version: u32,
+    pub digest: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicationState {
+    pub identity: PublicationIdentity,
+    pub handled: bool,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AcceptanceReference {
+    pub identity: AssignmentIdentity,
+    pub result_version: u32,
+    pub result_digest: String,
+    pub path: PathBuf,
+    pub digest: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssignmentVersion {
+    pub identity: AssignmentIdentity,
+    pub result_version: u32,
+    pub contract: PathBuf,
+    pub brief: PathBuf,
+    pub publication: Option<PublicationState>,
+    pub acceptance: Option<AcceptanceReference>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssignmentSnapshot {
     pub handle: String,
@@ -222,10 +268,66 @@ pub struct AssignmentSnapshot {
     pub brief: PathBuf,
     pub result_path: PathBuf,
     pub submission: Option<ResearchSubmission>,
-    /// A child submission never changes parent acceptance. This slice only collects.
+    /// Only an explicit parent RecordAcceptance changes acceptance.
     pub acceptance: String,
+    pub result_version: u32,
+    pub publication: Option<PublicationState>,
+    pub acceptance_ref: Option<AcceptanceReference>,
+    pub history: Vec<AssignmentVersion>,
+    pub selected_version: Option<u32>,
+    pub historical_submission: Option<ResearchSubmission>,
     pub receipts: Vec<DispatchReceipt>,
     pub resources: AssignmentResources,
+}
+
+/// A hint cursor is valid only for one Server lifetime. It is not task completion.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObservationCursor {
+    pub server_epoch: String,
+    pub sequence: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PublicationIssue {
+    Uncommitted,
+    Unavailable,
+    Invalid,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DelegationObservation {
+    pub handle: String,
+    pub identity: AssignmentIdentity,
+    pub binding: Option<AgentBinding>,
+    pub activity: Option<ActivitySample>,
+    pub activity_revision: u64,
+    pub input_requests: Vec<InputRequest>,
+    pub input_revision: u64,
+    pub health: Option<ReporterHealth>,
+    /// False means retained evidence must not satisfy the current assignment.
+    pub current: bool,
+    pub publication: Option<PublicationState>,
+    pub publication_issue: Option<PublicationIssue>,
+    pub last_progress_unix_ms: u64,
+    pub stalled: bool,
+    /// A gap/epoch change cannot manufacture fresh progress from a snapshot.
+    pub progress_unresolved: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ObservationStatus {
+    Changed,
+    Deadline,
+    ReconcileRequired,
+    Stalled,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DelegationObservationBatch {
+    pub cursor: ObservationCursor,
+    pub status: ObservationStatus,
+    pub progress_deadline_ms: u64,
+    pub observations: Vec<DelegationObservation>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -256,10 +358,42 @@ pub enum DelegationRequest {
         auth: DelegationAuth,
         handle: String,
     },
+    Followup {
+        auth: DelegationAuth,
+        handle: String,
+        request: String,
+        expected_identity: AssignmentIdentity,
+        expected_result_version: u32,
+        text: String,
+        revised_contract: Option<Box<ResearchContract>>,
+    },
+    CollectVersion {
+        auth: DelegationAuth,
+        handle: String,
+        version: u32,
+    },
+    RecordAcceptance {
+        auth: DelegationAuth,
+        handle: String,
+        identity: AssignmentIdentity,
+        result_version: u32,
+        result_digest: String,
+    },
     Publish {
         auth: DelegationAuth,
         handle: String,
         submission: ResearchSubmission,
+    },
+    Observe {
+        auth: DelegationAuth,
+        handles: Vec<String>,
+        after: Option<ObservationCursor>,
+        wait_ms: u64,
+    },
+    MarkHandled {
+        auth: DelegationAuth,
+        handle: String,
+        publication: PublicationIdentity,
     },
 }
 

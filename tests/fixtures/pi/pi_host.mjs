@@ -18,23 +18,33 @@ export async function createHost(extensionPath, { mode = "tui", session = "sessi
   const handlers = new Map();
   const commands = new Map();
   const tools = new Map();
+  let state;
   const api = {
     on(event, handler) {
       if (!handlers.has(event)) handlers.set(event, []);
       handlers.get(event).push(handler);
     },
     registerTool(tool) { tools.set(tool.name, tool); },
+    sendMessage(message, options) {
+      const delivery = state.idle ? "idle" : "followUp";
+      const wake = { message, options, delivery };
+      state.messages.push(wake);
+      if (!state.idle) state.followUps.push(wake);
+      if (process.env.OVRCR_TEST_PI_WAKE_LOG) appendFileSync(process.env.OVRCR_TEST_PI_WAKE_LOG, JSON.stringify({ pid: process.pid, session: state.session, ...wake }) + "\n");
+    },
     registerCommand(name, options) {
       commands.set(name, options);
     },
   };
   const module = await import(pathToFileURL(extensionPath).href);
   await module.default(api);
-  const state = {
+  state = {
     mode,
     session,
     idle,
     notices: [],
+    messages: [],
+    followUps: [],
     model: model === undefined ? undefined : { id: model, provider: "test" },
   };
   const ctx = {
@@ -60,7 +70,7 @@ export async function createHost(extensionPath, { mode = "tui", session = "sessi
     commands: () => [...commands.keys()].sort(),
     tools: () => [...tools.keys()].sort(),
     toolDefinition: name => tools.get(name),
-    tool: (name, args) => tools.get(name).execute("host-tool", args, undefined, undefined, ctx),
+    tool: (name, args, signal) => tools.get(name).execute("host-tool", args, signal, undefined, ctx),
     run: (name, args = []) => commands.get(name).handler(args, ctx),
     async emit(event) {
       const results = [];
@@ -117,7 +127,9 @@ async function main() {
   }
   process.stdout.write("PI_NATIVE_READY\n");
   let index = 0;
+  const pendingTools = new Map();
   let toolPublication = 0;
+  let previousSubmission = null;
   const toolOutput = (path, value) => {
     const temporary = `${path}.${process.pid}.${toolPublication++}.tmp`;
     writeFileSync(temporary, JSON.stringify(value));
@@ -136,27 +148,59 @@ async function main() {
     const [command, a, b, c] = clean.split(":");
     if (host && command === "tool") {
       const request = JSON.parse(clean.slice(5));
-      try { toolOutput(request.output, await host.tool(request.name, request.args)); }
-      catch (error) { toolOutput(request.output, { error: String(error) }); }
+      const controller = new AbortController();
+      const run = async () => {
+        try { toolOutput(request.output, await host.tool(request.name, request.args, controller.signal)); }
+        catch (error) { toolOutput(request.output, { error: String(error) }); }
+        finally { pendingTools.delete(request.output); }
+      };
+      if (request.background) { pendingTools.set(request.output, controller); void run(); }
+      else await run();
       continue;
     }
     if (host && process.env.OVRCR_TEST_DELEGATION && clean.startsWith("Perform the read-only research assignment in ")) {
-      const path = clean.match(/in (.+\/brief-v1\.json)\. Read/)[1];
+      const path = clean.match(/in (.+\/brief-v[1-9][0-9]*\.json)\. Read/)[1];
       const brief = JSON.parse(readFileSync(path, "utf8"));
       writeFileSync(`${path}.started`, "CHILD_RESEARCH_STARTED");
       appendFileSync(`${path}.input-count`, "1\n");
       process.stdout.write("CHILD_RESEARCH_STARTED\n");
       await host.emit({ type: "agent_start" });
+      if (brief.contract.scope.includes("READY_WAKE")) {
+        await host.emit({ type: "agent_end", messages: [assistant("stop")] });
+        await host.emit({ type: "agent_settled" });
+      }
+      if (brief.contract.scope.includes("INPUT_WAKE")) await host.emit({ type: "ui_prompt_start", kind: "input" });
       while (!existsSync(process.env.OVRCR_TEST_DELEGATION_RESULT_GATE)) await new Promise(resolve => setTimeout(resolve, 10));
-      const submission = { schema: 1, identity: brief.identity, version: 1, outcome: "success", summary: "Read the assigned repository README.", evidence: ["README:1 fixture"], unresolved: [] };
+      const submission = { schema: 1, identity: brief.identity, version: brief.result_version ?? 1, outcome: "success", summary: "Read the assigned repository README.", evidence: ["README:1 fixture"], unresolved: [] };
       if (brief.contract.scope.includes("STALE_RESULT")) submission.identity.contract += 1;
+      if (previousSubmission) {
+        let late;
+        try { late = await host.tool("ovrcr_publish", { handle: brief.handle, submission: previousSubmission }); }
+        catch (error) { late = {error:String(error)}; }
+        writeFileSync(`${path}.late-result`,JSON.stringify(late));
+      }
+      previousSubmission = structuredClone(submission);
       let result;
       try { result = await host.tool("ovrcr_publish", { handle: brief.handle, submission }); }
       catch (error) { result = { error: String(error) }; }
+      const childAcceptance = await host.tool("ovrcr_accept", {handle:brief.handle, identity:brief.identity, result_version:brief.result_version ?? 1, result_digest:"child-cannot-accept"});
+      writeFileSync(`${path}.child-acceptance`, JSON.stringify(childAcceptance));
       writeFileSync(`${path}.published`, JSON.stringify(result));
       process.stdout.write("CHILD_RESULT_PUBLISHED\n");
-      await host.emit({ type: "agent_end", messages: [assistant("stop")] });
-      await host.emit({ type: "agent_settled" });
+      if (brief.contract.scope.includes("REBIND_AFTER_RESULT")) {
+        while (!existsSync(`${path}.rebind`)) await new Promise(resolve => setTimeout(resolve, 10));
+        host.state.session = `replacement-${process.pid}`;
+        await host.emit({ type: "session_start", reason: "new" });
+        writeFileSync(`${path}.rebound`, "REBOUND");
+      }
+      if (!brief.contract.scope.includes("NO_READY")) {
+        await host.emit({ type: "agent_end", messages: [assistant("stop")] });
+        await host.emit({ type: "agent_settled" });
+      }
+      continue;
+    }
+    if (command === "abort_tool") {
+      pendingTools.get(clean.slice("abort_tool:".length))?.abort();
       continue;
     }
     if (command === "exit") process.exit(17);

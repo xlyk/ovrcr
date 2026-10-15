@@ -1,4 +1,6 @@
 //! Public Pi tools -> control CLI -> isolated binary Server -> real managed child PTY.
+#[path = "pi_delegation/followups.rs"]
+mod followups;
 #[path = "support/live.rs"]
 mod live;
 use live::{Live, PROJECT};
@@ -687,7 +689,14 @@ impl ControlProxy {
                 if exchange_preamble(&mut stream).is_err() {
                     continue;
                 }
-                let message: ClientMessage = read_frame(&mut stream).unwrap();
+                let mut message: ClientMessage = read_frame(&mut stream).unwrap();
+                // This serial fault proxy tests mutation ordering. Keep observer reads
+                // nonblocking here; dedicated observation tests use the real wait path.
+                if let Request::Delegation(request) = &mut message.request
+                    && let DelegationRequest::Observe { wait_ms, .. } = request.as_mut()
+                {
+                    *wait_ms = 0;
+                }
                 let Request::Delegation(request) = &message.request else {
                     panic!("only delegation uses proxy")
                 };
@@ -703,6 +712,17 @@ impl ControlProxy {
                     DelegationRequest::Inspect { handle, .. } => ("Inspect", handle.clone()),
                     DelegationRequest::Collect { handle, .. } => ("Collect", handle.clone()),
                     DelegationRequest::Publish { handle, .. } => ("Publish", handle.clone()),
+                    DelegationRequest::Followup { request, .. } => ("Followup", request.clone()),
+                    DelegationRequest::CollectVersion { handle, .. } => {
+                        ("CollectVersion", handle.clone())
+                    }
+                    DelegationRequest::RecordAcceptance { handle, .. } => {
+                        ("RecordAcceptance", handle.clone())
+                    }
+                    DelegationRequest::Observe { .. } => ("Observe", String::new()),
+                    DelegationRequest::MarkHandled { handle, .. } => {
+                        ("MarkHandled", handle.clone())
+                    }
                 };
                 worker_requests
                     .lock()
@@ -723,9 +743,12 @@ impl ControlProxy {
                         wait_file(&fault.with_extension("rebind.done"));
                     } else {
                         if point == "input-target-captured" || point == "input-before-write" {
-                            let DelegationRequest::SendInitial { identity, .. } = request.as_ref()
-                            else {
-                                unreachable!()
+                            let identity = match request.as_ref() {
+                                DelegationRequest::SendInitial { identity, .. } => identity,
+                                DelegationRequest::Followup {
+                                    expected_identity, ..
+                                } => expected_identity,
+                                _ => unreachable!(),
                             };
                             let deadline = Instant::now() + Duration::from_secs(10);
                             loop {
@@ -1641,3 +1664,6 @@ fn public_dispatch_retired_parent_a_to_b_to_a_cannot_replay_control() {
     assert_eq!(fixture.input_count(&initial), 1);
     assert_eq!(fixture.child_count(), 1);
 }
+
+#[path = "pi_delegation/observation.rs"]
+mod observation;

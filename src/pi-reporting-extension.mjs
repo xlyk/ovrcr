@@ -10,9 +10,10 @@
 // Bounded delivery lives in the transport module materialized beside this file.
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, open, lstat, rename } from "node:fs/promises";
+import { mkdir, open, lstat, rename, link, unlink } from "node:fs/promises";
 import { constants } from "node:fs";
 import { join } from "node:path";
+import { createDelegationObserver } from "./ovrcr-delegation-observer.mjs";
 import { createReporter, idOf, modelId, outcomeOf } from "./ovrcr-reporting-transport.mjs";
 
 // Replaced with the JSON-encoded absolute path of the supervising ovrcr binary when the
@@ -112,7 +113,7 @@ function registerDelegation(pi) {
   const workflow = randomUUID();
   const controller = randomUUID();
   let active = true;
-  pi.on("session_shutdown", () => { active = false; });
+  pi.on("session_shutdown", () => { active = false; observer.stop(); });
   const auth = () => {
     if (!active) throw new Error("Pi session changed; reconcile the assignment from its owner");
     const session = Number(process.env.OVRCR_DELEGATION_SESSION);
@@ -120,7 +121,7 @@ function registerDelegation(pi) {
     if (!Number.isSafeInteger(session) || session <= 0 || !capability || !process.env.OVRCR_DELEGATION_SOCKET) throw new Error("Delegation requires a managed Pi session");
     return { session, capability };
   };
-  const call = request => new Promise((resolve, reject) => {
+  const call = (request, { signal } = {}) => new Promise((resolve, reject) => {
     const child = spawn(OVRCR_BINARY, ["--json", "delegation"], {
       env: { ...process.env, OVRCR_SOCKET: process.env.OVRCR_DELEGATION_SOCKET, OVRCR_HOME: process.env.OVRCR_DELEGATION_HOME },
       stdio: ["pipe", "pipe", "pipe"],
@@ -129,6 +130,14 @@ function registerDelegation(pi) {
     let failed = false;
     let stderr = "";
     const timer = setTimeout(() => { failed = true; child.kill(); reject(new Error("control outcome unknown; inspect the original handle before any further action")); }, 30000);
+    const abort = () => {
+      failed = true; child.kill(); clearTimeout(timer);
+      const error = new Error("observation wait cancelled; child work continues");
+      error.name = "AbortError";
+      reject(error);
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
     child.stdout.on("data", bytes => {
       output += bytes;
       if (output.length > 1024 * 1024) { failed = true; child.kill(); clearTimeout(timer); reject(new Error("control response exceeded bound")); }
@@ -137,6 +146,7 @@ function registerDelegation(pi) {
     child.on("error", error => { clearTimeout(timer); reject(error); });
     child.on("close", code => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
       if (failed) return;
       try {
         if (code !== 0) {
@@ -154,14 +164,16 @@ function registerDelegation(pi) {
     child.stdin.on("error", () => {});
     child.stdin.end(JSON.stringify(request));
   });
+  const observer = createDelegationObserver({ pi, call, auth });
+  pi.registerCommand("ovrcr-observe-reconnect", { description: "Reconnect assignment observations without changing child work", handler: () => observer.reconnect() });
   const object = (properties, required = Object.keys(properties)) => ({ type: "object", properties, required, additionalProperties: false });
   const string = { type: "string" };
-  const originalIntent = async handle => {
+  const originalIntent = async (handle, prefix = "") => {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(handle)) throw new Error("invalid original request identity");
     const directory = join(process.env.OVRCR_DELEGATION_HOME ?? "", "parent-intents");
     const parent = await lstat(directory);
     if (!parent.isDirectory() || parent.isSymbolicLink() || (parent.mode & 0o077) || parent.uid !== process.getuid()) throw new Error("original intent directory is not private");
-    const file = await open(join(directory, `${handle}.json`), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const file = await open(join(directory, `${prefix}${handle}.json`), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const stat = await file.stat();
       if (!stat.isFile() || stat.size > 262144 || (stat.mode & 0o077) || stat.uid !== process.getuid()) throw new Error("invalid original intent file");
@@ -180,11 +192,16 @@ function registerDelegation(pi) {
       return contract;
     } finally { await file.close(); }
   };
-  const tool = (name, description, parameters, run) => pi.registerTool({ name, label: name, description, parameters, async execute(_id, args, _signal, _onUpdate, ctx) {
-    if (!args || typeof args !== "object") throw new Error("tool arguments must be an object");
-    for (const key of parameters.required ?? []) if (!(key in args)) throw new Error(`missing required argument: ${key}`);
-    const response = await run(args, ctx);
-    return { content: [{ type: "text", text: JSON.stringify(response) }], details: response };
+  const tool = (name, description, parameters, run) => pi.registerTool({ name, label: name, description, parameters, async execute(_id, args, signal, _onUpdate, ctx) {
+    try {
+      if (!args || typeof args !== "object") throw new Error("tool arguments must be an object");
+      for (const key of parameters.required ?? []) if (!(key in args)) throw new Error(`missing required argument: ${key}`);
+      const response = await run(args, ctx, signal);
+      if (name !== "ovrcr_publish" && response?.identity?.session) observer.watch(response.handle);
+      return { content: [{ type: "text", text: JSON.stringify(response) }], details: response };
+    } finally {
+      observer.acknowledge();
+    }
   }});
   tool("ovrcr_start", "Start one read-only Pi research assignment in an existing workspace. Returns a stable handle without waiting for completion. Use handle to finish an initial delivery still waiting for Pi startup; unknown sends are never replayed.", { ...object({ handle: string, project: string, workspace: string, scope: string, provider: string, model_provider: string, model: string, permitted_actions: { type: "array", items: string }, acceptance_evidence: { type: "array", items: string }, mandatory_capabilities: { type: "array", items: string } }, []), anyOf: [{ required: ["handle"] }, { required: ["project", "workspace", "scope", "model_provider", "model", "acceptance_evidence"] }] }, async args => {
     let handle = args.handle;
@@ -243,7 +260,54 @@ function registerDelegation(pi) {
       return snapshot;
     } catch (error) { return { handle, dispatch: error.refused || !attempted ? "Refused" : "Unknown", transport: attempted ? "Unknown" : "NotSent", reason: String(error.message), recovery: "Call ovrcr_start with only this original handle; do not start a replacement assignment" }; }
   });
+  // Followups retain their original private request even if the first reply is lost.
+  const saveFollowup = async intent => {
+    const root = process.env.OVRCR_DELEGATION_HOME;
+    if (!root) throw new Error("managed instance directory unavailable");
+    const directory = join(root, "parent-intents");
+    await mkdir(directory, { mode: 0o700, recursive: true });
+    const stat = await lstat(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) || stat.uid !== process.getuid()) throw new Error("intent directory must be private");
+    const bytes = JSON.stringify(intent);
+    if (Buffer.byteLength(bytes) > 262144) throw new Error("followup intent exceeds supported content limits");
+    const temporary = join(directory, `.${intent.request}.tmp`);
+    const file = await open(temporary, "wx", 0o600);
+    try { await file.writeFile(bytes); await file.sync(); } finally { await file.close(); }
+    try { await link(temporary, join(directory, `followup-${intent.request}.json`)); }
+    finally { await unlink(temporary); }
+    const held = await open(directory, "r");
+    try { await held.sync(); } finally { await held.close(); }
+  };
+  tool("ovrcr_followup", "Send a scoped followup to this assignment's same safe child. Supply expected_identity, expected_result_version and text, plus revised_contract only for explicit changed requirements. Each call expects a new result version. Recover a lost reply with only handle and its original request; unknown/partial input must never be resent under a new request.", { ...object({ handle: string, request: string, expected_identity: { type: "object" }, expected_result_version: { type: "integer", minimum: 1 }, text: string, revised_contract: { type: ["object", "null"] } }, ["handle"]), anyOf: [{ required: ["handle", "request"] }, { required: ["handle", "expected_identity", "expected_result_version", "text"] }] }, async args => {
+    let request = args.request;
+    let attempted = false;
+    try {
+      if (typeof args.handle !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(args.handle)) throw new Error("invalid assignment handle");
+      let intent;
+      if (request !== undefined) {
+        if (Object.keys(args).some(key => !["handle", "request"].includes(key))) throw new Error("recovery requires only handle and original request");
+        intent = await originalIntent(request, "followup-");
+        if (intent.handle !== args.handle) throw new Error("original followup belongs to another assignment");
+      } else {
+        if (!Number.isSafeInteger(args.expected_result_version) || args.expected_result_version < 1 || !args.expected_identity || typeof args.expected_identity !== "object" || Array.isArray(args.expected_identity) || typeof args.text !== "string" || !args.text.trim() || Buffer.byteLength(args.text) > 32768 || Object.keys(args).some(key => !["handle", "expected_identity", "expected_result_version", "text", "revised_contract"].includes(key))) throw new Error("provide expected_identity, expected_result_version and 1..32768 bytes of scoped text");
+        request = randomUUID();
+        intent = { schema: 1, handle: args.handle, request, expected_identity: args.expected_identity, expected_result_version: args.expected_result_version, text: args.text, revised_contract: args.revised_contract ?? null };
+        auth();
+        await saveFollowup(intent);
+      }
+      attempted = true;
+      const { schema: _schema, ...fields } = intent;
+      const snapshot = await call({ Followup: { auth: auth(), ...fields } });
+      return { ...snapshot, request };
+    } catch (error) { return { handle: args.handle, request: request ?? null, dispatch: error.refused || !attempted ? "Refused" : "Unknown", transport: attempted ? "Unknown" : "NotSent", reason: String(error.message), recovery: "Recover with only this handle and original request; do not create another request while input is unknown or partial" }; }
+  });
+  tool("ovrcr_accept", "Record the parent's explicit acceptance of the exact current result identity, version and digest. This records your judgment; collection, Ready and child success never accept automatically.", object({ handle: string, identity: { type: "object" }, result_version: { type: "integer", minimum: 1 }, result_digest: string }), async args => {
+    try { return await call({ RecordAcceptance: { auth: auth(), ...args } }); }
+    catch (error) { return { handle: args.handle, dispatch: error.refused ? "Refused" : "Unknown", reason: String(error.message), recovery: "Retry acceptance only with the same exact current result reference" }; }
+  });
   tool("ovrcr_inspect", "Inspect an owned assignment without changing it. Activity is not acceptance.", object({ handle: string }), args => call({ Inspect: { auth: auth(), handle: args.handle } }));
-  tool("ovrcr_collect", "Collect a complete validated submission. Parent acceptance remains pending.", object({ handle: string }), args => call({ Collect: { auth: auth(), handle: args.handle } }));
-  tool("ovrcr_publish", "Publish the assigned child's immutable version 1 research result. Use the exact identity from the brief. This does not accept the work.", object({ handle: string, submission: { type: "object" } }), args => call({ Publish: { auth: auth(), handle: args.handle, submission: args.submission } }));
+  tool("ovrcr_collect", "Collect the current validated submission without accepting it. Optional version explicitly reads historical evidence; historical_submission cannot satisfy current collection or acceptance.", object({ handle: string, version: { type: "integer", minimum: 1 } }, ["handle"]), args => call(args.version === undefined ? { Collect: { auth: auth(), handle: args.handle } } : { CollectVersion: { auth: auth(), handle: args.handle, version: args.version } }));
+  tool("ovrcr_wait", "Wait for bounded content-free assignment observations. Cancellation leaves child work running. Fetch available files with ovrcr_collect; use exact publication identity to mark handling separately from acceptance.", object({ handles: { type: "array", items: string, minItems: 1, maxItems: 64 }, after: { type: "object" }, wait_ms: { type: "integer", minimum: 0, maximum: 20000 } }, []), (args, _ctx, signal) => observer.wait(args, signal));
+  tool("ovrcr_mark_handled", "Acknowledge handling of this exact immutable publication. Does not accept task success.", object({ handle: string, publication: { type: "object" } }), args => call({ MarkHandled: { auth: auth(), handle: args.handle, publication: args.publication } }));
+  tool("ovrcr_publish", "Publish the assigned child's immutable research result. Use the exact identity and result_version from the current brief (result_version is submission.version). This does not accept the work.", object({ handle: string, submission: { type: "object" } }), args => call({ Publish: { auth: auth(), handle: args.handle, submission: args.submission } }));
 }
