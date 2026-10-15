@@ -1091,6 +1091,7 @@ impl ControlProxy {
                     DelegationRequest::MarkHandled { handle, .. } => {
                         ("MarkHandled", handle.clone())
                     }
+                    DelegationRequest::Capabilities { .. } => ("Capabilities", String::new()),
                 };
                 worker_requests
                     .lock()
@@ -1398,6 +1399,189 @@ impl RecoveryFixture {
             .filter(|s| s.kind == SessionKind::Agent { name: "pi".into() } && s.id != self.parent)
             .count()
     }
+}
+
+#[test]
+fn public_legacy_accounting_migration_preserves_effects_and_original_contract_bytes() {
+    let fixture = RecoveryFixture::new();
+    let set = fixture
+        .live
+        .command()
+        .args(["settings", "set", "delegation.max_execution_attempts", "1"])
+        .output()
+        .unwrap();
+    assert!(
+        set.status.success(),
+        "{}",
+        String::from_utf8_lossy(&set.stderr)
+    );
+    fixture.proxy.arm(ControlRule {
+        operation: "Launch",
+        loss: 0,
+        fault: None,
+    });
+    let first = fixture.start();
+    assert_eq!(first["dispatch"], "Unknown");
+    let handle = first["handle"].as_str().unwrap();
+    assert_eq!(fixture.child_count(), 0);
+    let db = rusqlite::Connection::open(fixture.live.config.join("registry.sqlite3")).unwrap();
+    let metadata: String = db
+        .query_row(
+            "SELECT metadata FROM delegations WHERE handle=?1",
+            [handle],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let original: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+    let contract_path = Path::new(original["root"].as_str().unwrap()).join("contract-v1.json");
+    let original_contract = fs::read(&contract_path).unwrap();
+    let save = |value: &serde_json::Value| {
+        db.execute(
+            "UPDATE delegations SET session=NULL,metadata=?1 WHERE handle=?2",
+            rusqlite::params![value.to_string(), handle],
+        )
+        .unwrap();
+    };
+    let legacy = || {
+        let mut value = original.clone();
+        for key in [
+            "execution_attempts",
+            "receipts",
+            "request_digests",
+            "project",
+            "workspace",
+            "previous_request",
+            "successor_request",
+            "retryable_capacity_refusal",
+        ] {
+            value.as_object_mut().unwrap().remove(key);
+        }
+        value
+    };
+    let launch_receipt = |value: &mut serde_json::Value, outcome: &str| {
+        let mut identity = value["identity"].clone();
+        identity["session"] = serde_json::Value::Null;
+        identity["run"] = serde_json::Value::Null;
+        value["receipts"] = serde_json::json!([
+            {"request":handle,"operation":"Prepare","identity":identity,"outcome":"Applied","input":null,"reason":null},
+            {"request":handle,"operation":"Launch","identity":identity,"outcome":outcome,"input":null,"reason":null}
+        ]);
+    };
+    for (name, expected) in [
+        ("legacy launch unknown without resource", Some(1)),
+        ("legacy refusal without proof", None),
+        ("legacy input refusal after launch", Some(1)),
+        ("legacy applied without resource", Some(1)),
+        ("zero contradicts unknown receipt", None),
+        ("prepared contradicts unknown receipt", None),
+        ("unknown predecessor history", None),
+        ("known count survives missing resource", Some(2)),
+    ] {
+        let mut value = legacy();
+        match name {
+            "legacy launch unknown without resource" => value["dispatch"] = "LaunchUnknown".into(),
+            "legacy refusal without proof" => value["dispatch"] = "Refused".into(),
+            "legacy input refusal after launch" | "legacy applied without resource" => {
+                value["dispatch"] = if name.contains("refusal") {
+                    "Refused"
+                } else {
+                    "Applied"
+                }
+                .into();
+                value["identity"]["session"] = 100_000.into();
+                value["identity"]["run"] = 1.into();
+                value["binding"] = serde_json::json!({"provider":"Pi","invocation":"legacy-child","conversation":"legacy-A","generation":1});
+            }
+            "zero contradicts unknown receipt" | "prepared contradicts unknown receipt" => {
+                launch_receipt(&mut value, "Unknown");
+                if name.starts_with("zero") {
+                    value["dispatch"] = "LaunchUnknown".into();
+                    value["execution_attempts"] = 0.into();
+                }
+            }
+            "unknown predecessor history" => {
+                value["dispatch"] = "LaunchUnknown".into();
+                value["identity"]["attempt"] = 2.into();
+                value["previous_request"] = "missing-predecessor".into();
+            }
+            "known count survives missing resource" => {
+                value["dispatch"] = "Refused".into();
+                value["execution_attempts"] = 2.into();
+            }
+            _ => unreachable!(),
+        }
+        save(&value);
+        let migrated = fixture.reconcile(handle);
+        assert_eq!(migrated.execution_attempts, expected, "{name}");
+        assert!(migrated.resources.current_session.is_none(), "{name}");
+        let recovered = fixture.recover(handle);
+        assert_eq!(
+            recovered["execution_attempts"],
+            serde_json::to_value(expected).unwrap(),
+            "{name}: {recovered}"
+        );
+        let repeated = fixture.reconcile(handle);
+        assert_eq!(repeated.execution_attempts, expected, "{name}");
+        assert_eq!(repeated.identity, migrated.identity, "{name}");
+        assert_eq!(repeated.receipts, migrated.receipts, "{name}");
+        let retry = fixture.tool("ovrcr_retry", serde_json::json!({"handle":handle}));
+        assert_eq!(retry["dispatch"], "Refused", "{name}");
+        assert_eq!(
+            fixture.child_count(),
+            0,
+            "legacy migration must not invent a retry: {name}"
+        );
+    }
+    // Reconstruct the actual pre-#327 canonical document. This tests binary
+    // migration of immutable bytes, not merely a new contract with default fields.
+    let modern = std::str::from_utf8(&original_contract).unwrap();
+    let boundary = modern.rfind(",\"limits\":").unwrap();
+    let old_bytes = format!("{}}}", &modern[..boundary]).into_bytes();
+    fs::write(&contract_path, &old_bytes).unwrap();
+    let hash = std::process::Command::new("node").args(["--input-type=module", "-e", "import {createHash} from 'node:crypto';import {readFileSync} from 'node:fs';console.log(createHash('sha256').update(readFileSync(process.argv[1])).digest('hex'));"]).arg(&contract_path).output().unwrap();
+    assert!(hash.status.success());
+    let mut value = legacy();
+    value["contract_digest"] = String::from_utf8(hash.stdout).unwrap().trim().into();
+    save(&value);
+    let intent = fixture
+        .live
+        .config
+        .join("parent-intents")
+        .join(format!("{handle}.json"));
+    fs::write(&intent, &old_bytes).unwrap();
+    let prepared = fixture.reconcile(handle);
+    assert_eq!(prepared.execution_attempts, Some(0));
+    let started: AssignmentSnapshot = serde_json::from_value(fixture.recover(handle)).unwrap();
+    assert_eq!(started.dispatch, DispatchStatus::Applied);
+    assert_eq!(started.execution_attempts, Some(1));
+    assert_eq!(
+        fs::read(&contract_path).unwrap(),
+        old_bytes,
+        "migration must retain exact original contract bytes"
+    );
+    wait_file(&started.brief.with_extension("json.started"));
+    assert_eq!(fixture.input_count(&started), 1);
+    assert_eq!(fixture.child_count(), 1);
+    for changed in ["scope", "nondefault limit"] {
+        let mut contract: serde_json::Value = serde_json::from_slice(&old_bytes).unwrap();
+        if changed == "scope" {
+            contract["scope"] = "Changed task".into();
+        } else {
+            contract["limits"] = serde_json::json!({"max_execution_attempts":1});
+        }
+        fs::write(&intent, serde_json::to_vec(&contract).unwrap()).unwrap();
+        let refused = fixture.recover(handle);
+        assert_eq!(refused["dispatch"], "Refused", "{changed}: {refused}");
+        assert_eq!(fixture.reconcile(handle).execution_attempts, Some(1));
+        assert_eq!(fixture.input_count(&started), 1);
+        assert_eq!(fs::read(&contract_path).unwrap(), old_bytes);
+    }
+    fs::write(&intent, &old_bytes).unwrap();
+    let same: AssignmentSnapshot = serde_json::from_value(fixture.recover(handle)).unwrap();
+    assert_eq!(same.identity, started.identity);
+    assert_eq!(same.receipts, started.receipts);
+    assert_eq!(same.execution_attempts, Some(1));
+    assert_eq!(fixture.input_count(&same), 1);
 }
 
 #[cfg(feature = "acceptance-diagnostics")]

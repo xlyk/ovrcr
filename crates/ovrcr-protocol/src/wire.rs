@@ -2152,7 +2152,7 @@ mod wire_snapshot {
         ),
         (
             "Delegation::Capabilities",
-            "3206010766697874757265010301047465737401016d000000000000",
+            "3207010766697874757265010301047465737401016d000000000000",
         ),
         (
             "Response::DelegationCapabilities",
