@@ -1181,7 +1181,7 @@ impl Dashboard {
                                 .into()
                         }
                         (Kind::Typed(expected), _) => {
-                            format!("Enter {expected} · Enter save · Esc cancel")
+                            format!("Expected {expected} · Enter save · Esc cancel")
                         }
                         (Kind::Path, _) => "Tab complete · Enter save · Esc cancel".into(),
                         _ => "Enter save · Esc cancel".into(),
@@ -1510,6 +1510,86 @@ mod tests {
             assert_eq!(
                 d.settings_editor.refused.get(path).map(String::as_str),
                 Some("fixture save refused")
+            );
+        }
+    }
+
+    #[test]
+    fn delegation_editor_renders_typed_guidance_and_preserves_raw_toml_writes() {
+        for (filter, expected_path, hint, value) in [
+            (
+                "delegation.max_live_children",
+                "delegation.max_live_children",
+                "Expected an integer from 1 to 50",
+                "6",
+            ),
+            (
+                "delegation.max_execution_attempts",
+                "delegation.max_execution_attempts",
+                "Expected a positive integer",
+                "2",
+            ),
+            (
+                "delegation.allowed_models",
+                "delegation.allowed_models",
+                "Expected an array of backend/model strings",
+                "[\"test/model\"]",
+            ),
+            (
+                "agents[0]",
+                "agents[0].argv",
+                "TOML array, e.g.",
+                "[\"one\", \"--verbose\"]",
+            ),
+        ] {
+            let mut d = editor(false);
+            let mut reading = report(d.settings.clone(), Vec::new());
+            reading.rows = ovrcr_protocol::setting_rows(
+                &d.settings,
+                &Settings::default(),
+                &Default::default(),
+            );
+            d.handle_server_message(ovrcr_protocol::ServerMessage::Event(
+                ovrcr_protocol::ServerEvent::SettingsChanged(Box::new(reading)),
+            ));
+            d.key(KeyCode::Char('/'));
+            for ch in filter.chars() {
+                d.key(KeyCode::Char(ch));
+            }
+            d.key(KeyCode::Enter);
+            d.key(KeyCode::Enter);
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 40)).unwrap();
+            d.draw(&mut terminal).unwrap();
+            let drawn: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            assert!(
+                drawn.contains(hint),
+                "{filter}: expected typed guidance, got {drawn}"
+            );
+            if filter.starts_with("delegation.") {
+                assert!(
+                    !drawn.contains("TOML array, e.g."),
+                    "{filter}: unrelated argv-array guidance"
+                );
+            }
+            let length = d.settings_editor.edit.as_ref().unwrap().text.len();
+            d.key(KeyCode::End);
+            for _ in 0..length {
+                d.key(KeyCode::Backspace);
+            }
+            d.settings_editor_paste(value);
+            let (path, written) = setting_write(d.key(KeyCode::Enter));
+            assert_eq!(path, expected_path);
+            assert_eq!(
+                written.as_deref(),
+                Some(value),
+                "typed and argv values remain raw TOML"
             );
         }
     }

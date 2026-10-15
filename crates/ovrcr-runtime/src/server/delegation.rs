@@ -84,6 +84,125 @@ pub(crate) struct Record {
 const MAX_DELEGATION_RECORDS: u64 = 4096;
 
 impl Record {
+    /// Validate operation evidence before using it to authorize another effect.
+    /// Receipt reconstruction is never an independent source of budget proof.
+    fn spent_execution_attempts(&self) -> Option<u32> {
+        if self.identity.session.is_some() != self.identity.run.is_some()
+            || self.handle != self.identity.request
+            || self.receipts.len() > 3
+            || self.request_digests.len() > 3
+        {
+            return None;
+        }
+        let allocated = self.identity.session.is_some();
+        let consistent = match self.dispatch {
+            DispatchStatus::Prepared => !allocated && self.binding.is_none(),
+            DispatchStatus::LaunchUnknown => self.binding.is_none(),
+            DispatchStatus::Launched => allocated && self.binding.is_none(),
+            DispatchStatus::InputUnknown | DispatchStatus::Applied => {
+                allocated && self.binding.is_some()
+            }
+            DispatchStatus::Refused => self.binding.is_none() || allocated,
+        };
+        if !consistent {
+            return None;
+        }
+        let mut prepare_identity = self.identity.clone();
+        prepare_identity.session = None;
+        prepare_identity.run = None;
+        for (index, receipt) in self.receipts.iter().enumerate() {
+            let expected = if receipt.operation == DispatchOperation::InitialInput {
+                &self.identity
+            } else {
+                &prepare_identity
+            };
+            if receipt.request != self.identity.request
+                || &receipt.identity != expected
+                || self.receipts[..index]
+                    .iter()
+                    .any(|old| old.operation == receipt.operation)
+            {
+                return None;
+            }
+        }
+        for (index, (operation, saved)) in self.request_digests.iter().enumerate() {
+            let receipt = self.receipt(*operation)?;
+            let expected = digest(
+                &serde_json::to_vec(&(*operation, &self.contract_digest, &receipt.identity))
+                    .ok()?,
+            );
+            if saved != &expected
+                || self.request_digests[..index]
+                    .iter()
+                    .any(|(old, _)| old == operation)
+            {
+                return None;
+            }
+        }
+        let launch = self.receipt(DispatchOperation::Launch).map(|r| r.outcome);
+        let initial = self.receipt(DispatchOperation::InitialInput);
+        let crossed = matches!(
+            launch,
+            Some(DispatchOutcome::Applied | DispatchOutcome::Unknown | DispatchOutcome::Partial)
+        ) || initial.is_some()
+            || self.binding.is_some()
+            || matches!(
+                self.dispatch,
+                DispatchStatus::LaunchUnknown
+                    | DispatchStatus::Launched
+                    | DispatchStatus::InputUnknown
+                    | DispatchStatus::Applied
+            );
+        if let Some(count) = self.execution_attempts {
+            // Allocating a row alone is not execution, and an authoritative
+            // pre-process rejection may retain that allocated identity.
+            if count == 0
+                && (crossed
+                    || self.identity.session.is_some() && launch != Some(DispatchOutcome::Rejected))
+            {
+                return None;
+            }
+            return Some(count);
+        }
+        // Old records can establish one first attempt, never an unknown cumulative
+        // retry history. Current resource absence is deliberately not consulted.
+        if self.identity.attempt != 1 || self.previous_request.is_some() {
+            return None;
+        }
+        let contract = read_contract(self).ok()?;
+        if contract.validate().is_err()
+            || contract.previous_request.is_some()
+            || contract.request != self.identity.request
+            || contract.workflow != self.identity.workflow
+            || contract.controller != self.identity.controller
+            || contract.task != self.identity.task
+        {
+            return None;
+        }
+        if matches!(self.dispatch, DispatchStatus::Prepared) {
+            if crossed || self.identity.session.is_some() {
+                return None;
+            }
+            let prepare = self.receipt(DispatchOperation::Prepare).map(|r| r.outcome);
+            // Raw legacy Prepared was durably replaced with LaunchUnknown before
+            // the native boundary. A validated intact record with no operation
+            // evidence contradicting it retains that old pre-effect invariant.
+            return if self.receipts.is_empty() && self.request_digests.is_empty()
+                || prepare == Some(DispatchOutcome::Applied)
+                    && matches!(launch, None | Some(DispatchOutcome::Accepted))
+            {
+                Some(0)
+            } else {
+                None
+            };
+        }
+        if crossed || self.identity.session.is_some() {
+            return Some(1);
+        }
+        // Refused/Rejected is not no-process proof: it may follow earlier effects.
+        None
+    }
+
     fn receipt(&self, operation: DispatchOperation) -> Option<&DispatchReceipt> {
         self.receipts
             .iter()
@@ -163,6 +282,8 @@ impl Record {
     }
 
     fn upgrade_legacy(&mut self) {
+        // Derive before receipts are synthesized; do not bless their provenance.
+        self.execution_attempts = self.spent_execution_attempts();
         if !self.receipts.is_empty() {
             return;
         }
@@ -454,15 +575,20 @@ impl ServerState {
                         lifecycle_error(ErrorCode::Conflict, "parent Pi conversation is not bound")
                     })?;
                 let handle = contract.request.clone();
-                let bytes = serde_json::to_vec(&contract)?;
+                let previous = self.retained.lock().assignment(&handle)?;
+                let bytes = contract_bytes(
+                    &contract,
+                    previous
+                        .as_ref()
+                        .map(|record| record.contract_digest.as_str()),
+                )?;
                 let contract_digest = digest(&bytes);
-                let is_new = self.retained.lock().assignment(&handle)?.is_none();
+                let is_new = previous.is_none();
                 let prepared_policy = if is_new {
                     Some(self.contract_policy(&contract, availability == Some(true))?)
                 } else {
                     None
                 };
-                let previous = self.retained.lock().assignment(&handle)?;
                 let mut record = if let Some(mut record) = previous {
                     if record.parent != auth.session
                         || record.parent_run != parent.run()
@@ -503,9 +629,10 @@ impl ServerState {
                         ));
                     }
                     let previous = if let Some(previous_request) = &contract.previous_request {
-                        let previous = store
+                        let mut previous = store
                             .assignment(previous_request)?
                             .context("previous assignment not found")?;
+                        previous.upgrade_legacy();
                         if previous.parent != auth.session
                             || previous.parent_run != parent.run()
                             || previous.parent_binding != parent_binding
@@ -519,6 +646,9 @@ impl ServerState {
                             || !previous.retryable_capacity_refusal
                             || previous.identity.session.is_some()
                             || previous.identity.run.is_some()
+                            || !previous
+                                .receipt(DispatchOperation::Launch)
+                                .is_some_and(|receipt| receipt.outcome == DispatchOutcome::Rejected)
                         {
                             return Err(lifecycle_error(
                                 ErrorCode::Conflict,
@@ -717,7 +847,8 @@ impl ServerState {
                             } else {
                                 "delegation live-child limit or minimum free slots after launch prevents admission".into()
                             });
-                            record.retryable_capacity_refusal = true;
+                            record.retryable_capacity_refusal =
+                                record.spent_execution_attempts().is_some();
                             let reason = record.reason.clone();
                             record.outcome(
                                 DispatchOperation::Launch,
@@ -726,7 +857,7 @@ impl ServerState {
                                 reason.as_deref(),
                             );
                             self.retained.lock().save_assignment(&record)?;
-                            return self.assignment_snapshot(record);
+                            return self.reconciliation_snapshot(record);
                         }
                         let spent = record.spent_execution_attempts().ok_or_else(|| {
                             lifecycle_error(
@@ -740,10 +871,14 @@ impl ServerState {
                             .is_some_and(|limit| spent >= limit)
                         {
                             record.dispatch = DispatchStatus::Refused;
-                            record.reason =
-                                Some("logical task execution-attempt limit reached".into());
+                            record.outcome(
+                                DispatchOperation::Launch,
+                                DispatchOutcome::Rejected,
+                                None,
+                                Some("logical task execution-attempt limit reached"),
+                            );
                             self.retained.lock().save_assignment(&record)?;
-                            return self.assignment_snapshot(record);
+                            return self.reconciliation_snapshot(record);
                         }
                         // Resolve the executable before charging: lookup cannot create
                         // a process, and an error here must leave Prepared unspent.
@@ -1476,6 +1611,30 @@ fn publication_error(issue: PublicationIssue) -> anyhow::Error {
     })
 }
 
+/// Preserve the exact older canonical bytes when the only added fields were
+/// absent defaults. A different contract never acquires the old digest.
+fn contract_bytes(contract: &ResearchContract, expected: Option<&str>) -> Result<Vec<u8>> {
+    let bytes = serde_json::to_vec(contract)?;
+    if let Some(expected) = expected
+        && digest(&bytes) != expected
+        && contract.limits == DelegationLimits::default()
+        && contract.previous_request.is_none()
+    {
+        let suffix = format!(
+            ",\"limits\":{},\"previous_request\":null}}",
+            serde_json::to_string(&DelegationLimits::default())?
+        );
+        if let Some(prefix) = bytes.strip_suffix(suffix.as_bytes()) {
+            let mut legacy = prefix.to_vec();
+            legacy.push(b'}');
+            if digest(&legacy) == expected {
+                return Ok(legacy);
+            }
+        }
+    }
+    Ok(bytes)
+}
+
 fn read_contract(record: &Record) -> Result<ResearchContract> {
     let bytes = Directory::open(&record.root, false)?
         .read(&format!("contract-v{}.json", record.identity.contract))?;
@@ -1572,6 +1731,8 @@ mod tests {
             model: "fixture-model".into(),
             acceptance_evidence: vec!["citation".into()],
             mandatory_capabilities: vec!["read".into()],
+            limits: DelegationLimits::default(),
+            previous_request: None,
         };
         let bytes = serde_json::to_vec(&contract).unwrap();
         Directory::open(&root, true)
@@ -1631,6 +1792,10 @@ mod tests {
             workspace: String::new(),
             receipts: vec![],
             request_digests: vec![],
+            previous_request: None,
+            successor_request: None,
+            execution_attempts: None,
+            retryable_capacity_refusal: false,
         }
     }
 
@@ -1722,5 +1887,220 @@ mod tests {
                 .is_err()
         );
         assert_eq!(value.receipts.len(), 1);
+    }
+
+    fn operation(value: &mut Record, operation: DispatchOperation, outcome: DispatchOutcome) {
+        let mut identity = value.identity.clone();
+        if operation != DispatchOperation::InitialInput {
+            identity.session = None;
+            identity.run = None;
+        }
+        // Test fixtures start pending before allocation, then simulate persisted outcomes.
+        value.request_digests.retain(|(kind, _)| *kind != operation);
+        value.receipts.retain(|r| r.operation != operation);
+        value.receipts.push(DispatchReceipt {
+            request: value.handle.clone(),
+            operation,
+            identity: identity.clone(),
+            outcome,
+            input: None,
+            reason: None,
+        });
+        value.request_digests.push((
+            operation,
+            digest(&serde_json::to_vec(&(operation, &value.contract_digest, &identity)).unwrap()),
+        ));
+    }
+
+    #[test]
+    fn execution_accounting_uses_receipts_and_never_resource_absence() {
+        let cases = [
+            ("raw prepared", Some(0)),
+            ("accepted launch", Some(0)),
+            ("prepare unknown", None),
+            ("unknown launch without row", Some(1)),
+            ("partial launch without row", Some(1)),
+            ("applied launch", Some(1)),
+            ("rejected input after launch", Some(1)),
+            ("refused without proof", None),
+            ("rejected without proof", None),
+            ("known preflight refusal", Some(0)),
+            ("allocated preflight refusal", Some(0)),
+            ("known capacity refusal", Some(0)),
+            ("zero contradicts unknown", None),
+            ("zero contradicts input", None),
+            ("prepared contradicts launch", None),
+            ("unpaired allocation", None),
+            ("wrong receipt identity", None),
+            ("wrong operation digest", None),
+            ("duplicate receipt", None),
+            ("missing predecessor count", None),
+            ("known inherited count", Some(2)),
+            ("known count after removal", Some(2)),
+            ("invalid legacy contract", None),
+            ("contradictory applied binding", None),
+        ];
+        for (name, expected) in cases {
+            let directory = tempfile::tempdir().unwrap();
+            let mut value = record(
+                directory.path().join("assignment"),
+                DispatchStatus::Prepared,
+            );
+            match name {
+                "raw prepared" => {}
+                "accepted launch"
+                | "prepare unknown"
+                | "wrong receipt identity"
+                | "wrong operation digest"
+                | "duplicate receipt" => {
+                    operation(
+                        &mut value,
+                        DispatchOperation::Prepare,
+                        DispatchOutcome::Applied,
+                    );
+                    operation(
+                        &mut value,
+                        DispatchOperation::Launch,
+                        DispatchOutcome::Accepted,
+                    );
+                    match name {
+                        "prepare unknown" => operation(
+                            &mut value,
+                            DispatchOperation::Prepare,
+                            DispatchOutcome::Unknown,
+                        ),
+                        "wrong receipt identity" => {
+                            value.receipts[0].identity.task = "other".into()
+                        }
+                        "wrong operation digest" => value.request_digests[0].1 = "changed".into(),
+                        "duplicate receipt" => value.receipts.push(value.receipts[0].clone()),
+                        _ => {}
+                    }
+                }
+                "unknown launch without row"
+                | "partial launch without row"
+                | "zero contradicts unknown" => {
+                    value.dispatch = DispatchStatus::LaunchUnknown;
+                    operation(
+                        &mut value,
+                        DispatchOperation::Launch,
+                        if name == "partial launch without row" {
+                            DispatchOutcome::Partial
+                        } else {
+                            DispatchOutcome::Unknown
+                        },
+                    );
+                    if name == "zero contradicts unknown" {
+                        value.execution_attempts = Some(0);
+                    }
+                }
+                "applied launch" | "rejected input after launch" | "zero contradicts input" => {
+                    value.dispatch = DispatchStatus::Launched;
+                    value.identity.session = Some(SessionId(2));
+                    value.identity.run = Some(SessionRunId(1));
+                    operation(
+                        &mut value,
+                        DispatchOperation::Launch,
+                        DispatchOutcome::Applied,
+                    );
+                    if name != "applied launch" {
+                        operation(
+                            &mut value,
+                            DispatchOperation::InitialInput,
+                            DispatchOutcome::Rejected,
+                        );
+                        value.dispatch = DispatchStatus::Refused;
+                    }
+                    if name == "zero contradicts input" {
+                        value.execution_attempts = Some(0);
+                    }
+                }
+                "refused without proof"
+                | "rejected without proof"
+                | "known preflight refusal"
+                | "allocated preflight refusal"
+                | "known capacity refusal" => {
+                    value.dispatch = DispatchStatus::Refused;
+                    if name != "refused without proof" {
+                        operation(
+                            &mut value,
+                            DispatchOperation::Launch,
+                            DispatchOutcome::Rejected,
+                        );
+                    }
+                    if name.contains("preflight") || name == "known capacity refusal" {
+                        value.execution_attempts = Some(0);
+                    }
+                    if name == "allocated preflight refusal" {
+                        value.identity.session = Some(SessionId(2));
+                        value.identity.run = Some(SessionRunId(1));
+                    }
+                    value.retryable_capacity_refusal = name == "known capacity refusal";
+                }
+                "prepared contradicts launch" => operation(
+                    &mut value,
+                    DispatchOperation::Launch,
+                    DispatchOutcome::Unknown,
+                ),
+                "unpaired allocation" => value.identity.run = Some(SessionRunId(1)),
+                "missing predecessor count" | "known inherited count" => {
+                    value.identity.attempt = 2;
+                    value.previous_request = Some("previous".into());
+                    if name == "known inherited count" {
+                        value.execution_attempts = Some(2);
+                    }
+                }
+                "known count after removal" => {
+                    value.dispatch = DispatchStatus::Refused;
+                    value.execution_attempts = Some(2);
+                }
+                "invalid legacy contract" => {
+                    std::fs::write(value.root.join("contract-v1.json"), b"{}").unwrap()
+                }
+                "contradictory applied binding" => {
+                    value.dispatch = DispatchStatus::Applied;
+                    value.identity.session = Some(SessionId(2));
+                    value.identity.run = Some(SessionRunId(1));
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(value.spent_execution_attempts(), expected, "{name}");
+            value.upgrade_legacy();
+            assert_eq!(
+                value.execution_attempts, expected,
+                "derive before synthesized receipts: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn old_contract_bytes_preserve_immutable_digest_without_weakening_comparison() {
+        let directory = tempfile::tempdir().unwrap();
+        let value = record(
+            directory.path().join("assignment"),
+            DispatchStatus::Prepared,
+        );
+        let contract = read_contract(&value).unwrap();
+        let modern = serde_json::to_vec(&contract).unwrap();
+        let suffix = format!(
+            ",\"limits\":{},\"previous_request\":null}}",
+            serde_json::to_string(&DelegationLimits::default()).unwrap()
+        );
+        let mut old = modern.strip_suffix(suffix.as_bytes()).unwrap().to_vec();
+        old.push(b'}');
+        let old_digest = digest(&old);
+        assert_eq!(contract_bytes(&contract, Some(&old_digest)).unwrap(), old);
+        let mut changed = contract.clone();
+        changed.scope.push_str(" changed");
+        assert_ne!(
+            digest(&contract_bytes(&changed, Some(&old_digest)).unwrap()),
+            old_digest
+        );
+        changed = contract;
+        changed.limits.max_execution_attempts = Some(1);
+        assert_ne!(
+            digest(&contract_bytes(&changed, Some(&old_digest)).unwrap()),
+            old_digest
+        );
     }
 }
