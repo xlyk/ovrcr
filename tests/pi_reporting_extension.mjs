@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync, chmodSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { spawn } from "node:child_process";
 import { createHost, assistant } from "./fixtures/pi/pi_host.mjs";
 
 const SOURCE = resolve("src/pi-reporting-extension.mjs");
@@ -13,16 +14,18 @@ after(() => {
   for (const dir of materialized) rmSync(dir, { recursive: true, force: true });
 });
 
-function materialize({ hang = false } = {}) {
+function materialize({ hang = false, interruptAfterBody = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "ovrcr-pi-ext-"));
   materialized.push(dir);
   const record = join(dir, "record.jsonl");
   const helper = join(dir, "fake-ovrcr");
+  const checkpoint = join(dir, "body-written");
+  const interrupt = interruptAfterBody ? `printf ready > "${checkpoint}"; kill -STOP $$; ` : "";
   // `hang: "queued"` is a helper that only answers the final drain frame: an ordinary
   // frame stalls before it records anything, exactly as a lost helper does.
   const body = hang === "queued"
-    ? `body=$(cat)\ncase "$body" in *session_shutdown*) ;; *) sleep 5;; esac\nprintf '%s\\n' "$body" >> "${record}"\n`
-    : `cat >> "${record}"; printf '\\n' >> "${record}"\n${hang ? "sleep 5\n" : ""}`;
+    ? `IFS= read -r body\ncase "$body" in *session_shutdown*) ;; *) sleep 5;; esac\nprintf '%s\\n' "$body" >> "${record}"\n`
+    : `IFS= read -r body\nprintf '%s\\n' "$body" >> "${record}"\n${interrupt}${hang ? "sleep 5\n" : ""}`;
   writeFileSync(
     helper,
     `#!/bin/sh\n[ "$1" = report ] && [ "$2" = pi ] && [ "$3" = --stdin ] || exit 9\n${body}`,
@@ -34,7 +37,7 @@ function materialize({ hang = false } = {}) {
   writeFileSync(join(dir, "ovrcr-delegation-continuation.mjs"), readFileSync(new URL("../src/ovrcr-delegation-continuation.mjs", import.meta.url)));
   const extension = join(dir, "ovrcr-pi-reporting.mjs");
   writeFileSync(extension, readFileSync(SOURCE, "utf8").replace("__OVRCR_BINARY__", JSON.stringify(helper)));
-  return { extension, record };
+  return { extension, record, helper, checkpoint };
 }
 
 function frames(record) {
@@ -374,3 +377,19 @@ test("omits model until the session reports one", async () => {
   assert.equal(sent[0].model, undefined);
 });
 
+
+test("reporting fixture publishes one complete EOF-terminated Unicode frame before interruption", async () => {
+  const { helper, record, checkpoint } = materialize({ interruptAfterBody: true });
+  const payload = { event: "fixture", path: "literal\\path", unicode: "π 雪", escaped: "line\nvalue" };
+  const child = spawn(helper,["report","pi","--stdin"],{stdio:["pipe","ignore","pipe"]});
+  const closed = new Promise(resolve=>child.once("close",resolve));
+  child.stdin.end(JSON.stringify(payload));
+  try {
+    const deadline=Date.now()+5000;
+    while(!existsSync(checkpoint)){assert.ok(Date.now()<deadline,"fixture reached owned interruption point");await new Promise(r=>setTimeout(r,5));}
+    child.kill("SIGKILL");await closed;
+    const bytes=readFileSync(record,"utf8");
+    assert.ok(bytes.endsWith("\n"),"a killed helper must not leave an unterminated frame for the next JSON body");
+    assert.deepEqual(bytes.split("\n").filter(Boolean).map(JSON.parse),[payload]);
+  } finally { child.kill("SIGKILL");await closed; }
+});

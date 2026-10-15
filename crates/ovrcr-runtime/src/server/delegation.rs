@@ -883,7 +883,7 @@ impl ServerState {
                                 "legacy workflow has no current authority; explicit recovery is required"
                             );
                         }
-                        if store.workflows()?.len() >= super::delegation_recovery::MAX_WORKFLOWS {
+                        if store.workflows()?.total >= super::delegation_recovery::MAX_WORKFLOWS {
                             bail!("workflow storage is full");
                         }
                         let authority = WorkflowAuthority {

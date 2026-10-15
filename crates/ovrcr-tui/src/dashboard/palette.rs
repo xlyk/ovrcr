@@ -2958,7 +2958,7 @@ impl Dashboard {
                     choices.candidates.is_empty().then(|| "No workflow needs transfer to this Pi. Reconcile its existing workflows in Pi.".into())
                 } else {
                     Some(format!(
-                        "{} older assignment(s) lack certified recovery authority; their artifacts/receipts remain read-only and cannot be transferred. Available workflows are listed below.",
+                        "{} retained record(s) have missing or unverifiable recovery authority; their artifacts/receipts remain read-only and cannot be transferred. Available workflows are listed below.",
                         choices.gaps.len()
                     ))
                 };

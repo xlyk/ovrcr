@@ -207,9 +207,10 @@ impl WorkflowRecord {
             || a.server_lifetime != lifetime
             || self.departure.is_some()
         {
-            bail!(
-                "workflow authority changed or departed; reconcile the current controller before effects"
-            );
+            return Err(super::lifecycle_error(
+                ErrorCode::Conflict,
+                "workflow controller changed or departed; reconcile the current controller before effects",
+            ));
         }
         Ok(())
     }
@@ -265,13 +266,20 @@ impl WorkflowRecord {
     }
 }
 
+/// A bounded inventory, not another owner. Damaged rows still consume capacity.
+pub(crate) struct WorkflowInventory {
+    pub valid: Vec<WorkflowRecord>,
+    pub malformed: Vec<String>,
+    pub total: usize,
+}
+
 impl SessionStore {
     pub(crate) fn workflow(&self, workflow: &str) -> Result<Option<WorkflowRecord>> {
         use rusqlite::OptionalExtension;
-        let raw: Option<String> = self
+        let raw: Option<Vec<u8>> = self
             .connection
             .query_row(
-                "SELECT metadata FROM delegation_workflows WHERE workflow = ?1",
+                "SELECT substr(CAST(COALESCE(metadata, '') AS BLOB), 1, 262145) FROM delegation_workflows WHERE workflow = ?1",
                 [workflow],
                 |row| row.get(0),
             )
@@ -282,7 +290,11 @@ impl SessionStore {
                     "workflow metadata exceeds supported bound; original evidence remains retained"
                 );
             }
-            let row: WorkflowRecord = serde_json::from_str(&raw)?;
+            let row: WorkflowRecord = serde_json::from_slice(&raw).map_err(|_| {
+                anyhow::anyhow!(
+                    "workflow authority metadata is malformed; original evidence remains retained"
+                )
+            })?;
             row.validate()?;
             if row.authority.workflow != workflow {
                 bail!("workflow key changed");
@@ -291,7 +303,7 @@ impl SessionStore {
         })
         .transpose()
     }
-    pub(crate) fn workflows(&self) -> Result<Vec<WorkflowRecord>> {
+    pub(crate) fn workflows(&self) -> Result<WorkflowInventory> {
         let mut stmt = self
             .connection
             .prepare("SELECT workflow FROM delegation_workflows ORDER BY workflow LIMIT 4097")?;
@@ -301,9 +313,22 @@ impl SessionStore {
         if keys.len() > MAX_WORKFLOWS {
             bail!("workflow storage exceeds supported capacity");
         }
-        keys.iter()
-            .map(|key| self.workflow(key)?.context("workflow disappeared"))
-            .collect()
+        let mut inventory = WorkflowInventory {
+            valid: Vec::new(),
+            malformed: Vec::new(),
+            total: keys.len(),
+        };
+        for key in keys {
+            match self.workflow(&key) {
+                Ok(Some(row)) => inventory.valid.push(row),
+                Ok(None) => bail!("workflow disappeared during bounded discovery"),
+                Err(error) if error.downcast_ref::<rusqlite::Error>().is_some() => {
+                    return Err(error);
+                }
+                Err(_) => inventory.malformed.push(key),
+            }
+        }
+        Ok(inventory)
     }
     pub(crate) fn save_workflow(&self, record: &WorkflowRecord) -> Result<()> {
         record.validate()?;
@@ -314,7 +339,10 @@ impl SessionStore {
         self.connection.execute("INSERT INTO delegation_workflows (workflow, metadata) VALUES (?1,?2) ON CONFLICT(workflow) DO UPDATE SET metadata=excluded.metadata", rusqlite::params![record.authority.workflow, bytes])?;
         Ok(())
     }
-    pub(crate) fn workflow_handles(&self, workflow: &str) -> Result<Vec<String>> {
+    fn workflow_members(
+        &self,
+        workflow: &str,
+    ) -> Result<(Vec<super::delegation::Record>, Vec<String>)> {
         let mut stmt = self.connection.prepare(
             "SELECT handle FROM delegations WHERE workflow = ?1 ORDER BY handle LIMIT 4097",
         )?;
@@ -324,42 +352,148 @@ impl SessionStore {
         if handles.len() > 4096 {
             bail!("workflow membership exceeds supported capacity");
         }
-        for handle in &handles {
-            let row = self.assignment(handle)?.context("assignment disappeared")?;
-            if row.identity.instance != self.delegation_instance()?
-                || row.identity.workflow != workflow
-            {
-                bail!("workflow membership is foreign or malformed");
+        let instance = self.delegation_instance()?;
+        let mut members = Vec::new();
+        let mut gaps = Vec::new();
+        let mut extra = 0;
+        for handle in handles {
+            let row = match self.assignment(&handle) {
+                Ok(row) => row,
+                Err(error) if error.downcast_ref::<rusqlite::Error>().is_some() => {
+                    return Err(error);
+                }
+                Err(_) => None,
+            };
+            if let Some(row) = row.filter(|row| {
+                identifier(&handle)
+                    && row.handle == handle
+                    && row.identity.request == handle
+                    && row.identity.instance == instance
+                    && row.identity.workflow == workflow
+            }) {
+                members.push(row);
+            } else if gaps.len() < 64 {
+                let label = if identifier(&handle) {
+                    handle.as_str()
+                } else {
+                    "retained member"
+                };
+                gaps.push(format!("{label}: assignment metadata is missing or unverifiable; original evidence remains read-only and effects require direct validation"));
+            } else {
+                extra += 1;
             }
         }
-        Ok(handles)
+        if extra > 0 {
+            gaps.push(format!("{extra} additional retained members have unverifiable metadata; original evidence remains read-only"));
+        }
+        Ok((members, gaps))
     }
 
     fn workflow_recovery_gaps(
         &self,
         parent: Option<(SessionId, SessionRunId, &AgentBinding)>,
         workflow: Option<&str>,
+        inventory: &WorkflowInventory,
     ) -> Result<Vec<WorkflowRecoveryGap>> {
-        let mut query = self.connection.prepare("SELECT d.handle FROM delegations d LEFT JOIN delegation_workflows w ON d.workflow=w.workflow WHERE w.workflow IS NULL ORDER BY d.handle LIMIT 4097")?;
-        let handles: Vec<String> = query
-            .query_map([], |r| r.get(0))?
+        // CASE prevents json_extract from evaluating invalid JSON. Scope before
+        // decoding: an unrelated malformed assignment is never a caller's gap.
+        let mut query = self.connection.prepare("SELECT handle, workflow FROM delegations WHERE (?1 IS NULL OR workflow = ?1) AND (?2 IS NULL OR CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.parent') = ?2 AND json_extract(metadata, '$.parent_run') = ?3 AND json_extract(metadata, '$.parent_binding.provider') = 'Pi' AND json_extract(metadata, '$.parent_binding.invocation') = ?4 AND json_extract(metadata, '$.parent_binding.conversation') = ?5 AND json_extract(metadata, '$.parent_binding.generation') = ?6 ELSE 0 END) ORDER BY handle LIMIT 4097")?;
+        let rows: Vec<(String, String)> = query
+            .query_map(
+                rusqlite::params![
+                    workflow,
+                    parent.map(|p| i64::try_from(p.0.0)).transpose()?,
+                    parent.map(|p| i64::try_from(p.1.0)).transpose()?,
+                    parent.map(|p| p.2.invocation.as_str()),
+                    parent.map(|p| p.2.conversation.as_str()),
+                    parent.map(|p| i64::try_from(p.2.generation)).transpose()?
+                ],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?
             .collect::<std::result::Result<_, _>>()?;
-        if handles.len() > 4096 {
+        if rows.len() > 4096 {
             bail!("retained obligations exceed supported record capacity");
         }
+        let associated: std::collections::HashSet<_> =
+            rows.iter().map(|(_, key)| key.clone()).collect();
+        let instance = self.delegation_instance()?;
         let mut gaps = Vec::new();
-        for handle in handles {
-            let row = self
-                .assignment(&handle)?
-                .context("retained obligation disappeared")?;
-            if workflow.is_some_and(|w| w != row.identity.workflow)
-                || parent.is_some_and(|(id, run, binding)| {
-                    row.parent != id || row.parent_run != run || &row.parent_binding != binding
-                })
+        let mut extra = 0;
+        for (handle, key) in rows {
+            if inventory
+                .valid
+                .iter()
+                .any(|row| row.authority.workflow == key)
             {
                 continue;
             }
-            gaps.push(WorkflowRecoveryGap { workflow: row.identity.workflow.clone(), identity: row.identity.clone(), brief: row.root.join("brief-v1.json"), result_path: row.root.join(format!("result-v{}.json", row.result_version)), reason: "Retained workflow lacks certified recovery authority. Its original obligations and receipts remain read-only; automatic recovery and transfer are unavailable for this older record.".into() });
+            if gaps.len() == 64 {
+                extra += 1;
+                continue;
+            }
+            let decoded = match self.assignment(&handle) {
+                Ok(row) => row,
+                Err(error) if error.downcast_ref::<rusqlite::Error>().is_some() => {
+                    return Err(error);
+                }
+                Err(_) => None,
+            };
+            let row = decoded.filter(|row| {
+                row.handle == handle
+                    && row.identity.request == handle
+                    && row.identity.workflow == key
+                    && row.identity.instance == instance
+                    && [
+                        &row.identity.instance,
+                        &row.identity.workflow,
+                        &row.identity.controller,
+                        &row.identity.task,
+                        &row.identity.request,
+                    ]
+                    .into_iter()
+                    .all(|id| identifier(id))
+                    && row.identity.controller_epoch > 0
+                    && row.identity.attempt > 0
+                    && row.identity.contract > 0
+                    && parent.is_none_or(|(id, run, binding)| {
+                        row.parent == id && row.parent_run == run && &row.parent_binding == binding
+                    })
+            });
+            let damaged = inventory.malformed.contains(&key);
+            let reason = if row.is_none() {
+                "Retained record has unverifiable metadata. Original evidence remains read-only; automatic recovery and transfer are unavailable."
+            } else if damaged {
+                "Retained workflow authority is malformed or unsupported. Original obligations and receipts remain read-only; automatic recovery and transfer are unavailable."
+            } else {
+                "Retained workflow lacks certified recovery authority. Its original obligations and receipts remain read-only; automatic recovery and transfer are unavailable for this older record."
+            };
+            let trusted_keys = identifier(&key) && identifier(&handle);
+            gaps.push(WorkflowRecoveryGap {
+                workflow: trusted_keys.then_some(key),
+                handle: trusted_keys.then_some(handle),
+                identity: row.as_ref().map(|row| row.identity.clone()),
+                brief: row.as_ref().map(|row| row.root.join("brief-v1.json")),
+                result_path: row.as_ref().map(|row| {
+                    row.root
+                        .join(format!("result-v{}.json", row.result_version))
+                }),
+                reason: reason.into(),
+            });
+        }
+        if parent.is_none() {
+            for key in &inventory.malformed {
+                if associated.contains(key) || workflow.is_some_and(|selected| selected != key) {
+                    continue;
+                }
+                if gaps.len() == 64 {
+                    extra += 1;
+                    continue;
+                }
+                gaps.push(WorkflowRecoveryGap { workflow: identifier(key).then(||key.clone()), handle: None, identity: None, brief: None, result_path: None, reason: "Retained authority record has unverifiable metadata and no trustworthy assignment attribution. Original evidence remains read-only; automatic recovery and transfer are unavailable.".into() });
+            }
+        }
+        if extra > 0 {
+            gaps.push(WorkflowRecoveryGap { workflow: None, handle: None, identity: None, brief: None, result_path: None, reason: format!("{extra} additional retained records have recovery gaps; original evidence remains read-only. Select an explicit workflow for scoped inspection.") });
         }
         Ok(gaps)
     }
@@ -380,7 +514,7 @@ impl SessionStore {
         };
         crate::extension_recovery::validate(AgentProvider::Pi, reference)?;
         let transaction = self.connection.unchecked_transaction()?;
-        for mut row in self.workflows()? {
+        for mut row in self.workflows()?.valid {
             let a = &row.authority;
             if a.parent != session || a.server_lifetime != lifetime {
                 continue;
@@ -424,7 +558,7 @@ impl SessionStore {
         };
         let reference = crate::extension_recovery::canonical_pi_reference(reference)?;
         let transaction = self.connection.unchecked_transaction()?;
-        for mut row in self.workflows()? {
+        for mut row in self.workflows()?.valid {
             if row.authority.parent == id
                 && row.authority.parent_run == old
                 && row.authority.server_lifetime == lifetime
@@ -451,7 +585,7 @@ impl SessionStore {
         lifetime: &str,
     ) -> Result<()> {
         let transaction = self.connection.unchecked_transaction()?;
-        for mut row in self.workflows()? {
+        for mut row in self.workflows()?.valid {
             let old = row.authority.clone();
             if old.parent != id || old.server_lifetime != lifetime {
                 continue;
@@ -520,7 +654,7 @@ impl SessionStore {
     ) -> Result<()> {
         let reference = self.get(id).and_then(|r| r.conversation.clone());
         let transaction = self.connection.unchecked_transaction()?;
-        for mut row in self.workflows()? {
+        for mut row in self.workflows()?.valid {
             if row.authority.parent != id
                 || row.authority.parent_run != run
                 || row.authority.binding != *binding
@@ -600,22 +734,18 @@ impl ServerState {
         row: WorkflowRecord,
         receipt: Option<WorkflowTransitionReceipt>,
     ) -> Result<WorkflowSnapshot> {
-        let handles = self
+        let (members, mut gaps) = self
             .retained
             .lock()
-            .workflow_handles(&row.authority.workflow)?;
-        let mut gaps = Vec::new();
+            .workflow_members(&row.authority.workflow)?;
+        let handles = members.iter().map(|record| record.handle.clone()).collect();
         let active =
             row.authority.server_lifetime == self.server_lifetime && row.departure.is_none();
         if !active {
             gaps.push("workflow owner departed or Server lifetime changed; explicit transfer may be required".into());
         }
-        for handle in &handles {
-            let record = self
-                .retained
-                .lock()
-                .assignment(handle)?
-                .context("assignment missing")?;
+        for record in &members {
+            let handle = &record.handle;
             if let (Some(id), Some(run)) = (record.identity.session, record.identity.run)
                 && !self
                     .session_summary(id)
@@ -678,11 +808,13 @@ impl ServerState {
                 let (binding, producer) = parent
                     .authenticated_workflow_source(&auth)
                     .context("workflow source capability is missing or retired")?;
+                let inventory = store.workflows()?;
                 let gaps = store.workflow_recovery_gaps(
                     Some((auth.session, parent.run(), &binding)),
                     workflow.as_deref(),
+                    &inventory,
                 )?;
-                let rows = store.workflows()?;
+                let rows = inventory.valid;
                 let mut selected = Vec::new();
                 for row in rows {
                     if workflow
@@ -824,9 +956,10 @@ impl ServerState {
             .workflow_source()
             .context("proposed Pi source is not certified")?;
         let store = self.retained.lock();
-        let legacy = store.workflow_recovery_gaps(None, None)?;
+        let inventory = store.workflows()?;
+        let legacy = store.workflow_recovery_gaps(None, None, &inventory)?;
         let mut candidates = Vec::new();
-        for row in store.workflows()? {
+        for row in inventory.valid {
             if row.authority.parent == parent
                 && row.authority.parent_run == run
                 && row.authority.binding == binding
@@ -1105,8 +1238,33 @@ mod tests {
             )
             .unwrap();
         assert!(store.workflow("workflow").is_err());
-        assert!(store.workflows().is_err());
+        let inventory = store.workflows().unwrap();
+        assert!(inventory.valid.is_empty());
+        assert_eq!(inventory.malformed, ["workflow"]);
+        assert_eq!(
+            inventory.total, 1,
+            "invalid row still occupies retained capacity"
+        );
     }
+    #[test]
+    fn malformed_workflow_inventory_keeps_conservative_full_capacity() {
+        let store = SessionStore::in_memory();
+        store.connection.execute_batch("WITH RECURSIVE count(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM count WHERE x<4096) INSERT INTO delegation_workflows(workflow,metadata) SELECT 'damaged-'||x,'{' FROM count;").unwrap();
+        let inventory = store.workflows().unwrap();
+        assert_eq!(inventory.total, MAX_WORKFLOWS);
+        assert_eq!(inventory.malformed.len(), MAX_WORKFLOWS);
+        assert!(inventory.valid.is_empty());
+        let raw: String = store
+            .connection
+            .query_row(
+                "SELECT metadata FROM delegation_workflows WHERE workflow='damaged-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(raw, "{");
+    }
+
     #[test]
     fn original_missing_epoch_is_never_inherited_after_transfer() {
         let mut row = original();

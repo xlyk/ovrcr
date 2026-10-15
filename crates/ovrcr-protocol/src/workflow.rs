@@ -167,10 +167,11 @@ pub enum DashboardWorkflowRequest {
 /// Evidence of retained work without certified current authority. Never a transfer target.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkflowRecoveryGap {
-    pub workflow: String,
-    pub identity: crate::AssignmentIdentity,
-    pub brief: std::path::PathBuf,
-    pub result_path: std::path::PathBuf,
+    pub workflow: Option<String>,
+    pub handle: Option<String>,
+    pub identity: Option<crate::AssignmentIdentity>,
+    pub brief: Option<std::path::PathBuf>,
+    pub result_path: Option<std::path::PathBuf>,
     pub reason: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

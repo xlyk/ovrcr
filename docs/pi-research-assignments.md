@@ -82,6 +82,18 @@ remain read-only. An exact legacy Session/run/binding can discover these through
 is available. The Dashboard shows those gaps alongside valid transfer choices.
 For ordinary recovered workflows the tool returns its usual workflow snapshot;
 any additional gaps remain in that snapshot's `gaps` field.
+An explicit Pi new/fork transition starts fresh in-memory workflow/controller
+routing and discards old observation queues. It can start a distinct workflow;
+old durable work stays retained and requires its original certified authority or
+explicit transfer. Queued tools and late replies from the old context cannot
+acquire the fresh routing. Failed or ambiguous recovery never starts a new workflow.
+A malformed authority row stays read-only and consumes storage capacity, while
+unrelated valid workflows remain usable. A damaged assignment that cannot be
+attributed safely is an operator-only gap with optional identity/artifact fields;
+invalid storage keys are never displayed as invented identities. Pi sees gap
+metadata only when retained scope proves its exact original Session/run/binding.
+Gap lists are bounded and report any additional count without dropping evidence.
+
 
 ## Start and collect
 
