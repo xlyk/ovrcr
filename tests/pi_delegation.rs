@@ -1027,6 +1027,88 @@ struct ControlProxy {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
+fn configure_proxy_stream(stream: &std::os::unix::net::UnixStream) -> std::io::Result<bool> {
+    match stream.set_read_timeout(Some(Duration::from_secs(30))) {
+        Ok(()) => Ok(true),
+        Err(error) if error.raw_os_error() == Some(libc::EINVAL) => {
+            use std::os::fd::AsRawFd;
+            let mut byte = 0u8;
+            // macOS rejects SO_RCVTIMEO after peer close; skip only proven EOF.
+            let peek = unsafe {
+                libc::recv(
+                    stream.as_raw_fd(),
+                    (&mut byte as *mut u8).cast(),
+                    1,
+                    libc::MSG_PEEK | libc::MSG_DONTWAIT,
+                )
+            };
+            let peek_errno = if peek < 0 {
+                std::io::Error::last_os_error().raw_os_error()
+            } else {
+                None
+            };
+            let mut status = libc::pollfd {
+                fd: stream.as_raw_fd(),
+                events: libc::POLLIN | libc::POLLHUP,
+                revents: 0,
+            };
+            let poll = unsafe { libc::poll(&mut status, 1, 0) };
+            eprintln!(
+                "CONTROL_PROXY_TIMEOUT_SETUP error={:?} peek={} peek_errno={:?} poll={} revents={}",
+                error.raw_os_error(),
+                peek,
+                peek_errno,
+                poll,
+                status.revents
+            );
+            if peek == 0 {
+                Ok(false)
+            } else if peek > 0 && poll == 1 && status.revents & libc::POLLHUP != 0 {
+                // Closed peer's queued bytes remain finite; preserve normal frame handling.
+                Ok(true)
+            } else {
+                Err(error)
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn control_proxy_closed_peer_does_not_prevent_the_next_valid_frame() {
+    let (closed, peer) = std::os::unix::net::UnixStream::pair().unwrap();
+    drop(peer);
+    assert!(
+        !configure_proxy_stream(&closed).unwrap(),
+        "positively closed peer has no frame to route"
+    );
+    let (mut stream, mut peer) = std::os::unix::net::UnixStream::pair().unwrap();
+    assert!(configure_proxy_stream(&stream).unwrap());
+    let expected = ClientMessage {
+        request_id: 1007,
+        request: Request::Inspect,
+    };
+    write_frame(&mut peer, &expected).unwrap();
+    let actual: ClientMessage = read_frame(&mut stream).unwrap();
+    assert_eq!(actual.request_id, expected.request_id);
+    assert!(matches!(actual.request, Request::Inspect));
+    let (mut queued, mut peer) = std::os::unix::net::UnixStream::pair().unwrap();
+    write_frame(&mut peer, &expected).unwrap();
+    drop(peer);
+    assert!(
+        configure_proxy_stream(&queued).unwrap(),
+        "buffered complete frame must remain processable after peer close"
+    );
+    let actual: ClientMessage = read_frame(&mut queued).unwrap();
+    assert_eq!(actual.request_id, expected.request_id);
+    assert!(matches!(actual.request, Request::Inspect));
+    assert!(
+        read_frame::<ClientMessage>(&mut queued).is_err(),
+        "positively closed peer reaches EOF after its original queued frame"
+    );
+}
+
 impl ControlProxy {
     fn new(
         path: std::path::PathBuf,
@@ -1050,9 +1132,9 @@ impl ControlProxy {
                     break;
                 }
                 let mut stream = stream.unwrap();
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(30)))
-                    .unwrap();
+                if !configure_proxy_stream(&stream).unwrap() {
+                    continue;
+                }
                 if exchange_preamble(&mut stream).is_err() {
                     continue;
                 }
