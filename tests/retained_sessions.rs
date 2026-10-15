@@ -771,6 +771,7 @@ fn extension_conversations_switch_and_survive_repeated_restart() {
             &mut old_watch,
             1,
             Request::ReserveAgent(ReserveAgent {
+                    pi_resume: None,
                 session: SessionId(id),
                 capability: AgentSecret(capability),
                 operation: "old-run-reserve".into(),

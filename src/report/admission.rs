@@ -1536,7 +1536,7 @@ mod tests {
             Some(Box::new(move |event| {
                 // Keep the deliberately queued pre-exit response pending until the real
                 // native-completion callback, reproducing the disputed ordering exactly.
-                if let ovrcr_runtime::agent_runner::HookEvent::NativeCompleted { deadline } = event
+                if let ovrcr_runtime::agent_runner::HookEvent::NativeCompleted { deadline, .. } = event
                 {
                     receiver.finish(&mut reporter, deadline);
                 }

@@ -376,6 +376,8 @@ pub enum Request {
         save: bool,
     },
     Delegation(Box<crate::DelegationRequest>),
+    Workflow(Box<crate::WorkflowRequest>),
+    DashboardWorkflow(crate::DashboardWorkflowRequest),
     AssignmentControl(crate::AssignmentControlRequest),
     /// Human authority is captured when enqueued and checked at the final PTY fence.
     AssignedHumanInput {
@@ -464,6 +466,8 @@ pub enum Response {
     ITermFocusPrepared(Option<crate::BridgeActivationTarget>),
     BridgeOwner(crate::BridgeOwnerResult),
     Delegation(Box<crate::AssignmentSnapshot>),
+    Workflows(Vec<crate::WorkflowSnapshot>),
+    WorkflowCandidates(Vec<crate::WorkflowTransfer>),
     DelegationObservation(Box<crate::DelegationObservationBatch>),
     DelegationCapabilities(Box<crate::DelegationCapabilities>),
 }
@@ -1487,6 +1491,8 @@ mod wire_snapshot {
             }),
         ));
         let auth = crate::DelegationAuth {
+            controller: None,
+            source: None,
             session: SessionId(1),
             capability: "fixture".into(),
         };
@@ -1707,6 +1713,8 @@ mod wire_snapshot {
             encode(&Request::Delegation(Box::new(
                 crate::DelegationRequest::ConfirmHumanReturn {
                     auth: crate::DelegationAuth {
+            controller: None,
+            source: None,
                         session: SessionId(1),
                         capability: "fixture".into(),
                     },

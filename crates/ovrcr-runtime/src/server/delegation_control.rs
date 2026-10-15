@@ -471,12 +471,15 @@ impl ServerState {
             drop(store);
             return self.reconciliation_snapshot(record);
         }
+        let authority = self.require_workflow(&store, &auth, &record)?;
         let captured = record.control.clone();
-        let parent_binding = record.parent_binding.clone();
+        let parent_binding = authority.binding.clone();
         let binding = record.binding.clone().context("assignment is not bound")?;
         child
             .with_delegated_context(
                 &crate::session::DelegatedInput {
+                    parent_producer: Some(&authority.producer),
+                    parent_source: auth.source.as_ref(),
                     request: &request,
                     parent: &parent,
                     parent_binding: &parent_binding,

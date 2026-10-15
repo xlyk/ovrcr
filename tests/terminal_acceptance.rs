@@ -984,6 +984,7 @@ fn agent_attention_ranks_accepted_reports_and_selects_the_real_destination() -> 
                 &mut admission,
                 1,
                 Request::ReserveAgent(p::ReserveAgent {
+                    pi_resume: None,
                     session: session.id,
                     capability: p::AgentSecret(capability),
                     operation: "fixture-reserve".into(),

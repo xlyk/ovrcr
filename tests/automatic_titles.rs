@@ -173,6 +173,7 @@ fn retain_reference(
         &mut stream,
         10,
         Request::ReserveAgent(ReserveAgent {
+                    pi_resume: None,
             session: session.id,
             capability,
             operation: format!("reserve-{conversation}"),
@@ -326,6 +327,7 @@ fn open_pi_title_agent(
         &mut stream,
         10,
         Request::ReserveAgent(ReserveAgent {
+                    pi_resume: None,
             session: session.id,
             capability: parse_secret(token),
             operation: format!("reserve-{conversation}"),

@@ -38,6 +38,8 @@ struct Suggestions {
 
 #[derive(Clone)]
 enum Command {
+    WorkflowRecovery(SessionId, SessionRunId),
+    TransferWorkflow(Box<crate::protocol::WorkflowTransfer>),
     CreateTerminal,
     CreateWorkspace,
     RenameTerminal(SessionId),
@@ -141,6 +143,7 @@ pub(super) struct Palette {
     agents: Option<Vec<AgentCandidate>>,
     pending: Option<u64>,
     archive: Option<Vec<crate::protocol::SessionSummary>>,
+    workflows: Option<Vec<crate::protocol::WorkflowTransfer>>,
     error: Option<String>,
     workspace_acknowledged: bool,
     workspace_id: Option<String>,
@@ -515,6 +518,7 @@ impl Palette {
             agents: None,
             pending: None,
             archive: None,
+            workflows: None,
             error: None,
             workspace_acknowledged: false,
             workspace_id: None,
@@ -792,6 +796,7 @@ impl Dashboard {
             agents: None,
             pending: None,
             archive: None,
+            workflows: None,
             error: None,
             workspace_acknowledged: false,
             workspace_id: None,
@@ -1424,7 +1429,15 @@ impl Dashboard {
         query: &str,
         archive: Option<&[crate::protocol::SessionSummary]>,
         agents: Option<&[AgentCandidate]>,
+        workflows: Option<&[crate::protocol::WorkflowTransfer]>,
     ) -> Vec<Entry> {
+        if let Some(transfers) = workflows {
+            let query = query.to_lowercase();
+            return transfers.iter().filter_map(|transfer| {
+                let label = format!("Recover workflow {} from parent #{} epoch {}", transfer.expected.workflow, transfer.expected.parent.0, transfer.expected.epoch);
+                query.split_whitespace().all(|word| label.to_lowercase().contains(word)).then_some(Entry { label, command: Command::TransferWorkflow(Box::new(transfer.clone())) })
+            }).collect();
+        }
         if let Some(candidates) = agents {
             let query = query.to_lowercase();
             return candidates
@@ -1520,6 +1533,9 @@ impl Dashboard {
             .action_session()
             .filter(|id| find_session(self, *id).is_some())
         {
+            if let Some(session) = find_session(self, id).filter(|session| session.phase.is_live() && matches!(&session.kind, SessionKind::Agent { name } if name == "pi")) {
+                entries.push(Entry { label: "Recover workflow control in this Pi".into(), command: Command::WorkflowRecovery(id, session.run) });
+            }
             entries.push(Entry {
                 label: "Rename terminal (blank = original name)".into(),
                 command: Command::RenameTerminal(id),
@@ -2016,6 +2032,7 @@ impl Dashboard {
                                 query,
                                 palette.archive.as_deref(),
                                 palette.agents.as_deref(),
+                                palette.workflows.as_deref(),
                             )
                             .len();
                         if count > 0 {
@@ -2080,10 +2097,21 @@ impl Dashboard {
                         query,
                         palette.archive.as_deref(),
                         palette.agents.as_deref(),
+                                palette.workflows.as_deref(),
                     );
                     *selected = (*selected).min(entries.len().saturating_sub(1));
                     if let Some(entry) = entries.get(*selected) {
                         match entry.command.clone() {
+                            Command::WorkflowRecovery(parent, run) => {
+                                action = self.palette_submit(&mut palette, Request::DashboardWorkflow(crate::protocol::DashboardWorkflowRequest::Candidates { parent, run }));
+                            }
+                            Command::TransferWorkflow(transfer) => {
+                                palette.page = Page::Confirm {
+                                    target: format!("Transfer workflow {} from parent #{} epoch {} to Pi #{} run {}? Old parent input is retired. Child human control and unresolved work remain.", transfer.expected.workflow, transfer.expected.parent.0, transfer.expected.epoch, transfer.parent.0, transfer.parent_run.0),
+                                    request: Some(Request::DashboardWorkflow(crate::protocol::DashboardWorkflowRequest::Transfer(*transfer))),
+                                };
+                            }
+
                             Command::SwitchAgent(id, run) => {
                                 let candidate = palette.agents.as_ref().and_then(|candidates| {
                                     candidates
@@ -2879,6 +2907,14 @@ impl Dashboard {
             }
         );
         match response {
+            Response::WorkflowCandidates(transfers) => {
+                let palette = self.palette.as_mut().unwrap();
+                palette.pending = None;
+                palette.workflows = Some(transfers.clone());
+                palette.page = Page::Search { query: String::new(), selected: 0 };
+                palette.error = transfers.is_empty().then(|| "No workflow needs transfer to this Pi. Reconcile its existing workflows in Pi.".into());
+                return Some(Vec::new());
+            }
             Response::Inventory { sessions, .. } if self.palette.as_ref()?.archive.is_some() => {
                 let palette = self.palette.as_mut().unwrap();
                 palette.pending = None;
@@ -3201,6 +3237,7 @@ impl Dashboard {
                     query,
                     palette.archive.as_deref(),
                     palette.agents.as_deref(),
+                                palette.workflows.as_deref(),
                 );
                 if entries.is_empty() {
                     lines.push(Line::from(if palette.archive.is_some() {
@@ -3600,7 +3637,7 @@ impl Dashboard {
         );
         let detail = if let Page::Search { query, selected } = &palette.page {
             let entries =
-                self.palette_entries(query, palette.archive.as_deref(), palette.agents.as_deref());
+                self.palette_entries(query, palette.archive.as_deref(), palette.agents.as_deref(), palette.workflows.as_deref());
             let selected = (*selected).min(entries.len().saturating_sub(1));
             entries
                 .get(selected)
@@ -5124,7 +5161,7 @@ mod launch_tests {
         d.hierarchy.projects[0].workspaces[0].sessions = vec![row];
         d.select_session(SessionId(1));
         assert!(
-            d.palette_entries("", None, None)
+            d.palette_entries("", None, None, None)
                 .iter()
                 .any(|entry| entry.label == "Retry resume conversation")
         );
@@ -5519,7 +5556,7 @@ mod launch_tests {
         let mut certain = summary(10);
         certain.archived = true;
         certain.phase = SessionPhase::Stopped;
-        let entries = d.palette_entries("", Some(&[filed, certain]), None);
+        let entries = d.palette_entries("", Some(&[filed, certain]), None, None);
         let acknowledge: Vec<_> = entries
             .iter()
             .filter(|entry| entry.label.starts_with("Acknowledge stopped: "))

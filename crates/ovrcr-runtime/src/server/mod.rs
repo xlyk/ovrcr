@@ -1,5 +1,6 @@
 pub(crate) mod delegation;
 mod delegation_files;
+pub(crate) mod delegation_recovery;
 mod delegation_observation;
 use crate::config::{
     ProjectRecord, Registry, WorkspaceRecord, initialize_registry, save_registry_atomic,
@@ -972,7 +973,26 @@ impl ServerState {
                 ready();
             }
         };
-        if let Err(error) = Session::spawn_registered(id, spec, size, events, &register) {
+        let spawn_result = {
+            // Only the parent's initial assigned launch needs this fence. An explicit
+            // person-requested reopen has a different child run and keeps its own contract.
+            let store = assigned_input.then(|| self.retained.lock());
+            if let Some(store) = &store {
+                let assignment = store.assigned_record(id)?.context("assigned launch membership disappeared")?;
+                if assignment.identity.run == Some(record.run) {
+                    let workflow = store.workflow(&assignment.identity.workflow)?.context("assigned launch authority disappeared")?;
+                    let authority = &workflow.authority;
+                    let parent = self.session_for_control(authority.parent)?;
+                    if workflow.departure.is_some() || authority.server_lifetime != self.server_lifetime
+                        || authority.epoch != assignment.identity.controller_epoch || authority.parent_run != parent.run()
+                        || parent.workflow_source() != Some((authority.binding.clone(), authority.producer.clone())) {
+                        return Err(crate::session::NoProcessStarted::context(anyhow::anyhow!("assigned launch parent authority changed")));
+                    }
+                }
+            }
+            Session::spawn_registered(id, spec, size, events, &register)
+        };
+        if let Err(error) = spawn_result {
             if let Some(failed) = self.sessions.lock().unwrap().remove(&id) {
                 failed.revoke_hook_capability();
             }
@@ -1307,6 +1327,9 @@ impl ServerState {
                 command
             }
         });
+        if let Some(reference) = record.conversation.as_ref() {
+            self.retained.lock().record_workflow_reopen(id, expected_run, reference, &self.server_lifetime)?;
+        }
         let summary = self.spawn_record_locked(id, expected_run, vec![shell], None, staged)?;
         if let Some(command) = input {
             let session = self

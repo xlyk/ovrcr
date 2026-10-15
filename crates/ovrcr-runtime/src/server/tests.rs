@@ -6422,6 +6422,7 @@ mod agent_reporting {
         }
         fn reserve(&self, epoch: u64, operation: &str) -> Request {
             Request::ReserveAgent(ReserveAgent {
+                    pi_resume: None,
                 session: SessionId(900),
                 capability: AgentSecret([7; 32]),
                 operation: operation.into(),

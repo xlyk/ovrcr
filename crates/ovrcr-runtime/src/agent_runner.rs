@@ -19,6 +19,7 @@ pub enum HookEvent<'a> {
         deadline: std::time::Instant,
     },
     NativeCompleted {
+        reaped: bool,
         deadline: std::time::Instant,
     },
 }
@@ -213,6 +214,7 @@ pub fn run_native_with_env(
     drop(terminal);
     if let Some(channel) = &mut channel {
         channel.complete(
+            completion_deadline.is_some() && result.is_ok(),
             completion_deadline
                 .unwrap_or_else(|| std::time::Instant::now() + Duration::from_secs(2)),
         );
@@ -292,7 +294,7 @@ struct InvocationChannel {
     thread: Option<std::thread::JoinHandle<()>>,
     initialize: Option<std::sync::mpsc::SyncSender<Option<HookHandler>>>,
     native: std::sync::Arc<std::sync::Mutex<Option<libc::pid_t>>>,
-    completion: std::sync::Arc<std::sync::Mutex<Option<std::time::Instant>>>,
+    completion: std::sync::Arc<std::sync::Mutex<Option<(bool, std::time::Instant)>>>,
 }
 impl InvocationChannel {
     fn new() -> io::Result<Self> {
@@ -322,9 +324,9 @@ impl InvocationChannel {
             let mut next_poll = Instant::now();
             while !stop.load(Ordering::SeqCst) {
                 let completion_deadline = *thread_completion.lock().unwrap();
-                if let Some(deadline) = completion_deadline {
+                if let Some((reaped, deadline)) = completion_deadline {
                     if let Some(handler) = &mut handler {
-                        handler(HookEvent::NativeCompleted { deadline });
+                        handler(HookEvent::NativeCompleted { deadline, reaped });
                     }
                     break;
                 }
@@ -405,8 +407,8 @@ impl InvocationChannel {
             native,
         })
     }
-    fn complete(&mut self, deadline: std::time::Instant) {
-        *self.completion.lock().unwrap() = Some(deadline);
+    fn complete(&mut self, reaped: bool, deadline: std::time::Instant) {
+        *self.completion.lock().unwrap() = Some((reaped, deadline));
         // The handler contract uses this same absolute deadline. Never acquire a new
         // grace period or block indefinitely joining a failed reporting callback.
         while self
@@ -575,7 +577,7 @@ fn read_private_bytes(
 impl Drop for InvocationChannel {
     fn drop(&mut self) {
         drop(self.initialize.take());
-        self.complete(std::time::Instant::now() + Duration::from_secs(2));
+        self.complete(false, std::time::Instant::now() + Duration::from_secs(2));
     }
 }
 

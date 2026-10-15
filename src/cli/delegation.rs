@@ -1,5 +1,5 @@
 use super::{AppResult, RuntimeError};
-use ovrcr::protocol::{DelegationRequest, ErrorCode, Request, Response};
+use ovrcr::protocol::{DelegationRequest, WorkflowRequest, ErrorCode, Request, Response};
 use std::io::Read;
 
 pub(super) fn run() -> AppResult<()> {
@@ -14,10 +14,14 @@ pub(super) fn run() -> AppResult<()> {
             "delegation request is too large",
         ));
     }
-    let request: DelegationRequest = serde_json::from_slice(&bytes)
-        .map_err(|_| RuntimeError::new(ErrorCode::InvalidRequest, "invalid delegation request"))?;
-    let response = super::request_without_start(Request::Delegation(Box::new(request)))?;
+    let request = match serde_json::from_slice::<WorkflowRequest>(&bytes) {
+        Ok(request) => Request::Workflow(Box::new(request)),
+        Err(_) => Request::Delegation(Box::new(serde_json::from_slice::<DelegationRequest>(&bytes)
+            .map_err(|_| RuntimeError::new(ErrorCode::InvalidRequest, "invalid delegation request"))?)),
+    };
+    let response = super::request_without_start(request)?;
     match response {
+        Response::Workflows(workflows) => super::print_json(&serde_json::to_value(workflows).map_err(RuntimeError::internal)?),
         Response::Delegation(snapshot) => {
             super::print_json(&serde_json::to_value(snapshot).map_err(RuntimeError::internal)?)
         }
