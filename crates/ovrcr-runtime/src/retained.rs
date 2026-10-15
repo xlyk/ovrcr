@@ -1146,7 +1146,13 @@ mod tests {
         drop(store);
         let connection = Connection::open(crate::config::database_path(&config)).unwrap();
         connection
-            .execute_batch("DROP TABLE agent_conversations; PRAGMA user_version = 3;")
+            .execute_batch(
+                "DROP TABLE agent_conversations;
+                 DROP TABLE conversation_subjects;
+                 DROP TABLE delegations;
+                 DROP TABLE delegation_instance;
+                 PRAGMA user_version = 3;",
+            )
             .unwrap();
         drop(connection);
         assert_eq!(
@@ -1183,7 +1189,12 @@ mod tests {
         let connection = Connection::open(crate::config::database_path(&config)).unwrap();
         connection
             .execute_batch(
-                "ALTER TABLE retained_sessions DROP COLUMN disposition; PRAGMA user_version = 2;",
+                "ALTER TABLE retained_sessions DROP COLUMN disposition;
+                 DROP TABLE agent_conversations;
+                 DROP TABLE conversation_subjects;
+                 DROP TABLE delegations;
+                 DROP TABLE delegation_instance;
+                 PRAGMA user_version = 2;",
             )
             .unwrap();
         drop(connection);
