@@ -761,8 +761,7 @@ impl ServerState {
                     result_digest,
                 );
             }
-            DelegationRequest::Inspect { auth, handle }
-            => {
+            DelegationRequest::Inspect { auth, handle } => {
                 return self.assignment_snapshot(self.owned_assignment(&auth, &handle)?);
             }
             DelegationRequest::Reconcile { auth, request } => {
@@ -880,8 +879,16 @@ impl ServerState {
                     });
                     store.save_assignment(&record)?;
                     let directory = Directory::open(&record.root, false)?;
-                    if let Err(error) = directory.publish(&format!("submission-v{}.json", record.result_version), &bytes) {
-                        if directory.read(&format!("submission-v{}.json", record.result_version)).ok().as_ref() != Some(&bytes) {
+                    if let Err(error) = directory.publish(
+                        &format!("submission-v{}.json", record.result_version),
+                        &bytes,
+                    ) {
+                        if directory
+                            .read(&format!("submission-v{}.json", record.result_version))
+                            .ok()
+                            .as_ref()
+                            != Some(&bytes)
+                        {
                             return Err(error);
                         }
                         directory.sync()?;
@@ -906,7 +913,7 @@ impl ServerState {
             Directory::open(&record.root, false).map_err(|_| PublicationIssue::Unavailable)?;
         let expected = if let Some(intent) = &record.publication_intent {
             if intent.identity.assignment != record.identity
-                || intent.identity.version != 1
+                || intent.identity.version != record.result_version
                 || intent.identity.kind != PublicationKind::Submission
                 || record.binding.as_ref() != Some(&intent.binding)
                 || record
@@ -924,11 +931,11 @@ impl ServerState {
                 .map(|digest| PublicationIdentity {
                     assignment: record.identity.clone(),
                     kind: PublicationKind::Submission,
-                    version: 1,
+                    version: record.result_version,
                     digest: digest.clone(),
                 })
         };
-        let bytes = match directory.read("submission-v1.json") {
+        let bytes = match directory.read(&format!("submission-v{}.json", record.result_version)) {
             Ok(bytes) => bytes,
             Err(error)
                 if expected.is_none()
@@ -945,11 +952,9 @@ impl ServerState {
         if digest(&bytes) != expected.digest {
             return Err(PublicationIssue::Invalid);
         }
-        let submission: ResearchSubmission =
-            serde_json::from_slice(&bytes).map_err(|_| PublicationIssue::Invalid)?;
-        submission
-            .validate(&expected.assignment)
-            .map_err(|_| PublicationIssue::Invalid)?;
+        let mut version = record.version();
+        version.result_digest = Some(expected.digest.clone());
+        read_version_submission(record, &version).map_err(|_| PublicationIssue::Invalid)?;
         // A previous link may have succeeded while its directory fsync failed.
         if record.result_digest.is_none() {
             directory

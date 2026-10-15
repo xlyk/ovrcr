@@ -126,6 +126,7 @@ writeFileSync(${JSON.stringify(state)}, JSON.stringify(value)); console.log(JSON
 test("followup recovery retains exact private request after a lost reply", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ovrcr-followup-intent-"));
   const before = { ...process.env };
+  let host;
   try {
     const binary = join(dir, "control.mjs"), calls = join(dir, "calls"), lost = join(dir, "lost");
     writeFileSync(binary, `#!/usr/bin/env node
@@ -141,7 +142,8 @@ console.log(JSON.stringify({handle:fields.handle,identity:fields.expected_identi
     const source = readFileSync(new URL("../src/pi-reporting-extension.mjs", import.meta.url), "utf8").replace("__OVRCR_BINARY__", JSON.stringify(binary));
     writeFileSync(join(dir, "reporting.mjs"), source);
     writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(new URL("../src/ovrcr-reporting-transport.mjs", import.meta.url)));
-    const host = await createHost(join(dir, "reporting.mjs"));
+    writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
+    host = await createHost(join(dir, "reporting.mjs"));
     const first = (await host.tool("ovrcr_followup", {handle:"assignment",expected_identity:{request:"assignment",contract:1},expected_result_version:1,text:"Clarify the scoped result"})).details;
     assert.equal(first.dispatch,"Unknown");
     assert.equal(first.receipts,undefined);
@@ -156,7 +158,7 @@ console.log(JSON.stringify({handle:fields.handle,identity:fields.expected_identi
     const unsafe=(await host.tool("ovrcr_followup",{handle:"assignment",request:first.request})).details;
     assert.equal(unsafe.dispatch,"Refused");
     assert.equal(readFileSync(calls,"utf8").trim().split("\n").length,2,"unsafe original intent cannot contact control");
-  } finally {process.env=before;rmSync(dir,{recursive:true,force:true});}
+  } finally {await host?.emit({type:"session_shutdown",reason:"quit"});process.env=before;rmSync(dir,{recursive:true,force:true});}
 });
 
 

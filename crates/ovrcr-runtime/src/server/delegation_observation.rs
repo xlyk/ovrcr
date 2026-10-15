@@ -74,6 +74,7 @@ pub(super) fn now_ms() -> u64 {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Fingerprint {
+    result_version: u32,
     publication: Option<PublicationState>,
     issue: Option<PublicationIssue>,
     current: bool,
@@ -85,6 +86,8 @@ struct Fingerprint {
 #[serde(deny_unknown_fields)]
 struct Checkpoint {
     identity: AssignmentIdentity,
+    #[serde(default = "checkpoint_initial_version")]
+    result_version: u32,
     epoch: String,
     binding: Option<AgentBinding>,
     activity: u64,
@@ -92,6 +95,10 @@ struct Checkpoint {
     progress_unix_ms: u64,
     unresolved: bool,
 }
+fn checkpoint_initial_version() -> u32 {
+    1
+}
+
 impl Checkpoint {
     fn expire_future(&mut self, now: u64) {
         if self.progress_unix_ms > now {
@@ -281,6 +288,7 @@ impl ServerState {
                     handle,
                     session,
                     Fingerprint {
+                        result_version: record.result_version,
                         publication: observed.publication.clone(),
                         issue: observed.publication_issue.clone(),
                         current: observed.current,
@@ -359,6 +367,7 @@ impl ServerState {
                     {
                         Checkpoint {
                             identity: record.identity.clone(),
+                            result_version: record.result_version,
                             epoch: self.server_lifetime.clone(),
                             binding: record.binding.clone(),
                             activity: agent.map_or(0, |a| a.activity_revision),
@@ -370,8 +379,18 @@ impl ServerState {
                     Err(error) => return Err(error),
                 };
                 checkpoint.expire_future(now_ms());
-                if checkpoint.identity != record.identity {
-                    bail!("observation checkpoint belongs to another assignment");
+                if checkpoint.identity != record.identity
+                    || checkpoint.result_version != record.result_version
+                {
+                    if !record.previous_versions.iter().any(|version| {
+                        version.identity == checkpoint.identity
+                            && version.result_version == checkpoint.result_version
+                    }) {
+                        bail!("observation checkpoint belongs to another assignment or result");
+                    }
+                    // A known follow-up changes the selected result, never inventing progress.
+                    checkpoint.identity = record.identity.clone();
+                    checkpoint.result_version = record.result_version;
                 }
                 if current && let Some(summary) = &summary {
                     let source = Source::of(summary);
@@ -465,6 +484,7 @@ mod tests {
         let identity: AssignmentIdentity = serde_json::from_value(serde_json::json!({"instance":"i","workflow":"w","controller":"c","controller_epoch":1,"task":"t","attempt":1,"contract":1,"request":"r","session":1,"run":1})).unwrap();
         let mut checkpoint = Checkpoint {
             identity,
+            result_version: 1,
             epoch: "old".into(),
             binding: None,
             activity: 1,
@@ -511,6 +531,7 @@ mod tests {
         let identity: AssignmentIdentity = serde_json::from_value(serde_json::json!({"instance":"i","workflow":"w","controller":"c","controller_epoch":1,"task":"t","attempt":1,"contract":1,"request":"r","session":1,"run":1})).unwrap();
         let mut checkpoint = Checkpoint {
             identity,
+            result_version: 1,
             epoch: "server".into(),
             binding: None,
             activity: 1,
