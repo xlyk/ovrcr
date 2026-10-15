@@ -26,7 +26,7 @@ pub(crate) struct FollowupIntent {
     pub expected_result_version: u32,
     #[serde(default)]
     pub expected_control_epoch: u64,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_parent_epoch: Option<u64>,
     pub target: AssignmentIdentity,
     pub result_version: u32,
@@ -364,7 +364,10 @@ impl ServerState {
         };
         // Completed receipts remain readable. Accepted work never adopts a replacement parent.
         if intent.expected_parent_epoch.unwrap_or(1) != parent_authority.epoch {
-            return self.reject_followup(record, &request);
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "followup belongs to a retired workflow controller; original Accepted intent remains suspended without replay",
+            ));
         }
         // Accepted requests keep their captured authority after interrupted publication.
         if control::require_controller(&record.control, intent.expected_control_epoch).is_err() {

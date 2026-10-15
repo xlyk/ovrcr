@@ -1822,7 +1822,7 @@ mod wire_snapshot {
                         current: true,
                         publication: Some(crate::PublicationState {
                             identity: crate::PublicationIdentity {
-                                assignment: identity,
+                                assignment: identity.clone(),
                                 kind: crate::PublicationKind::Submission,
                                 version: 1,
                                 digest: "digest".into(),
@@ -1942,6 +1942,24 @@ mod wire_snapshot {
             gaps: vec![],
             receipt: None,
         };
+        let gaps = vec![
+            crate::WorkflowRecoveryGap {
+                workflow: Some("w".into()),
+                handle: Some("r".into()),
+                identity: Some(identity),
+                brief: Some("/brief".into()),
+                result_path: Some("/result".into()),
+                reason: "missing authority".into(),
+            },
+            crate::WorkflowRecoveryGap {
+                workflow: None,
+                handle: None,
+                identity: None,
+                brief: None,
+                result_path: None,
+                reason: "unverifiable retained record".into(),
+            },
+        ];
         for (name, response) in [
             ("Workflows", Response::Workflows(vec![snapshot.clone()])),
             (
@@ -1957,14 +1975,14 @@ mod wire_snapshot {
                 "WorkflowRecovery",
                 Response::WorkflowRecovery(Box::new(crate::WorkflowRecovery {
                     workflows: vec![snapshot],
-                    gaps: vec![],
+                    gaps: gaps.clone(),
                 })),
             ),
             (
                 "WorkflowCandidates",
                 Response::WorkflowCandidates(Box::new(crate::WorkflowCandidates {
                     candidates: vec![transfer],
-                    gaps: vec![],
+                    gaps,
                 })),
             ),
         ] {
@@ -2336,11 +2354,11 @@ mod wire_snapshot {
         ),
         (
             "Response::WorkflowRecovery",
-            "17010169017701630101010303696e7604636f6e76010870726f64756365720673657276657201010172010101690177010664696765737401010c6f626a6563746976652e6d640001017200000000000000",
+            "17010169017701630101010303696e7604636f6e76010870726f64756365720673657276657201010172010101690177010664696765737401010c6f626a6563746976652e6d64000101720000000000000201017701017201016901770163010174010101720102010101062f627269656601072f726573756c74116d697373696e6720617574686f7269747900000000001c756e76657269666961626c652072657461696e6564207265636f7264",
         ),
         (
             "Response::WorkflowCandidates",
-            "1301087472616e736665720169017701630101010303696e7604636f6e76010870726f64756365720673657276657203020303696e7604636f6e760109737563636573736f7200",
+            "1301087472616e736665720169017701630101010303696e7604636f6e76010870726f64756365720673657276657203020303696e7604636f6e760109737563636573736f720201017701017201016901770163010174010101720102010101062f627269656601072f726573756c74116d697373696e6720617574686f7269747900000000001c756e76657269666961626c652072657461696e6564207265636f7264",
         ),
     ];
 

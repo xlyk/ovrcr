@@ -9,6 +9,7 @@
 // holds until settled, so a continuation reports work without opening a new cycle.
 // Bounded delivery lives in the transport module materialized beside this file.
 import { spawn } from "node:child_process";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID, randomBytes } from "node:crypto";
 import { mkdir, open, lstat, rename, link, unlink } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -117,9 +118,16 @@ function registerDelegation(pi, producer, sourceKey) {
   let workflow = randomUUID();
   let controller = randomUUID();
   let authority;
+  let routingGeneration = 0;
+  const toolRouting = new AsyncLocalStorage();
+  const requireRouting = () => {
+    const captured = toolRouting.getStore();
+    if (captured !== undefined && captured !== routingGeneration) throw new Error("Tool belongs to a previous Pi context; original effects remain retained");
+  };
   let active = true;
   pi.on("session_shutdown", () => { active = false; observer.stop(); });
   const auth = () => {
+    requireRouting();
     if (!active) throw new Error("Pi session changed; reconcile the assignment from its owner");
     const session = Number(process.env.OVRCR_DELEGATION_SESSION);
     const capability = process.env.OVRCR_DELEGATION_TOKEN;
@@ -127,6 +135,8 @@ function registerDelegation(pi, producer, sourceKey) {
     return { session, capability, source: sourceKey, controller: authority ? { workflow: authority.workflow, epoch: authority.epoch, producer: authority.producer } : { workflow, epoch: 1, producer: producer.instance } };
   };
   const call = (request, { signal } = {}) => new Promise((resolve, reject) => {
+    requireRouting();
+    const mine = routingGeneration;
     const child = spawn(OVRCR_BINARY, ["--json", "delegation"], {
       env: { ...process.env, OVRCR_SOCKET: process.env.OVRCR_DELEGATION_SOCKET, OVRCR_HOME: process.env.OVRCR_DELEGATION_HOME },
       stdio: ["pipe", "pipe", "pipe"],
@@ -153,6 +163,7 @@ function registerDelegation(pi, producer, sourceKey) {
       clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
       if (failed) return;
+      if (mine !== routingGeneration) { reject(new Error("Control reply belongs to a previous Pi context; original effects remain retained")); return; }
       try {
         if (code !== 0) {
           let failure;
@@ -174,7 +185,13 @@ function registerDelegation(pi, producer, sourceKey) {
   pi.registerCommand("ovrcr-observe-reconnect", { description: "Reconnect assignment observations without changing child work", handler: () => observer.reconnect() });
   const continuation = createDelegationContinuation({ pi, call, auth,
     enabled: () => Boolean(process.env.OVRCR_DELEGATION_SOCKET),
-    restored: snapshot => {
+    restored: (snapshot, { fresh = false } = {}) => {
+      if (fresh) {
+        routingGeneration += 1;
+        workflow = randomUUID();
+        controller = randomUUID();
+        observer.reset();
+      }
       authority = snapshot?.authority;
       if (authority) { workflow = authority.workflow; controller = authority.controller; }
       for (const handle of snapshot?.handles ?? []) observer.watch(handle);
@@ -182,17 +199,22 @@ function registerDelegation(pi, producer, sourceKey) {
   });
   const object = (properties, required = Object.keys(properties)) => ({ type: "object", properties, required, additionalProperties: false });
   const string = { type: "string" };
-  const tool = (name, description, parameters, run) => pi.registerTool({ name, label: name, description, parameters, async execute(_id, args, signal, _onUpdate, ctx) {
-    try {
-      if (!args || typeof args !== "object") throw new Error("tool arguments must be an object");
-      for (const key of parameters.required ?? []) if (!(key in args)) throw new Error(`missing required argument: ${key}`);
-      await continuation.ready();
-      const response = await run(args, ctx, signal);
-      if (name !== "ovrcr_publish" && response?.identity?.session) observer.watch(response.handle);
-      return { content: [{ type: "text", text: JSON.stringify(response) }], details: response };
-    } finally {
-      observer.acknowledge();
-    }
+  const tool = (name, description, parameters, run) => pi.registerTool({ name, label: name, description, parameters, execute(_id, args, signal, _onUpdate, ctx) {
+    return toolRouting.run(routingGeneration, async () => {
+      const mine = routingGeneration;
+      try {
+        if (!args || typeof args !== "object") throw new Error("tool arguments must be an object");
+        for (const key of parameters.required ?? []) if (!(key in args)) throw new Error(`missing required argument: ${key}`);
+        await continuation.ready();
+        requireRouting();
+        const response = await run(args, ctx, signal);
+        if (mine !== routingGeneration) throw new Error("Tool reply belongs to a previous Pi context; reconcile its original records");
+        if (name !== "ovrcr_publish" && response?.identity?.session) observer.watch(response.handle);
+        return { content: [{ type: "text", text: JSON.stringify(response) }], details: response };
+      } finally {
+        if (mine === routingGeneration) observer.acknowledge();
+      }
+    });
   }});
   const identity = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
   const directory = async () => {

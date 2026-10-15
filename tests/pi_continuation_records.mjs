@@ -5,11 +5,11 @@ import { createDelegationContinuation, validatePointer } from "../src/ovrcr-dele
 const pointer = { schema: 1, instance: "instance", workflow: "workflow", version: 1, digest: "a".repeat(64) };
 const snapshot = () => ({ authority: { workflow: "workflow", instance: "instance", epoch: 4, producer: "public-producer" }, active: true, handles: ["prepared", "survivor"], pointer: { ...pointer }, continuation: { objective: "objective-v1.json", decisions: ["decision-v1.json"] }, gaps: [] });
 function fixture(call, entries = [{ type: "custom", customType: "ovrcr_workflow_pointer", data: { ...pointer } }]) {
-  const hooks = new Map(), appended = [], restored = [];
+  const hooks = new Map(), appended = [], restored = [], resets = [];
   const pi = { on(name, handler) { hooks.set(name, handler); }, appendEntry(customType, data) { appended.push({ customType, data }); } };
   const ctx = { sessionManager: { getBranch: () => entries } };
-  const continuation = createDelegationContinuation({ pi, call, auth: () => ({ source: "memory-only" }), restored: state => restored.push(state) });
-  return { continuation, appended, restored, emit: (type, event = {}) => hooks.get(type)({ type, ...event }, ctx), ctx };
+  const continuation = createDelegationContinuation({ pi, call, auth: () => ({ source: "memory-only" }), restored: (state, options) => { restored.push(state); resets.push(options?.fresh === true); } });
+  return { continuation, appended, restored, resets, emit: (type, event = {}) => hooks.get(type)({ type, ...event }, ctx), ctx };
 }
 
 test("actual startup and both compaction outcomes reconcile the original workflow without effects", async () => {
@@ -35,6 +35,7 @@ for (const reason of ["fork", "new"]) test(`${reason} cannot inherit a copied po
   const f = fixture(async () => { calls++; return [snapshot()]; });
   await f.emit("session_start", { reason });
   assert.equal(calls, 0);
+  assert.deepEqual(f.resets, [true]);
   assert.equal(f.continuation.state, null);
   assert.match(f.continuation.gap, /grant no control/);
 });
@@ -92,4 +93,27 @@ test("a pointer with only legacy gaps preserves the real gap without invented au
   assert.match(f.continuation.gap, /transfer unavailable/);
   assert.doesNotMatch(f.continuation.gap, /TypeError|undefined/);
   assert.match((await f.emit("before_agent_start")).message.content, /transfer unavailable/);
+});
+
+test("explicit new retires an older recovery reply without clearing the new context", async () => {
+  let release;
+  const f = fixture(() => new Promise(resolve => { release = resolve; }));
+  const old = f.emit("session_start", { reason: "startup" });
+  await f.emit("session_start", { reason: "new" });
+  release([snapshot()]);
+  await old;
+  assert.deepEqual(f.resets, [true]);
+  assert.equal(f.continuation.state, null);
+  assert.match(f.continuation.gap, /grant no control/);
+  assert.equal(f.appended.length, 0);
+});
+
+test("ordinary failed or ambiguous recovery never asks for fresh logical routing", async () => {
+  for (const reply of [new Error("Server lifetime changed"), [snapshot(), snapshot()]]) {
+    const f = fixture(async () => { if (reply instanceof Error) throw reply; return reply; });
+    await f.emit("session_start", { reason: "startup" });
+    assert.deepEqual(f.resets, [false]);
+    assert.equal(f.continuation.state, null);
+    assert.ok(f.continuation.gap);
+  }
 });

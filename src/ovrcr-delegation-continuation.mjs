@@ -46,10 +46,11 @@ export function createDelegationContinuation({ pi, call, auth, enabled = () => t
   }
   function restore(event, ctx) {
     if (!enabled()) return;
+    generation += 1;
     const task = async () => {
       if (["fork", "new"].includes(event.reason)) {
         state = null;
-        restored(null);
+        restored(null, { fresh: true });
         gap = "Copied or forked workflow pointers grant no control. Create a distinct workflow or request an explicit transfer.";
         return;
       }
@@ -57,14 +58,16 @@ export function createDelegationContinuation({ pi, call, auth, enabled = () => t
       const next = await reconcile(ctx, saved?.workflow);
       if (saved && !next?.recovery_gaps && (!next || next.authority?.instance !== saved.instance)) throw new Error("Workflow pointer belongs to another instance; no work was resumed");
     };
-    ready = task().catch(error => { state = null; gap = String(error.message); restored(null); });
+    const pending = task();
+    const mine = generation;
+    ready = pending.catch(error => { if (active && mine === generation) { state = null; gap = String(error.message); restored(null); } });
     return ready;
   }
   pi.on("session_start", restore);
   pi.on("session_before_compact", () => { if (active) remember(); });
   pi.on("session_compact", (_event, ctx) => restore({ reason: "compaction" }, ctx));
   pi.on("session_compact_failed", (_event, ctx) => restore({ reason: "compaction" }, ctx));
-  pi.on("session_shutdown", () => { active = false; generation += 1; });
+  pi.on("session_shutdown", () => { active = false; generation += 1; state = null; gap = "Workflow source was retired"; });
   pi.on("before_agent_start", async () => {
     await ready;
     if (!state && !gap) return;

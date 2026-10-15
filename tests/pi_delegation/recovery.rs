@@ -245,6 +245,12 @@ fn parent_recovery_owned_reopen_and_same_run_explicit_resume_reclaim_exact_origi
     )
     .unwrap();
     let old_auth = original_auth(&fixture);
+    let db = rusqlite::Connection::open(fixture.live.config.join("registry.sqlite3")).unwrap();
+    db.execute(
+        "INSERT INTO delegation_workflows(workflow,metadata) VALUES('unrelated-orphan','{')",
+        [],
+    )
+    .unwrap();
     let bytes = fixture.byte_count(&first);
     assert!(
         !first.result_path.exists(),
@@ -1196,7 +1202,7 @@ fn parent_recovery_missing_legacy_authority_stays_visible_read_only_and_does_not
         choices
             .gaps
             .iter()
-            .any(|gap| gap.identity == first.identity)
+            .any(|gap| gap.identity.as_ref() == Some(&first.identity))
     );
     let after: String = db
         .query_row(
@@ -1217,4 +1223,484 @@ fn parent_recovery_missing_legacy_authority_stays_visible_read_only_and_does_not
         &fixture.live.root.path().join("legacy-foreign.json"),
     );
     assert!(foreign.get("error").is_some());
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+#[test]
+fn parent_recovery_r1_accepted_followup_stays_suspended_with_immutable_receipt_after_parent_transfer()
+ {
+    let fixture = OwnedFollowup::new();
+    let first: AssignmentSnapshot = serde_json::from_value(fixture.start()).unwrap();
+    let first = complete(&fixture, &first);
+    workflow(&fixture);
+    fixture.proxy.arm(ControlRule {
+        operation: "Followup",
+        loss: 2,
+        fault: Some(("followup-after-files", 0)),
+    });
+    let pending: AssignmentSnapshot =
+        serde_json::from_value(super::followups::followup(&fixture, &first, None)).unwrap();
+    let receipt = pending
+        .receipts
+        .iter()
+        .find(|r| r.operation == DispatchOperation::Followup)
+        .unwrap();
+    assert_eq!(receipt.outcome, DispatchOutcome::Accepted);
+    let request = receipt.request.clone();
+    let root = first.brief.parent().unwrap();
+    let files: Vec<_> = [
+        format!("followup-{request}.json"),
+        "contract-v1.json".into(),
+        "brief-v2.json".into(),
+        "submission-v1.json".into(),
+    ]
+    .into_iter()
+    .map(|name| {
+        let bytes = fs::read(root.join(&name)).unwrap();
+        (name, bytes)
+    })
+    .collect();
+    let bytes = fixture.byte_count(&first);
+    let second = create_parent(&fixture);
+    let target = target(&fixture, second.id);
+    let moved: WorkflowSnapshot = serde_json::from_value(fixture.tool("ovrcr_transfer", serde_json::json!({"request":"r1-move","parent":target.session,"parent_run":target.run,"binding":target.binding,"producer":target.producer}))).unwrap();
+    parent_tool(
+        &fixture,
+        second.id,
+        "ovrcr_recover",
+        serde_json::json!({"workflow":moved.authority.workflow}),
+    );
+    parent_tool(
+        &fixture,
+        second.id,
+        "ovrcr_followup",
+        serde_json::json!({"handle":first.handle,"request":request}),
+    );
+    let after: AssignmentSnapshot = serde_json::from_value(parent_tool(
+        &fixture,
+        second.id,
+        "ovrcr_inspect",
+        serde_json::json!({"handle":first.handle}),
+    ))
+    .unwrap();
+    assert_eq!(
+        after.receipts, pending.receipts,
+        "parent transfer suspends old Accepted receipt; child-control rejection is a different rule"
+    );
+    assert_eq!(after.identity, pending.identity);
+    assert_eq!(after.result_version, pending.result_version);
+    assert_eq!(after.dispatch, pending.dispatch);
+    assert_eq!(after.execution_attempts, Some(1));
+    let fresh = parent_tool(
+        &fixture,
+        second.id,
+        "ovrcr_followup",
+        serde_json::json!({"handle":first.handle,"expected_identity":first.identity,"expected_result_version":first.result_version,"expected_control_epoch":first.control.epoch,"text":"Do not bypass the suspended original followup"}),
+    );
+    assert_eq!(fresh["dispatch"], "Refused");
+    for (name, original) in files {
+        assert_eq!(fs::read(root.join(name)).unwrap(), original);
+    }
+    assert_eq!(fixture.byte_count(&first), bytes);
+    assert_eq!(fixture.child_count(), 2);
+}
+
+#[test]
+fn parent_recovery_r1_malformed_workflow_is_scoped_read_only_gap_while_valid_workflow_remains_usable()
+ {
+    let fixture = OwnedFollowup::new();
+    let first: AssignmentSnapshot = serde_json::from_value(fixture.start()).unwrap();
+    let first = complete(&fixture, &first);
+    let before = workflow(&fixture);
+    let result = fs::read(&first.result_path).unwrap();
+    let second = create_parent(&fixture);
+    let other: AssignmentSnapshot = serde_json::from_value(parent_tool(&fixture, second.id, "ovrcr_start", serde_json::json!({"project":PROJECT,"workspace":fixture.workspace,"scope":"Independent valid work","model_provider":"test","model":"fixture-model","acceptance_evidence":["citation"]}))).unwrap();
+    let valid: WorkflowSnapshot = serde_json::from_value(parent_tool(
+        &fixture,
+        second.id,
+        "ovrcr_recover",
+        serde_json::json!({}),
+    ))
+    .unwrap();
+    let db = rusqlite::Connection::open(fixture.live.config.join("registry.sqlite3")).unwrap();
+    let old = durable_workflow(&fixture, &before.authority.workflow);
+    let mut unsupported = old.clone();
+    unsupported["schema"] = serde_json::json!(999);
+    let mut conflicting = old;
+    conflicting["authority"]["epoch"] = serde_json::json!(2);
+    for broken in [
+        "{private-truncated".to_owned(),
+        serde_json::to_string(&unsupported).unwrap(),
+        serde_json::to_string(&conflicting).unwrap(),
+        "x".repeat(262_145),
+    ] {
+        db.execute(
+            "UPDATE delegation_workflows SET metadata=?1 WHERE workflow=?2",
+            rusqlite::params![broken, before.authority.workflow],
+        )
+        .unwrap();
+        let current: WorkflowSnapshot = serde_json::from_value(parent_tool(
+            &fixture,
+            second.id,
+            "ovrcr_recover",
+            serde_json::json!({"workflow":valid.authority.workflow}),
+        ))
+        .unwrap();
+        assert_eq!(current.authority, valid.authority);
+        assert!(current.handles.contains(&other.handle));
+        assert!(
+            !serde_json::to_string(&current)
+                .unwrap()
+                .contains(&first.handle),
+            "foreign invalid workflow contents are not disclosed"
+        );
+        let gaps = fixture.tool(
+            "ovrcr_recover",
+            serde_json::json!({"workflow":before.authority.workflow}),
+        );
+        assert_eq!(
+            gaps["recovery_gaps"][0]["identity"],
+            serde_json::to_value(&first.identity).unwrap()
+        );
+        assert!(
+            !serde_json::to_string(&gaps)
+                .unwrap()
+                .contains("private-truncated")
+        );
+        assert!(matches!(
+            fixture.live.request(Request::Delegation(Box::new(
+                fixture.proxy.original(DispatchOperation::InitialInput)
+            ))),
+            Response::Error { .. }
+        ));
+        let mut stream = dashboard(&fixture);
+        let Response::WorkflowCandidates(choices) = dashboard_view(
+            &mut stream,
+            70,
+            Request::DashboardWorkflow(DashboardWorkflowRequest::Candidates {
+                parent: fixture.parent,
+                run: before.authority.parent_run,
+            }),
+        )
+        .unwrap() else {
+            panic!("operator choices");
+        };
+        assert!(
+            choices
+                .candidates
+                .iter()
+                .any(|c| c.expected.workflow == valid.authority.workflow)
+        );
+        assert!(
+            choices
+                .gaps
+                .iter()
+                .any(|g| g.identity.as_ref() == Some(&first.identity))
+        );
+        let raw: String = db
+            .query_row(
+                "SELECT metadata FROM delegation_workflows WHERE workflow=?1",
+                [&before.authority.workflow],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(raw, broken);
+        assert_eq!(fs::read(&first.result_path).unwrap(), result);
+    }
+    db.execute(
+        "UPDATE delegations SET metadata='{private-assignment' WHERE handle=?1",
+        [&first.handle],
+    )
+    .unwrap();
+    let still_valid: WorkflowSnapshot = serde_json::from_value(parent_tool(
+        &fixture,
+        second.id,
+        "ovrcr_recover",
+        serde_json::json!({"workflow":valid.authority.workflow}),
+    ))
+    .unwrap();
+    assert_eq!(still_valid.authority, valid.authority);
+    let mut stream = dashboard(&fixture);
+    let Response::WorkflowCandidates(choices) = dashboard_view(
+        &mut stream,
+        71,
+        Request::DashboardWorkflow(DashboardWorkflowRequest::Candidates {
+            parent: fixture.parent,
+            run: before.authority.parent_run,
+        }),
+    )
+    .unwrap() else {
+        panic!("operator malformed assignment choices");
+    };
+    assert!(
+        choices
+            .candidates
+            .iter()
+            .any(|c| c.expected.workflow == valid.authority.workflow)
+    );
+    assert!(
+        choices
+            .gaps
+            .iter()
+            .any(|gap| gap.handle.as_deref() == Some(first.handle.as_str())
+                && gap.identity.is_none()
+                && gap.brief.is_none()
+                && gap.result_path.is_none())
+    );
+    assert!(
+        !serde_json::to_string(&choices)
+            .unwrap()
+            .contains("private-assignment")
+    );
+    let retained: String = db
+        .query_row(
+            "SELECT metadata FROM delegations WHERE handle=?1",
+            [&first.handle],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(retained, "{private-assignment");
+    db.execute("INSERT INTO delegations(handle,workflow,session,metadata) VALUES('untrusted key','untrusted workflow',NULL,'{private-key')", []).unwrap();
+    let Response::WorkflowCandidates(unknown) = dashboard_view(
+        &mut stream,
+        72,
+        Request::DashboardWorkflow(DashboardWorkflowRequest::Candidates {
+            parent: fixture.parent,
+            run: before.authority.parent_run,
+        }),
+    )
+    .unwrap() else {
+        panic!("unknown operator gap");
+    };
+    assert!(
+        unknown
+            .candidates
+            .iter()
+            .any(|c| c.expected.workflow == valid.authority.workflow)
+    );
+    assert!(
+        unknown
+            .gaps
+            .iter()
+            .any(|gap| gap.handle.is_none() && gap.workflow.is_none() && gap.identity.is_none())
+    );
+    let visible = serde_json::to_string(&unknown).unwrap();
+    assert!(
+        !visible.contains("untrusted key")
+            && !visible.contains("untrusted workflow")
+            && !visible.contains("private-key")
+    );
+    let third = create_parent(&fixture);
+    let parents: Vec<WorkflowParent> = serde_json::from_value(parent_tool(
+        &fixture,
+        third.id,
+        "ovrcr_parents",
+        serde_json::json!({}),
+    ))
+    .unwrap();
+    assert!(
+        parents.iter().any(|p| p.session == third.id),
+        "unrelated malformed row cannot prevent certified source registration"
+    );
+    let native = valid.authority.binding.conversation.clone();
+    assert_eq!(
+        fixture.live.request(Request::SendTerminal {
+            session: second.id,
+            text: format!("session_replace:{native}:reload"),
+            submit: true
+        }),
+        Response::Ok
+    );
+    let reloaded: WorkflowSnapshot = serde_json::from_value(parent_tool(
+        &fixture,
+        second.id,
+        "ovrcr_recover",
+        serde_json::json!({"workflow":valid.authority.workflow}),
+    ))
+    .unwrap();
+    assert_eq!(reloaded.authority.epoch, valid.authority.epoch + 1);
+}
+
+#[test]
+fn parent_recovery_explicit_new_and_fork_start_distinct_workflows_without_old_effects() {
+    let fixture = OwnedFollowup::new();
+    let first: AssignmentSnapshot = serde_json::from_value(fixture.start()).unwrap();
+    let first = complete(&fixture, &first);
+    let original = workflow(&fixture);
+    let original_row = durable_workflow(&fixture, &original.authority.workflow);
+    let original_files = (
+        fs::read(&first.brief).unwrap(),
+        fs::read(&first.result_path).unwrap(),
+    );
+    let original_bytes = fixture.byte_count(&first);
+    let mut prior = original.authority.clone();
+    for reason in ["new", "fork"] {
+        event(
+            &fixture,
+            &format!("session_start:distinct-{reason}:{reason}"),
+        );
+        let retired = fixture.recover(&first.handle);
+        assert_eq!(
+            retired["dispatch"], "Refused",
+            "copied old intent cannot acquire new-context control: {retired}"
+        );
+        let next = fixture.start();
+        assert_eq!(
+            next["dispatch"], "Applied",
+            "explicit {reason} must permit distinct work: {next}"
+        );
+        let next: AssignmentSnapshot = serde_json::from_value(next).unwrap();
+        let current = workflow(&fixture);
+        assert_ne!(current.authority.workflow, prior.workflow);
+        assert_ne!(current.authority.controller, prior.controller);
+        assert_eq!(current.authority.epoch, 1);
+        assert_eq!(
+            current.handles.as_slice(),
+            std::slice::from_ref(&next.handle)
+        );
+        let collected = complete(&fixture, &next);
+        assert_eq!(collected.identity, next.identity);
+        assert_eq!(collected.dispatch, DispatchStatus::Applied);
+        assert_eq!(
+            durable_workflow(&fixture, &original.authority.workflow),
+            original_row
+        );
+        assert_eq!(fs::read(&first.brief).unwrap(), original_files.0);
+        assert_eq!(fs::read(&first.result_path).unwrap(), original_files.1);
+        assert_eq!(fixture.byte_count(&first), original_bytes);
+        assert_eq!(fixture.input_count(&first), 1);
+        prior = current.authority;
+    }
+    let db = rusqlite::Connection::open(fixture.live.config.join("registry.sqlite3")).unwrap();
+    let raw: String = db
+        .query_row(
+            "SELECT metadata FROM delegations WHERE handle=?1",
+            [&first.handle],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let stored: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(
+        stored["identity"],
+        serde_json::to_value(&first.identity).unwrap()
+    );
+    assert_eq!(
+        stored["receipts"],
+        serde_json::to_value(&first.receipts).unwrap()
+    );
+    assert_eq!(
+        stored["control"],
+        serde_json::to_value(&first.control).unwrap()
+    );
+}
+
+#[test]
+fn parent_recovery_r1_corrupt_member_is_gap_beside_valid_obligation_and_foreign_workflow() {
+    let fixture = OwnedFollowup::new();
+    let first: AssignmentSnapshot = serde_json::from_value(fixture.start()).unwrap();
+    let first = complete(&fixture, &first);
+    let member: AssignmentSnapshot = serde_json::from_value(fixture.start()).unwrap();
+    let member = complete(&fixture, &member);
+    let before = workflow(&fixture);
+    let second = create_parent(&fixture);
+    let other: AssignmentSnapshot = serde_json::from_value(parent_tool(&fixture, second.id,"ovrcr_start",serde_json::json!({"project":PROJECT,"workspace":fixture.workspace,"scope":"Unrelated valid work","model_provider":"test","model":"fixture-model","acceptance_evidence":["citation"]}))).unwrap();
+    let foreign: WorkflowSnapshot = serde_json::from_value(parent_tool(
+        &fixture,
+        second.id,
+        "ovrcr_recover",
+        serde_json::json!({}),
+    ))
+    .unwrap();
+    let authority_row = durable_workflow(&fixture, &before.authority.workflow);
+    let files = [
+        (&first.brief, fs::read(&first.brief).unwrap()),
+        (&first.result_path, fs::read(&first.result_path).unwrap()),
+        (&member.brief, fs::read(&member.brief).unwrap()),
+        (&member.result_path, fs::read(&member.result_path).unwrap()),
+    ];
+    let counts = (fixture.byte_count(&first), fixture.byte_count(&member));
+    let db = rusqlite::Connection::open(fixture.live.config.join("registry.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE delegations SET metadata='{private-corrupt-member' WHERE handle=?1",
+        [&member.handle],
+    )
+    .unwrap();
+    let current = workflow(&fixture);
+    assert_eq!(current.authority, before.authority);
+    assert_eq!(
+        current.handles.as_slice(),
+        std::slice::from_ref(&first.handle)
+    );
+    assert!(
+        current
+            .gaps
+            .iter()
+            .any(|gap| gap.contains(&member.handle) && gap.contains("unverifiable"))
+    );
+    assert!(
+        !serde_json::to_string(&current)
+            .unwrap()
+            .contains("private-corrupt-member")
+    );
+    let unaffected: WorkflowSnapshot = serde_json::from_value(parent_tool(
+        &fixture,
+        second.id,
+        "ovrcr_recover",
+        serde_json::json!({"workflow":foreign.authority.workflow}),
+    ))
+    .unwrap();
+    assert_eq!(unaffected.authority, foreign.authority);
+    assert_eq!(
+        unaffected.handles.as_slice(),
+        std::slice::from_ref(&other.handle)
+    );
+    assert!(
+        !serde_json::to_string(&unaffected)
+            .unwrap()
+            .contains(&member.handle)
+    );
+    assert!(matches!(
+        fixture.live.request(Request::Delegation(Box::new(
+            DelegationRequest::Reconcile {
+                auth: original_auth(&fixture),
+                request: member.handle.clone()
+            }
+        ))),
+        Response::Error { .. }
+    ));
+    assert_eq!(
+        durable_workflow(&fixture, &before.authority.workflow),
+        authority_row
+    );
+    let destination = target(&fixture, second.id);
+    let transferred: WorkflowSnapshot = serde_json::from_value(fixture.tool("ovrcr_transfer", serde_json::json!({"request":"member-gap-transfer","parent":destination.session,"parent_run":destination.run,"binding":destination.binding,"producer":destination.producer}))).unwrap();
+    assert_eq!(transferred.authority.epoch, before.authority.epoch + 1);
+    assert_eq!(
+        transferred.handles.as_slice(),
+        std::slice::from_ref(&first.handle)
+    );
+    assert!(
+        transferred
+            .gaps
+            .iter()
+            .any(|gap| gap.contains(&member.handle) && gap.contains("unverifiable")),
+        "post-commit transfer response retains the damaged member gap"
+    );
+    let raw: String = db
+        .query_row(
+            "SELECT metadata FROM delegations WHERE handle=?1",
+            [&member.handle],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(raw, "{private-corrupt-member");
+    for (path, bytes) in files {
+        assert_eq!(fs::read(path).unwrap(), bytes);
+    }
+    assert_eq!(
+        (fixture.byte_count(&first), fixture.byte_count(&member)),
+        counts
+    );
+    assert_eq!(fixture.input_count(&first), 1);
+    assert_eq!(fixture.input_count(&member), 1);
 }

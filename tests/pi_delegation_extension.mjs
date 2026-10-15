@@ -288,3 +288,86 @@ test("retry rejects a FIFO intent before a blocking open can wait for a writer",
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("tool queued on old recovery cannot start work after explicit new", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ovrcr-retired-routing-"));
+  const before = { ...process.env };
+  let host;
+  try {
+    const binary = join(dir, "control.mjs"), calls = join(dir, "calls"), gate = join(dir, "release");
+    writeFileSync(binary, `#!/usr/bin/env node
+import { appendFileSync, existsSync } from 'node:fs';
+let input='';for await(const bytes of process.stdin)input+=bytes;
+if(process.argv.includes('report'))process.exit(0);
+const request=JSON.parse(input), operation=Object.keys(request)[0];
+appendFileSync(${JSON.stringify(calls)},operation+'\\n');
+if(operation==='Recover'){while(!existsSync(${JSON.stringify(gate)}))await new Promise(r=>setTimeout(r,5));console.log('[]');}
+else if(operation==='Capabilities')console.log(JSON.stringify({reason:'fixture refuses allocation'}));
+else throw new Error('Unexpected effect '+operation);
+`);
+    chmodSync(binary, 0o700);
+    Object.assign(process.env, { OVRCR_AGENT_SOCKET: "/fixture/reporting", OVRCR_AGENT_TOKEN: "fixture-reporting", OVRCR_DELEGATION_SESSION: "1", OVRCR_DELEGATION_TOKEN: "fixture-control", OVRCR_DELEGATION_SOCKET: "/fixture/control", OVRCR_DELEGATION_HOME: dir });
+    const source = readFileSync(new URL("../src/pi-reporting-extension.mjs", import.meta.url), "utf8").replace("__OVRCR_BINARY__", JSON.stringify(binary));
+    writeFileSync(join(dir,"reporting.mjs"),source);
+    for (const file of ["ovrcr-reporting-transport.mjs","ovrcr-delegation-observer.mjs","ovrcr-delegation-continuation.mjs"]) writeFileSync(join(dir,file),readFileSync(new URL(`../src/${file}`,import.meta.url)));
+    host = await createHost(join(dir,"reporting.mjs"));
+    const starting = host.emit({type:"session_start",reason:"startup"});
+    const deadline = Date.now()+5000;
+    while (!(() => { try { return readFileSync(calls,"utf8").includes("Recover"); } catch { return false; } })()) {
+      assert.ok(Date.now()<deadline,"old recovery was admitted");
+      await new Promise(r=>setTimeout(r,5));
+    }
+    const queued = host.tool("ovrcr_start",{project:"p",workspace:"w",scope:"Old queued work",acceptance_evidence:["citation"]});
+    const outcome = queued.then(value=>({value}),error=>({error}));
+    await host.emit({type:"session_start",reason:"new"});
+    writeFileSync(gate,"1");
+    await starting;
+    const retired = await outcome;
+    assert.match(String(retired.error?.message ?? retired.value?.details?.reason),/previous Pi context|retired/);
+    assert.deepEqual(readFileSync(calls,"utf8").trim().split("\n"),["Recover"],"no stale Capabilities/Prepare/Launch/input may run with fresh routing");
+  } finally {
+    await host?.emit({type:"session_shutdown",reason:"quit"});
+    process.env=before;
+    rmSync(dir,{recursive:true,force:true});
+  }
+});
+
+test("an awaited old private intent cannot reacquire auth after fork", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ovrcr-retired-intent-"));
+  const before = { ...process.env };
+  let host, prototype, originalRead, release;
+  try {
+    const binary = join(dir,"control.mjs"), calls = join(dir,"calls");
+    writeFileSync(binary, `#!/usr/bin/env node
+import {appendFileSync} from 'node:fs';
+let input='';for await(const bytes of process.stdin)input+=bytes;
+if(process.argv.includes('report'))process.exit(0);
+const request=JSON.parse(input);appendFileSync(${JSON.stringify(calls)},Object.keys(request)[0]+'\\n');console.log('[]');
+`);
+    chmodSync(binary,0o700);
+    Object.assign(process.env,{OVRCR_AGENT_SOCKET:"/fixture/reporting",OVRCR_AGENT_TOKEN:"reporting",OVRCR_DELEGATION_SESSION:"1",OVRCR_DELEGATION_TOKEN:"control",OVRCR_DELEGATION_SOCKET:"/fixture/control",OVRCR_DELEGATION_HOME:dir});
+    writeFileSync(join(dir,"reporting.mjs"),readFileSync(new URL("../src/pi-reporting-extension.mjs",import.meta.url),"utf8").replace("__OVRCR_BINARY__",JSON.stringify(binary)));
+    for(const file of ["ovrcr-reporting-transport.mjs","ovrcr-delegation-observer.mjs","ovrcr-delegation-continuation.mjs"])writeFileSync(join(dir,file),readFileSync(new URL(`../src/${file}`,import.meta.url)));
+    mkdirSync(join(dir,"parent-intents"),{mode:0o700});
+    const intent = join(dir,"parent-intents","original.json"), bytes = JSON.stringify({schema:1,request:"original",workflow:"old-workflow",controller:"old-controller"});
+    writeFileSync(intent,bytes,{mode:0o600});
+    host=await createHost(join(dir,"reporting.mjs"));
+    const probe=await open(intent,"r");prototype=Object.getPrototypeOf(probe);await probe.close();
+    originalRead=prototype.read;
+    let entered;
+    const reading=new Promise(resolve=>{entered=resolve;});
+    let held=false;
+    prototype.read=async function(...args){if(!held){held=true;entered();await new Promise(resolve=>{release=resolve;});}return originalRead.apply(this,args);};
+    const pending=host.tool("ovrcr_start",{handle:"original"});
+    await reading;
+    await host.emit({type:"session_start",reason:"fork"});
+    release();
+    await assert.rejects(pending,/previous Pi context/);
+    assert.equal(readFileSync(intent,"utf8"),bytes,"old intent remains immutable");
+    assert.throws(()=>readFileSync(calls),{code:"ENOENT"},"stale advance never spawns even Reconcile with fresh auth");
+  } finally {
+    release?.();if(prototype)prototype.read=originalRead;
+    await host?.emit({type:"session_shutdown",reason:"quit"});
+    process.env=before;rmSync(dir,{recursive:true,force:true});
+  }
+});

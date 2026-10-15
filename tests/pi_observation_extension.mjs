@@ -162,3 +162,25 @@ test("returned control wakes reconciliation once without accepting or confirming
   assert.equal(d.messages.length, 1, "input revisions do not manufacture another control change");
   assert(d.calls.every(call => call.Observe), "observer never confirms or accepts control");
 });
+
+test("new-context reset clears queued old handles and fences an in-flight explicit wait", async t => {
+  const d = driver(t);
+  d.observer.watch("old");
+  const first = d.nextMessage();
+  d.push(batch([item("old")]));
+  await first;
+  await d.nextCall();
+  const waiting = d.observer.wait({ handles: ["old"], wait_ms: 1000 });
+  d.observer.reset();
+  // The explicit wait's late public reply cannot enroll its old handles again.
+  d.push(batch([item("old")]));
+  await assert.rejects(waiting, /previous Pi context/);
+  d.observer.acknowledge();
+  const count = d.calls.length;
+  d.observer.watch("new");
+  assert.deepEqual(d.calls[count].Observe.handles, ["new"]);
+  const next = d.nextMessage();
+  d.push(batch([item("new")]));
+  await next;
+  assert.deepEqual(d.messages.map(m => m.message.details.handles), [["old"], ["new"]]);
+});

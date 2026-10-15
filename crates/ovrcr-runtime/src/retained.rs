@@ -1239,6 +1239,7 @@ mod tests {
                  DROP TABLE conversation_subjects;
                  DROP TABLE delegations;
                  DROP TABLE delegation_instance;
+                 DROP TABLE delegation_workflows;
                  PRAGMA user_version = 3;",
             )
             .unwrap();
@@ -1282,6 +1283,7 @@ mod tests {
                  DROP TABLE conversation_subjects;
                  DROP TABLE delegations;
                  DROP TABLE delegation_instance;
+                 DROP TABLE delegation_workflows;
                  PRAGMA user_version = 2;",
             )
             .unwrap();
