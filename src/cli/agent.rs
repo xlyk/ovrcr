@@ -65,8 +65,12 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
     let mut argv = argv;
     ovrcr::protocol::apply_default_auto_trust(&name, &mut argv);
     let pi_resume = if name == "pi" && ovrcr::report::pi::eligible_argv(&argv) {
-        ovrcr_runtime::extension_recovery::explicit_pi_resume(&argv).ok().flatten()
-    } else { None };
+        ovrcr_runtime::extension_recovery::explicit_pi_resume(&argv)
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
     let swallow_conflict = name != "claude";
     let mut lease = {
         ovrcr::report::reserve_invocation_with_resume(provider(&name), pi_resume)

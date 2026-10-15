@@ -682,7 +682,7 @@ pub fn reserve_invocation_with_resume(
             &mut stream,
             1,
             Request::ReserveAgent(ReserveAgent {
-                    pi_resume,
+                pi_resume: pi_resume.map(Box::new),
                 session: identity.session,
                 capability: AgentSecret(identity.capability),
                 operation: ovrcr_runtime::agent_runner::private_identifier()?,

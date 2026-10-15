@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 /// Non-payload assignment authority shares the registry migration/connection owner.
 pub(crate) fn create_delegation_schema(connection: &Connection) -> Result<()> {
     connection.execute_batch("CREATE TABLE delegation_instance (id TEXT NOT NULL); CREATE TABLE delegations (handle TEXT PRIMARY KEY, workflow TEXT NOT NULL, session INTEGER, metadata TEXT NOT NULL); CREATE INDEX delegations_by_session ON delegations(session); CREATE INDEX delegations_by_workflow ON delegations(workflow);")?;
-    connection.execute_batch("CREATE TABLE delegation_workflows (workflow TEXT PRIMARY KEY, metadata TEXT NOT NULL);")?;
+    connection.execute_batch(
+        "CREATE TABLE delegation_workflows (workflow TEXT PRIMARY KEY, metadata TEXT NOT NULL);",
+    )?;
     connection.execute(
         "INSERT INTO delegation_instance (id) VALUES (?1)",
         [crate::agent_runner::private_identifier()?],

@@ -65,9 +65,9 @@ fn discovery_error(error: anyhow::Error) -> anyhow::Error {
 mod io;
 mod process;
 mod reporting;
-pub(crate) use reporting::AgentPersistence;
 use io::{read_pty, wait_for_child};
 use process::*;
+pub(crate) use reporting::AgentPersistence;
 
 /// How long `terminate` waits after SIGTERM before hanging up a process
 /// group that is still present. Interactive shells ignore SIGTERM, so this
@@ -1055,7 +1055,9 @@ impl Session {
             let parent_valid = parent.phase == SessionPhase::Running
                 && parent.reporting.active()
                 && parent.reporting.source.as_ref() == input.parent_source
-                && input.parent_producer.is_none_or(|producer| parent.reporting.producer.as_deref() == Some(producer))
+                && input
+                    .parent_producer
+                    .is_none_or(|producer| parent.reporting.producer.as_deref() == Some(producer))
                 && parent.hook_capability.as_ref().is_some_and(|token| {
                     crate::agent_runner::delegation_capability(&capability_hex(token))
                         == input.capability

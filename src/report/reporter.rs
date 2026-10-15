@@ -236,28 +236,80 @@ impl Reporter {
         self.paused.is_some()
     }
 
-    pub fn workflow_source(&mut self, producer: &str, reason: &str, source: Option<ovrcr_protocol::AgentSecret>, deadline: Instant) -> bool {
-        if self.provider != AgentProvider::Pi { return true; }
-        let Some(binding) = self.binding().cloned() else { return false; };
-        let Some(source) = source else { return false; };
-        if self.workflow_producer.as_deref() == Some(producer) && self.workflow_source_key.as_ref().is_some_and(|current| current != &source) {
+    pub fn workflow_source(
+        &mut self,
+        producer: &str,
+        reason: &str,
+        source: Option<ovrcr_protocol::AgentSecret>,
+        deadline: Instant,
+    ) -> bool {
+        if self.provider != AgentProvider::Pi {
+            return true;
+        }
+        let Some(binding) = self.binding().cloned() else {
+            return false;
+        };
+        let Some(source) = source else {
+            return false;
+        };
+        if self.workflow_producer.as_deref() == Some(producer)
+            && self
+                .workflow_source_key
+                .as_ref()
+                .is_some_and(|current| current != &source)
+        {
             return false;
         }
         self.workflow_producer = Some(producer.into());
         self.workflow_source_key = Some(source.clone());
-        self.workflow_command(AgentCommand::WorkflowSource { binding, producer: producer.into(), reason: reason.into(), source }, deadline)
+        self.workflow_command(
+            AgentCommand::WorkflowSource {
+                binding: Box::new(binding),
+                producer: producer.into(),
+                reason: reason.into(),
+                source,
+            },
+            deadline,
+        )
     }
     pub fn workflow_departure(&mut self, reaped: bool, deadline: Instant) -> bool {
-        let (Some(binding), Some(producer)) = (self.binding().cloned(), self.workflow_producer.clone()) else { return false; };
-        self.workflow_command(AgentCommand::WorkflowDeparture { binding, producer, reaped }, deadline)
+        let (Some(binding), Some(producer)) =
+            (self.binding().cloned(), self.workflow_producer.clone())
+        else {
+            return false;
+        };
+        self.workflow_command(
+            AgentCommand::WorkflowDeparture {
+                binding,
+                producer,
+                reaped,
+            },
+            deadline,
+        )
     }
     fn workflow_command(&mut self, command: AgentCommand, deadline: Instant) -> bool {
-        let Ok(operation) = private_identifier() else { return false; };
-        let Some(lease) = self.lease.as_mut() else { return false; };
+        let Ok(operation) = private_identifier() else {
+            return false;
+        };
+        let Some(lease) = self.lease.as_mut() else {
+            return false;
+        };
         let first = Instant::now() + deadline.saturating_duration_since(Instant::now()) / 2;
         let result = lease.command(operation.clone(), command, first);
-        if matches!(result, Ok(Response::AgentOperation(AgentOperationResult::WorkflowUpdated))) { return true; }
-        matches!(lease.operation_status(operation, deadline), Ok(Response::AgentOperation(AgentOperationResult::WorkflowUpdated)))
+        if matches!(
+            result,
+            Ok(Response::AgentOperation(
+                AgentOperationResult::WorkflowUpdated
+            ))
+        ) {
+            return true;
+        }
+        matches!(
+            lease.operation_status(operation, deadline),
+            Ok(Response::AgentOperation(
+                AgentOperationResult::WorkflowUpdated
+            ))
+        )
     }
 
     /// Stop reporting, keeping the lease so the reservation is released the ordinary way

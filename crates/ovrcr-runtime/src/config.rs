@@ -385,7 +385,10 @@ fn is_uninitialized(connection: &Connection) -> Result<bool> {
 pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
     let (application, version) = schema_identity(connection)?;
     if application != APPLICATION_ID
-        || !matches!(version, 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | SCHEMA_VERSION)
+        || !matches!(
+            version,
+            1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | SCHEMA_VERSION
+        )
     {
         bail!(
             "incompatible registry database (application {application}, schema {version}); \

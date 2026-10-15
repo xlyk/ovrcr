@@ -1433,10 +1433,24 @@ impl Dashboard {
     ) -> Vec<Entry> {
         if let Some(transfers) = workflows {
             let query = query.to_lowercase();
-            return transfers.iter().filter_map(|transfer| {
-                let label = format!("Recover workflow {} from parent #{} epoch {}", transfer.expected.workflow, transfer.expected.parent.0, transfer.expected.epoch);
-                query.split_whitespace().all(|word| label.to_lowercase().contains(word)).then_some(Entry { label, command: Command::TransferWorkflow(Box::new(transfer.clone())) })
-            }).collect();
+            return transfers
+                .iter()
+                .filter_map(|transfer| {
+                    let label = format!(
+                        "Recover workflow {} from parent #{} epoch {}",
+                        transfer.expected.workflow,
+                        transfer.expected.parent.0,
+                        transfer.expected.epoch
+                    );
+                    query
+                        .split_whitespace()
+                        .all(|word| label.to_lowercase().contains(word))
+                        .then_some(Entry {
+                            label,
+                            command: Command::TransferWorkflow(Box::new(transfer.clone())),
+                        })
+                })
+                .collect();
         }
         if let Some(candidates) = agents {
             let query = query.to_lowercase();
@@ -1533,8 +1547,14 @@ impl Dashboard {
             .action_session()
             .filter(|id| find_session(self, *id).is_some())
         {
-            if let Some(session) = find_session(self, id).filter(|session| session.phase.is_live() && matches!(&session.kind, SessionKind::Agent { name } if name == "pi")) {
-                entries.push(Entry { label: "Recover workflow control in this Pi".into(), command: Command::WorkflowRecovery(id, session.run) });
+            if let Some(session) = find_session(self, id).filter(|session| {
+                session.phase.is_live()
+                    && matches!(&session.kind, SessionKind::Agent { name } if name == "pi")
+            }) {
+                entries.push(Entry {
+                    label: "Recover workflow control in this Pi".into(),
+                    command: Command::WorkflowRecovery(id, session.run),
+                });
             }
             entries.push(Entry {
                 label: "Rename terminal (blank = original name)".into(),
@@ -2097,18 +2117,37 @@ impl Dashboard {
                         query,
                         palette.archive.as_deref(),
                         palette.agents.as_deref(),
-                                palette.workflows.as_deref(),
+                        palette.workflows.as_deref(),
                     );
                     *selected = (*selected).min(entries.len().saturating_sub(1));
                     if let Some(entry) = entries.get(*selected) {
                         match entry.command.clone() {
                             Command::WorkflowRecovery(parent, run) => {
-                                action = self.palette_submit(&mut palette, Request::DashboardWorkflow(crate::protocol::DashboardWorkflowRequest::Candidates { parent, run }));
+                                action = self.palette_submit(
+                                    &mut palette,
+                                    Request::DashboardWorkflow(
+                                        crate::protocol::DashboardWorkflowRequest::Candidates {
+                                            parent,
+                                            run,
+                                        },
+                                    ),
+                                );
                             }
                             Command::TransferWorkflow(transfer) => {
                                 palette.page = Page::Confirm {
-                                    target: format!("Transfer workflow {} from parent #{} epoch {} to Pi #{} run {}? Old parent input is retired. Child human control and unresolved work remain.", transfer.expected.workflow, transfer.expected.parent.0, transfer.expected.epoch, transfer.parent.0, transfer.parent_run.0),
-                                    request: Some(Request::DashboardWorkflow(crate::protocol::DashboardWorkflowRequest::Transfer(*transfer))),
+                                    target: format!(
+                                        "Transfer workflow {} from parent #{} epoch {} to Pi #{} run {}? Old parent input is retired. Child human control and unresolved work remain.",
+                                        transfer.expected.workflow,
+                                        transfer.expected.parent.0,
+                                        transfer.expected.epoch,
+                                        transfer.parent.0,
+                                        transfer.parent_run.0
+                                    ),
+                                    request: Some(Request::DashboardWorkflow(
+                                        crate::protocol::DashboardWorkflowRequest::Transfer(
+                                            transfer,
+                                        ),
+                                    )),
                                 };
                             }
 
@@ -2907,12 +2946,22 @@ impl Dashboard {
             }
         );
         match response {
-            Response::WorkflowCandidates(transfers) => {
+            Response::WorkflowCandidates(choices) => {
                 let palette = self.palette.as_mut().unwrap();
                 palette.pending = None;
-                palette.workflows = Some(transfers.clone());
-                palette.page = Page::Search { query: String::new(), selected: 0 };
-                palette.error = transfers.is_empty().then(|| "No workflow needs transfer to this Pi. Reconcile its existing workflows in Pi.".into());
+                palette.workflows = Some(choices.candidates.clone());
+                palette.page = Page::Search {
+                    query: String::new(),
+                    selected: 0,
+                };
+                palette.error = if choices.gaps.is_empty() {
+                    choices.candidates.is_empty().then(|| "No workflow needs transfer to this Pi. Reconcile its existing workflows in Pi.".into())
+                } else {
+                    Some(format!(
+                        "{} older assignment(s) lack certified recovery authority; their artifacts/receipts remain read-only and cannot be transferred. Available workflows are listed below.",
+                        choices.gaps.len()
+                    ))
+                };
                 return Some(Vec::new());
             }
             Response::Inventory { sessions, .. } if self.palette.as_ref()?.archive.is_some() => {
@@ -3237,7 +3286,7 @@ impl Dashboard {
                     query,
                     palette.archive.as_deref(),
                     palette.agents.as_deref(),
-                                palette.workflows.as_deref(),
+                    palette.workflows.as_deref(),
                 );
                 if entries.is_empty() {
                     lines.push(Line::from(if palette.archive.is_some() {
@@ -3636,8 +3685,12 @@ impl Dashboard {
             body,
         );
         let detail = if let Page::Search { query, selected } = &palette.page {
-            let entries =
-                self.palette_entries(query, palette.archive.as_deref(), palette.agents.as_deref(), palette.workflows.as_deref());
+            let entries = self.palette_entries(
+                query,
+                palette.archive.as_deref(),
+                palette.agents.as_deref(),
+                palette.workflows.as_deref(),
+            );
             let selected = (*selected).min(entries.len().saturating_sub(1));
             entries
                 .get(selected)

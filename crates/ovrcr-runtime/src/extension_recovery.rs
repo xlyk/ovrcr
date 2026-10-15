@@ -193,7 +193,12 @@ pub fn canonical_pi_reference(reference: &ExtensionConversation) -> Result<Exten
     let mut reference = reference.clone();
     reference.executable = std::fs::canonicalize(&reference.executable)?;
     reference.config_dir = std::fs::canonicalize(&reference.config_dir)?;
-    reference.history = Some(std::fs::canonicalize(reference.history.as_ref().context("Pi history is unavailable")?)?);
+    reference.history = Some(std::fs::canonicalize(
+        reference
+            .history
+            .as_ref()
+            .context("Pi history is unavailable")?,
+    )?);
     Ok(reference)
 }
 
@@ -205,30 +210,76 @@ pub fn explicit_pi_resume(argv: &[OsString]) -> Result<Option<ExtensionConversat
     let mut index = 1;
     while index < argv.len() {
         let arg = argv[index].to_str().context("non-UTF8 Pi option")?;
-        if arg == "--" { break; }
-        if matches!(arg, "--continue" | "-c" | "--resume" | "-r" | "--no-session" | "--fork") || arg.starts_with("--fork=") { bail!("implicit, forked or ephemeral sessions cannot claim a workflow"); }
+        if arg == "--" {
+            break;
+        }
+        if matches!(
+            arg,
+            "--continue" | "-c" | "--resume" | "-r" | "--no-session" | "--fork"
+        ) || arg.starts_with("--fork=")
+        {
+            bail!("implicit, forked or ephemeral sessions cannot claim a workflow");
+        }
         if arg == "--session" || arg.starts_with("--session=") {
-            let value = if let Some(value) = arg.strip_prefix("--session=") { value } else { index += 1; argv.get(index).and_then(|v| v.to_str()).context("missing explicit Pi session")? };
-            if selected.replace(PathBuf::from(value)).is_some() { bail!("duplicate or conflicting Pi session selectors"); }
+            let value = if let Some(value) = arg.strip_prefix("--session=") {
+                value
+            } else {
+                index += 1;
+                argv.get(index)
+                    .and_then(|v| v.to_str())
+                    .context("missing explicit Pi session")?
+            };
+            if selected.replace(PathBuf::from(value)).is_some() {
+                bail!("duplicate or conflicting Pi session selectors");
+            }
         }
         index += 1;
     }
-    let Some(history) = selected else { return Ok(None); };
-    if !history.is_absolute() { bail!("Pi resume must name an absolute original history"); }
+    let Some(history) = selected else {
+        return Ok(None);
+    };
+    if !history.is_absolute() {
+        bail!("Pi resume must name an absolute original history");
+    }
     let history = std::fs::canonicalize(history)?;
     let options = launch_options(AgentProvider::Pi, argv)?;
-    let executable = argv.first().map(PathBuf::from).context("missing Pi executable")?;
-    let executable = if executable.is_absolute() { executable } else {
-        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).map(|dir| dir.join(&executable)).find(|p| p.is_absolute() && p.is_file()).context("Pi executable unavailable")?
+    let executable = argv
+        .first()
+        .map(PathBuf::from)
+        .context("missing Pi executable")?;
+    let executable = if executable.is_absolute() {
+        executable
+    } else {
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .map(|dir| dir.join(&executable))
+            .find(|p| p.is_absolute() && p.is_file())
+            .context("Pi executable unavailable")?
     };
-    let file = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(&history)?;
-    if !file.metadata()?.is_file() { bail!("Pi history must be a regular file"); }
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(&history)?;
+    if !file.metadata()?.is_file() {
+        bail!("Pi history must be a regular file");
+    }
     let mut header = String::new();
     BufReader::new(file.take(16 * 1024)).read_line(&mut header)?;
-    let header: serde_json::Value = serde_json::from_str(&header).context("Pi history header is invalid")?;
-    if header["type"] != "session" { bail!("Pi history header is not a session"); }
-    let conversation = header["id"].as_str().context("Pi history has no identity")?.to_owned();
-    let reference = ExtensionConversation { conversation, executable, history: Some(history), config_dir: config_dir(AgentProvider::Pi)?, options };
+    let header: serde_json::Value =
+        serde_json::from_str(&header).context("Pi history header is invalid")?;
+    if header["type"] != "session" {
+        bail!("Pi history header is not a session");
+    }
+    let conversation = header["id"]
+        .as_str()
+        .context("Pi history has no identity")?
+        .to_owned();
+    let reference = ExtensionConversation {
+        conversation,
+        executable,
+        history: Some(history),
+        config_dir: config_dir(AgentProvider::Pi)?,
+        options,
+    };
     validate(AgentProvider::Pi, &reference)?;
     Ok(Some(canonical_pi_reference(&reference)?))
 }

@@ -17915,7 +17915,7 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"
         &mut reporting,
         10,
         Request::ReserveAgent(ReserveAgent {
-                    pi_resume: None,
+            pi_resume: None,
             session: summary.id,
             capability: AgentSecret(capability),
             operation: "private-reserve".into(),

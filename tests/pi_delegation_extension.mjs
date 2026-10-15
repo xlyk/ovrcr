@@ -20,7 +20,7 @@ test("managed Pi exposes research assignment and explicit collection tools", asy
     writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
     writeFileSync(join(dir, "ovrcr-delegation-continuation.mjs"), readFileSync(new URL("../src/ovrcr-delegation-continuation.mjs", import.meta.url)));
     host = await createHost(join(dir, "reporting.mjs"));
-    assert.deepEqual(host.tools(), ["ovrcr_accept", "ovrcr_capabilities", "ovrcr_checkpoint", "ovrcr_collect", "ovrcr_confirm_return", "ovrcr_followup", "ovrcr_inspect", "ovrcr_mark_handled", "ovrcr_publish", "ovrcr_recover", "ovrcr_retry", "ovrcr_start", "ovrcr_transfer", "ovrcr_wait"]);
+    assert.deepEqual(host.tools(), ["ovrcr_accept", "ovrcr_capabilities", "ovrcr_checkpoint", "ovrcr_collect", "ovrcr_confirm_return", "ovrcr_followup", "ovrcr_inspect", "ovrcr_mark_handled", "ovrcr_parents", "ovrcr_publish", "ovrcr_recover", "ovrcr_retry", "ovrcr_start", "ovrcr_transfer", "ovrcr_wait"]);
     assert.deepEqual(host.toolDefinition("ovrcr_publish").parameters.required, ["handle", "submission"]);
     assert.deepEqual(host.toolDefinition("ovrcr_collect").parameters.required, ["handle"]);
     assert.deepEqual(host.toolDefinition("ovrcr_start").parameters.anyOf, [{ required: ["handle"] }, { required: ["project", "workspace", "scope", "acceptance_evidence"] }]);
@@ -269,6 +269,7 @@ test("retry rejects a FIFO intent before a blocking open can wait for a writer",
     writeFileSync(join(dir, "reporting.mjs"), source);
     writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(new URL("../src/ovrcr-reporting-transport.mjs", import.meta.url)));
     writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-delegation-continuation.mjs"), readFileSync(new URL("../src/ovrcr-delegation-continuation.mjs", import.meta.url)));
     const host = await createHost(join(dir, "reporting.mjs"));
     let waitedForWriter = false;
     // Release the original defect so a failed regression cannot hang Node's
