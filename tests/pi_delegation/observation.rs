@@ -535,9 +535,9 @@ fn production_versioned_publications_keep_authorship_handling_and_observation_cu
             .unwrap()
             .handled
     );
-    let first: AssignmentSnapshot = serde_json::from_value(f.tool("ovrcr_accept", serde_json::json!({"handle":first.handle,"identity":first.identity,"result_version":1,"result_digest":publication1.digest}))).unwrap();
+    let first: AssignmentSnapshot = serde_json::from_value(f.tool("ovrcr_accept", serde_json::json!({"handle":first.handle,"identity":first.identity,"result_version":1,"result_digest":publication1.digest,"expected_control_epoch":first.control.epoch}))).unwrap();
     fs::remove_file(&f.gate).unwrap();
-    let second: AssignmentSnapshot = serde_json::from_value(f.tool("ovrcr_followup", serde_json::json!({"handle":first.handle,"expected_identity":first.identity,"expected_result_version":1,"text":"Clarify the same scoped result."}))).unwrap();
+    let second: AssignmentSnapshot = serde_json::from_value(f.tool("ovrcr_followup", serde_json::json!({"handle":first.handle,"expected_identity":first.identity,"expected_result_version":1,"expected_control_epoch":first.control.epoch,"text":"Clarify the same scoped result."}))).unwrap();
     assert_eq!(second.identity, first.identity);
     assert_eq!(second.result_version, 2);
     wait_file(&second.brief.with_extension("json.started"));
@@ -578,7 +578,7 @@ fn production_versioned_publications_keep_authorship_handling_and_observation_cu
             .contains("stale result version"),
         "{late}"
     );
-    let blocked = f.tool("ovrcr_followup", serde_json::json!({"handle":second.handle,"expected_identity":second.identity,"expected_result_version":2,"text":"Cannot supersede unresolved authenticated intent."}));
+    let blocked = f.tool("ovrcr_followup", serde_json::json!({"handle":second.handle,"expected_identity":second.identity,"expected_result_version":2,"expected_control_epoch":second.control.epoch,"text":"Cannot supersede unresolved authenticated intent."}));
     assert_eq!(blocked["dispatch"], "Refused", "{blocked}");
     assert!(
         !second
@@ -647,13 +647,13 @@ fn production_versioned_publications_keep_authorship_handling_and_observation_cu
     ))
     .unwrap();
     assert!(handled2.publication.as_ref().unwrap().handled);
-    let second: AssignmentSnapshot = serde_json::from_value(f.tool("ovrcr_accept", serde_json::json!({"handle":second.handle,"identity":second.identity,"result_version":2,"result_digest":publication2.digest}))).unwrap();
+    let second: AssignmentSnapshot = serde_json::from_value(f.tool("ovrcr_accept", serde_json::json!({"handle":second.handle,"identity":second.identity,"result_version":2,"result_digest":publication2.digest,"expected_control_epoch":second.control.epoch}))).unwrap();
     let brief: serde_json::Value =
         serde_json::from_slice(&fs::read(&second.brief).unwrap()).unwrap();
     let mut contract: ResearchContract = serde_json::from_value(brief["contract"].clone()).unwrap();
     contract.scope = "NO_READY explain the README prerequisites under revised requirements".into();
     fs::remove_file(&f.gate).unwrap();
-    let third: AssignmentSnapshot = serde_json::from_value(f.tool("ovrcr_followup", serde_json::json!({"handle":second.handle,"expected_identity":second.identity,"expected_result_version":2,"text":"Use the explicitly revised scoped requirements.","revised_contract":contract}))).unwrap();
+    let third: AssignmentSnapshot = serde_json::from_value(f.tool("ovrcr_followup", serde_json::json!({"handle":second.handle,"expected_identity":second.identity,"expected_result_version":2,"expected_control_epoch":second.control.epoch,"text":"Use the explicitly revised scoped requirements.","revised_contract":contract}))).unwrap();
     assert_eq!(third.result_version, 3);
     assert_eq!(third.identity.contract, 2);
     assert_eq!(third.identity.session, first.identity.session);

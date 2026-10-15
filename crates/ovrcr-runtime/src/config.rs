@@ -795,7 +795,7 @@ mod tests {
             "offline reads must not migrate"
         );
         initialize_registry(&config).unwrap();
-        assert_eq!(schema_version(&database), 9);
+        assert_eq!(schema_version(&database), SCHEMA_VERSION);
         let connection = Connection::open(&database).unwrap();
         assert_eq!(
             connection

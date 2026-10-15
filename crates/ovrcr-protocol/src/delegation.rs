@@ -318,6 +318,8 @@ pub struct DelegationObservation {
     pub stalled: bool,
     /// A gap/epoch change cannot manufacture fresh progress from a snapshot.
     pub progress_unresolved: bool,
+    /// Current durable authority; a wake is never confirmation or permission.
+    pub control: AssignmentControl,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
