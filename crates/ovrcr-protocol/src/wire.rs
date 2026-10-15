@@ -1528,6 +1528,7 @@ mod wire_snapshot {
                 crate::DelegationRequest::Launch {
                     auth: auth.clone(),
                     handle: "r".into(),
+                    identity: identity.clone(),
                 },
             ),
             (
@@ -1550,6 +1551,13 @@ mod wire_snapshot {
                 crate::DelegationRequest::Collect {
                     auth: auth.clone(),
                     handle: "r".into(),
+                },
+            ),
+            (
+                "Reconcile",
+                crate::DelegationRequest::Reconcile {
+                    auth: auth.clone(),
+                    request: "r".into(),
                 },
             ),
             (
@@ -1579,6 +1587,13 @@ mod wire_snapshot {
                 result_path: "/result".into(),
                 submission: Some(submission),
                 acceptance: "pending".into(),
+                receipts: vec![],
+                resources: crate::AssignmentResources {
+                    project: Some("p".into()),
+                    workspace: Some("ws".into()),
+                    workspace_present: true,
+                    current_session: None,
+                },
             }))),
         ));
         all
@@ -1641,13 +1656,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a042b017301630168016c0104",
+            "2a042c017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f042b017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f042c017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -1678,18 +1693,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d042b0000"),
+        ("Response::NotificationNavigation", "0d042c0000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e042b017301630168016c0104",
+            "0e01016e042c017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f010708090101690101042b017301630168016c0164",
+            "0f010708090101690101042c017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "10042b010708090101690101042b017301630168016c0164",
+            "10042c010708090101690101042c017301630168016c0164",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -1713,7 +1728,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e042b017301630168016c0104",
+            "08016e042c017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -1861,20 +1876,24 @@ mod wire_snapshot {
             "Delegation::Prepare",
             "3200010766697874757265010177016301740172017002777304726561640104726561640270690474657374016d010463697465010472656164",
         ),
-        ("Delegation::Launch", "32010107666978747572650172"),
+        (
+            "Delegation::Launch",
+            "320101076669787475726501720169017701630101740101017201020101",
+        ),
         (
             "Delegation::SendInitial",
             "320201076669787475726501720169017701630101740101017201020101",
         ),
         ("Delegation::Inspect", "32030107666978747572650172"),
-        ("Delegation::Collect", "32040107666978747572650172"),
+        ("Delegation::Collect", "32050107666978747572650172"),
+        ("Delegation::Reconcile", "32040107666978747572650172"),
         (
             "Delegation::Publish",
-            "3205010766697874757265017201016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e00",
+            "3206010766697874757265017201016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e00",
         ),
         (
             "Response::Delegation",
-            "11017201690177016301017401010172010201010400050104636f6e76062f6272696566072f726573756c740101016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e000770656e64696e67",
+            "11017201690177016301017401010172010201010400050104636f6e76062f6272696566072f726573756c740101016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e000770656e64696e6700010170010277730100",
         ),
     ];
 

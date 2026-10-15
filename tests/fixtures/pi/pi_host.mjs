@@ -7,7 +7,8 @@
 // PI_CALLBACK=<n> after each one.
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
-import { writeFileSync, readFileSync, existsSync, appendFileSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, appendFileSync, renameSync } from "node:fs";
+import { join } from "node:path";
 
 export function assistant(stopReason) {
   return { role: "assistant", stopReason, content: [] };
@@ -82,6 +83,8 @@ export async function createHost(extensionPath, { mode = "tui", session = "sessi
 //   | session_shutdown:<reason>
 //   | mode:<tui|rpc|print> | exit
 async function main() {
+  // The acceptance proxy changes only control transport; reporting stays direct.
+  if (process.env.OVRCR_TEST_DELEGATION_CONTROL_SOCKET) process.env.OVRCR_DELEGATION_SOCKET = process.env.OVRCR_TEST_DELEGATION_CONTROL_SOCKET;
   const args = process.argv.slice(2);
   const at = args.indexOf("-e");
   const extension = at >= 0 ? args[at + 1] : null;
@@ -90,7 +93,21 @@ async function main() {
   if (host && process.env.OVRCR_TEST_DELEGATION) {
     host.state.session = `fixture-${process.pid}`;
     host.state.model = { id: args[args.indexOf("--model") + 1] || "fixture-model", provider: "test" };
+    if (args.includes("--tools") && process.env.OVRCR_TEST_DELEGATION_INITIAL_MODEL) host.state.model.id = process.env.OVRCR_TEST_DELEGATION_INITIAL_MODEL;
     await host.emit({ type: "session_start", reason: "startup" });
+    if (args.includes("--tools") && process.env.OVRCR_TEST_DELEGATION_REBIND_GATE) {
+      const gate = process.env.OVRCR_TEST_DELEGATION_REBIND_GATE;
+      const original = host.state.session;
+      void (async () => {
+        while (!existsSync(gate)) await new Promise(resolve => setTimeout(resolve, 5));
+        host.state.model = {id:"fixture-model",provider:"test"};
+        for (const session of ["replacement-B",original]) {
+          host.state.session = session;
+          await host.emit({type:"session_start",reason:"new"});
+        }
+        writeFileSync(`${gate}.done`,"rebound");
+      })();
+    }
   }
   if (process.env.OVRCR_TEST_PROBE) {
     writeFileSync(
@@ -100,13 +117,27 @@ async function main() {
   }
   process.stdout.write("PI_NATIVE_READY\n");
   let index = 0;
+  let toolPublication = 0;
+  const toolOutput = (path, value) => {
+    const temporary = `${path}.${process.pid}.${toolPublication++}.tmp`;
+    writeFileSync(temporary, JSON.stringify(value));
+    renameSync(temporary, path);
+  };
+  // Start flowing stdin only after startup awaits, immediately before readline.
+  // Otherwise an observed binding can prompt input before readline owns it.
+  if (process.env.OVRCR_TEST_DELEGATION_BYTES) {
+    const session = process.env.OVRCR_DELEGATION_SESSION;
+    if (!/^[1-9][0-9]*$/.test(session ?? "")) throw new Error("byte counter requires assigned session identity");
+    process.stdin.setRawMode?.(true);
+    process.stdin.on("data", bytes => appendFileSync(join(process.env.OVRCR_TEST_DELEGATION_BYTES, session), `${bytes.length}\n`));
+  }
   for await (const line of createInterface({ input: process.stdin })) {
     const clean = line.replaceAll("\x1b[200~", "").replaceAll("\x1b[201~", "");
     const [command, a, b, c] = clean.split(":");
     if (host && command === "tool") {
       const request = JSON.parse(clean.slice(5));
-      try { writeFileSync(request.output, JSON.stringify(await host.tool(request.name, request.args))); }
-      catch (error) { writeFileSync(request.output, JSON.stringify({ error: String(error) })); }
+      try { toolOutput(request.output, await host.tool(request.name, request.args)); }
+      catch (error) { toolOutput(request.output, { error: String(error) }); }
       continue;
     }
     if (host && process.env.OVRCR_TEST_DELEGATION && clean.startsWith("Perform the read-only research assignment in ")) {

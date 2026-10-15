@@ -322,6 +322,13 @@ impl SessionStore {
             .query_row("SELECT id FROM delegation_instance", [], |row| row.get(0))?)
     }
 
+    pub(crate) fn assignment_count(&self) -> Result<u64> {
+        let count: i64 =
+            self.connection
+                .query_row("SELECT count(*) FROM delegations", [], |row| row.get(0))?;
+        Ok(count.try_into()?)
+    }
+
     pub(crate) fn assignment(
         &self,
         handle: &str,

@@ -283,12 +283,66 @@ type TermResultHook = Arc<dyn Fn() -> Option<bool> + Send + Sync>;
 type ListingErrorHook = Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>;
 
 pub(crate) struct DelegatedInput<'a> {
+    pub request: &'a str,
     pub parent: &'a Session,
     pub parent_binding: &'a ovrcr_protocol::AgentBinding,
     pub capability: &'a str,
     pub child_binding: &'a ovrcr_protocol::AgentBinding,
     pub model: &'a str,
     pub text: &'a str,
+}
+
+#[derive(Debug)]
+pub(crate) enum DelegatedDelivery {
+    Rejected(ovrcr_protocol::InputDelivery),
+    Applied(ovrcr_protocol::InputDelivery),
+    Partial(ovrcr_protocol::InputDelivery),
+    Unknown(ovrcr_protocol::InputDelivery),
+}
+
+fn write_delegated(
+    writer: &mut dyn std::io::Write,
+    text: &[u8],
+    fail_after: Option<usize>,
+) -> DelegatedDelivery {
+    let mut bytes = text.to_vec();
+    bytes.push(b'\r');
+    let mut written = 0;
+    while written < bytes.len() {
+        let end = fail_after.unwrap_or(bytes.len()).min(bytes.len());
+        let result = if written >= end {
+            Err(std::io::Error::other("injected assigned write failure"))
+        } else {
+            writer.write(&bytes[written..end])
+        };
+        match result {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Ok(0) | Err(_) => {
+                let delivery = ovrcr_protocol::InputDelivery {
+                    written_bytes: written as u64,
+                    total_bytes: bytes.len() as u64,
+                    submit_written: false,
+                };
+                return if written == 0 {
+                    DelegatedDelivery::Rejected(delivery)
+                } else {
+                    DelegatedDelivery::Partial(delivery)
+                };
+            }
+            Ok(count) => written += count,
+        }
+    }
+    let delivery = ovrcr_protocol::InputDelivery {
+        written_bytes: written as u64,
+        total_bytes: bytes.len() as u64,
+        submit_written: true,
+    };
+    if fail_after == Some(bytes.len()) || fail_after == Some(usize::MAX) || writer.flush().is_err()
+    {
+        DelegatedDelivery::Unknown(delivery)
+    } else {
+        DelegatedDelivery::Applied(delivery)
+    }
 }
 
 pub struct Session {
@@ -935,7 +989,10 @@ impl Session {
 
     /// The caller holds SessionStore before entering here. Reporter binding changes
     /// share these state mutexes; hold them through the actual PTY write, in ID order.
-    pub(crate) fn send_delegated_text(&self, input: DelegatedInput<'_>) -> Result<bool> {
+    pub(crate) fn send_delegated_text(
+        &self,
+        input: DelegatedInput<'_>,
+    ) -> Result<DelegatedDelivery> {
         let bracketed = self
             .terminal
             .lock()
@@ -949,9 +1006,13 @@ impl Session {
             hook();
         }
         if self.id() == input.parent.id() {
-            return Ok(false);
+            return Ok(DelegatedDelivery::Rejected(ovrcr_protocol::InputDelivery {
+                written_bytes: 0,
+                total_bytes: bytes.len() as u64 + 1,
+                submit_written: false,
+            }));
         }
-        let write = |parent: &SessionState, child: &SessionState| -> Result<bool> {
+        let write = |parent: &SessionState, child: &SessionState| -> Result<DelegatedDelivery> {
             let parent_valid = parent.phase == SessionPhase::Running
                 && parent.hook_capability.as_ref().is_some_and(|token| {
                     crate::agent_runner::delegation_capability(&capability_hex(token))
@@ -973,17 +1034,15 @@ impl Session {
                             == Some(input.model)
                 });
             if !parent_valid || !child_valid {
-                return Ok(false);
+                return Ok(DelegatedDelivery::Rejected(ovrcr_protocol::InputDelivery {
+                    written_bytes: 0,
+                    total_bytes: bytes.len() as u64 + 1,
+                    submit_written: false,
+                }));
             }
             let mut writer = self.writer.lock().unwrap();
-            writer
-                .write_all(&bytes)
-                .context("write assigned text to PTY")?;
-            writer
-                .write_all(b"\r")
-                .context("submit assigned text to PTY")?;
-            writer.flush().context("flush assigned PTY")?;
-            Ok(true)
+            let failure = crate::server::delegation::take_fault("input", input.request);
+            Ok(write_delegated(&mut **writer, &bytes, failure))
         };
         if input.parent.id().0 < self.id().0 {
             let parent = input.parent.state.lock().unwrap();

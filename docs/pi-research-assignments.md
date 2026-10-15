@@ -67,6 +67,48 @@ facts:
 original handle. Do not start a replacement or resend an uncertain prompt.
 Cancelling a tool wait does not cancel the child.
 
+### Recover a lost control reply
+
+Call `ovrcr_start` with only the original handle. The extension reads the private
+original intent and reconciles that request with the Server. If Prepare never
+arrived, it submits that exact contract again. If an immutable contract publication
+was interrupted, only bytes matching the authenticated saved intent can complete
+it. Recovery advances launch or initial input only when Server metadata proves
+that operation has not crossed its effect boundary. A partial or unknown effect
+is returned for inspection and never replayed. A missing or unsafe local intent
+file requires manual recovery; creating another assignment is not recovery.
+
+Snapshots include three initial-dispatch `receipts`, keyed by original request
+and operation (`Prepare`, `Launch`, `InitialInput`). Their outcomes mean:
+
+| Outcome | Meaning |
+| --- | --- |
+| `Accepted` | Intent is durable; the effect has not started. There is no dispatch queue. |
+| `Applied` | This operation completed, not the provider task. |
+| `Rejected` | This operation is known to have produced no effect. |
+| `Partial` | A known input prefix reached the PTY; replay is unsafe. |
+| `Unknown` | The effect boundary was crossed and completion is unconfirmed. |
+
+Input receipts contain byte counts and whether submit was written, never input
+contents. A transport error has no fabricated Server receipt. Repeating an
+operation returns its known outcome; changing its original contract or identity
+is refused. These receipts do not promise exactly-once execution across crashes.
+
+The connect-only `Reconcile` request returns receipts and `resources` even when
+submission bytes are damaged. Original allocated session/run IDs remain in
+`identity`; resources identify the registered project/workspace, whether that
+workspace is still registered, and the currently present session/run/phase.
+Compare the current run with the allocated run before treating it as the original
+child. Collection still strictly validates result bytes and current attribution.
+
+Pre-receipt records are interpreted conservatively using their saved status and
+validated contract. Missing receipts alone never mean an operation was unsent.
+Unclassifiable records remain unknown. Storage is bounded to 4096 assignments
+and three initial-dispatch receipt slots each (at most 12,288 receipts). New
+admission fails before effects when full; existing and unresolved records remain
+recoverable. No receipt is silently evicted to make room. This technical bound
+does not change live-session capacity or introduce a scheduling policy.
+
 ## Child result and control
 
 The child reads the assigned brief and calls `ovrcr_publish` with its `handle`

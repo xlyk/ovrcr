@@ -1578,9 +1578,10 @@ fn delegation_rechecks_a_to_b_to_a_binding_at_the_pty_write_boundary() {
     let parent_binding = bind(&parent, &parent_auth, &parent_owner, None, "A", "parent-A");
     let child_binding = bind(&child, &child_auth, &child_owner, None, "A", "child-A");
     let ready = dir.path().join("ready");
-    assert!(
+    assert!(matches!(
         child
             .send_delegated_text(DelegatedInput {
+                request: "fixture",
                 parent: &parent,
                 parent_binding: &parent_binding,
                 capability: &crate::agent_runner::delegation_capability(&capability_hex(
@@ -1590,8 +1591,9 @@ fn delegation_rechecks_a_to_b_to_a_binding_at_the_pty_write_boundary() {
                 model: "fixture-model",
                 text: &format!("printf ready > '{}'", ready.display())
             })
-            .unwrap()
-    );
+            .unwrap(),
+        DelegatedDelivery::Applied(_)
+    ));
     let deadline = Instant::now() + Duration::from_secs(2);
     while !ready.exists() {
         assert!(Instant::now() < deadline);
@@ -1617,6 +1619,7 @@ fn delegation_rechecks_a_to_b_to_a_binding_at_the_pty_write_boundary() {
         thread::spawn(move || {
             child
                 .send_delegated_text(DelegatedInput {
+                    request: "fixture",
                     parent: &parent,
                     parent_binding: &parent_binding,
                     capability: &crate::agent_runner::delegation_capability(&capability_hex(
@@ -1649,7 +1652,7 @@ fn delegation_rechecks_a_to_b_to_a_binding_at_the_pty_write_boundary() {
     assert_ne!(child_binding.generation, a.generation);
     release.wait();
     assert!(
-        !sent.join().unwrap(),
+        matches!(sent.join().unwrap(), DelegatedDelivery::Rejected(_)),
         "stale A generation must never reach the PTY"
     );
     let fence = dir.path().join("after-write-fence");
@@ -1669,4 +1672,32 @@ fn delegation_rechecks_a_to_b_to_a_binding_at_the_pty_write_boundary() {
     drop(parent_cleanup);
     child_dispatch.join().unwrap();
     parent_dispatch.join().unwrap();
+}
+#[test]
+fn delegated_counted_writes_preserve_zero_partial_and_uncertain_effects() {
+    let mut bytes = Vec::new();
+    assert!(matches!(
+        write_delegated(&mut bytes, b"hello", Some(0)),
+        DelegatedDelivery::Rejected(_)
+    ));
+    assert!(bytes.is_empty());
+    let DelegatedDelivery::Partial(receipt) = write_delegated(&mut bytes, b"hello", Some(2)) else {
+        panic!("partial")
+    };
+    assert_eq!(bytes, b"he");
+    assert_eq!(receipt.written_bytes, 2);
+    assert_eq!(receipt.total_bytes, 6);
+    assert!(!receipt.submit_written);
+    bytes.clear();
+    let DelegatedDelivery::Unknown(receipt) = write_delegated(&mut bytes, b"hello", Some(6)) else {
+        panic!("unknown")
+    };
+    assert_eq!(bytes, b"hello\r");
+    assert!(receipt.submit_written);
+    bytes.clear();
+    assert!(matches!(
+        write_delegated(&mut bytes, b"hello", None),
+        DelegatedDelivery::Applied(_)
+    ));
+    assert_eq!(bytes, b"hello\r");
 }
