@@ -3945,22 +3945,42 @@ fn hidden_sidebar_ignores_sidebar_clicks_and_survives_a_tiny_window() {
     }
 }
 
-
 fn assigned_control_dashboard() -> Dashboard {
-    use crate::protocol::{AssignmentControl, AssignmentControlEvidence, AssignmentControlView, AssignmentIdentity};
+    use crate::protocol::{
+        AssignmentControl, AssignmentControlEvidence, AssignmentControlView, AssignmentIdentity,
+    };
     let mut dashboard = keymap_dashboard(SessionPhase::Running);
     let summary = &mut dashboard.hierarchy.projects[0].workspaces[0].sessions[0];
-    let binding = AgentBinding { provider: AgentProvider::Pi, invocation: "invocation".into(),
-        conversation: "child".into(), generation: 1 };
+    let binding = AgentBinding {
+        provider: AgentProvider::Pi,
+        invocation: "invocation".into(),
+        conversation: "child".into(),
+        generation: 1,
+    };
     summary.assignment_control = Some(AssignmentControlView {
-        handle: "assignment".into(), control: AssignmentControl::default(),
+        handle: "assignment".into(),
+        control: AssignmentControl::default(),
         evidence: Some(AssignmentControlEvidence {
-            server_lifetime: "server".into(), identity: AssignmentIdentity {
-                instance: "instance".into(), workflow: "workflow".into(), controller: "parent".into(),
-                controller_epoch: 7, task: "task".into(), attempt: 1, contract: 1,
-                request: "prepare".into(), session: Some(summary.id), run: Some(summary.run),
-            }, binding, result_version: 1, activity_revision: 1, input_revision: 0,
-            publication: None, publication_issue: None, human_input_revision: 0,
+            server_lifetime: "server".into(),
+            identity: AssignmentIdentity {
+                instance: "instance".into(),
+                workflow: "workflow".into(),
+                controller: "parent".into(),
+                controller_epoch: 7,
+                task: "task".into(),
+                attempt: 1,
+                contract: 1,
+                request: "prepare".into(),
+                session: Some(summary.id),
+                run: Some(summary.run),
+            },
+            binding,
+            result_version: 1,
+            activity_revision: 1,
+            input_revision: 0,
+            publication: None,
+            publication_issue: None,
+            human_input_revision: 0,
         }),
     });
     dashboard
@@ -3974,19 +3994,42 @@ fn assigned_child_focus_stays_passive_and_explicit_actions_share_the_keymap() {
     assert!(!dashboard.input_is_allowed());
     assert!(binding_named(&dashboard, "H").enabled());
     assert!(!binding_named(&dashboard, "A").enabled());
-    assert!(binding_named(&dashboard, "Enter").description.contains("Take control"));
+    assert!(
+        binding_named(&dashboard, "Enter")
+            .description
+            .contains("Take control")
+    );
     let _ = dashboard.run(super::keymap::Action::Focus);
     assert_eq!(dashboard.mode, InputMode::Browse);
-    assert_eq!(dashboard.hierarchy.projects[0].workspaces[0].sessions[0], summary);
+    assert_eq!(
+        dashboard.hierarchy.projects[0].workspaces[0].sessions[0],
+        summary
+    );
     assert!(dashboard.input_request(b"FORBIDDEN".to_vec(), 80).is_none());
-    let super::DashboardAction::Request(request) = dashboard.run(super::keymap::Action::TakeControl) else {
+    let super::DashboardAction::Request(request) =
+        dashboard.run(super::keymap::Action::TakeControl)
+    else {
         panic!("take control must be explicit request");
     };
-    assert!(matches!(request.request, Request::AssignmentControl(AssignmentControlRequest::Takeover {
-        session: SessionId(12), run: SessionRunId(1), expected_epoch: 1, ..
-    })));
-    assert_eq!(dashboard.hierarchy.projects[0].workspaces[0].sessions[0].assignment_control.as_ref().unwrap().control.owner, ControlOwner::Controller,
-        "an outgoing request never optimistically changes authority");
+    assert!(matches!(
+        request.request,
+        Request::AssignmentControl(AssignmentControlRequest::Takeover {
+            session: SessionId(12),
+            run: SessionRunId(1),
+            expected_epoch: 1,
+            ..
+        })
+    ));
+    assert_eq!(
+        dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
+            .assignment_control
+            .as_ref()
+            .unwrap()
+            .control
+            .owner,
+        ControlOwner::Controller,
+        "an outgoing request never optimistically changes authority"
+    );
 }
 
 #[test]
@@ -3995,29 +4038,55 @@ fn assigned_input_captures_epoch_and_return_discards_it_without_stale_reenable()
     let mut dashboard = assigned_control_dashboard();
     let mut human = dashboard.hierarchy.projects[0].workspaces[0].sessions[0].clone();
     let control = &mut human.assignment_control.as_mut().unwrap().control;
-    control.owner = ControlOwner::Human; control.epoch = 2;
-    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(human.clone()))));
+    control.owner = ControlOwner::Human;
+    control.epoch = 2;
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        human.clone(),
+    ))));
     assert!(dashboard.input_is_allowed());
     let _ = dashboard.run(super::keymap::Action::Focus);
     assert_eq!(dashboard.mode, InputMode::Terminal);
-    let queued = dashboard.input_request(b"CAPTURED_UNDER_HUMAN".to_vec(), 81).unwrap();
-    assert!(matches!(queued.request, Request::AssignedHumanInput { control_epoch: 2, session: SessionId(12), run: SessionRunId(1), .. }));
+    let queued = dashboard
+        .input_request(b"CAPTURED_UNDER_HUMAN".to_vec(), 81)
+        .unwrap();
+    assert!(matches!(
+        queued.request,
+        Request::AssignedHumanInput {
+            control_epoch: 2,
+            session: SessionId(12),
+            run: SessionRunId(1),
+            ..
+        }
+    ));
     dashboard.push_request(queued);
     let mut returned = human.clone();
     let control = &mut returned.assignment_control.as_mut().unwrap().control;
-    control.owner = ControlOwner::Controller; control.epoch = 3;
-    control.barrier = Some(ControlBarrier::HumanReturn { request: "return".into() });
-    let outgoing = dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(returned.clone()))));
-    assert!(outgoing.iter().all(|request| !matches!(request.request, Request::AssignedHumanInput { .. })));
+    control.owner = ControlOwner::Controller;
+    control.epoch = 3;
+    control.barrier = Some(ControlBarrier::HumanReturn {
+        request: "return".into(),
+    });
+    let outgoing = dashboard.handle_server_message(ServerMessage::Event(
+        ServerEvent::SessionChanged(Box::new(returned.clone())),
+    ));
+    assert!(
+        outgoing
+            .iter()
+            .all(|request| !matches!(request.request, Request::AssignedHumanInput { .. }))
+    );
     assert_eq!(dashboard.mode, InputMode::Browse);
     assert!(!dashboard.input_is_allowed());
     assert!(!binding_named(&dashboard, "H").enabled());
     assert!(!binding_named(&dashboard, "A").enabled());
     let status = super::status::SessionStatus::of(&returned, 0);
     assert!(status.activity.contains("return pending reconciliation"));
-    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(human))));
-    assert_eq!(dashboard.hierarchy.projects[0].workspaces[0].sessions[0], returned,
-        "late same-run Human snapshot must not restore input after return");
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        human,
+    ))));
+    assert_eq!(
+        dashboard.hierarchy.projects[0].workspaces[0].sessions[0], returned,
+        "late same-run Human snapshot must not restore input after return"
+    );
     assert!(dashboard.input_request(b"STALE".to_vec(), 82).is_none());
 }
 
@@ -4026,15 +4095,63 @@ fn assigned_mouse_cleanup_keeps_captured_run_view_and_control_epoch() {
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     let mut dashboard = assigned_control_dashboard();
     dashboard.mouse.held[0] = Some(super::HeldMouse {
-        session: SessionId(12), run: SessionRunId(1), control_epoch: Some(2), view_revision: 7,
-        event: MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: 10, row: 5, modifiers: KeyModifiers::NONE },
-        mode: vt100::MouseProtocolMode::PressRelease, encoding: vt100::MouseProtocolEncoding::Sgr,
+        session: SessionId(12),
+        run: SessionRunId(1),
+        control_epoch: Some(2),
+        view_revision: 7,
+        event: MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 10,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        },
+        mode: vt100::MouseProtocolMode::PressRelease,
+        encoding: vt100::MouseProtocolEncoding::Sgr,
     });
-    dashboard.hierarchy.projects[0].workspaces[0].sessions[0].assignment_control.as_mut().unwrap().control.epoch = 4;
+    dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
+        .assignment_control
+        .as_mut()
+        .unwrap()
+        .control
+        .epoch = 4;
     dashboard.cancel_mouse_gesture();
     let requests = dashboard.drain_outbox();
     assert_eq!(requests.len(), 1);
-    assert!(matches!(requests[0].request, Request::AssignedHumanInput {
-        session: SessionId(12), run: SessionRunId(1), control_epoch: 2, view_revision: 7, ..
-    }), "held release cannot borrow renewed human authority");
+    assert!(
+        matches!(
+            requests[0].request,
+            Request::AssignedHumanInput {
+                session: SessionId(12),
+                run: SessionRunId(1),
+                control_epoch: 2,
+                view_revision: 7,
+                ..
+            }
+        ),
+        "held release cannot borrow renewed human authority"
+    );
+}
+
+#[test]
+fn assigned_human_input_requires_current_binding_evidence_as_well_as_owner() {
+    let mut dashboard = assigned_control_dashboard();
+    let projected = dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
+        .assignment_control
+        .as_mut()
+        .unwrap();
+    projected.control.owner = crate::protocol::ControlOwner::Human;
+    projected.control.epoch = 2;
+    projected.evidence = None;
+    assert!(!dashboard.input_is_allowed());
+    assert!(
+        binding_named(&dashboard, "Enter")
+            .description
+            .contains("unavailable")
+    );
+    dashboard.mode = InputMode::Terminal;
+    assert!(
+        dashboard
+            .input_request(b"FORBIDDEN".to_vec(), 700)
+            .is_none()
+    );
 }

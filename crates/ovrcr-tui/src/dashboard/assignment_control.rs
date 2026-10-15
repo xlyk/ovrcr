@@ -17,6 +17,14 @@ pub(super) fn input_denial(control: Option<&AssignmentControl>) -> Option<&'stat
     }
 }
 
+pub(super) fn session_input_denial(summary: &SessionSummary) -> Option<&'static str> {
+    let view = summary.assignment_control.as_ref()?;
+    if view.evidence.is_none() {
+        return Some("current assignment binding is unavailable");
+    }
+    input_denial(Some(&view.control))
+}
+
 pub(super) fn control_clause(control: Option<&AssignmentControl>) -> Option<&'static str> {
     let control = control?;
     Some(match control.owner {
@@ -132,7 +140,7 @@ impl Dashboard {
                 run: session.run,
                 expected_epoch: view.control.epoch,
                 view_revision: self.view_revision(),
-                evidence: view.evidence.expect("validated current evidence"),
+                evidence: Box::new(view.evidence.expect("validated current evidence")),
             }
         };
         self.mode = InputMode::Browse;
@@ -172,10 +180,12 @@ mod tests {
 
     #[test]
     fn pending_return_is_visible_and_never_grants_input() {
-        let mut control = AssignmentControl::default();
-        control.barrier = Some(ControlBarrier::HumanReturn {
-            request: "return".into(),
-        });
+        let mut control = AssignmentControl {
+            barrier: Some(ControlBarrier::HumanReturn {
+                request: "return".into(),
+            }),
+            ..AssignmentControl::default()
+        };
         assert_eq!(
             control_clause(Some(&control)),
             Some("Pi return pending reconciliation")

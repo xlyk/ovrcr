@@ -827,13 +827,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             format!("Send terminal input to {target}"),
             missing
                 .or_else(|| (!running).then_some("session is not running"))
-                .or_else(|| {
-                    super::assignment_control::input_denial(
-                        selected
-                            .and_then(|s| s.assignment_control.as_ref())
-                            .map(|view| &view.control),
-                    )
-                })
+                .or_else(|| selected.and_then(super::assignment_control::session_input_denial))
                 .or_else(|| (!dashboard.input_is_allowed()).then_some(WAITING)),
             Action::Focus,
         )

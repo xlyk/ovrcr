@@ -23,8 +23,9 @@ The Server revokes human input before acknowledging the action. Status becomes
 accept a result.
 
 The parent inspects the assignment and explicitly confirms the returned state
-through `ovrcr_confirm_return`, using its exact current control epoch and
-reconciliation evidence. Inspect and Reconcile only observe state. They never
+through `ovrcr_confirm_return`, supplying `handle`, a distinct `request`, the
+`returned_request` from the HumanReturn barrier, `expected_control_epoch` from
+`control.epoch`, and exact fresh `control_evidence` as `evidence`. Inspect and Reconcile only observe state. They never
 clear this barrier or resend input. If native questions, results, human input,
 run or reporting binding change before confirmation, the captured evidence is
 stale and must be reconciled again. A changed or uncertain reporting binding

@@ -80,6 +80,6 @@ pub enum AssignmentControlRequest {
         run: SessionRunId,
         expected_epoch: u64,
         view_revision: u64,
-        evidence: AssignmentControlEvidence,
+        evidence: Box<AssignmentControlEvidence>,
     },
 }

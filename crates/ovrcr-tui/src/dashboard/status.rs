@@ -139,7 +139,10 @@ impl SessionStatus {
             unread: session.unread.as_ref().map(|_| {
                 let unread = unread_clause(session);
                 match super::assignment_control::control_clause(
-                    session.assignment_control.as_ref().map(|view| &view.control),
+                    session
+                        .assignment_control
+                        .as_ref()
+                        .map(|view| &view.control),
                 ) {
                     Some(control) => format!("{control} · {unread}"),
                     None => unread,

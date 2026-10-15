@@ -3977,12 +3977,9 @@ impl Dashboard {
             return false;
         };
         matches!(self.selected_phase(), Some(SessionPhase::Running))
-            && super::assignment_control::input_denial(
-                find_session(self, session)
-                    .and_then(|summary| summary.assignment_control.as_ref())
-                    .map(|view| &view.control),
-            )
-            .is_none()
+            && find_session(self, session)
+                .and_then(super::assignment_control::session_input_denial)
+                .is_none()
             && self.handshake.is_ready(session)
             && self
                 .handshake
@@ -4008,8 +4005,7 @@ impl Dashboard {
                 let denial = self
                     .action_session()
                     .and_then(|id| find_session(self, id))
-                    .and_then(|summary| summary.assignment_control.as_ref())
-                    .and_then(|view| super::assignment_control::input_denial(Some(&view.control)));
+                    .and_then(super::assignment_control::session_input_denial);
                 match denial {
                     Some(reason) => reason.into(),
                     None => return DashboardAction::None,

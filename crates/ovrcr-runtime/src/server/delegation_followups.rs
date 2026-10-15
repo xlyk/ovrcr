@@ -24,6 +24,8 @@ pub(crate) struct FollowupIntent {
     pub request: String,
     pub expected: AssignmentIdentity,
     pub expected_result_version: u32,
+    #[serde(default)]
+    pub expected_control_epoch: u64,
     pub target: AssignmentIdentity,
     pub result_version: u32,
     pub digest: String,
@@ -157,11 +159,11 @@ impl ServerState {
         auth: DelegationAuth,
         handle: String,
         request: String,
-        expected: (AssignmentIdentity, u32),
+        expected: (AssignmentIdentity, u32, u64),
         text: String,
         revised: Option<ResearchContract>,
     ) -> Result<AssignmentSnapshot> {
-        let (expected, expected_result_version) = expected;
+        let (expected, expected_result_version, expected_control_epoch) = expected;
         if !valid_request(&request) || text.trim().is_empty() || text.len() > 32_768 {
             return Err(lifecycle_error(
                 ErrorCode::InvalidRequest,
@@ -169,8 +171,13 @@ impl ServerState {
             ));
         }
         let mut record = self.owned_assignment(&auth, &handle)?;
-        let payload =
-            serde_json::to_vec(&(expected.clone(), expected_result_version, &text, &revised))?;
+        let payload = serde_json::to_vec(&(
+            expected.clone(),
+            expected_result_version,
+            expected_control_epoch,
+            &text,
+            &revised,
+        ))?;
         let payload_digest = digest(&payload);
         let intent = if let Some(intent) = record
             .followups
@@ -181,6 +188,7 @@ impl ServerState {
             if intent.digest != payload_digest
                 || intent.expected != expected
                 || intent.expected_result_version != expected_result_version
+                || intent.expected_control_epoch != expected_control_epoch
             {
                 return Err(lifecycle_error(
                     ErrorCode::Conflict,
@@ -195,6 +203,7 @@ impl ServerState {
             }
             intent
         } else {
+            control::require_controller(&record.control, expected_control_epoch)?;
             if expected != record.identity || expected_result_version != record.result_version {
                 return Err(lifecycle_error(
                     ErrorCode::Conflict,
@@ -248,13 +257,20 @@ impl ServerState {
             let contract = revision_contract(&original, revised.clone())?;
             let mut target = expected.clone();
             if changed {
-                target.contract = target
-                    .contract
+                target.contract = record
+                    .followups
+                    .iter()
+                    .map(|intent| intent.target.contract)
+                    .fold(target.contract, u32::max)
                     .checked_add(1)
                     .context("contract version exhausted")?;
             }
+            // Rejected old-epoch intents keep their immutable reserved files.
             let result_version = record
-                .result_version
+                .followups
+                .iter()
+                .map(|intent| intent.result_version)
+                .fold(record.result_version, u32::max)
                 .checked_add(1)
                 .context("result version exhausted")?;
             let bytes = serde_json::to_vec(&contract)?;
@@ -264,6 +280,7 @@ impl ServerState {
                 request: request.clone(),
                 expected: expected.clone(),
                 expected_result_version,
+                expected_control_epoch,
                 target: target.clone(),
                 result_version,
                 digest: payload_digest.clone(),
@@ -283,7 +300,10 @@ impl ServerState {
             self.retained.lock().save_assignment(&record)?;
             intent
         };
-        // Accepted means the PTY effect has not begun, even after interrupted file publication.
+        // Accepted requests keep their captured authority after interrupted publication.
+        if control::require_controller(&record.control, intent.expected_control_epoch).is_err() {
+            return self.reject_followup(record, &request);
+        }
         if self.assignment_session(&record).is_err() {
             return self.reject_followup(record, &request);
         }
@@ -342,7 +362,9 @@ impl ServerState {
                 "followup expected version changed before advance",
             ));
         }
+        control::require_controller(&record.control, intent.expected_control_epoch)?;
         record.previous_versions.push(record.version());
+        record.control.attribution_invalidated = false;
         record.identity = intent.target;
         record.result_version = intent.result_version;
         record.contract_digest = intent.contract_digest;
@@ -370,6 +392,9 @@ impl ServerState {
         );
         match session.send_delegated_text(crate::session::DelegatedInput {
             request: &request,
+            control: &record.control,
+            control_epoch: intent.expected_control_epoch,
+            authority: crate::session::DelegatedAuthority::Controller,
             parent: &parent,
             parent_binding: &record.parent_binding,
             capability: &auth.capability,
@@ -464,8 +489,16 @@ impl ServerState {
         identity: AssignmentIdentity,
         result_version: u32,
         result_digest: String,
+        expected_control_epoch: u64,
     ) -> Result<AssignmentSnapshot> {
         let mut record = self.owned_assignment(&auth, &handle)?;
+        control::require_controller(&record.control, expected_control_epoch)?;
+        if record.control.attribution_invalidated {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "human changes require a fresh result version before acceptance",
+            ));
+        }
         if record.identity != identity
             || record.result_version != result_version
             || record.result_digest.as_ref() != Some(&result_digest)
@@ -504,10 +537,14 @@ impl ServerState {
         let model = read_contract(&record)?.model;
         // Same retained -> ordered Session -> file/metadata boundary as scoped input.
         let store = self.retained.lock();
+        let captured_control = record.control.clone();
         session
             .with_delegated_context(
                 &crate::session::DelegatedInput {
                     request: &handle,
+                    control: &captured_control,
+                    control_epoch: expected_control_epoch,
+                    authority: crate::session::DelegatedAuthority::Controller,
                     parent: &parent,
                     parent_binding: &parent_binding,
                     capability: &auth.capability,
@@ -515,7 +552,7 @@ impl ServerState {
                     model: &model,
                     text: "",
                 },
-                || {
+                |_| {
                     publish_matching(&Directory::open(&record.root, false)?, &name, &bytes)?;
                     record.acceptance = Some(reference);
                     store.save_assignment(&record)

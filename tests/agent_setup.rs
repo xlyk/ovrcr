@@ -310,6 +310,7 @@ fn doctor_inspects_unbound_and_unavailable_sessions_without_private_values() {
                 recovery: None,
                 title: None,
                 manual_title: None,
+                assignment_control: None,
                 id: SessionId(7),
                 project: "p".into(),
                 workspace: "w".into(),
