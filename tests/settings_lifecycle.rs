@@ -115,6 +115,7 @@ fn delegation_policy_is_published_and_survives_server_restart() {
     let live = fresh();
     live.start_binary();
     for (path, value) in [
+        ("delegation.progress_deadline_ms", "12345"),
         ("delegation.enabled", "false"),
         ("delegation.allowed_harnesses", "[\"pi\", \"codex\"]"),
         ("delegation.allowed_models", "[\"test/model\"]"),
@@ -136,6 +137,7 @@ fn delegation_policy_is_published_and_survives_server_restart() {
     }
     let before = settings_event(&mut attach(&live));
     assert!(before.findings.is_empty(), "{:?}", before.findings);
+    assert_eq!(before.settings.delegation.progress_deadline_ms, 12345);
     assert!(!before.settings.delegation.enabled);
     assert_eq!(before.settings.delegation.max_live_children, 6);
     assert_eq!(before.settings.delegation.max_execution_attempts, Some(2));
@@ -145,14 +147,15 @@ fn delegation_policy_is_published_and_survives_server_restart() {
     );
     restart(&live);
     let after = settings_event(&mut attach(&live));
+    assert_eq!(after.settings.delegation.progress_deadline_ms, 12345);
     assert_eq!(after.settings.delegation, before.settings.delegation);
     for row in after
         .rows
         .iter()
         .filter(|row| row.key.starts_with("delegation."))
     {
-        assert_eq!(row.source, SettingSource::Document);
-        assert_eq!(row, before_row(&before, &row.key));
+        assert_eq!(row.source, SettingSource::Document, "{}", row.key);
+        assert_eq!(row, before_row(&before, &row.key), "{}", row.key);
     }
     let cli = cli_settings(&live).1;
     assert_eq!(cli.settings.delegation, after.settings.delegation);
