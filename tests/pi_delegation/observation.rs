@@ -20,6 +20,8 @@ impl Fixture {
         .unwrap();
         let gate = live.root.path().join("allow-result");
         let wakes = live.root.path().join("wakes.jsonl");
+        let bytes = live.root.path().join("input-bytes");
+        fs::create_dir(&bytes).unwrap();
         let host = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pi/pi_host.mjs");
         let pi = live.claude.command.parent().unwrap().join("pi");
         fs::write(&pi, include_bytes!("../fixtures/pi/research_pi.sh")).unwrap();
@@ -29,6 +31,8 @@ impl Fixture {
             ("OVRCR_TEST_PI_HOST", host.as_os_str()),
             ("OVRCR_TEST_DELEGATION_RESULT_GATE", gate.as_os_str()),
             ("OVRCR_TEST_PI_WAKE_LOG", wakes.as_os_str()),
+            // Match interactive Pi raw input; canonical PTYs truncate full contract JSON.
+            ("OVRCR_TEST_DELEGATION_BYTES", bytes.as_os_str()),
         ]);
         live.ready("observe-fixture");
         let workspaces = cli_json(&live, &["workspace", "list", "--project", PROJECT]);
@@ -505,4 +509,200 @@ fn production_ready_and_input_observations_wake_without_submission_or_acceptance
         })
     });
     assert!(!ready.result_path.exists() && !input.result_path.exists());
+}
+
+#[test]
+fn production_versioned_publications_keep_authorship_handling_and_observation_current() {
+    let f = Fixture::new(10000);
+    let first = f.start("NO_READY versioned authenticated recovery");
+    fs::write(&f.gate, "publish1").unwrap();
+    wait_file(&first.brief.with_extension("json.published"));
+    let first: AssignmentSnapshot =
+        serde_json::from_value(f.tool("ovrcr_collect", serde_json::json!({"handle":first.handle})))
+            .unwrap();
+    let publication1 = first.publication.as_ref().unwrap().identity.clone();
+    let handled: AssignmentSnapshot = serde_json::from_value(f.tool(
+        "ovrcr_mark_handled",
+        serde_json::json!({"handle":first.handle,"publication":publication1}),
+    ))
+    .unwrap();
+    assert!(handled.publication.as_ref().unwrap().handled);
+    let initial = f.observe(&[&first.handle], None, 0);
+    assert!(
+        initial.observations[0]
+            .publication
+            .as_ref()
+            .unwrap()
+            .handled
+    );
+    let first: AssignmentSnapshot = serde_json::from_value(f.tool("ovrcr_accept", serde_json::json!({"handle":first.handle,"identity":first.identity,"result_version":1,"result_digest":publication1.digest}))).unwrap();
+    fs::remove_file(&f.gate).unwrap();
+    let second: AssignmentSnapshot = serde_json::from_value(f.tool("ovrcr_followup", serde_json::json!({"handle":first.handle,"expected_identity":first.identity,"expected_result_version":1,"text":"Clarify the same scoped result."}))).unwrap();
+    assert_eq!(second.identity, first.identity);
+    assert_eq!(second.result_version, 2);
+    wait_file(&second.brief.with_extension("json.started"));
+    assert!(second.history[0].publication.as_ref().unwrap().handled);
+    assert_eq!(second.history[0].acceptance, first.acceptance_ref);
+    let pending = f.observe(&[&second.handle], Some(&initial.cursor), 0);
+    assert!(pending.observations[0].publication.is_none());
+    let bytes = serde_json::to_vec(&ResearchSubmission {
+        schema: 1,
+        identity: second.identity.clone(),
+        version: 2,
+        outcome: "success".into(),
+        summary: "Read the assigned repository README.".into(),
+        evidence: vec!["README:1 fixture".into()],
+        unresolved: vec![],
+    })
+    .unwrap();
+    fs::write(&second.result_path, &bytes).unwrap();
+    fs::set_permissions(&second.result_path, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(
+        f.observe(&[&second.handle], None, 0).observations[0].publication_issue,
+        Some(PublicationIssue::Uncommitted)
+    );
+    fs::write(&second.result_path, "corrupt version2").unwrap();
+    fs::write(&f.gate, "attempt2").unwrap();
+    wait_file(&second.brief.with_extension("json.published"));
+    assert_eq!(
+        f.observe(&[&second.handle], None, 0).observations[0].publication_issue,
+        Some(PublicationIssue::Invalid)
+    );
+    let late: serde_json::Value =
+        serde_json::from_slice(&fs::read(second.brief.with_extension("json.late-result")).unwrap())
+            .unwrap();
+    assert!(
+        late["error"]
+            .as_str()
+            .unwrap()
+            .contains("stale result version"),
+        "{late}"
+    );
+    let blocked = f.tool("ovrcr_followup", serde_json::json!({"handle":second.handle,"expected_identity":second.identity,"expected_result_version":2,"text":"Cannot supersede unresolved authenticated intent."}));
+    assert_eq!(blocked["dispatch"], "Refused", "{blocked}");
+    assert!(
+        !second
+            .brief
+            .parent()
+            .unwrap()
+            .join("brief-v3.json")
+            .exists()
+    );
+    fs::remove_file(&second.result_path).unwrap();
+    assert_eq!(
+        f.observe(&[&second.handle], None, 0).observations[0].publication_issue,
+        Some(PublicationIssue::Unavailable)
+    );
+    fs::write(&second.result_path, &bytes).unwrap();
+    fs::set_permissions(&second.result_path, fs::Permissions::from_mode(0o600)).unwrap();
+    let recovered = f.observe(&[&second.handle], None, 0);
+    assert_eq!(
+        recovered.observations[0]
+            .publication
+            .as_ref()
+            .unwrap()
+            .identity
+            .version,
+        2
+    );
+    assert!(
+        !recovered.observations[0]
+            .publication
+            .as_ref()
+            .unwrap()
+            .handled
+    );
+    let second: AssignmentSnapshot = serde_json::from_value(
+        f.tool("ovrcr_collect", serde_json::json!({"handle":second.handle})),
+    )
+    .unwrap();
+    let publication2 = second.publication.as_ref().unwrap().identity.clone();
+    assert_eq!(publication2.version, 2);
+    assert_eq!(second.submission.as_ref().unwrap().version, 2);
+    assert_eq!(second.acceptance, "pending");
+    let stale = tool_reply(
+        &f.live,
+        f.parent,
+        "ovrcr_mark_handled",
+        serde_json::json!({"handle":second.handle,"publication":publication1}),
+        &f.live.root.path().join("old-handling.json"),
+    );
+    assert!(
+        stale["error"]
+            .as_str()
+            .unwrap()
+            .contains("handled identity does not match current publication"),
+        "{stale}"
+    );
+    assert!(
+        !f.observe(&[&second.handle], None, 0).observations[0]
+            .publication
+            .as_ref()
+            .unwrap()
+            .handled
+    );
+    let handled2: AssignmentSnapshot = serde_json::from_value(f.tool(
+        "ovrcr_mark_handled",
+        serde_json::json!({"handle":second.handle,"publication":publication2}),
+    ))
+    .unwrap();
+    assert!(handled2.publication.as_ref().unwrap().handled);
+    let second: AssignmentSnapshot = serde_json::from_value(f.tool("ovrcr_accept", serde_json::json!({"handle":second.handle,"identity":second.identity,"result_version":2,"result_digest":publication2.digest}))).unwrap();
+    let brief: serde_json::Value =
+        serde_json::from_slice(&fs::read(&second.brief).unwrap()).unwrap();
+    let mut contract: ResearchContract = serde_json::from_value(brief["contract"].clone()).unwrap();
+    contract.scope = "NO_READY explain the README prerequisites under revised requirements".into();
+    fs::remove_file(&f.gate).unwrap();
+    let third: AssignmentSnapshot = serde_json::from_value(f.tool("ovrcr_followup", serde_json::json!({"handle":second.handle,"expected_identity":second.identity,"expected_result_version":2,"text":"Use the explicitly revised scoped requirements.","revised_contract":contract}))).unwrap();
+    assert_eq!(third.result_version, 3);
+    assert_eq!(third.identity.contract, 2);
+    assert_eq!(third.identity.session, first.identity.session);
+    assert_eq!(third.identity.run, first.identity.run);
+    wait_file(&third.brief.with_extension("json.started"));
+    let revised = f.observe(&[&third.handle], None, 0);
+    assert_eq!(revised.observations[0].identity, third.identity);
+    assert!(revised.observations[0].publication.is_none());
+    fs::write(&f.gate, "publish3").unwrap();
+    wait_file(&third.brief.with_extension("json.published"));
+    let third: AssignmentSnapshot =
+        serde_json::from_value(f.tool("ovrcr_collect", serde_json::json!({"handle":third.handle})))
+            .unwrap();
+    let publication3 = third.publication.as_ref().unwrap().identity.clone();
+    assert_eq!(publication3.version, 3);
+    assert!(!third.publication.as_ref().unwrap().handled);
+    let third: AssignmentSnapshot = serde_json::from_value(f.tool(
+        "ovrcr_mark_handled",
+        serde_json::json!({"handle":third.handle,"publication":publication3}),
+    ))
+    .unwrap();
+    assert!(third.publication.as_ref().unwrap().handled);
+    for version in [1, 2] {
+        let history: AssignmentSnapshot = serde_json::from_value(f.tool(
+            "ovrcr_collect",
+            serde_json::json!({"handle":third.handle,"version":version}),
+        ))
+        .unwrap();
+        assert_eq!(
+            history.historical_submission.as_ref().unwrap().version,
+            version
+        );
+        assert!(history.submission.is_none());
+        assert!(
+            history.history[(version - 1) as usize]
+                .publication
+                .as_ref()
+                .unwrap()
+                .handled
+        );
+        assert!(history.history[(version - 1) as usize].acceptance.is_some());
+    }
+    for brief in [&first.brief, &second.brief, &third.brief] {
+        assert_eq!(
+            fs::read_to_string(brief.with_extension("json.input-count"))
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
+    }
 }

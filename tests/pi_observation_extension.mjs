@@ -126,3 +126,20 @@ test("handled publication suppresses its old Ready after reconnect", async t => 
   d.push(batch([handled])); await d.nextCall();
   assert.equal(d.messages.length, 0);
 });
+
+
+test("handling result1 never suppresses a new result in the same contract", async t => {
+  const d = driver(t);
+  d.observer.watch("a");
+  const old = item("a");
+  old.publication.handled = true;
+  d.push(batch([old])); await d.nextCall();
+  assert.equal(d.messages.length, 0);
+  const next = item("a", "digest2");
+  next.publication.identity.version = 2;
+  assert.deepEqual(next.publication.identity.assignment, old.publication.identity.assignment);
+  const message = d.nextMessage();
+  d.push(batch([next])); await message;
+  assert.deepEqual(d.messages[0].message.details.handles, ["a"]);
+  assert(!d.messages[0].message.content.includes("digest2"));
+});

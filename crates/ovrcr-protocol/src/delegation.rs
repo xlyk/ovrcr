@@ -227,6 +227,7 @@ pub enum PublicationKind {
     Submission,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PublicationIdentity {
     pub assignment: AssignmentIdentity,
     pub kind: PublicationKind,
@@ -284,11 +285,6 @@ pub struct AssignmentSnapshot {
 pub struct ObservationCursor {
     pub server_epoch: String,
     pub sequence: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum PublicationKind {
-    Submission,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

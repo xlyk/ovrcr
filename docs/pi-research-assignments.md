@@ -181,8 +181,11 @@ After processing a collected result, call `ovrcr_mark_handled` with `handle`
 and the exact `publication.identity` returned by observation. Its assignment,
 kind, version and digest must match. Repeating that acknowledgement is safe;
 a different digest cannot inherit handling. Collection, wake delivery and
-handling do not accept the child's task-success claim. Acceptance stays pending.
-Unacknowledged results remain discoverable across observer reconnects.
+handling do not accept the child's task-success claim. Explicit acceptance stays
+unchanged.
+Unacknowledged results remain discoverable across observer reconnects. Prior
+handling and acceptance remain in version history. A follow-up expects a new
+publication identity; handling an old result cannot acknowledge its successor.
 
 Set the observation progress deadline through the normal settings owner:
 
@@ -227,7 +230,7 @@ workflow files follow the same trusted-user boundary as the OVRCR instance.
 Viewing or focusing a child does not grant control. While assigned, generic
 terminal send, named keystrokes and Dashboard terminal input are refused. The
 parent can still receive ordinary input. This slice has no takeover/return UI;
-those controls, automatic wake, rich restart recovery, other child
+those controls, rich restart recovery, other child
 providers and coding workspace creation are later work.
 
 ## Storage and diagnostics
