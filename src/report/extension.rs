@@ -27,6 +27,7 @@ use std::{
 /// Bounded delivery shared by every provider extension; materialized as its sibling.
 pub const TRANSPORT_SOURCE: &str = include_str!("../ovrcr-reporting-transport.mjs");
 const TRANSPORT_FILE: &str = "ovrcr-reporting-transport.mjs";
+const DELEGATION_OBSERVER_SOURCE: &str = include_str!("../ovrcr-delegation-observer.mjs");
 const BINARY_TOKEN: &str = "__OVRCR_BINARY__";
 
 /// Everything that differs between one extension-reporting provider and the next.
@@ -69,6 +70,9 @@ fn materialize_extension(harness: &Harness) -> std::io::Result<(PathBuf, PathBuf
         Ok(path)
     };
     write(TRANSPORT_FILE, TRANSPORT_SOURCE)?;
+    if harness.provider == AgentProvider::Pi {
+        write("ovrcr-delegation-observer.mjs", DELEGATION_OBSERVER_SOURCE)?;
+    }
     let path = write(harness.extension_file, &source)?;
     Ok((dir, path))
 }

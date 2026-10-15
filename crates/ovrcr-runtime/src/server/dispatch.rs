@@ -412,6 +412,7 @@ fn persist_session_exit(state: &ServerState, session: &Session) {
 pub(super) fn publish_session_changed(state: &ServerState, id: SessionId) {
     state.refresh_claude_quota();
     if let Some(summary) = state.session_summary(id) {
+        state.delegation_observations.session_changed(&summary);
         state
             .dashboard
             .try_send(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(

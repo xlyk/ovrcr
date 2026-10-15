@@ -455,6 +455,7 @@ pub enum Response {
     ITermFocusPrepared(Option<crate::BridgeActivationTarget>),
     BridgeOwner(crate::BridgeOwnerResult),
     Delegation(Box<crate::AssignmentSnapshot>),
+    DelegationObservation(Box<crate::DelegationObservationBatch>),
 }
 
 /// Which create/remove/close a Lifecycle job performed.
@@ -1593,9 +1594,34 @@ mod wire_snapshot {
             (
                 "Publish",
                 crate::DelegationRequest::Publish {
-                    auth,
+                    auth: auth.clone(),
                     handle: "r".into(),
                     submission: submission.clone(),
+                },
+            ),
+            (
+                "Observe",
+                crate::DelegationRequest::Observe {
+                    auth: auth.clone(),
+                    handles: vec!["r".into()],
+                    after: Some(crate::ObservationCursor {
+                        server_epoch: "epoch".into(),
+                        sequence: 3,
+                    }),
+                    wait_ms: 1000,
+                },
+            ),
+            (
+                "MarkHandled",
+                crate::DelegationRequest::MarkHandled {
+                    auth,
+                    handle: "r".into(),
+                    publication: crate::PublicationIdentity {
+                        assignment: identity.clone(),
+                        kind: crate::PublicationKind::Submission,
+                        version: 1,
+                        digest: "digest".into(),
+                    },
                 },
             ),
         ] {
@@ -1608,7 +1634,7 @@ mod wire_snapshot {
             "Response::Delegation".into(),
             encode(&Response::Delegation(Box::new(crate::AssignmentSnapshot {
                 handle: "r".into(),
-                identity,
+                identity: identity.clone(),
                 dispatch: crate::DispatchStatus::Applied,
                 reason: None,
                 activity: AgentActivity::ResponseReady,
@@ -1631,6 +1657,43 @@ mod wire_snapshot {
                     current_session: None,
                 },
             }))),
+        ));
+        all.push((
+            "Response::DelegationObservation".into(),
+            encode(&Response::DelegationObservation(Box::new(
+                crate::DelegationObservationBatch {
+                    cursor: crate::ObservationCursor {
+                        server_epoch: "epoch".into(),
+                        sequence: 3,
+                    },
+                    status: crate::ObservationStatus::ReconcileRequired,
+                    progress_deadline_ms: 300000,
+                    observations: vec![crate::DelegationObservation {
+                        handle: "r".into(),
+                        identity: identity.clone(),
+                        binding: None,
+                        activity: None,
+                        activity_revision: 1,
+                        input_requests: vec![],
+                        input_revision: 2,
+                        health: Some(crate::ReporterHealth::Connected),
+                        current: true,
+                        publication: Some(crate::PublicationState {
+                            identity: crate::PublicationIdentity {
+                                assignment: identity,
+                                kind: crate::PublicationKind::Submission,
+                                version: 1,
+                                digest: "digest".into(),
+                            },
+                            handled: false,
+                        }),
+                        publication_issue: Some(crate::PublicationIssue::Invalid),
+                        last_progress_unix_ms: 100,
+                        stalled: false,
+                        progress_unresolved: true,
+                    }],
+                },
+            ))),
         ));
         all
     }
@@ -1692,13 +1755,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a042e017301630168016c0104",
+            "2a042f017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f042e017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f042f017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -1729,18 +1792,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d042e0000"),
+        ("Response::NotificationNavigation", "0d042f0000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e042e017301630168016c0104",
+            "0e01016e042f017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f010708090101690101042e017301630168016c0164",
+            "0f010708090101690101042f017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "10042e010708090101690101042e017301630168016c0164",
+            "10042f010708090101690101042f017301630168016c0164",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -1755,7 +1818,7 @@ mod wire_snapshot {
         ),
         (
             "ServerEvent::SettingsChanged",
-            "05072f642e746f6d6c0500000100000002010470692f6d08666561747572652f01022f63010161010162020170010161017100000005636f64657801022f680467726f6b00000000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
+            "05072f642e746f6d6c0500000100000002010470692f6d08666561747572652f01022f63010161010162020170010161017100000005636f64657801022f680467726f6b000000fce093040000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
         ),
         (
             "ServerEvent::Recorded",
@@ -1764,7 +1827,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e042e017301630168016c0104",
+            "08016e042f017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -1937,8 +2000,20 @@ mod wire_snapshot {
             "3209010766697874757265017201016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e00",
         ),
         (
+            "Delegation::Observe",
+            "320a010766697874757265010172010565706f636803fbe803",
+        ),
+        (
+            "Delegation::MarkHandled",
+            "320b01076669787475726501720169017701630101740101017201020101000106646967657374",
+        ),
+        (
             "Response::Delegation",
             "11017201690177016301017401010172010201010400050104636f6e76062f6272696566072f726573756c740101016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e000770656e64696e6701000000000000010170010277730100",
+        ),
+        (
+            "Response::DelegationObservation",
+            "120565706f63680302fce093040001017201690177016301017401010172010201010000010002010001010169017701630101740101017201020101000106646967657374000102640001",
         ),
     ];
 

@@ -1485,6 +1485,19 @@ impl Default for QuotaSettings {
     }
 }
 
+/// Observation stall reporting only; a deadline never interrupts child work.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DelegationSettings {
+    pub progress_deadline_ms: u64,
+}
+impl Default for DelegationSettings {
+    fn default() -> Self {
+        Self {
+            progress_deadline_ms: 300_000,
+        }
+    }
+}
+
 /// Every effective value. `picker_roots` is already `~`-expanded.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
@@ -1506,6 +1519,8 @@ pub struct Settings {
     pub agents: Vec<AgentOverride>,
     pub launch_choices: BTreeMap<String, LaunchChoice>,
     pub quota: QuotaSettings,
+    #[serde(default)]
+    pub delegation: DelegationSettings,
     /// Consent setting, off until set. When on, a dirty feature worktree is
     /// pushed to `origin/wip/<branch>` when that workspace is removed and when
     /// the server shuts down, without a prompt. The checkout's own branch is
@@ -1544,6 +1559,7 @@ impl Default for Settings {
             agents: Vec::new(),
             launch_choices: BTreeMap::new(),
             quota: QuotaSettings::default(),
+            delegation: DelegationSettings::default(),
             save_uncommitted_work: false,
         }
     }

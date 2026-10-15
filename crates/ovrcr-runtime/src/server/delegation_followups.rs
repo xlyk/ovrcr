@@ -383,6 +383,7 @@ impl ServerState {
             Ok(crate::session::DelegatedDelivery::Applied(input)) => {
                 if take_fault("input-after-effect", &request).is_some() {
                     drop(store);
+                    self.delegation_observations.invalidate(session.id());
                     return self.reconciliation_snapshot(record);
                 }
                 record.dispatch = DispatchStatus::Applied;
@@ -413,6 +414,9 @@ impl ServerState {
         }
         store.save_assignment(&record)?;
         drop(store);
+        if let Some(session) = record.identity.session {
+            self.delegation_observations.invalidate(session);
+        }
         self.reconciliation_snapshot(record)
     }
 

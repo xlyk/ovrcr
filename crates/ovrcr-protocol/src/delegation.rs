@@ -1,5 +1,8 @@
 //! The first delegation slice: one read-only Pi assignment and explicit collection.
-use crate::{AgentActivity, SessionId, SessionPhase, SessionRunId};
+use crate::{
+    ActivitySample, AgentActivity, AgentBinding, InputRequest, ReporterHealth, SessionId,
+    SessionPhase, SessionRunId,
+};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -224,6 +227,7 @@ pub enum PublicationKind {
     Submission,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PublicationIdentity {
     pub assignment: AssignmentIdentity,
     pub kind: PublicationKind,
@@ -274,6 +278,56 @@ pub struct AssignmentSnapshot {
     pub historical_submission: Option<ResearchSubmission>,
     pub receipts: Vec<DispatchReceipt>,
     pub resources: AssignmentResources,
+}
+
+/// A hint cursor is valid only for one Server lifetime. It is not task completion.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObservationCursor {
+    pub server_epoch: String,
+    pub sequence: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PublicationIssue {
+    Uncommitted,
+    Unavailable,
+    Invalid,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DelegationObservation {
+    pub handle: String,
+    pub identity: AssignmentIdentity,
+    pub binding: Option<AgentBinding>,
+    pub activity: Option<ActivitySample>,
+    pub activity_revision: u64,
+    pub input_requests: Vec<InputRequest>,
+    pub input_revision: u64,
+    pub health: Option<ReporterHealth>,
+    /// False means retained evidence must not satisfy the current assignment.
+    pub current: bool,
+    pub publication: Option<PublicationState>,
+    pub publication_issue: Option<PublicationIssue>,
+    pub last_progress_unix_ms: u64,
+    pub stalled: bool,
+    /// A gap/epoch change cannot manufacture fresh progress from a snapshot.
+    pub progress_unresolved: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ObservationStatus {
+    Changed,
+    Deadline,
+    ReconcileRequired,
+    Stalled,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DelegationObservationBatch {
+    pub cursor: ObservationCursor,
+    pub status: ObservationStatus,
+    pub progress_deadline_ms: u64,
+    pub observations: Vec<DelegationObservation>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -329,6 +383,17 @@ pub enum DelegationRequest {
         auth: DelegationAuth,
         handle: String,
         submission: ResearchSubmission,
+    },
+    Observe {
+        auth: DelegationAuth,
+        handles: Vec<String>,
+        after: Option<ObservationCursor>,
+        wait_ms: u64,
+    },
+    MarkHandled {
+        auth: DelegationAuth,
+        handle: String,
+        publication: PublicationIdentity,
     },
 }
 

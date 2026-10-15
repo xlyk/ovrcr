@@ -78,6 +78,8 @@ enum Kind {
     Path,
     /// TOML value text written as typed, such as an argv array literal.
     Toml,
+    /// A typed TOML value with its catalog description retained for editing.
+    Typed(&'static str),
     /// No in-place edit; the row's children are.
     Fixed,
 }
@@ -432,6 +434,7 @@ fn editor_kind(
             Kind::Toggle(entry.value(settings).as_deref() == Some("true"))
         }
         ovrcr_protocol::Shape::Text(_) => Kind::Text,
+        ovrcr_protocol::Shape::Typed(expected) => Kind::Typed(expected),
         ovrcr_protocol::Shape::Path(_) => Kind::Path,
         ovrcr_protocol::Shape::Pick { options, .. } => Kind::Pick(
             options
@@ -808,7 +811,7 @@ impl Dashboard {
                 edit.text.clear();
             }
             Kind::Path => edit.picker = Some(PathPicker::new()),
-            Kind::Text | Kind::Toml => {}
+            Kind::Text | Kind::Toml | Kind::Typed(_) => {}
         }
         self.settings_editor.cursor = TextCursor::default();
         self.settings_editor.edit = Some(edit);
@@ -945,7 +948,7 @@ impl Dashboard {
                     return DashboardAction::Redraw;
                 }
             },
-            (Kind::Toml, _) => edit.text.trim().to_string(),
+            (Kind::Toml | Kind::Typed(_), _) => edit.text.trim().to_string(),
             _ => toml_string(edit.text.trim()),
         };
         let text = edit.text.trim();
@@ -1177,6 +1180,9 @@ impl Dashboard {
                             "TOML array, e.g. [\"claude\", \"--verbose\"] · Enter save · Esc cancel"
                                 .into()
                         }
+                        (Kind::Typed(expected), _) => {
+                            format!("Enter {expected} · Enter save · Esc cancel")
+                        }
                         (Kind::Path, _) => "Tab complete · Enter save · Esc cancel".into(),
                         _ => "Enter save · Esc cancel".into(),
                     },
@@ -1270,6 +1276,53 @@ mod tests {
     }
 
     #[test]
+    fn progress_deadline_label_and_edit_hint_describe_an_integer() {
+        let mut d = editor(false);
+        d.handle_server_message(ovrcr_protocol::ServerMessage::Event(
+            ovrcr_protocol::ServerEvent::SettingsChanged(Box::new(report(
+                Settings::default(),
+                vec![(
+                    "delegation.progress_deadline_ms",
+                    Some("300000"),
+                    SettingSource::Default,
+                )],
+            ))),
+        ));
+        d.key(KeyCode::Char('/'));
+        for ch in "delegation.progress_deadline_ms".chars() {
+            d.key(KeyCode::Char(ch));
+        }
+        d.key(KeyCode::Enter);
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+        d.draw(&mut terminal).unwrap();
+        let text = |terminal: &ratatui::Terminal<ratatui::backend::TestBackend>| {
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+        };
+        assert!(text(&terminal).contains(&format!("{:<27}300000", "Progress deadline (ms)")));
+        d.key(KeyCode::Enter);
+        d.draw(&mut terminal).unwrap();
+        let drawn = text(&terminal);
+        assert!(drawn.contains("an integer from 1 to 86400000"), "{drawn}");
+        assert!(!drawn.contains("TOML array"), "{drawn}");
+        let DashboardAction::Request(ClientMessage {
+            request: Request::SetSetting { path, value },
+            ..
+        }) = d.key(KeyCode::Enter)
+        else {
+            panic!("expected typed setting request");
+        };
+        assert_eq!(path, "delegation.progress_deadline_ms");
+        assert_eq!(value.as_deref(), Some("300000"));
+    }
+
+    #[test]
     fn groups_come_in_the_documented_order() {
         let mut headers: Vec<_> = items(&report(Settings::default(), Vec::new()), &[])
             .into_iter()
@@ -1285,7 +1338,8 @@ mod tests {
                 "Titles",
                 "Usage",
                 "Agents",
-                "Remembered launches"
+                "Remembered launches",
+                "Delegation"
             ]
         );
     }

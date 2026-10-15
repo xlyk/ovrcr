@@ -2174,6 +2174,9 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     );
 
     dashboard.send(b"[gv")?;
+    // OSC52 is emitted before the deferred redraw. Establish Copy first so
+    // the later Browse wait cannot accept the unchanged pre-Copy frame.
+    dashboard.wait_for_screen(|screen| screen.contains("COPY  "), wait_deadline())?;
     dashboard.send(b"lllllly")?;
     dashboard.wait_for_output(b"\x1b]52;c;V0FJVElORw==\x1b\\", wait_deadline())?;
     dashboard.send(b"\x1b")?;

@@ -300,7 +300,7 @@ fn digest(bytes: &[u8]) -> String {
 }
 
 impl ServerState {
-    fn delegation_auth(
+    pub(super) fn delegation_auth(
         &self,
         auth: &DelegationAuth,
     ) -> Result<std::sync::Arc<crate::session::Session>> {
@@ -316,7 +316,7 @@ impl ServerState {
         Ok(session)
     }
 
-    fn owned_assignment(&self, auth: &DelegationAuth, handle: &str) -> Result<Record> {
+    pub(super) fn owned_assignment(&self, auth: &DelegationAuth, handle: &str) -> Result<Record> {
         let parent = self.delegation_auth(auth)?;
         let mut record = self
             .retained
@@ -761,12 +761,60 @@ impl ServerState {
                     result_digest,
                 );
             }
-            DelegationRequest::Inspect { auth, handle }
-            | DelegationRequest::Collect { auth, handle } => {
+            DelegationRequest::Inspect { auth, handle } => {
                 return self.assignment_snapshot(self.owned_assignment(&auth, &handle)?);
             }
             DelegationRequest::Reconcile { auth, request } => {
                 return self.reconciliation_snapshot(self.owned_assignment(&auth, &request)?);
+            }
+            DelegationRequest::Collect { auth, handle } => {
+                let mut record = self.owned_assignment(&auth, &handle)?;
+                if let Some(publication) = self
+                    .assignment_publication(&record)
+                    .map_err(publication_error)?
+                    && record.result_digest.is_none()
+                {
+                    record.result_digest = Some(publication.digest);
+                    self.retained.lock().save_assignment(&record)?;
+                }
+                return self.assignment_snapshot(record);
+            }
+            DelegationRequest::MarkHandled {
+                auth,
+                handle,
+                publication,
+            } => {
+                let mut record = self.owned_assignment(&auth, &handle)?;
+                let parent = self.delegation_auth(&auth)?;
+                let child = self.assignment_session(&record)?;
+                // Reporter binding replacements use this same retained -> Session order.
+                // Keep the verified controller/child generations stable through the write.
+                let store = self.retained.lock();
+                if parent.run() != record.parent_run
+                    || parent.summary().agent.as_ref().map(|a| &a.binding)
+                        != Some(&record.parent_binding)
+                    || Some(child.run()) != record.identity.run
+                    || child.summary().agent.as_ref().map(|a| &a.binding) != record.binding.as_ref()
+                {
+                    bail!("assignment controller or child conversation changed");
+                }
+                let current = self
+                    .assignment_publication(&record)
+                    .map_err(publication_error)?;
+                if current.as_ref() != Some(&publication) {
+                    bail!("handled identity does not match current publication");
+                }
+                record.result_digest = Some(publication.digest.clone());
+                record.handled_publication = Some(publication);
+                store.save_assignment(&record)?;
+                drop(store);
+                if let Some(session) = record.identity.session {
+                    self.delegation_observations.invalidate(session);
+                }
+                return self.assignment_snapshot(record);
+            }
+            DelegationRequest::Observe { .. } => {
+                bail!("Observe must use the bounded control observation path")
             }
             DelegationRequest::Publish {
                 auth,
@@ -812,28 +860,108 @@ impl ServerState {
                     .binding
                     .clone()
                     .context("child assignment is not bound")?;
+                let publication = PublicationIdentity {
+                    assignment: record.identity.clone(),
+                    kind: PublicationKind::Submission,
+                    version: submission.version,
+                    digest: hash.clone(),
+                };
+                if record.publication_intent.as_ref().is_some_and(|intent| {
+                    intent.identity != publication || intent.binding != binding
+                }) {
+                    bail!("submission version has a different authenticated publication intent");
+                }
                 let store = self.retained.lock();
                 session.with_delegation_binding(&auth.capability, &binding, || {
+                    record.publication_intent = Some(PublicationIntent {
+                        identity: publication,
+                        binding: binding.clone(),
+                    });
+                    store.save_assignment(&record)?;
                     let directory = Directory::open(&record.root, false)?;
                     if let Err(error) = directory.publish(
                         &format!("submission-v{}.json", record.result_version),
                         &bytes,
-                    ) && directory
-                        .read(&format!("submission-v{}.json", record.result_version))
-                        .ok()
-                        .as_ref()
-                        != Some(&bytes)
-                    {
-                        return Err(error);
+                    ) {
+                        if directory
+                            .read(&format!("submission-v{}.json", record.result_version))
+                            .ok()
+                            .as_ref()
+                            != Some(&bytes)
+                        {
+                            return Err(error);
+                        }
+                        directory.sync()?;
                     }
                     record.result_digest = Some(hash);
                     store.save_assignment(&record)
                 })?;
                 drop(store);
+                self.delegation_observations.invalidate(auth.session);
                 record
             }
         };
         self.reconciliation_snapshot(record)
+    }
+
+    /// Authorship comes from durable child authorization, never parseable file presence.
+    pub(super) fn assignment_publication(
+        &self,
+        record: &Record,
+    ) -> std::result::Result<Option<PublicationIdentity>, PublicationIssue> {
+        let directory =
+            Directory::open(&record.root, false).map_err(|_| PublicationIssue::Unavailable)?;
+        let expected = if let Some(intent) = &record.publication_intent {
+            if intent.identity.assignment != record.identity
+                || intent.identity.version != record.result_version
+                || intent.identity.kind != PublicationKind::Submission
+                || record.binding.as_ref() != Some(&intent.binding)
+                || record
+                    .result_digest
+                    .as_ref()
+                    .is_some_and(|d| d != &intent.identity.digest)
+            {
+                return Err(PublicationIssue::Invalid);
+            }
+            Some(intent.identity.clone())
+        } else {
+            record
+                .result_digest
+                .as_ref()
+                .map(|digest| PublicationIdentity {
+                    assignment: record.identity.clone(),
+                    kind: PublicationKind::Submission,
+                    version: record.result_version,
+                    digest: digest.clone(),
+                })
+        };
+        let bytes = match directory.read(&format!("submission-v{}.json", record.result_version)) {
+            Ok(bytes) => bytes,
+            Err(error)
+                if expected.is_none()
+                    && error.chain().any(|e| {
+                        e.downcast_ref::<std::io::Error>()
+                            .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+                    }) =>
+            {
+                return Ok(None);
+            }
+            Err(_) => return Err(PublicationIssue::Unavailable),
+        };
+        let expected = expected.ok_or(PublicationIssue::Uncommitted)?;
+        if digest(&bytes) != expected.digest {
+            return Err(PublicationIssue::Invalid);
+        }
+        let mut version = record.version();
+        version.result_digest = Some(expected.digest.clone());
+        read_version_submission(record, &version).map_err(|_| PublicationIssue::Invalid)?;
+        // A previous link may have succeeded while its directory fsync failed.
+        if record.result_digest.is_none() {
+            directory
+                .sync()
+                .map_err(|_| PublicationIssue::Unavailable)?;
+        }
+        Ok(Some(expected))
     }
 
     fn assignment_session(
@@ -1045,6 +1173,15 @@ impl ServerState {
             resources,
         })
     }
+}
+
+fn publication_error(issue: PublicationIssue) -> anyhow::Error {
+    anyhow::anyhow!(match issue {
+        PublicationIssue::Invalid => "submission publication changed or is partial",
+        PublicationIssue::Unavailable =>
+            "submission publication unavailable; authenticated intent is retained",
+        PublicationIssue::Uncommitted => "publication has no authenticated child intent",
+    })
 }
 
 fn read_contract(record: &Record) -> Result<ResearchContract> {

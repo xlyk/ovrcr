@@ -4,7 +4,7 @@ A managed Pi parent can start one read-only assignment in an existing OVRCR
 workspace, keep working, and explicitly collect the child's result. Launch Pi
 through `ovrcr agent run pi -- pi` or the Dashboard picker. The managed extension
 registers `ovrcr_start`, `ovrcr_inspect`, `ovrcr_collect`, `ovrcr_followup`,
-`ovrcr_accept` and `ovrcr_publish`.
+`ovrcr_accept`, `ovrcr_publish`, `ovrcr_wait` and `ovrcr_mark_handled`.
 A plain Pi process has no delegation authority.
 
 ## Start and collect
@@ -158,6 +158,58 @@ record it, and the child binding must still match. Repeating the same acceptance
 is idempotent. A child report, Ready signal, delivery receipt, local edit or
 collection never accepts work. No dependency or review engine is added here.
 
+## Wake, wait and handling
+
+The managed parent automatically observes assignments it starts or inspects.
+A result file can wake idle Pi or queue a native follow-up while Pi is busy,
+even when the child emits no Ready. Wake messages contain handles and status
+only. Pi retrieves submission contents separately with `ovrcr_collect`.
+These observations use a control connection and leave the existing Dashboard
+and its Unread acknowledgements alone.
+
+Call `ovrcr_wait` with `{"handles":["..."],"wait_ms":1000}` to reconcile a batch.
+The response contains a `cursor`, content-free observations, publication
+identities and handling state. Pass the returned cursor as `after` on the next
+call to wait for changes. A batch holds at most 64 distinct handles and waits
+at most 20 seconds. These are observation bounds, not a child-concurrency cap.
+The 256-entry hint ring returns `ReconcileRequired` after overflow or a foreign
+Server cursor; files and durable identities remain authoritative. Disconnects
+are explicit and the observer reconnects through the same public control path.
+`/ovrcr-observe-reconnect` restarts observation without changing child work.
+
+After processing a collected result, call `ovrcr_mark_handled` with `handle`
+and the exact `publication.identity` returned by observation. Its assignment,
+kind, version and digest must match. Repeating that acknowledgement is safe;
+a different digest cannot inherit handling. Collection, wake delivery and
+handling do not accept the child's task-success claim. Explicit acceptance stays
+unchanged.
+Unacknowledged results remain discoverable across observer reconnects. Prior
+handling and acceptance remain in version history. A follow-up expects a new
+publication identity; handling an old result cannot acknowledge its successor.
+
+Set the observation progress deadline through the normal settings owner:
+
+```toml
+[delegation]
+progress_deadline_ms = 300000
+```
+
+The default is five minutes; valid values are 1 through 86400000 milliseconds.
+A silent child becomes stalled/incomplete without being interrupted. Private
+parent observation checkpoints preserve the deadline across reconnects.
+Repeated polls, title/metrics updates, an epoch change or unproven gapped samples
+do not manufacture progress. Future persisted times are unresolved/expired.
+Cancelling `ovrcr_wait` aborts only that observation helper. The same child run
+continues and its later result remains collectable.
+
+Before publication becomes visible, the Server records an authenticated child
+intent containing the exact assignment, original binding, version and digest.
+File-only reconciliation can recover matching complete bytes after publication
+failure or a lost wake. A parseable file without that intent cannot acquire
+child authorship. Partial, changed, foreign and escaping files stay invalid;
+unresolved intent and identifiable late evidence are retained. A stale run or
+conversation cannot satisfy current collection or handling.
+
 ## Child result and control
 
 The child reads the assigned brief and calls `ovrcr_publish` with its `handle`
@@ -178,7 +230,7 @@ workflow files follow the same trusted-user boundary as the OVRCR instance.
 Viewing or focusing a child does not grant control. While assigned, generic
 terminal send, named keystrokes and Dashboard terminal input are refused. The
 parent can still receive ordinary input. This slice has no takeover/return UI;
-those controls, automatic wake, rich restart recovery, other child
+those controls, rich restart recovery, other child
 providers and coding workspace creation are later work.
 
 ## Storage and diagnostics
@@ -201,7 +253,9 @@ are intentional task artifacts.
 
 Deterministic coverage is in `tests/pi_delegation.rs` (real managed PTYs, binary
 Server, public tools and files) and `tests/pi_delegation_extension.mjs` (public
-tool schema and missing-input behavior). `tests/fixtures/pi/research_pi.sh`
+tool schema and missing-input behavior). Observation integration lives in
+`tests/pi_delegation/observation.rs` within the same binary;
+`tests/pi_observation_extension.mjs` covers continuation coalescing and cancellation. `tests/fixtures/pi/research_pi.sh`
 replaces model work for acceptance; it is not installed-provider evidence.
 Native and paid-provider acceptance must be recorded separately on the reviewed
 revision.
