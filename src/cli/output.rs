@@ -58,6 +58,7 @@ pub(super) fn workspace_value(
         .count();
     let name = workspace.branch.as_str();
     json!({
+        "id": workspace.id,
         "project": project,
         "name": name,
         "path": path_text(&workspace.path),

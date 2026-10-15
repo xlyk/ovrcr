@@ -124,6 +124,53 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn workspace_json_discovers_stable_id_distinct_from_checkout_branch() {
+    let mut fixture = Fixture::new();
+    fixture.capture();
+    let workspaces = fixture.json(&["workspace", "list", "--project", "fixture"]);
+    let listed = workspaces
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|workspace| workspace["branch"] == "feature/demo")
+        .unwrap();
+    let id = listed["id"].as_str().expect("public workspace ID");
+    assert!(!id.is_empty());
+    assert_ne!(id, "feature/demo");
+    let selected = fixture.json(&[
+        "workspace",
+        "get",
+        "--project",
+        "fixture",
+        "--branch",
+        "feature/demo",
+    ]);
+    assert_eq!(selected, *listed);
+    assert_eq!(selected["name"], "feature/demo");
+    assert_eq!(selected["project"], "fixture");
+    let path = selected["path"].as_str().unwrap();
+    live::git(
+        std::path::Path::new(path),
+        &["switch", "-c", "feature/renamed"],
+    );
+    let renamed = fixture.json(&["workspace", "get", "--project", "fixture", "--path", path]);
+    assert_eq!(
+        renamed["id"], id,
+        "checkout changes must preserve workspace identity"
+    );
+    assert_eq!(renamed["branch"], "feature/renamed");
+    assert_eq!(renamed["name"], "feature/renamed");
+    let workspaces = fixture.json(&["workspace", "list", "--project", "fixture"]);
+    assert!(
+        workspaces
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|workspace| { workspace["id"] == id && workspace["branch"] == "feature/renamed" })
+    );
+}
+
+#[test]
 fn terminal_cli_drives_real_session_and_preserves_workspace_removal_guards() {
     let mut fixture = Fixture::new();
     fixture.capture();

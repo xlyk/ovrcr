@@ -1,7 +1,7 @@
 //! Public Pi tools -> control CLI -> isolated binary Server -> real managed child PTY.
 #[path = "support/live.rs"]
 mod live;
-use live::{Live, PROJECT, WORKSPACE};
+use live::{Live, PROJECT};
 use ovrcr::protocol::*;
 use std::{
     fs,
@@ -9,6 +9,16 @@ use std::{
     path::Path,
     time::{Duration, Instant},
 };
+
+fn cli_json(live: &Live, args: &[&str]) -> serde_json::Value {
+    let output = live.command().arg("--json").args(args).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
 
 fn wait_file(path: &Path) {
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -101,10 +111,34 @@ fn public_pi_research_assignment_launches_collects_and_fences_real_child() {
         ("OVRCR_TEST_DELEGATION_RESULT_GATE", gate.as_os_str()),
     ]);
     live.ready("research-fixture");
+    let workspaces = cli_json(&live, &["workspace", "list", "--project", PROJECT]);
+    let workspace = workspaces
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|workspace| workspace["branch"] == "research-fixture")
+        .unwrap();
+    let workspace_id = workspace["id"]
+        .as_str()
+        .expect("public workspace ID")
+        .to_owned();
+    assert_ne!(workspace_id, "research-fixture");
+    let selected = cli_json(
+        &live,
+        &[
+            "workspace",
+            "get",
+            "--project",
+            PROJECT,
+            "--branch",
+            "research-fixture",
+        ],
+    );
+    assert_eq!(selected["id"], workspace_id);
     let Response::CreatedSession(parent) =
         live.request(Request::CreateSession(CreateSessionRequest {
             project: PROJECT.into(),
-            workspace: WORKSPACE.into(),
+            workspace: workspace_id.clone(),
             name: "parent".into(),
             label: None,
             argv: vec![
@@ -143,7 +177,7 @@ fn public_pi_research_assignment_launches_collects_and_fences_real_child() {
         &live,
         parent.id,
         "ovrcr_start",
-        serde_json::json!({"project":PROJECT,"workspace":WORKSPACE,"scope":"Read README. Do not change files.","model_provider":"test","model":"fixture-model","acceptance_evidence":["README citation"]}),
+        serde_json::json!({"project":PROJECT,"workspace":workspace_id,"scope":"Read README. Do not change files.","model_provider":"test","model":"fixture-model","acceptance_evidence":["README citation"]}),
         &live.root.path().join("start.json"),
     );
     let started: AssignmentSnapshot =
@@ -162,6 +196,7 @@ fn public_pi_research_assignment_launches_collects_and_fences_real_child() {
     };
     assert!(sessions.iter().any(|s| s.id == child
         && s.run == run
+        && s.workspace == workspace_id
         && s.kind == SessionKind::Agent { name: "pi".into() }));
     for request in [
         Request::SendTerminal {
@@ -328,7 +363,7 @@ fn public_pi_research_assignment_launches_collects_and_fences_real_child() {
     assert!(!events.contains("Read README. Do not change files."));
     assert!(!events.contains("Read the assigned repository README."));
     // Known refusal stays separate from an uncertain transport outcome.
-    let contract = serde_json::json!({"project":PROJECT,"workspace":WORKSPACE,"scope":"Read README", "model_provider":"test", "model":"missing-model", "acceptance_evidence":["README citation"]});
+    let contract = serde_json::json!({"project":PROJECT,"workspace":workspace_id,"scope":"Read README", "model_provider":"test", "model":"missing-model", "acceptance_evidence":["README citation"]});
     let refused = tool(
         &live,
         parent.id,
@@ -443,7 +478,7 @@ fn public_pi_research_assignment_launches_collects_and_fences_real_child() {
         let Response::CreatedSession(session) =
             live.request(Request::CreateSession(CreateSessionRequest {
                 project: PROJECT.into(),
-                workspace: WORKSPACE.into(),
+                workspace: workspace_id.clone(),
                 name: format!("capacity-{index}"),
                 label: None,
                 argv: vec!["/bin/sh".into()],
@@ -458,7 +493,7 @@ fn public_pi_research_assignment_launches_collects_and_fences_real_child() {
         &live,
         parent.id,
         "ovrcr_start",
-        serde_json::json!({"project":PROJECT,"workspace":WORKSPACE,"scope":"Read README","model_provider":"test","model":"fixture-model","acceptance_evidence":["README citation"]}),
+        serde_json::json!({"project":PROJECT,"workspace":workspace_id,"scope":"Read README","model_provider":"test","model":"fixture-model","acceptance_evidence":["README citation"]}),
         &live.root.path().join("capacity.json"),
     );
     assert_eq!(capacity["dispatch"], "Refused");

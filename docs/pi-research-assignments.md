@@ -8,8 +8,22 @@ A plain Pi process has no delegation authority.
 
 ## Start and collect
 
-Call `ovrcr_start` with the registered project and workspace IDs, a bounded scope,
-an exact model provider and model ID, and the evidence required for acceptance:
+Discover the registered project and workspace through the public CLI, using the
+same OVRCR instance as the managed parent:
+
+```sh
+ovrcr --json project list
+ovrcr --json workspace list --project my-project
+ovrcr --json workspace get --project my-project --branch feature/research
+```
+
+Use the project's `name` as `project` and the workspace row's `id` as `workspace`
+in `ovrcr_start`. The workspace `name` and `branch` are display labels, not IDs;
+the `id` stays stable when the checkout branch changes. When a branch is
+ambiguous or detached, use `workspace get --project my-project --path /absolute/worktree/path`.
+
+Call `ovrcr_start` with those IDs, a bounded scope, an exact model provider and
+model ID, and the evidence required for acceptance:
 
 ```json
 {
