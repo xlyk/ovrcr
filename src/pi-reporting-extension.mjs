@@ -193,12 +193,15 @@ function registerDelegation(pi) {
     } finally { await file.close(); }
   };
   const tool = (name, description, parameters, run) => pi.registerTool({ name, label: name, description, parameters, async execute(_id, args, signal, _onUpdate, ctx) {
-    if (!args || typeof args !== "object") throw new Error("tool arguments must be an object");
-    for (const key of parameters.required ?? []) if (!(key in args)) throw new Error(`missing required argument: ${key}`);
-    const response = await run(args, ctx, signal);
-    if (name !== "ovrcr_publish" && response?.identity?.session) observer.watch(response.handle);
-    observer.acknowledge();
-    return { content: [{ type: "text", text: JSON.stringify(response) }], details: response };
+    try {
+      if (!args || typeof args !== "object") throw new Error("tool arguments must be an object");
+      for (const key of parameters.required ?? []) if (!(key in args)) throw new Error(`missing required argument: ${key}`);
+      const response = await run(args, ctx, signal);
+      if (name !== "ovrcr_publish" && response?.identity?.session) observer.watch(response.handle);
+      return { content: [{ type: "text", text: JSON.stringify(response) }], details: response };
+    } finally {
+      observer.acknowledge();
+    }
   }});
   tool("ovrcr_start", "Start one read-only Pi research assignment in an existing workspace. Returns a stable handle without waiting for completion. Use handle to finish an initial delivery still waiting for Pi startup; unknown sends are never replayed.", { ...object({ handle: string, project: string, workspace: string, scope: string, provider: string, model_provider: string, model: string, permitted_actions: { type: "array", items: string }, acceptance_evidence: { type: "array", items: string }, mandatory_capabilities: { type: "array", items: string } }, []), anyOf: [{ required: ["handle"] }, { required: ["project", "workspace", "scope", "model_provider", "model", "acceptance_evidence"] }] }, async args => {
     let handle = args.handle;

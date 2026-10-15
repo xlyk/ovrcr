@@ -155,3 +155,70 @@ console.log(JSON.stringify({handle:fields.handle,identity:fields.expected_identi
     assert.equal(readFileSync(calls,"utf8").trim().split("\n").length,2,"unsafe original intent cannot contact control");
   } finally {process.env=before;rmSync(dir,{recursive:true,force:true});}
 });
+
+
+test("failed registered collection releases pending follow-up without accepting either result", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ovrcr-failed-collect-"));
+  const before = { ...process.env };
+  let host;
+  const statePath = join(dir, "state.json");
+  const callsPath = join(dir, "calls.jsonl");
+  const eventually = async predicate => {
+    const deadline = Date.now() + 5000;
+    while (!predicate()) {
+      assert(Date.now() < deadline, "fixture observation did not arrive");
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  };
+  try {
+    const binary = join(dir, "control.mjs");
+    writeFileSync(binary, String.raw`#!/usr/bin/env node
+import { readFileSync, appendFileSync } from "node:fs";
+if (process.argv[2] !== "--json") process.exit(0);
+let input = "";
+for await (const bytes of process.stdin) input += bytes;
+const request = JSON.parse(input);
+const operation = Object.keys(request)[0];
+const state = JSON.parse(readFileSync(process.env.OVRCR_TEST_COLLECT_STATE, "utf8"));
+appendFileSync(process.env.OVRCR_TEST_COLLECT_CALLS, JSON.stringify({ operation, phase: state.phase }) + "\n");
+if (operation === "Collect") {
+  process.stderr.write(JSON.stringify({ error: { code: "InvalidRequest", message: "publication A changed or is partial" } }));
+  process.exit(1);
+}
+if (operation !== "Observe") process.exit(2);
+const item = handle => ({ handle, current: true, activity: { state: "Busy" }, input_requests: [], stalled: false, publication: { identity: { assignment: { task: handle }, kind: "Submission", version: 1, digest: handle }, handled: false } });
+process.stdout.write(JSON.stringify({ cursor: { server_epoch: "fixture", sequence: state.phase === "A" ? 1 : 2 }, status: "Changed", progress_deadline_ms: 1000, observations: (state.phase === "A" ? ["A"] : ["A", "B"]).map(item) }));
+`);
+    chmodSync(binary, 0o700);
+    writeFileSync(statePath, JSON.stringify({ phase: "A" }));
+    writeFileSync(callsPath, "");
+    Object.assign(process.env, {
+      OVRCR_AGENT_SOCKET: "/fixture/reporting", OVRCR_AGENT_TOKEN: "fixture-reporting-token",
+      OVRCR_DELEGATION_SESSION: "1", OVRCR_DELEGATION_TOKEN: "fixture-control-token",
+      OVRCR_DELEGATION_SOCKET: "/fixture/control", OVRCR_DELEGATION_HOME: dir,
+      OVRCR_TEST_COLLECT_STATE: statePath, OVRCR_TEST_COLLECT_CALLS: callsPath,
+    });
+    const extension = join(dir, "reporting.mjs");
+    writeFileSync(extension, readFileSync(new URL("../src/pi-reporting-extension.mjs", import.meta.url), "utf8").replace("__OVRCR_BINARY__", JSON.stringify(binary)));
+    for (const name of ["ovrcr-reporting-transport.mjs", "ovrcr-delegation-observer.mjs"]) writeFileSync(join(dir, name), readFileSync(new URL(`../src/${name}`, import.meta.url)));
+    host = await createHost(extension, { idle: false });
+    await host.tool("ovrcr_wait", { handles: ["A", "B"], wait_ms: 0 });
+    await eventually(() => host.state.messages.length === 1);
+    assert.deepEqual(host.state.messages[0].message.details.handles, ["A"]);
+    writeFileSync(statePath, JSON.stringify({ phase: "B" }));
+    // A subsequent public Observe request proves the previous B snapshot was consumed.
+    await eventually(() => readFileSync(callsPath, "utf8").trim().split("\n").map(line => JSON.parse(line)).filter(call => call.operation === "Observe" && call.phase === "B").length >= 2);
+    assert.equal(host.state.messages.length, 1, "B is pending behind A's outstanding continuation");
+    await assert.rejects(host.tool("ovrcr_collect", { handle: "A" }), /publication A changed or is partial/);
+    assert.equal(host.state.messages.length, 2, "failed collection must release the consumed continuation for B");
+    assert.deepEqual(host.state.messages[1].message.details.handles, ["B"]);
+    assert.deepEqual(host.state.messages[1].options, { triggerTurn: true, deliverAs: "followUp" });
+    const calls = readFileSync(callsPath, "utf8").trim().split("\n").map(line => JSON.parse(line));
+    assert(calls.every(call => ["Observe", "Collect"].includes(call.operation)), "collection failure must not mark either publication handled or accepted");
+    assert.equal(JSON.parse(readFileSync(statePath, "utf8")).phase, "B");
+  } finally {
+    await host?.emit({ type: "session_shutdown", reason: "quit" });
+    process.env = before;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
