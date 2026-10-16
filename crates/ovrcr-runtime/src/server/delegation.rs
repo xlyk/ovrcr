@@ -3135,7 +3135,7 @@ mod tests {
         let contract = read_contract(&value).unwrap();
         let modern = serde_json::to_vec(&contract).unwrap();
         let suffix = format!(
-            ",\"limits\":{},\"previous_request\":null}}",
+            ",\"limits\":{},\"previous_request\":null,\"coding\":null}}",
             serde_json::to_string(&DelegationLimits::default()).unwrap()
         );
         let mut old = modern.strip_suffix(suffix.as_bytes()).unwrap().to_vec();
