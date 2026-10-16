@@ -707,7 +707,20 @@ impl ServerState {
         &self,
         auth: &DelegationAuth,
     ) -> Result<std::sync::Arc<crate::session::Session>> {
-        let session = self.session_for_control(auth.session)?;
+        // Callers may already hold retained storage. Authentication needs a live
+        // Session; the control lookup's retained error classification would relock it.
+        let session = self
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&auth.session)
+            .cloned()
+            .ok_or_else(|| {
+                lifecycle_error(
+                    ErrorCode::Conflict,
+                    "delegation requires the current managed Pi capability",
+                )
+            })?;
         if !matches!(session.summary().kind, SessionKind::Agent { ref name } if name == "pi")
             || !session.authorizes_delegation(&auth.capability)
         {
@@ -721,6 +734,8 @@ impl ServerState {
 
     pub(super) fn owned_assignment(&self, auth: &DelegationAuth, handle: &str) -> Result<Record> {
         self.delegation_auth(auth)?;
+        #[cfg(feature = "acceptance-diagnostics")]
+        hold_before_effect("assignment-after-auth", handle)?;
         let mut record = self
             .retained
             .lock()

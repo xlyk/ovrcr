@@ -433,19 +433,44 @@ impl ServerState {
         auth: &DelegationAuth,
         record: &Record,
     ) -> Result<std::sync::Arc<crate::session::Session>> {
-        let session = self.session_for_control(auth.session)?;
+        // Publication may hold retained storage. Clone the live Session once;
+        // neither authorization lookup may fall back into retained storage.
+        let session = self
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&auth.session)
+            .cloned()
+            .ok_or_else(|| {
+                lifecycle_error(
+                    ErrorCode::Conflict,
+                    "only the assigned child may publish with its current capability",
+                )
+            })?;
         let contract = read_contract(record)?;
+        let summary = session.summary();
         if Some(auth.session) != record.identity.session
-            || Some(session.run()) != record.identity.run
+            || Some(summary.run) != record.identity.run
+            || !summary.phase.is_live()
             || !session.authorizes_delegation(&auth.capability)
-            || !matches!(session.summary().kind, SessionKind::Agent { ref name } if name == &contract.provider)
+            || !matches!(summary.kind, SessionKind::Agent { ref name } if name == &contract.provider)
         {
             return Err(lifecycle_error(
                 ErrorCode::Conflict,
                 "only the assigned child may publish with its current capability",
             ));
         }
-        self.assignment_session(record)?;
+        if let Some(binding) = &record.binding
+            && summary.agent.as_ref().map(|agent| &agent.binding) != Some(binding)
+        {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "child conversation binding changed",
+            ));
+        }
+        // Both callers also fence capability, live phase and full binding under
+        // the captured Session's state lock at publication. Removal revokes that
+        // capability, so a captured Arc cannot publish after retirement.
         Ok(session)
     }
 
