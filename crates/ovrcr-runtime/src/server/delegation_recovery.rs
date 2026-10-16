@@ -1117,7 +1117,19 @@ impl ServerState {
         {
             bail!("transfer request already identifies an assignment operation");
         }
-        let parent = self.session_for_control(transfer.parent)?;
+        // The caller owns retained. Missing targets must not take its fallback lock.
+        let parent = self
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&transfer.parent)
+            .cloned()
+            .ok_or_else(|| {
+                super::lifecycle_error(
+                    ErrorCode::Conflict,
+                    "proposed workflow parent has no current managed Session",
+                )
+            })?;
         let (binding, producer) = parent
             .workflow_source()
             .context("proposed Pi source is not certified")?;

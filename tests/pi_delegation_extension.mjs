@@ -385,7 +385,7 @@ for (const operation of ["DeclareDelivery", "Archive"]) test(`${operation} persi
   const before = {...process.env};
   let host;
   try {
-    const binary=join(dir,"control.mjs"), calls=join(dir,"calls.jsonl"), lost=join(dir,"lost");
+    const binary=join(dir,"control.mjs"), calls=join(dir,"calls.jsonl"), lost=join(dir,"lost"), failure=join(dir,"failure");
     const prefix=operation === "Archive" ? "archive-" : "delivery-";
     writeFileSync(binary, `#!/usr/bin/env node
 import {readFileSync,writeFileSync,appendFileSync,existsSync} from 'node:fs';
@@ -394,6 +394,7 @@ const wire=JSON.parse(input);const fields=wire.Archive?.archive ?? wire.DeclareD
 const saved=JSON.parse(readFileSync(${JSON.stringify(dir)}+'/parent-intents/'+${JSON.stringify(prefix)}+fields.request+'.json','utf8'));
 if ((saved.declaration ?? (({schema,...rest})=>rest)(saved)).request !== fields.request) throw Error('intent was not durable before transport');
 appendFileSync(${JSON.stringify(calls)},JSON.stringify(fields)+'\\n');
+if(existsSync(${JSON.stringify(failure)})){console.error(JSON.stringify({error:{code:readFileSync(${JSON.stringify(failure)},'utf8'),message:'fixture authoritative rejection'}}));process.exit(1);}
 if(!existsSync(${JSON.stringify(lost)})){writeFileSync(${JSON.stringify(lost)},'lost');process.exit(1);}
 console.log(JSON.stringify(wire.Archive ? {handle:fields.handle,archive_receipts:[{request:fields.request,outcome:'fixture-recorded'}]} : [{deliveries:[{reference:{request:fields.request,digest:'a'.repeat(64)}}]}]));
 `);
@@ -407,6 +408,7 @@ console.log(JSON.stringify(wire.Archive ? {handle:fields.handle,archive_receipts
     const args=operation === "Archive" ? {handle:"assignment",expected_identity:{request:"assignment"},expected_result_version:1,expected_obligation_revision:1,expected_control_epoch:1,delivery:{request:"delivery",digest:"a".repeat(64)}} : {declaration:{workflow:"workflow",scope:"delivered finding",provenance:"parent decision",resources:[]}};
     const unknown=(await host.tool(name,args)).details;
     assert.equal(unknown.transport,"Unknown");
+    assert.equal(unknown.dispatch,"Unknown","lost reply cannot claim a known refusal");
     assert.equal(unknown.archive_receipts,undefined,"transport cannot invent a Server outcome");
     assert.equal(unknown.deliveries,undefined);
     assert.ok(unknown.request);
@@ -419,10 +421,20 @@ console.log(JSON.stringify(wire.Archive ? {handle:fields.handle,archive_receipts
     const records=readFileSync(calls,"utf8").trim().split("\n").map(JSON.parse);
     assert.deepEqual(records[1],records[0],"lost reply preserves original public intent and target");
     assert.equal(readFileSync(saved,"utf8"),bytes,"reconciliation never rewrites immutable local intent");
+    for (const code of ["Conflict","Internal"]) {
+      writeFileSync(failure,code);
+      const rejected=(await host.tool(name,recovery)).details;
+      assert.equal(rejected.dispatch,code === "Conflict" ? "Refused" : "Unknown");
+      assert.equal(rejected.reason,"fixture authoritative rejection");
+      assert.equal(rejected.request,unknown.request);
+      assert.equal(rejected.archive_receipts,undefined,"error classification invents no Server receipt");
+      assert.equal(rejected.deliveries,undefined);
+      assert.equal(readFileSync(saved,"utf8"),bytes);
+    }
     if(operation === "Archive") {
       const foreign=(await host.tool(name,{handle:"different-assignment",request:unknown.request})).details;
       assert.equal(foreign.transport,"NotSent");
-      assert.equal(readFileSync(calls,"utf8").trim().split("\n").length,2);
+      assert.equal(readFileSync(calls,"utf8").trim().split("\n").length,4);
     }
   } finally {await host?.emit({type:"session_shutdown",reason:"quit"});process.env=before;rmSync(dir,{recursive:true,force:true});}
 });

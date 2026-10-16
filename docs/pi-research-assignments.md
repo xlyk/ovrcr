@@ -606,7 +606,10 @@ capacity before the original effect and never evicts unresolved evidence.
 For a lost delivery reply, repeat `ovrcr_deliver` with only its original request.
 For a lost archive reply, repeat `ovrcr_archive` with only handle and original
 request. The extension persists each intent before invocation. A transport
-`Unknown` is not a Server receipt. Recovery reads the original journals, including
+`Unknown` is not a Server receipt. A definitive Server rejection reports
+`dispatch: "Refused"`; a lost reply or internal error remains `dispatch: "Unknown"`.
+Neither error response invents a delivery record or archive receipt.
+Recovery reads the original journals, including
 a completed archive after its run increment. Use `ovrcr_collect` with an explicit
 historical `version` to retrieve archived evidence; historical submissions never
 become current results. Parent exit or transfer can leave a certified stop for

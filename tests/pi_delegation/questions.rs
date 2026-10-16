@@ -3,7 +3,7 @@
 use super::followups::OwnedFollowup;
 use super::*;
 
-fn start(f: &RecoveryFixture) -> AssignmentSnapshot {
+pub(super) fn start(f: &RecoveryFixture) -> AssignmentSnapshot {
     let started: AssignmentSnapshot = serde_json::from_value(f.tool("ovrcr_start", serde_json::json!({
         "project": PROJECT, "workspace": f.workspace, "scope": "QUESTION_FILE_ONLY read README within existing authority",
         "model_provider": "test", "model": "fixture-model", "acceptance_evidence": ["README citation"]
@@ -21,7 +21,7 @@ fn start(f: &RecoveryFixture) -> AssignmentSnapshot {
     snapshot
 }
 
-fn reference(snapshot: &AssignmentSnapshot) -> QuestionReference {
+pub(super) fn reference(snapshot: &AssignmentSnapshot) -> QuestionReference {
     snapshot
         .questions
         .iter()
@@ -46,7 +46,7 @@ fn collect(
         .expect("separately fetched exact question")
 }
 
-fn answer(
+pub(super) fn answer(
     f: &RecoveryFixture,
     snapshot: &AssignmentSnapshot,
     question: &QuestionReference,
@@ -54,7 +54,10 @@ fn answer(
     f.tool("ovrcr_answer_question", answer_args(snapshot, question))
 }
 
-fn answer_args(snapshot: &AssignmentSnapshot, question: &QuestionReference) -> serde_json::Value {
+pub(super) fn answer_args(
+    snapshot: &AssignmentSnapshot,
+    question: &QuestionReference,
+) -> serde_json::Value {
     serde_json::json!({"handle": snapshot.handle, "question": question,
         "expected_control_epoch": snapshot.control.epoch, "basis": "ExistingAuthority",
         "scope": "ANSWER_SCOPE_SECRET: Read only the assigned README.", "answer": "ANSWER_BODY_SECRET: Use the Introduction section."})
@@ -806,6 +809,8 @@ fn public_question_zero_write_replay_stays_read_only_and_explicit_fresh_answer_c
 #[test]
 fn public_question_sixty_four_answer_effects_exhaust_storage_without_eviction_or_replay() {
     let f = OwnedFollowup::new();
+    #[cfg(feature = "acceptance-diagnostics")]
+    let archive_signals = super::delivery::count_owned_child_terms(&f);
     let first = start(&f);
     let mut current = first.clone();
     let mut original_request = String::new();
@@ -895,6 +900,8 @@ fn public_question_sixty_four_answer_effects_exhaust_storage_without_eviction_or
     );
     assert_eq!(f.child_count(), 1);
     assert_private_metadata(&f);
+    #[cfg(feature = "acceptance-diagnostics")]
+    super::delivery::archive_full_question_history(&f, &current, &archive_signals);
 }
 
 #[cfg(feature = "acceptance-diagnostics")]

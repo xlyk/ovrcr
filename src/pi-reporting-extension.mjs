@@ -352,7 +352,7 @@ function registerDelegation(pi, producer, sourceKey) {
         const rows = await call({DeclareDelivery:{auth:auth(),declaration:intent.declaration}});
         if (!Array.isArray(rows) || rows.length !== 1) throw new Error("delivery reply unknown; reconcile original request");
         return rows[0];
-      } catch (error) { return {request:request ?? null,transport:attempted ? "Unknown" : "NotSent",reason:String(error.message),recovery:"Repeat ovrcr_deliver with only the original request; do not replace uncertain declarations"}; }
+      } catch (error) { return {request:request ?? null,dispatch:error.refused || !attempted ? "Refused" : "Unknown",transport:attempted ? "Unknown" : "NotSent",reason:String(error.message),recovery:"Repeat ovrcr_deliver with only the original request; do not replace uncertain declarations"}; }
     });
   const archiveFields = { request:publicId,handle:publicId,expected_identity:assignmentIdentity,expected_result_version:resultVersion,
     expected_obligation_revision:positiveInteger,expected_control_epoch:positiveInteger,delivery:deliveryRef,continuation_of:nullable(publicId) };
@@ -378,7 +378,7 @@ function registerDelegation(pi, producer, sourceKey) {
         attempted = true;
         const {schema:_schema,...archive} = intent;
         return await call({Archive:{auth:auth(),archive}});
-      } catch (error) { return {handle:args.handle,request:request ?? null,transport:attempted ? "Unknown" : "NotSent",reason:String(error.message),recovery:"Recover with only handle and original request; never create another stop while the outcome is unknown"}; }
+      } catch (error) { return {handle:args.handle,request:request ?? null,dispatch:error.refused || !attempted ? "Refused" : "Unknown",transport:attempted ? "Unknown" : "NotSent",reason:String(error.message),recovery:"Recover with only handle and original request; never create another stop while the outcome is unknown"}; }
     });
   tool("ovrcr_parents", "List exact currently certified live Pi Session/run/binding/Producer targets for explicit workflow transfer. Public identity is advisory; the Server revalidates the target when transferring. A target need not own any workflow.", object({}), () => call({ Parents: { auth: auth() } }));
   tool("ovrcr_checkpoint", "Save a continuation index up to 65536 UTF-8 bytes; each reference is at most 4096 UTF-8 bytes. Point to original artifacts. Do not save transcripts, credentials or private reasoning.", object({ index: continuationIndex }), async (args, ctx) => { await continuation.discover(ctx); return continuation.save(args.index); });
