@@ -545,6 +545,79 @@ fn production_observer_deadline_reconnect_overflow_and_wait_abort_leave_child_ru
     );
 }
 
+// Match the original authored research document in pi_host.mjs. New optional
+// wire fields do not belong to that model report's authenticated file bytes.
+fn authored_research_bytes(submission: &ResearchSubmission) -> Vec<u8> {
+    assert!(submission.coding.is_none());
+    #[derive(serde::Serialize)]
+    struct Authored<'a> {
+        schema: u32,
+        identity: &'a AssignmentIdentity,
+        version: u32,
+        outcome: &'a str,
+        summary: &'a str,
+        evidence: &'a [String],
+        unresolved: &'a [String],
+    }
+    serde_json::to_vec(&Authored {
+        schema: submission.schema,
+        identity: &submission.identity,
+        version: submission.version,
+        outcome: &submission.outcome,
+        summary: &submission.summary,
+        evidence: &submission.evidence,
+        unresolved: &submission.unresolved,
+    })
+    .unwrap()
+}
+
+fn assert_authored_intent(fixture: &Fixture, child: &AssignmentSnapshot, bytes: &[u8]) {
+    let database = rusqlite::Connection::open_with_flags(
+        fixture.live.config.join("registry.sqlite3"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    database.busy_timeout(Duration::from_secs(5)).unwrap();
+    let metadata: String = database
+        .query_row(
+            "SELECT metadata FROM delegations WHERE handle=?1",
+            [child.handle.as_str()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let metadata: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+    let expected = metadata["publication_intent"]["identity"]["digest"]
+        .as_str()
+        .expect("real child authenticated publication intent");
+    let path = fixture
+        .live
+        .root
+        .path()
+        .join(format!("authored-research-v{}.json", child.result_version));
+    fs::write(&path, bytes).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    // Reuse the suite's existing Node crypto hashing path; no production
+    // canonicalizer or new dependency can manufacture the expected bytes.
+    let output = std::process::Command::new("node")
+        .args(["--input-type=module", "-e", "import {createHash} from 'node:crypto';import {readFileSync} from 'node:fs';console.log(createHash('sha256').update(readFileSync(process.argv[1])).digest('hex'));"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let actual = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        actual.trim(),
+        expected,
+        "authored fixture bytes must match the actual child-authenticated intent before restoration"
+    );
+    eprintln!(
+        "AUTHORED_RESEARCH_INTENT version={} bytes={} sha256={} matched=true",
+        child.result_version,
+        bytes.len(),
+        actual.trim()
+    );
+}
+
 #[test]
 fn production_publication_reconciliation_requires_authenticated_intent_and_exact_bytes() {
     let f = Fixture::new(10000);
@@ -559,7 +632,7 @@ fn production_publication_reconciliation_requires_authenticated_intent_and_exact
         evidence: vec!["README:1 fixture".into()],
         unresolved: vec![],
     };
-    let bytes = serde_json::to_vec(&submission).unwrap();
+    let bytes = authored_research_bytes(&submission);
     fs::write(&child.result_path, &bytes).unwrap();
     fs::set_permissions(&child.result_path, fs::Permissions::from_mode(0o600)).unwrap();
     let unauthenticated = f.observe(&[&child.handle], None, 0);
@@ -578,6 +651,7 @@ fn production_publication_reconciliation_requires_authenticated_intent_and_exact
         invalid.observations[0].publication_issue,
         Some(PublicationIssue::Invalid)
     );
+    assert_authored_intent(&f, &child, &bytes);
     let temporary = child.result_path.with_extension("tmp");
     fs::write(&temporary, &bytes).unwrap();
     fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600)).unwrap();
@@ -724,7 +798,7 @@ fn production_versioned_publications_keep_authorship_handling_and_observation_cu
     assert_eq!(second.history[0].acceptance, first.acceptance_ref);
     let pending = f.observe(&[&second.handle], Some(&initial.cursor), 0);
     assert!(pending.observations[0].publication.is_none());
-    let bytes = serde_json::to_vec(&ResearchSubmission {
+    let bytes = authored_research_bytes(&ResearchSubmission {
         coding: None,
         schema: 1,
         identity: second.identity.clone(),
@@ -733,8 +807,7 @@ fn production_versioned_publications_keep_authorship_handling_and_observation_cu
         summary: "Read the assigned repository README.".into(),
         evidence: vec!["README:1 fixture".into()],
         unresolved: vec![],
-    })
-    .unwrap();
+    });
     fs::write(&second.result_path, &bytes).unwrap();
     fs::set_permissions(&second.result_path, fs::Permissions::from_mode(0o600)).unwrap();
     assert_eq!(
@@ -768,6 +841,7 @@ fn production_versioned_publications_keep_authorship_handling_and_observation_cu
             .join("brief-v3.json")
             .exists()
     );
+    assert_authored_intent(&f, &second, &bytes);
     fs::remove_file(&second.result_path).unwrap();
     assert_eq!(
         f.observe(&[&second.handle], None, 0).observations[0].publication_issue,
