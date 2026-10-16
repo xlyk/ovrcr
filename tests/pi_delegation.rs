@@ -1,6 +1,8 @@
 //! Public Pi tools -> control CLI -> isolated binary Server -> real managed child PTY.
 #[path = "pi_delegation/control.rs"]
 mod assignment_control;
+#[path = "pi_delegation/delivery.rs"]
+mod delivery;
 #[path = "pi_delegation/followups.rs"]
 mod followups;
 #[path = "support/live.rs"]
@@ -1149,6 +1151,19 @@ impl ControlProxy {
                     *wait_ms = 0;
                 }
                 if matches!(&message.request, Request::Workflow(_)) {
+                    let declaration = matches!(&message.request, Request::Workflow(request) if matches!(request.as_ref(), WorkflowRequest::DeclareDelivery { .. }));
+                    let rule = if declaration {
+                        let mut rules = worker_rules.lock().unwrap();
+                        rules
+                            .iter()
+                            .position(|r| r.operation == "DeclareDelivery")
+                            .map(|index| rules.remove(index))
+                    } else {
+                        None
+                    };
+                    if rule.as_ref().is_some_and(|r| r.loss == 0) {
+                        continue;
+                    }
                     let mut upstream = connect_server(&server).unwrap();
                     upstream
                         .set_read_timeout(Some(Duration::from_secs(30)))
@@ -1156,13 +1171,15 @@ impl ControlProxy {
                     let response =
                         client::request(&mut upstream, message.request_id, message.request)
                             .unwrap();
-                    let _ = write_frame(
-                        &mut stream,
-                        &ServerMessage::Response {
-                            request_id: message.request_id,
-                            response,
-                        },
-                    );
+                    if !rule.as_ref().is_some_and(|r| r.loss == 1) {
+                        let _ = write_frame(
+                            &mut stream,
+                            &ServerMessage::Response {
+                                request_id: message.request_id,
+                                response,
+                            },
+                        );
+                    }
                     continue;
                 }
                 let Request::Delegation(request) = &message.request else {
@@ -1204,6 +1221,9 @@ impl ControlProxy {
                         ("MarkHandled", handle.clone())
                     }
                     DelegationRequest::Capabilities { .. } => ("Capabilities", String::new()),
+                    DelegationRequest::Archive { archive, .. } => {
+                        ("Archive", archive.request.clone())
+                    }
                     DelegationRequest::Interrupt { handle, .. } => ("Interrupt", handle.clone()),
                     DelegationRequest::ConfirmInterrupt { handle, .. } => {
                         ("ConfirmInterrupt", handle.clone())

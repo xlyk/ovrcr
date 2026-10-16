@@ -156,14 +156,14 @@ impl Record {
             }
             return Ok(true);
         }
-        if self
-            .receipts
-            .iter()
-            .any(|receipt| receipt.request == request)
-        {
+        if self.delivery_request_used(request) {
             bail!("request already identifies another operation");
         }
-        if self.control_intents.len() >= 64 {
+        if self.control_intents.len()
+            + self.archive_receipts.len()
+            + usize::from(self.archive_pending().is_some())
+            >= 64
+        {
             bail!(
                 "assignment control receipt storage is full (64 operations); existing receipts are retained"
             );
@@ -277,6 +277,13 @@ impl ServerState {
     /// Called at the existing reporting publication boundary, never by Reconcile.
     pub(crate) fn refresh_assignment_binding(&self, id: SessionId) -> Result<()> {
         let session = self.session_for_control(id)?;
+        #[cfg(feature = "acceptance-diagnostics")]
+        let refresh_identity = format!("{}-{}", id.0, session.run().0);
+        #[cfg(feature = "acceptance-diagnostics")]
+        if matches!(session.summary().phase, SessionPhase::Exited { .. }) {
+            // The real exit has already been applied; capture its Arc before filing wins.
+            hold_before_effect("archive-exit-refresh-captured", &refresh_identity)?;
+        }
         let store = self.retained.lock();
         let Some(mut record) = store.assigned_record(id)? else {
             return Ok(());
@@ -284,7 +291,24 @@ impl ServerState {
         let Some(binding) = record.binding.clone() else {
             return Ok(());
         };
-        if record.control.owner != ControlOwner::Uncertain
+        if record.archive_pending().is_some() {
+            record.validate_archive_storage()?;
+            return Ok(());
+        }
+        // A queued refresh may retain the old Arc after final archive filing.
+        // Only that exact durable archived transition makes its lost reporting expected.
+        let filed_archive = store.get(id).is_some_and(|row| {
+            row.disposition == crate::retained::Disposition::Archived
+                && record.archive_receipts.iter().any(|receipt| {
+                    matches!(
+                        &receipt.outcome,
+                        ArchiveOutcome::Archived { previous_run, archived_run }
+                            if *previous_run == session.run() && *archived_run == row.run
+                    )
+                })
+        });
+        if !filed_archive
+            && record.control.owner != ControlOwner::Uncertain
             && session
                 .with_assignment_attribution(
                     record.identity.run.context("assigned run missing")?,
@@ -296,6 +320,9 @@ impl ServerState {
             suspend(&mut record.control)?;
             store.save_assignment(&record)?;
         }
+        drop(store);
+        #[cfg(feature = "acceptance-diagnostics")]
+        let _ = take_fault("archive-refresh-completed", &refresh_identity);
         Ok(())
     }
 

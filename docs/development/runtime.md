@@ -87,3 +87,15 @@ agent_settled evidence under current parent/child locks; preserve historical
 delivery uncertainty and unrelated input or attribution fences. Wait aborts
 terminate only their observer helper. No operation archives or removes resources.
 
+
+Delegated archive commits an exact-run Archive barrier and unknown stop receipt
+before capability revocation, then releases mutation/retained/Session state for
+the existing owned termination chain. Its termination mutex is acquired with
+try-lock before ordered Session state and released before completion relocks.
+Stop proof plus pending receipt commit together; archive/run advancement plus
+final receipt and exact barrier retirement commit together. Retained caches
+publish only after those commits. Final filing pins the current parent source
+through commit, including continuations. An explicit continuation consumes its
+protected slot/bytes only on successful filing and never performs another stop.
+Same-resource lifecycle changes respect the barrier; unrelated input/view remain
+available during the stop. Archive preserves private evidence and workspaces.

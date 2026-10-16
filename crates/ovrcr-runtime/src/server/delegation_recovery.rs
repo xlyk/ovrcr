@@ -27,6 +27,8 @@ pub(crate) struct ResumeAdmission {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowRecord {
+    #[serde(default)]
+    pub deliveries: Vec<RecordedDelivery>,
     pub schema: u32,
     pub authority: WorkflowAuthority,
     pub departure: Option<Departure>,
@@ -52,6 +54,7 @@ pub(crate) fn identifier(value: &str) -> bool {
 
 impl WorkflowRecord {
     pub(crate) fn validate(&self) -> Result<()> {
+        self.validate_deliveries()?;
         let valid_authority = |a: &WorkflowAuthority| {
             a.epoch > 0
                 && a.parent.0 > 0
@@ -255,9 +258,13 @@ impl WorkflowRecord {
             bail!("invalid transfer request");
         }
         if self
-            .cancellation
-            .as_ref()
-            .is_some_and(|c| c.receipt.request == request)
+            .deliveries
+            .iter()
+            .any(|d| d.reference.request == request)
+            || self
+                .cancellation
+                .as_ref()
+                .is_some_and(|c| c.receipt.request == request)
         {
             bail!("request already identifies workflow cancellation");
         }
@@ -825,10 +832,16 @@ impl ServerState {
             gaps,
             receipt,
             cancellation,
+            deliveries: row.deliveries,
         })
     }
     pub(crate) fn workflow_request(&self, request: WorkflowRequest) -> Result<Response> {
         match request {
+            WorkflowRequest::DeclareDelivery { auth, declaration } => {
+                Ok(Response::Workflows(vec![
+                    self.declare_delivery(auth, declaration)?,
+                ]))
+            }
             WorkflowRequest::Cancel {
                 auth,
                 workflow,
@@ -1097,7 +1110,26 @@ impl ServerState {
             drop(store);
             return self.workflow_snapshot(row, Some(receipt));
         }
-        let parent = self.session_for_control(transfer.parent)?;
+        let (members, _) = store.workflow_members(&transfer.expected.workflow)?;
+        if members
+            .iter()
+            .any(|record| record.delivery_request_used(&transfer.request))
+        {
+            bail!("transfer request already identifies an assignment operation");
+        }
+        // The caller owns retained. Missing targets must not take its fallback lock.
+        let parent = self
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&transfer.parent)
+            .cloned()
+            .ok_or_else(|| {
+                super::lifecycle_error(
+                    ErrorCode::Conflict,
+                    "proposed workflow parent has no current managed Session",
+                )
+            })?;
         let (binding, producer) = parent
             .workflow_source()
             .context("proposed Pi source is not certified")?;
@@ -1254,6 +1286,7 @@ mod tests {
     }
     fn original() -> WorkflowRecord {
         WorkflowRecord {
+            deliveries: vec![],
             schema: 1,
             authority: WorkflowAuthority {
                 instance: "instance".into(),

@@ -321,6 +321,65 @@ function registerDelegation(pi, producer, sourceKey) {
     if (!Array.isArray(rows) || rows.length !== 1) throw new Error("Cancellation outcome unknown; reconcile this original workflow and request");
     return rows[0];
   });
+  const deliveryRef = object({ request: publicId, digest });
+  const shortText = { type: "string", minLength: 1, maxLength: 1024 };
+  const acceptanceRef = object({ identity: assignmentIdentity, result_version: resultVersion, result_digest: digest, path: boundedReference, digest });
+  const retention = { anyOf: [{ type: "string", const: "ArchiveEligible" }, object({ Keep: object({ reason: shortText }) })] };
+  const deliveryResource = object({ handle: publicId, identity: assignmentIdentity, result_version: resultVersion, obligation_revision: positiveInteger,
+    publication: nullable(publicationIdentity), acceptance: nullable(acceptanceRef),
+    evidence: { type: "array", maxItems: 16, items: object({kind:{type:"string",enum:["Recovery","Review","Check","Continuation","OtherAuthorizedEvidence"]},reference:shortText,digest}) },
+    completed_obligations: { type: "array", maxItems: 16, items: {type:"string",minLength:1,maxLength:128} }, retention, previous: nullable(deliveryRef) });
+  const deliveryDeclaration = object({ request: publicId, workflow: publicId, scope: shortText, provenance: shortText,
+    resources: { type: "array", minItems: 1, maxItems: 64, items: deliveryResource } }, ["workflow","scope","provenance","resources"]);
+  tool("ovrcr_deliver", "Record your explicit delivery point, completed obligations and scoped retention decisions. This is your assertion, not proof of a person's receipt. It neither stops children nor removes worktrees. Recover with only the original request.",
+    { ...object({declaration:deliveryDeclaration,request:publicId},[]),oneOf:[{required:["declaration"]},{required:["request"]}] }, async args => {
+      let request = args.request ?? args.declaration?.request;
+      let attempted = false;
+      try {
+        let intent;
+        if (args.declaration !== undefined) {
+          if (Object.keys(args).some(key => key !== "declaration")) throw new Error("provide declaration or original request only");
+          request ??= randomUUID();
+          if (!identity(request)) throw new Error("invalid delivery request");
+          intent = {schema:1,request,declaration:{...args.declaration,request}};
+          auth();
+          await writePrivate(`delivery-${request}.json`,intent);
+        } else {
+          if (Object.keys(args).some(key => key !== "request")) throw new Error("delivery recovery requires only original request");
+          intent = await originalIntent(request,"delivery-");
+        }
+        attempted = true;
+        const rows = await call({DeclareDelivery:{auth:auth(),declaration:intent.declaration}});
+        if (!Array.isArray(rows) || rows.length !== 1) throw new Error("delivery reply unknown; reconcile original request");
+        return rows[0];
+      } catch (error) { return {request:request ?? null,dispatch:error.refused || !attempted ? "Refused" : "Unknown",transport:attempted ? "Unknown" : "NotSent",reason:String(error.message),recovery:"Repeat ovrcr_deliver with only the original request; do not replace uncertain declarations"}; }
+    });
+  const archiveFields = { request:publicId,handle:publicId,expected_identity:assignmentIdentity,expected_result_version:resultVersion,
+    expected_obligation_revision:positiveInteger,expected_control_epoch:positiveInteger,delivery:deliveryRef,continuation_of:nullable(publicId) };
+  tool("ovrcr_archive", "Archive one exact task-owned run after its latest eligible delivery. Keep, Human ownership, uncertainty and stale obligations refuse. A stopped continuation references its exact predecessor and never signals again. Worktrees, provider history and workflow evidence survive. Recover with only handle and original request.",
+    {...object(archiveFields,["handle"]),anyOf:[{required:["handle","request"]},{required:["handle","expected_identity","expected_result_version","expected_obligation_revision","expected_control_epoch","delivery"]}]}, async args => {
+      let request = args.request;
+      let attempted = false;
+      try {
+        if (!identity(args.handle)) throw new Error("invalid assignment handle");
+        let intent;
+        if (Object.keys(args).every(key => ["handle","request"].includes(key))) {
+          intent = await originalIntent(request,"archive-");
+          if (intent.handle !== args.handle) throw new Error("archive request belongs to another assignment");
+        } else {
+          if (Object.keys(args).some(key => !Object.hasOwn(archiveFields,key)) || !args.expected_identity || !args.delivery
+              || [args.expected_result_version,args.expected_obligation_revision,args.expected_control_epoch].some(value => !Number.isSafeInteger(value) || value < 1)) throw new Error("provide exact current archive identity, versions, epoch and delivery");
+          request ??= randomUUID();
+          if (!identity(request)) throw new Error("invalid archive request");
+          intent = {schema:1,...args,request,continuation_of:args.continuation_of ?? null};
+          auth();
+          await writePrivate(`archive-${request}.json`,intent);
+        }
+        attempted = true;
+        const {schema:_schema,...archive} = intent;
+        return await call({Archive:{auth:auth(),archive}});
+      } catch (error) { return {handle:args.handle,request:request ?? null,dispatch:error.refused || !attempted ? "Refused" : "Unknown",transport:attempted ? "Unknown" : "NotSent",reason:String(error.message),recovery:"Recover with only handle and original request; never create another stop while the outcome is unknown"}; }
+    });
   tool("ovrcr_parents", "List exact currently certified live Pi Session/run/binding/Producer targets for explicit workflow transfer. Public identity is advisory; the Server revalidates the target when transferring. A target need not own any workflow.", object({}), () => call({ Parents: { auth: auth() } }));
   tool("ovrcr_checkpoint", "Save a continuation index up to 65536 UTF-8 bytes; each reference is at most 4096 UTF-8 bytes. Point to original artifacts. Do not save transcripts, credentials or private reasoning.", object({ index: continuationIndex }), async (args, ctx) => { await continuation.discover(ctx); return continuation.save(args.index); });
   tool("ovrcr_transfer", "Explicitly transfer the current workflow to an exact certified managed Pi principal. Inspect its Session/run/full binding and Producer first. This retires this parent's input without launching or returning human-controlled children.", object({ request: publicId, parent: positiveInteger, parent_run: positiveInteger, binding: parentBinding, producer: publicId }), async args => {

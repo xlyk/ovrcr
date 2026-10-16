@@ -37,6 +37,8 @@ It records current parent Session/run/full binding, source identity, Server life
 and complete immutable transition history separately from assignment provenance.
 Source credentials stay in memory. Existing records without certified workflow
 authority remain visible read-only gaps; migration never invents ownership.
+Schema version 14 protects immutable delivery declarations, obligation revisions
+and archive receipts with reserved continuation capacity from older writers.
 Immutable task contracts, briefs and submissions remain private files outside
 child checkouts; see [Pi research assignments](../pi-research-assignments.md).
 SQLite owns identity, path, and root-setup metadata. The stored

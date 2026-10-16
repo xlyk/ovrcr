@@ -571,6 +571,22 @@ impl ServerState {
             .map_err(|error| lifecycle_error(input_error_code(&error), error_chain_string(&error)))
     }
 
+    fn reject_archive_lifecycle(&self, id: SessionId) -> Result<()> {
+        let retained = self.retained.lock();
+        // Missing public IDs keep each caller's existing NotFound classification.
+        if retained.get(id).is_some()
+            && retained
+                .assigned_record(id)?
+                .is_some_and(|row| row.archive_pending().is_some())
+        {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "delegated archive owns this exact run; reconcile its original receipt",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn close_terminal(
         &self,
         id: SessionId,
@@ -582,6 +598,7 @@ impl ServerState {
         {
             let _mutation = self.mutation_lock.lock().unwrap();
             self.reject_if_stopping()?;
+            self.reject_archive_lifecycle(id)?;
             let summary = self
                 .session_summary(id)
                 .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
@@ -609,6 +626,7 @@ impl ServerState {
     }
 
     fn archive_session_locked(&self, id: SessionId, run: SessionRunId) -> Result<()> {
+        self.reject_archive_lifecycle(id)?;
         self.retained.lock().set_archived(id, run, true)?;
         if let Some(session) = self.sessions.lock().unwrap().remove(&id) {
             session.revoke_hook_capability();
@@ -620,6 +638,7 @@ impl ServerState {
     pub fn delete_archived_session(&self, id: SessionId, expected: SessionRunId) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
+        self.reject_archive_lifecycle(id)?;
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
@@ -636,6 +655,7 @@ impl ServerState {
     pub fn unarchive_session(&self, id: SessionId, expected: SessionRunId) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
+        self.reject_archive_lifecycle(id)?;
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
@@ -657,6 +677,7 @@ impl ServerState {
     ) -> Result<SessionControlTarget> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
+        self.reject_archive_lifecycle(id)?;
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
@@ -737,6 +758,7 @@ impl ServerState {
     pub fn set_session_paused(&self, id: SessionId, paused: bool) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
+        self.reject_archive_lifecycle(id)?;
         let session = self.session_for_control(id)?;
         let control = session.set_paused(paused).map(|_| ());
         let refresh = self.refresh_session_locked(id);
@@ -1141,6 +1163,7 @@ impl ServerState {
     }
 
     fn acknowledge_stopped_locked(&self, id: SessionId, expected_run: SessionRunId) -> Result<()> {
+        self.reject_archive_lifecycle(id)?;
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
@@ -1177,6 +1200,7 @@ impl ServerState {
     ) -> Result<SessionSummary> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
+        self.reject_archive_lifecycle(id)?;
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
@@ -1215,6 +1239,7 @@ impl ServerState {
         acknowledge_stopped: bool,
     ) -> Result<SessionSummary> {
         self.reject_if_stopping()?;
+        self.reject_archive_lifecycle(id)?;
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
@@ -1405,6 +1430,7 @@ impl ServerState {
     }
 
     fn remove_session_locked(&self, id: SessionId) -> Result<()> {
+        self.reject_archive_lifecycle(id)?;
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
@@ -1872,6 +1898,16 @@ impl ServerState {
     pub fn remove_project(&self, name: &str) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
+        let protected: Vec<_> = self
+            .retained
+            .lock()
+            .records()
+            .filter(|row| row.metadata.project == name)
+            .map(|row| row.id)
+            .collect();
+        for id in protected {
+            self.reject_archive_lifecycle(id)?;
+        }
         if self
             .tasks
             .as_ref()
@@ -2189,6 +2225,19 @@ impl ServerState {
                     .collect::<Vec<_>>(),
             )
         };
+        let protected: Vec<_> = self
+            .retained
+            .lock()
+            .records()
+            .filter(|row| {
+                row.metadata.project == project
+                    && (row.metadata.workspace == workspace.id || row.metadata.workspace == name)
+            })
+            .map(|row| row.id)
+            .collect();
+        for id in protected {
+            self.reject_archive_lifecycle(id)?;
+        }
         // Another project may register this checkout as its protected root.
         if repository_roots
             .iter()

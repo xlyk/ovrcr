@@ -19446,6 +19446,7 @@ fn iterm_owner_cli(
     let mut child = fixture
         .command()
         .args(["bridge", "owner", "--stdin"])
+        .env("OVRCR_TEST_BRIDGE_OWNER_DIAGNOSTICS", "1")
         .stdin(Stdio::piped())
         .stdout(output)
         .stderr(error)
@@ -19479,10 +19480,11 @@ fn iterm_owner_cli(
     };
     assert!(live::wait_group_absent(group, Duration::from_secs(2)));
     fixture.forget_group(group);
+    let diagnostics = std::fs::read_to_string(error_path).unwrap();
+    eprintln!("ITERM_OWNER_CLI_DIAGNOSTIC label={label} status={status}\n{diagnostics}");
     assert!(
         status.success(),
-        "current-owner CLI failed: {status}; {}",
-        std::fs::read_to_string(error_path).unwrap()
+        "current-owner CLI {label} failed: {status}; {diagnostics}"
     );
     let result: ovrcr::protocol::BridgeOwnerResult =
         serde_json::from_slice(&std::fs::read(output_path).unwrap()).unwrap();

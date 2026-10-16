@@ -4,6 +4,8 @@ pub mod assignment_control;
 pub use assignment_control::*;
 pub mod questions;
 pub use questions::*;
+pub mod delegation_delivery;
+pub use delegation_delivery::*;
 pub mod delegation;
 pub use delegation::*;
 pub mod agent;

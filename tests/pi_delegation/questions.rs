@@ -3,7 +3,7 @@
 use super::followups::OwnedFollowup;
 use super::*;
 
-fn start(f: &RecoveryFixture) -> AssignmentSnapshot {
+pub(super) fn start(f: &RecoveryFixture) -> AssignmentSnapshot {
     let started: AssignmentSnapshot = serde_json::from_value(f.tool("ovrcr_start", serde_json::json!({
         "project": PROJECT, "workspace": f.workspace, "scope": "QUESTION_FILE_ONLY read README within existing authority",
         "model_provider": "test", "model": "fixture-model", "acceptance_evidence": ["README citation"]
@@ -21,7 +21,7 @@ fn start(f: &RecoveryFixture) -> AssignmentSnapshot {
     snapshot
 }
 
-fn reference(snapshot: &AssignmentSnapshot) -> QuestionReference {
+pub(super) fn reference(snapshot: &AssignmentSnapshot) -> QuestionReference {
     snapshot
         .questions
         .iter()
@@ -46,7 +46,7 @@ fn collect(
         .expect("separately fetched exact question")
 }
 
-fn answer(
+pub(super) fn answer(
     f: &RecoveryFixture,
     snapshot: &AssignmentSnapshot,
     question: &QuestionReference,
@@ -54,7 +54,10 @@ fn answer(
     f.tool("ovrcr_answer_question", answer_args(snapshot, question))
 }
 
-fn answer_args(snapshot: &AssignmentSnapshot, question: &QuestionReference) -> serde_json::Value {
+pub(super) fn answer_args(
+    snapshot: &AssignmentSnapshot,
+    question: &QuestionReference,
+) -> serde_json::Value {
     serde_json::json!({"handle": snapshot.handle, "question": question,
         "expected_control_epoch": snapshot.control.epoch, "basis": "ExistingAuthority",
         "scope": "ANSWER_SCOPE_SECRET: Read only the assigned README.", "answer": "ANSWER_BODY_SECRET: Use the Introduction section."})
@@ -138,6 +141,63 @@ fn assert_private_metadata(f: &RecoveryFixture) {
 }
 
 #[cfg(feature = "acceptance-diagnostics")]
+fn wait_fault_marker(path: &Path, expected: &str) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match fs::read_to_string(path) {
+            Ok(value) if value == expected => return,
+            Ok(value) => assert!(
+                expected.starts_with(&value),
+                "unexpected fault marker at {}: {value:?}",
+                path.display()
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("fault marker read at {}: {error}", path.display()),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "incomplete fault marker at {}",
+            path.display()
+        );
+        std::thread::park_timeout(Duration::from_millis(2));
+    }
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+#[test]
+fn fault_marker_waits_for_complete_bytes_after_file_creation() {
+    use std::io::Write;
+    use std::sync::mpsc::{RecvTimeoutError, channel};
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("fault.hit");
+    let mut producer = fs::File::create(&path).unwrap();
+    let (ready_tx, ready_rx) = channel();
+    let (complete_tx, complete_rx) = channel();
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            ready_tx.send(()).unwrap();
+            wait_fault_marker(&path, "answer");
+            complete_tx.send(()).unwrap();
+        });
+        ready_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(matches!(
+            complete_rx.recv_timeout(Duration::from_millis(50)),
+            Err(RecvTimeoutError::Timeout)
+        ));
+        producer.write_all(b"ans").unwrap();
+        producer.flush().unwrap();
+        assert!(matches!(
+            complete_rx.recv_timeout(Duration::from_millis(50)),
+            Err(RecvTimeoutError::Timeout)
+        ));
+        producer.write_all(b"wer").unwrap();
+        producer.flush().unwrap();
+        complete_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    });
+    assert_eq!(fs::read_to_string(path).unwrap(), "answer");
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
 struct EffectRelease(std::path::PathBuf);
 #[cfg(feature = "acceptance-diagnostics")]
 impl Drop for EffectRelease {
@@ -170,7 +230,7 @@ fn held_answer(
         }),
         Response::Ok
     );
-    wait_file(&f.live.root.path().join("fault.hit"));
+    wait_fault_marker(&f.live.root.path().join("fault.hit"), "answer");
     assert_eq!(
         fs::read_to_string(f.live.root.path().join("fault.hit")).unwrap(),
         "answer"
@@ -449,7 +509,7 @@ fn public_observation_parent_closed_after_first_auth_refuses_without_relocking_r
             },
         )
         .unwrap();
-        wait_file(&root.join("fault.hit"));
+        wait_fault_marker(&root.join("fault.hit"), "assignment-after-auth");
         assert_eq!(
             fs::read_to_string(root.join("fault.hit")).unwrap(),
             "assignment-after-auth"
@@ -806,6 +866,8 @@ fn public_question_zero_write_replay_stays_read_only_and_explicit_fresh_answer_c
 #[test]
 fn public_question_sixty_four_answer_effects_exhaust_storage_without_eviction_or_replay() {
     let f = OwnedFollowup::new();
+    #[cfg(feature = "acceptance-diagnostics")]
+    let archive_signals = super::delivery::count_owned_child_terms(&f);
     let first = start(&f);
     let mut current = first.clone();
     let mut original_request = String::new();
@@ -895,6 +957,8 @@ fn public_question_sixty_four_answer_effects_exhaust_storage_without_eviction_or
     );
     assert_eq!(f.child_count(), 1);
     assert_private_metadata(&f);
+    #[cfg(feature = "acceptance-diagnostics")]
+    super::delivery::archive_full_question_history(&f, &current, &archive_signals);
 }
 
 #[cfg(feature = "acceptance-diagnostics")]
