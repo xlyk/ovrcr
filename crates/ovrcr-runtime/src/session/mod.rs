@@ -294,6 +294,7 @@ type ListingErrorHook = Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>;
 pub(crate) enum DelegatedAuthority {
     Controller,
     ConfirmHumanReturn,
+    Interrupt,
 }
 
 pub(crate) struct DelegatedInput<'a> {
@@ -1037,6 +1038,52 @@ impl Session {
             .unwrap_or_else(rejected))
     }
 
+    /// One native Escape byte, with no paste framing or submit. The caller has
+    /// already durably recorded Unknown and the exact interrupt barrier.
+    pub(crate) fn send_delegated_interrupt(
+        &self,
+        input: &DelegatedInput<'_>,
+        validate: impl FnOnce(&ovrcr_protocol::AgentSnapshot) -> Result<()>,
+    ) -> Result<
+        Option<(
+            ovrcr_protocol::DispatchOutcome,
+            ovrcr_protocol::InputDelivery,
+        )>,
+    > {
+        use ovrcr_protocol::{DispatchOutcome, InputDelivery};
+        self.with_delegated_context(input, |agent| {
+            validate(agent)?;
+            let mut writer = self.writer.lock().unwrap();
+            let mut delivery = InputDelivery {
+                written_bytes: 0,
+                total_bytes: 1,
+                submit_written: false,
+            };
+            if crate::server::delegation::take_fault("interrupt-before-write", input.request)
+                .is_some()
+            {
+                return Ok((DispatchOutcome::Rejected, delivery));
+            }
+            let outcome = match writer.write(&[0x1b]) {
+                Ok(1) => {
+                    delivery.written_bytes = 1;
+                    if crate::server::delegation::take_fault("interrupt-after-write", input.request)
+                        .is_some()
+                        || writer.flush().is_err()
+                    {
+                        DispatchOutcome::Unknown
+                    } else {
+                        DispatchOutcome::Applied
+                    }
+                }
+                Ok(0) => DispatchOutcome::Rejected,
+                Ok(_) => DispatchOutcome::Unknown,
+                Err(_) => DispatchOutcome::Rejected,
+            };
+            Ok((outcome, delivery))
+        })
+    }
+
     /// Caller holds SessionStore before these Session locks (ascending ID order).
     /// The action must use that held store and must not reenter Session state.
     pub(crate) fn with_delegated_context<T>(
@@ -1081,6 +1128,10 @@ impl Session {
                 && input.control.owner == ovrcr_protocol::ControlOwner::Controller
                 && match input.authority {
                     DelegatedAuthority::Controller => input.control.barrier.is_none(),
+                    DelegatedAuthority::Interrupt => matches!(
+                        input.control.barrier,
+                        Some(ovrcr_protocol::ControlBarrier::Interrupt { .. })
+                    ),
                     DelegatedAuthority::ConfirmHumanReturn => matches!(
                         input.control.barrier,
                         Some(ovrcr_protocol::ControlBarrier::HumanReturn { .. })

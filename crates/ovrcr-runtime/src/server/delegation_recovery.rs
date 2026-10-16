@@ -34,6 +34,9 @@ pub(crate) struct WorkflowRecord {
     pub reopen_run: Option<SessionRunId>,
     pub pointer: Option<ContinuationPointer>,
     pub transfers: Vec<WorkflowTransitionReceipt>,
+    #[serde(default)]
+    pub cancellation:
+        Option<super::delegation::cancellation::WorkflowCancellation<WorkflowAuthority>>,
 }
 
 pub(crate) fn hash(value: &[u8]) -> String {
@@ -67,6 +70,16 @@ impl WorkflowRecord {
                 .iter()
                 .all(|v| identifier(v))
         };
+        if let Some(capture) = &self.cancellation {
+            capture.validate()?;
+            if capture.captured_authority.instance != self.authority.instance
+                || capture.captured_authority.workflow != self.authority.workflow
+                || capture.captured_authority.controller != self.authority.controller
+                || capture.captured_authority.epoch > self.authority.epoch
+            {
+                bail!("cancel capture provenance changed");
+            }
+        }
         let a = &self.authority;
         if self.schema != 1 || !valid_authority(a) || self.transfers.len() > MAX_TRANSFERS {
             bail!("unsupported or malformed workflow authority; original records remain retained");
@@ -138,6 +151,19 @@ impl WorkflowRecord {
         }
         if previous.is_some_and(|last| last != a) || (previous.is_none() && a.epoch != 1) {
             bail!("current workflow authority has no complete transition history");
+        }
+        if let Some(capture) = &self.cancellation {
+            let captured = &capture.captured_authority;
+            if (captured != a && !self.transfers.iter().any(|r| &r.previous == captured))
+                || self
+                    .transfers
+                    .iter()
+                    .any(|r| r.request == capture.receipt.request)
+                || capture.receipt.digest
+                    != hash(&serde_json::to_vec(&(&capture.receipt.request, captured))?)
+            {
+                bail!("workflow cancellation lacks original authenticated capture provenance");
+            }
         }
         match &self.departure {
             Some(Departure::Reload { producer }) if producer != &a.producer => {
@@ -227,6 +253,13 @@ impl WorkflowRecord {
         self.validate()?;
         if !identifier(request) {
             bail!("invalid transfer request");
+        }
+        if self
+            .cancellation
+            .as_ref()
+            .is_some_and(|c| c.receipt.request == request)
+        {
+            bail!("request already identifies workflow cancellation");
         }
         if let Some(receipt) = self.transfers.iter().find(|r| r.request == request) {
             if receipt.digest != digest {
@@ -339,7 +372,7 @@ impl SessionStore {
         self.connection.execute("INSERT INTO delegation_workflows (workflow, metadata) VALUES (?1,?2) ON CONFLICT(workflow) DO UPDATE SET metadata=excluded.metadata", rusqlite::params![record.authority.workflow, bytes])?;
         Ok(())
     }
-    fn workflow_members(
+    pub(crate) fn workflow_members(
         &self,
         workflow: &str,
     ) -> Result<(Vec<super::delegation::Record>, Vec<String>)> {
@@ -370,6 +403,17 @@ impl SessionStore {
                     && row.identity.request == handle
                     && row.identity.instance == instance
                     && row.identity.workflow == workflow
+                    && [&row.identity.controller, &row.identity.task]
+                        .iter()
+                        .all(|id| identifier(id))
+                    && row.identity.controller_epoch > 0
+                    && row.identity.attempt > 0
+                    && row.identity.contract > 0
+                    && row.result_version > 0
+                    && row.control.epoch > 0
+                    && row.identity.session.is_some() == row.identity.run.is_some()
+                    && row.identity.session.is_none_or(|id| id.0 > 0)
+                    && row.identity.run.is_none_or(|run| run.0 > 0)
             }) {
                 members.push(row);
             } else if gaps.len() < 64 {
@@ -729,7 +773,7 @@ impl ServerState {
         )?;
         Ok(row.authority)
     }
-    fn workflow_snapshot(
+    pub(crate) fn workflow_snapshot(
         &self,
         row: WorkflowRecord,
         receipt: Option<WorkflowTransitionReceipt>,
@@ -767,6 +811,11 @@ impl ServerState {
             })();
             match read { Ok(index) => Some(index), Err(_) => { gaps.push("continuation publication is missing, malformed or conflicting; original obligations remain retained".into()); None } }
         });
+        let cancellation = row
+            .cancellation
+            .as_ref()
+            .map(|capture| self.cancellation_view(capture))
+            .transpose()?;
         Ok(WorkflowSnapshot {
             authority: row.authority,
             active,
@@ -775,10 +824,16 @@ impl ServerState {
             continuation,
             gaps,
             receipt,
+            cancellation,
         })
     }
     pub(crate) fn workflow_request(&self, request: WorkflowRequest) -> Result<Response> {
         match request {
+            WorkflowRequest::Cancel {
+                auth,
+                workflow,
+                request,
+            } => self.cancel_workflow(auth, workflow, request),
             WorkflowRequest::Parents { auth } => {
                 let parent = self.delegation_auth(&auth)?;
                 let sessions: Vec<_> = self.sessions.lock().unwrap().values().cloned().collect();
@@ -1109,6 +1164,94 @@ impl ServerState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cancellation_capture_survives_transfer_and_rejects_fabricated_historical_authority() {
+        use super::super::delegation::cancellation::{CancellationReceipt, WorkflowCancellation};
+        let mut row = original();
+        let authority = row.authority.clone();
+        row.cancellation = Some(WorkflowCancellation {
+            receipt: CancellationReceipt {
+                request: "cancel".into(),
+                digest: hash(&serde_json::to_vec(&("cancel", &authority)).unwrap()),
+                dispatch_closed: true,
+            },
+            captured_authority: authority,
+            targets: vec![],
+            gaps: vec![],
+            unverifiable_members: 0,
+        });
+        let captured = serde_json::to_vec(&row.cancellation).unwrap();
+        transfer(&mut row, "transfer-cancelled", "source-2");
+        row.validate().unwrap();
+        assert_eq!(serde_json::to_vec(&row.cancellation).unwrap(), captured);
+        let store = SessionStore::in_memory();
+        store.save_workflow(&row).unwrap();
+        let decoded = store.workflow("workflow").unwrap().unwrap();
+        assert_eq!(serde_json::to_vec(&decoded.cancellation).unwrap(), captured);
+        row.cancellation.as_mut().unwrap().captured_authority.parent = SessionId(999);
+        assert!(
+            row.validate().is_err(),
+            "decoded provenance must be an actual authority in the sole row's history"
+        );
+    }
+
+    #[test]
+    fn complete_cancellation_capture_cannot_overflow_durable_workflow_row_or_replace_evidence() {
+        use super::super::delegation::cancellation::{
+            CancellationReceipt, CancellationTarget, WorkflowCancellation,
+        };
+        let mut row = original();
+        let store = SessionStore::in_memory();
+        store.save_workflow(&row).unwrap();
+        let authority = row.authority.clone();
+        let targets = (0..1024)
+            .map(|index| {
+                let handle = format!("{}-{index}", "h".repeat(100));
+                CancellationTarget {
+                    handle: handle.clone(),
+                    identity: AssignmentIdentity {
+                        instance: authority.instance.clone(),
+                        workflow: authority.workflow.clone(),
+                        controller: authority.controller.clone(),
+                        controller_epoch: 1,
+                        task: "t".repeat(100),
+                        attempt: 1,
+                        contract: 1,
+                        request: handle,
+                        session: Some(SessionId(index + 100)),
+                        run: Some(SessionRunId(1)),
+                    },
+                    result_version: 1,
+                    control_epoch: 1,
+                    interrupt_request: format!("cancel-target-{index}"),
+                    refusal: None,
+                }
+            })
+            .collect();
+        row.cancellation = Some(WorkflowCancellation {
+            receipt: CancellationReceipt {
+                request: "cancel".into(),
+                digest: hash(&serde_json::to_vec(&("cancel", &authority)).unwrap()),
+                dispatch_closed: true,
+            },
+            captured_authority: authority,
+            targets,
+            gaps: vec![],
+            unverifiable_members: 0,
+        });
+        row.validate().unwrap();
+        assert!(serde_json::to_vec(&row).unwrap().len() > 262_144);
+        assert!(store.save_workflow(&row).is_err());
+        assert!(
+            store
+                .workflow("workflow")
+                .unwrap()
+                .unwrap()
+                .cancellation
+                .is_none(),
+            "oversize preflight leaves original ownership/evidence untouched"
+        );
+    }
     fn original() -> WorkflowRecord {
         WorkflowRecord {
             schema: 1,
@@ -1133,6 +1276,7 @@ mod tests {
             reopen_run: None,
             pointer: None,
             transfers: Vec::new(),
+            cancellation: None,
         }
     }
     fn transfer(

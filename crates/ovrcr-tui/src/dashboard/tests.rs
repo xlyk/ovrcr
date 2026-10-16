@@ -1690,6 +1690,8 @@ fn provider_metrics_label_stale_past_five_minutes_and_narrow_to_tok() {
                     health_revision: 1,
                     input_requests: Vec::new(),
                     input_revision: 0,
+                    native_control: None,
+                    native_control_revision: 0,
                 }),
                 agent_epoch: 1,
                 unread: None,
@@ -1855,6 +1857,8 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
                     health_revision: 1,
                     input_requests: Vec::new(),
                     input_revision: 0,
+                    native_control: None,
+                    native_control_revision: 0,
                 }),
                 agent_epoch: 1,
                 unread: None,
@@ -2867,6 +2871,8 @@ fn an_open_input_request_agrees_between_the_busy_predicate_and_the_status_glyph(
             kind: InputKind::Confirm,
         }],
         input_revision: 1,
+        native_control: None,
+        native_control_revision: 0,
     });
     let summary = dashboard.hierarchy.projects[0].workspaces[0].sessions[0].clone();
     assert_eq!(super::status::SessionStatus::of(&summary, 0).glyph, '?');

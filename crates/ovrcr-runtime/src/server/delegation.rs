@@ -1,8 +1,16 @@
 //! Server-owned assignment control. Task payloads live only in private publications.
+#[path = "delegation_cancellation.rs"]
+pub(crate) mod cancellation;
+#[path = "delegation_cancellation_effects.rs"]
+mod cancellation_effects;
 #[path = "delegation_control.rs"]
 pub(crate) mod control;
 #[path = "delegation_followups.rs"]
 mod followups;
+#[path = "delegation_interrupt.rs"]
+pub(crate) mod interrupt;
+#[path = "delegation_interrupt_effects.rs"]
+mod interrupt_effects;
 #[path = "delegation_policy.rs"]
 mod policy;
 
@@ -37,6 +45,8 @@ pub(crate) struct Record {
     pub takeover_evidence: Option<AssignmentControlEvidence>,
     #[serde(default)]
     pub control_intents: Vec<control::ControlIntent>,
+    #[serde(default)]
+    pub interrupt_intents: Vec<interrupt_effects::InterruptIntent>,
     #[serde(default)]
     pub initial_control_epoch: Option<u64>,
     #[serde(default)]
@@ -93,6 +103,13 @@ impl Record {
             || self.handle != self.identity.request
             || self.receipts.len() > 3 + followups::MAX_FOLLOWUPS + 64
             || self.control_intents.len() > 64
+            || self.interrupt_intents.len() > 64
+            || self.interrupt_intents.len()
+                != self
+                    .control_intents
+                    .iter()
+                    .filter(|i| i.operation == DispatchOperation::Interrupt)
+                    .count()
             || self.followups.len() > followups::MAX_FOLLOWUPS
             || self.request_digests.len() > 3
         {
@@ -187,6 +204,8 @@ impl Record {
                 DispatchOperation::Takeover
                     | DispatchOperation::HumanReturn
                     | DispatchOperation::ConfirmHumanReturn
+                    | DispatchOperation::Interrupt
+                    | DispatchOperation::ConfirmInterrupt
             ) {
                 let intent = self
                     .control_intents
@@ -202,6 +221,13 @@ impl Record {
                         .any(|old| old.request == receipt.request)
                 {
                     return None;
+                }
+                if receipt.operation == DispatchOperation::Interrupt {
+                    self.interrupt_intents
+                        .iter()
+                        .find(|intent| intent.request == receipt.request)?
+                        .validate(receipt)
+                        .ok()?;
                 }
                 continue;
             }
@@ -261,6 +287,8 @@ impl Record {
                     DispatchOperation::Takeover
                         | DispatchOperation::HumanReturn
                         | DispatchOperation::ConfirmHumanReturn
+                        | DispatchOperation::Interrupt
+                        | DispatchOperation::ConfirmInterrupt
                 ) || self
                     .request_receipt(&intent.request, intent.operation)
                     .is_none()
@@ -298,7 +326,12 @@ impl Record {
             Some(DispatchOutcome::Applied | DispatchOutcome::Unknown | DispatchOutcome::Partial)
         ) || initial.is_some()
             || !self.followups.is_empty()
-            || !self.control_intents.is_empty()
+            || self.control_intents.iter().any(|intent| {
+                intent.operation != DispatchOperation::Interrupt
+                    || self
+                        .request_receipt(&intent.request, intent.operation)
+                        .is_none_or(|receipt| receipt.outcome != DispatchOutcome::Rejected)
+            })
             || !self.previous_versions.is_empty()
             || self.binding.is_some()
             || matches!(
@@ -516,7 +549,9 @@ impl Record {
                         DispatchOperation::Followup
                         | DispatchOperation::Takeover
                         | DispatchOperation::HumanReturn
-                        | DispatchOperation::ConfirmHumanReturn,
+                        | DispatchOperation::ConfirmHumanReturn
+                        | DispatchOperation::Interrupt
+                        | DispatchOperation::ConfirmInterrupt,
                         _,
                     ) => {
                         unreachable!("legacy dispatch has no followups")
@@ -729,6 +764,7 @@ impl ServerState {
                     .ok_or_else(|| {
                         lifecycle_error(ErrorCode::Conflict, "parent Pi conversation is not bound")
                     })?;
+                self.require_dispatch_open(&self.retained.lock(), &contract.workflow)?;
                 let handle = contract.request.clone();
                 let previous = self.retained.lock().assignment(&handle)?;
                 let bytes = contract_bytes(
@@ -910,6 +946,7 @@ impl ServerState {
                             reopen_run: None,
                             pointer: None,
                             transfers: Vec::new(),
+                            cancellation: None,
                         })?;
                     }
                     let root = std::fs::canonicalize(&self.registry_path)?
@@ -919,6 +956,7 @@ impl ServerState {
                         control: AssignmentControl::default(),
                         takeover_evidence: None,
                         control_intents: vec![],
+                        interrupt_intents: vec![],
                         initial_control_epoch: None,
                         initial_parent_epoch: None,
                         handle: handle.clone(),
@@ -996,6 +1034,7 @@ impl ServerState {
                     }
                     let publication_guard = self.retained.lock();
                     self.require_workflow(&publication_guard, &auth, &record)?;
+                    self.require_dispatch_open(&publication_guard, &record.identity.workflow)?;
                     let directory = Directory::open(&record.root, true)?;
                     if let Err(error) = directory.publish("contract-v1.json", &bytes)
                         && directory.read("contract-v1.json").ok().as_ref() != Some(&bytes)
@@ -1022,6 +1061,7 @@ impl ServerState {
                 handle,
                 identity,
             } => {
+                self.require_dispatch_open(&self.retained.lock(), &identity.workflow)?;
                 let authority = self.current_workflow_authority(&auth, &identity.workflow)?;
                 let mut record = self.owned_assignment(&auth, &handle)?;
                 if !record.intent(DispatchOperation::Launch, &identity)? {
@@ -1035,6 +1075,9 @@ impl ServerState {
                     ));
                 }
                 self.retained.lock().save_assignment(&record)?;
+                if take_fault("launch-after-intent", &handle).is_some() {
+                    return self.reconciliation_snapshot(record);
+                }
                 if !record
                     .receipt(DispatchOperation::Prepare)
                     .is_some_and(|r| r.outcome == DispatchOutcome::Applied)
@@ -1192,6 +1235,7 @@ impl ServerState {
                 expected_control_epoch,
             } => {
                 let mut record = self.owned_assignment(&auth, &handle)?;
+                self.require_dispatch_open(&self.retained.lock(), &record.identity.workflow)?;
                 if record.identity.session.is_none() || record.identity.run.is_none() {
                     return Err(lifecycle_error(
                         ErrorCode::Conflict,
@@ -1308,6 +1352,7 @@ impl ServerState {
                     let parent = self.session_for_control(auth.session)?;
                     let store = self.retained.lock();
                     let authority = self.require_workflow(&store, &auth, &record)?;
+                    self.require_dispatch_open(&store, &record.identity.workflow)?;
                     if record.initial_parent_epoch != Some(authority.epoch) {
                         bail!("captured parent authority changed before input");
                     }
@@ -1399,6 +1444,40 @@ impl ServerState {
                     result_version,
                     result_digest,
                     expected_control_epoch,
+                );
+            }
+            DelegationRequest::Interrupt {
+                auth,
+                handle,
+                request,
+                expected_identity,
+                expected_result_version,
+                expected_control_epoch,
+            } => {
+                return self.interrupt_assignment(
+                    auth,
+                    handle,
+                    request,
+                    expected_identity,
+                    expected_result_version,
+                    expected_control_epoch,
+                );
+            }
+            DelegationRequest::ConfirmInterrupt {
+                auth,
+                handle,
+                request,
+                interrupted_request,
+                expected_control_epoch,
+                evidence,
+            } => {
+                return self.confirm_interrupt(
+                    auth,
+                    handle,
+                    request,
+                    interrupted_request,
+                    expected_control_epoch,
+                    *evidence,
                 );
             }
             DelegationRequest::ConfirmHumanReturn {
@@ -1996,6 +2075,7 @@ mod tests {
             control: AssignmentControl::default(),
             takeover_evidence: None,
             control_intents: vec![],
+            interrupt_intents: vec![],
             initial_control_epoch: None,
             initial_parent_epoch: None,
             handle: "request".into(),

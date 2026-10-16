@@ -32,6 +32,7 @@ pub(super) fn control_clause(control: Option<&AssignmentControl>) -> Option<&'st
         ControlOwner::Uncertain => "Control uncertain",
         ControlOwner::Controller => match control.barrier {
             Some(ControlBarrier::HumanReturn { .. }) => "Pi return pending reconciliation",
+            Some(ControlBarrier::Interrupt { .. }) => "Pi interrupt pending reconciliation",
             Some(_) => "Pi control suspended",
             None if control.attribution_invalidated => "Pi control; fresh result version required",
             None => "Pi control · view only",
@@ -189,6 +190,14 @@ mod tests {
         assert_eq!(
             control_clause(Some(&control)),
             Some("Pi return pending reconciliation")
+        );
+        assert!(input_denial(Some(&control)).is_some());
+        control.barrier = Some(ControlBarrier::Interrupt {
+            request: "interrupt".into(),
+        });
+        assert_eq!(
+            control_clause(Some(&control)),
+            Some("Pi interrupt pending reconciliation")
         );
         assert!(input_denial(Some(&control)).is_some());
         control.barrier = None;

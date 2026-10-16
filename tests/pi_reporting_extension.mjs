@@ -35,7 +35,8 @@ function materialize({ hang = false, interruptAfterBody = false } = {}) {
   writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(TRANSPORT, "utf8"));
   writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
   writeFileSync(join(dir, "ovrcr-delegation-continuation.mjs"), readFileSync(new URL("../src/ovrcr-delegation-continuation.mjs", import.meta.url)));
-  const extension = join(dir, "ovrcr-pi-reporting.mjs");
+    writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.mjs", import.meta.url)));
+  const extension = join(dir, "ovrcr-pi-reporting.ts");
   writeFileSync(extension, readFileSync(SOURCE, "utf8").replace("__OVRCR_BINARY__", JSON.stringify(helper)));
   return { extension, record, helper, checkpoint };
 }
