@@ -1355,6 +1355,15 @@ fn public_coding_final_capture_control_fence_refuses_then_same_version_can_publi
         1,
     );
     let input_bytes = fixture.byte_count(&original);
+    let hold = original.brief.with_extension("json.hold-settlement");
+    struct ReleaseSettlement(std::path::PathBuf);
+    impl Drop for ReleaseSettlement {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+    let _release = ReleaseSettlement(hold.clone());
+    fs::write(&hold, "hold settlement until return evidence is captured").unwrap();
     fs::write(fixture.live.root.path().join("allow-result"), "1").unwrap();
     wait_file(&gate.entered);
     assert_eq!(
@@ -1394,7 +1403,9 @@ fn public_coding_final_capture_control_fence_refuses_then_same_version_can_publi
         "{reply}"
     );
     assert_no_publication(&fixture, &original);
+    wait_file(&original.brief.with_extension("json.settlement-held"));
     let changed = fixture.reconcile(&original.handle);
+    assert_eq!(changed.activity, AgentActivity::Busy);
     assert_eq!(
         changed.control.human_input_revision,
         taken.control.human_input_revision + 1
@@ -1419,12 +1430,61 @@ fn public_coding_final_capture_control_fence_refuses_then_same_version_can_publi
         false,
         1,
     );
-    let confirmed = super::assignment_control::confirm(
-        &fixture,
-        &returned,
-        "capture-return",
-        "capture-confirm",
+    let before_settlement = returned.control_evidence.clone().unwrap();
+    fs::remove_file(&hold).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let settled = loop {
+        let current = fixture.reconcile(&original.handle);
+        assert_eq!(current.identity, returned.identity);
+        assert_eq!(current.control, returned.control);
+        assert_eq!(current.result_version, returned.result_version);
+        if current.activity == AgentActivity::ResponseReady {
+            break current;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "exact child settlement after return"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let after_settlement = settled.control_evidence.clone().unwrap();
+    assert!(after_settlement.activity_revision > before_settlement.activity_revision);
+    let mut expected = before_settlement.clone();
+    expected.activity_revision = after_settlement.activity_revision;
+    assert_eq!(
+        after_settlement, expected,
+        "only activity evidence advanced"
     );
+    let refused = fixture.tool(
+        "ovrcr_confirm_return",
+        serde_json::json!({
+            "handle":returned.handle,"request":"capture-confirm-stale",
+            "returned_request":"capture-return","expected_control_epoch":returned.control.epoch,
+            "evidence":before_settlement,
+        }),
+    );
+    assert_eq!(refused["dispatch"], "Refused", "{refused}");
+    assert!(
+        refused["reason"]
+            .as_str()
+            .unwrap_or("")
+            .contains("return confirmation changed; reconcile the assignment again"),
+        "{refused}"
+    );
+    let reconciled = fixture.reconcile(&original.handle);
+    assert_eq!(reconciled.control, returned.control, "{refused}");
+    assert_eq!(reconciled.control_evidence, settled.control_evidence);
+    assert_no_publication(&fixture, &original);
+    let reply = fixture.tool(
+        "ovrcr_confirm_return",
+        serde_json::json!({
+            "handle":reconciled.handle,"request":"capture-confirm",
+            "returned_request":"capture-return","expected_control_epoch":reconciled.control.epoch,
+            "evidence":reconciled.control_evidence,
+        }),
+    );
+    let confirmed: AssignmentSnapshot = serde_json::from_value(reply.clone())
+        .unwrap_or_else(|error| panic!("fresh confirmation: {error}; reply={reply}"));
     assert!(confirmed.control.barrier.is_none());
     replay_valid_publication(&fixture, &original);
 }
