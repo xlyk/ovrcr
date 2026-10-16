@@ -96,6 +96,33 @@ pub(crate) struct Record {
 const MAX_DELEGATION_RECORDS: u64 = 4096;
 
 impl Record {
+    fn pending_initial_binding(&self) -> bool {
+        // SendInitial freezes this binding before native model readiness. It
+        // has spent one launch, but has not crossed the input boundary yet.
+        // Recognize that journaled state without repairing unknown history.
+        self.execution_attempts.is_some_and(|count| count > 0)
+            && self.binding.as_ref().is_some_and(|binding| {
+                binding.provider == AgentProvider::Pi && binding.generation == 1
+            })
+            && self.initial_control_epoch.is_some()
+            && self.initial_parent_epoch.is_some()
+            && self
+                .receipt(DispatchOperation::Launch)
+                .is_some_and(|receipt| receipt.outcome == DispatchOutcome::Applied)
+            && self
+                .receipt(DispatchOperation::InitialInput)
+                .is_some_and(|receipt| {
+                    receipt.outcome == DispatchOutcome::Accepted
+                        && receipt.request == self.handle
+                        && receipt.identity == self.identity
+                        && receipt.result_version == self.result_version
+                })
+            && self
+                .request_digests
+                .iter()
+                .any(|(operation, _)| *operation == DispatchOperation::InitialInput)
+    }
+
     /// Validate operation evidence before using it to authorize another effect.
     /// Receipt reconstruction is never an independent source of budget proof.
     fn spent_execution_attempts(&self) -> Option<u32> {
@@ -119,7 +146,9 @@ impl Record {
         let consistent = match self.dispatch {
             DispatchStatus::Prepared => !allocated && self.binding.is_none(),
             DispatchStatus::LaunchUnknown => self.binding.is_none(),
-            DispatchStatus::Launched => allocated && self.binding.is_none(),
+            DispatchStatus::Launched => {
+                allocated && (self.binding.is_none() || self.pending_initial_binding())
+            }
             DispatchStatus::InputUnknown | DispatchStatus::Applied => {
                 allocated && self.binding.is_some()
             }
@@ -2244,6 +2273,146 @@ mod tests {
             operation,
             digest(&serde_json::to_vec(&(operation, &value.contract_digest, &identity)).unwrap()),
         ));
+    }
+
+    #[test]
+    fn pending_initial_binding_preserves_only_valid_known_accounting() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut pending = record(
+            directory.path().join("assignment"),
+            DispatchStatus::Launched,
+        );
+        pending.binding = Some(AgentBinding {
+            provider: AgentProvider::Pi,
+            invocation: "child".into(),
+            conversation: "child-A".into(),
+            generation: 1,
+        });
+        pending.initial_control_epoch = Some(1);
+        pending.initial_parent_epoch = Some(1);
+        pending.execution_attempts = Some(1);
+        operation(
+            &mut pending,
+            DispatchOperation::Prepare,
+            DispatchOutcome::Applied,
+        );
+        operation(
+            &mut pending,
+            DispatchOperation::Launch,
+            DispatchOutcome::Applied,
+        );
+        operation(
+            &mut pending,
+            DispatchOperation::InitialInput,
+            DispatchOutcome::Accepted,
+        );
+        for count in [1, 3] {
+            let mut valid = pending.clone();
+            valid.execution_attempts = Some(count);
+            valid.identity.attempt = 2;
+            valid.previous_request = Some("prior-request".into());
+            // Keep every receipt and digest paired with the immutable retry identity.
+            operation(
+                &mut valid,
+                DispatchOperation::Prepare,
+                DispatchOutcome::Applied,
+            );
+            operation(
+                &mut valid,
+                DispatchOperation::Launch,
+                DispatchOutcome::Applied,
+            );
+            operation(
+                &mut valid,
+                DispatchOperation::InitialInput,
+                DispatchOutcome::Accepted,
+            );
+            let before = serde_json::to_vec(&valid).unwrap();
+            assert_eq!(valid.spent_execution_attempts(), Some(count));
+            valid.upgrade_legacy();
+            assert_eq!(serde_json::to_vec(&valid).unwrap(), before);
+        }
+        for case in [
+            "missing receipt",
+            "missing digest",
+            "rejected",
+            "applied",
+            "unknown",
+            "partial",
+            "foreign identity",
+            "foreign request",
+            "foreign result",
+            "foreign provider",
+            "replacement generation",
+            "zero generation",
+            "zero count",
+            "unknown count",
+            "wrong digest",
+            "missing child epoch",
+            "missing parent epoch",
+            "unpaired run",
+        ] {
+            let mut bad = pending.clone();
+            match case {
+                "missing receipt" => bad
+                    .receipts
+                    .retain(|r| r.operation != DispatchOperation::InitialInput),
+                "missing digest" => bad
+                    .request_digests
+                    .retain(|(op, _)| *op != DispatchOperation::InitialInput),
+                "rejected" | "applied" | "unknown" | "partial" => operation(
+                    &mut bad,
+                    DispatchOperation::InitialInput,
+                    match case {
+                        "rejected" => DispatchOutcome::Rejected,
+                        "applied" => DispatchOutcome::Applied,
+                        "unknown" => DispatchOutcome::Unknown,
+                        _ => DispatchOutcome::Partial,
+                    },
+                ),
+                "foreign identity" => {
+                    bad.receipts
+                        .iter_mut()
+                        .find(|r| r.operation == DispatchOperation::InitialInput)
+                        .unwrap()
+                        .identity
+                        .run = Some(SessionRunId(2))
+                }
+                "foreign request" => {
+                    bad.receipts
+                        .iter_mut()
+                        .find(|r| r.operation == DispatchOperation::InitialInput)
+                        .unwrap()
+                        .request = "other".into()
+                }
+                "foreign result" => {
+                    bad.receipts
+                        .iter_mut()
+                        .find(|r| r.operation == DispatchOperation::InitialInput)
+                        .unwrap()
+                        .result_version = 2
+                }
+                "foreign provider" => bad.binding.as_mut().unwrap().provider = AgentProvider::Codex,
+                "replacement generation" => bad.binding.as_mut().unwrap().generation = 2,
+                "zero generation" => bad.binding.as_mut().unwrap().generation = 0,
+                "zero count" => bad.execution_attempts = Some(0),
+                "unknown count" => bad.execution_attempts = None,
+                "wrong digest" => {
+                    bad.request_digests
+                        .iter_mut()
+                        .find(|(op, _)| *op == DispatchOperation::InitialInput)
+                        .unwrap()
+                        .1 = "changed".into()
+                }
+                "missing child epoch" => bad.initial_control_epoch = None,
+                "missing parent epoch" => bad.initial_parent_epoch = None,
+                "unpaired run" => bad.identity.run = None,
+                _ => unreachable!(),
+            }
+            assert_eq!(bad.spent_execution_attempts(), None, "{case}");
+            bad.upgrade_legacy();
+            assert_eq!(bad.execution_attempts, None, "{case}");
+        }
     }
 
     #[test]

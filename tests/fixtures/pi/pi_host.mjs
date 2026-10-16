@@ -132,7 +132,17 @@ async function main() {
     if (resume) host.state.history = resume;
     host.state.model = { id: args[args.indexOf("--model") + 1] || "fixture-model", provider: "test" };
     if (args.includes("--tools") && process.env.OVRCR_TEST_DELEGATION_INITIAL_MODEL) host.state.model.id = process.env.OVRCR_TEST_DELEGATION_INITIAL_MODEL;
+    const modelGate = args.includes("--tools") && process.env.OVRCR_TEST_DELEGATION_MODEL_GATE;
+    const pendingModel = modelGate && !existsSync(modelGate) ? host.state.model : null;
+    if (pendingModel) host.state.model = undefined;
     await host.emit({ type: "session_start", reason: "startup" });
+    if (pendingModel) void (async () => {
+      while (!existsSync(modelGate)) await new Promise(resolve => setTimeout(resolve, 10));
+      // Model readiness changes within this exact binding, never a rebind/reload.
+      host.state.model = pendingModel;
+      await host.emit({ type: "model_select", model: pendingModel });
+      writeFileSync(`${modelGate}.reported`, "same-binding-model-reported");
+    })();
     if (args.includes("--tools") && process.env.OVRCR_TEST_DELEGATION_REBIND_GATE) {
       const gate = process.env.OVRCR_TEST_DELEGATION_REBIND_GATE;
       const original = host.state.session;
