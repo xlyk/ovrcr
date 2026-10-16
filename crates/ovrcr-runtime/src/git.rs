@@ -367,7 +367,8 @@ pub fn create_worktree(
             if base.is_empty() {
                 bail!("worktree base cannot be empty");
             }
-            let base = resolve_commit(&repo, &base)?;
+            let base = resolve_commit(&repo, &base)
+                .with_context(|| format!("validate worktree base {base:?}"))?;
             pinned = Some(base.clone());
             let args = vec![
                 OsString::from("worktree"),
