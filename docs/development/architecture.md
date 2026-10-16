@@ -39,6 +39,9 @@ Source credentials stay in memory. Existing records without certified workflow
 authority remain visible read-only gaps; migration never invents ownership.
 Schema version 14 protects immutable delivery declarations, obligation revisions
 and archive receipts with reserved continuation capacity from older writers.
+Schema version 15 protects coding workspace creation/process proofs and original
+candidate provenance from older writers. Default new wire fields do not change
+existing authenticated research document bytes.
 Immutable task contracts, briefs and submissions remain private files outside
 child checkouts; see [Pi research assignments](../pi-research-assignments.md).
 SQLite owns identity, path, and root-setup metadata. The stored

@@ -55,7 +55,18 @@ pub(super) fn resolve(
         live_sessions,
         live_children,
         available_slots: 0,
-        capabilities: vec!["read".into(), "result_file".into()],
+        capabilities: [
+            "read",
+            "result_file",
+            "isolated_workspace",
+            "immutable_candidate",
+            "write",
+            "edit",
+            "check",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect(),
         enforceable_limits: vec![
             "max_live_children".into(),
             "max_execution_attempts".into(),

@@ -10,7 +10,7 @@ pub(crate) mod control;
 #[path = "delegation_delivery.rs"]
 mod delivery;
 #[path = "delegation_followups.rs"]
-mod followups;
+pub(super) mod followups;
 #[path = "delegation_interrupt.rs"]
 pub(crate) mod interrupt;
 #[path = "delegation_interrupt_effects.rs"]
@@ -46,6 +46,8 @@ pub(crate) struct PublicationIntent {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Record {
     pub handle: String,
+    #[serde(default)]
+    pub coding: Option<CodingWorkspace>,
     #[serde(default)]
     pub control: AssignmentControl,
     #[serde(default)]
@@ -709,7 +711,7 @@ fn publish_matching(directory: &Directory, name: &str, bytes: &[u8]) -> Result<(
     directory.sync()
 }
 
-fn digest(bytes: &[u8]) -> String {
+pub(super) fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
@@ -918,6 +920,20 @@ impl ServerState {
                 } else {
                     None
                 };
+                let coding_intent = if is_new {
+                    if let Some(predecessor) = &contract.previous_request {
+                        let previous = self
+                            .retained
+                            .lock()
+                            .assignment(predecessor)?
+                            .context("previous assignment missing")?;
+                        self.coding_retry_resource(&previous)?
+                    } else {
+                        self.coding_workspace_intent(&contract)?
+                    }
+                } else {
+                    None
+                };
                 let mut record = if let Some(mut record) = previous {
                     self.current_workflow_authority(&auth, &record.identity.workflow)?;
                     if record
@@ -977,7 +993,10 @@ impl ServerState {
                             ));
                         }
                         if previous.dispatch != DispatchStatus::Refused
-                            || !previous.retryable_capacity_refusal
+                            || !(previous.retryable_capacity_refusal
+                                || coding_intent
+                                    .as_ref()
+                                    .is_some_and(|resource| resource.no_process_started))
                             || previous.result_version != 1
                             || !previous.previous_versions.is_empty()
                             || !previous.followups.is_empty()
@@ -986,15 +1005,16 @@ impl ServerState {
                             || previous.publication_intent.is_some()
                             || previous.result_digest.is_some()
                             || previous.unresolved_input()
-                            || previous.identity.session.is_some()
-                            || previous.identity.run.is_some()
+                            || (previous.coding.is_none()
+                                && (previous.identity.session.is_some()
+                                    || previous.identity.run.is_some()))
                             || !previous
                                 .receipt(DispatchOperation::Launch)
                                 .is_some_and(|receipt| receipt.outcome == DispatchOutcome::Rejected)
                         {
                             return Err(lifecycle_error(
                                 ErrorCode::Conflict,
-                                "only an authoritative zero-effect capacity refusal can be retried",
+                                "only an authoritative zero-effect capacity refusal or proven no-process coding failure can be retried",
                             ));
                         }
                         let old_contract = read_contract(&previous)?;
@@ -1096,6 +1116,7 @@ impl ServerState {
                         initial_control_epoch: None,
                         initial_parent_epoch: None,
                         handle: handle.clone(),
+                        coding: coding_intent.clone(),
                         identity: AssignmentIdentity {
                             instance: store.delegation_instance()?,
                             workflow: contract.workflow.clone(),
@@ -1301,6 +1322,12 @@ impl ServerState {
                         if take_fault("launch-before-effect", &handle).is_some() {
                             return self.reconciliation_snapshot(record);
                         }
+                        let coding = contract.coding.is_some();
+                        let tools = if coding {
+                            "read,write,edit,bash,grep,find,ls"
+                        } else {
+                            "read,grep,find,ls"
+                        };
                         let argv = vec![
                             executable.into_os_string(),
                             "agent".into(),
@@ -1312,24 +1339,55 @@ impl ServerState {
                             "--no-extensions".into(),
                             "--no-skills".into(),
                             "--tools".into(),
-                            "read,grep,find,ls".into(),
+                            tools.into(),
                             "--provider".into(),
-                            contract.model_provider.into(),
+                            contract.model_provider.clone().into(),
                             "--model".into(),
-                            contract.model.into(),
+                            contract.model.clone().into(),
                         ];
-                        let result = self.create_session_locked(
-                            CreateSessionRequest {
-                                project: contract.project,
-                                workspace: contract.workspace,
-                                name: String::new(),
-                                label: Some("Pi research".into()),
-                                argv,
-                                kind: SessionKind::Agent { name: "pi".into() },
-                            },
-                            None,
-                            Some(&handle),
-                        );
+                        let result = if let Some(coding_contract) = &contract.coding {
+                            {
+                                let store = self.retained.lock();
+                                self.require_workflow(&store, &auth, &record)?;
+                                self.require_dispatch_open(&store, &record.identity.workflow)?;
+                            }
+                            let resource =
+                                record.coding.as_mut().context("coding intent missing")?;
+                            if resource.creation == WorkspaceCreation::Prepared {
+                                resource.creation = WorkspaceCreation::Creating;
+                            }
+                            let base = resource.base.clone();
+                            self.retained.lock().save_assignment(&record)?;
+                            self.create_workspace_locked(
+                                contract.project.clone(),
+                                contract.workspace.clone(),
+                                BranchRequest::New {
+                                    branch: coding_contract.branch.clone(),
+                                    base,
+                                },
+                                super::WorkspaceLaunch::Session(SessionLaunch {
+                                    argv,
+                                    label: Some("Pi coding".into()),
+                                    kind: SessionKind::Agent { name: "pi".into() },
+                                }),
+                                Some(&handle),
+                            )
+                            .map(|_| ())
+                        } else {
+                            self.create_session_locked(
+                                CreateSessionRequest {
+                                    project: contract.project,
+                                    workspace: contract.workspace,
+                                    name: String::new(),
+                                    label: Some("Pi research".into()),
+                                    argv,
+                                    kind: SessionKind::Agent { name: "pi".into() },
+                                },
+                                None,
+                                Some(&handle),
+                            )
+                            .map(|_| ())
+                        };
                         record = self
                             .retained
                             .lock()
@@ -1349,15 +1407,33 @@ impl ServerState {
                                 );
                             }
                             Err(error) => {
-                                if error.is::<crate::session::NoProcessStarted>() {
+                                let no_process = error.is::<crate::session::NoProcessStarted>()
+                                    || record
+                                        .coding
+                                        .as_ref()
+                                        .is_some_and(|resource| resource.no_process_started);
+                                if no_process {
                                     record.execution_attempts = Some(spent);
                                 }
-                                record.reason = Some("launch did not complete; inspect retained session before taking further action".into());
-                                if error.is::<crate::session::NoProcessStarted>()
-                                    || record.identity.session.is_none()
-                                {
+                                if let Some(resource) = &mut record.coding {
+                                    resource.no_process_started = no_process;
+                                    if resource.creation == WorkspaceCreation::Creating {
+                                        resource.creation = WorkspaceCreation::Unresolved;
+                                    }
+                                }
+                                let reason = format!(
+                                    "launch did not complete; retained resources require reconciliation: {error:#}"
+                                );
+                                if no_process || record.identity.session.is_none() {
                                     record.dispatch = DispatchStatus::Refused;
-                                    record.outcome(DispatchOperation::Launch, DispatchOutcome::Rejected, None, Some("launch refused before a process started; reconcile retained resources"));
+                                    record.outcome(
+                                        DispatchOperation::Launch,
+                                        DispatchOutcome::Rejected,
+                                        None,
+                                        Some(&reason),
+                                    );
+                                } else {
+                                    record.reason = Some(reason);
                                 }
                             }
                         }
@@ -1495,10 +1571,11 @@ impl ServerState {
                         bail!("captured parent authority changed before input");
                     }
                     store.save_assignment(&record)?;
-                    let text = format!(
-                        "Perform the read-only research assignment in {}. Read that immutable brief with your read tool; publish the complete result with ovrcr_publish using handle {} and the exact identity in the brief. Do not modify task or parent records. A terminal success line is not a submission.",
-                        record.root.join("brief-v1.json").display(),
-                        record.handle
+                    let text = assignment_prompt(
+                        &contract,
+                        &record.root.join("brief-v1.json"),
+                        &record.handle,
+                        false,
                     );
                     match session.send_delegated_text(crate::session::DelegatedInput {
                     parent_producer: Some(&authority.producer),
@@ -1701,7 +1778,7 @@ impl ServerState {
             DelegationRequest::Publish {
                 auth,
                 handle,
-                submission,
+                mut submission,
             } => {
                 let mut record = self
                     .retained
@@ -1729,7 +1806,35 @@ impl ServerState {
                 if submission.version != record.result_version {
                     bail!("submission belongs to a stale result version");
                 }
-                let bytes = serde_json::to_vec(&submission)?;
+                let contract = read_contract(&record)?;
+                let authenticated = record
+                    .publication_intent
+                    .as_ref()
+                    .map(|intent| intent.identity.clone())
+                    .or_else(|| {
+                        record
+                            .result_digest
+                            .as_ref()
+                            .map(|digest| PublicationIdentity {
+                                assignment: record.identity.clone(),
+                                kind: PublicationKind::Submission,
+                                version: record.result_version,
+                                digest: digest.clone(),
+                            })
+                    });
+                let selected = super::delegation_coding::SelectedCodingVersion {
+                    identity: &record.identity,
+                    result_version: record.result_version,
+                    contract: &contract,
+                    contract_digest: &record.contract_digest,
+                    publication: authenticated.as_ref(),
+                };
+                let captured_control = record.control.clone();
+                let captured_identity = record.identity.clone();
+                let captured_version = record.result_version;
+                let prepared_candidate =
+                    self.capture_coding_submission(&record, &selected, &mut submission)?;
+                let bytes = submission_bytes(&submission)?;
                 let hash = digest(&bytes);
                 if record
                     .result_digest
@@ -1754,12 +1859,33 @@ impl ServerState {
                     bail!("submission version has a different authenticated publication intent");
                 }
                 let store = self.retained.lock();
+                let latest = store
+                    .assignment(&handle)?
+                    .context("assignment disappeared during candidate capture")?;
+                if latest.identity != captured_identity
+                    || latest.result_version != captured_version
+                    || latest.control != captured_control
+                    || latest.binding.as_ref() != Some(&binding)
+                    || latest.contract_digest != record.contract_digest
+                    || latest.coding != record.coding
+                {
+                    bail!(
+                        "assignment authority or version changed during candidate capture; no publication committed"
+                    );
+                }
+                record = latest;
                 session.with_delegation_binding(&auth.capability, &binding, || {
                     record.publication_intent = Some(PublicationIntent {
                         identity: publication,
                         binding: binding.clone(),
                     });
                     store.save_assignment(&record)?;
+                    if let Some(prepared) = &prepared_candidate {
+                        Self::commit_coding_candidate(&record,prepared,&submission)?;
+                        if take_fault("coding-after-candidate",&handle).is_some() {
+                            bail!("owned interruption after authenticated candidate commit before result file");
+                        }
+                    }
                     let directory = Directory::open(&record.root, false)?;
                     if let Err(error) = directory.publish(
                         &format!("submission-v{}.json", record.result_version),
@@ -1827,6 +1953,29 @@ impl ServerState {
                     }) =>
             {
                 return Ok(None);
+            }
+            Err(error)
+                if record.coding.is_some()
+                    && expected.is_some()
+                    && error.chain().any(|cause| {
+                        cause
+                            .downcast_ref::<std::io::Error>()
+                            .is_some_and(|cause| cause.kind() == std::io::ErrorKind::NotFound)
+                    }) =>
+            {
+                let authenticated = expected.as_ref().ok_or(PublicationIssue::Uncommitted)?;
+                let bytes = Self::recover_coding_result(record, authenticated)
+                    .map_err(|_| PublicationIssue::Unavailable)?;
+                let name = format!("submission-v{}.json", record.result_version);
+                if directory.publish(&name, &bytes).is_err()
+                    && directory.read(&name).ok().as_ref() != Some(&bytes)
+                {
+                    return Err(PublicationIssue::Unavailable);
+                }
+                directory
+                    .sync()
+                    .map_err(|_| PublicationIssue::Unavailable)?;
+                bytes
             }
             Err(_) => return Err(PublicationIssue::Unavailable),
         };
@@ -1923,9 +2072,17 @@ impl ServerState {
         ));
         self.retained.lock().save_assignment(&record)?;
         let contract = read_contract(&record)?;
-        let brief = serde_json::to_vec_pretty(
-            &serde_json::json!({"schema": 1, "handle": handle, "identity": record.identity, "contract": contract, "result_version": 1, "output": record.root.join("submission-v1.json"), "publication": "Call ovrcr_publish. Only this child can publish; it cannot accept the result. Research tools are read-only.", "questions": questions::QUESTION_INSTRUCTIONS}),
-        )?;
+        let publication = if contract.coding.is_some() {
+            "Call ovrcr_publish with actual named check outcomes (Passed/Failed/Missing/Unrun). The Server captures a complete immutable authorized delta against coding_workspace.base. Do not commit, push, merge, deploy, access credentials or modify task/parent records. Tool selection is not an OS sandbox. Only the parent can accept the result."
+        } else {
+            "Call ovrcr_publish. Only this child can publish; it cannot accept the result. Research tools are read-only."
+        };
+        let mut value = serde_json::json!({"schema":1,"handle":handle,"identity":record.identity,"contract":contract_document(&contract)?,
+            "result_version":1,"output":record.root.join("submission-v1.json"),"publication":publication,"questions":questions::QUESTION_INSTRUCTIONS});
+        if let Some(resource) = &record.coding {
+            value["coding_workspace"] = serde_json::to_value(resource)?;
+        }
+        let brief = serde_json::to_vec_pretty(&value)?;
         Directory::open(&record.root, false)?.publish("brief-v1.json", &brief)?;
         record.brief_digest = Some(digest(&brief));
         self.retained.lock().save_assignment(&record)?;
@@ -1997,6 +2154,7 @@ impl ServerState {
                         .is_ok()
                 });
         let resources = AssignmentResources {
+            coding: record.coding.clone(),
             project,
             workspace,
             workspace_present,
@@ -2084,11 +2242,65 @@ fn publication_error(issue: PublicationIssue) -> anyhow::Error {
 
 /// Preserve the exact older canonical bytes when the only added fields were
 /// absent defaults. A different contract never acquires the old digest.
+fn assignment_prompt(
+    contract: &ResearchContract,
+    brief: &std::path::Path,
+    handle: &str,
+    followup: bool,
+) -> String {
+    let mode = if contract.coding.is_some() {
+        "coding"
+    } else {
+        "read-only research"
+    };
+    let purpose = if followup {
+        "this is a scoped followup in the same assignment. "
+    } else {
+        ""
+    };
+    format!(
+        "Perform the {mode} assignment in {}. Read that immutable brief with your read tool; {purpose}publish the exact requested result_version with ovrcr_publish using handle {handle} and the identity in that brief. Do not modify task or parent records. A terminal success line is not a submission.",
+        brief.display()
+    )
+}
+
+fn contract_document(contract: &ResearchContract) -> Result<serde_json::Value> {
+    Ok(serde_json::from_slice(&research_contract_bytes(contract)?)?)
+}
+
+fn research_contract_bytes(contract: &ResearchContract) -> Result<Vec<u8>> {
+    let mut bytes = serde_json::to_vec(contract)?;
+    if contract.coding.is_none() {
+        let suffix = b",\"coding\":null}";
+        if bytes.ends_with(suffix) {
+            bytes.truncate(bytes.len() - suffix.len());
+            bytes.push(b'}');
+        }
+    }
+    Ok(bytes)
+}
+
+/// Default new wire fields never rewrite previously authenticated research files.
+fn submission_bytes(submission: &ResearchSubmission) -> Result<Vec<u8>> {
+    let mut bytes = serde_json::to_vec(submission)?;
+    if submission.coding.is_none() {
+        let suffix = b",\"coding\":null}";
+        if bytes.ends_with(suffix) {
+            bytes.truncate(bytes.len() - suffix.len());
+            bytes.push(b'}');
+        }
+    }
+    Ok(bytes)
+}
+
 fn legacy_contract_bytes(contract: &ResearchContract) -> Result<Option<Vec<u8>>> {
-    if contract.limits != DelegationLimits::default() || contract.previous_request.is_some() {
+    if contract.coding.is_some()
+        || contract.limits != DelegationLimits::default()
+        || contract.previous_request.is_some()
+    {
         return Ok(None);
     }
-    let bytes = serde_json::to_vec(contract)?;
+    let bytes = research_contract_bytes(contract)?;
     let suffix = format!(
         ",\"limits\":{},\"previous_request\":null}}",
         serde_json::to_string(&DelegationLimits::default())?
@@ -2101,7 +2313,7 @@ fn legacy_contract_bytes(contract: &ResearchContract) -> Result<Option<Vec<u8>>>
 }
 
 fn contract_bytes(contract: &ResearchContract, expected: Option<&str>) -> Result<Vec<u8>> {
-    let bytes = serde_json::to_vec(contract)?;
+    let bytes = research_contract_bytes(contract)?;
     if let Some(expected) = expected
         && digest(&bytes) != expected
         && let Some(legacy) = legacy_contract_bytes(contract)?
@@ -2194,6 +2406,7 @@ mod tests {
             .unwrap()
             .join(root.file_name().unwrap());
         let contract = ResearchContract {
+            coding: None,
             schema: 1,
             workflow: "workflow".into(),
             controller: "controller".into(),
@@ -2227,6 +2440,7 @@ mod tests {
             initial_control_epoch: None,
             initial_parent_epoch: None,
             handle: "request".into(),
+            coding: None,
             identity: AssignmentIdentity {
                 instance: "instance".into(),
                 workflow: "workflow".into(),
@@ -2921,7 +3135,7 @@ mod tests {
         let contract = read_contract(&value).unwrap();
         let modern = serde_json::to_vec(&contract).unwrap();
         let suffix = format!(
-            ",\"limits\":{},\"previous_request\":null}}",
+            ",\"limits\":{},\"previous_request\":null,\"coding\":null}}",
             serde_json::to_string(&DelegationLimits::default()).unwrap()
         );
         let mut old = modern.strip_suffix(suffix.as_bytes()).unwrap().to_vec();

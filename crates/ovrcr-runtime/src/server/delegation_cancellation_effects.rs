@@ -4,7 +4,7 @@ use super::cancellation::*;
 use super::*;
 
 impl ServerState {
-    pub(super) fn require_dispatch_open(
+    pub(in crate::server) fn require_dispatch_open(
         &self,
         store: &crate::retained::SessionStore,
         workflow: &str,

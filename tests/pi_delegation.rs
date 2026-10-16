@@ -1,6 +1,8 @@
 //! Public Pi tools -> control CLI -> isolated binary Server -> real managed child PTY.
 #[path = "pi_delegation/control.rs"]
 mod assignment_control;
+#[path = "pi_delegation/coding.rs"]
+mod coding;
 #[path = "pi_delegation/delivery.rs"]
 mod delivery;
 #[path = "pi_delegation/followups.rs"]
@@ -1376,7 +1378,28 @@ impl RecoveryFixture {
     }
 
     fn with_model_gate(initial_model: Option<&str>, gated: bool) -> Self {
-        let live = Live::idle().bounded();
+        Self::with_model_gate_owned_executable(initial_model, gated, false)
+    }
+
+    fn with_model_gate_owned_executable(
+        initial_model: Option<&str>,
+        gated: bool,
+        owned_executable: bool,
+    ) -> Self {
+        let mut live = Live::idle().bounded();
+        if owned_executable {
+            let source = live.executable.clone();
+            let private = live.root.path().join("owned-ovrcr");
+            assert!(!private.exists());
+            fs::copy(&source, &private).unwrap();
+            fs::set_permissions(&private, fs::Permissions::from_mode(0o700)).unwrap();
+            eprintln!(
+                "LIVE_OWNED_EXECUTABLE path={} source={}",
+                private.display(),
+                source.display()
+            );
+            live.executable = private;
+        }
         let fault = live.root.path().join("fault");
         let proxy = ControlProxy::new(
             live.root.path().join("proxy.sock"),
