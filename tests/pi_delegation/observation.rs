@@ -237,6 +237,60 @@ fn production_observer_wakes_for_simultaneous_question_files_without_ready_or_in
 }
 
 #[test]
+fn production_stopped_child_question_is_historical_and_observation_leaves_control_responsive() {
+    let f = Fixture::new(10000);
+    let child = f.start("QUESTION_FILE_ONLY stopped question evidence");
+    wait_file(&child.brief.with_extension("json.question-published"));
+    let before = f.observe(&[&child.handle], None, 0);
+    let exact = before.observations[0].questions[0].reference.clone();
+    assert!(before.observations[0].questions[0].current);
+    assert_eq!(
+        f.live.request(Request::KillSession {
+            session: child.identity.session.unwrap()
+        }),
+        Response::Ok
+    );
+    f.until(|| !f.summary(child.identity.session.unwrap()).phase.is_live());
+    let started = Instant::now();
+    let stopped = f.observe(&[&child.handle], None, 0);
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "stopped-child observation must remain bounded"
+    );
+    let question = &stopped.observations[0].questions[0];
+    assert_eq!(question.reference, exact);
+    assert!(
+        !question.current,
+        "stopped child evidence grants no current answer authority"
+    );
+    assert!(question.answer.is_none());
+    let mut control = connect_server(&f.live.socket).unwrap();
+    control
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    assert!(
+        matches!(
+            client::request(&mut control, 1, Request::Inspect).unwrap(),
+            Response::Inventory { .. }
+        ),
+        "independent control request after observation"
+    );
+    let historical: AssignmentSnapshot = serde_json::from_value(f.tool(
+        "ovrcr_collect_question",
+        serde_json::json!({"handle": child.handle, "reference": exact}),
+    ))
+    .unwrap();
+    assert!(
+        historical
+            .collected_question
+            .unwrap()
+            .question
+            .contains("QUESTION_BODY_SECRET")
+    );
+    assert_eq!(historical.result_version, child.result_version);
+}
+
+#[test]
 fn production_native_prompt_gap_distinguishes_reported_prompt_from_unexplained_deadline() {
     for (scope, expected) in [
         (

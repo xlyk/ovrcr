@@ -304,8 +304,12 @@ Call `ovrcr_answer_question` with the assignment `handle`, exact `question`
 reference object, current `expected_control_epoch`, `basis`, bounded `scope`,
 and `answer`. `basis` is `"ExistingAuthority"` for facts within existing authority
 or `"ExplicitHumanDecision"` for an actual choice the person made; this label
-records the parent's assertion and does not create permission. The extension
-captures the current parent workflow epoch and saves an immutable private intent
+records the parent's assertion and does not create permission. The Server reads
+the authenticated stored question and refuses `ExistingAuthority` for
+`HumanDecision`, both before accepting an answer intent and before delivery or
+resuming an Accepted intent. It cannot verify that the asserted human choice
+actually occurred; the parent must present the context and obtain that choice.
+The extension captures the current parent workflow epoch and saves an immutable private intent
 before sending. The child receives an instruction to read the scoped private
 answer artifact for that exact question.
 

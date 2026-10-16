@@ -169,14 +169,13 @@ fn matching_legacy_brief(
                     .context("brief is not an object")?
                     .remove("questions");
             }
-            if old_contract {
-                if let Some(nested) = candidate
+            if old_contract
+                && let Some(nested) = candidate
                     .get_mut("contract")
                     .and_then(serde_json::Value::as_object_mut)
-                {
-                    nested.remove("limits");
-                    nested.remove("previous_request");
-                }
+            {
+                nested.remove("limits");
+                nested.remove("previous_request");
             }
             let candidate = serde_json::to_vec_pretty(&candidate)?;
             if digest(&candidate) == expected {

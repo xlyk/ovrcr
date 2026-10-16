@@ -414,6 +414,18 @@ impl Record {
     }
 }
 
+fn require_answer_basis(question: &AssignmentQuestion, answer: &QuestionAnswer) -> Result<()> {
+    if question.kind == QuestionKind::HumanDecision
+        && answer.basis != AnswerBasis::ExplicitHumanDecision
+    {
+        return Err(lifecycle_error(
+            ErrorCode::Conflict,
+            "the authenticated human-decision question requires explicit human-decision provenance",
+        ));
+    }
+    Ok(())
+}
+
 impl ServerState {
     /// This role can publish only for its allocated child. It grants no parent operations.
     pub(super) fn assignment_publisher(
@@ -442,8 +454,25 @@ impl ServerState {
         record: &Record,
     ) -> Vec<QuestionPublicationState> {
         let current = record.current_question().map(|q| &q.reference);
-        let attributed =
-            self.assignment_session(record).is_ok() && !record.control.attribution_invalidated;
+        // Observation may already hold retained. Only a current live Session can
+        // attribute a question; the control lookup's retained fallback would
+        // recursively lock that store for stopped children after a restart.
+        let child = record
+            .identity
+            .session
+            .and_then(|id| self.sessions.lock().unwrap().get(&id).cloned());
+        let attributed = !record.control.attribution_invalidated
+            && child.is_some_and(|child| {
+                let summary = child.summary();
+                summary.phase == SessionPhase::Running
+                    && Some(summary.run) == record.identity.run
+                    && record.binding.as_ref().is_some_and(|binding| {
+                        summary
+                            .agent
+                            .as_ref()
+                            .is_some_and(|agent| &agent.binding == binding)
+                    })
+            });
         let directory = Directory::open(&record.root, false);
         record
             .questions
@@ -659,9 +688,11 @@ impl ServerState {
         control::require_controller(&record.control, answer.control_epoch)?;
         record.require_question(&answer.question)?;
         let directory = Directory::open(&record.root, false)?;
-        read_question(&directory, &answer.question, &record.questions).map_err(|_| {
-            anyhow::anyhow!("current question bytes do not match authenticated intent")
-        })?;
+        let question =
+            read_question(&directory, &answer.question, &record.questions).map_err(|_| {
+                anyhow::anyhow!("current question bytes do not match authenticated intent")
+            })?;
+        require_answer_basis(&question, &answer)?;
         let captured_control = record.control.clone();
         let input = crate::session::DelegatedInput {
             request: &answer.request,
@@ -740,12 +771,13 @@ impl ServerState {
         }
         control::require_controller(&record.control, answer.control_epoch)?;
         record.require_question(&answer.question)?;
-        read_question(
+        let question = read_question(
             &Directory::open(&record.root, false)?,
             &answer.question,
             &record.questions,
         )
         .map_err(|_| anyhow::anyhow!("question changed before answer input"))?;
+        require_answer_basis(&question, &answer)?;
         let bytes = Directory::open(&record.root, false)?
             .read(&format!("answer-{}.json", answer.request))?;
         if digest(&bytes) != prepared.intent.digest
