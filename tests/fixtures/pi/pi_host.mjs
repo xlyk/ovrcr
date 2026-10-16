@@ -183,7 +183,7 @@ async function main() {
       let result;
       try { result = await host.tool("ovrcr_publish", { handle: brief.handle, submission }); }
       catch (error) { result = { error: String(error) }; }
-      const childAcceptance = await host.tool("ovrcr_accept", {handle:brief.handle, identity:brief.identity, result_version:brief.result_version ?? 1, result_digest:"child-cannot-accept"});
+      const childAcceptance = await host.tool("ovrcr_accept", {handle:brief.handle, identity:brief.identity, result_version:brief.result_version ?? 1, result_digest:"child-cannot-accept", expected_control_epoch:1});
       writeFileSync(`${path}.child-acceptance`, JSON.stringify(childAcceptance));
       writeFileSync(`${path}.published`, JSON.stringify(result));
       process.stdout.write("CHILD_RESULT_PUBLISHED\n");
@@ -203,6 +203,7 @@ async function main() {
       pendingTools.get(clean.slice("abort_tool:".length))?.abort();
       continue;
     }
+    if (command === "human_marker") { process.stdout.write(`RECEIVED_HUMAN_${a}\n`); continue; }
     if (command === "exit") process.exit(17);
     if (host) {
       if (command === "mode") host.state.mode = a;

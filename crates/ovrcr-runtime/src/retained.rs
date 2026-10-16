@@ -224,6 +224,7 @@ impl RetainedSession {
             context_usage: None,
             title: self.effective_title(),
             manual_title: self.metadata.pinned_title.clone(),
+            assignment_control: None,
         }
     }
 }
@@ -350,6 +351,23 @@ impl SessionStore {
     pub(crate) fn save_assignment(&self, value: &crate::server::delegation::Record) -> Result<()> {
         self.connection.execute("INSERT INTO delegations (handle, workflow, session, metadata) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(handle) DO UPDATE SET session=excluded.session, metadata=excluded.metadata", params![value.handle, value.identity.workflow, value.identity.session.map(|id| sql_integer(id.0)).transpose()?, serde_json::to_string(value)?])?;
         Ok(())
+    }
+
+    pub(crate) fn assigned_record(
+        &self,
+        id: SessionId,
+    ) -> Result<Option<crate::server::delegation::Record>> {
+        use rusqlite::OptionalExtension;
+        let raw: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT metadata FROM delegations WHERE session = ?1",
+                [sql_integer(id.0)?],
+                |row| row.get(0),
+            )
+            .optional()?;
+        raw.map(|raw| serde_json::from_str(&raw).map_err(Into::into))
+            .transpose()
     }
 
     pub(crate) fn assigned(&self, id: SessionId) -> Result<bool> {

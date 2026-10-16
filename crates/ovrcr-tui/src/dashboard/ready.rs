@@ -78,6 +78,7 @@ mod tests {
             name: "s".into(),
             title: None,
             manual_title: None,
+            assignment_control: None,
             label: "l".into(),
             pid: Some(1),
             started_unix_ms: Some(0),

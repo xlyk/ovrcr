@@ -18,15 +18,19 @@ test("managed Pi exposes research assignment and explicit collection tools", asy
     writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(new URL("../src/ovrcr-reporting-transport.mjs", import.meta.url)));
     writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
     host = await createHost(join(dir, "reporting.mjs"));
-    assert.deepEqual(host.tools(), ["ovrcr_accept", "ovrcr_collect", "ovrcr_followup", "ovrcr_inspect", "ovrcr_mark_handled", "ovrcr_publish", "ovrcr_start", "ovrcr_wait"]);
+    assert.deepEqual(host.tools(), ["ovrcr_accept", "ovrcr_collect", "ovrcr_confirm_return", "ovrcr_followup", "ovrcr_inspect", "ovrcr_mark_handled", "ovrcr_publish", "ovrcr_start", "ovrcr_wait"]);
     assert.deepEqual(host.toolDefinition("ovrcr_publish").parameters.required, ["handle", "submission"]);
     assert.deepEqual(host.toolDefinition("ovrcr_collect").parameters.required, ["handle"]);
     assert.deepEqual(host.toolDefinition("ovrcr_start").parameters.anyOf, [{ required: ["handle"] }, { required: ["project", "workspace", "scope", "model_provider", "model", "acceptance_evidence"] }]);
-    assert.deepEqual(host.toolDefinition("ovrcr_followup").parameters.anyOf, [{required:["handle","request"]},{required:["handle","expected_identity","expected_result_version","text"]}]);
-    assert.deepEqual(host.toolDefinition("ovrcr_accept").parameters.required, ["handle","identity","result_version","result_digest"]);
-    const malformed = await host.tool("ovrcr_followup", {handle:"assignment",expected_identity:{},expected_result_version:1,text:""});
+    assert.deepEqual(host.toolDefinition("ovrcr_followup").parameters.anyOf, [{required:["handle","request"]},{required:["handle","expected_identity","expected_result_version","expected_control_epoch","text"]}]);
+    assert.deepEqual(host.toolDefinition("ovrcr_accept").parameters.required, ["handle","identity","result_version","result_digest","expected_control_epoch"]);
+    const malformed = await host.tool("ovrcr_followup", {handle:"assignment",expected_identity:{},expected_result_version:1,expected_control_epoch:1,text:""});
     assert.equal(malformed.details.dispatch, "Refused");
     assert.equal(malformed.details.transport, "NotSent");
+    assert.deepEqual(host.toolDefinition("ovrcr_confirm_return").parameters.required, ["handle","request","returned_request","expected_control_epoch","evidence"]);
+    await assert.rejects(() => host.tool("ovrcr_confirm_return", {handle:"assignment"}), /missing required argument: request/);
+    const missingEpoch = await host.tool("ovrcr_followup", {handle:"assignment",expected_identity:{},expected_result_version:1,text:"scoped"});
+    assert.equal(missingEpoch.details.transport,"NotSent");
     await assert.rejects(() => host.tool("ovrcr_accept", {}), /missing required argument: handle/);
     const missing = await host.tool("ovrcr_start", {});
     assert.equal(missing.details.dispatch, "Refused");
@@ -54,7 +58,7 @@ appendFileSync(${JSON.stringify(calls)}, operation + '\\n');
 let value = existsSync(${JSON.stringify(state)}) ? JSON.parse(readFileSync(${JSON.stringify(state)})) : null;
 if (operation === 'Prepare') {
   const contract = request.Prepare.contract;
-  value ??= { handle: contract.request, identity: {instance:'i',workflow:contract.workflow,controller:contract.controller,controller_epoch:1,task:contract.task,attempt:1,contract:1,request:contract.request,session:null,run:null}, dispatch:'Prepared', receipts:[] };
+  value ??= { handle: contract.request, identity: {instance:'i',workflow:contract.workflow,controller:contract.controller,controller_epoch:1,task:contract.task,attempt:1,contract:1,request:contract.request,session:null,run:null}, dispatch:'Prepared', control:{epoch:1}, receipts:[] };
   if (!existsSync(${JSON.stringify(join(dir, "lost"))})) {
     writeFileSync(${JSON.stringify(join(dir, "lost"))}, 'lost');
     if (${JSON.stringify(loss)} === 'after') writeFileSync(${JSON.stringify(state)}, JSON.stringify(value));
@@ -63,7 +67,7 @@ if (operation === 'Prepare') {
   value.receipts = [{operation:'Prepare',outcome:'Applied'}];
 } else if (!value) { console.error(JSON.stringify({error:{code:'NotFound',message:'assignment not found'}})); process.exit(1); }
 if (operation === 'Launch') { value.identity.session = 41; value.identity.run = 1; value.dispatch = 'Launched'; value.receipts.push({operation:'Launch',outcome:'Applied'}); }
-if (operation === 'SendInitial') { value.dispatch = 'Applied'; value.receipts.push({operation:'InitialInput',outcome:'Applied'}); }
+if (operation === 'SendInitial') { if(request.SendInitial.expected_control_epoch !== 1) throw new Error('missing initial epoch'); value.control = {epoch:1}; value.dispatch = 'Applied'; value.receipts.push({operation:'InitialInput',outcome:'Applied'}); }
 writeFileSync(${JSON.stringify(state)}, JSON.stringify(value)); console.log(JSON.stringify(value));
 `);
     chmodSync(binary, 0o700);
@@ -132,7 +136,14 @@ test("followup recovery retains exact private request after a lost reply", async
     writeFileSync(binary, `#!/usr/bin/env node
 import {readFileSync,writeFileSync,appendFileSync,existsSync} from 'node:fs';
 let input='';for await(const bytes of process.stdin)input+=bytes;
-const fields=JSON.parse(input).Followup;
+const request=JSON.parse(input);
+if (request.Reconcile) {
+  appendFileSync(${JSON.stringify(calls)},JSON.stringify(request)+'\\n');
+  console.log(JSON.stringify({handle:request.Reconcile.request,control:{epoch:9},receipts:[{request:'legacy',operation:'Followup',outcome:'Applied'}]}));
+  process.exit(0);
+}
+const fields=request.Followup;
+if (fields.expected_control_epoch !== 1) throw new Error('missing captured epoch');
 appendFileSync(${JSON.stringify(calls)},JSON.stringify(fields)+'\\n');
 if(!existsSync(${JSON.stringify(lost)})){writeFileSync(${JSON.stringify(lost)},'lost');process.exit(1);}
 console.log(JSON.stringify({handle:fields.handle,identity:fields.expected_identity,dispatch:'Applied',receipts:[{request:fields.request,operation:'Followup',outcome:'Applied'}]}));
@@ -144,7 +155,7 @@ console.log(JSON.stringify({handle:fields.handle,identity:fields.expected_identi
     writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(new URL("../src/ovrcr-reporting-transport.mjs", import.meta.url)));
     writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
     host = await createHost(join(dir, "reporting.mjs"));
-    const first = (await host.tool("ovrcr_followup", {handle:"assignment",expected_identity:{request:"assignment",contract:1},expected_result_version:1,text:"Clarify the scoped result"})).details;
+    const first = (await host.tool("ovrcr_followup", {handle:"assignment",expected_identity:{request:"assignment",contract:1},expected_result_version:1,expected_control_epoch:1,text:"Clarify the scoped result"})).details;
     assert.equal(first.dispatch,"Unknown");
     assert.equal(first.receipts,undefined);
     const recovered = (await host.tool("ovrcr_followup", {handle:"assignment",request:first.request})).details;
@@ -154,10 +165,19 @@ console.log(JSON.stringify({handle:fields.handle,identity:fields.expected_identi
     const saved=join(dir,"parent-intents",`followup-${first.request}.json`);
     const bytes=readFileSync(saved,"utf8");
     assert.ok(!bytes.includes("fixture-delegation"),"persist no capability in task payloads");
+    const legacy=JSON.parse(bytes);delete legacy.expected_control_epoch;
+    writeFileSync(saved,JSON.stringify(legacy),{mode:0o600});
+    const legacyBytes=readFileSync(saved,"utf8");
+    const observed=(await host.tool("ovrcr_followup",{handle:"assignment",request:first.request})).details;
+    assert.equal(observed.control.epoch,9);
+    assert.equal(observed.receipts[0].outcome,"Applied");
+    assert.equal(readFileSync(saved,"utf8"),legacyBytes,"legacy immutable bytes are preserved");
+    const latest=JSON.parse(readFileSync(calls,"utf8").trim().split("\n").at(-1));
+    assert.deepEqual(Object.keys(latest),["Reconcile"],"legacy recovery only observes even if a fresh epoch exists");
     rmSync(saved);symlinkSync(calls,saved);
     const unsafe=(await host.tool("ovrcr_followup",{handle:"assignment",request:first.request})).details;
     assert.equal(unsafe.dispatch,"Refused");
-    assert.equal(readFileSync(calls,"utf8").trim().split("\n").length,2,"unsafe original intent cannot contact control");
+    assert.equal(readFileSync(calls,"utf8").trim().split("\n").length,3,"unsafe original intent cannot contact control");
   } finally {await host?.emit({type:"session_shutdown",reason:"quit"});process.env=before;rmSync(dir,{recursive:true,force:true});}
 });
 

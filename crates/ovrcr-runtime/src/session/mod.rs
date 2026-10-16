@@ -289,8 +289,17 @@ type TermResultHook = Arc<dyn Fn() -> Option<bool> + Send + Sync>;
 #[cfg(test)]
 type ListingErrorHook = Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>;
 
+#[derive(Clone, Copy)]
+pub(crate) enum DelegatedAuthority {
+    Controller,
+    ConfirmHumanReturn,
+}
+
 pub(crate) struct DelegatedInput<'a> {
     pub request: &'a str,
+    pub control: &'a ovrcr_protocol::AssignmentControl,
+    pub control_epoch: u64,
+    pub authority: DelegatedAuthority,
     pub parent: &'a Session,
     pub parent_binding: &'a ovrcr_protocol::AgentBinding,
     pub capability: &'a str,
@@ -576,6 +585,7 @@ impl Session {
                 archived: false,
                 title: None,
                 manual_title: None,
+                assignment_control: None,
                 id,
                 run: spec.run,
                 kind: spec.kind.clone(),
@@ -1016,7 +1026,7 @@ impl Session {
             })
         };
         Ok(self
-            .with_delegated_context(&input, || {
+            .with_delegated_context(&input, |_| {
                 let mut writer = self.writer.lock().unwrap();
                 let failure = crate::server::delegation::take_fault("input", input.request);
                 Ok(write_delegated(&mut **writer, &bytes, failure))
@@ -1029,7 +1039,7 @@ impl Session {
     pub(crate) fn with_delegated_context<T>(
         &self,
         input: &DelegatedInput<'_>,
-        action: impl FnOnce() -> Result<T>,
+        action: impl FnOnce(&ovrcr_protocol::AgentSnapshot) -> Result<T>,
     ) -> Result<Option<T>> {
         #[cfg(test)]
         if let Some(hook) = self.before_delegated_input.lock().unwrap().clone() {
@@ -1059,10 +1069,19 @@ impl Session {
                             .and_then(|metrics| metrics.sample.model.as_deref())
                             == Some(input.model)
                 });
-            if !parent_valid || !child_valid {
+            let control_valid = input.control.epoch == input.control_epoch
+                && input.control.owner == ovrcr_protocol::ControlOwner::Controller
+                && match input.authority {
+                    DelegatedAuthority::Controller => input.control.barrier.is_none(),
+                    DelegatedAuthority::ConfirmHumanReturn => matches!(
+                        input.control.barrier,
+                        Some(ovrcr_protocol::ControlBarrier::HumanReturn { .. })
+                    ),
+                };
+            if !parent_valid || !child_valid || !control_valid {
                 return Ok(None);
             }
-            action().map(Some)
+            action(child.reporting.snapshot.as_ref().unwrap()).map(Some)
         };
         if input.parent.id().0 < self.id().0 {
             let parent = input.parent.state.lock().unwrap();
@@ -1073,6 +1092,70 @@ impl Session {
             let parent = input.parent.state.lock().unwrap();
             apply(&parent, &child)
         }
+    }
+
+    /// Attribution survives an intentional pause, while input admission remains Running-only.
+    /// Caller owns retained metadata; inspect the exact reporting binding under child state.
+    pub(crate) fn with_assignment_attribution<T>(
+        &self,
+        run: ovrcr_protocol::SessionRunId,
+        binding: &ovrcr_protocol::AgentBinding,
+        action: impl FnOnce(&ovrcr_protocol::AgentSnapshot) -> Result<T>,
+    ) -> Result<T> {
+        let state = self.state.lock().unwrap();
+        let snapshot = state
+            .reporting
+            .snapshot
+            .as_ref()
+            .filter(|snapshot| {
+                self.run() == run
+                    && matches!(state.phase, SessionPhase::Running | SessionPhase::Paused)
+                    && state.hook_capability.is_some()
+                    && &snapshot.binding == binding
+                    && snapshot.health.state == ovrcr_protocol::ReporterHealth::Connected
+            })
+            .context("assigned attribution binding is unavailable or changed")?;
+        action(snapshot)
+    }
+
+    /// Caller owns retained metadata; this is the final current-child reporting fence.
+    pub(crate) fn with_assignment_context<T>(
+        &self,
+        run: ovrcr_protocol::SessionRunId,
+        binding: &ovrcr_protocol::AgentBinding,
+        action: impl FnOnce(&ovrcr_protocol::AgentSnapshot) -> Result<T>,
+    ) -> Result<T> {
+        let state = self.state.lock().unwrap();
+        let snapshot = state
+            .reporting
+            .snapshot
+            .as_ref()
+            .filter(|snapshot| {
+                self.run() == run
+                    && state.phase == SessionPhase::Running
+                    && state.hook_capability.is_some()
+                    && &snapshot.binding == binding
+                    && snapshot.health.state == ovrcr_protocol::ReporterHealth::Connected
+            })
+            .context("assigned run or reporting binding is unavailable or changed")?;
+        action(snapshot)
+    }
+
+    /// Generic writers always reject assigned membership. Only Server-validated human
+    /// input reaches this separate writer, with retained authority held by its caller.
+    pub(crate) fn with_assignment_writer<T>(
+        &self,
+        run: ovrcr_protocol::SessionRunId,
+        binding: &ovrcr_protocol::AgentBinding,
+        action: impl FnOnce(&mut dyn std::io::Write) -> Result<T>,
+    ) -> Result<T> {
+        if !self.has_assigned_input() {
+            bail!("human assignment input requires immutable membership");
+        }
+        self.with_assignment_context(run, binding, |_| {
+            let mut writer = self.writer.lock().unwrap();
+            action(&mut **writer)
+        })
     }
 
     pub(crate) fn with_delegation_binding<T>(

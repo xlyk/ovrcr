@@ -1,4 +1,6 @@
 //! Public Pi tools -> control CLI -> isolated binary Server -> real managed child PTY.
+#[path = "pi_delegation/control.rs"]
+mod assignment_control;
 #[path = "pi_delegation/followups.rs"]
 mod followups;
 #[path = "support/live.rs"]
@@ -716,6 +718,9 @@ impl ControlProxy {
                     DelegationRequest::CollectVersion { handle, .. } => {
                         ("CollectVersion", handle.clone())
                     }
+                    DelegationRequest::ConfirmHumanReturn { request, .. } => {
+                        ("ConfirmHumanReturn", request.clone())
+                    }
                     DelegationRequest::RecordAcceptance { handle, .. } => {
                         ("RecordAcceptance", handle.clone())
                     }
@@ -1106,6 +1111,30 @@ fn public_dispatch_freezes_fresh_child_target_before_metrics_and_write() {
             if stage == "after-capture" {
                 assert_eq!(first["dispatch"], "Unknown");
                 let saved = fixture.reconcile(&handle);
+                let mut wrong_epoch = fixture.proxy.original(DispatchOperation::InitialInput);
+                if let DelegationRequest::SendInitial {
+                    expected_control_epoch,
+                    ..
+                } = &mut wrong_epoch
+                {
+                    *expected_control_epoch += 1;
+                } else {
+                    unreachable!()
+                }
+                assert!(matches!(
+                    fixture
+                        .live
+                        .request(Request::Delegation(Box::new(wrong_epoch))),
+                    Response::Error {
+                        code: ErrorCode::Conflict,
+                        ..
+                    }
+                ));
+                assert_eq!(
+                    fixture.reconcile(&handle).receipts,
+                    saved.receipts,
+                    "caller-only wrong epoch cannot terminalize a still-authorized original intent"
+                );
                 assert_eq!(
                     saved
                         .receipts
@@ -1158,6 +1187,14 @@ fn public_dispatch_freezes_fresh_child_target_before_metrics_and_write() {
         };
         assert_eq!(rejected["dispatch"], "Refused", "{stage}: {rejected}");
         let current = fixture.reconcile(&handle);
+        println!(
+            "INITIAL_FENCE stage={stage} epoch={} input={} bytes={}",
+            current.control.epoch,
+            fixture.input_count(&current),
+            fixture.byte_count(&current)
+        );
+        assert_eq!(fixture.input_count(&current), 0);
+        assert_eq!(fixture.byte_count(&current), 0);
         assert_eq!(
             current
                 .receipts

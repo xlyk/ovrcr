@@ -1391,6 +1391,7 @@ mod tests {
                         name: "session".into(),
                         title: None,
                         manual_title: None,
+                        assignment_control: None,
                         label: "PRIVATE_LABEL".into(),
                         pid: Some(1),
                         started_unix_ms: Some(0),

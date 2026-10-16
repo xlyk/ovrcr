@@ -1,9 +1,9 @@
 //! Followups exercise the registered tools through the shared binary/PTY fixture.
 use super::*;
 
-struct OwnedFollowup(Option<RecoveryFixture>);
+pub(super) struct OwnedFollowup(Option<RecoveryFixture>);
 impl OwnedFollowup {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self(Some(RecoveryFixture::new()))
     }
     fn with_model(model: Option<&str>) -> Self {
@@ -53,7 +53,10 @@ impl Drop for OwnedFollowup {
     }
 }
 
-fn complete(fixture: &RecoveryFixture, snapshot: &AssignmentSnapshot) -> AssignmentSnapshot {
+pub(super) fn complete(
+    fixture: &RecoveryFixture,
+    snapshot: &AssignmentSnapshot,
+) -> AssignmentSnapshot {
     fs::write(fixture.live.root.path().join("allow-result"), "1").unwrap();
     wait_file(&snapshot.brief.with_extension("json.published"));
     serde_json::from_value(fixture.tool(
@@ -68,12 +71,12 @@ fn followup(
     current: &AssignmentSnapshot,
     revised: Option<ResearchContract>,
 ) -> serde_json::Value {
-    fixture.tool("ovrcr_followup", serde_json::json!({"handle":current.handle,"expected_identity":current.identity,"expected_result_version":current.result_version,"text":"Clarify the README conclusion and return fresh evidence.","revised_contract":revised}))
+    fixture.tool("ovrcr_followup", serde_json::json!({"handle":current.handle,"expected_identity":current.identity,"expected_result_version":current.result_version,"expected_control_epoch":current.control.epoch,"text":"Clarify the README conclusion and return fresh evidence.","revised_contract":revised}))
 }
 
 fn accept(fixture: &RecoveryFixture, current: &AssignmentSnapshot) -> AssignmentSnapshot {
     let publication = current.publication.as_ref().expect("current publication");
-    serde_json::from_value(fixture.tool("ovrcr_accept", serde_json::json!({"handle":current.handle,"identity":current.identity,"result_version":current.result_version,"result_digest":publication.identity.digest}))).unwrap()
+    serde_json::from_value(fixture.tool("ovrcr_accept", serde_json::json!({"handle":current.handle,"identity":current.identity,"result_version":current.result_version,"result_digest":publication.identity.digest,"expected_control_epoch":current.control.epoch}))).unwrap()
 }
 
 #[test]
@@ -271,7 +274,7 @@ fn public_followup_versions_contract_results_and_parent_acceptance_in_one_child(
         .unwrap();
     assert!(!metadata.contains("Clarify the README conclusion"));
     assert!(!metadata.contains("specifically explain its installation prerequisites"));
-    let stale = fixture.tool("ovrcr_accept", serde_json::json!({"handle":revised.handle,"identity":original.identity,"result_version":1,"result_digest":original.publication.unwrap().identity.digest}));
+    let stale = fixture.tool("ovrcr_accept", serde_json::json!({"handle":revised.handle,"identity":original.identity,"result_version":1,"result_digest":original.publication.unwrap().identity.digest,"expected_control_epoch":original.control.epoch}));
     assert_eq!(stale["dispatch"], "Refused");
 }
 

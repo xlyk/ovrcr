@@ -1,3 +1,5 @@
+pub mod assignment_control;
+pub use assignment_control::*;
 pub mod delegation;
 pub use delegation::*;
 pub mod agent;

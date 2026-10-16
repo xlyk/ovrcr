@@ -28,7 +28,10 @@ dismissal, accepted-count and attempt-count fields; offline readers accept it
 read-only. Schema version 8 adds the instance identity and non-payload delegation
 receipts, owned by the same SessionStore connection and migration transaction.
 Schema version 9 protects versioned assignment metadata from older writers; its
-upgrade preserves existing receipt identities and private evidence.
+upgrade preserves existing receipt identities and private evidence. Schema version
+10 protects per-child control owner/epoch, human-input revision and bounded control
+receipts from older writers; it preserves prior immutable intent digests. Missing
+legacy input epochs never acquire current write authority.
 Immutable task contracts, briefs and submissions remain private files outside
 child checkouts; see [Pi research assignments](../pi-research-assignments.md).
 SQLite owns identity, path, and root-setup metadata. The stored

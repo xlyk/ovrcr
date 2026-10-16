@@ -1,3 +1,5 @@
+#[path = "terminal_acceptance/assignment_control.rs"]
+mod assignment_control;
 #[path = "support/dashboard_proxy.rs"]
 mod dashboard_proxy;
 #[path = "support/live.rs"]

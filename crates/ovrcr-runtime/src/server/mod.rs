@@ -443,11 +443,9 @@ impl ServerState {
             let boot_id = retained.boot_id().map(str::to_owned);
             (record, session, boot_id)
         };
-        Some(Self::summary_for_record(
-            &record,
-            session.as_ref(),
-            boot_id.as_deref(),
-        ))
+        let mut summary = Self::summary_for_record(&record, session.as_ref(), boot_id.as_deref());
+        self.project_assignment_control(&mut summary);
+        Some(summary)
     }
 
     pub(crate) fn session_summaries(&self) -> Vec<SessionSummary> {
@@ -463,7 +461,10 @@ impl ServerState {
         };
         rows.into_iter()
             .map(|(record, session)| {
-                Self::summary_for_record(&record, session.as_ref(), boot_id.as_deref())
+                let mut summary =
+                    Self::summary_for_record(&record, session.as_ref(), boot_id.as_deref());
+                self.project_assignment_control(&mut summary);
+                summary
             })
             .collect()
     }
