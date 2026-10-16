@@ -865,6 +865,7 @@ fn stored_assignment_bytes(f: &RecoveryFixture, handle: &str) -> Vec<u8> {
 
 #[cfg(feature = "acceptance-diagnostics")]
 fn near_full_assignment(f: &RecoveryFixture, child: &AssignmentSnapshot) {
+    // Seed valid paired journal metadata and padding at the public archive capacity boundary.
     let mut record = persisted(f, &child.handle);
     for index in 0..62 {
         let request = format!("retained-budget-control-{index}");
@@ -1766,4 +1767,603 @@ pub(super) fn archive_full_question_history(
     }
     assert_eq!(fs::read(&completed.result_path).unwrap(), result);
     assert_eq!(fs::read(signals).unwrap(), one_stop);
+}
+
+#[test]
+fn nonexistent_lifecycle_targets_keep_not_found_across_sqlite_integer_boundary() {
+    let live = Live::binary();
+    for id in [i64::MAX as u64, i64::MAX as u64 + 1, u64::MAX] {
+        let session = SessionId(id);
+        let expected_run = SessionRunId(1);
+        for (operation, request) in [
+            (
+                "reopen",
+                Request::ReopenSession {
+                    session,
+                    expected_run,
+                    acknowledge_stopped: false,
+                },
+            ),
+            (
+                "close",
+                Request::CloseTerminal {
+                    session,
+                    expected_run,
+                },
+            ),
+            ("kill", Request::KillSession { session }),
+            ("pause", Request::PauseSession { session }),
+            ("resume", Request::ResumeSession { session }),
+            (
+                "acknowledge",
+                Request::AcknowledgeSessionStopped {
+                    session,
+                    expected_run,
+                },
+            ),
+            (
+                "recover",
+                Request::RecoverSession {
+                    session,
+                    expected_run,
+                },
+            ),
+            (
+                "unarchive",
+                Request::UnarchiveSession {
+                    session,
+                    expected_run,
+                },
+            ),
+            (
+                "delete-archive",
+                Request::DeleteArchivedSession {
+                    session,
+                    expected_run,
+                },
+            ),
+            ("remove", Request::RemoveSession { session }),
+        ] {
+            let Response::Error { code, message } = live.request(request) else {
+                panic!("{operation} must refuse nonexistent session {id}");
+            };
+            assert_eq!(code, ErrorCode::NotFound, "{operation} {id}: {message}");
+        }
+    }
+    let Response::Inventory { sessions, .. } = live.request(Request::Inspect) else {
+        panic!("independent Inspect remains responsive");
+    };
+    assert!(sessions.is_empty());
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+#[test]
+fn admitted_archive_fences_lifecycle_while_unrelated_input_and_view_remain_responsive() {
+    let f = OwnedFollowup::new();
+    let signals = count_owned_child_terms(&f);
+    let started: AssignmentSnapshot = serde_json::from_value(f.start()).unwrap();
+    let child = complete(&f, &started);
+    let id = child.identity.session.unwrap();
+    let run = child.identity.run.unwrap();
+    let mut dashboard = super::assignment_control::dashboard(&f, &child);
+    let before_source = current(&f, id);
+    assert_eq!(before_source.phase, SessionPhase::Running);
+    assert_eq!(
+        before_source.agent.as_ref().unwrap().health.state,
+        ReporterHealth::Connected
+    );
+    let observed = before_source
+        .assignment_control
+        .as_ref()
+        .unwrap()
+        .evidence
+        .clone()
+        .unwrap();
+    let Response::CreatedSession(ordinary) =
+        f.live.request(Request::CreateSession(CreateSessionRequest {
+            project: PROJECT.into(),
+            workspace: f.workspace.clone(),
+            name: "archive-unrelated-input".into(),
+            label: None,
+            argv: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "while IFS= read -r line; do printf 'R1-OUTPUT:%s\\n' \"$line\"; done".into(),
+            ],
+            kind: SessionKind::Terminal,
+        }))
+    else {
+        panic!("ordinary unrelated terminal");
+    };
+    f.live.own_group(ordinary.pid.unwrap() as i32);
+    let delivered = declare(
+        &f,
+        &declaration(
+            &child,
+            "lifecycle-delivered",
+            None,
+            RetentionChoice::ArchiveEligible,
+        ),
+    );
+    let request = archive_request(
+        &child,
+        "lifecycle-stop",
+        reference(&delivered, "lifecycle-delivered"),
+    );
+    let wire = DelegationRequest::Archive {
+        auth: auth(&f),
+        archive: request.clone(),
+    };
+    let socket = f.live.socket.clone();
+    let fault = f.live.root.path().join("fault");
+    struct Release(std::path::PathBuf);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            let _ = fs::write(&self.0, "release");
+        }
+    }
+    let _release = Release(fault.with_extension("release"));
+    fs::write(&fault, "archive-after-admission|lifecycle-stop|0").unwrap();
+    let action = std::thread::spawn(move || {
+        let mut stream = connect_server(&socket).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(20)))
+            .unwrap();
+        client::request(&mut stream, 777, Request::Delegation(Box::new(wire))).unwrap()
+    });
+    wait_exact_fault_marker(&fault.with_extension("hit"), "archive-after-admission");
+    assert!(!action.is_finished());
+    let admitted = persisted(&f, &child.handle);
+    let archive_before = admitted["archive_receipts"].clone();
+    let control_before = admitted["control"].clone();
+    let receipts_before = admitted["receipts"].clone();
+    assert_eq!(archive_before[0]["outcome"], "StopUnknown");
+    assert_eq!(
+        control_before["barrier"]["Archive"]["request"],
+        "lifecycle-stop"
+    );
+    assert!(fs::read(&signals).unwrap_or_default().is_empty());
+    for (label, request) in [
+        (
+            "close",
+            Request::CloseTerminal {
+                session: id,
+                expected_run: run,
+            },
+        ),
+        ("kill", Request::KillSession { session: id }),
+        ("pause", Request::PauseSession { session: id }),
+    ] {
+        assert_eq!(
+            f.live.request(request),
+            Response::Error {
+                code: ErrorCode::Conflict,
+                message: "delegated archive owns this exact run; reconcile its original receipt"
+                    .into()
+            },
+            "{label}"
+        );
+    }
+    let projected = current(&f, id).assignment_control.unwrap();
+    assert!(
+        projected.evidence.is_none(),
+        "archive admission revokes the previously Connected reporting source"
+    );
+    for request in [
+        AssignmentControlRequest::Takeover {
+            request: "admitted-takeover".into(),
+            session: id,
+            run,
+            expected_epoch: projected.control.epoch,
+            view_revision: 1,
+        },
+        AssignmentControlRequest::Return {
+            request: "admitted-return".into(),
+            session: id,
+            run,
+            expected_epoch: projected.control.epoch,
+            view_revision: 1,
+            evidence: Box::new(observed),
+        },
+    ] {
+        let Response::Error { code, message } =
+            dashboard_view(&mut dashboard, 40, Request::AssignmentControl(request)).unwrap()
+        else {
+            panic!("revoked archive source must refuse human control");
+        };
+        assert_eq!(code, ErrorCode::Conflict);
+        assert_eq!(
+            message,
+            "assigned run or reporting binding is unavailable or changed"
+        );
+    }
+    let responsive = |dashboard: &mut std::os::unix::net::UnixStream, revision: u64| {
+        let marker = format!("held-{revision}");
+        assert_eq!(
+            f.live.request(Request::SendTerminal {
+                session: ordinary.id,
+                text: marker.clone(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let Response::TerminalText { text, .. } = f.live.request(Request::ReadTerminal {
+                session: ordinary.id,
+                max_lines: None,
+            }) else {
+                panic!("ordinary output read");
+            };
+            if text.contains(&format!("R1-OUTPUT:{marker}")) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "actual ordinary PTY output while archive is held"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            dashboard_view(
+                dashboard,
+                50 + revision,
+                Request::SetView {
+                    view: DashboardView {
+                        revision,
+                        panes: vec![PaneTarget {
+                            session: ordinary.id,
+                            run: ordinary.run,
+                            size: TerminalSize {
+                                rows: 24,
+                                cols: 120
+                            }
+                        }],
+                        focused: Some(ordinary.id),
+                    }
+                }
+            )
+            .unwrap(),
+            Response::Ok
+        );
+    };
+    responsive(&mut dashboard, 2);
+    let after = persisted(&f, &child.handle);
+    assert_eq!(after["archive_receipts"], archive_before);
+    assert_eq!(after["control"], control_before);
+    assert_eq!(after["receipts"], receipts_before);
+    assert_eq!(current(&f, id).run, run);
+    assert_eq!(current(&f, id).phase, SessionPhase::Running);
+    assert!(fs::read(&signals).unwrap_or_default().is_empty());
+    assert!(!action.is_finished());
+    fs::copy(
+        fault.with_extension("hit"),
+        f.live.root.path().join("lifecycle-admission.hit"),
+    )
+    .unwrap();
+    fs::remove_file(fault.with_extension("hit")).unwrap();
+    fs::write(&fault, "archive-after-stop|lifecycle-stop|0").unwrap();
+    fs::write(fault.with_extension("release"), "release").unwrap();
+    wait_exact_fault_marker(&fault.with_extension("hit"), "archive-after-stop");
+    assert!(!action.is_finished());
+    assert!(
+        !current(&f, id).phase.is_live(),
+        "reopen now has an actual stopped target"
+    );
+    let one_stop = assert_one_owned_term(&signals);
+    assert_eq!(
+        f.live.request(Request::ReopenSession {
+            session: id,
+            expected_run: run,
+            acknowledge_stopped: true
+        }),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            message: "delegated archive owns this exact run; reconcile its original receipt".into()
+        }
+    );
+    responsive(&mut dashboard, 3);
+    let after = persisted(&f, &child.handle);
+    assert_eq!(after["archive_receipts"], archive_before);
+    assert_eq!(after["control"], control_before);
+    assert_eq!(after["receipts"], receipts_before);
+    assert_eq!(current(&f, id).run, run);
+    assert_eq!(fs::read(&signals).unwrap(), one_stop);
+    assert!(
+        !action.is_finished(),
+        "no gate timeout may substitute for explicit release"
+    );
+    fs::write(fault.with_extension("release"), "release").unwrap();
+    let Response::Delegation(archived) = action.join().unwrap() else {
+        panic!("archive result");
+    };
+    assert_archived(&archived, "lifecycle-stop");
+    assert_eq!(stopped_row(&f, id), (run.0 + 1, true, 1));
+    assert_eq!(fs::read(&signals).unwrap(), one_stop);
+    assert!(current(&f, ordinary.id).phase.is_live());
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+fn restart_archive_server_with_explicit_parent(
+    f: &RecoveryFixture,
+    workflow: &WorkflowSnapshot,
+    label: &str,
+) -> (SessionId, WorkflowSnapshot) {
+    let groups = f.live.session_groups();
+    for group in &groups {
+        f.live.own_group(*group);
+    }
+    let old_server = f.live.server_pid().unwrap();
+    assert_eq!(
+        f.live.request(Request::Shutdown { kill: true }),
+        Response::Ok
+    );
+    f.live.join();
+    let probe = unsafe { libc::kill(old_server as i32, 0) };
+    let errno = std::io::Error::last_os_error().raw_os_error();
+    assert_eq!((probe, errno), (-1, Some(libc::ESRCH)));
+    for group in groups {
+        assert!(live::wait_group_absent(group, Duration::from_secs(5)));
+    }
+    let root = f.live.root.path();
+    let host = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pi/pi_host.mjs");
+    let history = root.join("history");
+    let gate = root.join("allow-result");
+    let fault = root.join("fault");
+    f.live.start_binary_env(&[
+        ("OVRCR_TEST_DELEGATION", "1".as_ref()),
+        ("OVRCR_TEST_PI_HOST", host.as_os_str()),
+        (
+            "OVRCR_TEST_CONTROL_BINARY",
+            env!("CARGO_BIN_EXE_ovrcr").as_ref(),
+        ),
+        ("OVRCR_TEST_DELEGATION_RESULT_GATE", gate.as_os_str()),
+        (
+            "OVRCR_TEST_DELEGATION_CONTROL_SOCKET",
+            f.proxy.path.as_os_str(),
+        ),
+        ("OVRCR_TEST_DELEGATION_FAULT", fault.as_os_str()),
+        ("OVRCR_TEST_DELEGATION_BYTES", f.bytes.as_os_str()),
+        ("OVRCR_TEST_HISTORY", history.as_os_str()),
+    ]);
+    let parent = super::parent_recovery::create_parent(f);
+    let forbidden = tool_reply(
+        &f.live,
+        parent.id,
+        "ovrcr_recover",
+        serde_json::json!({"workflow":workflow.authority.workflow}),
+        &root.join(format!("{label}-unclaimed.json")),
+    );
+    assert!(
+        forbidden.get("error").is_some(),
+        "restart cannot infer current authority"
+    );
+    let parents: Vec<WorkflowParent> = serde_json::from_value(super::parent_recovery::parent_tool(
+        f,
+        parent.id,
+        "ovrcr_parents",
+        serde_json::json!({}),
+    ))
+    .unwrap();
+    let target = parents
+        .into_iter()
+        .find(|p| p.session == parent.id)
+        .unwrap();
+    let mut dashboard = connect_server(&f.live.socket).unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    assert!(matches!(
+        client::request(&mut dashboard, 1, Request::DashboardHello).unwrap(),
+        Response::Hierarchy(_)
+    ));
+    let Response::Workflows(rows) = dashboard_view(
+        &mut dashboard,
+        2,
+        Request::DashboardWorkflow(DashboardWorkflowRequest::Transfer(Box::new(
+            WorkflowTransfer {
+                request: label.into(),
+                expected: workflow.authority.clone(),
+                parent: target.session,
+                parent_run: target.run,
+                binding: target.binding,
+                producer: target.producer,
+            },
+        ))),
+    )
+    .unwrap() else {
+        panic!("explicit current-parent transfer");
+    };
+    assert_eq!(rows.len(), 1);
+    let moved = rows[0].clone();
+    assert_ne!(
+        moved.authority.server_lifetime,
+        workflow.authority.server_lifetime
+    );
+    assert_eq!(moved.receipt.as_ref().unwrap().previous, workflow.authority);
+    let recovered: WorkflowSnapshot = serde_json::from_value(super::parent_recovery::parent_tool(
+        f,
+        parent.id,
+        "ovrcr_recover",
+        serde_json::json!({"workflow":workflow.authority.workflow}),
+    ))
+    .unwrap();
+    assert_eq!(recovered.authority, moved.authority);
+    (parent.id, moved)
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+#[test]
+fn near_full_pending_archive_survives_real_restart_and_completed_replay_preserves_replacement() {
+    let f = OwnedFollowup::new();
+    let signals = count_owned_child_terms(&f);
+    let started: AssignmentSnapshot = serde_json::from_value(f.start()).unwrap();
+    let child = complete(&f, &started);
+    let id = child.identity.session.unwrap();
+    let run = child.identity.run.unwrap();
+    let delivered = declare(
+        &f,
+        &declaration(
+            &child,
+            "restart-delivery",
+            None,
+            RetentionChoice::ArchiveEligible,
+        ),
+    );
+    near_full_assignment(&f, &child);
+    let request = archive_request(
+        &child,
+        "restart-stop",
+        reference(&delivered, "restart-delivery"),
+    );
+    let old_auth = auth(&f);
+    let evidence = fs::read(&child.result_path).unwrap();
+    fs::write(
+        f.live.root.path().join("fault"),
+        "archive-after-stage|restart-stop|0",
+    )
+    .unwrap();
+    let failed = f.tool("ovrcr_archive", serde_json::to_value(&request).unwrap());
+    assert_eq!(failed["dispatch"], "Unknown");
+    let pending = f.reconcile(&child.handle);
+    let predecessor = receipt(&pending, "restart-stop").clone();
+    assert_eq!(predecessor.outcome, ArchiveOutcome::StoppedArchivePending);
+    let control = pending.control.clone();
+    let before_restart = stored_assignment_bytes(&f, &child.handle);
+    let one_stop = assert_one_owned_term(&signals);
+    let (parent, moved) =
+        restart_archive_server_with_explicit_parent(&f, &delivered, "restart-owner");
+    let invoke = |parent, name: &str, args: serde_json::Value| {
+        super::parent_recovery::parent_tool(&f, parent, name, args)
+    };
+    let loaded: AssignmentSnapshot = serde_json::from_value(invoke(
+        parent,
+        "ovrcr_inspect",
+        serde_json::json!({"handle":child.handle}),
+    ))
+    .unwrap();
+    assert_eq!(
+        loaded.execution_attempts,
+        Some(1),
+        "actual startup load and current-owner decoder accept the near-full journal"
+    );
+    assert_eq!(loaded.control, control);
+    assert_eq!(receipt(&loaded, "restart-stop"), &predecessor);
+    assert_eq!(stored_assignment_bytes(&f, &child.handle), before_restart);
+    assert_eq!(stopped_row(&f, id), (run.0, true, 0));
+    let mut continuation = archive_request(&loaded, "restart-files", request.delivery.clone());
+    continuation.continuation_of = Some("restart-stop".into());
+    for attempt in 0..3 {
+        let mut invalid = continuation.clone();
+        invalid.request = format!("restart-refused-{attempt}");
+        match attempt {
+            0 => invalid.expected_control_epoch += 1,
+            1 => invalid.continuation_of = Some("missing-predecessor".into()),
+            _ => invalid.delivery.digest = "f".repeat(64),
+        }
+        let refused = invoke(
+            parent,
+            "ovrcr_archive",
+            serde_json::to_value(invalid).unwrap(),
+        );
+        assert!(
+            refused.get("archive_receipts").is_none(),
+            "invalid continuation cannot consume its reserved slot: {refused}"
+        );
+        assert_eq!(stored_assignment_bytes(&f, &child.handle), before_restart);
+        assert_eq!(fs::read(&signals).unwrap(), one_stop);
+    }
+    assert!(matches!(
+        f.live
+            .request(Request::Delegation(Box::new(DelegationRequest::Archive {
+                auth: old_auth.clone(),
+                archive: continuation.clone()
+            }))),
+        Response::Error { .. }
+    ));
+    assert_eq!(stored_assignment_bytes(&f, &child.handle), before_restart);
+    fs::write(
+        f.live.root.path().join("fault"),
+        "archive-after-stage|restart-files|0",
+    )
+    .unwrap();
+    let rollback = invoke(
+        parent,
+        "ovrcr_archive",
+        serde_json::to_value(&continuation).unwrap(),
+    );
+    assert_eq!(rollback["dispatch"], "Unknown");
+    assert_eq!(stored_assignment_bytes(&f, &child.handle), before_restart);
+    assert_eq!(stopped_row(&f, id), (run.0, true, 0));
+    assert_eq!(fs::read(&signals).unwrap(), one_stop);
+    let archived: AssignmentSnapshot = serde_json::from_value(invoke(
+        parent,
+        "ovrcr_archive",
+        serde_json::to_value(&continuation).unwrap(),
+    ))
+    .unwrap();
+    assert_archived(&archived, "restart-files");
+    assert_eq!(receipt(&archived, "restart-stop"), &predecessor);
+    assert_eq!(stopped_row(&f, id), (run.0 + 1, true, 1));
+    assert_eq!(fs::read(&signals).unwrap(), one_stop);
+    let filed = persisted(&f, &child.handle);
+    assert_eq!(
+        filed["control_intents"].as_array().unwrap().len()
+            + filed["archive_receipts"].as_array().unwrap().len(),
+        64
+    );
+    let (third, _) = restart_archive_server_with_explicit_parent(&f, &moved, "completed-owner");
+    let completed_row = stopped_row(&f, id);
+    let completed_bytes = stored_assignment_bytes(&f, &child.handle);
+    let replay: AssignmentSnapshot = serde_json::from_value(invoke(
+        third,
+        "ovrcr_archive",
+        serde_json::to_value(&continuation).unwrap(),
+    ))
+    .unwrap();
+    assert_eq!(replay.archive_receipts, archived.archive_receipts);
+    assert_eq!(
+        stopped_row(&f, id),
+        completed_row,
+        "completed receipt replay after startup never advances run"
+    );
+    assert_eq!(stored_assignment_bytes(&f, &child.handle), completed_bytes);
+    assert_eq!(
+        f.live.request(Request::UnarchiveSession {
+            session: id,
+            expected_run: SessionRunId(completed_row.0)
+        }),
+        Response::Ok
+    );
+    let returned = current(&f, id);
+    let Response::CreatedSession(replacement) = f.live.request(Request::ReopenSession {
+        session: id,
+        expected_run: returned.run,
+        acknowledge_stopped: true,
+    }) else {
+        panic!("public replacement reopen");
+    };
+    assert!(replacement.run.0 > completed_row.0);
+    assert!(replacement.phase.is_live());
+    f.live.own_group(replacement.pid.unwrap() as i32);
+    let replacement_signals = fs::read(&signals).unwrap();
+    assert!(matches!(
+        f.live
+            .request(Request::Delegation(Box::new(DelegationRequest::Archive {
+                auth: old_auth,
+                archive: continuation.clone()
+            }))),
+        Response::Error { .. }
+    ));
+    let replay: AssignmentSnapshot = serde_json::from_value(invoke(
+        third,
+        "ovrcr_archive",
+        serde_json::to_value(&continuation).unwrap(),
+    ))
+    .unwrap();
+    assert_eq!(replay.archive_receipts, archived.archive_receipts);
+    assert_eq!(current(&f, id).run, replacement.run);
+    assert!(current(&f, id).phase.is_live());
+    assert_eq!(fs::read(&signals).unwrap(), replacement_signals);
+    assert_eq!(fs::read(&child.result_path).unwrap(), evidence);
 }

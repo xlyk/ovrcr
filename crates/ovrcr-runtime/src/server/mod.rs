@@ -572,11 +572,12 @@ impl ServerState {
     }
 
     fn reject_archive_lifecycle(&self, id: SessionId) -> Result<()> {
-        if self
-            .retained
-            .lock()
-            .assigned_record(id)?
-            .is_some_and(|row| row.archive_pending().is_some())
+        let retained = self.retained.lock();
+        // Missing public IDs keep each caller's existing NotFound classification.
+        if retained.get(id).is_some()
+            && retained
+                .assigned_record(id)?
+                .is_some_and(|row| row.archive_pending().is_some())
         {
             return Err(lifecycle_error(
                 ErrorCode::Conflict,
