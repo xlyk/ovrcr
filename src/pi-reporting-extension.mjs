@@ -388,7 +388,9 @@ function registerDelegation(pi, producer, sourceKey) {
     if (!Array.isArray(rows) || rows.length !== 1) throw new Error("Invalid workflow transfer receipt; reconcile the original request");
     return rows[0];
   });
-  tool("ovrcr_start", "Start one read-only research assignment with an advertised allowed selection or configured default. Returns immediately after dispatch. Keep a capacity-refused handle pending; reconcile then use ovrcr_retry. Unknown effects must never be replaced.", { ...object({ handle: string, project: string, workspace: string, scope: string, ...selections, permitted_actions: { type: "array", items: string }, acceptance_evidence: { type: "array", items: string }, mandatory_capabilities: { type: "array", items: string } }, []), anyOf: [{ required: ["handle"] }, { required: ["project", "workspace", "scope", "acceptance_evidence"] }] }, async args => {
+  const repositoryPath = { type: "string", minLength: 1, maxLength: 4096, pattern: "^(?:[.]|[^/\\u0000-\\u001f]+(?:/[^/\\u0000-\\u001f]+)*)$" };
+  const codingContract = object({requested_base:{type:"string",minLength:1,maxLength:256},branch:{type:"string",minLength:1,maxLength:256},authorized_paths:{type:"array",minItems:1,maxItems:64,items:repositoryPath},required_checks:{type:"array",minItems:1,maxItems:32,uniqueItems:true,items:{type:"string",minLength:1,maxLength:256}}});
+  tool("ovrcr_start", "Start one read-only research or isolated coding assignment with an advertised allowed selection or configured default. Returns immediately after dispatch. Coding requires a new workspace ID, requested base, authorized repository paths and named checks. Coding allows only read/write/edit/check; no commit/push/merge/deploy authority or OS sandbox is implied. Keep a refused handle and its resources; reconcile then explicitly use ovrcr_retry when eligible. Unknown effects must never be replaced.", { ...object({ handle: string, project: string, workspace: string, scope: string, coding: codingContract, ...selections, permitted_actions: { type: "array", items: string }, acceptance_evidence: { type: "array", items: string }, mandatory_capabilities: { type: "array", items: string } }, []), anyOf: [{ required: ["handle"] }, { required: ["project", "workspace", "scope", "acceptance_evidence"] }] }, async args => {
     let handle = args.handle;
     const required = ["project", "workspace", "scope"];
     if (handle !== undefined ? (!identity(handle) || Object.keys(args).some(key => key !== "handle")) : required.some(key => typeof args[key] !== "string" || !args[key].trim()) || !Array.isArray(args.acceptance_evidence) || !args.acceptance_evidence.length) {
@@ -405,20 +407,21 @@ function registerDelegation(pi, producer, sourceKey) {
       if (args.mandatory_capabilities !== undefined && (!Array.isArray(args.mandatory_capabilities) || args.mandatory_capabilities.some(capability => !report.capabilities.includes(capability)))) return { handle: null, dispatch: "Refused", identity: { session: null, run: null }, reason: "unsupported mandatory capability" };
       if (!report.resolved_choice || report.reason) return { handle: null, dispatch: "Refused", identity: { session: null, run: null }, reason: report.reason, choices: report.choices };
       handle = randomUUID();
-      const contract = { schema: 1, workflow, controller, task: randomUUID(), request: handle, project: args.project, workspace: args.workspace, scope: args.scope, ...report.resolved_choice, permitted_actions: args.permitted_actions ?? ["read"], acceptance_evidence: args.acceptance_evidence ?? [], mandatory_capabilities: args.mandatory_capabilities ?? ["read", "result_file"], limits: report.effective_limits, previous_request: null };
+      const contract = { schema: 1, workflow, controller, task: randomUUID(), request: handle, project: args.project, workspace: args.workspace, scope: args.scope, ...report.resolved_choice, permitted_actions: args.permitted_actions ?? (args.coding ? ["read","write","edit","check"] : ["read"]), acceptance_evidence: args.acceptance_evidence ?? [], mandatory_capabilities: args.mandatory_capabilities ?? ["read", "result_file"], limits: report.effective_limits, previous_request: null, coding: args.coding ?? null };
       if (contract.scope.length > 32768 || contract.acceptance_evidence.length > 32 || contract.acceptance_evidence.some(value => typeof value !== "string" || !value || value.length > 4096)) return { handle, dispatch: "Refused", reason: "contract exceeds supported content limits" };
       await writePrivate(`${handle}.json`, contract);
       attempted = true;
       return await advance(handle, contract);
     } catch (error) { return { handle, dispatch: (error.refused || !attempted) ? "Refused" : "Unknown", transport: attempted ? "Unknown" : "NotSent", reason: String(error.message), recovery: "Call ovrcr_start with only this original handle; do not start a replacement assignment" }; }
   });
-  tool("ovrcr_retry", "Retry a reconciled zero-effect capacity refusal with the exact original task and effective choices. Persists and reuses one successor request; unknown/partial effects never qualify. If that successor is capacity-refused, retry its returned handle after capacity changes.", object({ handle: string }), async args => {
+  tool("ovrcr_retry", "Retry a reconciled zero-effect capacity refusal or a proven no-process coding launch failure with the exact original task, workspace/base and permissions. Persists and reuses one successor request; unknown/partial effects never qualify. If that successor is capacity-refused, retry its returned handle after capacity changes.", object({ handle: string }), async args => {
     let handle;
     let attempted = false;
     try {
       const original = await readIntent(args.handle);
       const prior = await call({ Inspect: { auth: auth(), handle: args.handle } });
-      if (!prior.retryable_capacity_refusal || prior.dispatch !== "Refused") return { handle: args.handle, dispatch: "Refused", reason: "only an authoritative zero-effect capacity refusal can be retried" };
+      const codingRetry = prior.resources?.coding?.no_process_started === true && ["CreatedUnregistered","Registered"].includes(prior.resources.coding.creation);
+      if (prior.dispatch !== "Refused" || (!prior.retryable_capacity_refusal && !codingRetry)) return { handle: args.handle, dispatch: "Refused", reason: "only an authoritative zero-effect capacity refusal or proven no-process coding failure can be retried" };
       let pointer;
       try { pointer = await readPrivate(`retry-${args.handle}.json`); } catch (error) { if (error.code !== "ENOENT") throw error; }
       if (!pointer) {
@@ -524,5 +527,5 @@ function registerDelegation(pi, producer, sourceKey) {
       return { ...snapshot, request };
     } catch (error) { return { handle: args.handle, request: request ?? null, dispatch: error.refused || !attempted ? "Refused" : "Unknown", transport: attempted ? "Unknown" : "NotSent", reason: String(error.message), recovery: "Inspect/recover only the original answer request; delivery is not consumption or acceptance" }; }
   });
-  tool("ovrcr_publish", "Publish the assigned child's immutable research result. Use the exact identity and result_version from the current brief (result_version is submission.version). This does not accept the work.", object({ handle: string, submission: { type: "object" } }), args => call({ Publish: { auth: auth(), handle: args.handle, submission: args.submission } }));
+  tool("ovrcr_publish", "Publish the assigned child's immutable result. Coding reports include actual named checks with Passed/Failed/Missing/Unrun outcomes, command, exit_code and evidence, and candidate:null; only the Server attaches the complete immutable candidate. Use the exact identity and result_version from the current brief (result_version is submission.version). This does not accept the work.", object({ handle: string, submission: { type: "object" } }), args => call({ Publish: { auth: auth(), handle: args.handle, submission: args.submission } }));
 }

@@ -1,7 +1,8 @@
-# Pi research assignments
+# Pi research and coding assignments
 
-A managed Pi parent can start independent read-only assignments in existing OVRCR
-workspaces, keep working, and explicitly collect each child's result. Launch Pi
+A managed Pi parent can start read-only assignments in existing OVRCR workspaces
+or bounded coding assignments in new isolated Git workspaces, keep working, and
+explicitly collect each child's result. Launch Pi
 through `ovrcr agent run pi -- pi` or the Dashboard picker. The managed extension
 registers `ovrcr_capabilities`, `ovrcr_start`, `ovrcr_retry`, `ovrcr_inspect`,
 `ovrcr_collect`, `ovrcr_followup`, `ovrcr_accept`, `ovrcr_confirm_return`, `ovrcr_publish`, `ovrcr_wait`,
@@ -137,7 +138,9 @@ selection (or omit it to use the default), and required acceptance evidence:
 The model above is an example, not a promised available selection. The Server
 checks Pi's available-model inventory using the same profile as the child. It
 refuses an unavailable exact selection or an unsupported mandatory capability.
-Only `read` and `result_file` are supported in this first flow.
+Research supports mandatory `read` and `result_file` capabilities. Coding also
+supports `isolated_workspace`, `immutable_candidate`, `write`, `edit` and `check`.
+Provider/model availability still comes from the same discovery and policy owner.
 
 The response includes a stable `handle`, the Server-created session and run IDs,
 the immutable brief location, and a dispatch status. The child appears in the
@@ -158,10 +161,100 @@ facts:
 - `acceptance` stays `pending` until the parent explicitly calls `ovrcr_accept`
   for the exact current result. Collection never accepts the child's claim.
 
-`Refused` means this operation is known not to have taken effect. `LaunchUnknown`,
+`Refused` means the requested process or input was not applied. A coding request
+can still retain a created worktree; inspect `resources.coding` before recovery. `LaunchUnknown`,
 `InputUnknown`, or a tool response with `Unknown` requires inspection of the
 original handle. Do not start a replacement or resend an uncertain prompt.
 Cancelling a tool wait does not cancel the child.
+
+### Start an isolated coding assignment
+
+Use the same `ovrcr_start` tool with `coding` and a **new** opaque `workspace` ID:
+
+```json
+{
+  "project": "my-project",
+  "workspace": "fix-token-expiry",
+  "scope": "Fix the approved token-expiration bug within src/auth and add focused tests.",
+  "permitted_actions": ["read", "write", "edit", "check"],
+  "acceptance_evidence": ["Complete immutable change and actual check results"],
+  "coding": {
+    "requested_base": "main",
+    "branch": "fix/token-expiry",
+    "authorized_paths": ["src/auth", "tests/auth.rs"],
+    "required_checks": ["auth regression", "format"]
+  }
+}
+```
+
+In research mode `workspace` names an existing registered workspace. In coding
+mode it requests a new ID; an existing ID, protected repository root or occupied
+path is refused. The Server resolves `requested_base` once before effects and
+records the exact commit, repository and proposed path. It revalidates the
+registered repository root's existing Git generation before intent, creation,
+registration, native launch and current candidate capture; replacing the
+repository at the same path does not inherit its authority. The normal combined
+workspace/managed-launch path creates the worktree and reports its actual Git
+generation and child Session/run. Moving the display ref afterward cannot change
+that base. Independent tasks get distinct workspaces; same-child followup or
+repair keeps the original workspace, base and permission envelope. A revision
+may change only scope and acceptance evidence.
+
+Coding launches Pi with explicit `--no-approve`, disabled discovered extensions
+and skills, and `read,write,edit,bash,grep,find,ls`. The assignment permits only
+read/write/edit/check within its authorized repository paths. This is a bounded
+assignment and tool policy, not an OS sandbox. It does not authorize commits,
+pushes, merges, deployment or credential access. Research keeps its read-only
+tool set. Configured automatic trust must not widen either launch.
+
+`resources.coding` separately records `Prepared`, `Creating`,
+`CreatedUnregistered`, `Registered` or `Unresolved`, the original path/base/Git
+generation, and authoritative `no_process_started`. A worktree may survive a
+registration or launch failure even when no process started. Reconcile the same
+handle; plain `ovrcr_start({"handle":"..."})` preserves a final rejected launch.
+For a proven no-process/no-input failure with an exact unchanged saved worktree,
+use explicit `ovrcr_retry` on the failed handle. It creates one linked successor
+attempt and reuses that worktree. Repeating the predecessor retry recovers the
+same successor. Unknown/postspawn effects, changed generation/base, missing
+ownership proof or uncertain creation refuse retry; the Server never adopts by
+ID/branch or deletes a worktree as rollback. Original receipts, contracts and
+diagnostics remain available.
+
+A coding child calls `ovrcr_publish` with `submission.coding.checks` and
+`candidate:null`. Each check names its actual command, outcome, exit code and
+evidence. `Passed` requires exit 0; `Failed` requires a nonzero exit; `Missing` and
+`Unrun` cannot claim an exit code. Required names absent from the report are
+explicitly `Missing`. The Server preserves failed/unrun checks and attaches the
+candidate; neither a success claim nor collection means review, integration or
+parent acceptance occurred.
+
+The supported candidate form is a complete immutable no-commit delta against
+the recorded exact base. It includes committed-since-base, staged, unstaged and
+relevant untracked changes, with immutable preimage/postimage bytes, Git modes,
+deletions and confined symlink targets. Its manifest is private outside the
+checkout and identifies repository, workspace generation, base, captured HEAD
+and changed artifacts. Consumers use those saved bytes after checkout edits or
+removal, preserve original version/contract provenance, and report unavailable
+base context rather than choosing a moving ref. Commit-candidate and dependency
+integration policy are outside this form.
+
+Capture refuses out-of-scope changes, unresolved merges, submodules, special
+files, non-UTF-8 paths, escaping symlinks, private credential paths and detected
+concurrent changes. Ignored untracked files are excluded. Index entries marked
+assume-unchanged or skip-worktree are unsupported and refused, since Git can hide
+their edits. A read-only per-command mode override captures executable-bit
+changes even when `core.filemode=false`; repository configuration is unchanged.
+Bounds are 1024 changed files, 256 KiB decoded preimage/postimage content and 512 KiB
+publication bytes; exceeding a bound refuses a partial candidate.
+
+Preparation does not reserve a candidate filename. At final publication the
+Server revalidates current child/control/version, saves an authenticated intent,
+then commits those exact candidate/result bytes. Identical reports reuse the
+original immutable candidate. A crash after candidate commit but before result
+publication can reconstruct only the exact intent-bound result from saved bytes.
+Missing, corrupt or mismatched originals remain a storage gap and never trigger
+recapture. Historical collection verifies the selected original contract and
+publication, even after parent recovery or a later repair.
 
 ### Recover a lost control reply
 

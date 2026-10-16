@@ -6,6 +6,11 @@ impl OwnedFollowup {
     pub(super) fn new() -> Self {
         Self(Some(RecoveryFixture::new()))
     }
+    pub(super) fn with_owned_executable() -> Self {
+        Self(Some(RecoveryFixture::with_model_gate_owned_executable(
+            None, false, true,
+        )))
+    }
     fn with_model(model: Option<&str>) -> Self {
         Self(Some(RecoveryFixture::with_model(model)))
     }

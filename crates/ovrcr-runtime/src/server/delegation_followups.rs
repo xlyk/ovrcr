@@ -157,29 +157,41 @@ fn matching_legacy_brief(
         return Ok(bytes);
     }
     let value: serde_json::Value = serde_json::from_slice(&bytes)?;
-    for old_questions in [false, true] {
-        for old_contract in [false, true] {
-            if old_contract && legacy_contract_bytes(contract)?.is_none() {
-                continue;
-            }
-            let mut candidate = value.clone();
-            if old_questions {
-                candidate
-                    .as_object_mut()
-                    .context("brief is not an object")?
-                    .remove("questions");
-            }
-            if old_contract
-                && let Some(nested) = candidate
-                    .get_mut("contract")
-                    .and_then(serde_json::Value::as_object_mut)
-            {
-                nested.remove("limits");
-                nested.remove("previous_request");
-            }
-            let candidate = serde_json::to_vec_pretty(&candidate)?;
-            if digest(&candidate) == expected {
-                return Ok(candidate);
+    for old_coding in [false, true] {
+        if old_coding && contract.coding.is_some() {
+            continue;
+        }
+        for old_questions in [false, true] {
+            for old_contract in [false, true] {
+                if old_contract && legacy_contract_bytes(contract)?.is_none() {
+                    continue;
+                }
+                let mut candidate = value.clone();
+                if old_coding
+                    && let Some(nested) = candidate
+                        .get_mut("contract")
+                        .and_then(serde_json::Value::as_object_mut)
+                {
+                    nested.remove("coding");
+                }
+                if old_questions {
+                    candidate
+                        .as_object_mut()
+                        .context("brief is not an object")?
+                        .remove("questions");
+                }
+                if old_contract
+                    && let Some(nested) = candidate
+                        .get_mut("contract")
+                        .and_then(serde_json::Value::as_object_mut)
+                {
+                    nested.remove("limits");
+                    nested.remove("previous_request");
+                }
+                let candidate = serde_json::to_vec_pretty(&candidate)?;
+                if digest(&candidate) == expected {
+                    return Ok(candidate);
+                }
             }
         }
     }
@@ -195,6 +207,19 @@ fn followup_payload(
     saved_digest: Option<&str>,
 ) -> Result<Vec<u8>> {
     let mut payload = serde_json::to_vec(&(expected, version, control_epoch, text, revised))?;
+    if let (Some(saved), Some(contract)) = (saved_digest, revised.as_ref())
+        && contract.coding.is_none()
+        && digest(&payload) != saved
+    {
+        let mut candidate = serde_json::to_vec(&(expected, version, control_epoch, text))?;
+        candidate.pop();
+        candidate.push(b',');
+        candidate.extend_from_slice(&research_contract_bytes(contract)?);
+        candidate.push(b']');
+        if digest(&candidate) == saved {
+            payload = candidate;
+        }
+    }
     // Reconstruct only the old canonical nested shape, and only under its exact
     // durable digest. Changed semantics cannot inherit a prior request identity.
     if let Some(saved) = saved_digest
@@ -400,6 +425,9 @@ impl ServerState {
             ));
         }
         let original = read_contract(&record)?;
+        if original.coding.is_some() {
+            self.coding_workspace(&record)?;
+        }
         let contract = revision_contract(&original, revised)?;
         let brief = followup_brief(
             &record,
@@ -480,13 +508,13 @@ impl ServerState {
             bail!("captured followup parent authority changed");
         }
         store.save_assignment(&record)?;
-        let prompt = format!(
-            "Perform the read-only research assignment in {}. Read that immutable brief with your read tool; this is a scoped followup in the same assignment. Publish the exact requested result version with ovrcr_publish using handle {} and the identity in that brief. Do not modify task or parent records.",
-            record
+        let prompt = assignment_prompt(
+            &contract,
+            &record
                 .root
-                .join(format!("brief-v{}.json", record.result_version))
-                .display(),
-            record.handle
+                .join(format!("brief-v{}.json", record.result_version)),
+            &record.handle,
+            true,
         );
         match session.send_delegated_text(crate::session::DelegatedInput {
             parent_producer: Some(&authority.producer),
@@ -680,9 +708,17 @@ fn followup_brief(
     request: &str,
     text: &str,
 ) -> Result<Vec<u8>> {
-    Ok(serde_json::to_vec_pretty(
-        &serde_json::json!({ "schema": 1, "handle": record.handle, "identity": identity, "contract": contract, "request": request, "followup": text, "result_version": version, "output": record.root.join(format!("submission-v{version}.json")), "publication": "Call ovrcr_publish with the exact identity and result_version as submission.version. Only this child can publish; it cannot accept the result. Research tools remain read-only.", "questions": questions::QUESTION_INSTRUCTIONS }),
-    )?)
+    let publication = if contract.coding.is_some() {
+        "Publish exact identity/result_version and actual named check outcomes. The same workspace/base/permission envelope applies. The Server captures a new complete immutable authorized delta; prior candidates stay unchanged. Do not commit, push, merge, deploy, access credentials or modify task/parent records. Only the parent can accept the result."
+    } else {
+        "Call ovrcr_publish with the exact identity and result_version as submission.version. Only this child can publish; it cannot accept the result. Research tools remain read-only."
+    };
+    let mut value = serde_json::json!({"schema":1,"handle":record.handle,"identity":identity,"contract":contract_document(contract)?,
+        "request":request,"followup":text,"result_version":version,"output":record.root.join(format!("submission-v{version}.json")),"publication":publication,"questions":questions::QUESTION_INSTRUCTIONS});
+    if let Some(resource) = &record.coding {
+        value["coding_workspace"] = serde_json::to_value(resource)?;
+    }
+    Ok(serde_json::to_vec_pretty(&value)?)
 }
 
 pub(super) fn verify_acceptance(record: &Record, version: &VersionState) -> Result<()> {
@@ -726,6 +762,23 @@ pub(super) fn read_version_submission(
         bail!("submission publication changed or is partial");
     }
     let result: ResearchSubmission = serde_json::from_slice(&bytes)?;
+    let contract: ResearchContract = serde_json::from_slice(
+        &directory.read(&format!("contract-v{}.json", version.identity.contract))?,
+    )?;
+    let authenticated = PublicationIdentity {
+        assignment: version.identity.clone(),
+        kind: PublicationKind::Submission,
+        version: version.result_version,
+        digest: expected.clone(),
+    };
+    let selected = super::super::delegation_coding::SelectedCodingVersion {
+        identity: &version.identity,
+        result_version: version.result_version,
+        contract: &contract,
+        contract_digest: &version.contract_digest,
+        publication: Some(&authenticated),
+    };
+    ServerState::verify_coding_candidate(record, &selected, &result)?;
     result
         .validate(&version.identity)
         .map_err(anyhow::Error::msg)?;
@@ -907,6 +960,7 @@ mod tests {
             super::super::tests::record(dir.path().join("assignment"), DispatchStatus::Applied);
         let directory = Directory::open(&record.root, false).unwrap();
         let result = ResearchSubmission {
+            coding: None,
             schema: 1,
             identity: record.identity.clone(),
             version: 1,
@@ -969,5 +1023,54 @@ mod tests {
         assert!(record.unresolved_input());
         record.followup_outcome("original-followup", DispatchOutcome::Rejected, None, None);
         assert!(!record.unresolved_input());
+    }
+    #[test]
+    fn new_default_coding_fields_preserve_previous_contract_brief_and_followup_digests() {
+        let dir = tempfile::tempdir().unwrap();
+        let record =
+            super::super::tests::record(dir.path().join("assignment"), DispatchStatus::Applied);
+        let contract = read_contract(&record).unwrap();
+        let current = serde_json::to_vec(&contract).unwrap();
+        let suffix = b",\"coding\":null}";
+        assert!(current.ends_with(suffix));
+        let mut old = current[..current.len() - suffix.len()].to_vec();
+        old.push(b'}');
+        assert_eq!(contract_bytes(&contract, Some(&digest(&old))).unwrap(), old);
+        let mut changed = contract.clone();
+        changed.scope.push_str(" different scope");
+        assert_ne!(
+            digest(&contract_bytes(&changed, Some(&digest(&old))).unwrap()),
+            digest(&old)
+        );
+        let text = "same scoped followup";
+        let mut old_payload = serde_json::to_vec(&(&record.identity, 1_u32, 1_u64, text)).unwrap();
+        old_payload.pop();
+        old_payload.push(b',');
+        old_payload.extend_from_slice(&old);
+        old_payload.push(b']');
+        assert_eq!(
+            followup_payload(
+                &record.identity,
+                1,
+                1,
+                text,
+                &Some(contract.clone()),
+                Some(&digest(&old_payload))
+            )
+            .unwrap(),
+            old_payload
+        );
+        let brief =
+            followup_brief(&record, &record.identity, 2, &contract, "followup", text).unwrap();
+        let mut previous: serde_json::Value = serde_json::from_slice(&brief).unwrap();
+        previous["contract"]
+            .as_object_mut()
+            .unwrap()
+            .remove("coding");
+        let previous = serde_json::to_vec_pretty(&previous).unwrap();
+        assert_eq!(
+            matching_legacy_brief(brief, &contract, &digest(&previous)).unwrap(),
+            previous
+        );
     }
 }

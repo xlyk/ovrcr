@@ -25,6 +25,11 @@ test("managed Pi exposes research assignment and explicit collection tools", asy
     assert.deepEqual(host.toolDefinition("ovrcr_publish").parameters.required, ["handle", "submission"]);
     assert.deepEqual(host.toolDefinition("ovrcr_collect").parameters.required, ["handle"]);
     assert.deepEqual(host.toolDefinition("ovrcr_start").parameters.anyOf, [{ required: ["handle"] }, { required: ["project", "workspace", "scope", "acceptance_evidence"] }]);
+    const coding = host.toolDefinition("ovrcr_start").parameters.properties.coding;
+    assert.deepEqual(coding.required,["requested_base","branch","authorized_paths","required_checks"]);
+    assert.equal(coding.additionalProperties,false);
+    assert.equal(coding.properties.authorized_paths.minItems,1);
+    assert.equal(coding.properties.required_checks.uniqueItems,true);
     assert.deepEqual(host.toolDefinition("ovrcr_followup").parameters.anyOf, [{required:["handle","request"]},{required:["handle","expected_identity","expected_result_version","expected_control_epoch","text"]}]);
     assert.deepEqual(host.toolDefinition("ovrcr_accept").parameters.required, ["handle","identity","result_version","result_digest","expected_control_epoch"]);
     const malformed = await host.tool("ovrcr_followup", {handle:"assignment",expected_identity:{},expected_result_version:1,expected_control_epoch:1,text:""});
