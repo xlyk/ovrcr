@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 15;
+const SCHEMA_VERSION: i64 = 16;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -375,6 +375,10 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
         // Older writers discard coding workspace effects and immutable candidate attribution.
         transaction.pragma_update(None, "user_version", 15)?;
     }
+    if schema_identity(&transaction)?.1 < 16 {
+        // Older writers discard trusted fallback evidence and typed acceptance.
+        transaction.pragma_update(None, "user_version", 16)?;
+    }
     transaction.commit().context("commit registry migration")?;
     Ok(connection)
 }
@@ -403,7 +407,7 @@ pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
     if application != APPLICATION_ID
         || !matches!(
             version,
-            1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | SCHEMA_VERSION
+            1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | SCHEMA_VERSION
         )
     {
         bail!(
@@ -883,6 +887,79 @@ mod tests {
             stored, metadata,
             "migration must not drop unknown/partial answer obligations"
         );
+    }
+
+    #[test]
+    fn schema_fifteen_upgrade_preserves_coding_delivery_and_uncertain_receipts() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("instance");
+        initialize_registry(&config).unwrap();
+        let database = database_path(&config);
+        let connection = Connection::open(&database).unwrap();
+        connection.pragma_update(None, "user_version", 15).unwrap();
+        // Migration preserves opaque metadata; only the owning validators grant authority.
+        let assignment = r#"{"coding":{"base":"original-base","git_identity":"original-generation"},"obligation_revision":7,"acceptance":{"result_digest":"original-child-digest"},"archive_receipts":[{"outcome":"StopUnknown"}]}"#;
+        let workflow = r#"{"deliveries":[{"reference":{"request":"original-delivery","digest":"original-declaration-digest"}}],"cancellation":null}"#;
+        connection.execute("INSERT INTO delegations(handle,workflow,metadata) VALUES('original','workflow',?1)", [assignment]).unwrap();
+        connection
+            .execute(
+                "INSERT INTO delegation_workflows(workflow,metadata) VALUES('workflow',?1)",
+                [workflow],
+            )
+            .unwrap();
+        let evidence = config.join("workflows/original");
+        std::fs::create_dir_all(&evidence).unwrap();
+        for name in [
+            "contract-v1.json",
+            "brief-v1.json",
+            "submission-v1.json",
+            "candidate-v1.json",
+            "acceptance-v1.json",
+        ] {
+            std::fs::write(evidence.join(name), format!("immutable original {name}")).unwrap();
+        }
+        drop(connection);
+        load_registry(&config).unwrap();
+        assert_eq!(
+            schema_version(&database),
+            15,
+            "offline reads do not migrate the accepted coding schema"
+        );
+        initialize_registry(&config).unwrap();
+        assert_eq!(schema_version(&database), SCHEMA_VERSION);
+        let connection = Connection::open(&database).unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT metadata FROM delegations WHERE handle='original'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            assignment
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT metadata FROM delegation_workflows WHERE workflow='workflow'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            workflow
+        );
+        for name in [
+            "contract-v1.json",
+            "brief-v1.json",
+            "submission-v1.json",
+            "candidate-v1.json",
+            "acceptance-v1.json",
+        ] {
+            assert_eq!(
+                std::fs::read_to_string(evidence.join(name)).unwrap(),
+                format!("immutable original {name}")
+            );
+        }
     }
 
     #[test]

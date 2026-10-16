@@ -1,5 +1,6 @@
 pub(crate) mod delegation;
 mod delegation_coding;
+mod delegation_fallback;
 mod delegation_files;
 mod delegation_observation;
 pub(crate) mod delegation_recovery;

@@ -359,12 +359,146 @@ pub struct PublicationState {
     pub handled: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AcceptanceTarget {
+    ChildSubmission {
+        digest: String,
+    },
+    ParentRecovery {
+        recovery_version: u32,
+        digest: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AcceptanceReference {
     pub identity: AssignmentIdentity,
     pub result_version: u32,
-    pub result_digest: String,
+    pub target: AcceptanceTarget,
     pub path: PathBuf,
     pub digest: String,
+}
+
+// Keep the exact legacy field order and child shape: nested declaration hashes
+// depend on these bytes. Untagged strict alternatives reject mixed variants.
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum AcceptanceWire {
+    Child(AcceptanceChildWire),
+    Recovery(AcceptanceRecoveryWire),
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AcceptanceChildWire {
+    identity: AssignmentIdentity,
+    result_version: u32,
+    result_digest: String,
+    path: PathBuf,
+    digest: String,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AcceptanceRecoveryWire {
+    identity: AssignmentIdentity,
+    result_version: u32,
+    target: String,
+    recovery_version: u32,
+    recovery_digest: String,
+    path: PathBuf,
+    digest: String,
+}
+#[derive(Serialize, Deserialize)]
+struct AcceptanceBinaryWire {
+    identity: AssignmentIdentity,
+    result_version: u32,
+    target: AcceptanceTarget,
+    path: PathBuf,
+    digest: String,
+}
+impl Serialize for AcceptanceReference {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if !serializer.is_human_readable() {
+            return AcceptanceBinaryWire {
+                identity: self.identity.clone(),
+                result_version: self.result_version,
+                target: self.target.clone(),
+                path: self.path.clone(),
+                digest: self.digest.clone(),
+            }
+            .serialize(serializer);
+        }
+        match &self.target {
+            AcceptanceTarget::ChildSubmission { digest } => {
+                AcceptanceWire::Child(AcceptanceChildWire {
+                    identity: self.identity.clone(),
+                    result_version: self.result_version,
+                    result_digest: digest.clone(),
+                    path: self.path.clone(),
+                    digest: self.digest.clone(),
+                })
+            }
+            AcceptanceTarget::ParentRecovery {
+                recovery_version,
+                digest,
+            } => AcceptanceWire::Recovery(AcceptanceRecoveryWire {
+                identity: self.identity.clone(),
+                result_version: self.result_version,
+                target: "ParentRecovery".into(),
+                recovery_version: *recovery_version,
+                recovery_digest: digest.clone(),
+                path: self.path.clone(),
+                digest: self.digest.clone(),
+            }),
+        }
+        .serialize(serializer)
+    }
+}
+impl<'de> Deserialize<'de> for AcceptanceReference {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        if !deserializer.is_human_readable() {
+            let wire = AcceptanceBinaryWire::deserialize(deserializer)?;
+            return Ok(Self {
+                identity: wire.identity,
+                result_version: wire.result_version,
+                target: wire.target,
+                path: wire.path,
+                digest: wire.digest,
+            });
+        }
+        let (identity, result_version, target, path, digest) =
+            match AcceptanceWire::deserialize(deserializer)? {
+                AcceptanceWire::Child(w) => (
+                    w.identity,
+                    w.result_version,
+                    AcceptanceTarget::ChildSubmission {
+                        digest: w.result_digest,
+                    },
+                    w.path,
+                    w.digest,
+                ),
+                AcceptanceWire::Recovery(w)
+                    if w.target == "ParentRecovery" && w.recovery_version > 0 =>
+                {
+                    (
+                        w.identity,
+                        w.result_version,
+                        AcceptanceTarget::ParentRecovery {
+                            recovery_version: w.recovery_version,
+                            digest: w.recovery_digest,
+                        },
+                        w.path,
+                        w.digest,
+                    )
+                }
+                _ => return Err(serde::de::Error::custom("unknown acceptance target")),
+            };
+        Ok(Self {
+            identity,
+            result_version,
+            target,
+            path,
+            digest,
+        })
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssignmentVersion {
@@ -374,6 +508,8 @@ pub struct AssignmentVersion {
     pub brief: PathBuf,
     pub publication: Option<PublicationState>,
     pub acceptance: Option<AcceptanceReference>,
+    #[serde(default)]
+    pub recoveries: Vec<crate::RecoveryReference>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -410,6 +546,20 @@ pub struct AssignmentSnapshot {
     pub obligation_revision: u64,
     #[serde(default)]
     pub archive_receipts: Vec<crate::ArchiveReceipt>,
+    #[serde(default)]
+    pub recoveries: Vec<crate::RecoveryReference>,
+    #[serde(default)]
+    pub fallback_capture: Option<crate::FallbackCapture>,
+    #[serde(default)]
+    pub recovered: Option<crate::RecoveryPublication>,
+    #[serde(default)]
+    pub accepted_recovery: Option<crate::FallbackRecovery>,
+    #[serde(default)]
+    pub submission_issue: Option<String>,
+    #[serde(default)]
+    pub selected_acceptance_ref: Option<AcceptanceReference>,
+    #[serde(default)]
+    pub selected_recoveries: Vec<crate::RecoveryReference>,
 }
 
 /// A hint cursor is valid only for one Server lifetime. It is not task completion.
@@ -521,7 +671,7 @@ pub enum DelegationRequest {
         handle: String,
         identity: AssignmentIdentity,
         result_version: u32,
-        result_digest: String,
+        target: AcceptanceTarget,
         expected_control_epoch: u64,
     },
     ConfirmHumanReturn {
@@ -587,6 +737,18 @@ pub enum DelegationRequest {
     Archive {
         auth: DelegationAuth,
         archive: crate::ArchiveRequest,
+    },
+    CaptureFallback {
+        auth: DelegationAuth,
+        handle: String,
+        expected_identity: AssignmentIdentity,
+        expected_result_version: u32,
+        expected_control_epoch: u64,
+    },
+    RecoverFallback {
+        auth: DelegationAuth,
+        handle: String,
+        draft: Box<crate::FallbackRecoveryDraft>,
     },
 }
 

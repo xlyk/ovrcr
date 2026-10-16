@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
+import { createHash } from "node:crypto";
 // Test host for the OVRCR reporting extensions. It serves both harnesses: Pi and Oh My
 // Pi share the event vocabulary, and the grammar below covers the events only one of them
 // emits (agent_settled for Pi, session_switch and a continuing agent_end for Oh My Pi).
@@ -10,7 +11,7 @@ import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
 import { execFileSync, spawnSync } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, appendFileSync, renameSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { registerHooks } from "node:module";
 import { PassThrough } from "node:stream";
 
@@ -248,6 +249,72 @@ async function main() {
         await host.emit({ type: "agent_settled" });
       }
       if (brief.contract.scope.includes("INPUT_WAKE")) await host.emit({ type: "ui_prompt_start", kind: "input" });
+      if (brief.contract.scope.includes("FALLBACK_")) {
+        const directory = dirname(path);
+        const hash = bytes => createHash("sha256").update(bytes).digest("hex");
+        // Child correlation comes entirely from exact immutable brief/contract
+        // bytes. The production capture, never this fixture, owns attribution.
+        const artifact = { schema: 1, context: {
+          identity: brief.identity, result_version: brief.result_version,
+          contract_digest: hash(readFileSync(join(directory, `contract-v${brief.identity.contract}.json`))),
+          brief_digest: hash(readFileSync(path)), freshness_nonce: brief.fallback_nonce,
+        }, deliverable: readFileSync("README", "utf8"), unresolved: [] };
+        const bytes = Buffer.from(JSON.stringify(artifact));
+        writeFileSync(join(directory, "fallback-evidence.json"), bytes, { mode: 0o600 });
+        if (brief.contract.scope.includes("COMPLETE_INVALID")) writeFileSync(brief.output, "{incomplete original child publication", { mode: 0o600 });
+        let marker = hash(bytes);
+        if (brief.contract.scope.includes("OLD_SAME_RUN") || brief.contract.scope.includes("PREPARED_FUTURE")) {
+          const stale = structuredClone(artifact);
+          stale.context.result_version += brief.contract.scope.includes("PREPARED_FUTURE") ? 1 : -1;
+          stale.context.freshness_nonce = hash("not the current immutable brief nonce");
+          const other = Buffer.from(JSON.stringify(stale));
+          writeFileSync(join(directory, "fallback-other-version.json"), other, { mode: 0o600 });
+          marker = hash(other);
+        }
+        if (brief.contract.scope.includes("UNRELATED_ARTIFACT")) marker = hash("unrelated artifact");
+        if (brief.contract.scope.includes("FALLBACK_WITH_CURRENT_QUESTION")) {
+          const question = { schema: 1, identity: brief.identity, result_version: brief.result_version,
+            question_id: "fallback-citation", question_version: 1, supersedes: null, kind: "Clarification",
+            question: "QUESTION_BODY_FALLBACK_PRIVATE: Which citation label should a later discussion use?",
+            context: "The full verbatim README already fulfills this assignment; this optional clarification grants no new authority.",
+            choices: ["README", "repository README"] };
+          const reply = await host.tool("ovrcr_publish_question", { handle: brief.handle, question });
+          toolOutput(`${path}.question-published`, reply);
+          pendingQuestion = { path, brief, question,
+            reference: reply.details?.questions?.findLast(state => state.current)?.reference };
+        }
+        // Settle through the actual extension Reporter before displaying evidence.
+        if (!brief.contract.scope.includes("FALLBACK_INTERRUPT_RUNNING")) {
+          await host.emit({ type: "agent_end", messages: [assistant("stop")] });
+          await host.emit({ type: "agent_settled" });
+        }
+        const line = brief.contract.scope.includes("TRUNCATED_SUCCESS") ? `SUCCESS OVRCR_FALLBACK:${marker.slice(0, 20)}` : `OVRCR_FALLBACK:${marker}`;
+        await new Promise(resolve => process.stdout.write(`\n${line}\n`, resolve));
+        writeFileSync(`${path}.fallback-ready`, line);
+        // File gates drive fixture model work only; rebind and later publication
+        // still cross real Reporter/tools and cannot create parent recoveries.
+        void (async () => {
+          for (let tick = 0; tick < 12000; tick++) {
+            if (existsSync(`${path}.rebind`)) {
+              unlinkSync(`${path}.rebind`);
+              host.state.session = `fallback-replacement-${process.pid}`;
+              await host.emit({ type: "session_start", reason: "new" });
+              writeFileSync(`${path}.rebound`, "REAL_REPORTER_REBOUND");
+            }
+            if (existsSync(`${path}.publish-later`)) {
+              unlinkSync(`${path}.publish-later`);
+              const submission = { schema: 1, identity: brief.identity, version: brief.result_version,
+                outcome: "success", summary: "Later genuine child publication", evidence: ["README:1"], unresolved: [] };
+              let reply;
+              try { reply = await host.tool("ovrcr_publish", { handle: brief.handle, submission }); }
+              catch (error) { reply = { error: String(error) }; }
+              toolOutput(`${path}.published-later`, reply);
+            }
+            await new Promise(resolve => setTimeout(resolve, 5));
+          }
+        })().catch(error => { process.stderr.write(`FALLBACK_FIXTURE_FAILED ${error.message}\n`); process.exitCode = 1; });
+        continue;
+      }
       if (brief.contract.scope.includes("QUESTION_")) {
         const initial = { schema: 1, identity: brief.identity, result_version: brief.result_version ?? 1, question_id: "readme-choice", question_version: 1, supersedes: null, kind: "Clarification", question: "QUESTION_BODY_SECRET: Which README section is within the authorized scope?", context: "QUESTION_CONTEXT_SECRET: The repository has two sections.", choices: ["Introduction", "Installation"] };
         const questionState = { path, brief, reference: null, question: initial };
