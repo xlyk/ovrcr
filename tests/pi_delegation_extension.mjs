@@ -18,8 +18,9 @@ test("managed Pi exposes research assignment and explicit collection tools", asy
     writeFileSync(join(dir, "reporting.mjs"), source);
     writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(new URL("../src/ovrcr-reporting-transport.mjs", import.meta.url)));
     writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-delegation-continuation.mjs"), readFileSync(new URL("../src/ovrcr-delegation-continuation.mjs", import.meta.url)));
     host = await createHost(join(dir, "reporting.mjs"));
-    assert.deepEqual(host.tools(), ["ovrcr_accept", "ovrcr_capabilities", "ovrcr_collect", "ovrcr_confirm_return", "ovrcr_followup", "ovrcr_inspect", "ovrcr_mark_handled", "ovrcr_publish", "ovrcr_retry", "ovrcr_start", "ovrcr_wait"]);
+    assert.deepEqual(host.tools(), ["ovrcr_accept", "ovrcr_capabilities", "ovrcr_checkpoint", "ovrcr_collect", "ovrcr_confirm_return", "ovrcr_followup", "ovrcr_inspect", "ovrcr_mark_handled", "ovrcr_parents", "ovrcr_publish", "ovrcr_recover", "ovrcr_retry", "ovrcr_start", "ovrcr_transfer", "ovrcr_wait"]);
     assert.deepEqual(host.toolDefinition("ovrcr_publish").parameters.required, ["handle", "submission"]);
     assert.deepEqual(host.toolDefinition("ovrcr_collect").parameters.required, ["handle"]);
     assert.deepEqual(host.toolDefinition("ovrcr_start").parameters.anyOf, [{ required: ["handle"] }, { required: ["project", "workspace", "scope", "acceptance_evidence"] }]);
@@ -83,6 +84,7 @@ writeFileSync(${JSON.stringify(state)}, JSON.stringify(value)); console.log(JSON
     writeFileSync(join(dir, "reporting.mjs"), source);
     writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(new URL("../src/ovrcr-reporting-transport.mjs", import.meta.url)));
     writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-delegation-continuation.mjs"), readFileSync(new URL("../src/ovrcr-delegation-continuation.mjs", import.meta.url)));
     host = await createHost(join(dir, "reporting.mjs"));
     const first = (await host.tool("ovrcr_start", {project:"p",workspace:"w",scope:"Read",model_provider:"test",model:"fixture-model",acceptance_evidence:["citation"]})).details;
     assert.equal(first.dispatch, "Unknown");
@@ -156,6 +158,7 @@ console.log(JSON.stringify({handle:fields.handle,identity:fields.expected_identi
     writeFileSync(join(dir, "reporting.mjs"), source);
     writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(new URL("../src/ovrcr-reporting-transport.mjs", import.meta.url)));
     writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-delegation-continuation.mjs"), readFileSync(new URL("../src/ovrcr-delegation-continuation.mjs", import.meta.url)));
     host = await createHost(join(dir, "reporting.mjs"));
     const first = (await host.tool("ovrcr_followup", {handle:"assignment",expected_identity:{request:"assignment",contract:1},expected_result_version:1,expected_control_epoch:1,text:"Clarify the scoped result"})).details;
     assert.equal(first.dispatch,"Unknown");
@@ -228,6 +231,7 @@ process.stdout.write(JSON.stringify({ cursor: { server_epoch: "fixture", sequenc
     const extension = join(dir, "reporting.mjs");
     writeFileSync(extension, readFileSync(new URL("../src/pi-reporting-extension.mjs", import.meta.url), "utf8").replace("__OVRCR_BINARY__", JSON.stringify(binary)));
     for (const name of ["ovrcr-reporting-transport.mjs", "ovrcr-delegation-observer.mjs"]) writeFileSync(join(dir, name), readFileSync(new URL(`../src/${name}`, import.meta.url)));
+    for (const name of ["ovrcr-reporting-transport.mjs", "ovrcr-delegation-continuation.mjs"]) writeFileSync(join(dir, name), readFileSync(new URL(`../src/${name}`, import.meta.url)));
     host = await createHost(extension, { idle: false });
     await host.tool("ovrcr_wait", { handles: ["A", "B"], wait_ms: 0 });
     await eventually(() => host.state.messages.length === 1);
@@ -265,6 +269,7 @@ test("retry rejects a FIFO intent before a blocking open can wait for a writer",
     writeFileSync(join(dir, "reporting.mjs"), source);
     writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(new URL("../src/ovrcr-reporting-transport.mjs", import.meta.url)));
     writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-delegation-continuation.mjs"), readFileSync(new URL("../src/ovrcr-delegation-continuation.mjs", import.meta.url)));
     const host = await createHost(join(dir, "reporting.mjs"));
     let waitedForWriter = false;
     // Release the original defect so a failed regression cannot hang Node's
@@ -281,5 +286,88 @@ test("retry rejects a FIFO intent before a blocking open can wait for a writer",
     clearTimeout(release);
     process.env = before;
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("tool queued on old recovery cannot start work after explicit new", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ovrcr-retired-routing-"));
+  const before = { ...process.env };
+  let host;
+  try {
+    const binary = join(dir, "control.mjs"), calls = join(dir, "calls"), gate = join(dir, "release");
+    writeFileSync(binary, `#!/usr/bin/env node
+import { appendFileSync, existsSync } from 'node:fs';
+let input='';for await(const bytes of process.stdin)input+=bytes;
+if(process.argv.includes('report'))process.exit(0);
+const request=JSON.parse(input), operation=Object.keys(request)[0];
+appendFileSync(${JSON.stringify(calls)},operation+'\\n');
+if(operation==='Recover'){while(!existsSync(${JSON.stringify(gate)}))await new Promise(r=>setTimeout(r,5));console.log('[]');}
+else if(operation==='Capabilities')console.log(JSON.stringify({reason:'fixture refuses allocation'}));
+else throw new Error('Unexpected effect '+operation);
+`);
+    chmodSync(binary, 0o700);
+    Object.assign(process.env, { OVRCR_AGENT_SOCKET: "/fixture/reporting", OVRCR_AGENT_TOKEN: "fixture-reporting", OVRCR_DELEGATION_SESSION: "1", OVRCR_DELEGATION_TOKEN: "fixture-control", OVRCR_DELEGATION_SOCKET: "/fixture/control", OVRCR_DELEGATION_HOME: dir });
+    const source = readFileSync(new URL("../src/pi-reporting-extension.mjs", import.meta.url), "utf8").replace("__OVRCR_BINARY__", JSON.stringify(binary));
+    writeFileSync(join(dir,"reporting.mjs"),source);
+    for (const file of ["ovrcr-reporting-transport.mjs","ovrcr-delegation-observer.mjs","ovrcr-delegation-continuation.mjs"]) writeFileSync(join(dir,file),readFileSync(new URL(`../src/${file}`,import.meta.url)));
+    host = await createHost(join(dir,"reporting.mjs"));
+    const starting = host.emit({type:"session_start",reason:"startup"});
+    const deadline = Date.now()+5000;
+    while (!(() => { try { return readFileSync(calls,"utf8").includes("Recover"); } catch { return false; } })()) {
+      assert.ok(Date.now()<deadline,"old recovery was admitted");
+      await new Promise(r=>setTimeout(r,5));
+    }
+    const queued = host.tool("ovrcr_start",{project:"p",workspace:"w",scope:"Old queued work",acceptance_evidence:["citation"]});
+    const outcome = queued.then(value=>({value}),error=>({error}));
+    await host.emit({type:"session_start",reason:"new"});
+    writeFileSync(gate,"1");
+    await starting;
+    const retired = await outcome;
+    assert.match(String(retired.error?.message ?? retired.value?.details?.reason),/previous Pi context|retired/);
+    assert.deepEqual(readFileSync(calls,"utf8").trim().split("\n"),["Recover"],"no stale Capabilities/Prepare/Launch/input may run with fresh routing");
+  } finally {
+    await host?.emit({type:"session_shutdown",reason:"quit"});
+    process.env=before;
+    rmSync(dir,{recursive:true,force:true});
+  }
+});
+
+test("an awaited old private intent cannot reacquire auth after fork", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ovrcr-retired-intent-"));
+  const before = { ...process.env };
+  let host, prototype, originalRead, release;
+  try {
+    const binary = join(dir,"control.mjs"), calls = join(dir,"calls");
+    writeFileSync(binary, `#!/usr/bin/env node
+import {appendFileSync} from 'node:fs';
+let input='';for await(const bytes of process.stdin)input+=bytes;
+if(process.argv.includes('report'))process.exit(0);
+const request=JSON.parse(input);appendFileSync(${JSON.stringify(calls)},Object.keys(request)[0]+'\\n');console.log('[]');
+`);
+    chmodSync(binary,0o700);
+    Object.assign(process.env,{OVRCR_AGENT_SOCKET:"/fixture/reporting",OVRCR_AGENT_TOKEN:"reporting",OVRCR_DELEGATION_SESSION:"1",OVRCR_DELEGATION_TOKEN:"control",OVRCR_DELEGATION_SOCKET:"/fixture/control",OVRCR_DELEGATION_HOME:dir});
+    writeFileSync(join(dir,"reporting.mjs"),readFileSync(new URL("../src/pi-reporting-extension.mjs",import.meta.url),"utf8").replace("__OVRCR_BINARY__",JSON.stringify(binary)));
+    for(const file of ["ovrcr-reporting-transport.mjs","ovrcr-delegation-observer.mjs","ovrcr-delegation-continuation.mjs"])writeFileSync(join(dir,file),readFileSync(new URL(`../src/${file}`,import.meta.url)));
+    mkdirSync(join(dir,"parent-intents"),{mode:0o700});
+    const intent = join(dir,"parent-intents","original.json"), bytes = JSON.stringify({schema:1,request:"original",workflow:"old-workflow",controller:"old-controller"});
+    writeFileSync(intent,bytes,{mode:0o600});
+    host=await createHost(join(dir,"reporting.mjs"));
+    const probe=await open(intent,"r");prototype=Object.getPrototypeOf(probe);await probe.close();
+    originalRead=prototype.read;
+    let entered;
+    const reading=new Promise(resolve=>{entered=resolve;});
+    let held=false;
+    prototype.read=async function(...args){if(!held){held=true;entered();await new Promise(resolve=>{release=resolve;});}return originalRead.apply(this,args);};
+    const pending=host.tool("ovrcr_start",{handle:"original"});
+    await reading;
+    await host.emit({type:"session_start",reason:"fork"});
+    release();
+    await assert.rejects(pending,/previous Pi context/);
+    assert.equal(readFileSync(intent,"utf8"),bytes,"old intent remains immutable");
+    assert.throws(()=>readFileSync(calls),{code:"ENOENT"},"stale advance never spawns even Reconcile with fresh auth");
+  } finally {
+    release?.();if(prototype)prototype.read=originalRead;
+    await host?.emit({type:"session_shutdown",reason:"quit"});
+    process.env=before;rmSync(dir,{recursive:true,force:true});
   }
 });

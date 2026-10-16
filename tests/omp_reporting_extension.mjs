@@ -20,7 +20,7 @@ function materialize() {
   const helper = join(dir, "fake-ovrcr");
   writeFileSync(
     helper,
-    `#!/bin/sh\n[ "$1" = report ] && [ "$2" = omp ] && [ "$3" = --stdin ] || exit 9\ncat >> "${record}"; printf '\\n' >> "${record}"\n`,
+    `#!/bin/sh\n[ "$1" = report ] && [ "$2" = omp ] && [ "$3" = --stdin ] || exit 9\nIFS= read -r body\nprintf '%s\\n' "$body" >> "${record}"\n`,
   );
   chmodSync(helper, 0o700);
   // The receiver materializes the shared transport beside the extension that imports it.

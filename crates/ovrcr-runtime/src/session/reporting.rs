@@ -4,6 +4,8 @@ use ovrcr_protocol::*;
 #[derive(Default)]
 pub(super) struct ReportingState {
     pub epoch: u64,
+    pub(super) producer: Option<String>,
+    pub(super) source: Option<AgentSecret>,
     generation: u64,
     lease: Option<AgentSecret>,
     reservation: Option<(ReserveAgent, AgentReservation)>,
@@ -237,7 +239,50 @@ impl MeasurementWatermarks {
     }
 }
 
+pub(crate) enum AgentPersistence<'a> {
+    Reservation(&'a ReserveAgent),
+    Command(&'a AgentCommand),
+}
+
 impl Session {
+    /// Authenticate secret and capture public source identity under the same state lock.
+    pub(crate) fn authenticated_workflow_source(
+        &self,
+        auth: &DelegationAuth,
+    ) -> Option<(AgentBinding, String)> {
+        let state = self.state.lock().unwrap();
+        let reporting = &state.reporting;
+        if auth.session != self.id()
+            || !state.phase.is_live()
+            || !reporting.active()
+            || auth.source.is_none()
+            || reporting.source.as_ref() != auth.source.as_ref()
+            || !state.hook_capability.as_ref().is_some_and(|token| {
+                crate::agent_runner::delegation_capability(&capability_hex(token))
+                    == auth.capability
+            })
+            || reporting.snapshot.as_ref()?.health.state != ReporterHealth::Connected
+        {
+            return None;
+        }
+        Some((reporting.binding()?.clone(), reporting.producer.clone()?))
+    }
+    pub(crate) fn authorizes_workflow_source(&self, source: Option<&AgentSecret>) -> bool {
+        let state = self.state.lock().unwrap();
+        state.reporting.active() && source.is_some() && state.reporting.source.as_ref() == source
+    }
+    pub(crate) fn workflow_source(&self) -> Option<(AgentBinding, String)> {
+        let state = self.state.lock().unwrap();
+        let reporting = &state.reporting;
+        if !state.phase.is_live()
+            || !reporting.active()
+            || reporting.snapshot.as_ref()?.health.state != ReporterHealth::Connected
+        {
+            return None;
+        }
+        Some((reporting.binding()?.clone(), reporting.producer.clone()?))
+    }
+
     pub(crate) fn quota_snapshot(&self) -> Option<ProviderQuota> {
         let state = self.state.lock().unwrap();
         let snapshot = state.reporting.snapshot.as_ref()?;
@@ -261,7 +306,7 @@ impl Session {
         &self,
         request: &Request,
         owner: Option<&Arc<()>>,
-        persist: impl FnOnce(&AgentCommand) -> Result<()>,
+        persist: impl FnOnce(AgentPersistence<'_>) -> Result<()>,
     ) -> Result<Response> {
         let mut state = self.state.lock().unwrap();
         if let Request::MarkReviewed { expected, .. } = request {
@@ -314,6 +359,9 @@ impl Session {
                 epoch,
                 lease: AgentSecret(secret),
             };
+            persist(AgentPersistence::Reservation(reserve))?;
+            reporting.producer = None;
+            reporting.source = None;
             reporting.epoch = epoch;
             reporting.lease = Some(receipt.lease.clone());
             reporting.reservation = Some((reserve.clone(), receipt.clone()));
@@ -363,6 +411,43 @@ impl Session {
             bail!("operation receipt is unavailable or stale");
         };
         let result = match &r.command {
+            AgentCommand::WorkflowSource {
+                binding,
+                producer,
+                source,
+                ..
+            } => {
+                reporting.expected(Some(binding))?;
+                if binding.provider != AgentProvider::Pi {
+                    bail!("workflow source requires Pi");
+                }
+                validate_agent_id(producer)?;
+                if reporting.producer.as_ref() == Some(producer)
+                    && reporting
+                        .source
+                        .as_ref()
+                        .is_some_and(|current| current != source)
+                {
+                    bail!("current Producer source capability cannot be replaced");
+                }
+                persist(AgentPersistence::Command(&r.command))?;
+                reporting.producer = Some(producer.clone());
+                reporting.source = Some(source.clone());
+                AgentOperationResult::WorkflowUpdated
+            }
+            AgentCommand::WorkflowDeparture {
+                binding, producer, ..
+            } => {
+                reporting.expected(Some(binding))?;
+                if binding.provider != AgentProvider::Pi
+                    || reporting.producer.as_ref() != Some(producer)
+                {
+                    bail!("workflow departure source changed");
+                }
+                persist(AgentPersistence::Command(&r.command))?;
+                AgentOperationResult::WorkflowUpdated
+            }
+
             AgentCommand::InvalidateConversation => {
                 // Invalidation concerns the entire authenticated invocation, even
                 // when a successful Bind receipt was lost before this callback.
@@ -373,7 +458,7 @@ impl Session {
                 {
                     bail!("managed invocation does not support conversation recovery");
                 }
-                persist(&r.command)?;
+                persist(AgentPersistence::Command(&r.command))?;
                 AgentOperationResult::ConversationInvalidated
             }
             AgentCommand::RetainConversation { binding, reference } => {
@@ -382,7 +467,7 @@ impl Session {
                     bail!("Recovery must match the certified provider binding");
                 }
                 crate::recovery::validate(reference)?;
-                persist(&r.command)?;
+                persist(AgentPersistence::Command(&r.command))?;
                 AgentOperationResult::ConversationRetained
             }
             AgentCommand::Bind {
@@ -406,6 +491,8 @@ impl Session {
                     conversation: conversation.clone(),
                     generation,
                 };
+                reporting.producer = None;
+                reporting.source = None;
                 reporting.generation = generation;
                 reporting.measurements = MeasurementWatermarks::default();
                 reporting.snapshot = Some(AgentSnapshot {

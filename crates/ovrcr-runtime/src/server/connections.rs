@@ -597,6 +597,31 @@ pub(super) fn handle_request_with_id(
             request_id,
             HistoryRequest::End { session, snapshot },
         ),
+        Request::Workflow(request) => state.workflow_request(*request).unwrap_or_else(|error| {
+            error_response(ErrorCode::Conflict, error_chain_string(&error))
+        }),
+        Request::DashboardWorkflow(request) => {
+            let Some(owner) = owner.filter(|owner| dashboard && state.dashboard.owns(owner)) else {
+                return error_response(
+                    ErrorCode::Conflict,
+                    "workflow recovery requires the owning Dashboard",
+                );
+            };
+            match request {
+                ovrcr_protocol::DashboardWorkflowRequest::Candidates { parent, run } => {
+                    state.workflow_candidates(owner, parent, run).map_or_else(
+                        |error| error_response(ErrorCode::Conflict, error_chain_string(&error)),
+                        |choices| Response::WorkflowCandidates(Box::new(choices)),
+                    )
+                }
+                ovrcr_protocol::DashboardWorkflowRequest::Transfer(transfer) => state
+                    .transfer_workflow(*transfer, Some(owner), None)
+                    .map_or_else(
+                        |error| error_response(ErrorCode::Conflict, error_chain_string(&error)),
+                        |snapshot| Response::Workflows(vec![snapshot]),
+                    ),
+            }
+        }
         Request::Delegation(request) => {
             if let ovrcr_protocol::DelegationRequest::Observe {
                 auth,

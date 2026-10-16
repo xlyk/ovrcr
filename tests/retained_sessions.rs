@@ -619,6 +619,19 @@ fn extension_conversations_switch_and_survive_repeated_restart() {
             ),
         )
         .unwrap();
+        if provider == "pi" {
+            // Keep run N alive after its exact native owner is reaped so the
+            // delayed supervisor below still tests the original run capability.
+            std::fs::write(
+                &launcher,
+                format!(
+                    "#!/bin/sh\numask 077\nprintf '%s' \"$OVRCR_HOOK_TOKEN\" > {}\n{} \"$@\"\nprintf 'RETAINED_PI_NATIVE_EXIT=%s\\n' \"$?\"\nIFS= read -r done\n",
+                    quote(&capability_file),
+                    quote(&live.executable)
+                ),
+            )
+            .unwrap();
+        }
         std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700)).unwrap();
         let created = create_terminal(
             &live,
@@ -728,6 +741,21 @@ fn extension_conversations_switch_and_survive_repeated_restart() {
             ],
         );
         wait_output(&live, &id_arg, "PI_CALLBACK=6");
+        if provider == "pi" {
+            let rows = json(&live, &["terminal", "list"]);
+            let row = rows
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["id"] == id)
+                .unwrap();
+            assert_eq!(
+                row["agent"]["health"]["state"], "Connected",
+                "quit alone cannot prove the native owner departed"
+            );
+            json(&live, &["terminal", "send", &id_arg, "--text", "exit"]);
+            wait_output(&live, &id_arg, "RETAINED_PI_NATIVE_EXIT=17");
+        }
         let deadline = Instant::now() + live::wait_deadline();
         let epoch = loop {
             let rows = json(&live, &["terminal", "list"]);
@@ -771,6 +799,7 @@ fn extension_conversations_switch_and_survive_repeated_restart() {
             &mut old_watch,
             1,
             Request::ReserveAgent(ReserveAgent {
+                pi_resume: None,
                 session: SessionId(id),
                 capability: AgentSecret(capability),
                 operation: "old-run-reserve".into(),
@@ -1826,6 +1855,7 @@ fn restore_legacy_claude_schema(live: &Live) {
              DROP TABLE conversation_subjects;
              DROP TABLE delegations;
              DROP TABLE delegation_instance;
+             DROP TABLE delegation_workflows;
              PRAGMA user_version = 3;",
         )
         .unwrap();

@@ -32,6 +32,11 @@ upgrade preserves existing receipt identities and private evidence. Schema versi
 10 protects per-child control owner/epoch, human-input revision and bounded control
 receipts from older writers; it preserves prior immutable intent digests. Missing
 legacy input epochs never acquire current write authority.
+Schema version 11 adds one bounded workflow-authority row in the same connection.
+It records current parent Session/run/full binding, source identity, Server lifetime
+and complete immutable transition history separately from assignment provenance.
+Source credentials stay in memory. Existing records without certified workflow
+authority remain visible read-only gaps; migration never invents ownership.
 Immutable task contracts, briefs and submissions remain private files outside
 child checkouts; see [Pi research assignments](../pi-research-assignments.md).
 SQLite owns identity, path, and root-setup metadata. The stored

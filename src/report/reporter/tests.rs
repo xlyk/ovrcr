@@ -565,6 +565,7 @@ fn polling_never_promotes_pending_retention_to_a_replacement_generation() {
             deadline: deadline(),
         });
         handler(HookEvent::NativeCompleted {
+            reaped: false,
             deadline: deadline(),
         });
         let retained = supervisor

@@ -282,6 +282,8 @@ pub struct ReserveAgent {
     pub capability: AgentSecret,
     pub operation: String,
     pub expected_epoch: u64,
+    #[serde(default)]
+    pub pi_resume: Option<Box<ExtensionConversation>>,
     pub invocation: String,
     pub provider: AgentProvider,
 }
@@ -297,6 +299,19 @@ pub struct SupervisorAuth {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AgentCommand {
+    /// Sent by the native-root-authenticated Reporter, never a task tool.
+    WorkflowSource {
+        binding: Box<AgentBinding>,
+        producer: String,
+        reason: String,
+        source: AgentSecret,
+    },
+    WorkflowDeparture {
+        binding: AgentBinding,
+        producer: String,
+        reaped: bool,
+    },
+
     Bind {
         expected_binding: Option<AgentBinding>,
         conversation: String,
@@ -324,6 +339,7 @@ pub struct SupervisorRequest {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AgentOperationResult {
+    WorkflowUpdated,
     Reserved(AgentReservation),
     Bound(AgentBinding),
     Released,
@@ -851,6 +867,7 @@ pub(crate) mod tests {
         };
         let mut requests = vec![
             Request::ReserveAgent(ReserveAgent {
+                pi_resume: None,
                 session: SessionId(1),
                 capability: AgentSecret([165; 32]),
                 operation: "reserve".into(),

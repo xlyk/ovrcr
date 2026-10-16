@@ -65,7 +65,7 @@ jobs:
         with:
           node-version: 22
       - name: Extension tests
-        run: node --test tests/pi_reporting_extension.mjs tests/omp_reporting_extension.mjs tests/pi_delegation_extension.mjs tests/pi_observation_extension.mjs
+        run: node --test tests/pi_reporting_extension.mjs tests/omp_reporting_extension.mjs tests/pi_delegation_extension.mjs tests/pi_continuation_records.mjs tests/pi_observation_extension.mjs
 
   linux:
     name: linux
@@ -102,7 +102,7 @@ jobs:
         with:
           node-version: 22
       - name: Extension tests
-        run: node --test tests/pi_reporting_extension.mjs tests/omp_reporting_extension.mjs tests/pi_delegation_extension.mjs tests/pi_observation_extension.mjs
+        run: node --test tests/pi_reporting_extension.mjs tests/omp_reporting_extension.mjs tests/pi_delegation_extension.mjs tests/pi_continuation_records.mjs tests/pi_observation_extension.mjs
 
   linux-capacity:
     name: linux capacity

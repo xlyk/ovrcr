@@ -244,6 +244,11 @@ impl Live {
             .stderr(stderr)
             .spawn()
             .expect("spawn isolated OVRCR server");
+        eprintln!(
+            "LIVE_OWNED_SERVER root={} server={}",
+            self.root.path().display(),
+            child.id()
+        );
         *self.host.lock().unwrap() = Host::Binary(child);
         self.wait_socket();
     }
@@ -426,6 +431,11 @@ impl Live {
         let mut pgids = self.pgids.lock().unwrap();
         if !pgids.contains(&pgid) {
             pgids.push(pgid);
+            eprintln!(
+                "LIVE_OWNED_GROUP root={} pgid={}",
+                self.root.path().display(),
+                pgid
+            );
         }
     }
 

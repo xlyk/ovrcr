@@ -105,9 +105,11 @@ export function createDelegationObserver({ pi, call, auth }) {
     },
     acknowledge() { queued = false; deliver(); },
     async wait(args, signal) {
+      const mine = generation;
       const ids = args.handles ?? [...handles].slice(0, BATCH);
       if (!ids.length || ids.length > BATCH) throw new Error("wait requires 1..64 handles");
       const batch = await call({ Observe: { auth: auth(), handles: ids, after: args.after ?? null, wait_ms: args.wait_ms ?? 1000 } }, { signal });
+      if (!active || mine !== generation) throw new Error("Observation belongs to a previous Pi context");
       for (const id of ids) {
         if (!handles.has(id) && handles.size === TRACKED) throw new Error("observation tracking capacity exhausted");
         handles.add(id);
@@ -123,6 +125,18 @@ export function createDelegationObserver({ pi, call, auth }) {
       queued = false;
       seen.clear();
       start();
+    },
+    reset() {
+      generation += 1;
+      controller?.abort();
+      running = false;
+      handles.clear();
+      seen.clear();
+      pending.clear();
+      cursor = undefined;
+      queued = false;
+      disconnected = false;
+      offset = 0;
     },
     stop() { active = false; generation += 1; controller?.abort(); },
   };

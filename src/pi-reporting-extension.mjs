@@ -9,10 +9,12 @@
 // holds until settled, so a continuation reports work without opening a new cycle.
 // Bounded delivery lives in the transport module materialized beside this file.
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { randomUUID, randomBytes } from "node:crypto";
 import { mkdir, open, lstat, rename, link, unlink } from "node:fs/promises";
 import { constants } from "node:fs";
 import { join } from "node:path";
+import { createDelegationContinuation } from "./ovrcr-delegation-continuation.mjs";
 import { createDelegationObserver } from "./ovrcr-delegation-observer.mjs";
 import { createReporter, idOf, modelId, outcomeOf } from "./ovrcr-reporting-transport.mjs";
 
@@ -32,7 +34,8 @@ export default function (pi) {
     helperArgs: ["report", "pi", "--stdin"],
   });
 
-  registerDelegation(pi);
+  // This capability stays in memory. Only the rooted session_start may register it.
+  const sourceKey = Array.from(randomBytes(32));
 
   pi.on("session_start", (event, ctx) => {
     producer.run = 0;
@@ -41,6 +44,7 @@ export default function (pi) {
     const model = currentModel(ctx);
     return report("session_start", ctx, {
       reason: event.reason,
+      ...(process.env.OVRCR_DELEGATION_SOCKET ? { source_key: sourceKey } : {}),
       previous: idOf(event.previousSessionFile),
       ...(model ? { model } : {}),
     });
@@ -105,23 +109,34 @@ export default function (pi) {
       ctx.ui?.notify?.(ok ? "OVRCR reporting reattached" : "OVRCR reporting is unavailable", ok ? "info" : "warning");
     },
   });
+  registerDelegation(pi, producer, sourceKey);
 }
 
 
 // This control client is separate from reporting: task contents never enter Reporter.
-function registerDelegation(pi) {
-  const workflow = randomUUID();
-  const controller = randomUUID();
+function registerDelegation(pi, producer, sourceKey) {
+  let workflow = randomUUID();
+  let controller = randomUUID();
+  let authority;
+  let routingGeneration = 0;
+  const toolRouting = new AsyncLocalStorage();
+  const requireRouting = () => {
+    const captured = toolRouting.getStore();
+    if (captured !== undefined && captured !== routingGeneration) throw new Error("Tool belongs to a previous Pi context; original effects remain retained");
+  };
   let active = true;
   pi.on("session_shutdown", () => { active = false; observer.stop(); });
   const auth = () => {
+    requireRouting();
     if (!active) throw new Error("Pi session changed; reconcile the assignment from its owner");
     const session = Number(process.env.OVRCR_DELEGATION_SESSION);
     const capability = process.env.OVRCR_DELEGATION_TOKEN;
     if (!Number.isSafeInteger(session) || session <= 0 || !capability || !process.env.OVRCR_DELEGATION_SOCKET) throw new Error("Delegation requires a managed Pi session");
-    return { session, capability };
+    return { session, capability, source: sourceKey, controller: authority ? { workflow: authority.workflow, epoch: authority.epoch, producer: authority.producer } : { workflow, epoch: 1, producer: producer.instance } };
   };
   const call = (request, { signal } = {}) => new Promise((resolve, reject) => {
+    requireRouting();
+    const mine = routingGeneration;
     const child = spawn(OVRCR_BINARY, ["--json", "delegation"], {
       env: { ...process.env, OVRCR_SOCKET: process.env.OVRCR_DELEGATION_SOCKET, OVRCR_HOME: process.env.OVRCR_DELEGATION_HOME },
       stdio: ["pipe", "pipe", "pipe"],
@@ -148,6 +163,7 @@ function registerDelegation(pi) {
       clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
       if (failed) return;
+      if (mine !== routingGeneration) { reject(new Error("Control reply belongs to a previous Pi context; original effects remain retained")); return; }
       try {
         if (code !== 0) {
           let failure;
@@ -167,18 +183,38 @@ function registerDelegation(pi) {
   });
   const observer = createDelegationObserver({ pi, call, auth });
   pi.registerCommand("ovrcr-observe-reconnect", { description: "Reconnect assignment observations without changing child work", handler: () => observer.reconnect() });
+  const continuation = createDelegationContinuation({ pi, call, auth,
+    enabled: () => Boolean(process.env.OVRCR_DELEGATION_SOCKET),
+    restored: (snapshot, { fresh = false } = {}) => {
+      if (fresh) {
+        routingGeneration += 1;
+        workflow = randomUUID();
+        controller = randomUUID();
+        observer.reset();
+      }
+      authority = snapshot?.authority;
+      if (authority) { workflow = authority.workflow; controller = authority.controller; }
+      for (const handle of snapshot?.handles ?? []) observer.watch(handle);
+    },
+  });
   const object = (properties, required = Object.keys(properties)) => ({ type: "object", properties, required, additionalProperties: false });
   const string = { type: "string" };
-  const tool = (name, description, parameters, run) => pi.registerTool({ name, label: name, description, parameters, async execute(_id, args, signal, _onUpdate, ctx) {
-    try {
-      if (!args || typeof args !== "object") throw new Error("tool arguments must be an object");
-      for (const key of parameters.required ?? []) if (!(key in args)) throw new Error(`missing required argument: ${key}`);
-      const response = await run(args, ctx, signal);
-      if (name !== "ovrcr_publish" && response?.identity?.session) observer.watch(response.handle);
-      return { content: [{ type: "text", text: JSON.stringify(response) }], details: response };
-    } finally {
-      observer.acknowledge();
-    }
+  const tool = (name, description, parameters, run) => pi.registerTool({ name, label: name, description, parameters, execute(_id, args, signal, _onUpdate, ctx) {
+    return toolRouting.run(routingGeneration, async () => {
+      const mine = routingGeneration;
+      try {
+        if (!args || typeof args !== "object") throw new Error("tool arguments must be an object");
+        for (const key of parameters.required ?? []) if (!(key in args)) throw new Error(`missing required argument: ${key}`);
+        await continuation.ready();
+        requireRouting();
+        const response = await run(args, ctx, signal);
+        if (mine !== routingGeneration) throw new Error("Tool reply belongs to a previous Pi context; reconcile its original records");
+        if (name !== "ovrcr_publish" && response?.identity?.session) observer.watch(response.handle);
+        return { content: [{ type: "text", text: JSON.stringify(response) }], details: response };
+      } finally {
+        if (mine === routingGeneration) observer.acknowledge();
+      }
+    });
   }});
   const identity = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
   const directory = async () => {
@@ -251,11 +287,30 @@ function registerDelegation(pi) {
       snapshot = await call({ SendInitial: { auth: auth(), handle, identity: snapshot.identity, expected_control_epoch: initialControlEpoch } });
       if (snapshot.dispatch === "Launched") await new Promise(resolve => setTimeout(resolve, 100));
     }
+    if (!authority) {
+      // Discovery is separate from input; preserve the original dispatch receipt on failure.
+      try { await continuation.discover(); } catch {}
+    }
     return snapshot;
   };
   const limits = object({ max_live_children: { type: "integer" }, max_execution_attempts: { type: "integer" }, min_free_slots_after_launch: { type: "integer" }, max_cost_microusd: { type: "integer" }, max_output_tokens: { type: "integer" }, max_native_children: { type: "integer" } }, []);
   const selections = { provider: string, model_provider: string, model: string, required_limits: limits };
   tool("ovrcr_capabilities", "Discover installed, advertised and allowed delegation choices and current capacity. Defaults never substitute for an explicit unavailable choice. Capacity is advisory until serialized admission.", object(selections, []), args => call({ Capabilities: { auth: auth(), selection: args } }));
+  tool("ovrcr_recover", "Restore one exact existing workflow and reconcile its current authority. A copied pointer cannot transfer ownership; this never launches, resumes or resends child input.", object({ workflow: string }, []), (args, ctx) => continuation.recover(ctx, args.workflow));
+  const boundedReference = { type: "string", minLength: 1, maxLength: 4096, pattern: "^[^\\u0000]+$" };
+  const references = { type: "array", maxItems: 256, items: boundedReference };
+  const continuationIndex = object({ schema: { type: "integer", const: 1 }, objective: { type: "string", maxLength: 4096, pattern: "^[^\\u0000]*$" }, decisions: references, unresolved_assignments: references, questions: references, receipts: references, accepted_evidence: references, next_actions: references });
+  const publicId = { type: "string", minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9_-]+$" };
+  const positiveInteger = { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER };
+  const parentBinding = object({ provider: { type: "string", const: "Pi" }, invocation: publicId, conversation: publicId, generation: positiveInteger });
+  tool("ovrcr_parents", "List exact currently certified live Pi Session/run/binding/Producer targets for explicit workflow transfer. Public identity is advisory; the Server revalidates the target when transferring. A target need not own any workflow.", object({}), () => call({ Parents: { auth: auth() } }));
+  tool("ovrcr_checkpoint", "Save a continuation index up to 65536 UTF-8 bytes; each reference is at most 4096 UTF-8 bytes. Point to original artifacts. Do not save transcripts, credentials or private reasoning.", object({ index: continuationIndex }), async (args, ctx) => { await continuation.discover(ctx); return continuation.save(args.index); });
+  tool("ovrcr_transfer", "Explicitly transfer the current workflow to an exact certified managed Pi principal. Inspect its Session/run/full binding and Producer first. This retires this parent's input without launching or returning human-controlled children.", object({ request: publicId, parent: positiveInteger, parent_run: positiveInteger, binding: parentBinding, producer: publicId }), async args => {
+    if (!authority) throw new Error("Recover the current workflow before transfer");
+    const rows = await call({ Transfer: { auth: auth(), transfer: { ...args, expected: authority } } });
+    if (!Array.isArray(rows) || rows.length !== 1) throw new Error("Invalid workflow transfer receipt; reconcile the original request");
+    return rows[0];
+  });
   tool("ovrcr_start", "Start one read-only research assignment with an advertised allowed selection or configured default. Returns immediately after dispatch. Keep a capacity-refused handle pending; reconcile then use ovrcr_retry. Unknown effects must never be replaced.", { ...object({ handle: string, project: string, workspace: string, scope: string, ...selections, permitted_actions: { type: "array", items: string }, acceptance_evidence: { type: "array", items: string }, mandatory_capabilities: { type: "array", items: string } }, []), anyOf: [{ required: ["handle"] }, { required: ["project", "workspace", "scope", "acceptance_evidence"] }] }, async args => {
     let handle = args.handle;
     const required = ["project", "workspace", "scope"];

@@ -649,6 +649,13 @@ pub fn reserve_invocation() -> Result<Option<InvocationLease>> {
 pub fn reserve_invocation_for(
     provider: ovrcr_protocol::AgentProvider,
 ) -> Result<Option<InvocationLease>> {
+    reserve_invocation_with_resume(provider, None)
+}
+
+pub fn reserve_invocation_with_resume(
+    provider: ovrcr_protocol::AgentProvider,
+    pi_resume: Option<ovrcr_protocol::ExtensionConversation>,
+) -> Result<Option<InvocationLease>> {
     use ovrcr_protocol::{AgentOperationResult, AgentSecret, ReserveAgent, SupervisorAuth};
     let Ok(identity) = HookIdentity::from_environment() else {
         return Ok(None);
@@ -675,6 +682,7 @@ pub fn reserve_invocation_for(
             &mut stream,
             1,
             Request::ReserveAgent(ReserveAgent {
+                pi_resume: pi_resume.map(Box::new),
                 session: identity.session,
                 capability: AgentSecret(identity.capability),
                 operation: ovrcr_runtime::agent_runner::private_identifier()?,

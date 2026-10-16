@@ -7,6 +7,7 @@
 // PI_CALLBACK=<n> after each one.
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
+import { execFileSync } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, appendFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 
@@ -25,6 +26,12 @@ export async function createHost(extensionPath, { mode = "tui", session = "sessi
       handlers.get(event).push(handler);
     },
     registerTool(tool) { tools.set(tool.name, tool); },
+    appendEntry(customType, data) {
+      const entry = { type: "custom", customType, data };
+      state.entries.push(entry);
+      const file = ctx.sessionManager.getSessionFile();
+      if (file) appendFileSync(file, JSON.stringify(entry) + "\n");
+    },
     sendMessage(message, options) {
       const delivery = state.idle ? "idle" : "followUp";
       const wake = { message, options, delivery };
@@ -45,6 +52,7 @@ export async function createHost(extensionPath, { mode = "tui", session = "sessi
     notices: [],
     messages: [],
     followUps: [],
+    entries: [],
     model: model === undefined ? undefined : { id: model, provider: "test" },
   };
   const ctx = {
@@ -52,11 +60,16 @@ export async function createHost(extensionPath, { mode = "tui", session = "sessi
     hasUI: true,
     sessionManager: {
       getSessionId: () => state.session,
+      getBranch: () => {
+        const file = ctx.sessionManager.getSessionFile();
+        return file && existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").map(line => JSON.parse(line)).filter(entry => entry.type === "custom") : state.entries;
+      },
       getSessionFile: () => {
         if (state.ephemeral) return undefined;
-        if (!process.env.OVRCR_TEST_HISTORY) return state.history;
+        if (state.history) return state.history;
+        if (!process.env.OVRCR_TEST_HISTORY) return undefined;
         const file = `${process.env.OVRCR_TEST_HISTORY}/${state.session}.jsonl`;
-        writeFileSync(file, JSON.stringify({ type: "session", version: 3, id: state.session, cwd: process.cwd() }) + "\n");
+        if (!existsSync(file)) writeFileSync(file, JSON.stringify({ type: "session", version: 3, id: state.session, cwd: process.cwd() }) + "\n");
         return file;
       },
     },
@@ -101,7 +114,11 @@ async function main() {
   let host = extension ? await createHost(extension) : null;
   let retiredHost = null;
   if (host && process.env.OVRCR_TEST_DELEGATION) {
-    host.state.session = `fixture-${process.pid}`;
+    const resumeArg = args.find(arg => arg.startsWith("--session="));
+    const resumeAt = args.indexOf("--session");
+    const resume = resumeArg?.slice("--session=".length) ?? (resumeAt >= 0 ? args[resumeAt + 1] : undefined);
+    host.state.session = resume ? JSON.parse(readFileSync(resume, "utf8").split("\n")[0]).id : `fixture-${process.pid}`;
+    if (resume) host.state.history = resume;
     host.state.model = { id: args[args.indexOf("--model") + 1] || "fixture-model", provider: "test" };
     if (args.includes("--tools") && process.env.OVRCR_TEST_DELEGATION_INITIAL_MODEL) host.state.model.id = process.env.OVRCR_TEST_DELEGATION_INITIAL_MODEL;
     await host.emit({ type: "session_start", reason: "startup" });
@@ -192,6 +209,10 @@ async function main() {
         host.state.session = `replacement-${process.pid}`;
         await host.emit({ type: "session_start", reason: "new" });
         writeFileSync(`${path}.rebound`, "REBOUND");
+      }
+      if (existsSync(`${path}.hold-settlement`)) {
+        writeFileSync(`${path}.settlement-held`, "HELD");
+        while (existsSync(`${path}.hold-settlement`)) await new Promise(resolve => setTimeout(resolve, 10));
       }
       if (!brief.contract.scope.includes("NO_READY")) {
         await host.emit({ type: "agent_end", messages: [assistant("stop")] });
@@ -289,8 +310,27 @@ async function main() {
         if (!retiredHost) throw new Error("no retired producer");
         retiredHost.state.session = a;
         await retiredHost.emit({ type: "session_start", reason: "resume" });
+      } else if (command === "forge_workflow_source") {
+        const body = { schema: 1, mode: "tui", event: "session_start", reason: "reload", instance: a,
+          sequence: Number(b), session_id: host.state.session,
+          session_file: host.state.history ?? `${process.env.OVRCR_TEST_HISTORY}/${host.state.session}.jsonl`,
+          source_key: Array(32).fill(0x12) };
+        // Exercise the real rooted helper; never persist or print its private body.
+        execFileSync(process.env.OVRCR_TEST_CONTROL_BINARY, ["report", "pi", "--stdin"], { input: JSON.stringify(body), stdio: ["pipe", "ignore", "ignore"] });
+        process.stdout.write("PI_FORGED_SOURCE_ATTEMPTED\n");
       } else if (command === "session_tree") await host.emit({ type: "session_tree" });
-      else if (command === "session_compact") await host.emit({ type: "session_compact" });
+      else if (command === "session_compact") {
+        await host.emit({ type: "session_before_compact" });
+        await host.emit({ type: "session_compact" });
+      }
+      else if (command === "session_compact_failed") {
+        await host.emit({ type: "session_before_compact" });
+        await host.emit({ type: "session_compact_failed", aborted: true });
+      }
+      else if (command === "continuation_context") {
+        const messages = await host.emit({ type: "before_agent_start" });
+        process.stdout.write(`PI_CONTINUATION=${JSON.stringify(messages)}\n`);
+      }
       else if (command === "idle") host.state.idle = a !== "false";
       else if (command === "run_command") {
         await host.run(a);

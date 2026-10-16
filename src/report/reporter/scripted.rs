@@ -366,6 +366,25 @@ fn respond(request: Request, answer: Answer, state: &mut State) -> Response {
         }
         Request::Supervisor(supervisor) => {
             let receipt = match supervisor.command {
+                AgentCommand::WorkflowSource { binding, .. } => {
+                    if answer == Answer::Refuse {
+                        refusal()
+                    } else if state.released || state.binding.as_ref() != Some(binding.as_ref()) {
+                        reject("agent binding changed")
+                    } else {
+                        Response::AgentOperation(AgentOperationResult::WorkflowUpdated)
+                    }
+                }
+                AgentCommand::WorkflowDeparture { binding, .. } => {
+                    if answer == Answer::Refuse {
+                        refusal()
+                    } else if state.released || state.binding.as_ref() != Some(&binding) {
+                        reject("agent binding changed")
+                    } else {
+                        Response::AgentOperation(AgentOperationResult::WorkflowUpdated)
+                    }
+                }
+
                 AgentCommand::RetainConversation { binding, reference } => {
                     state.observed.push(Observed::Retain {
                         binding: binding.clone(),

@@ -524,11 +524,49 @@ fn public_followup_storage_limit_preserves_last_result_acceptance_and_all_receip
     let fixture = OwnedFollowup::new();
     let started: AssignmentSnapshot = serde_json::from_value(fixture.start()).unwrap();
     let mut current = accept(&fixture, &complete(&fixture, &started));
+    let hold = current
+        .brief
+        .parent()
+        .unwrap()
+        .join("brief-v65.json.hold-settlement");
+    struct ReleaseSettlement(std::path::PathBuf);
+    impl Drop for ReleaseSettlement {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+    let _release = ReleaseSettlement(hold.clone());
     for version in 2..=65 {
+        if version == 65 {
+            fs::write(&hold, "hold exact final settlement").unwrap();
+        }
         let next: AssignmentSnapshot =
             serde_json::from_value(followup(&fixture, &current, None)).unwrap();
         assert_eq!(next.result_version, version);
         current = accept(&fixture, &complete(&fixture, &next));
+    }
+    wait_file(&current.brief.with_extension("json.settlement-held"));
+    assert_eq!(current.activity, AgentActivity::Busy);
+    fs::remove_file(&hold).unwrap();
+    let identity = current.identity.clone();
+    let binding = current.control_evidence.as_ref().unwrap().binding.clone();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let observed: AssignmentSnapshot = serde_json::from_value(fixture.tool(
+            "ovrcr_collect",
+            serde_json::json!({"handle":current.handle}),
+        ))
+        .unwrap();
+        assert_eq!(observed.identity, identity);
+        assert_eq!(observed.control_evidence.as_ref().unwrap().binding, binding);
+        assert_eq!(observed.result_version, current.result_version);
+        assert_eq!(observed.acceptance_ref, current.acceptance_ref);
+        if observed.activity == AgentActivity::ResponseReady {
+            current = observed;
+            break;
+        }
+        assert!(Instant::now() < deadline, "exact final child settlement");
+        std::thread::sleep(Duration::from_millis(10));
     }
     assert_eq!(current.history.len(), 64);
     assert_eq!(current.receipts.len(), 67);

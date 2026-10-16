@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 10;
+const SCHEMA_VERSION: i64 = 11;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -355,6 +355,10 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
         // Schema9 writers would drop durable per-child authority and control receipts.
         transaction.pragma_update(None, "user_version", 10)?;
     }
+    if schema_identity(&transaction)?.1 < 11 {
+        transaction.execute_batch("CREATE TABLE IF NOT EXISTS delegation_workflows (workflow TEXT PRIMARY KEY, metadata TEXT NOT NULL);")?;
+        transaction.pragma_update(None, "user_version", 11)?;
+    }
     transaction.commit().context("commit registry migration")?;
     Ok(connection)
 }
@@ -381,7 +385,10 @@ fn is_uninitialized(connection: &Connection) -> Result<bool> {
 pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
     let (application, version) = schema_identity(connection)?;
     if application != APPLICATION_ID
-        || !matches!(version, 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | SCHEMA_VERSION)
+        || !matches!(
+            version,
+            1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | SCHEMA_VERSION
+        )
     {
         bail!(
             "incompatible registry database (application {application}, schema {version}); \

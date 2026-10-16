@@ -376,6 +376,8 @@ pub enum Request {
         save: bool,
     },
     Delegation(Box<crate::DelegationRequest>),
+    Workflow(Box<crate::WorkflowRequest>),
+    DashboardWorkflow(crate::DashboardWorkflowRequest),
     AssignmentControl(crate::AssignmentControlRequest),
     /// Human authority is captured when enqueued and checked at the final PTY fence.
     AssignedHumanInput {
@@ -464,8 +466,12 @@ pub enum Response {
     ITermFocusPrepared(Option<crate::BridgeActivationTarget>),
     BridgeOwner(crate::BridgeOwnerResult),
     Delegation(Box<crate::AssignmentSnapshot>),
+    Workflows(Vec<crate::WorkflowSnapshot>),
+    WorkflowCandidates(Box<crate::WorkflowCandidates>),
     DelegationObservation(Box<crate::DelegationObservationBatch>),
     DelegationCapabilities(Box<crate::DelegationCapabilities>),
+    WorkflowParents(Vec<crate::WorkflowParent>),
+    WorkflowRecovery(Box<crate::WorkflowRecovery>),
 }
 
 /// Which create/remove/close a Lifecycle job performed.
@@ -1487,6 +1493,8 @@ mod wire_snapshot {
             }),
         ));
         let auth = crate::DelegationAuth {
+            controller: None,
+            source: None,
             session: SessionId(1),
             capability: "fixture".into(),
         };
@@ -1707,6 +1715,8 @@ mod wire_snapshot {
             encode(&Request::Delegation(Box::new(
                 crate::DelegationRequest::ConfirmHumanReturn {
                     auth: crate::DelegationAuth {
+                        controller: None,
+                        source: None,
                         session: SessionId(1),
                         capability: "fixture".into(),
                     },
@@ -1812,7 +1822,7 @@ mod wire_snapshot {
                         current: true,
                         publication: Some(crate::PublicationState {
                             identity: crate::PublicationIdentity {
-                                assignment: identity,
+                                assignment: identity.clone(),
                                 kind: crate::PublicationKind::Submission,
                                 version: 1,
                                 digest: "digest".into(),
@@ -1828,6 +1838,156 @@ mod wire_snapshot {
                 },
             ))),
         ));
+        let auth = crate::DelegationAuth {
+            session: SessionId(1),
+            capability: "fixture".into(),
+            controller: None,
+            source: None,
+        };
+        let authority = crate::WorkflowAuthority {
+            instance: "i".into(),
+            workflow: "w".into(),
+            controller: "c".into(),
+            epoch: 1,
+            parent: SessionId(1),
+            parent_run: crate::SessionRunId(1),
+            binding: crate::AgentBinding {
+                provider: crate::AgentProvider::Pi,
+                invocation: "inv".into(),
+                conversation: "conv".into(),
+                generation: 1,
+            },
+            producer: "producer".into(),
+            server_lifetime: "server".into(),
+        };
+        let index = crate::ContinuationIndex {
+            schema: 1,
+            objective: "objective.md".into(),
+            decisions: vec![],
+            unresolved_assignments: vec!["r".into()],
+            questions: vec![],
+            receipts: vec![],
+            accepted_evidence: vec![],
+            next_actions: vec![],
+        };
+        let transfer = crate::WorkflowTransfer {
+            request: "transfer".into(),
+            expected: authority.clone(),
+            parent: SessionId(3),
+            parent_run: crate::SessionRunId(2),
+            binding: authority.binding.clone(),
+            producer: "successor".into(),
+        };
+        for (name, request) in [
+            (
+                "Parents",
+                crate::WorkflowRequest::Parents { auth: auth.clone() },
+            ),
+            (
+                "Recover",
+                crate::WorkflowRequest::Recover {
+                    auth: auth.clone(),
+                    workflow: Some("w".into()),
+                },
+            ),
+            (
+                "Save",
+                crate::WorkflowRequest::Save {
+                    auth: auth.clone(),
+                    workflow: "w".into(),
+                    expected_version: 0,
+                    index: index.clone(),
+                },
+            ),
+            (
+                "Transfer",
+                crate::WorkflowRequest::Transfer {
+                    auth,
+                    transfer: transfer.clone(),
+                },
+            ),
+        ] {
+            all.push((
+                format!("Workflow::{name}"),
+                encode(&Request::Workflow(Box::new(request))),
+            ));
+        }
+        all.push((
+            "Request::DashboardWorkflowCandidates".into(),
+            encode(&Request::DashboardWorkflow(
+                crate::DashboardWorkflowRequest::Candidates {
+                    parent: SessionId(1),
+                    run: crate::SessionRunId(1),
+                },
+            )),
+        ));
+        all.push((
+            "Request::DashboardWorkflowTransfer".into(),
+            encode(&Request::DashboardWorkflow(
+                crate::DashboardWorkflowRequest::Transfer(Box::new(transfer.clone())),
+            )),
+        ));
+        let snapshot = crate::WorkflowSnapshot {
+            authority: authority.clone(),
+            active: true,
+            handles: vec!["r".into()],
+            pointer: Some(crate::ContinuationPointer {
+                schema: 1,
+                instance: "i".into(),
+                workflow: "w".into(),
+                version: 1,
+                digest: "digest".into(),
+            }),
+            continuation: Some(index),
+            gaps: vec![],
+            receipt: None,
+        };
+        let gaps = vec![
+            crate::WorkflowRecoveryGap {
+                workflow: Some("w".into()),
+                handle: Some("r".into()),
+                identity: Some(identity),
+                brief: Some("/brief".into()),
+                result_path: Some("/result".into()),
+                reason: "missing authority".into(),
+            },
+            crate::WorkflowRecoveryGap {
+                workflow: None,
+                handle: None,
+                identity: None,
+                brief: None,
+                result_path: None,
+                reason: "unverifiable retained record".into(),
+            },
+        ];
+        for (name, response) in [
+            ("Workflows", Response::Workflows(vec![snapshot.clone()])),
+            (
+                "WorkflowParents",
+                Response::WorkflowParents(vec![crate::WorkflowParent {
+                    session: authority.parent,
+                    run: authority.parent_run,
+                    binding: authority.binding.clone(),
+                    producer: authority.producer.clone(),
+                }]),
+            ),
+            (
+                "WorkflowRecovery",
+                Response::WorkflowRecovery(Box::new(crate::WorkflowRecovery {
+                    workflows: vec![snapshot],
+                    gaps: gaps.clone(),
+                })),
+            ),
+            (
+                "WorkflowCandidates",
+                Response::WorkflowCandidates(Box::new(crate::WorkflowCandidates {
+                    candidates: vec![transfer],
+                    gaps,
+                })),
+            ),
+        ] {
+            all.push((format!("Response::{name}"), encode(&response)));
+        }
         all
     }
 
@@ -1888,13 +2048,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0431017301630168016c0104",
+            "2a0432017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0431017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0432017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -1925,18 +2085,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04310000"),
+        ("Response::NotificationNavigation", "0d04320000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0431017301630168016c0104",
+            "0e01016e0432017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010431017301630168016c0164",
+            "0f0107080901016901010432017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004310107080901016901010431017301630168016c0164",
+            "1004320107080901016901010432017301630168016c0164",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -1960,7 +2120,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0431017301630168016c0104",
+            "08016e0432017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -1995,7 +2155,7 @@ mod wire_snapshot {
         ("TaskRequest::Clean", "0f0101"),
         (
             "AgentRequest::0",
-            "1a01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a507726573657276650003696e7600",
+            "1a01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a50772657365727665000003696e7600",
         ),
         (
             "AgentRequest::1",
@@ -2007,27 +2167,27 @@ mod wire_snapshot {
         ),
         (
             "AgentRequest::3",
-            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70000004636f6e76",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70020004636f6e76",
         ),
         (
             "AgentRequest::4",
-            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70010003696e7604636f6e76010300010a01640007666978747572650000010a01050103010201010766697874757265010001010766697874757265",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70030003696e7604636f6e76010300010a01640007666978747572650000010a01050103010201010766697874757265010001010766697874757265",
         ),
         (
             "AgentRequest::5",
-            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f7002010003696e7604636f6e7601",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f7004010003696e7604636f6e7601",
         ),
         (
             "AgentRequest::6",
-            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70030003696e7604636f6e7601010201010e636f6c6c6563746f725f6c6f7374",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70050003696e7604636f6e7601010201010e636f6c6c6563746f725f6c6f7374",
         ),
         (
             "AgentRequest::7",
-            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70040003696e7604636f6e76010004636f6e760b2f62696e2f636c61756465132f686973746f72792f636f6e762e6a736f6e6c0e2f636f6e6669672f636c6175646500",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70060003696e7604636f6e76010004636f6e760b2f62696e2f636c61756465132f686973746f72792f636f6e762e6a736f6e6c0e2f636f6e6669672f636c6175646500",
         ),
         (
             "AgentRequest::8",
-            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f7005",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f7007",
         ),
         (
             "AgentRequest::9",
@@ -2051,13 +2211,13 @@ mod wire_snapshot {
         ),
         (
             "AgentResponse::0",
-            "0a0001a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+            "0a0101a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
         ),
-        ("AgentResponse::1", "0a010003696e7604636f6e7601"),
-        ("AgentResponse::2", "0a02"),
-        ("AgentResponse::3", "0a03"),
-        ("AgentResponse::4", "0a04"),
-        ("AgentResponse::5", "0a05"),
+        ("AgentResponse::1", "0a020003696e7604636f6e7601"),
+        ("AgentResponse::2", "0a03"),
+        ("AgentResponse::3", "0a04"),
+        ("AgentResponse::4", "0a05"),
+        ("AgentResponse::5", "0a06"),
         ("AgentActivity::Unknown", "00"),
         ("AgentActivity::Idle", "01"),
         ("AgentActivity::Busy", "02"),
@@ -2106,57 +2266,60 @@ mod wire_snapshot {
         ),
         (
             "Delegation::Prepare",
-            "3200010766697874757265010177016301740172017002777304726561640104726561640270690474657374016d0104636974650104726561640106010201000000010470726576",
+            "32000107666978747572650000010177016301740172017002777304726561640104726561640270690474657374016d0104636974650104726561640106010201000000010470726576",
         ),
         (
             "Delegation::Launch",
-            "320101076669787475726501720169017701630101740101017201020101",
+            "3201010766697874757265000001720169017701630101740101017201020101",
         ),
         (
             "Delegation::SendInitial",
-            "32020107666978747572650172016901770163010174010101720102010101",
+            "320201076669787475726500000172016901770163010174010101720102010101",
         ),
-        ("Delegation::Inspect", "32030107666978747572650172"),
-        ("Delegation::Collect", "32050107666978747572650172"),
-        ("Delegation::Reconcile", "32040107666978747572650172"),
+        ("Delegation::Inspect", "320301076669787475726500000172"),
+        ("Delegation::Collect", "320501076669787475726500000172"),
+        ("Delegation::Reconcile", "320401076669787475726500000172"),
         (
             "Delegation::Followup",
-            "3206010766697874757265017201660169017701630101740101017201020101010107636c617269667901010177016301740172017002777304726561640104726561640270690474657374016d0104636974650104726561640106010201000000010470726576",
+            "32060107666978747572650000017201660169017701630101740101017201020101010107636c617269667901010177016301740172017002777304726561640104726561640270690474657374016d0104636974650104726561640106010201000000010470726576",
         ),
-        ("Delegation::CollectVersion", "3207010766697874757265017201"),
+        (
+            "Delegation::CollectVersion",
+            "32070107666978747572650000017201",
+        ),
         (
             "Delegation::RecordAcceptance",
-            "320801076669787475726501720169017701630101740101017201020101010664696765737401",
+            "3208010766697874757265000001720169017701630101740101017201020101010664696765737401",
         ),
         (
             "Delegation::Publish",
-            "320a010766697874757265017201016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e00",
+            "320a0107666978747572650000017201016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e00",
         ),
         (
             "Delegation::Observe",
-            "320b010766697874757265010172010565706f636803fbe803",
+            "320b0107666978747572650000010172010565706f636803fbe803",
         ),
         (
             "Delegation::MarkHandled",
-            "320c01076669787475726501720169017701630101740101017201020101000106646967657374",
+            "320c010766697874757265000001720169017701630101740101017201020101000106646967657374",
         ),
-        ("Request::AssignedHumanInput", "34020102030107"),
-        ("Request::AssignmentTakeover", "33000474616b6502010103"),
+        ("Request::AssignedHumanInput", "36020102030107"),
+        ("Request::AssignmentTakeover", "35000474616b6502010103"),
         (
             "Request::AssignmentReturn",
-            "33010672657475726e02010203016c01690177016301017401010172010201010303696e7604636f6e7601010203000004",
+            "35010672657475726e02010203016c01690177016301017401010172010201010303696e7604636f6e7601010203000004",
         ),
         (
             "Delegation::ConfirmHumanReturn",
-            "3209010766697874757265017207636f6e6669726d0672657475726e03016c01690177016301017401010172010201010303696e7604636f6e7601010203000004",
+            "32090107666978747572650000017207636f6e6669726d0672657475726e03016c01690177016301017401010172010201010303696e7604636f6e7601010203000004",
         ),
         (
             "Delegation::Capabilities",
-            "320d010766697874757265010301047465737401016d000000000000",
+            "320d0107666978747572650000010301047465737401016d000000000000",
         ),
         (
             "Response::DelegationCapabilities",
-            "1301030474657374016d000132000000000003012f0204726561640b726573756c745f66696c6501116d61785f6c6976655f6368696c6472656e000000",
+            "1501030474657374016d000132000000000003012f0204726561640b726573756c745f66696c6501116d61785f6c6976655f6368696c6472656e000000",
         ),
         (
             "Response::Delegation",
@@ -2164,7 +2327,38 @@ mod wire_snapshot {
         ),
         (
             "Response::DelegationObservation",
-            "120565706f63680302fce0930400010172016901770163010174010101720102010100000100020100010101690177016301017401010172010201010001066469676573740001026400010100000000",
+            "140565706f63680302fce0930400010172016901770163010174010101720102010100000100020100010101690177016301017401010172010201010001066469676573740001026400010100000000",
+        ),
+        ("Workflow::Parents", "33000107666978747572650000"),
+        ("Workflow::Recover", "33010107666978747572650000010177"),
+        (
+            "Workflow::Save",
+            "33020107666978747572650000017700010c6f626a6563746976652e6d640001017200000000",
+        ),
+        (
+            "Workflow::Transfer",
+            "33030107666978747572650000087472616e736665720169017701630101010303696e7604636f6e76010870726f64756365720673657276657203020303696e7604636f6e760109737563636573736f72",
+        ),
+        ("Request::DashboardWorkflowCandidates", "34000101"),
+        (
+            "Request::DashboardWorkflowTransfer",
+            "3401087472616e736665720169017701630101010303696e7604636f6e76010870726f64756365720673657276657203020303696e7604636f6e760109737563636573736f72",
+        ),
+        (
+            "Response::Workflows",
+            "12010169017701630101010303696e7604636f6e76010870726f64756365720673657276657201010172010101690177010664696765737401010c6f626a6563746976652e6d6400010172000000000000",
+        ),
+        (
+            "Response::WorkflowParents",
+            "160101010303696e7604636f6e76010870726f6475636572",
+        ),
+        (
+            "Response::WorkflowRecovery",
+            "17010169017701630101010303696e7604636f6e76010870726f64756365720673657276657201010172010101690177010664696765737401010c6f626a6563746976652e6d64000101720000000000000201017701017201016901770163010174010101720102010101062f627269656601072f726573756c74116d697373696e6720617574686f7269747900000000001c756e76657269666961626c652072657461696e6564207265636f7264",
+        ),
+        (
+            "Response::WorkflowCandidates",
+            "1301087472616e736665720169017701630101010303696e7604636f6e76010870726f64756365720673657276657203020303696e7604636f6e760109737563636573736f720201017701017201016901770163010174010101720102010101062f627269656601072f726573756c74116d697373696e6720617574686f7269747900000000001c756e76657269666961626c652072657461696e6564207265636f7264",
         ),
     ];
 

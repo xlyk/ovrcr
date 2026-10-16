@@ -5,8 +5,95 @@ workspaces, keep working, and explicitly collect each child's result. Launch Pi
 through `ovrcr agent run pi -- pi` or the Dashboard picker. The managed extension
 registers `ovrcr_capabilities`, `ovrcr_start`, `ovrcr_retry`, `ovrcr_inspect`,
 `ovrcr_collect`, `ovrcr_followup`, `ovrcr_accept`, `ovrcr_confirm_return`, `ovrcr_publish`, `ovrcr_wait`
-and `ovrcr_mark_handled`.
+`ovrcr_mark_handled`, `ovrcr_recover`, `ovrcr_checkpoint`, `ovrcr_parents` and
+`ovrcr_transfer`.
 A plain Pi process has no delegation authority.
+
+## Continue an existing parent workflow
+
+`ovrcr_recover` with `{}` discovers workflows already controlled by this exact
+managed Pi source. With several workflows, provide `{"workflow":"<id>"}`. The
+returned snapshot includes the current controller epoch, all original assignment
+handles (including prepared and older-epoch work), continuation index and gaps.
+Inspect those assignments and original artifacts before acting. Recovery does
+not create a child, resume a provider, resend input or accept a result.
+
+Save an index with `ovrcr_checkpoint`:
+
+```json
+{
+  "index": {
+    "schema": 1,
+    "objective": "objective-v1.md",
+    "decisions": ["decision-v1.md"],
+    "unresolved_assignments": ["original-assignment-handle"],
+    "questions": [],
+    "receipts": ["original-dispatch-receipt.json"],
+    "accepted_evidence": [],
+    "next_actions": ["inspect the surviving child before new work"]
+  }
+}
+```
+
+The index is at most 65536 UTF-8 bytes. Each list has at most 256 nonempty
+references, each at most 4096 UTF-8 bytes; the objective has the same byte bound.
+Store useful task facts and references, never transcripts, credentials or private
+reasoning. Immutable versions live under `workflow-continuations/<workflow>/`.
+Native Pi history stores only a bounded instance/workflow/version/digest pointer.
+A pointer identifies evidence; copying it grants no authority.
+
+Startup and both compaction outcomes reconcile against the Server. Compaction
+within the same invocation keeps the controller epoch. An orderly extension
+reload requires a one-use handoff committed before the old source retires.
+Native restart can retain control only after the managed wrapper positively
+observes and reaps its exact native child, then an explicitly requested managed
+invocation resumes the original canonical native reference and reports a new
+rooted binding. This covers both retained Reopen into a new Session run and
+explicit `--session /absolute/original/history.jsonl` inside the shell left by an
+earlier Reopen. Reopen's existing stopped-process acknowledgement still applies.
+Duplicate/conflicting session selectors, implicit pickers, new/forked histories,
+other Sessions, copied history paths and unproven owner departure cannot claim
+this continuation. No workflow operation initiates Reopen or restarts a Server.
+
+For an explicit transfer, call `ovrcr_parents` with `{}`. It lists public
+`session`, `run`, full `binding` and `producer` tuples for currently certified live
+Pi sources, including sources with no workflow. Pass the chosen tuple as
+`parent`, `parent_run`, `binding`, `producer`, plus a stable `request`, to
+`ovrcr_transfer`. The Server revalidates the exact tuple and current source at
+commit. Repeating the same committed request returns its immutable receipt;
+a competing or stale expected authority cannot transfer again. The active
+Dashboard also offers **Recover workflow control in this Pi** in the target
+Pi's person-action menu, followed by explicit confirmation.
+
+Transfer retires the previous parent's effects while keeping original assignment
+identities, receipts, versions and execution accounting. Child Human/Uncertain
+ownership and pending return barriers are unchanged. The successor must inspect,
+explicitly confirm any human return, then issue a fresh scoped follow-up where
+required. Old Accepted, Unknown and Partial effects remain suspended; transfer
+never makes them unsent or refunds an execution.
+
+Server loss, unknown owner loss, missing children and malformed continuation
+files remain visible gaps. Stopped children stay stopped. An active Dashboard
+can explicitly transfer a retained workflow row after Server loss. Older
+assignments that lack a certified workflow-authority row cannot be automatically
+recovered or transferred: their original obligations, receipts and artifacts
+remain read-only. An exact legacy Session/run/binding can discover these through
+`ovrcr_recover`, which returns `{"recovery_gaps":[...]}` when no current workflow
+is available. The Dashboard shows those gaps alongside valid transfer choices.
+For ordinary recovered workflows the tool returns its usual workflow snapshot;
+any additional gaps remain in that snapshot's `gaps` field.
+An explicit Pi new/fork transition starts fresh in-memory workflow/controller
+routing and discards old observation queues. It can start a distinct workflow;
+old durable work stays retained and requires its original certified authority or
+explicit transfer. Queued tools and late replies from the old context cannot
+acquire the fresh routing. Failed or ambiguous recovery never starts a new workflow.
+A malformed authority row stays read-only and consumes storage capacity, while
+unrelated valid workflows remain usable. A damaged assignment that cannot be
+attributed safely is an operator-only gap with optional identity/artifact fields;
+invalid storage keys are never displayed as invented identities. Pi sees gap
+metadata only when retained scope proves its exact original Session/run/binding.
+Gap lists are bounded and report any additional count without dropping evidence.
+
 
 ## Start and collect
 
@@ -326,9 +413,11 @@ relative to held directory descriptors and rejects symlink traversal. Editing a
 file never changes the Server's control ownership or accepts work.
 
 The extension uses the connect-only `ovrcr --json delegation` command, which
-reads one typed `DelegationRequest` JSON document on stdin. It sends requests via
+reads one typed `DelegationRequest` or `WorkflowRequest` JSON document on stdin. It sends requests via
 the existing OVRCR control client. The managed wrapper gives native Pi a scoped
-delegation capability; raw reporting hook credentials remain unavailable to the
+delegation capability and a per-factory in-memory source key. Public Producer IDs
+are identity, not credentials. Source keys never enter history, snapshots, Events
+or workflow persistence; raw reporting hook credentials remain unavailable to the
 native process. Task content stays out of reporting Events, notifications and
 retained session metadata. The tool's returned data and private workflow files
 are intentional task artifacts.
