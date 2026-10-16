@@ -81,7 +81,9 @@ impl Record {
         self.receipts.iter().any(|r| {
             matches!(
                 r.operation,
-                DispatchOperation::InitialInput | DispatchOperation::Followup
+                DispatchOperation::InitialInput
+                    | DispatchOperation::Followup
+                    | DispatchOperation::AnswerQuestion
             ) && matches!(
                 r.outcome,
                 DispatchOutcome::Unknown | DispatchOutcome::Partial
@@ -116,16 +118,7 @@ impl Record {
     }
 }
 
-fn publish_matching(directory: &Directory, name: &str, bytes: &[u8]) -> Result<()> {
-    if let Err(error) = directory.publish(name, bytes)
-        && directory.read(name).ok().as_deref() != Some(bytes)
-    {
-        return Err(error);
-    }
-    directory.sync()
-}
-
-fn valid_request(request: &str) -> bool {
+pub(super) fn valid_request(request: &str) -> bool {
     !request.is_empty()
         && request.len() <= 128
         && request
@@ -160,17 +153,34 @@ fn matching_legacy_brief(
     contract: &ResearchContract,
     expected: &str,
 ) -> Result<Vec<u8>> {
-    if digest(&bytes) != expected && legacy_contract_bytes(contract)?.is_some() {
-        let mut value: serde_json::Value = serde_json::from_slice(&bytes)?;
-        if let Some(nested) = value
-            .get_mut("contract")
-            .and_then(serde_json::Value::as_object_mut)
-        {
-            nested.remove("limits");
-            nested.remove("previous_request");
-            let legacy = serde_json::to_vec_pretty(&value)?;
-            if digest(&legacy) == expected {
-                return Ok(legacy);
+    if digest(&bytes) == expected {
+        return Ok(bytes);
+    }
+    let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+    for old_questions in [false, true] {
+        for old_contract in [false, true] {
+            if old_contract && legacy_contract_bytes(contract)?.is_none() {
+                continue;
+            }
+            let mut candidate = value.clone();
+            if old_questions {
+                candidate
+                    .as_object_mut()
+                    .context("brief is not an object")?
+                    .remove("questions");
+            }
+            if old_contract {
+                if let Some(nested) = candidate
+                    .get_mut("contract")
+                    .and_then(serde_json::Value::as_object_mut)
+                {
+                    nested.remove("limits");
+                    nested.remove("previous_request");
+                }
+            }
+            let candidate = serde_json::to_vec_pretty(&candidate)?;
+            if digest(&candidate) == expected {
+                return Ok(candidate);
             }
         }
     }
@@ -276,6 +286,7 @@ impl ServerState {
                 ));
             }
             if record.unresolved_input()
+                || record.pending_answer()
                 || record.followups.iter().any(|f| {
                     record
                         .request_receipt(&f.request, DispatchOperation::Followup)
@@ -667,7 +678,7 @@ fn followup_brief(
     text: &str,
 ) -> Result<Vec<u8>> {
     Ok(serde_json::to_vec_pretty(
-        &serde_json::json!({ "schema": 1, "handle": record.handle, "identity": identity, "contract": contract, "request": request, "followup": text, "result_version": version, "output": record.root.join(format!("submission-v{version}.json")), "publication": "Call ovrcr_publish with the exact identity and result_version as submission.version. Only this child can publish; it cannot accept the result. Research tools remain read-only." }),
+        &serde_json::json!({ "schema": 1, "handle": record.handle, "identity": identity, "contract": contract, "request": request, "followup": text, "result_version": version, "output": record.root.join(format!("submission-v{version}.json")), "publication": "Call ovrcr_publish with the exact identity and result_version as submission.version. Only this child can publish; it cannot accept the result. Research tools remain read-only.", "questions": questions::QUESTION_INSTRUCTIONS }),
     )?)
 }
 

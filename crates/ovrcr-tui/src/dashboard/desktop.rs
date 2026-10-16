@@ -1459,6 +1459,38 @@ mod tests {
         d.desktop.pending.iter().map(|n| n.title).collect()
     }
     #[test]
+    fn native_input_notification_payload_excludes_dynamic_question_and_answer_content() {
+        let mut d = dashboard();
+        let mut hierarchy = snapshot_with_requests(
+            2,
+            "PRIVATE_ANSWER_BODY",
+            AgentActivity::Busy,
+            &[request("prompt-1", InputKind::Select)],
+        );
+        let current = session(&mut hierarchy);
+        current.title = Some("PRIVATE_QUESTION_BODY_AND_OPTIONS".into());
+        current.label = "PRIVATE_QUESTION_CONTEXT".into();
+        current.cwd = "/PRIVATE_ANSWER_SCOPE".into();
+        deliver(&mut d, hierarchy);
+        assert_eq!(d.desktop.pending.len(), 1);
+        let notice = &d.desktop.pending[0];
+        assert_eq!(notice.title, "OVRCR · input needed");
+        assert_eq!(notice.body, "project / workspace / session (#1)");
+        #[cfg(target_os = "macos")]
+        assert_eq!(notice.subtitle, "session");
+        #[cfg(not(target_os = "macos"))]
+        {
+            let command = host_command(notice);
+            assert!(
+                command
+                    .get_args()
+                    .all(|arg| !arg.to_string_lossy().contains("PRIVATE_"))
+            );
+        }
+        // This owns notification payload construction, not an OS banner/host
+        // execution claim. Question bodies never join the notification queue.
+    }
+    #[test]
     fn desktop_input_request_alerts_once_per_request_identity() {
         let mut d = dashboard();
         deliver(

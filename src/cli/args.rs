@@ -60,6 +60,8 @@ pub(super) enum Command {
         command: BridgeCommand,
     },
     /// Submit assignment/workflow control JSON on stdin (including interrupt/cancel); connect only.
+    /// Question publication, private collection and scoped answers are separate
+    /// requests. An answer receipt confirms delivery only, never native approval.
     Delegation,
     /// Run a native agent with invocation supervision.
     Agent {

@@ -44,6 +44,9 @@ export function createDelegationObserver({ pi, call, auth }) {
     for (const item of batch.observations) {
       const facts = {};
       if (item.publication && !item.publication.handled) facts.publication = item.publication.identity;
+      const questions = (item.questions ?? []).filter(q => q.current && (!q.handled || q.issue) && q.answer?.outcome !== "Applied");
+      if (questions.length) facts.questions = questions;
+      if (item.native_question_gap) facts.native_question_gap = item.native_question_gap;
       if (item.input_requests.length) facts.input = { requests: item.input_requests, revision: item.input_revision };
       if (!item.publication?.handled && item.activity?.state === "ResponseReady") facts.ready = { activity: item.activity, revision: item.activity_revision };
       if (item.stalled) facts.stalled = true;

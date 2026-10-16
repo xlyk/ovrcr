@@ -7,6 +7,8 @@ mod followups;
 mod live;
 #[path = "pi_delegation/recovery.rs"]
 mod parent_recovery;
+#[path = "pi_delegation/questions.rs"]
+mod questions;
 use live::{Live, PROJECT};
 use ovrcr::protocol::*;
 use std::{
@@ -1178,6 +1180,15 @@ impl ControlProxy {
                     DelegationRequest::Inspect { handle, .. } => ("Inspect", handle.clone()),
                     DelegationRequest::Collect { handle, .. } => ("Collect", handle.clone()),
                     DelegationRequest::Publish { handle, .. } => ("Publish", handle.clone()),
+                    DelegationRequest::PublishQuestion { handle, .. } => {
+                        ("PublishQuestion", handle.clone())
+                    }
+                    DelegationRequest::CollectQuestion { handle, .. } => {
+                        ("CollectQuestion", handle.clone())
+                    }
+                    DelegationRequest::AnswerQuestion { answer, .. } => {
+                        ("AnswerQuestion", answer.request.clone())
+                    }
                     DelegationRequest::Followup { request, .. } => ("Followup", request.clone()),
                     DelegationRequest::CollectVersion { handle, .. } => {
                         ("CollectVersion", handle.clone())

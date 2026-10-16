@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 12;
+const SCHEMA_VERSION: i64 = 13;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -363,6 +363,10 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
         // Older writers discard workflow cancellation and native interrupt journals.
         transaction.pragma_update(None, "user_version", 12)?;
     }
+    if schema_identity(&transaction)?.1 < 13 {
+        // Older writers would discard authenticated question and answer obligations.
+        transaction.pragma_update(None, "user_version", 13)?;
+    }
     transaction.commit().context("commit registry migration")?;
     Ok(connection)
 }
@@ -391,7 +395,7 @@ pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
     if application != APPLICATION_ID
         || !matches!(
             version,
-            1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | SCHEMA_VERSION
+            1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | SCHEMA_VERSION
         )
     {
         bail!(
@@ -839,6 +843,37 @@ mod tests {
                 .unwrap(),
             1,
             "reopening must not recreate delegation tables"
+        );
+    }
+
+    #[test]
+    fn schema_eleven_upgrade_keeps_question_intents_and_unknown_answer_receipts_exact() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("instance");
+        initialize_registry(&config).unwrap();
+        let database = database_path(&config);
+        let connection = Connection::open(&database).unwrap();
+        connection.pragma_update(None, "user_version", 11).unwrap();
+        // Migration preserves bytes, including incomplete obligations it cannot
+        // interpret; only the owning delegation validator can grant authority.
+        let metadata = r#"{"handle":"original","questions":[{"reference":{"question_id":"choice","digest":"original-question"},"handled":false}],"answers":[{"request":"answer-original","expected_parent_epoch":3,"control_epoch":7,"digest":"original-answer"}],"receipts":[{"request":"answer-original","operation":"AnswerQuestion","outcome":"Unknown"}]}"#;
+        connection.execute("INSERT INTO delegations(handle,workflow,metadata) VALUES('original','workflow',?1)", [metadata]).unwrap();
+        drop(connection);
+        load_registry(&config).unwrap();
+        assert_eq!(schema_version(&database), 11, "offline read never migrates");
+        initialize_registry(&config).unwrap();
+        assert_eq!(schema_version(&database), SCHEMA_VERSION);
+        let stored: String = Connection::open(&database)
+            .unwrap()
+            .query_row(
+                "SELECT metadata FROM delegations WHERE handle='original'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            stored, metadata,
+            "migration must not drop unknown/partial answer obligations"
         );
     }
 

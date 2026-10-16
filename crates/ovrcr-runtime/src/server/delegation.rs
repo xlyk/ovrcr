@@ -11,6 +11,9 @@ mod followups;
 pub(crate) mod interrupt;
 #[path = "delegation_interrupt_effects.rs"]
 mod interrupt_effects;
+#[path = "delegation_questions.rs"]
+mod questions;
+use questions::{AnswerIntent, QuestionPublicationIntent};
 #[path = "delegation_policy.rs"]
 mod policy;
 
@@ -72,6 +75,10 @@ pub(crate) struct Record {
     pub previous_versions: Vec<VersionState>,
     #[serde(default)]
     pub followups: Vec<FollowupIntent>,
+    #[serde(default)]
+    pub questions: Vec<QuestionPublicationIntent>,
+    #[serde(default)]
+    pub answers: Vec<AnswerIntent>,
     pub dispatch: DispatchStatus,
     pub reason: Option<String>,
     #[serde(default)]
@@ -128,7 +135,7 @@ impl Record {
     fn spent_execution_attempts(&self) -> Option<u32> {
         if self.identity.session.is_some() != self.identity.run.is_some()
             || self.handle != self.identity.request
-            || self.receipts.len() > 3 + followups::MAX_FOLLOWUPS + 64
+            || self.receipts.len() > 3 + followups::MAX_FOLLOWUPS + 64 + MAX_ASSIGNMENT_QUESTIONS
             || self.control_intents.len() > 64
             || self.interrupt_intents.len() > 64
             || self.interrupt_intents.len()
@@ -166,6 +173,9 @@ impl Record {
             .chain(std::iter::once(&self.version()))
             .cloned()
             .collect();
+        if !self.valid_question_evidence(&versions) {
+            return None;
+        }
         if versions[0].result_version != 1
             || versions.iter().enumerate().any(|(index, v)| {
                 (index > 0 && v.result_version <= versions[index - 1].result_version)
@@ -257,6 +267,18 @@ impl Record {
                         .find(|intent| intent.request == receipt.request)?
                         .validate(receipt)
                         .ok()?;
+                }
+                continue;
+            }
+            if receipt.operation == DispatchOperation::AnswerQuestion {
+                let intent = self.answers.iter().find(|a| a.request == receipt.request)?;
+                if receipt.identity != intent.question.assignment
+                    || receipt.result_version != intent.question.result_version
+                    || self.receipts[..index]
+                        .iter()
+                        .any(|old| old.request == receipt.request)
+                {
+                    return None;
                 }
                 continue;
             }
@@ -576,6 +598,7 @@ impl Record {
                     (DispatchOperation::InitialInput, _) => DispatchOutcome::Unknown,
                     (
                         DispatchOperation::Followup
+                        | DispatchOperation::AnswerQuestion
                         | DispatchOperation::Takeover
                         | DispatchOperation::HumanReturn
                         | DispatchOperation::ConfirmHumanReturn
@@ -664,6 +687,15 @@ pub(super) fn hold_before_effect(point: &str, handle: &str) -> Result<()> {
     #[cfg(not(feature = "acceptance-diagnostics"))]
     let _ = (point, handle);
     Ok(())
+}
+
+fn publish_matching(directory: &Directory, name: &str, bytes: &[u8]) -> Result<()> {
+    if let Err(error) = directory.publish(name, bytes)
+        && directory.read(name).ok().as_deref() != Some(bytes)
+    {
+        return Err(error);
+    }
+    directory.sync()
 }
 
 fn digest(bytes: &[u8]) -> String {
@@ -767,9 +799,49 @@ impl ServerState {
         };
         // Same serialization as session admission: validation, receipts and effects cannot
         // race another lifecycle mutation or a competing assignment input.
+        #[cfg(feature = "acceptance-diagnostics")]
+        if let DelegationRequest::PublishQuestion { handle, .. } = &request
+            && take_fault("question-mutation-blocked", handle).is_some()
+        {
+            // Prove actual lock contention for the owning forced-order test. The
+            // ordinary lock below remains the only admission/ordering mechanism.
+            if !matches!(
+                self.mutation_lock.try_lock(),
+                Err(std::sync::TryLockError::WouldBlock)
+            ) {
+                bail!("owned question ordering probe expected blocked mutation admission");
+            }
+            let fault = PathBuf::from(
+                std::env::var_os("OVRCR_TEST_DELEGATION_FAULT")
+                    .context("missing owned fault path")?,
+            );
+            std::fs::write(fault.with_extension("blocked"), "question-mutation-blocked")?;
+        }
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
         let record = match request {
+            DelegationRequest::PublishQuestion {
+                auth,
+                handle,
+                question,
+            } => {
+                return self.publish_question(auth, handle, question);
+            }
+            DelegationRequest::CollectQuestion {
+                auth,
+                handle,
+                reference,
+            } => {
+                return self.collect_question(auth, handle, reference);
+            }
+            DelegationRequest::AnswerQuestion {
+                auth,
+                handle,
+                answer,
+                expected_parent_epoch,
+            } => {
+                return self.answer_question(auth, handle, answer, expected_parent_epoch);
+            }
             DelegationRequest::Capabilities { .. } => {
                 return Err(lifecycle_error(
                     ErrorCode::InvalidRequest,
@@ -1028,6 +1100,8 @@ impl ServerState {
                         acceptance: None,
                         previous_versions: Vec::new(),
                         followups: Vec::new(),
+                        questions: Vec::new(),
+                        answers: Vec::new(),
                         dispatch: DispatchStatus::Prepared,
                         reason: None,
                         project: contract.project.clone(),
@@ -1553,6 +1627,9 @@ impl ServerState {
                 handle,
                 publication,
             } => {
+                if matches!(publication.kind, PublicationKind::Question { .. }) {
+                    return self.handle_question(auth, handle, publication);
+                }
                 let mut record = self.owned_assignment(&auth, &handle)?;
                 let parent = self.delegation_auth(&auth)?;
                 let child = self.assignment_session(&record)?;
@@ -1596,7 +1673,7 @@ impl ServerState {
                     .lock()
                     .assignment(&handle)?
                     .context("assignment not found")?;
-                let session = self.delegation_auth(&auth)?;
+                let session = self.assignment_publisher(&auth, &record)?;
                 if Some(auth.session) != record.identity.session
                     || Some(session.run()) != record.identity.run
                 {
@@ -1812,7 +1889,7 @@ impl ServerState {
         self.retained.lock().save_assignment(&record)?;
         let contract = read_contract(&record)?;
         let brief = serde_json::to_vec_pretty(
-            &serde_json::json!({"schema": 1, "handle": handle, "identity": record.identity, "contract": contract, "result_version": 1, "output": record.root.join("submission-v1.json"), "publication": "Call ovrcr_publish. Only this child can publish; it cannot accept the result. Research tools are read-only."}),
+            &serde_json::json!({"schema": 1, "handle": handle, "identity": record.identity, "contract": contract, "result_version": 1, "output": record.root.join("submission-v1.json"), "publication": "Call ovrcr_publish. Only this child can publish; it cannot accept the result. Research tools are read-only.", "questions": questions::QUESTION_INSTRUCTIONS}),
         )?;
         Directory::open(&record.root, false)?.publish("brief-v1.json", &brief)?;
         record.brief_digest = Some(digest(&brief));
@@ -1915,7 +1992,10 @@ impl ServerState {
             .as_ref()
             .and_then(|summary| summary.agent.as_ref())
             .and_then(|agent| self.control_evidence(&record, agent).ok());
+        let questions = self.question_states(&record);
         Ok(AssignmentSnapshot {
+            questions,
+            collected_question: None,
             control: record.control.clone(),
             control_evidence,
             handle: record.handle,
@@ -2148,6 +2228,8 @@ mod tests {
             acceptance: None,
             previous_versions: Vec::new(),
             followups: Vec::new(),
+            questions: Vec::new(),
+            answers: Vec::new(),
             dispatch: status,
             reason: None,
             project: String::new(),

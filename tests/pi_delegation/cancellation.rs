@@ -105,6 +105,83 @@ fn terminal_contains(f: &Fixture, child: &AssignmentSnapshot, marker: &str) {
 }
 
 #[test]
+fn production_question_answer_respects_interrupt_barrier_until_explicit_settlement_confirmation() {
+    let f = Owned::new();
+    let child = f.start("QUESTION_FILE_ONLY INTERRUPT_SETTLEMENT_GATE");
+    wait_file(&child.brief.with_extension("json.question-published"));
+    supported(&f, &child);
+    let current = inspect(&f, &child);
+    let question = current
+        .questions
+        .iter()
+        .find(|q| q.current)
+        .unwrap()
+        .reference
+        .clone();
+    let interrupted: AssignmentSnapshot = serde_json::from_value(f.tool(
+        "ovrcr_interrupt",
+        interrupt_args(&current, "question-interrupt"),
+    ))
+    .unwrap();
+    assert_eq!(
+        interrupt_receipt(&interrupted, "question-interrupt").outcome,
+        DispatchOutcome::Applied
+    );
+    wait_file(&child.brief.with_extension("json.interrupt-consumed"));
+    let before = bytes(&f, &child);
+    let args = |snapshot: &AssignmentSnapshot| serde_json::json!({"handle": snapshot.handle, "question": question, "expected_control_epoch": snapshot.control.epoch, "basis": "ExistingAuthority", "scope": "Read only the assigned README", "answer": "Use the Introduction section"});
+    let blocked = f.tool("ovrcr_answer_question", args(&interrupted));
+    assert_eq!(blocked["dispatch"], "Refused");
+    assert_eq!(bytes(&f, &child), before);
+    let collected: AssignmentSnapshot = serde_json::from_value(f.tool(
+        "ovrcr_collect_question",
+        serde_json::json!({"handle": child.handle, "reference": question}),
+    ))
+    .unwrap();
+    assert!(
+        collected.collected_question.is_some(),
+        "interrupt barrier leaves read-only question evidence available"
+    );
+    fs::write(
+        child.brief.with_extension("json.interrupt-settle"),
+        "fresh same-turn settlement",
+    )
+    .unwrap();
+    wait_file(&child.brief.with_extension("json.interrupt-settled"));
+    let settled = inspect(&f, &child);
+    assert!(matches!(
+        settled.control.barrier,
+        Some(ControlBarrier::Interrupt { .. })
+    ));
+    assert_eq!(
+        f.tool("ovrcr_answer_question", args(&settled))["dispatch"],
+        "Refused",
+        "native settlement alone grants no authority"
+    );
+    assert_eq!(bytes(&f, &child), before);
+    let confirmed: AssignmentSnapshot = serde_json::from_value(f.tool(
+        "ovrcr_confirm_interrupt",
+        confirm_args(&settled, "question-interrupt-confirm", "question-interrupt"),
+    ))
+    .unwrap();
+    assert!(confirmed.control.barrier.is_none());
+    let delivered: AssignmentSnapshot =
+        serde_json::from_value(f.tool("ovrcr_answer_question", args(&confirmed))).unwrap();
+    wait_file(&child.brief.with_extension("json.answer-received"));
+    assert_eq!(
+        delivered
+            .receipts
+            .iter()
+            .filter(|r| r.operation == DispatchOperation::AnswerQuestion
+                && r.outcome == DispatchOutcome::Applied)
+            .count(),
+        1
+    );
+    assert_eq!(delivered.result_version, child.result_version);
+    assert_eq!(delivered.execution_attempts, Some(1));
+}
+
+#[test]
 fn production_interrupt_delivery_requires_fresh_settlement_and_keeps_same_child_followup() {
     interrupt_then_confirm(false);
 }

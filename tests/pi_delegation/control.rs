@@ -38,7 +38,7 @@ fn view(stream: &mut UnixStream, child: SessionId, run: SessionRunId, revision: 
     );
 }
 
-fn dashboard(fixture: &RecoveryFixture, assignment: &AssignmentSnapshot) -> UnixStream {
+pub(super) fn dashboard(fixture: &RecoveryFixture, assignment: &AssignmentSnapshot) -> UnixStream {
     let mut stream = connect_server(&fixture.live.socket).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(3)))
@@ -56,7 +56,7 @@ fn dashboard(fixture: &RecoveryFixture, assignment: &AssignmentSnapshot) -> Unix
     stream
 }
 
-fn transition(
+pub(super) fn transition(
     fixture: &RecoveryFixture,
     stream: &mut UnixStream,
     child: SessionId,
@@ -108,7 +108,7 @@ fn transition(
     after
 }
 
-fn confirm(
+pub(super) fn confirm(
     fixture: &RecoveryFixture,
     snapshot: &AssignmentSnapshot,
     returned: &str,
