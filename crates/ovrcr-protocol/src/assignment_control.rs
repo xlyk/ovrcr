@@ -14,6 +14,7 @@ pub enum ControlBarrier {
     HumanReturn { request: String },
     AttributionChanged,
     Interrupt { request: String },
+    Archive { request: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

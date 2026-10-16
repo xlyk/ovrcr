@@ -1774,6 +1774,8 @@ mod wire_snapshot {
             encode(&Response::Delegation(Box::new(crate::AssignmentSnapshot {
                 questions: vec![],
                 collected_question: None,
+                obligation_revision: 1,
+                archive_receipts: vec![],
                 handle: "r".into(),
                 control: crate::AssignmentControl::default(),
                 control_evidence: None,
@@ -1937,6 +1939,7 @@ mod wire_snapshot {
             )),
         ));
         let snapshot = crate::WorkflowSnapshot {
+            deliveries: vec![],
             cancellation: None,
             authority: authority.clone(),
             active: true,
@@ -2118,6 +2121,8 @@ mod wire_snapshot {
             answer: Some(receipt.clone()),
         };
         let snapshot = crate::AssignmentSnapshot {
+            obligation_revision: 1,
+            archive_receipts: vec![],
             handle: "r".into(),
             identity: identity.clone(),
             dispatch: crate::DispatchStatus::Applied,
@@ -2302,6 +2307,7 @@ mod wire_snapshot {
         report.validate().unwrap();
         all.push(("ProviderReport::NativeControl".into(), encode(&report)));
         let cancelled = crate::WorkflowSnapshot {
+            deliveries: vec![],
             authority: crate::WorkflowAuthority {
                 instance: "i".into(),
                 workflow: "w".into(),

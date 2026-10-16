@@ -111,6 +111,8 @@ pub struct WorkflowSnapshot {
     pub gaps: Vec<String>,
     pub receipt: Option<WorkflowTransitionReceipt>,
     pub cancellation: Option<WorkflowCancellationView>,
+    #[serde(default)]
+    pub deliveries: Vec<crate::RecordedDelivery>,
 }
 
 /// Fixed membership and immutable dispatch-closure receipt; child effects remain separate.
@@ -180,6 +182,10 @@ pub enum WorkflowRequest {
         auth: DelegationAuth,
         workflow: String,
         request: String,
+    },
+    DeclareDelivery {
+        auth: DelegationAuth,
+        declaration: crate::DeliveryDeclaration,
     },
 }
 

@@ -561,3 +561,53 @@ tool schema and missing-input behavior). Observation integration lives in
 replaces model work for acceptance; it is not installed-provider evidence.
 Native and paid-provider acceptance must be recorded separately on the reviewed
 revision.
+
+
+## Declare delivery and archive owned sessions
+
+Submission, collection and acceptance retain the same child for follow-ups and
+review. After delivery, call `ovrcr_deliver` with a `declaration`: the workflow,
+a stable request (or let the tool generate one), delivery scope and provenance,
+and the exact resource identities, result versions and `obligation_revision`
+values from inspection. List completed obligations and use `ArchiveEligible`
+or `{"Keep":{"reason":"requested retention"}}` for each resource. Typed
+publication and acceptance references identify existing verified artifacts.
+Other evidence references are parent-authored indices; they authorize no new
+file reads and do not certify their contents. A declaration records the parent's
+judgment and does not send a message or prove the person's receipt.
+
+Each resource's `previous` must match its latest delivery reference. A changed
+retention instruction appends a new scoped declaration with explicit provenance;
+it never rewrites history. Keep stays effective until explicitly superseded.
+Every newly admitted follow-up advances `obligation_revision` before files or
+input, so an earlier delivery cannot close that new obligation. A same-resource
+archive already in flight fences declaration changes.
+
+Call `ovrcr_archive` separately with `handle`, a stable `request` (or generate
+one), `expected_identity`, `expected_result_version`,
+`expected_obligation_revision`, `expected_control_epoch`, the latest eligible
+`delivery` reference and `continuation_of:null`. The Server stops only the exact
+current owned run through its existing stop owner. Human ownership, uncertain
+processes, unresolved control and stale runs remain preserved. Archive advances
+the retained run once and removes the active Session; it retains the workspace,
+provider history, contracts, submissions, acceptance and workflow records.
+Worktree deletion remains a separate explicitly authorized repository action.
+
+Inspect `archive_receipts` per resource. `StopUnknown` may include a stop effect
+and must never be retried as a new stop. `StoppedArchivePending` certifies the
+original stopped run but does not mean archive filing committed. Its current
+workflow owner can issue a new archive request with `continuation_of` naming
+that exact predecessor and its admitted control epoch. This continuation files
+only the unchanged durably stopped run, preserves its predecessor receipt and
+never signals again. The new receipt and archive disposition commit together;
+a failed transaction consumes no continuation slot. Storage reserves enough
+capacity before the original effect and never evicts unresolved evidence.
+
+For a lost delivery reply, repeat `ovrcr_deliver` with only its original request.
+For a lost archive reply, repeat `ovrcr_archive` with only handle and original
+request. The extension persists each intent before invocation. A transport
+`Unknown` is not a Server receipt. Recovery reads the original journals, including
+a completed archive after its run increment. Use `ovrcr_collect` with an explicit
+historical `version` to retrieve archived evidence; historical submissions never
+become current results. Parent exit or transfer can leave a certified stop for
+an explicitly authorized current owner to finish.

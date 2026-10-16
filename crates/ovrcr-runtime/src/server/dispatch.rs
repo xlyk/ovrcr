@@ -512,6 +512,10 @@ fn dispatch_session_event(state: &Arc<ServerState>, event: SessionEvent) {
                 }));
         }
     } else {
+        // RestoreInputFailed returned above; this exact run's Exited state is applied.
+        #[cfg(feature = "acceptance-diagnostics")]
+        let _ =
+            super::delegation::take_fault("session-exit-applied", &format!("{}-{}", id.0, run.0));
         persist_session_exit(state, &session);
         publish_session_changed(state, id);
         state

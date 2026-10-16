@@ -44,6 +44,8 @@ struct SupervisorOwnership {
 }
 impl Drop for SupervisorOwnership {
     fn drop(&mut self) {
+        #[cfg(feature = "acceptance-diagnostics")]
+        let gate = hold_test_supervisor_disconnect(self.session);
         // This is outside the dispatcher; preserve lifecycle delivery when its queue is full.
         let _ = self
             .state
@@ -52,7 +54,36 @@ impl Drop for SupervisorOwnership {
                 session: self.session,
                 owner: self.identity.clone(),
             });
+        #[cfg(feature = "acceptance-diagnostics")]
+        if let Some(gate) = gate {
+            let _ = std::fs::write(gate.with_extension("enqueued"), self.session.0.to_string());
+        }
     }
+}
+
+// Select one valid producer ordering for the final-parent-exit acceptance case.
+// Never retain a Server/Session lock here or discard the original disconnect.
+#[cfg(feature = "acceptance-diagnostics")]
+fn hold_test_supervisor_disconnect(session: SessionId) -> Option<PathBuf> {
+    let fault = PathBuf::from(std::env::var_os("OVRCR_TEST_DELEGATION_FAULT")?);
+    let gate = fault
+        .parent()?
+        .join(format!("supervisor-disconnect-{}", session.0));
+    let hold = gate.with_extension("hold");
+    if std::fs::metadata(&hold).ok()?.len() != 4 || std::fs::read(&hold).ok()?.as_slice() != b"hold"
+    {
+        return None;
+    }
+    std::fs::write(gate.with_extension("hit"), session.0.to_string()).ok()?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !gate.with_extension("release").exists() {
+        if std::time::Instant::now() >= deadline {
+            let _ = std::fs::write(gate.with_extension("timeout"), session.0.to_string());
+            break;
+        }
+        std::thread::park_timeout(Duration::from_millis(5));
+    }
+    Some(gate)
 }
 
 pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
@@ -652,6 +683,10 @@ pub(super) fn handle_request_with_id(
                     |capabilities| Response::DelegationCapabilities(Box::new(capabilities)),
                 );
             }
+            let archiving = matches!(
+                request.as_ref(),
+                ovrcr_protocol::DelegationRequest::Archive { .. }
+            );
             let launching = matches!(
                 request.as_ref(),
                 ovrcr_protocol::DelegationRequest::Launch { .. }
@@ -666,7 +701,12 @@ pub(super) fn handle_request_with_id(
                     )
                 },
                 |snapshot| {
-                    if launching && snapshot.identity.session.is_some() {
+                    if (launching && snapshot.identity.session.is_some())
+                        || (archiving
+                            && snapshot.archive_receipts.iter().any(|r| {
+                                matches!(r.outcome, ovrcr_protocol::ArchiveOutcome::Archived { .. })
+                            }))
+                    {
                         state.dashboard.try_send(ServerMessage::Event(
                             ServerEvent::HierarchyChanged(state.hierarchy()),
                         ));

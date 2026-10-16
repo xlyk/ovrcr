@@ -422,6 +422,16 @@ pub(crate) struct LeaderWaitOverride<'a> {
     pub(crate) probe: &'a (dyn Fn(libc::pid_t) -> bool + Send + Sync),
 }
 
+pub(crate) struct SessionTermination<'a> {
+    session: &'a Session,
+    _guard: std::sync::MutexGuard<'a, ()>,
+}
+impl SessionTermination<'_> {
+    pub(crate) fn terminate(&self, grace: Duration) -> Result<()> {
+        self.session.terminate_guarded(grace)
+    }
+}
+
 impl Session {
     /// Spawn a session and publish it through `register` before its PTY
     /// reader and child waiter start.
@@ -1092,6 +1102,29 @@ impl Session {
         input: &DelegatedInput<'_>,
         action: impl FnOnce(&ovrcr_protocol::AgentSnapshot) -> Result<T>,
     ) -> Result<Option<T>> {
+        self.with_delegated_state(input, |child| {
+            action(child.reporting.snapshot.as_ref().unwrap())
+        })
+    }
+
+    pub(crate) fn with_delegated_archive(
+        &self,
+        input: &DelegatedInput<'_>,
+        commit: impl FnOnce() -> Result<()>,
+    ) -> Result<Option<()>> {
+        self.with_delegated_state(input, |child| {
+            commit()?;
+            child.reporting.lost("capability_revoked");
+            child.hook_capability = None;
+            Ok(())
+        })
+    }
+
+    fn with_delegated_state<T>(
+        &self,
+        input: &DelegatedInput<'_>,
+        action: impl FnOnce(&mut SessionState) -> Result<T>,
+    ) -> Result<Option<T>> {
         #[cfg(test)]
         if let Some(hook) = self.before_delegated_input.lock().unwrap().clone() {
             hook();
@@ -1099,7 +1132,7 @@ impl Session {
         if self.id() == input.parent.id() {
             return Ok(None);
         }
-        let apply = |parent: &SessionState, child: &SessionState| -> Result<Option<T>> {
+        let apply = |parent: &SessionState, child: &mut SessionState| -> Result<Option<T>> {
             let parent_valid = parent.phase == SessionPhase::Running
                 && parent.reporting.active()
                 && parent.reporting.source.as_ref() == input.parent_source
@@ -1145,16 +1178,16 @@ impl Session {
             if !parent_valid || !child_valid || !control_valid {
                 return Ok(None);
             }
-            action(child.reporting.snapshot.as_ref().unwrap()).map(Some)
+            action(child).map(Some)
         };
         if input.parent.id().0 < self.id().0 {
             let parent = input.parent.state.lock().unwrap();
-            let child = self.state.lock().unwrap();
-            apply(&parent, &child)
+            let mut child = self.state.lock().unwrap();
+            apply(&parent, &mut child)
         } else {
-            let child = self.state.lock().unwrap();
+            let mut child = self.state.lock().unwrap();
             let parent = input.parent.state.lock().unwrap();
-            apply(&parent, &child)
+            apply(&parent, &mut child)
         }
     }
 
@@ -1280,8 +1313,25 @@ impl Session {
         }
     }
 
+    pub(crate) fn try_termination(&self) -> Result<Option<SessionTermination<'_>>> {
+        match self.terminate_lock.try_lock() {
+            Ok(guard) => Ok(Some(SessionTermination {
+                session: self,
+                _guard: guard,
+            })),
+            Err(std::sync::TryLockError::WouldBlock) => Ok(None),
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                bail!("Session termination owner poisoned")
+            }
+        }
+    }
+
     pub fn terminate(&self, grace: Duration) -> Result<()> {
         let _termination = self.terminate_lock.lock().unwrap();
+        self.terminate_guarded(grace)
+    }
+
+    fn terminate_guarded(&self, grace: Duration) -> Result<()> {
         if matches!(
             self.state.lock().unwrap().phase,
             SessionPhase::Exited { .. }
