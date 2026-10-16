@@ -10503,6 +10503,34 @@ fn pi_callback(fixture: &ControlFixture, session: SessionId, index: &mut usize, 
     *index += 1;
 }
 
+// Native completion closes the watch, but the shell marker does not acknowledge
+// Server-side lease release. Observe both within the marker's existing bound.
+fn pi_exit_and_wait_for_lease_release(fixture: &ControlFixture, session: SessionId) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains_until(session, "PI_NATIVE_EXIT=17", deadline);
+    loop {
+        let current = fixture.session_summary(session);
+        if current.agent.as_ref().unwrap().health.state
+            == ovrcr::protocol::ReporterHealth::Unavailable
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "native owner exited but its lease is still held: {current:?}"
+        );
+        thread::yield_now();
+    }
+}
+
 #[test]
 fn pi_managed_extension_reports_busy_ready_error_idle_and_fences_producers() {
     let _guard = env_lock();
@@ -10697,25 +10725,28 @@ fn pi_managed_extension_reports_busy_ready_error_idle_and_fences_producers() {
         }
     }
     pi_callback(&fixture, summary.id, &mut index, "session_shutdown:quit");
+    assert_eq!(
+        fixture
+            .session_summary(summary.id)
+            .agent
+            .unwrap()
+            .health
+            .state,
+        ReporterHealth::Connected,
+        "quit alone cannot prove the native owner departed"
+    );
+    pi_exit_and_wait_for_lease_release(&fixture, summary.id);
+
     let after = fixture.session_summary(summary.id).agent.unwrap();
     assert_eq!(
         after.health.state,
         ReporterHealth::Unavailable,
-        "quit releases the lease"
+        "the reaped native owner releases the lease"
     );
     assert!(
         fixture.session_summary(summary.id).unread.is_some(),
         "reporter loss keeps Unread"
     );
-    assert_eq!(
-        fixture.request(Request::SendTerminal {
-            session: summary.id,
-            text: "exit".into(),
-            submit: true,
-        }),
-        Response::Ok
-    );
-    fixture.wait_terminal_contains(summary.id, "PI_NATIVE_EXIT=17");
 }
 
 #[test]
@@ -14263,6 +14294,18 @@ fn pi_input_request_shows_waiting_alerts_once_and_restores_the_underlying_activi
 
     // A reporter that is gone cannot vouch for the dialog it left open; Unread survives.
     pi_callback(&fixture, summary.id, &mut index, "session_shutdown:quit");
+    assert_eq!(
+        fixture
+            .session_summary(summary.id)
+            .agent
+            .unwrap()
+            .health
+            .state,
+        ReporterHealth::Connected,
+        "quit alone cannot prove the native owner departed"
+    );
+    pi_exit_and_wait_for_lease_release(&fixture, summary.id);
+
     let lost = fixture.session_summary(summary.id);
     let agent = lost
         .agent
@@ -14888,6 +14931,13 @@ fn pi_doctor_reports_bound_lifecycle_activity_and_transport_loss() {
     assert_eq!(ready["lifecycle"]["activity"], "ResponseReady");
     assert_eq!(ready["lifecycle"]["unread"], true);
     pi_callback(&fixture, summary.id, &mut index, "session_shutdown:quit");
+    let shutting_down = doctor(&fixture);
+    assert_eq!(
+        shutting_down["lifecycle"]["health"], "Connected",
+        "quit alone cannot prove the native owner departed"
+    );
+    pi_exit_and_wait_for_lease_release(&fixture, summary.id);
+
     let lost = doctor(&fixture);
     assert_eq!(lost["lifecycle"]["health"], "Unavailable");
     assert!(
