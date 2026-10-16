@@ -871,10 +871,7 @@ pub(super) fn verify_acceptance(record: &Record, version: &VersionState) -> Resu
     match value["schema"].as_u64() {
         Some(1) => match &reference.target {
             AcceptanceTarget::ChildSubmission { digest }
-                if value["result_digest"].as_str() == Some(digest.as_str()) =>
-            {
-                ()
-            }
+                if value["result_digest"].as_str() == Some(digest.as_str()) => {}
             _ => bail!("legacy acceptance target changed"),
         },
         Some(2) => {
