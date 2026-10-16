@@ -71,7 +71,7 @@ export function createDelegationContinuation({ pi, call, auth, enabled = () => t
   pi.on("before_agent_start", async () => {
     await ready;
     if (!state && !gap) return;
-    const content = `OVRCR workflow continuation. Read original artifacts before acting; receipts and human-control barriers remain authoritative. ${JSON.stringify({ pointer: state?.pointer, authority: state?.authority, continuation: state?.continuation, handles: state?.handles, gaps: state?.gaps, recovery_gap: gap })}`;
+    const content = `OVRCR workflow continuation. Read original artifacts before acting; receipts and human-control barriers remain authoritative. ${JSON.stringify({ pointer: state?.pointer, authority: state?.authority, continuation: state?.continuation, handles: state?.handles, deliveries: state?.deliveries, gaps: state?.gaps, recovery_gap: gap })}`;
     return { message: { customType: "ovrcr_continuation", content, display: false } };
   });
   return {

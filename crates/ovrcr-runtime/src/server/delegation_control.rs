@@ -156,14 +156,14 @@ impl Record {
             }
             return Ok(true);
         }
-        if self
-            .receipts
-            .iter()
-            .any(|receipt| receipt.request == request)
-        {
+        if self.delivery_request_used(request) {
             bail!("request already identifies another operation");
         }
-        if self.control_intents.len() >= 64 {
+        if self.control_intents.len()
+            + self.archive_receipts.len()
+            + usize::from(self.archive_pending().is_some())
+            >= 64
+        {
             bail!(
                 "assignment control receipt storage is full (64 operations); existing receipts are retained"
             );
@@ -284,6 +284,10 @@ impl ServerState {
         let Some(binding) = record.binding.clone() else {
             return Ok(());
         };
+        if record.archive_pending().is_some() {
+            record.validate_archive_storage()?;
+            return Ok(());
+        }
         if record.control.owner != ControlOwner::Uncertain
             && session
                 .with_assignment_attribution(

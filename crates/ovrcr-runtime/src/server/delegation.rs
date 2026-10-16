@@ -1,10 +1,14 @@
 //! Server-owned assignment control. Task payloads live only in private publications.
+#[path = "delegation_archive.rs"]
+mod archive;
 #[path = "delegation_cancellation.rs"]
 pub(crate) mod cancellation;
 #[path = "delegation_cancellation_effects.rs"]
 mod cancellation_effects;
 #[path = "delegation_control.rs"]
 pub(crate) mod control;
+#[path = "delegation_delivery.rs"]
+mod delivery;
 #[path = "delegation_followups.rs"]
 mod followups;
 #[path = "delegation_interrupt.rs"]
@@ -97,6 +101,10 @@ pub(crate) struct Record {
     pub execution_attempts: Option<u32>,
     #[serde(default)]
     pub retryable_capacity_refusal: bool,
+    #[serde(default = "ovrcr_protocol::initial_obligation_revision")]
+    pub obligation_revision: u64,
+    #[serde(default)]
+    pub archive_receipts: Vec<ArchiveReceipt>,
 }
 
 // Three initial operation slots plus bounded same-child followups; never evict evidence.
@@ -133,6 +141,9 @@ impl Record {
     /// Validate operation evidence before using it to authorize another effect.
     /// Receipt reconstruction is never an independent source of budget proof.
     fn spent_execution_attempts(&self) -> Option<u32> {
+        if self.obligation_revision == 0 || self.validate_archive_storage().is_err() {
+            return None;
+        }
         if self.identity.session.is_some() != self.identity.run.is_some()
             || self.handle != self.identity.request
             || self.receipts.len() > 3 + followups::MAX_FOLLOWUPS + 64 + MAX_ASSIGNMENT_QUESTIONS
@@ -785,6 +796,9 @@ impl ServerState {
     }
 
     pub(crate) fn delegation(&self, request: DelegationRequest) -> Result<AssignmentSnapshot> {
+        if let DelegationRequest::Archive { auth, archive } = request {
+            return self.archive_assignment(auth, archive, Duration::from_secs(5));
+        }
         // Capability discovery is outside lifecycle serialization. A concurrent launch
         // still rechecks its durable status under the lock before creating anything.
         let availability = if let DelegationRequest::Launch { auth, handle, .. } = &request {
@@ -856,6 +870,9 @@ impl ServerState {
                 expected_parent_epoch,
             } => {
                 return self.answer_question(auth, handle, answer, expected_parent_epoch);
+            }
+            DelegationRequest::Archive { .. } => {
+                unreachable!("archive routed before lifecycle guard")
             }
             DelegationRequest::Capabilities { .. } => {
                 return Err(lifecycle_error(
@@ -1063,12 +1080,15 @@ impl ServerState {
                             pointer: None,
                             transfers: Vec::new(),
                             cancellation: None,
+                            deliveries: vec![],
                         })?;
                     }
                     let root = std::fs::canonicalize(&self.registry_path)?
                         .join("workflows")
                         .join(&handle);
                     let mut record = Record {
+                        obligation_revision: 1,
+                        archive_receipts: vec![],
                         control: AssignmentControl::default(),
                         takeover_evidence: None,
                         control_intents: vec![],
@@ -2011,6 +2031,8 @@ impl ServerState {
         Ok(AssignmentSnapshot {
             questions,
             collected_question: None,
+            obligation_revision: record.obligation_revision,
+            archive_receipts: record.archive_receipts.clone(),
             control: record.control.clone(),
             control_evidence,
             handle: record.handle,
@@ -2196,6 +2218,8 @@ mod tests {
             .unwrap();
         let allocated = status != DispatchStatus::Prepared;
         Record {
+            obligation_revision: 1,
+            archive_receipts: vec![],
             control: AssignmentControl::default(),
             takeover_evidence: None,
             control_intents: vec![],

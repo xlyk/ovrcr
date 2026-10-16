@@ -271,6 +271,24 @@ impl Record {
         })
     }
 
+    /// Keep final counted delivery/reason headroom through every Record writer.
+    /// Unknown without counted input may be the durable pre-effect marker.
+    pub(super) fn answer_outcome_reserved_bytes(&self) -> usize {
+        if self.answers.iter().any(|answer| {
+            self.request_receipt(&answer.request, DispatchOperation::AnswerQuestion)
+                .is_some_and(|receipt| {
+                    matches!(
+                        receipt.outcome,
+                        DispatchOutcome::Accepted | DispatchOutcome::Unknown
+                    ) && receipt.input.is_none()
+                })
+        }) {
+            512
+        } else {
+            0
+        }
+    }
+
     pub(super) fn valid_question_evidence(&self, versions: &[VersionState]) -> bool {
         if self.questions.len() > MAX_ASSIGNMENT_QUESTIONS
             || self.answers.len() > MAX_ASSIGNMENT_QUESTIONS

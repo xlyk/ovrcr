@@ -204,6 +204,10 @@ pub enum DispatchStatus {
     Refused,
 }
 
+pub fn initial_obligation_revision() -> u64 {
+    1
+}
+
 fn initial_receipt_version() -> u32 {
     1
 }
@@ -380,6 +384,10 @@ pub struct AssignmentSnapshot {
     pub questions: Vec<crate::QuestionPublicationState>,
     #[serde(default)]
     pub collected_question: Option<crate::AssignmentQuestion>,
+    #[serde(default = "initial_obligation_revision")]
+    pub obligation_revision: u64,
+    #[serde(default)]
+    pub archive_receipts: Vec<crate::ArchiveReceipt>,
 }
 
 /// A hint cursor is valid only for one Server lifetime. It is not task completion.
@@ -553,6 +561,10 @@ pub enum DelegationRequest {
         handle: String,
         answer: crate::QuestionAnswer,
         expected_parent_epoch: u64,
+    },
+    Archive {
+        auth: DelegationAuth,
+        archive: crate::ArchiveRequest,
     },
 }
 

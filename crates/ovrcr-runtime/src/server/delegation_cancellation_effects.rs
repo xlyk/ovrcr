@@ -131,6 +131,12 @@ impl ServerState {
             .context("workflow membership count changed")?;
         let digest = hash(&serde_json::to_vec(&(&request, &row.authority))?);
         let mut requests: Vec<&str> = row.transfers.iter().map(|r| r.request.as_str()).collect();
+        requests.extend(row.deliveries.iter().map(|d| d.reference.request.as_str()));
+        requests.extend(records.iter().flat_map(|r| {
+            r.archive_receipts
+                .iter()
+                .map(|r| r.intent.request.request.as_str())
+        }));
         requests.extend(
             records
                 .iter()

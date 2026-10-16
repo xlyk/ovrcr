@@ -278,7 +278,7 @@ impl ServerState {
                     "followup identity is stale",
                 ));
             }
-            if record.receipts.iter().any(|r| r.request == request) {
+            if record.delivery_request_used(&request) {
                 return Err(lifecycle_error(
                     ErrorCode::Conflict,
                     "request already identifies another operation",
@@ -360,6 +360,10 @@ impl ServerState {
                 contract_digest: digest(&bytes),
                 brief_digest: digest(&brief),
             };
+            record.obligation_revision = record
+                .obligation_revision
+                .checked_add(1)
+                .context("obligation revision exhausted")?;
             record.followups.push(intent.clone());
             record.receipts.push(DispatchReceipt {
                 request: request.clone(),
