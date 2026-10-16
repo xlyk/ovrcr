@@ -223,6 +223,314 @@ fn question_path(
     ))
 }
 
+fn bounded_public_control(live: &Live, request: Request) -> anyhow::Result<Response> {
+    let mut stream = std::os::unix::net::UnixStream::connect(&live.socket)?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+    exchange_preamble(&mut stream)?;
+    client::request(&mut stream, 1, request)
+}
+
+#[test]
+fn public_missing_and_closed_question_publishers_refuse_without_blocking_control_or_mutating_evidence()
+ {
+    let f = super::observation::Fixture::new(10000);
+    let started = f.start("QUESTION_FILE_ONLY bounded publisher admission");
+    wait_file(&started.brief.with_extension("json.question-published"));
+    let published: serde_json::Value = serde_json::from_slice(
+        &fs::read(started.brief.with_extension("json.question-published")).unwrap(),
+    )
+    .unwrap();
+    let current: AssignmentSnapshot = serde_json::from_value(published["details"].clone()).unwrap();
+    let exact = reference(&current);
+    let collected: AssignmentSnapshot = serde_json::from_value(f.tool(
+        "ovrcr_collect_question",
+        serde_json::json!({"handle": current.handle, "reference": exact}),
+    ))
+    .unwrap();
+    let mut revised = collected.collected_question.unwrap();
+    revised.question_version += 1;
+    revised.supersedes = Some(exact);
+    revised.question = "Which Introduction subsection should I read?".into();
+    let stored = || {
+        let db = rusqlite::Connection::open(f.live.config.join("registry.sqlite3")).unwrap();
+        let raw: String = db
+            .query_row(
+                "SELECT metadata FROM delegations WHERE handle=?1",
+                [&current.handle],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        serde_json::json!({"questions": value["questions"], "answers": value["answers"], "publication_intent": value["publication_intent"], "receipts": value["receipts"], "result_digest": value["result_digest"], "result_version": value["result_version"]})
+    };
+    let files = || {
+        let mut entries: Vec<_> = fs::read_dir(current.brief.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|p| {
+                p.file_name().unwrap().to_str().is_some_and(|name| {
+                    name.starts_with("question-") || name.starts_with("submission-")
+                })
+            })
+            .map(|p| (p.file_name().unwrap().to_owned(), fs::read(&p).unwrap()))
+            .collect();
+        entries.sort();
+        entries
+    };
+    // Capture ownership before the deliberate RED deadlock; teardown never queries
+    // the blocked Server or the serial fault proxy.
+    let root = f.live.root.path().to_owned();
+    let server = f.live.server_pid().unwrap();
+    let groups = f.live.owned_groups();
+    let verdict = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        for (label, session) in [
+            ("missing", SessionId(u64::MAX)),
+            ("closed", current.identity.session.unwrap()),
+        ] {
+            if label == "closed" {
+                let command_path = current.brief.with_extension("json.question-command");
+                fs::write(
+                    command_path,
+                    serde_json::to_vec(&serde_json::json!({"sequence": 1, "question": revised}))
+                        .unwrap(),
+                )
+                .unwrap();
+                let reply_path = current.brief.with_extension("json.question-command-1");
+                wait_file(&reply_path);
+                let valid: serde_json::Value =
+                    serde_json::from_slice(&fs::read(reply_path).unwrap()).unwrap();
+                assert!(
+                    valid.get("error").is_none(),
+                    "valid child publication: {valid}"
+                );
+                assert_eq!(valid["details"]["questions"].as_array().unwrap().len(), 2);
+                assert_eq!(
+                    f.live.request(Request::CloseTerminal {
+                        session,
+                        expected_run: current.identity.run.unwrap()
+                    }),
+                    Response::Ok
+                );
+            }
+            let before = stored();
+            let before_files = files();
+            let request = DelegationRequest::PublishQuestion {
+                auth: DelegationAuth {
+                    session,
+                    capability: "deliberately-no-authority".into(),
+                    controller: None,
+                    source: None,
+                },
+                handle: current.handle.clone(),
+                question: revised.clone(),
+            };
+            eprintln!("PUBLISHER_AUTH_REQUEST label={label} request={request:?}");
+            let started = Instant::now();
+            let publication =
+                bounded_public_control(&f.live, Request::Delegation(Box::new(request)));
+            let independent = bounded_public_control(&f.live, Request::Inspect);
+            eprintln!(
+                "PUBLISHER_AUTH_RESULT label={label} elapsed_ms={} publication={publication:?} independent={:?}",
+                started.elapsed().as_millis(),
+                independent
+                    .as_ref()
+                    .map(|r| matches!(r, Response::Inventory { .. }))
+            );
+            assert_eq!(
+                stored(),
+                before,
+                "refusal cannot mutate publication/answer/receipt intents"
+            );
+            assert_eq!(
+                files(),
+                before_files,
+                "refusal cannot link question/result files"
+            );
+            assert!(
+                matches!(publication, Ok(Response::Error { .. })),
+                "publisher must refuse within its bounded public request"
+            );
+            assert!(
+                matches!(independent, Ok(Response::Inventory { .. })),
+                "independent control remains responsive"
+            );
+        }
+    }));
+    // This exact child is still owned by Live and cannot have its PID reused
+    // before it is reaped. Kill even on RED so no deadlocked cleanup request runs.
+    let signal = unsafe { libc::kill(server as i32, libc::SIGKILL) };
+    let stop = f.live.join_within(Duration::from_secs(2));
+    eprintln!("PUBLISHER_AUTH_FORCED_STOP server={server} signal_result={signal} stop={stop:?}");
+    assert_eq!(signal, 0);
+    assert!(
+        matches!(stop, live::Stop::Exited(status) if std::os::unix::process::ExitStatusExt::signal(&status) == Some(libc::SIGKILL)),
+        "owned Server must be reaped after the intentional forced stop"
+    );
+    drop(f);
+    let absent = |id| unsafe { libc::kill(id, 0) } == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+    let clean =
+        absent(server as i32) && groups.iter().all(|group| absent(-*group)) && !root.exists();
+    eprintln!(
+        "PUBLISHER_AUTH_CLEANUP root={} server={server} groups={groups:?} clean={clean}",
+        root.display()
+    );
+    assert!(clean);
+    if let Err(panic) = verdict {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+#[test]
+fn public_observation_parent_closed_after_first_auth_refuses_without_relocking_retained() {
+    let mut f = RecoveryFixture::new();
+    let current = start(&f);
+    let DelegationRequest::SendInitial { auth, .. } =
+        f.proxy.original(DispatchOperation::InitialInput)
+    else {
+        unreachable!()
+    };
+    // The real parent auth was captured on the registered production tool path.
+    // Retire only this test's proxy; the request below uses the actual socket.
+    f.proxy.retire();
+    let root = f.live.root.path().to_owned();
+    let server = f.live.server_pid().unwrap();
+    let mut groups = f.live.owned_groups();
+    groups.extend(f.live.session_groups());
+    groups.sort_unstable();
+    groups.dedup();
+    for group in &groups {
+        f.live.own_group(*group);
+    }
+    let stored = || {
+        let db = rusqlite::Connection::open(f.live.config.join("registry.sqlite3")).unwrap();
+        let assignment: String = db
+            .query_row(
+                "SELECT metadata FROM delegations WHERE handle=?1",
+                [&current.handle],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let workflow: String = db
+            .query_row(
+                "SELECT metadata FROM delegation_workflows WHERE workflow=?1",
+                [&current.identity.workflow],
+                |r| r.get(0),
+            )
+            .unwrap();
+        (assignment, workflow)
+    };
+    let verdict = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        fs::write(
+            root.join("fault"),
+            format!("assignment-after-auth|{}|0", current.handle),
+        )
+        .unwrap();
+        let request = Request::Delegation(Box::new(DelegationRequest::Observe {
+            auth,
+            handles: vec![current.handle.clone()],
+            after: None,
+            wait_ms: 0,
+        }));
+        let mut observing = std::os::unix::net::UnixStream::connect(&f.live.socket).unwrap();
+        observing
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        observing
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        exchange_preamble(&mut observing).unwrap();
+        write_frame(
+            &mut observing,
+            &ClientMessage {
+                request_id: 701,
+                request,
+            },
+        )
+        .unwrap();
+        wait_file(&root.join("fault.hit"));
+        assert_eq!(
+            fs::read_to_string(root.join("fault.hit")).unwrap(),
+            "assignment-after-auth"
+        );
+        let closed = bounded_public_control(
+            &f.live,
+            Request::CloseTerminal {
+                session: f.parent,
+                expected_run: SessionRunId(1),
+            },
+        );
+        eprintln!(
+            "PARENT_AUTH_CLOSED_AFTER_FIRST_AUTH parent={} result={closed:?}",
+            f.parent.0
+        );
+        assert!(
+            matches!(closed, Ok(Response::Ok)),
+            "public close must complete while observation holds no retained lock"
+        );
+        let before = stored();
+        let observation_path = current.brief.parent().unwrap().join("observation-v1.json");
+        let checkpoint = fs::read(&observation_path).ok();
+        fs::write(
+            root.join("fault.release"),
+            "resume exactly the authenticated observation",
+        )
+        .unwrap();
+        let observed: anyhow::Result<ServerMessage> = read_frame(&mut observing);
+        let independent = bounded_public_control(&f.live, Request::Inspect);
+        eprintln!(
+            "PARENT_AUTH_RECHECK_RESULT observed={observed:?} independent={:?}",
+            independent
+                .as_ref()
+                .map(|r| matches!(r, Response::Inventory { .. }))
+        );
+        assert_eq!(
+            stored(),
+            before,
+            "read-only refusal cannot alter assignment/workflow authority or receipts"
+        );
+        assert_eq!(
+            fs::read(observation_path).ok(),
+            checkpoint,
+            "refused observation cannot publish progress"
+        );
+        assert!(
+            matches!(
+                observed,
+                Ok(ServerMessage::Response {
+                    request_id: 701,
+                    response: Response::Error { .. }
+                })
+            ),
+            "closed parent must refuse reauthentication within the request bound"
+        );
+        assert!(
+            matches!(independent, Ok(Response::Inventory { .. })),
+            "independent control must remain responsive"
+        );
+    }));
+    let signal = unsafe { libc::kill(server as i32, libc::SIGKILL) };
+    let stop = f.live.join_within(Duration::from_secs(2));
+    eprintln!("PARENT_AUTH_FORCED_STOP server={server} signal_result={signal} stop={stop:?}");
+    assert_eq!(signal, 0);
+    assert!(
+        matches!(stop, live::Stop::Exited(status) if std::os::unix::process::ExitStatusExt::signal(&status) == Some(libc::SIGKILL))
+    );
+    drop(f);
+    let absent = |id| unsafe { libc::kill(id, 0) } == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+    let clean =
+        absent(server as i32) && groups.iter().all(|group| absent(-*group)) && !root.exists();
+    eprintln!(
+        "PARENT_AUTH_RECHECK_CLEANUP root={} server={server} groups={groups:?} clean={clean}",
+        root.display()
+    );
+    assert!(clean);
+    if let Err(panic) = verdict {
+        std::panic::resume_unwind(panic);
+    }
+}
+
 #[test]
 fn public_question_valid_private_file_without_authenticated_intent_cannot_be_collected_or_answered()
 {

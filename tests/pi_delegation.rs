@@ -1322,11 +1322,18 @@ impl ControlProxy {
     }
 }
 
+impl ControlProxy {
+    fn retire(&mut self) {
+        if let Some(thread) = self.thread.take() {
+            self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            let _ = std::os::unix::net::UnixStream::connect(&self.path);
+            thread.join().unwrap();
+        }
+    }
+}
 impl Drop for ControlProxy {
     fn drop(&mut self) {
-        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
-        let _ = std::os::unix::net::UnixStream::connect(&self.path);
-        self.thread.take().unwrap().join().unwrap();
+        self.retire();
     }
 }
 
@@ -2162,8 +2169,10 @@ fn public_dispatch_freezes_fresh_child_target_before_metrics_and_write() {
 
 impl Drop for RecoveryFixture {
     fn drop(&mut self) {
-        for group in self.live.session_groups() {
-            self.live.own_group(group);
+        if self.live.hosted() {
+            for group in self.live.session_groups() {
+                self.live.own_group(group);
+            }
         }
     }
 }
