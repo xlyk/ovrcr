@@ -213,7 +213,7 @@ function registerDelegation(pi, producer, sourceKey) {
         requireRouting();
         const response = await run(args, ctx, signal);
         if (mine !== routingGeneration) throw new Error("Tool reply belongs to a previous Pi context; reconcile its original records");
-        if (name !== "ovrcr_publish" && response?.identity?.session) observer.watch(response.handle);
+        if (!["ovrcr_publish", "ovrcr_publish_question"].includes(name) && response?.identity?.session) observer.watch(response.handle);
         return { content: [{ type: "text", text: JSON.stringify(response) }], details: response };
       } finally {
         if (mine === routingGeneration) observer.acknowledge();
@@ -436,5 +436,34 @@ function registerDelegation(pi, producer, sourceKey) {
   tool("ovrcr_collect", "Collect the current validated submission without accepting it. Optional version explicitly reads historical evidence; historical_submission cannot satisfy current collection or acceptance.", object({ handle: string, version: { type: "integer", minimum: 1 } }, ["handle"]), args => call(args.version === undefined ? { Collect: { auth: auth(), handle: args.handle } } : { CollectVersion: { auth: auth(), handle: args.handle, version: args.version } }));
   tool("ovrcr_wait", "Wait for bounded content-free assignment observations. Cancellation leaves child work running. Fetch available files with ovrcr_collect; use exact publication identity to mark handling separately from acceptance.", object({ handles: { type: "array", items: string, minItems: 1, maxItems: 64 }, after: { type: "object" }, wait_ms: { type: "integer", minimum: 0, maximum: 20000 } }, []), (args, _ctx, signal) => observer.wait(args, signal));
   tool("ovrcr_mark_handled", "Acknowledge handling of this exact immutable publication. Does not accept task success.", object({ handle: string, publication: { type: "object" } }), args => call({ MarkHandled: { auth: auth(), handle: args.handle, publication: args.publication } }));
+  const boundedId = publicId;
+  const positive = positiveInteger;
+  const questionReference = object({ assignment: assignmentIdentity, result_version: resultVersion, question_id: boundedId, question_version: resultVersion, digest });
+  const questionBody = object({ schema: { type: "integer", const: 1 }, identity: assignmentIdentity, result_version: resultVersion, question_id: boundedId, question_version: resultVersion, supersedes: nullable(questionReference), kind: { type: "string", enum: ["Clarification", "HumanDecision"] }, question: { type: "string", minLength: 1, maxLength: 32768 }, context: { type: "string", maxLength: 32768 }, choices: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 4096 } } });
+  tool("ovrcr_publish_question", "Publish this assigned child's exact model-originated question before waiting. Native approval/login prompts are separate: never invent their text or publish credentials. Keep one current unanswered question; use exact supersedes for a same-ID revision. This does not grant approval.", object({ handle: boundedId, question: questionBody }), args => call({ PublishQuestion: { auth: auth(), handle: args.handle, question: args.question } }));
+  tool("ovrcr_collect_question", "Fetch private question contents by exact authenticated reference, including historical evidence. Collection and handling do not answer a question, accept work or grant authority.", object({ handle: boundedId, reference: questionReference }), args => call({ CollectQuestion: { auth: auth(), handle: args.handle, reference: args.reference } }));
+  tool("ovrcr_answer_question", "Answer only the exact current published model question under existing authority or an explicit human decision. Capture the current child control epoch. This records scoped delivery, preserves result version and never answers an unknown native prompt. Recover a lost reply with only handle and original request; never bypass Unknown/Partial with a fresh request.", { ...object({ handle: boundedId, request: boundedId, question: questionReference, expected_control_epoch: positive, basis: { type: "string", enum: ["ExistingAuthority", "ExplicitHumanDecision"] }, scope: { type: "string", minLength: 1, maxLength: 4096 }, answer: { type: "string", minLength: 1, maxLength: 32768 } }, ["handle"]), anyOf: [{ required: ["handle", "request"] }, { required: ["handle", "question", "expected_control_epoch", "basis", "scope", "answer"] }] }, async args => {
+    let request = args.request;
+    let attempted = false;
+    try {
+      if (!identity(args.handle)) throw new Error("invalid assignment handle");
+      let intent;
+      if (request !== undefined) {
+        if (Object.keys(args).some(key => !["handle", "request"].includes(key))) throw new Error("recovery requires only handle and original request");
+        intent = await originalIntent(request, "answer-");
+        if (intent.handle !== args.handle || intent.answer?.request !== request || !Number.isSafeInteger(intent.expected_parent_epoch) || intent.expected_parent_epoch < 1) throw new Error("original answer identity or captured parent authority changed");
+      } else {
+        if (!args.question || typeof args.question !== "object" || Array.isArray(args.question) || !Number.isSafeInteger(args.expected_control_epoch) || args.expected_control_epoch < 1 || !["ExistingAuthority", "ExplicitHumanDecision"].includes(args.basis) || typeof args.scope !== "string" || !args.scope.trim() || Buffer.byteLength(args.scope) > 4096 || typeof args.answer !== "string" || !args.answer.trim() || Buffer.byteLength(args.answer) > 32768 || Object.keys(args).some(key => !["handle", "question", "expected_control_epoch", "basis", "scope", "answer"].includes(key))) throw new Error("provide exact question, control epoch, declared basis and bounded scope/answer");
+        const captured = auth();
+        if (!Number.isSafeInteger(captured.controller?.epoch) || captured.controller.epoch < 1) throw new Error("recover current workflow authority before answering");
+        request = randomUUID();
+        intent = { schema: 1, handle: args.handle, request, expected_parent_epoch: captured.controller.epoch, answer: { schema: 1, request, question: args.question, control_epoch: args.expected_control_epoch, basis: args.basis, scope: args.scope, answer: args.answer } };
+        await writePrivate(`answer-${request}.json`, intent);
+      }
+      attempted = true;
+      const snapshot = await call({ AnswerQuestion: { auth: auth(), handle: intent.handle, answer: intent.answer, expected_parent_epoch: intent.expected_parent_epoch } });
+      return { ...snapshot, request };
+    } catch (error) { return { handle: args.handle, request: request ?? null, dispatch: error.refused || !attempted ? "Refused" : "Unknown", transport: attempted ? "Unknown" : "NotSent", reason: String(error.message), recovery: "Inspect/recover only the original answer request; delivery is not consumption or acceptance" }; }
+  });
   tool("ovrcr_publish", "Publish the assigned child's immutable research result. Use the exact identity and result_version from the current brief (result_version is submission.version). This does not accept the work.", object({ handle: string, submission: { type: "object" } }), args => call({ Publish: { auth: auth(), handle: args.handle, submission: args.submission } }));
 }

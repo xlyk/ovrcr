@@ -155,6 +155,181 @@ impl Fixture {
 }
 
 #[test]
+fn production_observer_wakes_for_simultaneous_question_files_without_ready_or_input_events() {
+    let f = Fixture::new(10000);
+    let mut dashboard = f.dashboard();
+    f.send("idle:false");
+    f.send("agent_start");
+    let a = f.start("QUESTION_FILE_ONLY first QUESTION_SCOPE_SECRET");
+    let b = f.start("QUESTION_FILE_ONLY second QUESTION_SCOPE_SECRET");
+    for child in [&a, &b] {
+        wait_file(&child.brief.with_extension("json.question-published"));
+    }
+    let mut found = f.observe(&[&a.handle, &b.handle], None, 0);
+    f.until(|| {
+        found = f.observe(&[&a.handle, &b.handle], None, 0);
+        found
+            .observations
+            .iter()
+            .all(|o| o.questions.len() == 1 && o.questions[0].issue.is_none())
+    });
+    f.until(|| {
+        f.wake_rows()
+            .iter()
+            .any(|row| row["delivery"] == "followUp")
+    });
+    for (child, observed) in [(&a, &found.observations[0]), (&b, &found.observations[1])] {
+        assert!(observed.input_requests.is_empty());
+        assert_eq!(
+            observed.activity.as_ref().unwrap().state,
+            AgentActivity::Busy,
+            "question files must not depend on Ready"
+        );
+        assert_eq!(
+            f.summary(child.identity.session.unwrap()).activity,
+            AgentActivity::Busy
+        );
+        assert!(f.summary(child.identity.session.unwrap()).unread.is_none());
+        let collected: AssignmentSnapshot = serde_json::from_value(f.tool("ovrcr_collect_question", serde_json::json!({"handle": child.handle, "reference": observed.questions[0].reference}))).unwrap();
+        assert!(
+            collected
+                .collected_question
+                .unwrap()
+                .question
+                .contains("QUESTION_BODY_SECRET")
+        );
+        assert_eq!(collected.acceptance, "pending");
+    }
+    let publication = found.observations[0].questions[0].reference.publication();
+    f.tool(
+        "ovrcr_mark_handled",
+        serde_json::json!({"handle": a.handle, "publication": publication}),
+    );
+    f.send("run_command:ovrcr-observe-reconnect");
+    let reconnect = f.observe(&[&a.handle, &b.handle], None, 0);
+    assert!(reconnect.observations[0].questions[0].handled);
+    assert!(!reconnect.observations[1].questions[0].handled);
+    assert!(
+        reconnect
+            .observations
+            .iter()
+            .all(|o| o.questions[0].answer.is_none()),
+        "handling and reconnect grant no answer authority"
+    );
+    let metadata = serde_json::to_string(&reconnect).unwrap();
+    let wakes = fs::read_to_string(&f.wakes).unwrap();
+    for secret in [
+        "QUESTION_BODY_SECRET",
+        "QUESTION_CONTEXT_SECRET",
+        "QUESTION_SCOPE_SECRET",
+        "Introduction",
+        "Installation",
+    ] {
+        assert!(
+            !metadata.contains(secret) && !wakes.contains(secret),
+            "only bounded references belong in observation/wake payloads"
+        );
+    }
+    assert!(matches!(
+        dashboard_view(&mut dashboard, 2, Request::List).unwrap(),
+        Response::Hierarchy(_)
+    ));
+}
+
+#[test]
+fn production_stopped_child_question_is_historical_and_observation_leaves_control_responsive() {
+    let f = Fixture::new(10000);
+    let child = f.start("QUESTION_FILE_ONLY stopped question evidence");
+    wait_file(&child.brief.with_extension("json.question-published"));
+    let before = f.observe(&[&child.handle], None, 0);
+    let exact = before.observations[0].questions[0].reference.clone();
+    assert!(before.observations[0].questions[0].current);
+    assert_eq!(
+        f.live.request(Request::KillSession {
+            session: child.identity.session.unwrap()
+        }),
+        Response::Ok
+    );
+    f.until(|| !f.summary(child.identity.session.unwrap()).phase.is_live());
+    let started = Instant::now();
+    let stopped = f.observe(&[&child.handle], None, 0);
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "stopped-child observation must remain bounded"
+    );
+    let question = &stopped.observations[0].questions[0];
+    assert_eq!(question.reference, exact);
+    assert!(
+        !question.current,
+        "stopped child evidence grants no current answer authority"
+    );
+    assert!(question.answer.is_none());
+    let mut control = connect_server(&f.live.socket).unwrap();
+    control
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    assert!(
+        matches!(
+            client::request(&mut control, 1, Request::Inspect).unwrap(),
+            Response::Inventory { .. }
+        ),
+        "independent control request after observation"
+    );
+    let historical: AssignmentSnapshot = serde_json::from_value(f.tool(
+        "ovrcr_collect_question",
+        serde_json::json!({"handle": child.handle, "reference": exact}),
+    ))
+    .unwrap();
+    assert!(
+        historical
+            .collected_question
+            .unwrap()
+            .question
+            .contains("QUESTION_BODY_SECRET")
+    );
+    assert_eq!(historical.result_version, child.result_version);
+}
+
+#[test]
+fn production_native_prompt_gap_distinguishes_reported_prompt_from_unexplained_deadline() {
+    for (scope, expected) in [
+        (
+            "QUESTION_NATIVE_GAP",
+            NativeQuestionGap::IncompletePromptObservation,
+        ),
+        (
+            "QUESTION_NO_EVENT_GAP",
+            NativeQuestionGap::NoPromptObservation,
+        ),
+    ] {
+        let f = Fixture::new(150);
+        let child = f.start(scope);
+        let mut observed = f.observe(&[&child.handle], None, 0);
+        f.until(|| {
+            observed = f.observe(&[&child.handle], None, 0);
+            observed.observations[0].native_question_gap == Some(expected)
+        });
+        assert!(observed.observations[0].questions.is_empty());
+        assert!(
+            !child
+                .brief
+                .with_extension("json.question-published")
+                .exists()
+        );
+        assert_eq!(
+            !observed.observations[0].input_requests.is_empty(),
+            expected == NativeQuestionGap::IncompletePromptObservation
+        );
+        assert!(f.summary(child.identity.session.unwrap()).phase.is_live());
+        let json = serde_json::to_string(&observed).unwrap();
+        assert!(
+            !json.contains("QUESTION_BODY_SECRET"),
+            "gap classification must not persist fabricated prompt bodies"
+        );
+    }
+}
+
+#[test]
 fn production_observer_collects_simultaneous_file_only_results_and_preserves_dashboard() {
     let f = Fixture::new(10000);
     let mut dashboard = f.dashboard();

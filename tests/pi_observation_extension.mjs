@@ -36,6 +36,38 @@ function driver(t, { failures = 0 } = {}) {
 const batch = (observations) => ({ cursor: { server_epoch: "server", sequence: 1 }, status: "Changed", progress_deadline_ms: 1000, observations });
 const item = (handle, digest = "digest") => ({ handle, current: true, activity: { state: "Busy" }, input_requests: [], publication: { identity: { assignment: { task: handle }, kind: "Submission", version: 1, digest }, handled: false }, stalled: false });
 
+test("question-only observations coalesce/reconnect without exposing bodies or answering", async t => {
+  const d = driver(t);
+  const question = (handle, version = 1) => ({ ...item(handle), publication: null, questions: [{ reference: { assignment: { task: handle }, result_version: 1, question_id: "private-question-id", question_version: version, digest: "private-digest" }, current: true, handled: false, issue: null, answer: null, question: "PRIVATE_BODY_MUST_NOT_ESCAPE", choices: ["PRIVATE_CHOICE"] }] });
+  d.observer.watch("a");
+  let wake = d.nextMessage();
+  d.push(batch([question("a"), question("b")])); await wake;
+  assert.deepEqual(d.messages[0].message.details.handles, ["a", "b"]);
+  assert(!JSON.stringify(d.messages).includes("PRIVATE_") && !JSON.stringify(d.messages).includes("private-question-id") && !JSON.stringify(d.messages).includes("private-digest"));
+  await d.nextCall(); d.observer.acknowledge();
+  d.push(batch([question("a"), question("b")])); await d.nextCall();
+  assert.equal(d.messages.length, 1);
+  const handled = question("a"); handled.questions[0].handled = true;
+  const answered = question("b"); answered.questions[0].answer = { outcome: "Applied" };
+  d.push(batch([handled, answered])); await d.nextCall();
+  d.observer.reconnect();
+  d.push(batch([handled, answered])); await d.nextCall();
+  assert.equal(d.messages.length, 1, "handled and delivered evidence remains quiet after reconnect");
+  wake = d.nextMessage(); d.push(batch([question("a", 2)])); await wake;
+  assert.equal(d.messages.length, 2, "a new exact question version is independently actionable");
+  assert(d.calls.every(call => call.Observe), "one observer never grants answers or control");
+});
+
+test("native gaps are bounded signals and never inferred question text", async t => {
+  const d = driver(t);
+  d.observer.watch("a");
+  const wake = d.nextMessage();
+  d.push(batch([{ ...item("a"), publication: null, native_question_gap: "IncompletePromptObservation", native_screen: "PRIVATE_CREDENTIAL_SCREEN" }])); await wake;
+  assert.deepEqual(d.messages[0].message.details.handles, ["a"]);
+  assert(!JSON.stringify(d.messages).includes("PRIVATE_CREDENTIAL_SCREEN"));
+  assert(d.calls.every(call => call.Observe));
+});
+
 test("content-free publication wake uses Pi followUp API and coalesces outstanding work", async t => {
   const d = driver(t);
   d.observer.watch("a");

@@ -90,6 +90,8 @@ struct Fingerprint {
     control: ovrcr_protocol::AssignmentControl,
     control_receipt_digest: String,
     workflow_cancelled: bool,
+    questions: Vec<ovrcr_protocol::QuestionPublicationState>,
+    native_question_gap: Option<ovrcr_protocol::NativeQuestionGap>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -307,6 +309,8 @@ impl ServerState {
                         control: observed.control.clone(),
                         control_receipt_digest: observed.control_receipt_digest.clone(),
                         workflow_cancelled: observed.workflow_cancelled,
+                        questions: observed.questions.clone(),
+                        native_question_gap: observed.native_question_gap,
                     },
                 )?;
                 sessions.push(session);
@@ -435,7 +439,16 @@ impl ServerState {
         let future = progress.progress_unix_ms > now;
         let stalled = publication.is_none()
             && (future || now.saturating_sub(progress.progress_unix_ms) >= deadline);
+        let questions = self.question_states(record);
+        let native_question_gap = ovrcr_protocol::NativeQuestionGap::from_observation(
+            current,
+            agent.is_some(),
+            agent.is_some_and(|a| !a.input_requests.is_empty()),
+            stalled,
+        );
         Ok(DelegationObservation {
+            questions,
+            native_question_gap,
             handle: record.handle.clone(),
             identity: record.identity.clone(),
             binding: agent.map(|a| a.binding.clone()),

@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 // Test host for the OVRCR reporting extensions. It serves both harnesses: Pi and Oh My
 // Pi share the event vocabulary, and the grammar below covers the events only one of them
 // emits (agent_settled for Pi, session_switch and a continuing agent_end for Oh My Pi).
@@ -8,7 +9,7 @@
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
 import { execFileSync } from "node:child_process";
-import { writeFileSync, readFileSync, existsSync, appendFileSync, renameSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, appendFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { registerHooks } from "node:module";
 import { PassThrough } from "node:stream";
@@ -170,6 +171,7 @@ async function main() {
   let previousSubmission = null;
   let activeBrief;
   let interrupting = false;
+  let pendingQuestion = null;
   const toolOutput = (path, value) => {
     const temporary = `${path}.${process.pid}.${toolPublication++}.tmp`;
     writeFileSync(temporary, JSON.stringify(value));
@@ -221,6 +223,17 @@ async function main() {
       else await run();
       continue;
     }
+    if (host && pendingQuestion && clean.startsWith("Read the scoped answer in ")) {
+      const match = clean.match(/in (.+\/answer-[a-zA-Z0-9_-]+\.json) for question ([a-zA-Z0-9_-]+) version ([1-9][0-9]*)\./);
+      if (!match) throw new Error("invalid scoped answer instruction");
+      const answer = JSON.parse(readFileSync(match[1], "utf8"));
+      const current = pendingQuestion.reference;
+      if (!current || !isDeepStrictEqual(answer.question, current) || answer.question.question_id !== match[2] || answer.question.question_version !== Number(match[3])) throw new Error("answer is not for the current exact child question");
+      appendFileSync(`${pendingQuestion.path}.answer-count`, "1\n");
+      toolOutput(`${pendingQuestion.path}.answer-received`, answer);
+      process.stdout.write("CHILD_SCOPED_ANSWER_RECEIVED\n");
+      continue;
+    }
     if (host && process.env.OVRCR_TEST_DELEGATION && clean.startsWith("Perform the read-only research assignment in ")) {
       const path = clean.match(/in (.+\/brief-v[1-9][0-9]*\.json)\. Read/)[1];
       const brief = JSON.parse(readFileSync(path, "utf8"));
@@ -235,6 +248,55 @@ async function main() {
         await host.emit({ type: "agent_settled" });
       }
       if (brief.contract.scope.includes("INPUT_WAKE")) await host.emit({ type: "ui_prompt_start", kind: "input" });
+      if (brief.contract.scope.includes("QUESTION_")) {
+        const initial = { schema: 1, identity: brief.identity, result_version: brief.result_version ?? 1, question_id: "readme-choice", question_version: 1, supersedes: null, kind: "Clarification", question: "QUESTION_BODY_SECRET: Which README section is within the authorized scope?", context: "QUESTION_CONTEXT_SECRET: The repository has two sections.", choices: ["Introduction", "Installation"] };
+        const questionState = { path, brief, reference: null, question: initial };
+        pendingQuestion = questionState;
+        const publish = async question => {
+          let reply;
+          try { reply = await host.tool("ovrcr_publish_question", { handle: brief.handle, question }); }
+          catch (error) { reply = { error: String(error) }; }
+          const selected = reply.details?.questions?.findLast(state => state.current && state.reference.question_id === question.question_id && state.reference.question_version === question.question_version);
+          if (selected) { questionState.reference = selected.reference; questionState.question = question; }
+          return reply;
+        };
+        if (brief.contract.scope.includes("QUESTION_NATIVE_GAP")) await host.emit({ type: "ui_prompt_start", kind: "confirm" });
+        else if (!brief.contract.scope.includes("QUESTION_NO_EVENT_GAP")) toolOutput(`${path}.question-published`, await publish(initial));
+        // The child must leave readline free to receive the real scoped input. These
+        // file gates only drive fixture model work; every publication still crosses
+        // the registered child tool, control client, and binary Server.
+        const configuredPollMs = process.env.OVRCR_TEST_QUESTION_POLL_MS;
+        const pollMs = configuredPollMs === undefined ? 60000 : Number(configuredPollMs);
+        if (!Number.isSafeInteger(pollMs) || pollMs < 60000 || pollMs > 1800000) throw new Error("OVRCR_TEST_QUESTION_POLL_MS must be an integer in 60000..1800000");
+        const pollDeadline = performance.now() + pollMs;
+        void (async () => {
+          let resultPublished = false;
+          // Keep the original default ticks; native CUA opts into a longer,
+          // bounded monotonic lifetime without changing product behavior.
+          for (let tick = 0; configuredPollMs === undefined ? tick < 12000 : performance.now() < pollDeadline; tick++) {
+            const commandPath = `${path}.question-command`;
+            if (existsSync(commandPath)) {
+              const action = JSON.parse(readFileSync(commandPath, "utf8"));
+              unlinkSync(commandPath);
+              let reply;
+              if (action.operation === "native-input") { await host.emit({ type: "ui_prompt_start", kind: "confirm" }); reply = { observed: true }; }
+              else if (action.operation === "rebind") { const original = host.state.session; for (const session of ["question-replacement", original]) { host.state.session = session; await host.emit({ type: "session_start", reason: "new" }); } reply = { rebound: true }; }
+              else reply = await publish(action.question);
+              toolOutput(`${path}.question-command-${action.sequence}`, reply);
+            }
+            if (!resultPublished && existsSync(process.env.OVRCR_TEST_DELEGATION_RESULT_GATE)) {
+              const submission = { schema: 1, identity: brief.identity, version: brief.result_version ?? 1, outcome: "success", summary: "Read the assigned repository README.", evidence: ["README:1 fixture"], unresolved: [] };
+              let reply;
+              try { reply = await host.tool("ovrcr_publish", { handle: brief.handle, submission }); }
+              catch (error) { reply = { error: String(error) }; }
+              toolOutput(`${path}.published`, reply);
+              resultPublished = true;
+            }
+            await new Promise(resolve => setTimeout(resolve, 5));
+          }
+        })().catch(error => { process.stderr.write(`QUESTION_FIXTURE_FAILED ${error.message}\n`); process.exitCode = 1; });
+        continue;
+      }
       while (!existsSync(process.env.OVRCR_TEST_DELEGATION_RESULT_GATE)) await new Promise(resolve => setTimeout(resolve, 10));
       const submission = { schema: 1, identity: brief.identity, version: brief.result_version ?? 1, outcome: "success", summary: "Read the assigned repository README.", evidence: ["README:1 fixture"], unresolved: [] };
       if (brief.contract.scope.includes("STALE_RESULT")) submission.identity.contract += 1;
