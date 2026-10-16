@@ -51,3 +51,9 @@ The ordinary assignment observer reports the current control state and wakes the
 parent for takeover, pending return or uncertainty. A wake never confirms return,
 accepts a publication or resets the child's progress deadline. The parent still
 inspects and explicitly reconciles the exact current evidence.
+
+Workflow cancellation preserves Human ownership and sends that child no native
+interrupt. An explicit parent interrupt also refuses Human or Uncertain control.
+Interrupt confirmation clears only its own exact barrier and cannot confirm a
+human return or restore result attribution. See [interrupt and cancellation
+steps](pi-research-assignments.md#interrupt-a-child-or-cancel-a-workflow).

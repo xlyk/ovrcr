@@ -479,6 +479,8 @@ mod tests {
                 })
                 .collect(),
             input_revision: 1,
+            native_control: None,
+            native_control_revision: 0,
         }
     }
 

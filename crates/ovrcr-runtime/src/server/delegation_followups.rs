@@ -223,6 +223,7 @@ impl ServerState {
             ));
         }
         let mut record = self.owned_assignment(&auth, &handle)?;
+        self.require_dispatch_open(&self.retained.lock(), &record.identity.workflow)?;
         let parent_authority = self.current_workflow_authority(&auth, &record.identity.workflow)?;
         let payload = followup_payload(
             &expected,
@@ -401,6 +402,7 @@ impl ServerState {
         }
         let publication_guard = self.retained.lock();
         let authority = self.require_workflow(&publication_guard, &auth, &record)?;
+        self.require_dispatch_open(&publication_guard, &record.identity.workflow)?;
         if intent.expected_parent_epoch.unwrap_or(1) != authority.epoch {
             bail!("followup publication parent authority changed");
         }
@@ -459,6 +461,7 @@ impl ServerState {
         );
         let store = self.retained.lock();
         let authority = self.require_workflow(&store, &auth, &record)?;
+        self.require_dispatch_open(&store, &record.identity.workflow)?;
         if intent.expected_parent_epoch.unwrap_or(1) != authority.epoch {
             bail!("captured followup parent authority changed");
         }

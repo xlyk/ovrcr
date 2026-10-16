@@ -230,6 +230,8 @@ fn an_input_request_never_changes_unread_or_the_review_target() {
             },
         ],
         input_revision: 3,
+        native_control: None,
+        native_control_revision: 0,
     });
     publish_session(&mut d, summary.clone());
     draw(&mut d, 120, 30);

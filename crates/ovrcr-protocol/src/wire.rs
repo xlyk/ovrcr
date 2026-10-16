@@ -662,6 +662,8 @@ mod wire_snapshot {
                     kind: crate::InputKind::Approval,
                 }],
                 input_revision: 3,
+                native_control: None,
+                native_control_revision: 0,
             }),
             agent_epoch: 0,
             unread: Some(unread()),
@@ -1811,6 +1813,9 @@ mod wire_snapshot {
                     status: crate::ObservationStatus::ReconcileRequired,
                     progress_deadline_ms: 300000,
                     observations: vec![crate::DelegationObservation {
+                        control_receipt_digest: String::new(),
+                        native_control_revision: 0,
+                        workflow_cancelled: false,
                         handle: "r".into(),
                         identity: identity.clone(),
                         binding: None,
@@ -1928,6 +1933,7 @@ mod wire_snapshot {
             )),
         ));
         let snapshot = crate::WorkflowSnapshot {
+            cancellation: None,
             authority: authority.clone(),
             active: true,
             handles: vec!["r".into()],
@@ -1988,7 +1994,148 @@ mod wire_snapshot {
         ] {
             all.push((format!("Response::{name}"), encode(&response)));
         }
+        cancellation_cases(&mut all);
         all
+    }
+
+    fn cancellation_cases(all: &mut Vec<(String, String)>) {
+        let auth = crate::DelegationAuth {
+            session: SessionId(1),
+            capability: "fixture".into(),
+            controller: None,
+            source: None,
+        };
+        let identity = crate::AssignmentIdentity {
+            instance: "i".into(),
+            workflow: "w".into(),
+            controller: "c".into(),
+            controller_epoch: 1,
+            task: "t".into(),
+            attempt: 1,
+            contract: 1,
+            request: "r".into(),
+            session: Some(SessionId(2)),
+            run: Some(crate::SessionRunId(1)),
+        };
+        let binding = crate::AgentBinding {
+            provider: crate::AgentProvider::Pi,
+            invocation: "inv".into(),
+            conversation: "conv".into(),
+            generation: 1,
+        };
+        let evidence = crate::AssignmentControlEvidence {
+            server_lifetime: "server".into(),
+            identity: identity.clone(),
+            binding: binding.clone(),
+            result_version: 1,
+            activity_revision: 3,
+            input_revision: 0,
+            publication: None,
+            publication_issue: None,
+            human_input_revision: 0,
+        };
+        for (name, request) in [
+            (
+                "Delegation::Interrupt",
+                Request::Delegation(Box::new(crate::DelegationRequest::Interrupt {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                    request: "interrupt".into(),
+                    expected_identity: identity.clone(),
+                    expected_result_version: 1,
+                    expected_control_epoch: 1,
+                })),
+            ),
+            (
+                "Delegation::ConfirmInterrupt",
+                Request::Delegation(Box::new(crate::DelegationRequest::ConfirmInterrupt {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                    request: "confirm".into(),
+                    interrupted_request: "interrupt".into(),
+                    expected_control_epoch: 2,
+                    evidence: Box::new(evidence),
+                })),
+            ),
+            (
+                "Workflow::Cancel",
+                Request::Workflow(Box::new(crate::WorkflowRequest::Cancel {
+                    auth,
+                    workflow: "w".into(),
+                    request: "cancel".into(),
+                })),
+            ),
+        ] {
+            let bytes =
+                bincode::serde::encode_to_vec(&request, bincode::config::standard()).unwrap();
+            let (decoded, used): (Request, usize) =
+                bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+            assert_eq!(used, bytes.len());
+            assert_eq!(decoded, request);
+            all.push((name.into(), encode(&request)));
+        }
+        let report = crate::ProviderReport {
+            binding: binding.clone(),
+            revision: 4,
+            observation: crate::AgentObservation::NativeControl(Some(crate::NativeControlSample {
+                turn: "turn".into(),
+                interrupt: crate::NativeInterruptCapability::Escape,
+                settled: false,
+            })),
+        };
+        report.validate().unwrap();
+        all.push(("ProviderReport::NativeControl".into(), encode(&report)));
+        let cancelled = crate::WorkflowSnapshot {
+            authority: crate::WorkflowAuthority {
+                instance: "i".into(),
+                workflow: "w".into(),
+                controller: "c".into(),
+                epoch: 1,
+                parent: SessionId(1),
+                parent_run: crate::SessionRunId(1),
+                binding,
+                producer: "producer".into(),
+                server_lifetime: "server".into(),
+            },
+            active: true,
+            handles: vec!["r".into()],
+            pointer: None,
+            continuation: None,
+            gaps: vec![],
+            receipt: None,
+            cancellation: None,
+        };
+        let mut cancelled = cancelled;
+        cancelled.cancellation = Some(crate::WorkflowCancellationView {
+            request: "cancel".into(),
+            captured_authority: cancelled.authority.clone(),
+            dispatch_closure: crate::DispatchOutcome::Applied,
+            target_outcome: crate::DispatchOutcome::Unknown,
+            targets: vec![crate::WorkflowCancellationTarget {
+                handle: "r".into(),
+                identity,
+                result_version: 1,
+                control_epoch: 1,
+                interrupt_request: "interrupt".into(),
+                outcome: crate::DispatchOutcome::Unknown,
+                reason: None,
+            }],
+            gaps: vec!["unverifiable member".into()],
+            unverifiable_members: 1,
+        });
+        let response = Response::Workflows(vec![cancelled]);
+        let bytes = bincode::serde::encode_to_vec(&response, bincode::config::standard()).unwrap();
+        let (decoded, used): (Response, usize) =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+        assert_eq!(used, bytes.len());
+        assert_eq!(decoded, response);
+        all.push(("Response::CancelledWorkflow".into(), encode(&response)));
+        all.push((
+            "ControlBarrier::Interrupt".into(),
+            encode(&crate::ControlBarrier::Interrupt {
+                request: "interrupt".into(),
+            }),
+        ));
     }
 
     // Regenerate with `cargo test -p ovrcr-protocol wire_snapshot -- --nocapture`
@@ -2048,13 +2195,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0432017301630168016c0104",
+            "2a0433017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0432017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0433017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -2065,13 +2212,13 @@ mod wire_snapshot {
         ("Response::Hierarchy", "0100"),
         (
             "Response::CreatedSession",
-            "020100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e02010000000104010506000000",
+            "020100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e02010000000104010506000000",
         ),
         ("Response::Screen", "0301040301020107"),
         ("Response::Error", "0401016d"),
         (
             "Response::Inventory",
-            "0500010100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e02010000000104010506000000",
+            "0500010100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e02010000000104010506000000",
         ),
         ("Response::TerminalText", "060101020174"),
         ("Response::Task", "070601"),
@@ -2085,25 +2232,25 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04320000"),
+        ("Response::NotificationNavigation", "0d04330000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0432017301630168016c0104",
+            "0e01016e0433017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010432017301630168016c0164",
+            "0f0107080901016901010433017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004320107080901016901010432017301630168016c0164",
+            "1004330107080901016901010433017301630168016c0164",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
         ("ServerEvent::ScreenDirty", "02010403"),
         (
             "ServerEvent::SessionChanged",
-            "030100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e02010000000104010506000000",
+            "030100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e02010000000104010506000000",
         ),
         (
             "ServerEvent::QuotaChanged",
@@ -2120,7 +2267,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0432017301630168016c0104",
+            "08016e0433017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -2327,7 +2474,7 @@ mod wire_snapshot {
         ),
         (
             "Response::DelegationObservation",
-            "140565706f63680302fce0930400010172016901770163010174010101720102010100000100020100010101690177016301017401010172010201010001066469676573740001026400010100000000",
+            "140565706f63680302fce0930400010172016901770163010174010101720102010100000100020100010101690177016301017401010172010201010001066469676573740001026400010100000000000000",
         ),
         ("Workflow::Parents", "33000107666978747572650000"),
         ("Workflow::Recover", "33010107666978747572650000010177"),
@@ -2346,7 +2493,7 @@ mod wire_snapshot {
         ),
         (
             "Response::Workflows",
-            "12010169017701630101010303696e7604636f6e76010870726f64756365720673657276657201010172010101690177010664696765737401010c6f626a6563746976652e6d6400010172000000000000",
+            "12010169017701630101010303696e7604636f6e76010870726f64756365720673657276657201010172010101690177010664696765737401010c6f626a6563746976652e6d640001017200000000000000",
         ),
         (
             "Response::WorkflowParents",
@@ -2354,12 +2501,33 @@ mod wire_snapshot {
         ),
         (
             "Response::WorkflowRecovery",
-            "17010169017701630101010303696e7604636f6e76010870726f64756365720673657276657201010172010101690177010664696765737401010c6f626a6563746976652e6d64000101720000000000000201017701017201016901770163010174010101720102010101062f627269656601072f726573756c74116d697373696e6720617574686f7269747900000000001c756e76657269666961626c652072657461696e6564207265636f7264",
+            "17010169017701630101010303696e7604636f6e76010870726f64756365720673657276657201010172010101690177010664696765737401010c6f626a6563746976652e6d6400010172000000000000000201017701017201016901770163010174010101720102010101062f627269656601072f726573756c74116d697373696e6720617574686f7269747900000000001c756e76657269666961626c652072657461696e6564207265636f7264",
         ),
         (
             "Response::WorkflowCandidates",
             "1301087472616e736665720169017701630101010303696e7604636f6e76010870726f64756365720673657276657203020303696e7604636f6e760109737563636573736f720201017701017201016901770163010174010101720102010101062f627269656601072f726573756c74116d697373696e6720617574686f7269747900000000001c756e76657269666961626c652072657461696e6564207265636f7264",
         ),
+        (
+            "Delegation::Interrupt",
+            "320e0107666978747572650000017209696e7465727275707401690177016301017401010172010201010101",
+        ),
+        (
+            "Delegation::ConfirmInterrupt",
+            "320f0107666978747572650000017207636f6e6669726d09696e74657272757074020673657276657201690177016301017401010172010201010303696e7604636f6e7601010300000000",
+        ),
+        (
+            "Workflow::Cancel",
+            "3304010766697874757265000001770663616e63656c",
+        ),
+        (
+            "ProviderReport::NativeControl",
+            "0303696e7604636f6e7601040501047475726e0000",
+        ),
+        (
+            "Response::CancelledWorkflow",
+            "12010169017701630101010303696e7604636f6e76010870726f6475636572067365727665720101017200000000010663616e63656c0169017701630101010303696e7604636f6e76010870726f64756365720673657276657201040101720169017701630101740101017201020101010109696e7465727275707404000113756e76657269666961626c65206d656d62657201",
+        ),
+        ("ControlBarrier::Interrupt", "0209696e74657272757074"),
     ];
 
     #[test]

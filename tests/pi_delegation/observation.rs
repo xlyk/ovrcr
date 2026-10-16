@@ -3,15 +3,15 @@ use super::*;
 use std::os::unix::net::UnixStream;
 static TOOL_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
-struct Fixture {
-    live: Live,
-    gate: std::path::PathBuf,
-    wakes: std::path::PathBuf,
-    parent: SessionId,
-    workspace: String,
+pub(super) struct Fixture {
+    pub(super) live: Live,
+    pub(super) gate: std::path::PathBuf,
+    pub(super) wakes: std::path::PathBuf,
+    pub(super) parent: SessionId,
+    pub(super) workspace: String,
 }
 impl Fixture {
-    fn new(deadline: u64) -> Self {
+    pub(super) fn new(deadline: u64) -> Self {
         let live = Live::idle();
         fs::write(
             live.config.join("dashboard.toml"),
@@ -21,6 +21,7 @@ impl Fixture {
         let gate = live.root.path().join("allow-result");
         let wakes = live.root.path().join("wakes.jsonl");
         let bytes = live.root.path().join("input-bytes");
+        let fault = live.root.path().join("fault");
         fs::create_dir(&bytes).unwrap();
         let host = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pi/pi_host.mjs");
         let pi = live.claude.command.parent().unwrap().join("pi");
@@ -28,6 +29,8 @@ impl Fixture {
         fs::set_permissions(&pi, fs::Permissions::from_mode(0o700)).unwrap();
         live.start_binary_env(&[
             ("OVRCR_TEST_DELEGATION", "1".as_ref()),
+            ("OVRCR_TEST_PI_INTERRUPT_BINDING", "Escape".as_ref()),
+            ("OVRCR_TEST_DELEGATION_FAULT", fault.as_os_str()),
             ("OVRCR_TEST_PI_HOST", host.as_os_str()),
             ("OVRCR_TEST_DELEGATION_RESULT_GATE", gate.as_os_str()),
             ("OVRCR_TEST_PI_WAKE_LOG", wakes.as_os_str()),
@@ -80,20 +83,20 @@ impl Fixture {
         }
         fixture
     }
-    fn until(&self, mut condition: impl FnMut() -> bool) {
+    pub(super) fn until(&self, mut condition: impl FnMut() -> bool) {
         let deadline = Instant::now() + Duration::from_secs(20);
         while !condition() {
             assert!(Instant::now() < deadline, "observation fixture deadline");
             std::thread::sleep(Duration::from_millis(10));
         }
     }
-    fn summary(&self, id: SessionId) -> SessionSummary {
+    pub(super) fn summary(&self, id: SessionId) -> SessionSummary {
         let Response::Inventory { sessions, .. } = self.live.request(Request::Inspect) else {
             panic!("inventory");
         };
         sessions.into_iter().find(|s| s.id == id).unwrap()
     }
-    fn send(&self, text: &str) {
+    pub(super) fn send(&self, text: &str) {
         assert_eq!(
             self.live.request(Request::SendTerminal {
                 session: self.parent,
@@ -103,14 +106,14 @@ impl Fixture {
             Response::Ok
         );
     }
-    fn tool(&self, name: &str, args: serde_json::Value) -> serde_json::Value {
+    pub(super) fn tool(&self, name: &str, args: serde_json::Value) -> serde_json::Value {
         let path = self.live.root.path().join(format!(
             "tool-{}.json",
             TOOL_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         tool(&self.live, self.parent, name, args, &path)
     }
-    fn start(&self, scope: &str) -> AssignmentSnapshot {
+    pub(super) fn start(&self, scope: &str) -> AssignmentSnapshot {
         let started: AssignmentSnapshot = serde_json::from_value(self.tool("ovrcr_start", serde_json::json!({"project": PROJECT, "workspace": self.workspace, "scope": scope, "model_provider": "test", "model": "fixture-model", "acceptance_evidence": ["README citation"]}))).unwrap();
         assert_eq!(started.dispatch, DispatchStatus::Applied, "{started:?}");
         wait_file(&started.brief.with_extension("json.started"));
@@ -122,7 +125,7 @@ impl Fixture {
         }
         started
     }
-    fn observe(
+    pub(super) fn observe(
         &self,
         handles: &[&str],
         after: Option<&ObservationCursor>,
@@ -134,14 +137,14 @@ impl Fixture {
         ))
         .unwrap()
     }
-    fn wake_rows(&self) -> Vec<serde_json::Value> {
+    pub(super) fn wake_rows(&self) -> Vec<serde_json::Value> {
         fs::read_to_string(&self.wakes)
             .unwrap_or_default()
             .lines()
             .filter_map(|line| serde_json::from_str(line).ok())
             .collect()
     }
-    fn dashboard(&self) -> UnixStream {
+    pub(super) fn dashboard(&self) -> UnixStream {
         let mut stream = connect_server(&self.live.socket).unwrap();
         assert!(matches!(
             dashboard_view(&mut stream, 1, Request::DashboardHello).unwrap(),

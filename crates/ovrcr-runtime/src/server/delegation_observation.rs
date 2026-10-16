@@ -25,6 +25,7 @@ struct Source {
     binding: Option<AgentBinding>,
     activity: u64,
     input: u64,
+    native_control: u64,
     health: Option<ReporterHealth>,
     phase: SessionPhase,
     control: Option<ovrcr_protocol::AssignmentControl>,
@@ -37,6 +38,7 @@ impl Source {
             binding: agent.map(|a| a.binding.clone()),
             activity: agent.map_or(0, |a| a.activity_revision),
             input: agent.map_or(0, |a| a.input_revision),
+            native_control: agent.map_or(0, |a| a.native_control_revision),
             health: agent.map(|a| a.health.state),
             phase: summary.phase.clone(),
             control: summary
@@ -86,6 +88,8 @@ struct Fingerprint {
     stalled: bool,
     unresolved: bool,
     control: ovrcr_protocol::AssignmentControl,
+    control_receipt_digest: String,
+    workflow_cancelled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -301,6 +305,8 @@ impl ServerState {
                         stalled: observed.stalled,
                         unresolved: observed.progress_unresolved,
                         control: observed.control.clone(),
+                        control_receipt_digest: observed.control_receipt_digest.clone(),
+                        workflow_cancelled: observed.workflow_cancelled,
                     },
                 )?;
                 sessions.push(session);
@@ -445,6 +451,13 @@ impl ServerState {
             stalled,
             progress_unresolved: progress.unresolved || future,
             control: record.control.clone(),
+            control_receipt_digest: super::delegation_recovery::hash(&serde_json::to_vec(
+                &record.receipts,
+            )?),
+            native_control_revision: agent.map_or(0, |a| a.native_control_revision),
+            workflow_cancelled: store
+                .workflow(&record.identity.workflow)?
+                .is_some_and(|row| row.cancellation.is_some()),
         })
     }
 }
@@ -480,6 +493,7 @@ mod tests {
             health: Some(ReporterHealth::Connected),
             phase: SessionPhase::Running,
             control: None,
+            native_control: 0,
         };
         observations.source_changed(SessionId(1), source.clone());
         assert_eq!(observations.progress_at(SessionId(1)), None);
@@ -526,6 +540,7 @@ mod tests {
             health: Some(ReporterHealth::Connected),
             phase: SessionPhase::Running,
             control: None,
+            native_control: 0,
         };
         checkpoint.advance("new", &source, Some(500));
         assert_eq!(

@@ -77,3 +77,13 @@ child control or immutable assignment identity. A second Lifecycle job is refuse
 `HierarchyChanged` as today. CLI-only RemoveSession and DeleteArchived stay
 synchronous on the caller.
 
+Workflow cancellation lives in that same durable WorkflowRecord. Commit the
+bounded complete capture, fixed member identities/gaps and child interrupt
+intents atomically before effects. A tombstone gates new and resumed Accepted
+dispatch after discovery and survives parent transfer. Native interrupts use
+the exact current child writer with an Unknown receipt and advanced child
+barrier already durable. Confirm only that barrier with fresh same-turn Pi
+agent_settled evidence under current parent/child locks; preserve historical
+delivery uncertainty and unrelated input or attribution fences. Wait aborts
+terminate only their observer helper. No operation archives or removes resources.
+

@@ -1193,6 +1193,10 @@ impl ControlProxy {
                         ("MarkHandled", handle.clone())
                     }
                     DelegationRequest::Capabilities { .. } => ("Capabilities", String::new()),
+                    DelegationRequest::Interrupt { handle, .. } => ("Interrupt", handle.clone()),
+                    DelegationRequest::ConfirmInterrupt { handle, .. } => {
+                        ("ConfirmInterrupt", handle.clone())
+                    }
                 };
                 worker_requests
                     .lock()
@@ -2474,3 +2478,6 @@ fn public_dispatch_retired_parent_a_to_b_to_a_cannot_replay_control() {
 
 #[path = "pi_delegation/observation.rs"]
 mod observation;
+
+#[path = "pi_delegation/cancellation.rs"]
+mod cancellation;

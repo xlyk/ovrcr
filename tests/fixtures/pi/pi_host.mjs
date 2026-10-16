@@ -10,6 +10,17 @@ import { createInterface } from "node:readline";
 import { execFileSync } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, appendFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
+import { registerHooks } from "node:module";
+import { PassThrough } from "node:stream";
+
+// Supported Node loader hook; optional fixture API is explicitly enabled only
+// for isolated process tests. Production still uses Pi's installed loader.
+if (process.env.OVRCR_TEST_PI_INTERRUPT_BINDING) registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (specifier === "@earendil-works/pi-tui") return { url: new URL("./pi_keybindings.mjs", import.meta.url).href, shortCircuit: true };
+    return nextResolve(specifier, context);
+  },
+});
 
 export function assistant(stopReason) {
   return { role: "assistant", stopReason, content: [] };
@@ -147,6 +158,8 @@ async function main() {
   const pendingTools = new Map();
   let toolPublication = 0;
   let previousSubmission = null;
+  let activeBrief;
+  let interrupting = false;
   const toolOutput = (path, value) => {
     const temporary = `${path}.${process.pid}.${toolPublication++}.tmp`;
     writeFileSync(temporary, JSON.stringify(value));
@@ -154,13 +167,36 @@ async function main() {
   };
   // Start flowing stdin only after startup awaits, immediately before readline.
   // Otherwise an observed binding can prompt input before readline owns it.
+  let input = process.stdin;
   if (process.env.OVRCR_TEST_DELEGATION_BYTES) {
+    input = new PassThrough();
+    process.stdin.on("end", () => input.end());
     const session = process.env.OVRCR_DELEGATION_SESSION;
     if (!/^[1-9][0-9]*$/.test(session ?? "")) throw new Error("byte counter requires assigned session identity");
     process.stdin.setRawMode?.(true);
-    process.stdin.on("data", bytes => appendFileSync(join(process.env.OVRCR_TEST_DELEGATION_BYTES, session), `${bytes.length}\n`));
+    process.stdin.on("data", bytes => {
+      appendFileSync(join(process.env.OVRCR_TEST_DELEGATION_BYTES, session), `${bytes.length}\n`);
+      if (bytes.length === 1 && bytes[0] === 0x1b && activeBrief && !interrupting) {
+        interrupting = true;
+        const { path, brief } = activeBrief;
+        void (async () => {
+          await host.emit({ type: "agent_end", messages: [assistant("aborted")] });
+          writeFileSync(`${path}.interrupt-consumed`, "CHILD_NATIVE_ESCAPE_CONSUMED");
+          process.stdout.write("CHILD_NATIVE_ESCAPE_CONSUMED\n");
+          if (brief.contract.scope.includes("INTERRUPT_SETTLEMENT_GATE")) {
+            while (!existsSync(`${path}.interrupt-settle`)) await new Promise(resolve => setTimeout(resolve, 10));
+          }
+          await host.emit({ type: "agent_settled" });
+          writeFileSync(`${path}.interrupt-settled`, "CHILD_NATIVE_SETTLED");
+          process.stdout.write("CHILD_NATIVE_SETTLED\n");
+        })();
+        return; // The fixture native handler consumed this byte before its editor.
+      }
+      if (bytes.length === 1 && bytes[0] === 0x1b && activeBrief) return;
+      input.write(bytes);
+    });
   }
-  for await (const line of createInterface({ input: process.stdin })) {
+  for await (const line of createInterface({ input })) {
     const clean = line.replaceAll("\x1b[200~", "").replaceAll("\x1b[201~", "");
     const [command, a, b, c] = clean.split(":");
     if (host && command === "tool") {
@@ -178,6 +214,8 @@ async function main() {
     if (host && process.env.OVRCR_TEST_DELEGATION && clean.startsWith("Perform the read-only research assignment in ")) {
       const path = clean.match(/in (.+\/brief-v[1-9][0-9]*\.json)\. Read/)[1];
       const brief = JSON.parse(readFileSync(path, "utf8"));
+      activeBrief = { path, brief };
+      interrupting = false;
       writeFileSync(`${path}.started`, "CHILD_RESEARCH_STARTED");
       appendFileSync(`${path}.input-count`, "1\n");
       process.stdout.write("CHILD_RESEARCH_STARTED\n");

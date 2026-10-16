@@ -253,6 +253,8 @@ mod tests {
             health_revision: 0,
             input_requests: Vec::new(),
             input_revision: 0,
+            native_control: None,
+            native_control_revision: 0,
         };
         for reason in ["source_gap", "producer_replaced", "transition_mismatch"] {
             // A boundary the harness reaches on its own ends these, for either provider.
