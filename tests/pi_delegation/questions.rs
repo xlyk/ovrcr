@@ -1121,6 +1121,67 @@ fn public_question_binding_and_native_input_replacement_after_admission_fence_fi
 }
 
 #[test]
+fn public_human_decision_requires_declared_explicit_basis_before_any_answer_intent() {
+    let f = OwnedFollowup::new();
+    let first = start(&f);
+    let old = reference(&first);
+    let mut human_choice = collect(&f, &first, &old);
+    human_choice.question_version += 1;
+    human_choice.supersedes = Some(old);
+    human_choice.kind = QuestionKind::HumanDecision;
+    human_choice.question = "Choose whether the task may include Installation.".into();
+    human_choice.context = "The existing assignment only authorizes the Introduction; expanding it requires an explicit human choice.".into();
+    let published = command(&f, &first, 1, serde_json::json!({"question": human_choice}));
+    let current: AssignmentSnapshot = serde_json::from_value(published["details"].clone()).unwrap();
+    let exact = reference(&current);
+    let bytes = f.byte_count(&current);
+    let refused = answer(&f, &current, &exact);
+    assert_eq!(refused["dispatch"], "Refused", "wrong basis: {refused}");
+    assert_eq!(f.byte_count(&current), bytes);
+    assert_eq!(count(&current), 0);
+    let untouched = f.reconcile(&current.handle);
+    assert!(
+        !untouched
+            .receipts
+            .iter()
+            .any(|r| r.operation == DispatchOperation::AnswerQuestion)
+    );
+    assert!(
+        durable(&f, &current.handle)["answers"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    // This fixture asserts declared provenance, not an actual person's approval.
+    let mut args = answer_args(&current, &exact);
+    args["basis"] = "ExplicitHumanDecision".into();
+    let applied = f.tool("ovrcr_answer_question", args);
+    let request = applied["request"].as_str().unwrap();
+    let delivered: AssignmentSnapshot = serde_json::from_value(applied.clone()).unwrap();
+    assert_eq!(
+        delivered
+            .receipts
+            .iter()
+            .find(|r| r.request == request)
+            .unwrap()
+            .outcome,
+        DispatchOutcome::Applied
+    );
+    assert_eq!(received(&current).basis, AnswerBasis::ExplicitHumanDecision);
+    assert_eq!(count(&current), 1);
+    assert_eq!(delivered.result_version, current.result_version);
+    let after = f.byte_count(&current);
+    let replay: AssignmentSnapshot = serde_json::from_value(f.tool(
+        "ovrcr_answer_question",
+        serde_json::json!({"handle": current.handle, "request": request}),
+    ))
+    .unwrap();
+    assert_eq!(replay.receipts, delivered.receipts);
+    assert_eq!(f.byte_count(&current), after);
+    assert_eq!(count(&current), 1);
+}
+
+#[test]
 fn public_question_exact_answer_is_scoped_delivered_once_and_does_not_advance_result() {
     let f = OwnedFollowup::new();
     let current = start(&f);
