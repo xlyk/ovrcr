@@ -10784,7 +10784,7 @@ fn pi_managed_launch_preserves_argv_exit_and_environment_and_plain_launch_is_unt
     fixture.record_process_group(&managed);
     // The real receiver materializes the owned extension and prepends only its -e path.
     fixture.wait_terminal_contains(managed.id, "PI_ARGS=-e ");
-    fixture.wait_terminal_contains(managed.id, "ovrcr-pi-reporting.mjs");
+    fixture.wait_terminal_contains(managed.id, "ovrcr-pi-reporting.ts");
     fixture.wait_terminal_contains(managed.id, "--model x/y hello world");
     fixture.wait_terminal_contains(managed.id, "PI_HOOK=[]");
     fixture.wait_terminal_contains(managed.id, "PI_CHANNEL=[set]");
@@ -10795,7 +10795,7 @@ fn pi_managed_launch_preserves_argv_exit_and_environment_and_plain_launch_is_unt
     let extension = std::fs::read_to_string(&extension_record).unwrap();
     let extension = Path::new(extension.trim());
     assert!(
-        extension.ends_with("ovrcr-pi-reporting.mjs"),
+        extension.ends_with("ovrcr-pi-reporting.ts"),
         "{extension:?}"
     );
     let removed = Instant::now() + wait_deadline();

@@ -341,6 +341,8 @@ fn doctor_inspects_unbound_and_unavailable_sessions_without_private_values() {
                     health_revision: 1,
                     input_requests: Vec::new(),
                     input_revision: 0,
+                    native_control: None,
+                    native_control_revision: 0,
                 }),
             };
             write_frame(

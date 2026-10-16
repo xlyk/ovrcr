@@ -51,8 +51,9 @@ export function createDelegationObserver({ pi, call, auth }) {
       if (!item.current) facts.current = false;
       if (item.control && (item.control.owner !== "Controller" || item.control.barrier || item.control.attribution_invalidated)) {
         const { owner, epoch, barrier, attribution_invalidated } = item.control;
-        facts.control = { owner, epoch, barrier, attribution_invalidated };
+        facts.control = { owner, epoch, barrier, attribution_invalidated, receipts: item.control_receipt_digest, native_revision: item.native_control_revision };
       }
+      if (item.workflow_cancelled) facts.workflow_cancelled = true;
       const signal = Object.keys(facts).length ? facts : null;
       const key = JSON.stringify(signal);
       if (seen.get(item.handle) !== key && signal) pending.add(item.handle);

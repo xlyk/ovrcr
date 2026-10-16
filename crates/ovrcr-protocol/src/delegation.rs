@@ -218,6 +218,8 @@ pub enum DispatchOperation {
     Takeover,
     HumanReturn,
     ConfirmHumanReturn,
+    Interrupt,
+    ConfirmInterrupt,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -405,6 +407,10 @@ pub struct DelegationObservation {
     pub progress_unresolved: bool,
     /// Current durable authority; a wake is never confirmation or permission.
     pub control: AssignmentControl,
+    /// Content-free journal change marker, never delivery or progress proof.
+    pub control_receipt_digest: String,
+    pub native_control_revision: u64,
+    pub workflow_cancelled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -502,6 +508,22 @@ pub enum DelegationRequest {
     Capabilities {
         auth: DelegationAuth,
         selection: DelegationSelection,
+    },
+    Interrupt {
+        auth: DelegationAuth,
+        handle: String,
+        request: String,
+        expected_identity: AssignmentIdentity,
+        expected_result_version: u32,
+        expected_control_epoch: u64,
+    },
+    ConfirmInterrupt {
+        auth: DelegationAuth,
+        handle: String,
+        request: String,
+        interrupted_request: String,
+        expected_control_epoch: u64,
+        evidence: Box<AssignmentControlEvidence>,
     },
 }
 

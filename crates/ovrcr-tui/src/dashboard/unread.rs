@@ -151,6 +151,8 @@ mod tests {
                     })
                     .collect(),
                 input_revision: 2,
+                native_control: None,
+                native_control_revision: 0,
             }),
         }
     }

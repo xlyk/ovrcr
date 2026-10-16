@@ -1728,6 +1728,8 @@ mod harness_agent_label_tests {
             health_revision: 1,
             input_requests: Vec::new(),
             input_revision: 0,
+            native_control: None,
+            native_control_revision: 0,
         });
         assert_eq!(
             sidebar_agent_label(&reported),

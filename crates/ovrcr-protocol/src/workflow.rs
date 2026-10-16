@@ -110,6 +110,30 @@ pub struct WorkflowSnapshot {
     pub continuation: Option<ContinuationIndex>,
     pub gaps: Vec<String>,
     pub receipt: Option<WorkflowTransitionReceipt>,
+    pub cancellation: Option<WorkflowCancellationView>,
+}
+
+/// Fixed membership and immutable dispatch-closure receipt; child effects remain separate.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowCancellationView {
+    pub request: String,
+    pub captured_authority: WorkflowAuthority,
+    pub dispatch_closure: crate::DispatchOutcome,
+    pub target_outcome: crate::DispatchOutcome,
+    pub targets: Vec<WorkflowCancellationTarget>,
+    pub gaps: Vec<String>,
+    pub unverifiable_members: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowCancellationTarget {
+    pub handle: String,
+    pub identity: crate::AssignmentIdentity,
+    pub result_version: u32,
+    pub control_epoch: u64,
+    pub interrupt_request: String,
+    pub outcome: crate::DispatchOutcome,
+    pub reason: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,6 +175,11 @@ pub enum WorkflowRequest {
     Transfer {
         auth: DelegationAuth,
         transfer: WorkflowTransfer,
+    },
+    Cancel {
+        auth: DelegationAuth,
+        workflow: String,
+        request: String,
     },
 }
 

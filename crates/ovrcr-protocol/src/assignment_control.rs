@@ -13,6 +13,7 @@ pub enum ControlOwner {
 pub enum ControlBarrier {
     HumanReturn { request: String },
     AttributionChanged,
+    Interrupt { request: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

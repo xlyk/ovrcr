@@ -9,6 +9,7 @@
 // holds until settled, so a continuation reports work without opening a new cycle.
 // Bounded delivery lives in the transport module materialized beside this file.
 import { spawn } from "node:child_process";
+import { loadPiKeybindings, inspectPiInterruptBinding } from "./ovrcr-pi-interrupt.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID, randomBytes } from "node:crypto";
 import { mkdir, open, lstat, rename, link, unlink } from "node:fs/promises";
@@ -27,8 +28,11 @@ function currentModel(ctx) {
   return modelId(ctx.model);
 }
 
-export default function (pi) {
+export default async function (pi) {
   if (!process.env.OVRCR_AGENT_SOCKET || !process.env.OVRCR_AGENT_TOKEN) return;
+  // The supported Pi loader awaits factories. Cache only the optional getter API;
+  // the live configured manager is sampled synchronously at each agent_start.
+  const getKeybindings = await loadPiKeybindings();
   const { producer, report, flush, reattach } = createReporter({
     binary: OVRCR_BINARY,
     helperArgs: ["report", "pi", "--stdin"],
@@ -56,7 +60,7 @@ export default function (pi) {
       producer.open = true;
       producer.outcome = "none";
     }
-    return report("agent_start", ctx);
+    return report("agent_start", ctx, { interrupt: inspectPiInterruptBinding(getKeybindings) });
   });
   pi.on("agent_end", (event, ctx) => {
     producer.outcome = outcomeOf(event.messages ?? []);
@@ -303,6 +307,20 @@ function registerDelegation(pi, producer, sourceKey) {
   const publicId = { type: "string", minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9_-]+$" };
   const positiveInteger = { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER };
   const parentBinding = object({ provider: { type: "string", const: "Pi" }, invocation: publicId, conversation: publicId, generation: positiveInteger });
+  const resultVersion = { type: "integer", minimum: 1, maximum: 4294967295 };
+  const revision = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER };
+  const nullable = schema => ({ anyOf: [schema, { type: "null" }] });
+  const assignmentIdentity = object({ instance: publicId, workflow: publicId, controller: publicId, controller_epoch: positiveInteger, task: publicId, attempt: resultVersion, contract: resultVersion, request: publicId, session: nullable(positiveInteger), run: nullable(positiveInteger) });
+  const digest = { type: "string", minLength: 64, maxLength: 64, pattern: "^[a-f0-9]{64}$" };
+  const publicationIdentity = object({ assignment: assignmentIdentity, kind: { type: "string", const: "Submission" }, version: resultVersion, digest });
+  const controlEvidence = object({ server_lifetime: publicId, identity: assignmentIdentity, binding: parentBinding, result_version: resultVersion, activity_revision: revision, input_revision: revision, publication: nullable(publicationIdentity), publication_issue: nullable({ type: "string", enum: ["Missing", "Invalid", "Unattributed"] }), human_input_revision: revision });
+  tool("ovrcr_interrupt", "Request one supported native interrupt for the exact current owned child. Delivery is not settlement. Retain this request and reconcile; never replace an unknown or partial request. Follow-up stays fenced until explicit confirmation of fresh same-turn agent_settled.", object({ handle: publicId, request: publicId, expected_identity: assignmentIdentity, expected_result_version: resultVersion, expected_control_epoch: positiveInteger }), args => call({ Interrupt: { ...args, auth: auth() } }));
+  tool("ovrcr_confirm_interrupt", "Confirm the exact interrupt barrier using fresh inspected evidence and explicit same-turn Pi agent_settled. Authenticates today's workflow owner while retaining original interrupt provenance and all unresolved delivery receipts.", object({ handle: publicId, request: publicId, interrupted_request: publicId, expected_control_epoch: positiveInteger, evidence: controlEvidence }), args => call({ ConfirmInterrupt: { ...args, auth: auth() } }));
+  tool("ovrcr_cancel_workflow", "Durably close new and resumed workflow dispatch and freeze its owned target membership before native interrupt attempts. Repeating this exact request returns original targets and receipts without another effect. Human, uncertain and unverifiable members are preserved without signals. Sessions, workspaces and late results remain available.", object({ workflow: publicId, request: publicId }), async args => {
+    const rows = await call({ Cancel: { ...args, auth: auth() } });
+    if (!Array.isArray(rows) || rows.length !== 1) throw new Error("Cancellation outcome unknown; reconcile this original workflow and request");
+    return rows[0];
+  });
   tool("ovrcr_parents", "List exact currently certified live Pi Session/run/binding/Producer targets for explicit workflow transfer. Public identity is advisory; the Server revalidates the target when transferring. A target need not own any workflow.", object({}), () => call({ Parents: { auth: auth() } }));
   tool("ovrcr_checkpoint", "Save a continuation index up to 65536 UTF-8 bytes; each reference is at most 4096 UTF-8 bytes. Point to original artifacts. Do not save transcripts, credentials or private reasoning.", object({ index: continuationIndex }), async (args, ctx) => { await continuation.discover(ctx); return continuation.save(args.index); });
   tool("ovrcr_transfer", "Explicitly transfer the current workflow to an exact certified managed Pi principal. Inspect its Session/run/full binding and Producer first. This retires this parent's input without launching or returning human-controlled children.", object({ request: publicId, parent: positiveInteger, parent_run: positiveInteger, binding: parentBinding, producer: publicId }), async args => {
@@ -407,11 +425,11 @@ function registerDelegation(pi, producer, sourceKey) {
     } catch (error) { return { handle: args.handle, request: request ?? null, dispatch: error.refused || !attempted ? "Refused" : "Unknown", transport: attempted ? "Unknown" : "NotSent", reason: String(error.message), recovery: "Recover with only this handle and original request; do not create another request while input is unknown or partial" }; }
   });
   tool("ovrcr_accept", "Record the parent's explicit acceptance of the exact current result identity, version and digest. This records your judgment; collection, Ready and child success never accept automatically.", object({ handle: string, identity: { type: "object" }, result_version: { type: "integer", minimum: 1 }, result_digest: string, expected_control_epoch: { type: "integer", minimum: 1 } }), async args => {
-    try { return await call({ RecordAcceptance: { auth: auth(), ...args } }); }
+    try { return await call({ RecordAcceptance: { ...args, auth: auth() } }); }
     catch (error) { return { handle: args.handle, dispatch: error.refused ? "Refused" : "Unknown", reason: String(error.message), recovery: "Retry acceptance only with the same exact current result reference" }; }
   });
   tool("ovrcr_confirm_return", "Explicitly confirm fresh reconciliation after the person returns an assignment. Use the current control epoch, HumanReturn request and exact control_evidence from inspection. This never clears Unknown/Partial input receipts or uncertain ownership. Human changes still require a fresh followup result version.", object({ handle: string, request: string, returned_request: string, expected_control_epoch: { type: "integer", minimum: 1 }, evidence: { type: "object" } }), async args => {
-    try { return await call({ ConfirmHumanReturn: { auth: auth(), ...args } }); }
+    try { return await call({ ConfirmHumanReturn: { ...args, auth: auth() } }); }
     catch (error) { return { handle: args.handle, request: args.request, dispatch: error.refused ? "Refused" : "Unknown", reason: String(error.message), recovery: "Inspect the original return; repeat only the exact confirmation request after a lost reply" }; }
   });
   tool("ovrcr_inspect", "Inspect an owned assignment without changing it. Activity is not acceptance.", object({ handle: string }), args => call({ Inspect: { auth: auth(), handle: args.handle } }));

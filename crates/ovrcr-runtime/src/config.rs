@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 12;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -359,6 +359,10 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
         transaction.execute_batch("CREATE TABLE IF NOT EXISTS delegation_workflows (workflow TEXT PRIMARY KEY, metadata TEXT NOT NULL);")?;
         transaction.pragma_update(None, "user_version", 11)?;
     }
+    if schema_identity(&transaction)?.1 < 12 {
+        // Older writers discard workflow cancellation and native interrupt journals.
+        transaction.pragma_update(None, "user_version", 12)?;
+    }
     transaction.commit().context("commit registry migration")?;
     Ok(connection)
 }
@@ -387,7 +391,7 @@ pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
     if application != APPLICATION_ID
         || !matches!(
             version,
-            1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | SCHEMA_VERSION
+            1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | SCHEMA_VERSION
         )
     {
         bail!(

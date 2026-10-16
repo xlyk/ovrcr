@@ -9,6 +9,15 @@ under `~/.pi` is read or written by OVRCR.
 Managed Pi also exposes the limited [research assignment flow](pi-research-assignments.md).
 Task contents use that separate control/file path and never enter reporting.
 
+The private Pi entry is `ovrcr-pi-reporting.ts`, with its optional
+`ovrcr-pi-interrupt.ts` helper beside the existing transport, continuation and
+observer modules. Pi's supported loader awaits the async factory before exposing
+handlers. The optional public `getKeybindings` API is loaded there; its live
+configured manager is sampled at each `agent_start`. An absent API keeps ordinary
+reporting operational and reports native interruption as unavailable. Reload,
+replacement and reporting gaps discard the previous turn's capability. This
+does not change your extensions, skills, settings or native keybindings.
+
 ## What is reported
 
 | Pi event | OVRCR |

@@ -6,7 +6,8 @@ through `ovrcr agent run pi -- pi` or the Dashboard picker. The managed extensio
 registers `ovrcr_capabilities`, `ovrcr_start`, `ovrcr_retry`, `ovrcr_inspect`,
 `ovrcr_collect`, `ovrcr_followup`, `ovrcr_accept`, `ovrcr_confirm_return`, `ovrcr_publish`, `ovrcr_wait`
 `ovrcr_mark_handled`, `ovrcr_recover`, `ovrcr_checkpoint`, `ovrcr_parents` and
-`ovrcr_transfer`.
+`ovrcr_transfer`, `ovrcr_interrupt`, `ovrcr_confirm_interrupt` and
+`ovrcr_cancel_workflow`.
 A plain Pi process has no delegation authority.
 
 ## Continue an existing parent workflow
@@ -292,6 +293,54 @@ Repeated polls, title/metrics updates, an epoch change or unproven gapped sample
 do not manufacture progress. Future persisted times are unresolved/expired.
 Cancelling `ovrcr_wait` aborts only that observation helper. The same child run
 continues and its later result remains collectable.
+
+## Interrupt a child or cancel a workflow
+
+Aborting `ovrcr_wait`, including cancellation of the parent's response, stops
+that observation only. It sends no input or signal to any child. Keep the
+original handle and collect its later result normally.
+
+To interrupt one assignment, inspect it, then call `ovrcr_interrupt` with
+`handle`, a stable distinct `request`, its exact `expected_identity`,
+`expected_result_version`, and `expected_control_epoch`. The Server checks the
+current workflow owner, original child run and full reporting binding. Only a
+busy, connected Pi turn with a supported native interrupt binding can receive
+one Escape byte. Missing APIs, remapped keys, competing keybindings, open native
+Input, Human ownership and uncertain or replaced runs are refused without input.
+There is no Ctrl-C, process-kill or guessed-key fallback.
+
+An interrupt advances the child's control epoch and installs an `Interrupt`
+barrier before delivery. Its receipt reports delivery: `Applied` means the
+native byte was written and flushed, `Rejected` means no byte was sent, and
+`Unknown` preserves an uncertain outcome. None proves the agent settled. Repeat
+the exact request to read its original receipt without another write; changing
+the expected identity, version or epoch under that request is refused.
+
+After Pi reports a fresh same-turn `agent_settled`, inspect again and call
+`ovrcr_confirm_interrupt` with a new `request`, `handle`, the original
+`interrupted_request`, current `expected_control_epoch`, and exact fresh
+`control_evidence` as `evidence`. `agent_end`, a delivered key, elapsed time and
+parent transfer cannot confirm settlement. Confirmation authenticates today's
+workflow owner while retaining the interrupt's original authority and child
+provenance. It clears only that interrupt barrier. Old Unknown/Partial delivery
+receipts and unrelated input or attribution barriers remain unchanged. A later
+deliberate follow-up uses the new child epoch and the same run.
+
+Call `ovrcr_cancel_workflow` with `workflow` and a stable `request` to close new
+and resumed dispatch, including previously Accepted launch and input intents.
+The Server commits one tombstone, original authority, fixed target identities
+and child intents before effects. The returned `cancellation.dispatch_closure`
+can be `Applied` while `target_outcome` remains `Unknown` or partially refused.
+Each target reports its own delivery outcome. Malformed retained members are
+counted as fixed gaps; full child journals are refused without dropping their
+old receipts. Human, uncertain, unbound and replaced children receive no input.
+
+Repeating the cancellation request returns its original membership and receipts
+without rediscovery or retries. Parent recovery or transfer preserves the
+tombstone and cannot reopen dispatch. Cancellation keeps sessions, workspaces,
+pending acceptance and late results. Inspect, collect and explicitly reconcile
+remaining evidence through the original handles. No cancellation operation
+archives a session or removes a worktree.
 
 Before publication becomes visible, the Server records an authenticated child
 intent containing the exact assignment, original binding, version and digest.

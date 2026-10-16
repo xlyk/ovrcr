@@ -1193,6 +1193,10 @@ impl ControlProxy {
                         ("MarkHandled", handle.clone())
                     }
                     DelegationRequest::Capabilities { .. } => ("Capabilities", String::new()),
+                    DelegationRequest::Interrupt { handle, .. } => ("Interrupt", handle.clone()),
+                    DelegationRequest::ConfirmInterrupt { handle, .. } => {
+                        ("ConfirmInterrupt", handle.clone())
+                    }
                 };
                 worker_requests
                     .lock()
@@ -1330,6 +1334,10 @@ impl RecoveryFixture {
     }
 
     fn with_model(initial_model: Option<&str>) -> Self {
+        Self::with_model_gate(initial_model, false)
+    }
+
+    fn with_model_gate(initial_model: Option<&str>, gated: bool) -> Self {
         let live = Live::idle().bounded();
         let fault = live.root.path().join("fault");
         let proxy = ControlProxy::new(
@@ -1368,6 +1376,11 @@ impl RecoveryFixture {
         if let Some(model) = initial_model {
             environment.push(("OVRCR_TEST_DELEGATION_INITIAL_MODEL", model.as_ref()));
             environment.push(("OVRCR_TEST_DELEGATION_REBIND_GATE", rebind.as_os_str()));
+        }
+        let model_gate = live.root.path().join("allow-initial-model");
+        if gated {
+            fs::write(&model_gate, "initially ready").unwrap();
+            environment.push(("OVRCR_TEST_DELEGATION_MODEL_GATE", model_gate.as_os_str()));
         }
         live.start_binary_env(&environment);
         live.ready("recovery");
@@ -1504,6 +1517,163 @@ impl RecoveryFixture {
             .filter(|s| s.kind == SessionKind::Agent { name: "pi".into() } && s.id != self.parent)
             .count()
     }
+}
+
+#[test]
+fn public_retry_preserves_spent_attempt_while_initial_model_is_withheld() {
+    let fixture = RecoveryFixture::with_model_gate(None, true);
+    let output = fixture
+        .live
+        .command()
+        .args(["settings", "set", "delegation.max_live_children", "1"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let first: AssignmentSnapshot = serde_json::from_value(fixture.start()).unwrap();
+    assert_eq!(first.dispatch, DispatchStatus::Applied);
+    fs::remove_file(fixture.live.root.path().join("allow-initial-model")).unwrap();
+    let refused: AssignmentSnapshot = serde_json::from_value(fixture.start()).unwrap();
+    assert_eq!(refused.dispatch, DispatchStatus::Refused);
+    assert!(refused.retryable_capacity_refusal);
+    assert_eq!(refused.execution_attempts, Some(0));
+    assert_eq!(
+        fixture.live.request(Request::CloseTerminal {
+            session: first.identity.session.unwrap(),
+            expected_run: first.identity.run.unwrap()
+        }),
+        Response::Ok
+    );
+
+    let waiting: AssignmentSnapshot = serde_json::from_value(
+        fixture.tool("ovrcr_retry", serde_json::json!({"handle":refused.handle})),
+    )
+    .unwrap();
+    assert_eq!(waiting.dispatch, DispatchStatus::Launched);
+    assert_eq!(waiting.identity.task, refused.identity.task);
+    assert_eq!(waiting.identity.attempt, refused.identity.attempt + 1);
+    let row = || {
+        let db = rusqlite::Connection::open(fixture.live.config.join("registry.sqlite3")).unwrap();
+        let raw: String = db
+            .query_row(
+                "SELECT metadata FROM delegations WHERE handle=?1",
+                [&waiting.handle],
+                |row| row.get(0),
+            )
+            .unwrap();
+        serde_json::from_str::<serde_json::Value>(&raw).unwrap()
+    };
+    let pending = row();
+    let binding = pending["binding"].clone();
+    assert_eq!(binding["generation"], 1);
+    let initial = waiting
+        .receipts
+        .iter()
+        .find(|r| r.operation == DispatchOperation::InitialInput)
+        .unwrap();
+    assert_eq!(initial.outcome, DispatchOutcome::Accepted);
+    let requests = fixture.proxy.requests.lock().unwrap();
+    assert!(requests.iter().filter(|request| matches!(request, DelegationRequest::SendInitial { handle, .. } if handle == &waiting.handle)).count() >= 2);
+    drop(requests);
+    let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect) else {
+        panic!("inventory")
+    };
+    let child = sessions
+        .iter()
+        .find(|s| Some(s.id) == waiting.identity.session)
+        .unwrap();
+    assert_eq!(
+        child.agent.as_ref().unwrap().binding,
+        serde_json::from_value(binding.clone()).unwrap()
+    );
+    assert!(child.agent.as_ref().unwrap().metrics.is_none());
+    assert_eq!(fixture.byte_count(&waiting), 0);
+    assert_eq!(fixture.input_count(&waiting), 0);
+    eprintln!(
+        "MODEL_GATE_TRACE waiting={} durable_count={} binding={} initial={:?}",
+        waiting
+            .execution_attempts
+            .map_or("unknown".into(), |n| n.to_string()),
+        pending["execution_attempts"],
+        binding,
+        initial.outcome
+    );
+    assert_eq!(
+        waiting.execution_attempts,
+        Some(1),
+        "a captured binding awaiting native model metrics is still exactly one spent attempt"
+    );
+    assert_eq!(pending["execution_attempts"], 1);
+    let reconciled = fixture.reconcile(&waiting.handle);
+    assert_eq!(reconciled.execution_attempts, Some(1));
+    let DelegationRequest::Prepare { auth, .. } =
+        fixture.proxy.original(DispatchOperation::Prepare)
+    else {
+        unreachable!()
+    };
+    let inspected_control = fixture.control(DelegationRequest::Inspect {
+        auth,
+        handle: waiting.handle.clone(),
+    });
+    assert_eq!(inspected_control.execution_attempts, Some(1));
+    assert_eq!(inspected_control.receipts, waiting.receipts);
+    let inspected: AssignmentSnapshot = serde_json::from_value(fixture.tool(
+        "ovrcr_collect",
+        serde_json::json!({"handle":waiting.handle}),
+    ))
+    .unwrap();
+    assert_eq!(inspected.execution_attempts, Some(1));
+    assert_eq!(inspected.receipts, waiting.receipts);
+    assert_eq!(row()["execution_attempts"], 1);
+    assert_eq!(
+        fixture.child_count(),
+        2,
+        "one stopped predecessor workload and one retry child"
+    );
+    let gate = fixture.live.root.path().join("allow-initial-model");
+    fs::write(&gate, "publish model").unwrap();
+    wait_file(&gate.with_extension("reported"));
+    let applied: AssignmentSnapshot = serde_json::from_value(
+        fixture.tool("ovrcr_retry", serde_json::json!({"handle":refused.handle})),
+    )
+    .unwrap();
+    assert_eq!(applied.dispatch, DispatchStatus::Applied);
+    assert_eq!(applied.identity, waiting.identity);
+    assert_eq!(applied.execution_attempts, Some(1));
+    assert_eq!(row()["binding"], binding);
+    assert_eq!(row()["execution_attempts"], 1);
+    wait_file(&applied.brief.with_extension("json.input-count"));
+    assert_eq!(fixture.input_count(&applied), 1);
+    let initial_applied = applied
+        .receipts
+        .iter()
+        .find(|r| r.operation == DispatchOperation::InitialInput)
+        .unwrap();
+    assert_eq!(initial_applied.request, initial.request);
+    assert_eq!(initial_applied.identity, initial.identity);
+    assert_eq!(initial_applied.result_version, initial.result_version);
+    assert_eq!(initial_applied.outcome, DispatchOutcome::Applied);
+    for operation in [DispatchOperation::Prepare, DispatchOperation::Launch] {
+        assert_eq!(
+            applied.receipts.iter().find(|r| r.operation == operation),
+            waiting.receipts.iter().find(|r| r.operation == operation)
+        );
+    }
+    assert_eq!(row()["request_digests"], pending["request_digests"]);
+    let count = fixture.byte_count(&applied);
+    let repeated: AssignmentSnapshot = serde_json::from_value(
+        fixture.tool("ovrcr_retry", serde_json::json!({"handle":refused.handle})),
+    )
+    .unwrap();
+    assert_eq!(repeated.identity, applied.identity);
+    assert_eq!(repeated.receipts, applied.receipts);
+    assert_eq!(repeated.execution_attempts, Some(1));
+    assert_eq!(fixture.byte_count(&repeated), count);
+    assert_eq!(fixture.input_count(&repeated), 1);
+    assert_eq!(fixture.child_count(), 2);
+    eprintln!(
+        "MODEL_GATE_TRACE final=Applied count=1 duplicate_input=false binding_unchanged=true receipts={}",
+        serde_json::to_string(&applied.receipts).unwrap()
+    );
 }
 
 #[test]
@@ -2474,3 +2644,6 @@ fn public_dispatch_retired_parent_a_to_b_to_a_cannot_replay_control() {
 
 #[path = "pi_delegation/observation.rs"]
 mod observation;
+
+#[path = "pi_delegation/cancellation.rs"]
+mod cancellation;
