@@ -1,3 +1,4 @@
+pub mod candidate;
 use anyhow::{Context, Result, bail};
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
@@ -359,13 +360,15 @@ pub fn create_worktree(
         bail!("worktree destination is outside workspace root");
     }
 
+    let mut pinned = None;
     let (branch_name, args) = match branch {
         BranchSpec::New { branch, base } => {
             validate_branch(&repo, &branch)?;
             if base.is_empty() {
                 bail!("worktree base cannot be empty");
             }
-            validate_commitish(&repo, &base)?;
+            let base = resolve_commit(&repo, &base)?;
+            pinned = Some(base.clone());
             let args = vec![
                 OsString::from("worktree"),
                 OsString::from("add"),
@@ -395,6 +398,14 @@ pub fn create_worktree(
     let canonical_path = fs::canonicalize(&destination)
         .with_context(|| format!("canonicalize created worktree {}", destination.display()))?;
     let git_identity = Some(capture_worktree_identity(&canonical_path)?);
+    if let Some(base) = pinned
+        && resolve_commit(&canonical_path, "HEAD")? != base
+    {
+        bail!(
+            "created worktree HEAD differs from its pinned base; worktree retained at {}",
+            canonical_path.display()
+        );
+    }
     let branch = checkout_name(&canonical_path).unwrap_or(branch_name);
     Ok(WorkspaceRecord {
         id: id.to_owned(),
@@ -685,18 +696,24 @@ fn validate_branch(repo: &Path, branch: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_commitish(repo: &Path, base: &str) -> Result<()> {
-    run_git(
+pub fn resolve_commit(repo: &Path, base: &str) -> Result<String> {
+    if base.is_empty() || base.len() > 256 || base.chars().any(char::is_control) {
+        bail!("invalid worktree base");
+    }
+    let oid = git_stdout(
         repo,
         &[
-            OsString::from("rev-parse"),
-            OsString::from("--verify"),
-            OsString::from("--end-of-options"),
-            OsString::from(format!("{base}^{{commit}}")),
+            "rev-parse".into(),
+            "--verify".into(),
+            "--end-of-options".into(),
+            format!("{base}^{{commit}}").into(),
         ],
     )
-    .with_context(|| format!("validate worktree base {base:?}"))?;
-    Ok(())
+    .with_context(|| format!("resolve worktree base {base:?}"))?;
+    if !matches!(oid.len(), 40 | 64) || !oid.bytes().all(|b| b.is_ascii_hexdigit()) {
+        bail!("Git returned an invalid commit identity");
+    }
+    Ok(oid)
 }
 
 fn validate_local_branch(repo: &Path, branch: &str) -> Result<()> {

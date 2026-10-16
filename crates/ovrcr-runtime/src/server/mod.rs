@@ -1,4 +1,5 @@
 pub(crate) mod delegation;
+mod delegation_coding;
 mod delegation_files;
 mod delegation_observation;
 pub(crate) mod delegation_recovery;
@@ -16,7 +17,8 @@ use anyhow::{Context, Result, bail};
 use ovrcr_protocol::{
     BranchRequest, ClientMessage, ClientRole, DashboardView, ErrorCode, HierarchySnapshot,
     PROTOCOL_VERSION, ProjectSummary, Request, Response, ServerEvent, ServerMessage, SessionKind,
-    SessionRunId, WorkspaceSummary, read_frame, read_preamble, write_frame, write_preamble,
+    SessionRunId, WorkspaceCreation, WorkspaceSummary, read_frame, read_preamble, write_frame,
+    write_preamble,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs::{self, File, OpenOptions};
@@ -2055,6 +2057,23 @@ impl ServerState {
     ) -> Result<Option<SessionSummary>> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
+        self.create_workspace_locked(project, name, branch, launch, None)
+    }
+
+    /// The lifecycle/delegation caller already owns mutation_lock.
+    fn create_workspace_locked(
+        &self,
+        project: String,
+        name: String,
+        branch: BranchRequest,
+        launch: WorkspaceLaunch,
+        assignment: Option<&str>,
+    ) -> Result<Option<SessionSummary>> {
+        self.reject_if_stopping()?;
+        let retained_workspace = match assignment {
+            Some(handle) => self.coding_retained_workspace(handle)?,
+            None => None,
+        };
         let project_record = self
             .registry
             .lock()
@@ -2062,10 +2081,14 @@ impl ServerState {
             .project(&project)
             .map_err(|error| lifecycle_error(ErrorCode::NotFound, error.to_string()))?
             .clone();
+        let already_registered = retained_workspace
+            .as_ref()
+            .is_some_and(|workspace| project_record.workspaces.contains(workspace));
         if project_record
             .workspaces
             .iter()
             .any(|workspace| workspace.id == name)
+            && !already_registered
         {
             return Err(lifecycle_error(
                 ErrorCode::AlreadyExists,
@@ -2076,9 +2099,30 @@ impl ServerState {
             BranchRequest::New { branch, base } => BranchSpec::New { branch, base },
             BranchRequest::Existing { branch } => BranchSpec::Existing { branch },
         };
-        let workspace = git::create_worktree(&project_record, &name, branch)
-            .with_context(|| format!("create workspace {project}/{name}"))?;
-        {
+        if let Some(handle) = assignment {
+            self.coding_require_creation_open(handle)?;
+        }
+        let workspace = match retained_workspace {
+            Some(workspace) => workspace,
+            None => git::create_worktree(&project_record, &name, branch)
+                .with_context(|| format!("create workspace {project}/{name}"))?,
+        };
+        if !already_registered {
+            if let Some(handle) = assignment {
+                self.record_coding_workspace(
+                    handle,
+                    &workspace,
+                    WorkspaceCreation::CreatedUnregistered,
+                )?;
+                if delegation::take_fault("coding-before-registration", handle).is_some() {
+                    return Err(crate::session::NoProcessStarted::context(anyhow::anyhow!(
+                        "owned failure after Git creation before registry publication"
+                    )));
+                }
+            }
+            if let Some(handle) = assignment {
+                self.coding_require_creation_open(handle)?;
+            }
             let mut registry = self.registry.lock().unwrap();
             let mut next = registry.clone();
             next.add_workspace(&project, workspace.clone())?;
@@ -2093,6 +2137,14 @@ impl ServerState {
                 ));
             }
             *registry = next;
+        }
+        if let Some(handle) = assignment {
+            self.record_coding_workspace(handle, &workspace, WorkspaceCreation::Registered)?;
+            if delegation::take_fault("coding-after-registration", handle).is_some() {
+                return Err(crate::session::NoProcessStarted::context(anyhow::anyhow!(
+                    "owned failure after workspace registration before managed launch"
+                )));
+            }
         }
         let (launch, session_name) = match launch {
             WorkspaceLaunch::None => return Ok(None),
@@ -2119,6 +2171,10 @@ impl ServerState {
                 )
             }
         };
+        if let Some(handle) = assignment {
+            self.coding_require_creation_open(handle)?;
+            self.record_coding_spawn_possible(handle)?;
+        }
         self.create_session_locked(
             ovrcr_protocol::CreateSessionRequest {
                 project,
@@ -2129,7 +2185,7 @@ impl ServerState {
                 kind: launch.kind,
             },
             None,
-            None,
+            assignment,
         )
         .map(Some)
         .map_err(|error| {
@@ -2139,7 +2195,8 @@ impl ServerState {
             {
                 return error;
             }
-            lifecycle_error_with_hierarchy(
+            let no_process = error.is::<crate::session::NoProcessStarted>();
+            let failure = lifecycle_error_with_hierarchy(
                 ErrorCode::PartialFailure,
                 format!(
                     "worktree for workspace {} remains at {}: {}",
@@ -2148,7 +2205,12 @@ impl ServerState {
                     error_chain_string(&error)
                 ),
                 true,
-            )
+            );
+            if no_process {
+                crate::session::NoProcessStarted::context(failure)
+            } else {
+                failure
+            }
         })
     }
 

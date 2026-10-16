@@ -117,6 +117,8 @@ pub struct ResearchContract {
     pub limits: DelegationLimits,
     #[serde(default)]
     pub previous_request: Option<String>,
+    #[serde(default)]
+    pub coding: Option<crate::CodingContract>,
 }
 
 impl ResearchContract {
@@ -144,14 +146,27 @@ impl ResearchContract {
         if self.provider != "pi" {
             return Err("this flow supports only Pi research assignments");
         }
-        if self.permitted_actions != ["read"] {
-            return Err("this flow permits read-only research only");
+        if let Some(coding) = &self.coding {
+            coding.validate()?;
+            if self.permitted_actions != ["read", "write", "edit", "check"] {
+                return Err("coding requires exactly read, write, edit and check authority");
+            }
+        } else if self.permitted_actions != ["read"] {
+            return Err("research permits read-only actions");
         }
-        if self
-            .mandatory_capabilities
-            .iter()
-            .any(|value| value != "read" && value != "result_file")
-        {
+        if self.mandatory_capabilities.iter().any(|value| {
+            value != "read"
+                && value != "result_file"
+                && !(self.coding.is_some()
+                    && [
+                        "isolated_workspace",
+                        "immutable_candidate",
+                        "write",
+                        "edit",
+                        "check",
+                    ]
+                    .contains(&value.as_str()))
+        }) {
             return Err("unsupported mandatory capability");
         }
         for text in [
@@ -269,6 +284,8 @@ pub struct AssignmentResources {
     pub workspace_present: bool,
     /// May identify a replacement run; compare it with the allocated identity.
     pub current_session: Option<CurrentAssignmentSession>,
+    #[serde(default)]
+    pub coding: Option<crate::CodingWorkspace>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -281,6 +298,8 @@ pub struct ResearchSubmission {
     pub summary: String,
     pub evidence: Vec<String>,
     pub unresolved: Vec<String>,
+    #[serde(default)]
+    pub coding: Option<crate::CodingSubmission>,
 }
 
 impl ResearchSubmission {
@@ -306,6 +325,9 @@ impl ResearchSubmission {
                 .any(|s| s.len() > 4096)
         {
             return Err("submission exceeds limits");
+        }
+        if let Some(coding) = &self.coding {
+            coding.validate()?;
         }
         if self.outcome == "success" && self.evidence.is_empty() {
             return Err("success requires evidence");
@@ -621,6 +643,7 @@ mod tests {
     #[test]
     fn research_contract_rejects_unenforceable_permissions_and_capabilities() {
         let mut c = ResearchContract {
+            coding: None,
             schema: 1,
             workflow: "wf".into(),
             controller: "parent".into(),

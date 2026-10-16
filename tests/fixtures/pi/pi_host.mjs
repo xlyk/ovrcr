@@ -8,7 +8,7 @@ import { isDeepStrictEqual } from "node:util";
 // PI_CALLBACK=<n> after each one.
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, appendFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { registerHooks } from "node:module";
@@ -234,7 +234,7 @@ async function main() {
       process.stdout.write("CHILD_SCOPED_ANSWER_RECEIVED\n");
       continue;
     }
-    if (host && process.env.OVRCR_TEST_DELEGATION && clean.startsWith("Perform the read-only research assignment in ")) {
+    if (host && process.env.OVRCR_TEST_DELEGATION && (clean.startsWith("Perform the read-only research assignment in ") || clean.startsWith("Perform the coding assignment in "))) {
       const path = clean.match(/in (.+\/brief-v[1-9][0-9]*\.json)\. Read/)[1];
       const brief = JSON.parse(readFileSync(path, "utf8"));
       activeBrief = { path, brief };
@@ -299,6 +299,19 @@ async function main() {
       }
       while (!existsSync(process.env.OVRCR_TEST_DELEGATION_RESULT_GATE)) await new Promise(resolve => setTimeout(resolve, 10));
       const submission = { schema: 1, identity: brief.identity, version: brief.result_version ?? 1, outcome: "success", summary: "Read the assigned repository README.", evidence: ["README:1 fixture"], unresolved: [] };
+      if (brief.contract.coding) {
+        if (process.cwd() !== brief.coding_workspace.path) throw new Error("coding child cwd differs from Server-owned workspace");
+        writeFileSync(join(process.cwd(), "change.txt"), `${brief.handle}:${submission.version}\n`);
+        const checked = spawnSync("/bin/sh", ["-c", "false"], {cwd:process.cwd(),encoding:"utf8"});
+        if (checked.error || checked.status !== 1) throw new Error("fixture check did not execute the expected actual failure");
+        writeFileSync(`${path}.check.log`, `false exited ${checked.status}\n`);
+        writeFileSync(`${path}.native-argv`, JSON.stringify(process.argv.slice(2)));
+        submission.outcome = "failed";
+        submission.summary = "Isolated fixture edit; actual check failed.";
+        submission.evidence = ["change.txt",`${path}.check.log`];
+        submission.coding = {checks:[{name:"fixture-failure",command:"false",outcome:"Failed",exit_code:checked.status,evidence:[`${path}.check.log`]},
+          {name:"deliberately-unrun",command:null,outcome:"Unrun",exit_code:null,evidence:[]}],candidate:null};
+      }
       if (brief.contract.scope.includes("STALE_RESULT")) submission.identity.contract += 1;
       if (previousSubmission) {
         let late;

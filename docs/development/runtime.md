@@ -99,3 +99,16 @@ through commit, including continuations. An explicit continuation consumes its
 protected slot/bytes only on successful filing and never performs another stop.
 Same-resource lifecycle changes respect the barrier; unrelated input/view remain
 available during the stop. Archive preserves private evidence and workspaces.
+
+Coding delegation uses the same already-locked combined workspace/managed-launch
+body. Record proposed repository/path/pinned base before Git; save created Git
+generation before registration and registered resource before native launch.
+Revalidate the registered repository root's existing Git generation at coding
+intent, effect and current-capture gates, with Git outside retained/Session guards.
+A NoProcessStarted proof is independent of worktree existence. Final rejected
+launch receipts stay immutable; only one explicit linked successor may reuse a
+verified no-process/no-input workspace. Unknown ownership never permits adoption.
+Candidate capture runs without retained/Session locks. Its in-memory bytes gain
+a discoverable filename only after the existing child-authenticated publication
+intent binds the exact enriched result digest. Recovery uses original stored
+bytes and selected version/contract; it never captures a newer checkout.
