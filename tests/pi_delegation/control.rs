@@ -323,6 +323,7 @@ fn accepted_parent_followup_never_replays_after_passive_human_control_aba() {
     let fixture = OwnedFollowup::new();
     let first: AssignmentSnapshot = serde_json::from_value(fixture.start()).unwrap();
     let original = complete(&fixture, &first);
+    assert_eq!(original.execution_attempts, Some(1));
     let before = fixture.byte_count(&original);
     fixture.proxy.arm(ControlRule {
         operation: "Followup",
@@ -392,7 +393,17 @@ fn accepted_parent_followup_never_replays_after_passive_human_control_aba() {
         continued.identity.contract, 1,
         "ordinary continuation keeps current contract despite rejected reserved revision"
     );
+    assert_eq!(continued.execution_attempts, Some(1));
     let continued = complete(&fixture, &continued);
+    assert_eq!(
+        continued.execution_attempts,
+        Some(1),
+        "collection must preserve the proven execution across reserved result2"
+    );
+    assert_eq!(
+        fixture.reconcile(&continued.handle).execution_attempts,
+        Some(1)
+    );
     assert_eq!(fixture.input_count(&continued), 1);
     assert_eq!(
         fs::read(original.brief.parent().unwrap().join("brief-v2.json")).unwrap(),
@@ -411,7 +422,17 @@ fn accepted_parent_followup_never_replays_after_passive_human_control_aba() {
         "explicit revision skips every durable reserved contract version"
     );
     assert_eq!(revised.result_version, 4);
+    assert_eq!(revised.execution_attempts, Some(1));
     let revised = complete(&fixture, &revised);
+    assert_eq!(
+        revised.execution_attempts,
+        Some(1),
+        "a reserved contract gap does not consume or erase execution proof"
+    );
+    assert_eq!(
+        fixture.reconcile(&revised.handle).execution_attempts,
+        Some(1)
+    );
     assert_eq!(fixture.input_count(&revised), 1);
     assert_eq!(
         fs::read(original.brief.parent().unwrap().join("contract-v2.json")).unwrap(),

@@ -66,7 +66,7 @@ pub(super) fn complete(
     .unwrap()
 }
 
-fn followup(
+pub(super) fn followup(
     fixture: &RecoveryFixture,
     current: &AssignmentSnapshot,
     revised: Option<ResearchContract>,
@@ -126,6 +126,7 @@ fn public_followup_versions_contract_results_and_parent_acceptance_in_one_child(
         "clarification retains assignment and contract identity"
     );
     assert_eq!(clarified.result_version, 2);
+    assert_eq!(clarified.execution_attempts, Some(1));
     assert!(clarified.submission.is_none());
     assert!(clarified.acceptance_ref.is_none());
     let stale_followup = followup(&fixture, &original, None);
@@ -149,6 +150,7 @@ fn public_followup_versions_contract_results_and_parent_acceptance_in_one_child(
     stable.contract = 1;
     assert_eq!(stable, original.identity);
     assert_eq!(revised.result_version, 3);
+    assert_eq!(revised.execution_attempts, Some(1));
     assert_eq!(revised.conversation, original.conversation);
     assert!(revised.publication.is_none());
     assert!(revised.acceptance_ref.is_none());

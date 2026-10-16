@@ -3352,7 +3352,8 @@ impl Dashboard {
                 // for was claimed above.
                 Response::Events(_)
                 | Response::Delegation(_)
-                | Response::DelegationObservation(_) => {}
+                | Response::DelegationObservation(_)
+                | Response::DelegationCapabilities(_) => {}
                 Response::HistoryOpened(opened) => {
                     self.accept_history_opened(request_id, opened);
                 }

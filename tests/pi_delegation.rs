@@ -177,6 +177,61 @@ fn public_pi_research_assignment_launches_collects_and_fences_real_child() {
         assert!(Instant::now() < deadline, "parent binding missing");
         std::thread::sleep(Duration::from_millis(10));
     }
+    let capabilities = tool(
+        &live,
+        parent.id,
+        "ovrcr_capabilities",
+        serde_json::json!({}),
+        &live.root.path().join("capabilities.json"),
+    );
+    assert_eq!(capabilities["choices"].as_array().unwrap().len(), 2);
+    assert!(
+        capabilities["resolved_choice"].is_null(),
+        "multiple models need a parent selection"
+    );
+    assert_eq!(capabilities["native_helpers"], false);
+    assert_eq!(capabilities["native_descendant_usage"], false);
+    let omitted = tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        serde_json::json!({"project":PROJECT,"workspace":workspace_id,"scope":"Read README","acceptance_evidence":["citation"]}),
+        &live.root.path().join("needs-choice.json"),
+    );
+    assert_eq!(omitted["dispatch"], "Refused");
+    assert!(omitted["handle"].is_null());
+    let set = live
+        .command()
+        .args([
+            "settings",
+            "set",
+            "delegation.default_model",
+            "test/alternate-model",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        set.status.success(),
+        "{}",
+        String::from_utf8_lossy(&set.stderr)
+    );
+    let defaulted = tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        serde_json::json!({"project":PROJECT,"workspace":workspace_id,"scope":"Read README using the configured default","acceptance_evidence":["citation"]}),
+        &live.root.path().join("default-choice.json"),
+    );
+    assert_eq!(defaulted["dispatch"], "Applied", "{defaulted}");
+    for group in live.session_groups() {
+        live.own_group(group);
+    }
+    let default_brief: serde_json::Value =
+        serde_json::from_slice(&fs::read(defaulted["brief"].as_str().unwrap()).unwrap()).unwrap();
+    assert_eq!(default_brief["contract"]["provider"], "pi");
+    assert_eq!(default_brief["contract"]["model_provider"], "test");
+    assert_eq!(default_brief["contract"]["model"], "alternate-model");
+    assert_eq!(default_brief["contract"]["limits"]["max_live_children"], 50);
     let raw = tool(
         &live,
         parent.id,
@@ -393,6 +448,20 @@ fn public_pi_research_assignment_launches_collects_and_fences_real_child() {
             .unwrap()
             .contains("unsupported mandatory capability")
     );
+    let helper_gap = tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        serde_json::json!({"project":PROJECT,"workspace":workspace_id,"scope":"Read README","model_provider":"test","model":"fixture-model","acceptance_evidence":["citation"],"mandatory_capabilities":["native_helpers"]}),
+        &live.root.path().join("native-helper-gap.json"),
+    );
+    assert_eq!(helper_gap["dispatch"], "Refused");
+    assert!(
+        helper_gap["reason"]
+            .as_str()
+            .unwrap()
+            .contains("unsupported mandatory capability")
+    );
     // The parent can collect but cannot impersonate the child publisher.
     let forged = tool_reply(
         &live,
@@ -470,6 +539,89 @@ fn public_pi_research_assignment_launches_collects_and_fences_real_child() {
     wait_file(&live.root.path().join("partial.json"));
     let partial = fs::read_to_string(live.root.path().join("partial.json")).unwrap();
     assert!(partial.contains("changed or is partial"), "{partial}");
+    // The same public production path enforces typed policy without changing child flags.
+    let unsupported_limit = tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        serde_json::json!({"project":PROJECT,"workspace":workspace_id,"scope":"Read README","model_provider":"test","model":"fixture-model","acceptance_evidence":["citation"],"required_limits":{"max_output_tokens":1}}),
+        &live.root.path().join("unsupported-limit.json"),
+    );
+    assert_eq!(unsupported_limit["dispatch"], "Refused");
+    assert!(
+        unsupported_limit["reason"]
+            .as_str()
+            .unwrap()
+            .contains("unsupported mandatory")
+    );
+    for (key, value) in [
+        ("delegation.enabled", "false"),
+        ("delegation.max_live_children", "1"),
+        ("delegation.max_execution_attempts", "1"),
+    ] {
+        let output = live
+            .command()
+            .args(["settings", "set", key, value])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let disabled = tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        serde_json::json!({"project":PROJECT,"workspace":workspace_id,"scope":"Read README","model_provider":"test","model":"fixture-model","acceptance_evidence":["citation"]}),
+        &live.root.path().join("disabled.json"),
+    );
+    assert_eq!(disabled["dispatch"], "Refused");
+    assert!(disabled["reason"].as_str().unwrap().contains("disabled"));
+    let output = live
+        .command()
+        .args(["settings", "set", "delegation.enabled", "true"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let limited = tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        serde_json::json!({"project":PROJECT,"workspace":workspace_id,"scope":"Read README","model_provider":"test","model":"fixture-model","acceptance_evidence":["citation"]}),
+        &live.root.path().join("child-limit.json"),
+    );
+    assert_eq!(limited["dispatch"], "Refused", "{limited}");
+    assert_eq!(limited["retryable_capacity_refusal"], true);
+    assert_eq!(limited["execution_attempts"], 0);
+    let output = live
+        .command()
+        .args(["settings", "set", "delegation.max_live_children", "50"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let limited_retry = tool(
+        &live,
+        parent.id,
+        "ovrcr_retry",
+        serde_json::json!({"handle":limited["handle"]}),
+        &live.root.path().join("immutable-limit-retry.json"),
+    );
+    assert_eq!(
+        limited_retry["dispatch"], "Refused",
+        "retry cannot loosen the original effective child limit"
+    );
+    assert_eq!(limited_retry["execution_attempts"], 0);
+    let minimum_free = tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        serde_json::json!({"project":PROJECT,"workspace":workspace_id,"scope":"Read README","model_provider":"test","model":"fixture-model","acceptance_evidence":["citation"],"required_limits":{"min_free_slots_after_launch":49}}),
+        &live.root.path().join("minimum-free.json"),
+    );
+    assert_eq!(minimum_free["dispatch"], "Refused");
+    assert_eq!(minimum_free["retryable_capacity_refusal"], true);
     // Delegation uses the existing shared fifty-live-session admission rule.
     let Response::Inventory { sessions, .. } = live.request(Request::Inspect) else {
         panic!("inventory");
@@ -516,6 +668,217 @@ fn public_pi_research_assignment_launches_collects_and_fences_real_child() {
     assert_eq!(refused.dispatch, DispatchStatus::Refused);
     assert!(refused.identity.session.is_none());
     live.own_group(unsafe { libc::getpgid(parent.pid.unwrap() as i32) });
+    for group in live.session_groups() {
+        live.own_group(group);
+    }
+}
+
+#[test]
+fn public_pi_preflight_refusal_refunds_execution_but_post_spawn_failure_does_not() {
+    let live = Live::idle();
+    let host = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pi/pi_host.mjs");
+    let pi = live.claude.command.parent().unwrap().join("pi");
+    let probes = live.root.path().join("model-probes");
+    let entered = live.root.path().join("launch-preflight");
+    let release = live.root.path().join("release-preflight");
+    // Public start discovers capabilities, prepares, then checks availability for
+    // Launch. Pause only that third inventory probe: Prepare has committed, but
+    // no native child creation has been attempted.
+    let gate = format!(
+        "#!/bin/sh\ncase \" $* \" in *\" --list-models \"*) n=0; [ ! -f '{0}' ] || n=$(cat '{0}'); n=$((n+1)); echo \"$n\" > '{0}'; if [ \"$n\" = 3 ]; then : > '{1}'; while [ ! -f '{2}' ]; do sleep 0.01; done; fi;; esac\n",
+        probes.display(),
+        entered.display(),
+        release.display(),
+    );
+    fs::write(
+        &pi,
+        format!("{gate}{}", include_str!("fixtures/pi/research_pi.sh")),
+    )
+    .unwrap();
+    fs::set_permissions(&pi, fs::Permissions::from_mode(0o700)).unwrap();
+    live.start_binary_env(&[
+        ("OVRCR_TEST_DELEGATION", "1".as_ref()),
+        ("OVRCR_TEST_PI_HOST", host.as_os_str()),
+    ]);
+    live.ready("preflight-refund");
+    let workspaces = cli_json(&live, &["workspace", "list", "--project", PROJECT]);
+    let workspace = workspaces
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|workspace| workspace["branch"] == "preflight-refund")
+        .unwrap();
+    let workspace_id = workspace["id"].as_str().unwrap();
+    let workspace_path = std::path::PathBuf::from(workspace["path"].as_str().unwrap());
+    let Response::CreatedSession(parent) =
+        live.request(Request::CreateSession(CreateSessionRequest {
+            project: PROJECT.into(),
+            workspace: workspace_id.into(),
+            name: "parent".into(),
+            label: None,
+            argv: vec![
+                env!("CARGO_BIN_EXE_ovrcr").into(),
+                "agent".into(),
+                "run".into(),
+                "pi".into(),
+                "--".into(),
+                "pi".into(),
+                "--model".into(),
+                "fixture-model".into(),
+            ],
+            kind: SessionKind::Agent { name: "pi".into() },
+        }))
+    else {
+        panic!("parent creation");
+    };
+    for group in live.session_groups() {
+        live.own_group(group);
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let Response::Inventory { sessions, .. } = live.request(Request::Inspect) else {
+            panic!("inventory")
+        };
+        if sessions
+            .iter()
+            .any(|s| s.id == parent.id && s.agent.is_some())
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "parent binding");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let output = live.root.path().join("preflight-refused.json");
+    let args = serde_json::json!({"project":PROJECT,"workspace":workspace_id,"scope":"Read README","model_provider":"test","model":"fixture-model","acceptance_evidence":["citation"],"required_limits":{"max_execution_attempts":1}});
+    assert_eq!(
+        live.request(Request::SendTerminal {
+            session: parent.id,
+            text: format!(
+                "tool:{}",
+                serde_json::json!({"name":"ovrcr_start","args":args,"output":output})
+            ),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    wait_file(&entered);
+    let moved = live.root.path().join("temporarily-moved-workspace");
+    fs::rename(&workspace_path, &moved).unwrap();
+    fs::write(&release, "release").unwrap();
+    wait_file(&output);
+    // Restore before any assertion can fail so even RED leaves fixture-owned
+    // resource cleanup on its ordinary path.
+    fs::rename(&moved, &workspace_path).unwrap();
+    let reply: serde_json::Value = serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
+    assert!(reply.get("error").is_none(), "{reply}");
+    let refused: AssignmentSnapshot = serde_json::from_value(reply["details"].clone()).unwrap();
+    assert_eq!(refused.dispatch, DispatchStatus::Refused);
+    assert!(refused.identity.session.is_none());
+    assert_eq!(
+        refused.execution_attempts,
+        Some(0),
+        "pre-allocation workspace refusal has authoritative zero effects"
+    );
+    assert!(
+        !refused.retryable_capacity_refusal,
+        "a workspace error is not capacity retry authorization"
+    );
+    let repeated = tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        serde_json::json!({"handle":refused.handle}),
+        &live.root.path().join("refused-repeat.json"),
+    );
+    assert_eq!(repeated["dispatch"], "Refused");
+    assert_eq!(repeated["execution_attempts"], 0);
+    assert_eq!(repeated["identity"], reply["details"]["identity"]);
+    let retried = tool(
+        &live,
+        parent.id,
+        "ovrcr_retry",
+        serde_json::json!({"handle":refused.handle}),
+        &live.root.path().join("refused-retry.json"),
+    );
+    assert_eq!(retried["dispatch"], "Refused");
+    assert!(
+        retried["reason"]
+            .as_str()
+            .unwrap()
+            .contains("zero-effect capacity")
+    );
+    let Response::Inventory { sessions, .. } = live.request(Request::Inspect) else {
+        panic!("inventory")
+    };
+    assert!(
+        sessions.iter().all(
+            |s| !matches!(&s.kind, SessionKind::Agent { name } if name == "pi")
+                || s.id == parent.id
+        ),
+        "no child allocated on refusal"
+    );
+
+    // A real native managed child is now created, but its provider fails before
+    // it can bind. A later exited/non-live child does not refund that execution.
+    let child_entered = live.root.path().join("provider-started");
+    fs::write(
+        &pi,
+        format!(
+            "#!/bin/sh\ncase \" $* \" in *\" --no-approve \"*) : > '{}'; exit 23;; esac\n{}",
+            child_entered.display(),
+            include_str!("fixtures/pi/research_pi.sh")
+        ),
+    )
+    .unwrap();
+    let failed = tool(
+        &live,
+        parent.id,
+        "ovrcr_start",
+        args,
+        &live.root.path().join("post-spawn-failed.json"),
+    );
+    wait_file(&child_entered);
+    assert_eq!(
+        failed["execution_attempts"], 1,
+        "a provider startup failure follows native creation"
+    );
+    assert!(!failed["retryable_capacity_refusal"].as_bool().unwrap());
+    let child: SessionId = serde_json::from_value(failed["identity"]["session"].clone()).unwrap();
+    assert_ne!(child, parent.id);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let Response::Inventory { sessions, .. } = live.request(Request::Inspect) else {
+            panic!("inventory")
+        };
+        if sessions
+            .iter()
+            .find(|s| s.id == child)
+            .is_none_or(|s| !s.phase.is_live())
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "failed provider must exit");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let after = tool(
+        &live,
+        parent.id,
+        "ovrcr_inspect",
+        serde_json::json!({"handle":failed["handle"]}),
+        &live.root.path().join("after-provider-exit.json"),
+    );
+    assert_eq!(
+        after["execution_attempts"], 1,
+        "later resource absence is never zero-effect proof"
+    );
+    let retry = tool(
+        &live,
+        parent.id,
+        "ovrcr_retry",
+        serde_json::json!({"handle":failed["handle"]}),
+        &live.root.path().join("post-spawn-retry.json"),
+    );
+    assert_eq!(retry["dispatch"], "Refused");
     for group in live.session_groups() {
         live.own_group(group);
     }
@@ -728,6 +1091,7 @@ impl ControlProxy {
                     DelegationRequest::MarkHandled { handle, .. } => {
                         ("MarkHandled", handle.clone())
                     }
+                    DelegationRequest::Capabilities { .. } => ("Capabilities", String::new()),
                 };
                 worker_requests
                     .lock()
@@ -1035,6 +1399,307 @@ impl RecoveryFixture {
             .filter(|s| s.kind == SessionKind::Agent { name: "pi".into() } && s.id != self.parent)
             .count()
     }
+}
+
+#[test]
+fn public_legacy_accounting_migration_preserves_effects_and_original_contract_bytes() {
+    let fixture = RecoveryFixture::new();
+    let set = fixture
+        .live
+        .command()
+        .args(["settings", "set", "delegation.max_execution_attempts", "1"])
+        .output()
+        .unwrap();
+    assert!(
+        set.status.success(),
+        "{}",
+        String::from_utf8_lossy(&set.stderr)
+    );
+    fixture.proxy.arm(ControlRule {
+        operation: "Launch",
+        loss: 0,
+        fault: None,
+    });
+    let first = fixture.start();
+    assert_eq!(first["dispatch"], "Unknown");
+    let handle = first["handle"].as_str().unwrap();
+    assert_eq!(fixture.child_count(), 0);
+    let db = rusqlite::Connection::open(fixture.live.config.join("registry.sqlite3")).unwrap();
+    let metadata: String = db
+        .query_row(
+            "SELECT metadata FROM delegations WHERE handle=?1",
+            [handle],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let original: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+    let contract_path = Path::new(original["root"].as_str().unwrap()).join("contract-v1.json");
+    let original_contract = fs::read(&contract_path).unwrap();
+    let save = |value: &serde_json::Value| {
+        db.execute(
+            "UPDATE delegations SET session=NULL,metadata=?1 WHERE handle=?2",
+            rusqlite::params![value.to_string(), handle],
+        )
+        .unwrap();
+    };
+    let legacy = || {
+        let mut value = original.clone();
+        for key in [
+            "execution_attempts",
+            "receipts",
+            "request_digests",
+            "project",
+            "workspace",
+            "previous_request",
+            "successor_request",
+            "retryable_capacity_refusal",
+        ] {
+            value.as_object_mut().unwrap().remove(key);
+        }
+        value
+    };
+    let launch_receipt = |value: &mut serde_json::Value, outcome: &str| {
+        let mut identity = value["identity"].clone();
+        identity["session"] = serde_json::Value::Null;
+        identity["run"] = serde_json::Value::Null;
+        value["receipts"] = serde_json::json!([
+            {"request":handle,"operation":"Prepare","identity":identity,"outcome":"Applied","input":null,"reason":null},
+            {"request":handle,"operation":"Launch","identity":identity,"outcome":outcome,"input":null,"reason":null}
+        ]);
+    };
+    for (name, expected) in [
+        ("legacy launch unknown without resource", Some(1)),
+        ("legacy refusal without proof", None),
+        ("legacy input refusal after launch", Some(1)),
+        ("legacy applied without resource", Some(1)),
+        ("zero contradicts unknown receipt", None),
+        ("prepared contradicts unknown receipt", None),
+        ("unknown predecessor history", None),
+        ("known count survives missing resource", Some(2)),
+    ] {
+        let mut value = legacy();
+        match name {
+            "legacy launch unknown without resource" => value["dispatch"] = "LaunchUnknown".into(),
+            "legacy refusal without proof" => value["dispatch"] = "Refused".into(),
+            "legacy input refusal after launch" | "legacy applied without resource" => {
+                value["dispatch"] = if name.contains("refusal") {
+                    "Refused"
+                } else {
+                    "Applied"
+                }
+                .into();
+                value["identity"]["session"] = 100_000.into();
+                value["identity"]["run"] = 1.into();
+                value["binding"] = serde_json::json!({"provider":"Pi","invocation":"legacy-child","conversation":"legacy-A","generation":1});
+            }
+            "zero contradicts unknown receipt" | "prepared contradicts unknown receipt" => {
+                launch_receipt(&mut value, "Unknown");
+                if name.starts_with("zero") {
+                    value["dispatch"] = "LaunchUnknown".into();
+                    value["execution_attempts"] = 0.into();
+                }
+            }
+            "unknown predecessor history" => {
+                value["dispatch"] = "LaunchUnknown".into();
+                value["identity"]["attempt"] = 2.into();
+                value["previous_request"] = "missing-predecessor".into();
+            }
+            "known count survives missing resource" => {
+                value["dispatch"] = "Refused".into();
+                value["execution_attempts"] = 2.into();
+            }
+            _ => unreachable!(),
+        }
+        save(&value);
+        let migrated = fixture.reconcile(handle);
+        assert_eq!(migrated.execution_attempts, expected, "{name}");
+        assert!(migrated.resources.current_session.is_none(), "{name}");
+        let recovered = fixture.recover(handle);
+        assert_eq!(
+            recovered["execution_attempts"],
+            serde_json::to_value(expected).unwrap(),
+            "{name}: {recovered}"
+        );
+        let repeated = fixture.reconcile(handle);
+        assert_eq!(repeated.execution_attempts, expected, "{name}");
+        assert_eq!(repeated.identity, migrated.identity, "{name}");
+        assert_eq!(repeated.receipts, migrated.receipts, "{name}");
+        let retry = fixture.tool("ovrcr_retry", serde_json::json!({"handle":handle}));
+        assert_eq!(retry["dispatch"], "Refused", "{name}");
+        assert_eq!(
+            fixture.child_count(),
+            0,
+            "legacy migration must not invent a retry: {name}"
+        );
+    }
+    // Reconstruct the actual pre-#327 canonical document. This tests binary
+    // migration of immutable bytes, not merely a new contract with default fields.
+    let modern = std::str::from_utf8(&original_contract).unwrap();
+    let boundary = modern.rfind(",\"limits\":").unwrap();
+    let old_bytes = format!("{}}}", &modern[..boundary]).into_bytes();
+    fs::write(&contract_path, &old_bytes).unwrap();
+    let hash = std::process::Command::new("node").args(["--input-type=module", "-e", "import {createHash} from 'node:crypto';import {readFileSync} from 'node:fs';console.log(createHash('sha256').update(readFileSync(process.argv[1])).digest('hex'));"]).arg(&contract_path).output().unwrap();
+    assert!(hash.status.success());
+    let mut value = legacy();
+    value["contract_digest"] = String::from_utf8(hash.stdout).unwrap().trim().into();
+    save(&value);
+    let intent = fixture
+        .live
+        .config
+        .join("parent-intents")
+        .join(format!("{handle}.json"));
+    fs::write(&intent, &old_bytes).unwrap();
+    let prepared = fixture.reconcile(handle);
+    assert_eq!(prepared.execution_attempts, Some(0));
+    let started: AssignmentSnapshot = serde_json::from_value(fixture.recover(handle)).unwrap();
+    assert_eq!(started.dispatch, DispatchStatus::Applied);
+    assert_eq!(started.execution_attempts, Some(1));
+    assert_eq!(
+        fs::read(&contract_path).unwrap(),
+        old_bytes,
+        "migration must retain exact original contract bytes"
+    );
+    wait_file(&started.brief.with_extension("json.started"));
+    assert_eq!(fixture.input_count(&started), 1);
+    assert_eq!(fixture.child_count(), 1);
+    for changed in ["scope", "nondefault limit"] {
+        let mut contract: serde_json::Value = serde_json::from_slice(&old_bytes).unwrap();
+        if changed == "scope" {
+            contract["scope"] = "Changed task".into();
+        } else {
+            contract["limits"] = serde_json::json!({"max_execution_attempts":1});
+        }
+        fs::write(&intent, serde_json::to_vec(&contract).unwrap()).unwrap();
+        let refused = fixture.recover(handle);
+        assert_eq!(refused["dispatch"], "Refused", "{changed}: {refused}");
+        assert_eq!(fixture.reconcile(handle).execution_attempts, Some(1));
+        assert_eq!(fixture.input_count(&started), 1);
+        assert_eq!(fs::read(&contract_path).unwrap(), old_bytes);
+    }
+    fs::write(&intent, &old_bytes).unwrap();
+    let same: AssignmentSnapshot = serde_json::from_value(fixture.recover(handle)).unwrap();
+    assert_eq!(same.identity, started.identity);
+    assert_eq!(same.receipts, started.receipts);
+    assert_eq!(same.execution_attempts, Some(1));
+    assert_eq!(fixture.input_count(&same), 1);
+
+    // A clarification must reuse the old contract path and bytes. Recovering
+    // the initial request after that version advance still uses its first digest.
+    let current = followups::complete(&fixture, &same);
+    let clarified: AssignmentSnapshot =
+        serde_json::from_value(followups::followup(&fixture, &current, None)).unwrap();
+    assert_eq!(clarified.result_version, 2);
+    assert_eq!(clarified.execution_attempts, Some(1));
+    let clarified = followups::complete(&fixture, &clarified);
+    let replayed: AssignmentSnapshot = serde_json::from_value(fixture.recover(handle)).unwrap();
+    assert_eq!(replayed.result_version, 2);
+    assert_eq!(replayed.execution_attempts, Some(1));
+    assert_eq!(fs::read(&contract_path).unwrap(), old_bytes);
+
+    let mut revised: ResearchContract = serde_json::from_slice(&old_bytes).unwrap();
+    revised.scope = "Clarify the original README citation.".into();
+    fixture.proxy.arm(ControlRule {
+        operation: "Followup",
+        loss: 2,
+        fault: Some(("followup-after-files", 0)),
+    });
+    let pending: AssignmentSnapshot =
+        serde_json::from_value(followups::followup(&fixture, &clarified, Some(revised))).unwrap();
+    assert_eq!(pending.result_version, 2);
+    let request = pending.receipts.last().unwrap().request.clone();
+    let private = fixture
+        .live
+        .config
+        .join("parent-intents")
+        .join(format!("followup-{request}.json"));
+    let mut saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(&private).unwrap()).unwrap();
+    saved["revised_contract"]
+        .as_object_mut()
+        .unwrap()
+        .remove("limits");
+    saved["revised_contract"]
+        .as_object_mut()
+        .unwrap()
+        .remove("previous_request");
+    fs::write(&private, serde_json::to_vec(&saved).unwrap()).unwrap();
+    let root = contract_path.parent().unwrap();
+    let contract_v2 = root.join("contract-v2.json");
+    let modern = fs::read_to_string(&contract_v2).unwrap();
+    let boundary = modern.rfind(",\"limits\":").unwrap();
+    let legacy_revision = format!("{}}}", &modern[..boundary]).into_bytes();
+    fs::write(&contract_v2, &legacy_revision).unwrap();
+    let brief_v3 = root.join("brief-v3.json");
+    let mut brief: serde_json::Value =
+        serde_json::from_slice(&fs::read(&brief_v3).unwrap()).unwrap();
+    brief["contract"].as_object_mut().unwrap().remove("limits");
+    brief["contract"]
+        .as_object_mut()
+        .unwrap()
+        .remove("previous_request");
+    let legacy_brief = serde_json::to_vec_pretty(&brief).unwrap();
+    fs::write(&brief_v3, &legacy_brief).unwrap();
+    let mut payload = serde_json::to_vec(&(
+        &pending.identity,
+        pending.result_version,
+        saved["expected_control_epoch"].as_u64().unwrap(),
+        saved["text"].as_str().unwrap(),
+    ))
+    .unwrap();
+    payload.pop();
+    payload.push(b',');
+    payload.extend_from_slice(&legacy_revision);
+    payload.push(b']');
+    let payload_path = root.join(format!("followup-{request}.json"));
+    fs::write(&payload_path, &payload).unwrap();
+    let hash = |path: &Path| {
+        let output = std::process::Command::new("node").args(["--input-type=module", "-e", "import {createHash} from 'node:crypto';import {readFileSync} from 'node:fs';console.log(createHash('sha256').update(readFileSync(process.argv[1])).digest('hex'));"]).arg(path).output().unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    let metadata: String = db
+        .query_row(
+            "SELECT metadata FROM delegations WHERE handle=?1",
+            [handle],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let mut record: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+    let last = record["followups"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap();
+    last["digest"] = hash(&payload_path).into();
+    last["contract_digest"] = hash(&contract_v2).into();
+    last["brief_digest"] = hash(&brief_v3).into();
+    db.execute(
+        "UPDATE delegations SET metadata=?1 WHERE handle=?2",
+        rusqlite::params![record.to_string(), handle],
+    )
+    .unwrap();
+    let recovered: AssignmentSnapshot = serde_json::from_value(fixture.tool(
+        "ovrcr_followup",
+        serde_json::json!({"handle":handle,"request":request}),
+    ))
+    .unwrap();
+    assert_eq!(recovered.result_version, 3);
+    assert_eq!(recovered.identity.contract, 2);
+    assert_eq!(recovered.execution_attempts, Some(1));
+    assert_eq!(fixture.child_count(), 1);
+    let completed = followups::complete(&fixture, &recovered);
+    assert_eq!(completed.execution_attempts, Some(1));
+    assert_eq!(fixture.input_count(&completed), 1);
+    assert_eq!(fs::read(&contract_path).unwrap(), old_bytes);
+    assert_eq!(fs::read(&contract_v2).unwrap(), legacy_revision);
+    assert_eq!(fs::read(&brief_v3).unwrap(), legacy_brief);
+    let again: AssignmentSnapshot = serde_json::from_value(fixture.tool(
+        "ovrcr_followup",
+        serde_json::json!({"handle":handle,"request":request}),
+    ))
+    .unwrap();
+    assert_eq!(again.receipts, completed.receipts);
+    assert_eq!(again.execution_attempts, Some(1));
 }
 
 #[cfg(feature = "acceptance-diagnostics")]

@@ -1,10 +1,11 @@
 # Pi research assignments
 
-A managed Pi parent can start one read-only assignment in an existing OVRCR
-workspace, keep working, and explicitly collect the child's result. Launch Pi
+A managed Pi parent can start independent read-only assignments in existing OVRCR
+workspaces, keep working, and explicitly collect each child's result. Launch Pi
 through `ovrcr agent run pi -- pi` or the Dashboard picker. The managed extension
-registers `ovrcr_start`, `ovrcr_inspect`, `ovrcr_collect`, `ovrcr_followup`,
-`ovrcr_accept`, `ovrcr_confirm_return`, `ovrcr_publish`, `ovrcr_wait` and `ovrcr_mark_handled`.
+registers `ovrcr_capabilities`, `ovrcr_start`, `ovrcr_retry`, `ovrcr_inspect`,
+`ovrcr_collect`, `ovrcr_followup`, `ovrcr_accept`, `ovrcr_confirm_return`, `ovrcr_publish`, `ovrcr_wait`
+and `ovrcr_mark_handled`.
 A plain Pi process has no delegation authority.
 
 ## Start and collect
@@ -23,8 +24,11 @@ in `ovrcr_start`. The workspace `name` and `branch` are display labels, not IDs;
 the `id` stays stable when the checkout branch changes. When a branch is
 ambiguous or detached, use `workspace get --project my-project --path /absolute/worktree/path`.
 
-Call `ovrcr_start` with those IDs, a bounded scope, an exact model provider and
-model ID, and the evidence required for acceptance:
+Call `ovrcr_capabilities` with `{}` to discover allowed installed selections,
+defaults and available slots. If several choices remain without a configured
+default, Pi selects one from the returned choices. Explicit selections never
+fall back. Call `ovrcr_start` with the workspace IDs, a bounded scope, the
+selection (or omit it to use the default), and required acceptance evidence:
 
 ```json
 {
@@ -209,6 +213,19 @@ failure or a lost wake. A parseable file without that intent cannot acquire
 child authorship. Partial, changed, foreign and escaping files stay invalid;
 unresolved intent and identifiable late evidence are retained. A stale run or
 conversation cannot satisfy current collection or handling.
+A capacity refusal has `retryable_capacity_refusal: true`. Keep that assignment
+pending, inspect it, then call `ovrcr_retry` with its handle after capacity returns.
+The retry creates a new request and monotonically increasing attempt identity,
+preserving the logical task, scope and exact effective choices/limits. It persists
+that successor before sending. Repeating retry with the predecessor handle
+reconciles the same successor; it cannot launch another child. If the successor
+is itself capacity-refused, retry its returned handle on the next reconciliation.
+The predecessor stays refused and reports `successor_request`. Unknown or partial
+effects never qualify, regardless of current free capacity.
+
+`execution_attempts` is the Server's consumed execution count; `null` preserves
+legacy or unknown accounting. Only proven zero execution is reported as zero.
+A stopped or missing child does not refund a possibly consumed attempt.
 
 ## Child result and control
 
@@ -251,6 +268,52 @@ never reused; a later follow-up may skip their version numbers while keeping the
 immutable files and receipts. Unexpected reporting binding changes make control
 Uncertain and require supported recovery rather than ordinary return confirmation.
 See [Human control](pi-human-control.md) for Dashboard steps and lost-reply rules.
+
+## Delegation policy
+
+Delegation policy uses the Server's existing `dashboard.toml` settings document.
+The Settings view and `ovrcr settings set` use the same typed catalog, writer and
+published snapshot. For example:
+
+```toml
+[delegation]
+enabled = true
+allowed_harnesses = ["pi"]
+allowed_models = ["anthropic/claude-sonnet-4-5"]
+default_harness = "pi"
+default_model = "anthropic/claude-sonnet-4-5"
+max_live_children = 50
+# Optional per logical task; unset by default:
+# max_execution_attempts = 2
+```
+
+The model is illustrative and still requires an available exact inventory entry.
+`allowed_models = []` adds no model restriction. A configured harness does not
+install or enable an adapter. Invalid policy produces ordinary settings findings;
+dispatch refuses malformed policy rather than using a permissive fallback.
+Explicit assignment choices override defaults, subject to the allowlists and
+implemented capabilities. Unsupported mandatory token, cost or native-helper
+limits are refused before dispatch.
+
+`max_live_children` accepts 1 through 50 and adds a delegation limit. Ordinary
+sessions and delegated children share the existing fifty Running/Paused slots;
+stopped and archived sessions consume none. There is no four-worker limit.
+An assignment may require `min_free_slots_after_launch` (0 through 49) in
+`required_limits`. Admission checks that threshold atomically with the existing
+lifecycle lock; it does not reserve those slots against later ordinary creators.
+Requested limits cannot loosen Server policy. Native descendants are not separate
+inventoried OVRCR sessions. This Pi research flow advertises no native-helper capability because its managed
+launch restricts the built-in tools and disables discovered extensions and skills.
+This is an adapter capability gap, not a global policy ban. Later provider
+adapters can permit verified helpers within their child contracts while applying
+the same settings policy. Native helper use and descendant accounting require
+separate provider acceptance.
+
+`max_execution_attempts` is an optional positive integer for one logical task.
+Known zero-effect refusals, including a full instance, consume no execution
+budget. A launch that started or may have started consumes one execution attempt.
+The retry identity still advances after a capacity refusal. Uncertain effects do
+not become retryable when capacity returns.
 
 ## Storage and diagnostics
 

@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync, rmSync, chmodSync, symlinkSync, appendFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, chmodSync, symlinkSync, appendFileSync, mkdirSync, openSync, closeSync, constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { createHost } from "./fixtures/pi/pi_host.mjs";
 
@@ -18,10 +19,10 @@ test("managed Pi exposes research assignment and explicit collection tools", asy
     writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(new URL("../src/ovrcr-reporting-transport.mjs", import.meta.url)));
     writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
     host = await createHost(join(dir, "reporting.mjs"));
-    assert.deepEqual(host.tools(), ["ovrcr_accept", "ovrcr_collect", "ovrcr_confirm_return", "ovrcr_followup", "ovrcr_inspect", "ovrcr_mark_handled", "ovrcr_publish", "ovrcr_start", "ovrcr_wait"]);
+    assert.deepEqual(host.tools(), ["ovrcr_accept", "ovrcr_capabilities", "ovrcr_collect", "ovrcr_confirm_return", "ovrcr_followup", "ovrcr_inspect", "ovrcr_mark_handled", "ovrcr_publish", "ovrcr_retry", "ovrcr_start", "ovrcr_wait"]);
     assert.deepEqual(host.toolDefinition("ovrcr_publish").parameters.required, ["handle", "submission"]);
     assert.deepEqual(host.toolDefinition("ovrcr_collect").parameters.required, ["handle"]);
-    assert.deepEqual(host.toolDefinition("ovrcr_start").parameters.anyOf, [{ required: ["handle"] }, { required: ["project", "workspace", "scope", "model_provider", "model", "acceptance_evidence"] }]);
+    assert.deepEqual(host.toolDefinition("ovrcr_start").parameters.anyOf, [{ required: ["handle"] }, { required: ["project", "workspace", "scope", "acceptance_evidence"] }]);
     assert.deepEqual(host.toolDefinition("ovrcr_followup").parameters.anyOf, [{required:["handle","request"]},{required:["handle","expected_identity","expected_result_version","expected_control_epoch","text"]}]);
     assert.deepEqual(host.toolDefinition("ovrcr_accept").parameters.required, ["handle","identity","result_version","result_digest","expected_control_epoch"]);
     const malformed = await host.tool("ovrcr_followup", {handle:"assignment",expected_identity:{},expected_result_version:1,expected_control_epoch:1,text:""});
@@ -56,6 +57,7 @@ let input = ''; for await (const bytes of process.stdin) input += bytes;
 const request = JSON.parse(input); const operation = Object.keys(request)[0];
 appendFileSync(${JSON.stringify(calls)}, operation + '\\n');
 let value = existsSync(${JSON.stringify(state)}) ? JSON.parse(readFileSync(${JSON.stringify(state)})) : null;
+if (operation === 'Capabilities') { console.log(JSON.stringify({resolved_choice:{provider:'pi',model_provider:'test',model:'fixture-model'},effective_limits:{max_live_children:50,max_execution_attempts:null,min_free_slots_after_launch:0,max_cost_microusd:null,max_output_tokens:null,max_native_children:null},capabilities:['read','result_file']})); process.exit(0); }
 if (operation === 'Prepare') {
   const contract = request.Prepare.contract;
   value ??= { handle: contract.request, identity: {instance:'i',workflow:contract.workflow,controller:contract.controller,controller_epoch:1,task:contract.task,attempt:1,contract:1,request:contract.request,session:null,run:null}, dispatch:'Prepared', control:{epoch:1}, receipts:[] };
@@ -243,6 +245,40 @@ process.stdout.write(JSON.stringify({ cursor: { server_epoch: "fixture", sequenc
     assert.equal(JSON.parse(readFileSync(statePath, "utf8")).phase, "B");
   } finally {
     await host?.emit({ type: "session_shutdown", reason: "quit" });
+    process.env = before;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("retry rejects a FIFO intent before a blocking open can wait for a writer", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ovrcr-retry-fifo-"));
+  const before = { ...process.env };
+  let release;
+  try {
+    process.env.OVRCR_AGENT_SOCKET = "/fixture/socket";
+    process.env.OVRCR_AGENT_TOKEN = "fixture-token";
+    process.env.OVRCR_DELEGATION_HOME = dir;
+    mkdirSync(join(dir, "parent-intents"), { mode: 0o700 });
+    const fifo = join(dir, "parent-intents", "fifo.json");
+    execFileSync("mkfifo", ["-m", "600", fifo]);
+    const source = readFileSync(new URL("../src/pi-reporting-extension.mjs", import.meta.url), "utf8").replace("__OVRCR_BINARY__", JSON.stringify("/fixture/ovrcr"));
+    writeFileSync(join(dir, "reporting.mjs"), source);
+    writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(new URL("../src/ovrcr-reporting-transport.mjs", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
+    const host = await createHost(join(dir, "reporting.mjs"));
+    let waitedForWriter = false;
+    // Release the original defect so a failed regression cannot hang Node's
+    // filesystem worker. The fixed reader refuses without needing this writer.
+    release = setTimeout(() => {
+      waitedForWriter = true;
+      closeSync(openSync(fifo, constants.O_RDWR | constants.O_NONBLOCK));
+    }, 2000);
+    const reply = await host.tool("ovrcr_retry", { handle: "fifo" });
+    assert.equal(waitedForWriter, false, "intent recovery blocked until a FIFO writer appeared");
+    assert.equal(reply.details.dispatch, "Refused");
+    assert.match(reply.details.reason, /regular bounded private owned file/);
+  } finally {
+    clearTimeout(release);
     process.env = before;
     rmSync(dir, { recursive: true, force: true });
   }

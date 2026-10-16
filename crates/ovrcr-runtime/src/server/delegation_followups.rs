@@ -75,7 +75,7 @@ impl Record {
         self.reason = reason.map(str::to_owned);
     }
 
-    fn unresolved_input(&self) -> bool {
+    pub(super) fn unresolved_input(&self) -> bool {
         self.receipts.iter().any(|r| {
             matches!(
                 r.operation,
@@ -153,6 +153,56 @@ fn revision_contract(
     Ok(revised)
 }
 
+fn matching_legacy_brief(
+    bytes: Vec<u8>,
+    contract: &ResearchContract,
+    expected: &str,
+) -> Result<Vec<u8>> {
+    if digest(&bytes) != expected && legacy_contract_bytes(contract)?.is_some() {
+        let mut value: serde_json::Value = serde_json::from_slice(&bytes)?;
+        if let Some(nested) = value
+            .get_mut("contract")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            nested.remove("limits");
+            nested.remove("previous_request");
+            let legacy = serde_json::to_vec_pretty(&value)?;
+            if digest(&legacy) == expected {
+                return Ok(legacy);
+            }
+        }
+    }
+    Ok(bytes)
+}
+
+fn followup_payload(
+    expected: &AssignmentIdentity,
+    version: u32,
+    control_epoch: u64,
+    text: &str,
+    revised: &Option<ResearchContract>,
+    saved_digest: Option<&str>,
+) -> Result<Vec<u8>> {
+    let mut payload = serde_json::to_vec(&(expected, version, control_epoch, text, revised))?;
+    // Reconstruct only the old canonical nested shape, and only under its exact
+    // durable digest. Changed semantics cannot inherit a prior request identity.
+    if let Some(saved) = saved_digest
+        && digest(&payload) != saved
+        && let Some(revised) = revised.as_ref()
+        && let Some(legacy) = legacy_contract_bytes(revised)?
+    {
+        let mut candidate = serde_json::to_vec(&(expected, version, control_epoch, text))?;
+        candidate.pop();
+        candidate.push(b',');
+        candidate.extend_from_slice(&legacy);
+        candidate.push(b']');
+        if digest(&candidate) == saved {
+            payload = candidate;
+        }
+    }
+    Ok(payload)
+}
+
 impl ServerState {
     pub(super) fn followup(
         &self,
@@ -171,13 +221,18 @@ impl ServerState {
             ));
         }
         let mut record = self.owned_assignment(&auth, &handle)?;
-        let payload = serde_json::to_vec(&(
-            expected.clone(),
+        let payload = followup_payload(
+            &expected,
             expected_result_version,
             expected_control_epoch,
             &text,
             &revised,
-        ))?;
+            record
+                .followups
+                .iter()
+                .find(|f| f.request == request)
+                .map(|f| f.digest.as_str()),
+        )?;
         let payload_digest = digest(&payload);
         let intent = if let Some(intent) = record
             .followups
@@ -273,7 +328,10 @@ impl ServerState {
                 .fold(record.result_version, u32::max)
                 .checked_add(1)
                 .context("result version exhausted")?;
-            let bytes = serde_json::to_vec(&contract)?;
+            let bytes = contract_bytes(
+                &contract,
+                (!changed).then_some(record.contract_digest.as_str()),
+            )?;
             let brief =
                 followup_brief(&record, &target, result_version, &contract, &request, &text)?;
             let intent = FollowupIntent {
@@ -325,9 +383,9 @@ impl ServerState {
             &request,
             &text,
         )?;
-        if digest(&serde_json::to_vec(&contract)?) != intent.contract_digest
-            || digest(&brief) != intent.brief_digest
-        {
+        let brief = matching_legacy_brief(brief, &contract, &intent.brief_digest)?;
+        let bytes = contract_bytes(&contract, Some(&intent.contract_digest))?;
+        if digest(&bytes) != intent.contract_digest || digest(&brief) != intent.brief_digest {
             bail!("followup publication does not match durable intent");
         }
         let directory = Directory::open(&record.root, false)?;
@@ -338,7 +396,7 @@ impl ServerState {
         publish_matching(
             &directory,
             &format!("contract-v{}.json", intent.target.contract),
-            &serde_json::to_vec(&contract)?,
+            &bytes,
         )?;
         publish_matching(
             &directory,
@@ -635,6 +693,62 @@ pub(super) fn read_version_submission(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_nested_revision_requires_exact_saved_payload_digest() {
+        let dir = tempfile::tempdir().unwrap();
+        let record =
+            super::super::tests::record(dir.path().join("assignment"), DispatchStatus::Applied);
+        let contract = read_contract(&record).unwrap();
+        let text = "scoped clarification";
+        let mut old = serde_json::to_vec(&(&record.identity, 1_u32, 1_u64, text)).unwrap();
+        old.pop();
+        old.push(b',');
+        old.extend_from_slice(&legacy_contract_bytes(&contract).unwrap().unwrap());
+        old.push(b']');
+        let hash = digest(&old);
+        assert_eq!(
+            followup_payload(
+                &record.identity,
+                1,
+                1,
+                text,
+                &Some(contract.clone()),
+                Some(&hash)
+            )
+            .unwrap(),
+            old
+        );
+        let mut changed = contract.clone();
+        changed.limits.max_execution_attempts = Some(2);
+        for revised in [changed, {
+            let mut c = contract.clone();
+            c.scope.push_str(" changed");
+            c
+        }] {
+            assert_ne!(
+                digest(
+                    &followup_payload(&record.identity, 1, 1, text, &Some(revised), Some(&hash))
+                        .unwrap()
+                ),
+                hash
+            );
+        }
+        assert_ne!(
+            digest(
+                &followup_payload(
+                    &record.identity,
+                    1,
+                    1,
+                    "changed text",
+                    &Some(contract),
+                    Some(&hash)
+                )
+                .unwrap()
+            ),
+            hash
+        );
+    }
 
     #[test]
     fn contract_revision_changes_only_scope_and_evidence() {

@@ -30,9 +30,10 @@ pub enum SettingWrite {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shape {
     Toggle,
-    Typed(&'static str),
     Text(&'static str),
     Path(&'static str),
+    /// A TOML value edited as a whole (numbers and simple lists).
+    Typed(&'static str),
     Pick {
         options: &'static [&'static str],
         expected: &'static str,
@@ -244,6 +245,16 @@ fn value_of(settings: &Settings, path: &str) -> Option<String> {
         "picker_roots" => display(&settings.picker_roots),
         "agents" => display(&settings.agents),
         "launch_choices" => display_choices(&settings.launch_choices),
+        "delegation.enabled" => display(&settings.delegation.enabled),
+        "delegation.allowed_harnesses" => display(&settings.delegation.allowed_harnesses),
+        "delegation.allowed_models" => display(&settings.delegation.allowed_models),
+        "delegation.default_harness" => Some(settings.delegation.default_harness.name().into()),
+        "delegation.default_model" => settings.delegation.default_model.clone(),
+        "delegation.max_live_children" => display(&settings.delegation.max_live_children),
+        "delegation.max_execution_attempts" => settings
+            .delegation
+            .max_execution_attempts
+            .and_then(|v| display(&v)),
         "quota.enabled" => display(&quota.enabled),
         "quota.claude.probe" => display(&quota.claude_probe),
         "quota.codex.command" => path_text(&quota.codex.command),
@@ -256,7 +267,7 @@ fn value_of(settings: &Settings, path: &str) -> Option<String> {
     }
 }
 
-const CATALOG: [Entry; 21] = [
+const CATALOG: [Entry; 28] = [
     Entry {
         path: "desktop_notifications",
         shape: Shape::Toggle,
@@ -497,6 +508,92 @@ const CATALOG: [Entry; 21] = [
         value: |settings| value_of(settings, "delegation.progress_deadline_ms"),
         show_off: |_| false,
     },
+    Entry {
+        path: "delegation.enabled",
+        shape: Shape::Toggle,
+        owner: SettingOwner::Server,
+        group: "Delegation",
+        label: "Delegation enabled",
+        off_state: None,
+        about: &[
+            "Disabling prevents new dispatches; existing assignments remain inspectable and collectable.",
+        ],
+        value: |settings| value_of(settings, "delegation.enabled"),
+        show_off: |_| false,
+    },
+    Entry {
+        path: "delegation.allowed_harnesses",
+        shape: Shape::Typed("an array of harness names"),
+        owner: SettingOwner::Server,
+        group: "Delegation",
+        label: "Allowed harnesses",
+        off_state: None,
+        about: &["Configured choices still require an implemented, available adapter."],
+        value: |settings| value_of(settings, "delegation.allowed_harnesses"),
+        show_off: |_| false,
+    },
+    Entry {
+        path: "delegation.allowed_models",
+        shape: Shape::Typed("an array of backend/model strings"),
+        owner: SettingOwner::Server,
+        group: "Delegation",
+        label: "Allowed models",
+        off_state: None,
+        about: &["Empty adds no model restriction; only advertised models can launch."],
+        value: |settings| value_of(settings, "delegation.allowed_models"),
+        show_off: |_| false,
+    },
+    Entry {
+        path: "delegation.default_harness",
+        shape: Shape::Pick {
+            options: crate::DelegationHarness::NAMES,
+            expected: "a supported harness name",
+        },
+        owner: SettingOwner::Server,
+        group: "Delegation",
+        label: "Default harness",
+        off_state: None,
+        about: &["Used only when the assignment omits its harness."],
+        value: |settings| value_of(settings, "delegation.default_harness"),
+        show_off: |_| false,
+    },
+    Entry {
+        path: "delegation.default_model",
+        shape: Shape::Text("a backend/model string"),
+        owner: SettingOwner::Server,
+        group: "Delegation",
+        label: "Default model",
+        off_state: None,
+        about: &["Explicit unavailable models never fall back to this default."],
+        value: |settings| value_of(settings, "delegation.default_model"),
+        show_off: |_| false,
+    },
+    Entry {
+        path: "delegation.max_live_children",
+        shape: Shape::Typed("an integer from 1 to 50"),
+        owner: SettingOwner::Server,
+        group: "Delegation",
+        label: "Maximum live children",
+        off_state: None,
+        about: &[
+            "Additional delegation limit; all ordinary sessions still share the fifty live slots.",
+        ],
+        value: |settings| value_of(settings, "delegation.max_live_children"),
+        show_off: |_| false,
+    },
+    Entry {
+        path: "delegation.max_execution_attempts",
+        shape: Shape::Typed("a positive integer"),
+        owner: SettingOwner::Server,
+        group: "Delegation",
+        label: "Maximum execution attempts",
+        off_state: None,
+        about: &[
+            "Optional per logical task. Zero-effect capacity refusals consume no execution budget; possibly started launches do.",
+        ],
+        value: |settings| value_of(settings, "delegation.max_execution_attempts"),
+        show_off: |_| false,
+    },
 ];
 
 #[cfg(test)]
@@ -535,6 +632,13 @@ mod tests {
                 "agents",
                 "launch_choices",
                 "delegation.progress_deadline_ms",
+                "delegation.enabled",
+                "delegation.allowed_harnesses",
+                "delegation.allowed_models",
+                "delegation.default_harness",
+                "delegation.default_model",
+                "delegation.max_live_children",
+                "delegation.max_execution_attempts",
             ]
         );
         let groups: Vec<_> = entries().iter().map(|entry| entry.group).collect();
@@ -756,6 +860,11 @@ mod tests {
     fn every_entry_has_a_top_level_write_and_a_reader() {
         let settings = Settings {
             title_model: Some("pi/test".into()),
+            delegation: crate::DelegationSettings {
+                default_model: Some("test/model".into()),
+                max_execution_attempts: Some(2),
+                ..Default::default()
+            },
             ..Settings::default()
         };
         for entry in entries() {
