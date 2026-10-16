@@ -369,6 +369,194 @@ fn lost_archive_reply_reconciles_original_receipt_without_another_owned_stop() {
 }
 
 #[cfg(feature = "acceptance-diagnostics")]
+struct ArchiveRefreshRelease(std::path::PathBuf);
+#[cfg(feature = "acceptance-diagnostics")]
+impl Drop for ArchiveRefreshRelease {
+    fn drop(&mut self) {
+        let _ = fs::write(&self.0, "release captured refresh");
+    }
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+#[test]
+fn archived_exit_refresh_cannot_recreate_barrier_after_completed_archive() {
+    let f = OwnedFollowup::new();
+    let signals = count_owned_child_terms(&f);
+    let started: AssignmentSnapshot = serde_json::from_value(f.start()).unwrap();
+    let child = complete(&f, &started);
+    let id = child.identity.session.unwrap();
+    let run = child.identity.run.unwrap();
+    let delivered = declare(
+        &f,
+        &declaration(
+            &child,
+            "exit-refresh-delivered",
+            None,
+            RetentionChoice::ArchiveEligible,
+        ),
+    );
+    let request = archive_request(
+        &child,
+        "exit-refresh-archive",
+        reference(&delivered, "exit-refresh-delivered"),
+    );
+    let fault = f.live.root.path().join("fault");
+    let refresh_identity = format!("{}-{}", id.0, run.0);
+    let release = ArchiveRefreshRelease(fault.with_extension("release"));
+    fs::write(
+        &fault,
+        format!("archive-exit-refresh-captured|{refresh_identity}|0"),
+    )
+    .unwrap();
+    f.proxy.arm(ControlRule {
+        operation: "Archive",
+        loss: 1,
+        fault: None,
+    });
+    let output = f.live.root.path().join("exit-refresh-archive.json");
+    let command = format!(
+        "tool:{}",
+        serde_json::json!({
+            "name":"ovrcr_archive", "args":request, "output":output, "background":true
+        })
+    );
+    assert_eq!(
+        f.live.request(Request::SendTerminal {
+            session: f.parent,
+            text: command,
+            submit: true
+        }),
+        Response::Ok
+    );
+    wait_exact_fault_marker(
+        &fault.with_extension("hit"),
+        "archive-exit-refresh-captured",
+    );
+    wait_file(&output);
+    let reply: serde_json::Value = serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
+    assert!(reply.get("error").is_none(), "{reply}");
+    assert_eq!(reply["details"]["transport"], "Unknown");
+    let archived_run = SessionRunId(run.0 + 1);
+    assert_eq!(stopped_row(&f, id), (archived_run.0, true, 1));
+    let durable = persisted(&f, &child.handle);
+    assert!(durable["control"]["barrier"].is_null());
+    assert_eq!(durable["archive_receipts"].as_array().unwrap().len(), 1);
+    assert!(
+        matches!(
+            f.live.request(Request::ReadTerminal {
+                session: id,
+                max_lines: Some(1)
+            }),
+            Response::Error {
+                code: ErrorCode::Conflict,
+                ..
+            }
+        ),
+        "archive removed the old Session from the live cache before refresh resumes"
+    );
+    let signal_bytes = assert_one_owned_term(&signals);
+    eprintln!(
+        "ARCHIVE_REFRESH_BEFORE_RELEASE captured_run={} retained_run={} archived=true cached_terminal=false barrier=None",
+        run.0, archived_run.0
+    );
+    fs::remove_file(fault.with_extension("hit")).unwrap();
+    fs::write(
+        &fault,
+        format!("archive-refresh-completed|{refresh_identity}|0"),
+    )
+    .unwrap();
+    drop(release);
+    wait_exact_fault_marker(&fault.with_extension("hit"), "archive-refresh-completed");
+    let replay = archive(&f, &request);
+    eprintln!(
+        "ARCHIVE_REFRESH_AFTER_RELEASE owner={:?} barrier={:?} receipt={:?}",
+        replay.control.owner,
+        replay.control.barrier,
+        receipt(&replay, "exit-refresh-archive").outcome
+    );
+    assert_archived(&replay, "exit-refresh-archive");
+    assert_eq!(replay.archive_receipts.len(), 1);
+    assert_eq!(
+        fs::read(&signals).unwrap(),
+        signal_bytes,
+        "replay sends no second owned stop"
+    );
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+#[test]
+fn reopened_run_with_historical_archive_still_refreshes_attribution() {
+    let f = OwnedFollowup::new();
+    let started: AssignmentSnapshot = serde_json::from_value(f.start()).unwrap();
+    let child = complete(&f, &started);
+    let id = child.identity.session.unwrap();
+    let run = child.identity.run.unwrap();
+    let delivered = declare(
+        &f,
+        &declaration(
+            &child,
+            "reopen-delivered",
+            None,
+            RetentionChoice::ArchiveEligible,
+        ),
+    );
+    let request = archive_request(
+        &child,
+        "reopen-archive",
+        reference(&delivered, "reopen-delivered"),
+    );
+    assert_archived(&archive(&f, &request), "reopen-archive");
+    let archived_run = SessionRunId(run.0 + 1);
+    assert_eq!(
+        f.live.request(Request::UnarchiveSession {
+            session: id,
+            expected_run: archived_run
+        }),
+        Response::Ok
+    );
+    let returned_run = SessionRunId(archived_run.0 + 1);
+    let Response::CreatedSession(reopened) = f.live.request(Request::ReopenSession {
+        session: id,
+        expected_run: returned_run,
+        acknowledge_stopped: false,
+    }) else {
+        panic!("explicitly reopen the archived child");
+    };
+    assert_eq!(reopened.run, SessionRunId(returned_run.0 + 1));
+    assert!(!reopened.archived);
+    let fault = f.live.root.path().join("fault");
+    let refresh_identity = format!("{}-{}", id.0, reopened.run.0);
+    let _ = fs::remove_file(fault.with_extension("hit"));
+    fs::write(
+        &fault,
+        format!("archive-refresh-completed|{refresh_identity}|0"),
+    )
+    .unwrap();
+    assert_eq!(
+        f.live.request(Request::SetSessionTitle {
+            session: id,
+            title: Some("reopened attribution control".into())
+        }),
+        Response::Ok
+    );
+    wait_exact_fault_marker(&fault.with_extension("hit"), "archive-refresh-completed");
+    let after = f.reconcile(&child.handle);
+    assert_eq!(after.control.owner, ovrcr_protocol::ControlOwner::Uncertain);
+    assert_eq!(
+        after.control.barrier,
+        Some(ovrcr_protocol::ControlBarrier::AttributionChanged)
+    );
+    assert!(after.control.attribution_invalidated);
+    assert!(matches!(
+        receipt(&after, "reopen-archive").outcome,
+        ArchiveOutcome::Archived { .. }
+    ));
+    let current = current(&f, id);
+    assert_eq!(current.run, reopened.run);
+    assert!(!current.archived);
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
 #[test]
 fn archive_transaction_rollback_keeps_sql_cache_and_predecessor_until_atomic_continuation() {
     let f = OwnedFollowup::new();
