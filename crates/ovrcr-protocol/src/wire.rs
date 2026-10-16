@@ -1620,7 +1620,9 @@ mod wire_snapshot {
                     handle: "r".into(),
                     identity: identity.clone(),
                     result_version: 1,
-                    result_digest: "digest".into(),
+                    target: crate::AcceptanceTarget::ChildSubmission {
+                        digest: "digest".into(),
+                    },
                     expected_control_epoch: 1,
                 },
             ),
@@ -1778,6 +1780,13 @@ mod wire_snapshot {
                 collected_question: None,
                 obligation_revision: 1,
                 archive_receipts: vec![],
+                recoveries: vec![],
+                fallback_capture: None,
+                recovered: None,
+                accepted_recovery: None,
+                submission_issue: None,
+                selected_acceptance_ref: None,
+                selected_recoveries: vec![],
                 handle: "r".into(),
                 control: crate::AssignmentControl::default(),
                 control_evidence: None,
@@ -2007,7 +2016,245 @@ mod wire_snapshot {
         cancellation_cases(&mut all);
         question_cases(&mut all);
         delivery_cases(&mut all);
+        fallback_cases(&mut all);
         all
+    }
+
+    fn fallback_cases(all: &mut Vec<(String, String)>) {
+        let identity = crate::AssignmentIdentity {
+            instance: "i".into(),
+            workflow: "w".into(),
+            controller: "c".into(),
+            controller_epoch: 1,
+            task: "t".into(),
+            attempt: 1,
+            contract: 1,
+            request: "r".into(),
+            session: Some(crate::SessionId(2)),
+            run: Some(crate::SessionRunId(3)),
+        };
+        let auth = crate::DelegationAuth {
+            session: crate::SessionId(1),
+            capability: "fixture".into(),
+            controller: None,
+            source: None,
+        };
+        let binding = crate::AgentBinding {
+            provider: crate::AgentProvider::Pi,
+            invocation: "child".into(),
+            conversation: "child-conv".into(),
+            generation: 1,
+        };
+        let control = crate::AssignmentControl {
+            epoch: 1,
+            owner: crate::ControlOwner::Controller,
+            barrier: None,
+            human_input_revision: 0,
+            attribution_invalidated: false,
+        };
+        let authority = crate::WorkflowAuthority {
+            instance: "i".into(),
+            workflow: "w".into(),
+            controller: "c".into(),
+            epoch: 1,
+            parent: crate::SessionId(1),
+            parent_run: crate::SessionRunId(1),
+            binding: crate::AgentBinding {
+                provider: crate::AgentProvider::Pi,
+                invocation: "parent".into(),
+                conversation: "parent-conv".into(),
+                generation: 1,
+            },
+            producer: "producer".into(),
+            server_lifetime: "server".into(),
+        };
+        let original = crate::FallbackOriginalCondition::Invalid {
+            digest: "a".repeat(64),
+        };
+        let artifact = crate::FallbackFileReference {
+            name: "artifact.json".into(),
+            digest: "b".repeat(64),
+        };
+        let evidence_file = crate::FallbackFileReference {
+            name: "independent.txt".into(),
+            digest: "d".repeat(64),
+        };
+        let evidence = crate::FallbackEvidence {
+            requirement: "Complete README".into(),
+            file: evidence_file.clone(),
+            excerpt: "README".into(),
+            assessment: "Independent parent review".into(),
+        };
+        let capture = crate::FallbackCapture {
+            schema: 1,
+            id: "capture".into(),
+            server_lifetime: "server".into(),
+            authority: authority.clone(),
+            context: crate::FallbackContext {
+                identity: identity.clone(),
+                result_version: 3,
+                contract_digest: "c".repeat(64),
+                brief_digest: "f".repeat(64),
+                freshness_nonce: "nonce".into(),
+                binding: binding.clone(),
+                control: control.clone(),
+            },
+            evidence: crate::AssignmentControlEvidence {
+                server_lifetime: "server".into(),
+                identity: identity.clone(),
+                binding,
+                result_version: 3,
+                activity_revision: 7,
+                input_revision: 0,
+                publication: None,
+                publication_issue: Some(crate::ControlPublicationIssue::Invalid),
+                human_input_revision: 0,
+            },
+            captured_unix_ms: 1,
+            size: TerminalSize { rows: 24, cols: 80 },
+            screen: format!("OVRCR_FALLBACK:{}", "b".repeat(64)),
+            truncated: false,
+            original: original.clone(),
+            original_bytes: Some(b"{".to_vec()),
+        };
+        // Literal wire values pin shape; they do not claim filesystem content proof.
+        let recovery = crate::FallbackRecovery {
+            schema: 1,
+            version: 2,
+            author: authority,
+            capture: capture.clone(),
+            artifact: crate::FrozenFallbackFile {
+                reference: artifact.clone(),
+                bytes: b"artifact".to_vec(),
+            },
+            contract: crate::FrozenFallbackFile {
+                reference: crate::FallbackFileReference {
+                    name: "contract-v1.json".into(),
+                    digest: "c".repeat(64),
+                },
+                bytes: b"contract".to_vec(),
+            },
+            brief: crate::FrozenFallbackFile {
+                reference: crate::FallbackFileReference {
+                    name: "brief-v3.json".into(),
+                    digest: "f".repeat(64),
+                },
+                bytes: b"brief".to_vec(),
+            },
+            evidence: vec![evidence.clone()],
+            evidence_files: vec![crate::FrozenFallbackFile {
+                reference: evidence_file,
+                bytes: b"README".to_vec(),
+            }],
+        };
+        let accepted = crate::AcceptanceReference {
+            identity: identity.clone(),
+            result_version: 3,
+            target: crate::AcceptanceTarget::ParentRecovery {
+                recovery_version: 2,
+                digest: "e".repeat(64),
+            },
+            path: "/acceptance-v3.json".into(),
+            digest: "f".repeat(64),
+        };
+        let reference = crate::RecoveryReference {
+            version: 2,
+            digest: "e".repeat(64),
+        };
+        for (name, request) in [
+            (
+                "CaptureFallback",
+                crate::DelegationRequest::CaptureFallback {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                    expected_identity: identity.clone(),
+                    expected_result_version: 3,
+                    expected_control_epoch: 1,
+                },
+            ),
+            (
+                "RecoverFallback",
+                crate::DelegationRequest::RecoverFallback {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                    draft: Box::new(crate::FallbackRecoveryDraft {
+                        capture_id: "capture".into(),
+                        version: 2,
+                        artifact,
+                        original,
+                        evidence: vec![evidence],
+                    }),
+                },
+            ),
+            (
+                "RecordRecoveryAcceptance",
+                crate::DelegationRequest::RecordAcceptance {
+                    auth,
+                    handle: "r".into(),
+                    identity: identity.clone(),
+                    result_version: 3,
+                    target: crate::AcceptanceTarget::ParentRecovery {
+                        recovery_version: 2,
+                        digest: "e".repeat(64),
+                    },
+                    expected_control_epoch: 1,
+                },
+            ),
+        ] {
+            all.push((
+                format!("Delegation::{name}"),
+                encode(&Request::Delegation(Box::new(request))),
+            ));
+        }
+        all.push((
+            "Response::FallbackRecovery".into(),
+            encode(&Response::Delegation(Box::new(crate::AssignmentSnapshot {
+                handle: "r".into(),
+                identity,
+                dispatch: crate::DispatchStatus::Applied,
+                reason: None,
+                activity: AgentActivity::ResponseReady,
+                conversation: Some("child-conv".into()),
+                brief: "/brief-v3.json".into(),
+                result_path: "/submission-v3.json".into(),
+                submission: None,
+                acceptance: "accepted".into(),
+                result_version: 3,
+                publication: None,
+                acceptance_ref: Some(accepted.clone()),
+                history: vec![],
+                selected_version: Some(3),
+                historical_submission: None,
+                receipts: vec![],
+                resources: crate::AssignmentResources {
+                    project: Some("p".into()),
+                    workspace: Some("ws".into()),
+                    workspace_present: true,
+                    current_session: None,
+                    coding: None,
+                },
+                control,
+                control_evidence: Some(capture.evidence.clone()),
+                retryable_capacity_refusal: false,
+                successor_request: None,
+                execution_attempts: Some(1),
+                questions: vec![],
+                collected_question: None,
+                obligation_revision: 4,
+                archive_receipts: vec![],
+                recoveries: vec![reference.clone()],
+                fallback_capture: Some(capture),
+                recovered: Some(crate::RecoveryPublication {
+                    path: "/parent-fallback-r3-v2.json".into(),
+                    digest: "e".repeat(64),
+                    recovery: recovery.clone(),
+                }),
+                accepted_recovery: Some(recovery),
+                submission_issue: Some("invalid child submission".into()),
+                selected_acceptance_ref: Some(accepted),
+                selected_recoveries: vec![reference],
+            }))),
+        ));
     }
 
     fn delivery_cases(all: &mut Vec<(String, String)>) {
@@ -2321,6 +2568,13 @@ mod wire_snapshot {
             control_evidence: None,
             questions: vec![state.clone()],
             collected_question: Some(question),
+            recoveries: vec![],
+            fallback_capture: None,
+            recovered: None,
+            accepted_recovery: None,
+            submission_issue: None,
+            selected_acceptance_ref: None,
+            selected_recoveries: vec![],
         };
         let observation = crate::DelegationObservationBatch {
             cursor: crate::ObservationCursor {
@@ -2585,13 +2839,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0436017301630168016c0104",
+            "2a0437017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0436017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0437017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -2622,18 +2876,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04360000"),
+        ("Response::NotificationNavigation", "0d04370000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0436017301630168016c0104",
+            "0e01016e0437017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010436017301630168016c0164",
+            "0f0107080901016901010437017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004360107080901016901010436017301630168016c0164",
+            "1004370107080901016901010437017301630168016c0164",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -2657,7 +2911,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0436017301630168016c0104",
+            "08016e0437017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -2826,7 +3080,7 @@ mod wire_snapshot {
         ),
         (
             "Delegation::RecordAcceptance",
-            "3208010766697874757265000001720169017701630101740101017201020101010664696765737401",
+            "320801076669787475726500000172016901770163010174010101720102010101000664696765737401",
         ),
         (
             "Delegation::Publish",
@@ -2860,7 +3114,7 @@ mod wire_snapshot {
         ),
         (
             "Response::Delegation",
-            "11017201690177016301017401010172010201010400050104636f6e76062f6272696566072f726573756c740101016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e00000770656e64696e6701000000000000010170010277730100000100000000000001046e657874010100000100",
+            "11017201690177016301017401010172010201010400050104636f6e76062f6272696566072f726573756c740101016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e00000770656e64696e6701000000000000010170010277730100000100000000000001046e65787401010000010000000000000000",
         ),
         (
             "Response::DelegationObservation",
@@ -2932,7 +3186,7 @@ mod wire_snapshot {
         ),
         (
             "Response::QuestionCollection",
-            "11017201690177016301017401010172010201010400020104636f6e76062f6272696566072f726573756c74000770656e64696e670300000000000106616e73776572090301690177016301017401010172010201010301030a0001107072656669782064656c6976657265640101700102777301000001000000000000000101010169017701630101740101017201020101030773656374696f6e0240626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262620001000106616e73776572090301690177016301017401010172010201010301030a0001107072656669782064656c69766572656401010169017701630101740101017201020101030773656374696f6e02010169017701630101740101017201020101030773656374696f6e014061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161000e57686963682073656374696f6e3f0f526561642d6f6e6c792073636f7065020c496e74726f64756374696f6e0c496e7374616c6c6174696f6e0100",
+            "11017201690177016301017401010172010201010400020104636f6e76062f6272696566072f726573756c74000770656e64696e670300000000000106616e73776572090301690177016301017401010172010201010301030a0001107072656669782064656c6976657265640101700102777301000001000000000000000101010169017701630101740101017201020101030773656374696f6e0240626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262620001000106616e73776572090301690177016301017401010172010201010301030a0001107072656669782064656c69766572656401010169017701630101740101017201020101030773656374696f6e02010169017701630101740101017201020101030773656374696f6e014061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161000e57686963682073656374696f6e3f0f526561642d6f6e6c792073636f7065020c496e74726f64756374696f6e0c496e7374616c6c6174696f6e010000000000000000",
         ),
         (
             "Response::QuestionObservation",
@@ -2991,6 +3245,22 @@ mod wire_snapshot {
         ("DeliveryEvidenceKind::Check", "02"),
         ("DeliveryEvidenceKind::Continuation", "03"),
         ("DeliveryEvidenceKind::OtherAuthorizedEvidence", "04"),
+        (
+            "Delegation::CaptureFallback",
+            "32140107666978747572650000017201690177016301017401010172010201030301",
+        ),
+        (
+            "Delegation::RecoverFallback",
+            "3215010766697874757265000001720763617074757265020d61727469666163742e6a736f6e4062626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262014061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161010f436f6d706c65746520524541444d450f696e646570656e64656e742e747874406464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646406524541444d4519496e646570656e64656e7420706172656e7420726576696577",
+        ),
+        (
+            "Delegation::RecordRecoveryAcceptance",
+            "3208010766697874757265000001720169017701630101740101017201020103030102406565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656501",
+        ),
+        (
+            "Response::FallbackRecovery",
+            "1101720169017701630101740101017201020103040005010a6368696c642d636f6e760e2f62726965662d76332e6a736f6e132f7375626d697373696f6e2d76332e6a736f6e0008616363657074656403000101690177016301017401010172010201030301024065656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565132f616363657074616e63652d76332e6a736f6e406666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666600010300000101700102777301000001000000000106736572766572016901770163010174010101720102010303056368696c640a6368696c642d636f6e76010307000001010000000101000004000102406565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656501010763617074757265067365727665720169017701630101010306706172656e740b706172656e742d636f6e76010870726f64756365720673657276657201690177016301017401010172010201030340636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363634066666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666056e6f6e636503056368696c640a6368696c642d636f6e7601010000000006736572766572016901770163010174010101720102010303056368696c640a6368696c642d636f6e7601030700000101000118504f4f565243525f46414c4c4241434b3a626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262620001406161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616101017b011b2f706172656e742d66616c6c6261636b2d72332d76322e6a736f6e406565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656501020169017701630101010306706172656e740b706172656e742d636f6e76010870726f647563657206736572766572010763617074757265067365727665720169017701630101010306706172656e740b706172656e742d636f6e76010870726f64756365720673657276657201690177016301017401010172010201030340636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363634066666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666056e6f6e636503056368696c640a6368696c642d636f6e7601010000000006736572766572016901770163010174010101720102010303056368696c640a6368696c642d636f6e7601030700000101000118504f4f565243525f46414c4c4241434b3a626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262620001406161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616101017b0d61727469666163742e6a736f6e406262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626208617274696661637410636f6e74726163742d76312e6a736f6e406363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636308636f6e74726163740d62726965662d76332e6a736f6e4066666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666056272696566010f436f6d706c65746520524541444d450f696e646570656e64656e742e747874406464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646406524541444d4519496e646570656e64656e7420706172656e7420726576696577010f696e646570656e64656e742e747874406464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646406524541444d450101020169017701630101010306706172656e740b706172656e742d636f6e76010870726f647563657206736572766572010763617074757265067365727665720169017701630101010306706172656e740b706172656e742d636f6e76010870726f64756365720673657276657201690177016301017401010172010201030340636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363634066666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666056e6f6e636503056368696c640a6368696c642d636f6e7601010000000006736572766572016901770163010174010101720102010303056368696c640a6368696c642d636f6e7601030700000101000118504f4f565243525f46414c4c4241434b3a626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262620001406161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616101017b0d61727469666163742e6a736f6e406262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626208617274696661637410636f6e74726163742d76312e6a736f6e406363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636308636f6e74726163740d62726965662d76332e6a736f6e4066666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666056272696566010f436f6d706c65746520524541444d450f696e646570656e64656e742e747874406464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646406524541444d4519496e646570656e64656e7420706172656e7420726576696577010f696e646570656e64656e742e747874406464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646406524541444d450118696e76616c6964206368696c64207375626d697373696f6e0101690177016301017401010172010201030301024065656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565132f616363657074616e63652d76332e6a736f6e406666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666601024065656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565",
+        ),
     ];
 
     #[test]

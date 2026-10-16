@@ -6,6 +6,8 @@ pub mod questions;
 pub use questions::*;
 pub mod delegation_delivery;
 pub use delegation_delivery::*;
+pub mod delegation_fallback;
+pub use delegation_fallback::*;
 pub mod delegation;
 mod delegation_coding;
 pub use delegation::*;

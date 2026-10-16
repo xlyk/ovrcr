@@ -42,6 +42,10 @@ and archive receipts with reserved continuation capacity from older writers.
 Schema version 15 protects coding workspace creation/process proofs and original
 candidate provenance from older writers. Default new wire fields do not change
 existing authenticated research document bytes.
+Schema version 16 protects bounded trusted fallback capture/recovery references
+and typed acceptance in the same assignment/version rows. It adds no table or
+state owner. Task payloads stay in confined private files; frozen historical
+evidence is not current source authentication. See [terminal fallback](../pi-terminal-fallback.md).
 Immutable task contracts, briefs and submissions remain private files outside
 child checkouts; see [Pi research assignments](../pi-research-assignments.md).
 SQLite owns identity, path, and root-setup metadata. The stored

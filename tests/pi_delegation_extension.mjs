@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync, rmSync, chmodSync, symlinkSync, appendFileSync, mkdirSync, openSync, closeSync, constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { execFileSync } from "node:child_process";
+import childProcess, { execFileSync } from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { createHost } from "./fixtures/pi/pi_host.mjs";
 
@@ -21,7 +22,7 @@ test("managed Pi exposes research assignment and explicit collection tools", asy
     writeFileSync(join(dir, "ovrcr-delegation-continuation.mjs"), readFileSync(new URL("../src/ovrcr-delegation-continuation.mjs", import.meta.url)));
     writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.mjs", import.meta.url)));
     host = await createHost(join(dir, "reporting.ts"));
-    assert.deepEqual(host.tools(), ["ovrcr_accept", "ovrcr_answer_question", "ovrcr_archive", "ovrcr_cancel_workflow", "ovrcr_capabilities", "ovrcr_checkpoint", "ovrcr_collect", "ovrcr_collect_question", "ovrcr_confirm_interrupt", "ovrcr_confirm_return", "ovrcr_deliver", "ovrcr_followup", "ovrcr_inspect", "ovrcr_interrupt", "ovrcr_mark_handled", "ovrcr_parents", "ovrcr_publish", "ovrcr_publish_question", "ovrcr_recover", "ovrcr_retry", "ovrcr_start", "ovrcr_transfer", "ovrcr_wait"]);
+    assert.deepEqual(host.tools(), ["ovrcr_accept", "ovrcr_answer_question", "ovrcr_archive", "ovrcr_cancel_workflow", "ovrcr_capabilities", "ovrcr_capture_fallback", "ovrcr_checkpoint", "ovrcr_collect", "ovrcr_collect_question", "ovrcr_confirm_interrupt", "ovrcr_confirm_return", "ovrcr_deliver", "ovrcr_followup", "ovrcr_inspect", "ovrcr_interrupt", "ovrcr_mark_handled", "ovrcr_parents", "ovrcr_publish", "ovrcr_publish_question", "ovrcr_recover", "ovrcr_recover_fallback", "ovrcr_retry", "ovrcr_start", "ovrcr_transfer", "ovrcr_wait"]);
     assert.deepEqual(host.toolDefinition("ovrcr_publish").parameters.required, ["handle", "submission"]);
     assert.deepEqual(host.toolDefinition("ovrcr_collect").parameters.required, ["handle"]);
     assert.deepEqual(host.toolDefinition("ovrcr_start").parameters.anyOf, [{ required: ["handle"] }, { required: ["project", "workspace", "scope", "acceptance_evidence"] }]);
@@ -31,7 +32,7 @@ test("managed Pi exposes research assignment and explicit collection tools", asy
     assert.equal(coding.properties.authorized_paths.minItems,1);
     assert.equal(coding.properties.required_checks.uniqueItems,true);
     assert.deepEqual(host.toolDefinition("ovrcr_followup").parameters.anyOf, [{required:["handle","request"]},{required:["handle","expected_identity","expected_result_version","expected_control_epoch","text"]}]);
-    assert.deepEqual(host.toolDefinition("ovrcr_accept").parameters.required, ["handle","identity","result_version","result_digest","expected_control_epoch"]);
+    assert.deepEqual(host.toolDefinition("ovrcr_accept").parameters.required, ["handle","identity","result_version","expected_control_epoch"]);
     const malformed = await host.tool("ovrcr_followup", {handle:"assignment",expected_identity:{},expected_result_version:1,expected_control_epoch:1,text:""});
     assert.equal(malformed.details.dispatch, "Refused");
     assert.equal(malformed.details.transport, "NotSent");
@@ -45,6 +46,54 @@ test("managed Pi exposes research assignment and explicit collection tools", asy
     assert.equal(missing.details.handle, null);
     await assert.rejects(() => host.tool("ovrcr_inspect", {}), /missing required argument: handle/);
   } finally {
+    process.env = before;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("acceptance exclusivity rejects direct registered callbacks before transport", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ovrcr-accept-exclusivity-"));
+  const before = { ...process.env };
+  const launchNames = ["spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync", "fork"];
+  const originals = new Map(launchNames.map(name => [name, childProcess[name]]));
+  let launches = 0;
+  try {
+    for (const name of launchNames) childProcess[name] = () => {
+      launches += 1;
+      throw new Error("pure acceptance validation test forbids process launch");
+    };
+    syncBuiltinESMExports();
+    Object.assign(process.env, {
+      OVRCR_AGENT_SOCKET: "/fixture/reporting", OVRCR_AGENT_TOKEN: "fixture-reporting",
+      OVRCR_DELEGATION_SESSION: "1", OVRCR_DELEGATION_TOKEN: "fixture-delegation",
+      OVRCR_DELEGATION_SOCKET: "/fixture/control", OVRCR_DELEGATION_HOME: dir,
+    });
+    writeFileSync(join(dir, "reporting.ts"), readFileSync(
+      process.env.OVRCR_TEST_EXTENSION_SOURCE ?? new URL("../src/pi-reporting-extension.mjs", import.meta.url), "utf8"
+    ).replace("__OVRCR_BINARY__", JSON.stringify("/fixture/never-launch")));
+    for (const name of ["ovrcr-reporting-transport.mjs", "ovrcr-delegation-observer.mjs", "ovrcr-delegation-continuation.mjs"]) {
+      writeFileSync(join(dir, name), readFileSync(new URL(`../src/${name}`, import.meta.url)));
+    }
+    // This validation needs no optional installed-provider API or lifecycle event.
+    writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), "export async function loadPiKeybindings(){return undefined}\nexport function inspectPiInterruptBinding(){return 'Unavailable'}\n");
+    const host = await createHost(join(dir, "reporting.ts"));
+    const callback = host.toolDefinition("ovrcr_accept").execute;
+    for (const fields of [{}, { target: { ChildSubmission: { digest: "a".repeat(64) } }, result_digest: "a".repeat(64) }]) {
+      // Some hosts invoke callbacks directly without enforcing JSON-schema oneOf.
+      const response = await callback("direct-host", {
+        handle: "assignment", identity: {}, result_version: 1, expected_control_epoch: 1, ...fields,
+      }, undefined, undefined, {});
+      assert.deepEqual(response.details, {
+        handle: "assignment", dispatch: "Refused", transport: "NotSent",
+        reason: "provide exactly one target or legacy result_digest",
+      });
+      assert.equal(response.details.receipts, undefined);
+      assert.equal(response.details.acceptance_ref, undefined);
+      assert.equal(launches, 0, "invalid local arguments must never attempt control transport");
+    }
+  } finally {
+    for (const [name, original] of originals) childProcess[name] = original;
+    syncBuiltinESMExports();
     process.env = before;
     rmSync(dir, { recursive: true, force: true });
   }

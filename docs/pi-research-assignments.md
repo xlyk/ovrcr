@@ -9,6 +9,8 @@ registers `ovrcr_capabilities`, `ovrcr_start`, `ovrcr_retry`, `ovrcr_inspect`,
 `ovrcr_mark_handled`, `ovrcr_recover`, `ovrcr_checkpoint`, `ovrcr_parents` and
 `ovrcr_transfer`, `ovrcr_interrupt`, `ovrcr_confirm_interrupt` and
 `ovrcr_cancel_workflow`.
+Fallback uses `ovrcr_capture_fallback` and `ovrcr_recover_fallback`, followed by
+explicit typed `ovrcr_accept`; see [terminal fallback](pi-terminal-fallback.md).
 Questions use `ovrcr_publish_question`, `ovrcr_collect_question` and
 `ovrcr_answer_question`.
 A plain Pi process has no delegation authority.

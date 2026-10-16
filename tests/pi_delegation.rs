@@ -5,6 +5,8 @@ mod assignment_control;
 mod coding;
 #[path = "pi_delegation/delivery.rs"]
 mod delivery;
+#[path = "pi_delegation/fallback.rs"]
+mod fallback;
 #[path = "pi_delegation/followups.rs"]
 mod followups;
 #[path = "support/live.rs"]
@@ -1217,6 +1219,12 @@ impl ControlProxy {
                     }
                     DelegationRequest::RecordAcceptance { handle, .. } => {
                         ("RecordAcceptance", handle.clone())
+                    }
+                    DelegationRequest::CaptureFallback { handle, .. } => {
+                        ("CaptureFallback", handle.clone())
+                    }
+                    DelegationRequest::RecoverFallback { handle, .. } => {
+                        ("RecoverFallback", handle.clone())
                     }
                     DelegationRequest::Observe { .. } => ("Observe", String::new()),
                     DelegationRequest::MarkHandled { handle, .. } => {

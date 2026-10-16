@@ -27,6 +27,19 @@ fn save_assignment_on(
     connection: &Connection,
     value: &crate::server::delegation::Record,
 ) -> Result<()> {
+    if value.captures.len() > 64
+        || value.recoveries.len() > 64
+        || value
+            .previous_versions
+            .iter()
+            .any(|v| v.captures.len() > 64 || v.recoveries.len() > 64)
+    {
+        bail!("fallback metadata capacity exceeded; history is retained");
+    }
+    let metadata = serde_json::to_string(value)?;
+    if metadata.len() > 2 * 1024 * 1024 {
+        bail!("assignment metadata capacity exceeded; history is retained");
+    }
     value.validate_archive_storage()?;
     use rusqlite::OptionalExtension;
     let workflow: Option<String> = connection
@@ -56,7 +69,7 @@ fn save_assignment_on(
             bail!("assignment request already identifies an immutable workflow operation");
         }
     }
-    connection.execute("INSERT INTO delegations (handle, workflow, session, metadata) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(handle) DO UPDATE SET session=excluded.session, metadata=excluded.metadata", params![value.handle, value.identity.workflow, value.identity.session.map(|id| sql_integer(id.0)).transpose()?, serde_json::to_string(value)?])?;
+    connection.execute("INSERT INTO delegations (handle, workflow, session, metadata) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(handle) DO UPDATE SET session=excluded.session, metadata=excluded.metadata", params![value.handle, value.identity.workflow, value.identity.session.map(|id| sql_integer(id.0)).transpose()?, metadata])?;
     Ok(())
 }
 
