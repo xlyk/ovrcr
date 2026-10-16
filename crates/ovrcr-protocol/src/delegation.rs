@@ -220,6 +220,7 @@ pub enum DispatchOperation {
     ConfirmHumanReturn,
     Interrupt,
     ConfirmInterrupt,
+    AnswerQuestion,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -313,6 +314,10 @@ impl ResearchSubmission {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PublicationKind {
     Submission,
+    Question {
+        result_version: u32,
+        question_id: String,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -371,6 +376,10 @@ pub struct AssignmentSnapshot {
     pub retryable_capacity_refusal: bool,
     pub successor_request: Option<String>,
     pub execution_attempts: Option<u32>,
+    #[serde(default)]
+    pub questions: Vec<crate::QuestionPublicationState>,
+    #[serde(default)]
+    pub collected_question: Option<crate::AssignmentQuestion>,
 }
 
 /// A hint cursor is valid only for one Server lifetime. It is not task completion.
@@ -411,6 +420,10 @@ pub struct DelegationObservation {
     pub control_receipt_digest: String,
     pub native_control_revision: u64,
     pub workflow_cancelled: bool,
+    #[serde(default)]
+    pub questions: Vec<crate::QuestionPublicationState>,
+    #[serde(default)]
+    pub native_question_gap: Option<crate::NativeQuestionGap>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -524,6 +537,22 @@ pub enum DelegationRequest {
         interrupted_request: String,
         expected_control_epoch: u64,
         evidence: Box<AssignmentControlEvidence>,
+    },
+    PublishQuestion {
+        auth: DelegationAuth,
+        handle: String,
+        question: crate::AssignmentQuestion,
+    },
+    CollectQuestion {
+        auth: DelegationAuth,
+        handle: String,
+        reference: crate::QuestionReference,
+    },
+    AnswerQuestion {
+        auth: DelegationAuth,
+        handle: String,
+        answer: crate::QuestionAnswer,
+        expected_parent_epoch: u64,
     },
 }
 

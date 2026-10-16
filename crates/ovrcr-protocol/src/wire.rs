@@ -1772,6 +1772,8 @@ mod wire_snapshot {
         all.push((
             "Response::Delegation".into(),
             encode(&Response::Delegation(Box::new(crate::AssignmentSnapshot {
+                questions: vec![],
+                collected_question: None,
                 handle: "r".into(),
                 control: crate::AssignmentControl::default(),
                 control_evidence: None,
@@ -1816,6 +1818,8 @@ mod wire_snapshot {
                         control_receipt_digest: String::new(),
                         native_control_revision: 0,
                         workflow_cancelled: false,
+                        questions: vec![],
+                        native_question_gap: None,
                         handle: "r".into(),
                         identity: identity.clone(),
                         binding: None,
@@ -1995,7 +1999,219 @@ mod wire_snapshot {
             all.push((format!("Response::{name}"), encode(&response)));
         }
         cancellation_cases(&mut all);
+        question_cases(&mut all);
         all
+    }
+
+    fn question_cases(all: &mut Vec<(String, String)>) {
+        let identity = crate::AssignmentIdentity {
+            instance: "i".into(),
+            workflow: "w".into(),
+            controller: "c".into(),
+            controller_epoch: 1,
+            task: "t".into(),
+            attempt: 1,
+            contract: 1,
+            request: "r".into(),
+            session: Some(SessionId(2)),
+            run: Some(crate::SessionRunId(1)),
+        };
+        let previous = crate::QuestionReference {
+            assignment: identity.clone(),
+            result_version: 3,
+            question_id: "section".into(),
+            question_version: 1,
+            digest: "a".repeat(64),
+        };
+        let reference = crate::QuestionReference {
+            question_version: 2,
+            digest: "b".repeat(64),
+            ..previous.clone()
+        };
+        let question = crate::AssignmentQuestion {
+            schema: 1,
+            identity: identity.clone(),
+            result_version: 3,
+            question_id: "section".into(),
+            question_version: 2,
+            supersedes: Some(previous.clone()),
+            kind: crate::QuestionKind::Clarification,
+            question: "Which section?".into(),
+            context: "Read-only scope".into(),
+            choices: vec!["Introduction".into(), "Installation".into()],
+        };
+        question.validate(&identity, 3, Some(&previous)).unwrap();
+        let answer = crate::QuestionAnswer {
+            schema: 1,
+            request: "answer".into(),
+            question: reference.clone(),
+            control_epoch: 7,
+            basis: crate::AnswerBasis::ExistingAuthority,
+            scope: "README only".into(),
+            answer: "Introduction".into(),
+        };
+        answer.validate(&reference, 7).unwrap();
+        let auth = crate::DelegationAuth {
+            session: SessionId(1),
+            capability: "fixture".into(),
+            source: None,
+            controller: Some(crate::ControllerFence {
+                workflow: "w".into(),
+                epoch: 5,
+                producer: "producer".into(),
+            }),
+        };
+        for (name, fields) in [
+            (
+                "PublishQuestion",
+                crate::DelegationRequest::PublishQuestion {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                    question: question.clone(),
+                },
+            ),
+            (
+                "CollectQuestion",
+                crate::DelegationRequest::CollectQuestion {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                    reference: reference.clone(),
+                },
+            ),
+            (
+                "AnswerQuestion",
+                crate::DelegationRequest::AnswerQuestion {
+                    auth,
+                    handle: "r".into(),
+                    answer,
+                    expected_parent_epoch: 5,
+                },
+            ),
+        ] {
+            let request = Request::Delegation(Box::new(fields));
+            let bytes =
+                bincode::serde::encode_to_vec(&request, bincode::config::standard()).unwrap();
+            let (decoded, used): (Request, usize) =
+                bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+            assert_eq!(decoded, request);
+            assert_eq!(used, bytes.len());
+            all.push((format!("Delegation::{name}"), encode(&request)));
+        }
+        let receipt = crate::DispatchReceipt {
+            request: "answer".into(),
+            operation: crate::DispatchOperation::AnswerQuestion,
+            identity: identity.clone(),
+            result_version: 3,
+            outcome: crate::DispatchOutcome::Partial,
+            input: Some(crate::InputDelivery {
+                written_bytes: 3,
+                total_bytes: 10,
+                submit_written: false,
+            }),
+            reason: Some("prefix delivered".into()),
+        };
+        let state = crate::QuestionPublicationState {
+            reference: reference.clone(),
+            handled: false,
+            current: true,
+            issue: None,
+            answer: Some(receipt.clone()),
+        };
+        let snapshot = crate::AssignmentSnapshot {
+            handle: "r".into(),
+            identity: identity.clone(),
+            dispatch: crate::DispatchStatus::Applied,
+            reason: None,
+            activity: AgentActivity::Busy,
+            conversation: Some("conv".into()),
+            brief: "/brief".into(),
+            result_path: "/result".into(),
+            submission: None,
+            acceptance: "pending".into(),
+            result_version: 3,
+            publication: None,
+            acceptance_ref: None,
+            history: vec![],
+            selected_version: None,
+            historical_submission: None,
+            receipts: vec![receipt],
+            resources: crate::AssignmentResources {
+                project: Some("p".into()),
+                workspace: Some("ws".into()),
+                workspace_present: true,
+                current_session: None,
+            },
+            retryable_capacity_refusal: false,
+            successor_request: None,
+            execution_attempts: Some(1),
+            control: crate::AssignmentControl::default(),
+            control_evidence: None,
+            questions: vec![state.clone()],
+            collected_question: Some(question),
+        };
+        let observation = crate::DelegationObservationBatch {
+            cursor: crate::ObservationCursor {
+                server_epoch: "epoch".into(),
+                sequence: 4,
+            },
+            status: crate::ObservationStatus::Changed,
+            progress_deadline_ms: 300000,
+            observations: vec![crate::DelegationObservation {
+                handle: "r".into(),
+                identity,
+                binding: None,
+                activity: None,
+                activity_revision: 1,
+                input_requests: vec![],
+                input_revision: 2,
+                health: Some(crate::ReporterHealth::Connected),
+                current: true,
+                publication: None,
+                publication_issue: None,
+                last_progress_unix_ms: 100,
+                stalled: false,
+                progress_unresolved: true,
+                control: crate::AssignmentControl::default(),
+                control_receipt_digest: String::new(),
+                native_control_revision: 0,
+                workflow_cancelled: false,
+                questions: vec![state],
+                native_question_gap: Some(crate::NativeQuestionGap::IncompletePromptObservation),
+            }],
+        };
+        for (name, response) in [
+            (
+                "QuestionCollection",
+                Response::Delegation(Box::new(snapshot)),
+            ),
+            (
+                "QuestionObservation",
+                Response::DelegationObservation(Box::new(observation)),
+            ),
+        ] {
+            let bytes =
+                bincode::serde::encode_to_vec(&response, bincode::config::standard()).unwrap();
+            let (decoded, used): (Response, usize) =
+                bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+            assert_eq!(decoded, response);
+            assert_eq!(used, bytes.len());
+            all.push((format!("Response::{name}"), encode(&response)));
+        }
+        all.push((
+            "PublicationIdentity::Question".into(),
+            encode(&reference.publication()),
+        ));
+        for gap in [
+            crate::NativeQuestionGap::IncompletePromptObservation,
+            crate::NativeQuestionGap::NoPromptObservation,
+            crate::NativeQuestionGap::CredentialInput,
+            crate::NativeQuestionGap::IncompleteScreen,
+            crate::NativeQuestionGap::AttributionChanged,
+            crate::NativeQuestionGap::UnavailableBinding,
+            crate::NativeQuestionGap::UnsupportedAdapter,
+        ] {
+            all.push((format!("NativeQuestionGap::{gap:?}"), encode(&gap)));
+        }
     }
 
     fn cancellation_cases(all: &mut Vec<(String, String)>) {
@@ -2195,13 +2411,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0433017301630168016c0104",
+            "2a0434017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0433017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0434017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -2232,18 +2448,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04330000"),
+        ("Response::NotificationNavigation", "0d04340000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0433017301630168016c0104",
+            "0e01016e0434017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010433017301630168016c0164",
+            "0f0107080901016901010434017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004330107080901016901010433017301630168016c0164",
+            "1004340107080901016901010434017301630168016c0164",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -2267,7 +2483,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0433017301630168016c0104",
+            "08016e0434017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -2470,11 +2686,11 @@ mod wire_snapshot {
         ),
         (
             "Response::Delegation",
-            "11017201690177016301017401010172010201010400050104636f6e76062f6272696566072f726573756c740101016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e000770656e64696e67010000000000000101700102777301000100000000000001046e6578740101",
+            "11017201690177016301017401010172010201010400050104636f6e76062f6272696566072f726573756c740101016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e000770656e64696e67010000000000000101700102777301000100000000000001046e65787401010000",
         ),
         (
             "Response::DelegationObservation",
-            "140565706f63680302fce0930400010172016901770163010174010101720102010100000100020100010101690177016301017401010172010201010001066469676573740001026400010100000000000000",
+            "140565706f63680302fce09304000101720169017701630101740101017201020101000001000201000101016901770163010174010101720102010100010664696765737400010264000101000000000000000000",
         ),
         ("Workflow::Parents", "33000107666978747572650000"),
         ("Workflow::Recover", "33010107666978747572650000010177"),
@@ -2528,6 +2744,37 @@ mod wire_snapshot {
             "12010169017701630101010303696e7604636f6e76010870726f6475636572067365727665720101017200000000010663616e63656c0169017701630101010303696e7604636f6e76010870726f64756365720673657276657201040101720169017701630101740101017201020101010109696e7465727275707404000113756e76657269666961626c65206d656d62657201",
         ),
         ("ControlBarrier::Interrupt", "0209696e74657272757074"),
+        (
+            "Delegation::PublishQuestion",
+            "3210010766697874757265010177050870726f6475636572000172010169017701630101740101017201020101030773656374696f6e02010169017701630101740101017201020101030773656374696f6e014061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161000e57686963682073656374696f6e3f0f526561642d6f6e6c792073636f7065020c496e74726f64756374696f6e0c496e7374616c6c6174696f6e",
+        ),
+        (
+            "Delegation::CollectQuestion",
+            "3211010766697874757265010177050870726f64756365720001720169017701630101740101017201020101030773656374696f6e024062626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262",
+        ),
+        (
+            "Delegation::AnswerQuestion",
+            "3212010766697874757265010177050870726f64756365720001720106616e737765720169017701630101740101017201020101030773656374696f6e02406262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626207000b524541444d45206f6e6c790c496e74726f64756374696f6e05",
+        ),
+        (
+            "Response::QuestionCollection",
+            "11017201690177016301017401010172010201010400020104636f6e76062f6272696566072f726573756c74000770656e64696e670300000000000106616e73776572090301690177016301017401010172010201010301030a0001107072656669782064656c69766572656401017001027773010001000000000000000101010169017701630101740101017201020101030773656374696f6e0240626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262620001000106616e73776572090301690177016301017401010172010201010301030a0001107072656669782064656c69766572656401010169017701630101740101017201020101030773656374696f6e02010169017701630101740101017201020101030773656374696f6e014061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161000e57686963682073656374696f6e3f0f526561642d6f6e6c792073636f7065020c496e74726f64756374696f6e0c496e7374616c6c6174696f6e",
+        ),
+        (
+            "Response::QuestionObservation",
+            "140565706f63680400fce09304000101720169017701630101740101017201020101000001000201000100006400010100000000000000010169017701630101740101017201020101030773656374696f6e0240626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262620001000106616e73776572090301690177016301017401010172010201010301030a0001107072656669782064656c6976657265640100",
+        ),
+        (
+            "PublicationIdentity::Question",
+            "016901770163010174010101720102010101030773656374696f6e024062626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262",
+        ),
+        ("NativeQuestionGap::IncompletePromptObservation", "00"),
+        ("NativeQuestionGap::NoPromptObservation", "01"),
+        ("NativeQuestionGap::CredentialInput", "02"),
+        ("NativeQuestionGap::IncompleteScreen", "03"),
+        ("NativeQuestionGap::AttributionChanged", "04"),
+        ("NativeQuestionGap::UnavailableBinding", "05"),
+        ("NativeQuestionGap::UnsupportedAdapter", "06"),
     ];
 
     #[test]

@@ -293,6 +293,7 @@ type ListingErrorHook = Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>;
 #[derive(Clone, Copy)]
 pub(crate) enum DelegatedAuthority {
     Controller,
+    QuestionAnswer,
     ConfirmHumanReturn,
     Interrupt,
 }
@@ -1117,6 +1118,8 @@ impl Session {
                 && child.hook_capability.is_some()
                 && child.reporting.snapshot.as_ref().is_some_and(|snapshot| {
                     &snapshot.binding == input.child_binding
+                        && (!matches!(input.authority, DelegatedAuthority::QuestionAnswer)
+                            || snapshot.input_requests.is_empty())
                         && snapshot.health.state == ovrcr_protocol::ReporterHealth::Connected
                         && snapshot
                             .metrics
@@ -1127,7 +1130,9 @@ impl Session {
             let control_valid = input.control.epoch == input.control_epoch
                 && input.control.owner == ovrcr_protocol::ControlOwner::Controller
                 && match input.authority {
-                    DelegatedAuthority::Controller => input.control.barrier.is_none(),
+                    DelegatedAuthority::Controller | DelegatedAuthority::QuestionAnswer => {
+                        input.control.barrier.is_none()
+                    }
                     DelegatedAuthority::Interrupt => matches!(
                         input.control.barrier,
                         Some(ovrcr_protocol::ControlBarrier::Interrupt { .. })

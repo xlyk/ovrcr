@@ -6,7 +6,7 @@ fn inspect(fixture: &RecoveryFixture, handle: &str) -> AssignmentSnapshot {
     serde_json::from_value(fixture.tool("ovrcr_inspect", serde_json::json!({"handle":handle})))
         .unwrap()
 }
-fn workflow(fixture: &RecoveryFixture) -> WorkflowSnapshot {
+pub(super) fn workflow(fixture: &RecoveryFixture) -> WorkflowSnapshot {
     serde_json::from_value(fixture.tool("ovrcr_recover", serde_json::json!({}))).unwrap()
 }
 fn event(fixture: &RecoveryFixture, value: &str) {
@@ -456,7 +456,7 @@ fn parent_recovery_owned_reopen_and_same_run_explicit_resume_reclaim_exact_origi
     assert_eq!(row["transfers"].as_array().unwrap().len(), 2);
 }
 
-fn create_parent(fixture: &RecoveryFixture) -> SessionSummary {
+pub(super) fn create_parent(fixture: &RecoveryFixture) -> SessionSummary {
     let unique = fixture.files.get();
     fixture.files.set(unique + 1);
     let Response::CreatedSession(summary) =
@@ -499,7 +499,7 @@ fn create_parent(fixture: &RecoveryFixture) -> SessionSummary {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
-fn parent_tool(
+pub(super) fn parent_tool(
     fixture: &RecoveryFixture,
     target: SessionId,
     name: &str,
@@ -519,7 +519,7 @@ fn parent_tool(
             .join(format!("target-reply-{id}.json")),
     )
 }
-fn target(fixture: &RecoveryFixture, id: SessionId) -> WorkflowParent {
+pub(super) fn target(fixture: &RecoveryFixture, id: SessionId) -> WorkflowParent {
     let values: Vec<WorkflowParent> =
         serde_json::from_value(fixture.tool("ovrcr_parents", serde_json::json!({}))).unwrap();
     values

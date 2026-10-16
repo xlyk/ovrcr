@@ -233,7 +233,7 @@ test("an outer prompt span opens and closes one Input request; the title never l
   const { extension, record } = materialize();
   const host = await createHost(extension, { session: "sess-a" });
   await host.emit({ type: "agent_start" });
-  await host.emit({ type: "ui_prompt_start", reason: "ui_prompt", kind: "select", title: "PROMPT_TITLE_SECRET" });
+  await host.emit({ type: "ui_prompt_start", reason: "ui_prompt", kind: "select", title: "PROMPT_TITLE_SECRET", question: "QUESTION_BODY_SECRET", context: "QUESTION_CONTEXT_SECRET", choices: ["QUESTION_OPTION_SECRET"], scope: "ANSWER_SCOPE_SECRET", answer: "ANSWER_BODY_SECRET" });
   await host.emit({ type: "ui_prompt_end", reason: "ui_prompt", kind: "select", title: "PROMPT_TITLE_SECRET" });
   await host.emit({ type: "ui_prompt_start", reason: "ui_prompt", kind: "editor" });
   await host.emit({ type: "ui_prompt_end", reason: "ui_prompt", kind: "editor" });
@@ -245,6 +245,7 @@ test("an outer prompt span opens and closes one Input request; the title never l
   assert.notEqual(sent[1].request_id, sent[3].request_id);
   assert.match(sent[1].request_id, /^[0-9a-f]{32}:p1$/);
   assert.ok(!readFileSync(record, "utf8").includes("PROMPT_TITLE_SECRET"));
+  for (const secret of ["QUESTION_BODY_SECRET", "QUESTION_CONTEXT_SECRET", "QUESTION_OPTION_SECRET", "ANSWER_SCOPE_SECRET", "ANSWER_BODY_SECRET"]) assert.ok(!readFileSync(record, "utf8").includes(secret), "unknown prompt fields must never enter Reporter frames");
   assert.ok(!("title" in sent[1]));
 });
 

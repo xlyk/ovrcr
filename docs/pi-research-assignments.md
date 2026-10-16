@@ -4,10 +4,12 @@ A managed Pi parent can start independent read-only assignments in existing OVRC
 workspaces, keep working, and explicitly collect each child's result. Launch Pi
 through `ovrcr agent run pi -- pi` or the Dashboard picker. The managed extension
 registers `ovrcr_capabilities`, `ovrcr_start`, `ovrcr_retry`, `ovrcr_inspect`,
-`ovrcr_collect`, `ovrcr_followup`, `ovrcr_accept`, `ovrcr_confirm_return`, `ovrcr_publish`, `ovrcr_wait`
+`ovrcr_collect`, `ovrcr_followup`, `ovrcr_accept`, `ovrcr_confirm_return`, `ovrcr_publish`, `ovrcr_wait`,
 `ovrcr_mark_handled`, `ovrcr_recover`, `ovrcr_checkpoint`, `ovrcr_parents` and
 `ovrcr_transfer`, `ovrcr_interrupt`, `ovrcr_confirm_interrupt` and
 `ovrcr_cancel_workflow`.
+Questions use `ovrcr_publish_question`, `ovrcr_collect_question` and
+`ovrcr_answer_question`.
 A plain Pi process has no delegation authority.
 
 ## Continue an existing parent workflow
@@ -278,6 +280,82 @@ unchanged.
 Unacknowledged results remain discoverable across observer reconnects. Prior
 handling and acceptance remain in version history. A follow-up expects a new
 publication identity; handling an old result cannot acknowledge its successor.
+
+## Answer a child's question
+
+Before waiting for a factual clarification or human decision, the assigned child
+calls `ovrcr_publish_question`. It supplies schema `1`, the brief's exact
+`identity` and `result_version`, a `question_id`, `question_version: 1`,
+`supersedes: null`, `kind: "Clarification"` or `"HumanDecision"`, and the exact
+`question`, `context` and `choices`. The Server authenticates the allocated child
+and records its original binding and digest before linking the private file.
+A file written without this publication intent cannot establish child authorship.
+
+The existing observer wakes the parent for question files even when the child
+has emitted no Ready or Input event. `ovrcr_wait` returns bounded `questions`
+metadata. Fetch the body separately with `ovrcr_collect_question`, supplying
+the assignment `handle` and the entire exact `reference` object from the
+questions entry. Read its exact text and choices. Resolve
+facts only within already-granted authority. If the question requires a person's
+choice, obtain that explicit choice before answering. Silence, defaults, timers,
+child declarations and question files provide no human approval.
+
+Call `ovrcr_answer_question` with the assignment `handle`, exact `question`
+reference object, current `expected_control_epoch`, `basis`, bounded `scope`,
+and `answer`. `basis` is `"ExistingAuthority"` for facts within existing authority
+or `"ExplicitHumanDecision"` for an actual choice the person made; this label
+records the parent's assertion and does not create permission. The extension
+captures the current parent workflow epoch and saves an immutable private intent
+before sending. The child receives an instruction to read the scoped private
+answer artifact for that exact question.
+
+The distinct `AnswerQuestion` receipt reports delivery. `Applied` means the
+complete instruction reached the PTY, including submit; it does not prove the
+child read or consumed the answer, accepted the choice, completed the task or
+obtained permission beyond the original scope. Answering preserves the child,
+assignment, execution count, result version and acceptance state.
+
+If a reply is lost, call `ovrcr_answer_question` with only the `handle` and
+original `request`. Repeating that exact request returns its receipt without
+another input effect, even after a newer question appears. Changed payloads,
+stale results, superseded questions, retired parent/control epochs and replaced
+child bindings refuse new input. An original Accepted intent can resume only
+under its captured authority. Unknown or Partial delivery remains unresolved;
+neither a new answer request nor a follow-up can bypass the existing input
+barrier. Inspect the original receipt and use explicit supported control recovery
+or human intervention; reconnect and read-only reconciliation cannot clear it.
+
+One current unanswered question is supported per assignment. To revise it, keep
+the same `question_id`, increment `question_version` by one and provide the
+exact prior reference as `supersedes`. A different question ID requires an
+Applied answer to the previous current question. The Server retains at most
+64 immutable question publications and 64 answer intents; capacity refusal
+preserves the existing evidence. Use explicit assignment recovery or a separately
+authorized new assignment when those bounds prevent further work. No history is
+silently evicted. Questions and their answer receipts remain separately
+collectable after result revisions; their original identities grant no current
+authority. `ovrcr_mark_handled` accepts the question reference converted to the
+common publication identity and acknowledges handling only.
+
+## Native prompts without a structured question
+
+Native approval, permission and login prompts can occur before the child can
+write a question file. Installed Pi's public prompt events do not supply the
+complete text and choices, and login can bypass those events. OVRCR does not
+claim exact native prompt extraction from a title or an unfenced terminal read.
+`native_question_gap: "IncompletePromptObservation"` identifies a reported prompt
+whose exact contents are unavailable. `"NoPromptObservation"` identifies an
+unexplained progress deadline with no exact prompt evidence; it does not diagnose
+login or approval. Changed or unavailable attribution also remains explicit.
+
+Leave these states unresolved and ask the person to inspect the native UI when
+needed. Do not guess keys or treat `ovrcr_answer_question` as a native credential
+response channel. A known native Input request fences structured answer input.
+Credential, device-code and OAuth screen contents must not be retained in question
+or answer artifacts. Exact screen capture remains unavailable unless one atomic
+Server/session/run/binding/input/terminal/assignment fence can prove attribution.
+
+## Configure the progress deadline
 
 Set the observation progress deadline through the normal settings owner:
 
