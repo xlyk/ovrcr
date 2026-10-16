@@ -424,3 +424,37 @@ fn held_directory_prevents_path_replacement_from_redirecting_publication() {
         question()
     );
 }
+
+#[test]
+fn serialized_pending_answer_preserves_final_outcome_margin_through_common_record_guard() {
+    for outcome in [DispatchOutcome::Accepted, DispatchOutcome::Unknown] {
+        let (_temp, mut record) = answer_record(outcome);
+        record.reason = Some(String::new());
+        let padding = 262_144 - 512 - serde_json::to_vec(&record).unwrap().len();
+        record.reason = Some("x".repeat(padding));
+        let original = serde_json::to_vec(&record).unwrap();
+        assert_eq!(original.len(), 261_632);
+        let mut decoded: Record = serde_json::from_slice(&original).unwrap();
+        decoded.validate_archive_storage().unwrap();
+        decoded.reason.as_mut().unwrap().push('x');
+        assert!(serde_json::to_vec(&decoded).unwrap().len() < 262_144);
+        assert!(
+            decoded.validate_archive_storage().is_err(),
+            "plain row room cannot spend final answer delivery capacity"
+        );
+        let mut completed: Record = serde_json::from_slice(&original).unwrap();
+        completed.answer_outcome(
+            "answer-evidence",
+            DispatchOutcome::Unknown,
+            Some(InputDelivery {
+                written_bytes: u64::MAX - 1,
+                total_bytes: u64::MAX,
+                submit_written: false,
+            }),
+            Some("answer delivery completion is uncertain; do not replay"),
+        );
+        completed.validate_archive_storage().unwrap();
+        assert!(serde_json::to_vec(&completed).unwrap().len() <= 262_144);
+        assert_eq!(record.answers, completed.answers);
+    }
+}

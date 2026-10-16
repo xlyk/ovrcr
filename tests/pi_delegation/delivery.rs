@@ -562,18 +562,19 @@ fn dashboard_human_takeover_refuses_archive_without_affecting_its_current_run() 
 #[cfg(feature = "acceptance-diagnostics")]
 #[test]
 fn parent_exit_after_owned_stop_leaves_pending_for_current_owner_without_second_stop() {
-    parent_exit_before_archive_filing(false);
+    parent_exit_before_archive_filing(false, false);
 }
 
 #[cfg(feature = "acceptance-diagnostics")]
 #[test]
 fn parent_exit_after_final_authority_check_prevents_commit_then_current_owner_files() {
-    parent_exit_before_archive_filing(true);
+    parent_exit_before_archive_filing(true, false);
 }
 
 #[cfg(feature = "acceptance-diagnostics")]
-fn parent_exit_before_archive_filing(final_parent_pin: bool) {
+fn parent_exit_before_archive_filing(final_parent_pin: bool, remove_parent: bool) {
     let f = OwnedFollowup::new();
+    let signals = count_owned_child_terms(&f);
     let started: AssignmentSnapshot = serde_json::from_value(f.start()).unwrap();
     let child = complete(&f, &started);
     let delivered = declare(
@@ -687,6 +688,12 @@ fn parent_exit_before_archive_filing(final_parent_pin: bool) {
     }
     let parent_pid = parent.pid.expect("owned parent pid") as i32;
     f.live.own_group(parent_pid);
+    if remove_parent {
+        assert!(
+            !final_parent_pin,
+            "public removal requires the unlocked after-stop gate"
+        );
+    }
     assert_eq!(unsafe { libc::kill(-parent_pid, libc::SIGKILL) }, 0);
     if final_parent_pin {
         // Inspect would wait for retained, which final filing still owns. The
@@ -719,6 +726,27 @@ fn parent_exit_before_archive_filing(final_parent_pin: bool) {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
+    if remove_parent {
+        assert!(live::wait_group_absent(parent_pid, Duration::from_secs(3)));
+        assert_eq!(
+            f.live.request(Request::AcknowledgeSessionStopped {
+                session: f.parent,
+                expected_run: parent.run,
+            }),
+            Response::Ok
+        );
+        assert_eq!(
+            f.live.request(Request::RemoveSession { session: f.parent }),
+            Response::Ok
+        );
+        let Response::Inventory { sessions, .. } = f.live.request(Request::Inspect) else {
+            panic!("Inspect remains responsive after parent removal");
+        };
+        assert!(
+            sessions.iter().all(|session| session.id != f.parent),
+            "public removal must actually remove the old parent"
+        );
+    }
     fs::write(fault.with_extension("release"), "release").unwrap();
     let Response::Delegation(pending) = action.join().unwrap() else {
         panic!("pending after source loss");
@@ -729,6 +757,7 @@ fn parent_exit_before_archive_filing(final_parent_pin: bool) {
     }
     let original = receipt(&pending, "parent-exits").clone();
     assert_eq!(original.outcome, ArchiveOutcome::StoppedArchivePending);
+    let stopped_signals = assert_one_owned_term(&signals);
     let id = child.identity.session.unwrap();
     let run = child.identity.run.unwrap();
     assert_eq!(stopped_row(&f, id), (run.0, true, 0));
@@ -782,10 +811,15 @@ fn parent_exit_before_archive_filing(final_parent_pin: bool) {
     ))
     .unwrap();
     assert_eq!(replay.archive_receipts, archived.archive_receipts);
+    assert_eq!(
+        fs::read(&signals).unwrap(),
+        stopped_signals,
+        "current-owner continuation never signals again"
+    );
 }
 
 #[cfg(feature = "acceptance-diagnostics")]
-fn count_owned_child_terms(f: &RecoveryFixture) -> std::path::PathBuf {
+pub(super) fn count_owned_child_terms(f: &RecoveryFixture) -> std::path::PathBuf {
     let log = f.live.root.path().join("owned-child-sigterm.jsonl");
     let preload = f.live.root.path().join("record-owned-sigterm.mjs");
     fs::write(&preload, format!(
@@ -1313,4 +1347,423 @@ impl Drop for SupervisorDisconnectGates {
         self.release();
         let _ = fs::write(&self.archive_release, "release");
     }
+}
+
+#[test]
+fn absent_transfer_parent_refuses_boundedly_and_keeps_archive_recovery_owner() {
+    // Raw fixture permits explicit owned cleanup if the inherited control path
+    // times out; an unwinding OwnedFollowup must not query a blocked Server.
+    let mut f = RecoveryFixture::new();
+    let started: AssignmentSnapshot = serde_json::from_value(f.start()).unwrap();
+    let child = complete(&f, &started);
+    let authority = super::parent_recovery::workflow(&f).authority;
+    let groups = f.live.session_groups();
+    for group in &groups {
+        f.live.own_group(*group);
+    }
+    let server = f.live.server_pid().unwrap();
+    let mut dashboard = connect_server(&f.live.socket).unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    dashboard
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    assert!(matches!(
+        client::request(&mut dashboard, 1, Request::DashboardHello).unwrap(),
+        Response::Hierarchy(_)
+    ));
+    let before = persisted(&f, &child.handle);
+    let owner_auth = auth(&f);
+    // The remainder uses direct public control. Retire the fixture proxy while
+    // its Server is healthy, before an intentional failure shutdown can cut a read.
+    f.proxy.retire();
+    let transfer = WorkflowTransfer {
+        request: "missing-continuation-owner".into(),
+        expected: authority.clone(),
+        parent: SessionId(u64::MAX),
+        parent_run: SessionRunId(1),
+        binding: authority.binding.clone(),
+        producer: authority.producer.clone(),
+    };
+    let response = dashboard_view(
+        &mut dashboard,
+        2,
+        Request::DashboardWorkflow(DashboardWorkflowRequest::Transfer(Box::new(transfer))),
+    );
+    if response.is_err() {
+        // Preserve a bounded red result without leaving the task-owned deadlock
+        // or triggering recursive fixture requests during unwinding.
+        assert_eq!(unsafe { libc::kill(server as i32, libc::SIGKILL) }, 0);
+        for group in &groups {
+            let _ = unsafe { libc::kill(-*group, libc::SIGKILL) };
+            assert!(live::wait_group_absent(*group, Duration::from_secs(3)));
+        }
+        let _ = f.live.join_within(Duration::from_secs(5));
+    }
+    assert!(
+        matches!(response, Ok(Response::Error { .. })),
+        "absent proposed parent must refuse without relocking retained: {response:?}"
+    );
+    assert_eq!(persisted(&f, &child.handle), before);
+    assert!(matches!(
+        f.live.request(Request::Inspect),
+        Response::Inventory { .. }
+    ));
+    let Response::WorkflowRecovery(recovery) =
+        f.live
+            .request(Request::Workflow(Box::new(WorkflowRequest::Recover {
+                auth: owner_auth,
+                workflow: Some(authority.workflow.clone()),
+            })))
+    else {
+        panic!("current owner recovery remains responsive");
+    };
+    assert_eq!(recovery.workflows[0].authority, authority);
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+#[test]
+fn removed_parent_after_owned_stop_leaves_pending_for_one_current_owner_continuation() {
+    parent_exit_before_archive_filing(false, true);
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+#[test]
+fn pending_accepted_unknown_and_partial_answers_refuse_archive_without_stop_or_advancement() {
+    for (point, limit, expected) in [
+        ("answer-before-input", 0, DispatchOutcome::Accepted),
+        ("input", usize::MAX, DispatchOutcome::Unknown),
+        ("input", 7, DispatchOutcome::Partial),
+    ] {
+        let f = OwnedFollowup::new();
+        let signals = count_owned_child_terms(&f);
+        let child = super::questions::start(&f);
+        f.proxy.arm(ControlRule {
+            operation: "AnswerQuestion",
+            loss: 2,
+            fault: Some((point, limit)),
+        });
+        let answered: AssignmentSnapshot = serde_json::from_value(super::questions::answer(
+            &f,
+            &child,
+            &super::questions::reference(&child),
+        ))
+        .unwrap();
+        assert_eq!(
+            answered
+                .receipts
+                .iter()
+                .find(|r| r.operation == DispatchOperation::AnswerQuestion)
+                .unwrap()
+                .outcome,
+            expected
+        );
+        let delivered = declare(
+            &f,
+            &declaration(
+                &answered,
+                "answer-pending-delivery",
+                None,
+                RetentionChoice::ArchiveEligible,
+            ),
+        );
+        let before = persisted(&f, &child.handle);
+        let input = f.byte_count(&answered);
+        let id = child.identity.session.unwrap();
+        let run = child.identity.run.unwrap();
+        let stopped = stopped_row(&f, id);
+        let request = archive_request(
+            &answered,
+            "answer-pending-archive",
+            reference(&delivered, "answer-pending-delivery"),
+        );
+        let refused = archive(&f, &request);
+        assert_eq!(
+            receipt(&refused, "answer-pending-archive").outcome,
+            ArchiveOutcome::Refused {
+                reason: ArchiveRefusal::UnresolvedControl
+            }
+        );
+        assert_eq!(refused.control, answered.control, "{expected:?}");
+        assert_eq!(refused.obligation_revision, answered.obligation_revision);
+        assert_eq!(refused.receipts, answered.receipts);
+        assert_eq!(refused.result_version, answered.result_version);
+        assert_eq!(stopped_row(&f, id), stopped);
+        assert_eq!(current(&f, id).run, run);
+        assert!(!current(&f, id).archived);
+        assert_eq!(f.byte_count(&answered), input);
+        assert!(
+            fs::read(&signals).unwrap_or_default().is_empty(),
+            "no SIGTERM before answer resolution"
+        );
+        let after = persisted(&f, &child.handle);
+        assert_eq!(after["answers"], before["answers"]);
+        assert_eq!(after["questions"], before["questions"]);
+        assert_eq!(after["control"], before["control"]);
+        assert!(matches!(
+            f.live.request(Request::Inspect),
+            Response::Inventory { .. }
+        ));
+    }
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+#[test]
+fn delivery_and_answer_request_collisions_refuse_in_both_directions_before_effect() {
+    for answer_first in [true, false] {
+        let f = OwnedFollowup::new();
+        let child = super::questions::start(&f);
+        let question = super::questions::reference(&child);
+        if answer_first {
+            let reply = super::questions::answer(&f, &child, &question);
+            let applied: AssignmentSnapshot = serde_json::from_value(reply.clone()).unwrap();
+            let request = reply["request"].as_str().unwrap();
+            let before = persisted(&f, &child.handle);
+            let input = f.byte_count(&applied);
+            let denied = f.tool("ovrcr_deliver", serde_json::json!({"declaration": declaration(&applied, request, None, RetentionChoice::ArchiveEligible)}));
+            assert_eq!(denied["dispatch"], "Refused", "{denied}");
+            assert_eq!(persisted(&f, &child.handle), before);
+            assert_eq!(f.byte_count(&applied), input);
+            assert!(super::parent_recovery::workflow(&f).deliveries.is_empty());
+        } else {
+            let delivered = declare(
+                &f,
+                &declaration(
+                    &child,
+                    "delivery-before-answer",
+                    None,
+                    RetentionChoice::ArchiveEligible,
+                ),
+            );
+            let before = persisted(&f, &child.handle);
+            let input = f.byte_count(&child);
+            let response = f.live.request(Request::Delegation(Box::new(
+                DelegationRequest::AnswerQuestion {
+                    auth: auth(&f),
+                    handle: child.handle.clone(),
+                    expected_parent_epoch: delivered.authority.epoch,
+                    answer: QuestionAnswer {
+                        schema: 1,
+                        request: "delivery-before-answer".into(),
+                        question,
+                        control_epoch: child.control.epoch,
+                        basis: AnswerBasis::ExistingAuthority,
+                        scope: "Original README scope".into(),
+                        answer: "Use the Introduction".into(),
+                    },
+                },
+            )));
+            assert!(matches!(response, Response::Error { .. }), "{response:?}");
+            assert_eq!(persisted(&f, &child.handle), before);
+            assert_eq!(f.byte_count(&child), input);
+            assert!(
+                !child
+                    .brief
+                    .parent()
+                    .unwrap()
+                    .join("answer-delivery-before-answer.json")
+                    .exists()
+            );
+            assert_eq!(
+                super::parent_recovery::workflow(&f).deliveries,
+                delivered.deliveries
+            );
+        }
+    }
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+#[test]
+fn removed_parent_before_archive_refuses_boundedly_and_inspect_remains_responsive() {
+    let f = OwnedFollowup::new();
+    let signals = count_owned_child_terms(&f);
+    let started: AssignmentSnapshot = serde_json::from_value(f.start()).unwrap();
+    let child = complete(&f, &started);
+    let delivered = declare(
+        &f,
+        &declaration(
+            &child,
+            "before-remove",
+            None,
+            RetentionChoice::ArchiveEligible,
+        ),
+    );
+    let request = archive_request(
+        &child,
+        "removed-parent-archive",
+        reference(&delivered, "before-remove"),
+    );
+    let owner = auth(&f);
+    let parent = current(&f, f.parent);
+    let parent_pid = parent.pid.expect("owned parent pid") as i32;
+    f.live.own_group(parent_pid);
+    assert_eq!(unsafe { libc::kill(-parent_pid, libc::SIGKILL) }, 0);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while current(&f, f.parent).phase.is_live() {
+        assert!(
+            Instant::now() < deadline,
+            "parent exit must precede removal"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(live::wait_group_absent(parent_pid, Duration::from_secs(3)));
+    assert_eq!(
+        f.live.request(Request::AcknowledgeSessionStopped {
+            session: f.parent,
+            expected_run: parent.run,
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        f.live.request(Request::RemoveSession { session: f.parent }),
+        Response::Ok
+    );
+    let Response::Inventory { sessions, .. } = f.live.request(Request::Inspect) else {
+        panic!("Inspect remains responsive after parent removal");
+    };
+    assert!(sessions.iter().all(|session| session.id != f.parent));
+    let before = persisted(&f, &child.handle);
+    let row = stopped_row(&f, child.identity.session.unwrap());
+    let mut stream = connect_server(&f.live.socket).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let response = client::request(
+        &mut stream,
+        73,
+        Request::Delegation(Box::new(DelegationRequest::Archive {
+            auth: owner,
+            archive: request,
+        })),
+    )
+    .unwrap();
+    assert!(matches!(response, Response::Error { .. }), "{response:?}");
+    assert_eq!(persisted(&f, &child.handle), before);
+    assert_eq!(stopped_row(&f, child.identity.session.unwrap()), row);
+    assert!(fs::read(&signals).unwrap_or_default().is_empty());
+    assert!(matches!(
+        f.live.request(Request::Inspect),
+        Response::Inventory { .. }
+    ));
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+pub(super) fn archive_full_question_history(
+    f: &RecoveryFixture,
+    child: &AssignmentSnapshot,
+    signals: &Path,
+) {
+    assert_eq!(child.questions.len(), 64);
+    assert_eq!(
+        child
+            .receipts
+            .iter()
+            .filter(|r| r.operation == DispatchOperation::AnswerQuestion)
+            .count(),
+        64
+    );
+    let root = child.brief.parent().unwrap();
+    let private: Vec<_> = fs::read_dir(root)
+        .unwrap()
+        .map(|p| p.unwrap().path())
+        .filter(|p| {
+            p.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("question-")
+                || p.file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .starts_with("answer-")
+        })
+        .map(|p| {
+            let bytes = fs::read(&p).unwrap();
+            (p, bytes)
+        })
+        .collect();
+    assert_eq!(private.len(), 128);
+    let completed = complete(f, child);
+    let result = fs::read(&completed.result_path).unwrap();
+    let delivered = declare(
+        f,
+        &declaration(
+            &completed,
+            "all-questions-delivered",
+            None,
+            RetentionChoice::ArchiveEligible,
+        ),
+    );
+    near_full_assignment(f, &completed);
+    let request = archive_request(
+        &completed,
+        "mixed-history-stop",
+        reference(&delivered, "all-questions-delivered"),
+    );
+    fs::write(
+        f.live.root.path().join("fault"),
+        "archive-after-stage|mixed-history-stop|0",
+    )
+    .unwrap();
+    let failed = f.tool("ovrcr_archive", serde_json::to_value(&request).unwrap());
+    assert_eq!(failed["transport"], "Unknown");
+    let pending = f.reconcile(&child.handle);
+    let original = receipt(&pending, "mixed-history-stop").clone();
+    assert_eq!(original.outcome, ArchiveOutcome::StoppedArchivePending);
+    let one_stop = assert_one_owned_term(signals);
+    let latest = child
+        .questions
+        .iter()
+        .find(|q| q.current)
+        .unwrap()
+        .reference
+        .clone();
+    let handled: AssignmentSnapshot = serde_json::from_value(f.tool(
+        "ovrcr_mark_handled",
+        serde_json::json!({"handle":child.handle,"publication":latest.publication()}),
+    ))
+    .unwrap();
+    assert_eq!(receipt(&handled, "mixed-history-stop"), &original);
+    let frozen = stored_assignment_bytes(f, &child.handle);
+    let refused = f.tool(
+        "ovrcr_answer_question",
+        super::questions::answer_args(&pending, &latest),
+    );
+    assert_eq!(refused["dispatch"], "Refused");
+    assert_eq!(stored_assignment_bytes(f, &child.handle), frozen);
+    let mut continuation =
+        archive_request(&pending, "mixed-history-files", request.delivery.clone());
+    continuation.continuation_of = Some("mixed-history-stop".into());
+    let archived = archive(f, &continuation);
+    assert_archived(&archived, "mixed-history-files");
+    assert_eq!(receipt(&archived, "mixed-history-stop"), &original);
+    assert_eq!(archived.questions.len(), 64);
+    assert_eq!(
+        archived
+            .receipts
+            .iter()
+            .filter(|r| r.operation == DispatchOperation::AnswerQuestion)
+            .count(),
+        64
+    );
+    let final_row = persisted(f, &child.handle);
+    assert_eq!(
+        final_row["control_intents"].as_array().unwrap().len()
+            + final_row["archive_receipts"].as_array().unwrap().len(),
+        64
+    );
+    for (path, bytes) in private {
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            bytes,
+            "private question/answer evidence survives archive"
+        );
+    }
+    assert_eq!(fs::read(&completed.result_path).unwrap(), result);
+    assert_eq!(fs::read(signals).unwrap(), one_stop);
 }
