@@ -442,7 +442,7 @@ impl ServerState {
         {
             return Err(lifecycle_error(
                 ErrorCode::Conflict,
-                "publication requires this assignment's current child capability",
+                "only the assigned child may publish with its current capability",
             ));
         }
         self.assignment_session(record)?;
