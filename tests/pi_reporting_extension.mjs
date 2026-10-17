@@ -35,7 +35,8 @@ function materialize({ hang = false, interruptAfterBody = false } = {}) {
   writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(TRANSPORT, "utf8"));
   writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
   writeFileSync(join(dir, "ovrcr-delegation-continuation.mjs"), readFileSync(new URL("../src/ovrcr-delegation-continuation.mjs", import.meta.url)));
-    writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.mjs", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-pi-runtime.ts"), readFileSync(new URL("../src/ovrcr-pi-runtime.ts", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.ts", import.meta.url)));
   const extension = join(dir, "ovrcr-pi-reporting.ts");
   writeFileSync(extension, readFileSync(SOURCE, "utf8").replace("__OVRCR_BINARY__", JSON.stringify(helper)));
   return { extension, record, helper, checkpoint };
@@ -73,6 +74,22 @@ test("inert outside a managed invocation: registers nothing", async () => {
   const { extension } = materialize();
   const host = await createHost(extension);
   assert.deepEqual(host.registered(), []);
+});
+
+test("an unavailable optional Pi API preserves ordinary reporting", async () => {
+  managed();
+  const { extension, record } = materialize();
+  writeFileSync(join(resolve(extension, ".."), "ovrcr-pi-interrupt.ts"),
+    "export async function loadPiKeybindings(){return undefined}\nexport function inspectPiInterruptBinding(){return 'Unavailable'}\n");
+  const host = await createHost(extension);
+  await host.emit({ type: "session_start", reason: "startup" });
+  await host.emit({ type: "agent_start" });
+  await host.emit({ type: "agent_end", messages: [assistant("stop")] });
+  await host.emit({ type: "agent_settled" });
+  const sent = frames(record);
+  assert.deepEqual(sent.map(frame => frame.event), ["session_start", "agent_start", "agent_end", "agent_settled"]);
+  assert.equal(sent[1].interrupt, "Unavailable");
+  assert.equal(sent.at(-1).outcome, "ok");
 });
 
 test("one response cycle: start, end, settled carry run, outcome and ordered sequence", async () => {

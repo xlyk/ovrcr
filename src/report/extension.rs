@@ -73,8 +73,12 @@ fn materialize_extension(harness: &Harness) -> std::io::Result<(PathBuf, PathBuf
     write(TRANSPORT_FILE, TRANSPORT_SOURCE)?;
     if harness.provider == AgentProvider::Pi {
         write(
+            "ovrcr-pi-runtime.ts",
+            include_str!("../ovrcr-pi-runtime.ts"),
+        )?;
+        write(
             "ovrcr-pi-interrupt.ts",
-            include_str!("../ovrcr-pi-interrupt.mjs"),
+            include_str!("../ovrcr-pi-interrupt.ts"),
         )?;
         write("ovrcr-delegation-observer.mjs", DELEGATION_OBSERVER_SOURCE)?;
         write(
@@ -95,6 +99,15 @@ pub fn receiver(
     harness: &'static Harness,
     lease: Option<InvocationLease>,
     argv: &mut Vec<OsString>,
+) -> HookHandler {
+    receiver_with_environment(harness, lease, argv, &mut Vec::new())
+}
+
+pub fn receiver_with_environment(
+    harness: &'static Harness,
+    lease: Option<InvocationLease>,
+    argv: &mut Vec<OsString>,
+    environment: &mut Vec<(OsString, OsString)>,
 ) -> HookHandler {
     // Capture only non-secret launch references, before adding our temporary extension.
     let recovery = (|| {
@@ -127,7 +140,15 @@ pub fn receiver(
         Ok((dir, path)) => {
             scratch = Some(dir);
             argv.insert(1, "-e".into());
-            argv.insert(2, path.into_os_string());
+            argv.insert(2, path.clone().into_os_string());
+            if harness.provider == AgentProvider::Pi {
+                environment.push((
+                    "OVRCR_PI_ENTRY".into(),
+                    serde_json::json!({ "schema": 1, "path": path })
+                        .to_string()
+                        .into(),
+                ));
+            }
             None
         }
         Err(error) => Some(format!("extension not materialized: {error}")),

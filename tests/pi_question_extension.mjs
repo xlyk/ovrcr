@@ -31,7 +31,8 @@ console.log(JSON.stringify({handle:fields.handle,dispatch:'Applied',result_versi
   const source = readFileSync(new URL("../src/pi-reporting-extension.mjs", import.meta.url), "utf8").replace("__OVRCR_BINARY__", JSON.stringify(binary));
   writeFileSync(join(directory, "reporting.ts"), source);
   for (const name of ["ovrcr-reporting-transport.mjs", "ovrcr-delegation-observer.mjs", "ovrcr-delegation-continuation.mjs"]) writeFileSync(join(directory, name), readFileSync(new URL(`../src/${name}`, import.meta.url)));
-  writeFileSync(join(directory, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.mjs", import.meta.url)));
+  writeFileSync(join(directory, "ovrcr-pi-runtime.ts"), readFileSync(new URL("../src/ovrcr-pi-runtime.ts", import.meta.url)));
+  writeFileSync(join(directory, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.ts", import.meta.url)));
   const host = await createHost(join(directory, "reporting.ts"));
   t.after(async () => { await host.emit({ type: "session_shutdown", reason: "quit" }); process.env = before; rmSync(directory, { recursive: true, force: true }); });
   return { host, directory, calls: () => { try { return readFileSync(calls, "utf8").trim().split("\n").map(JSON.parse); } catch (error) { if (error.code === "ENOENT") return []; throw error; } } };
