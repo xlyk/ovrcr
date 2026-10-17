@@ -11,6 +11,8 @@ mod dependencies;
 mod fallback;
 #[path = "pi_delegation/followups.rs"]
 mod followups;
+#[path = "pi_delegation/review.rs"]
+mod independent_review;
 #[path = "support/live.rs"]
 mod live;
 #[path = "pi_delegation/recovery.rs"]
@@ -1192,6 +1194,15 @@ impl ControlProxy {
                     panic!("only delegation uses proxy")
                 };
                 let (operation, handle) = match request.as_ref() {
+                    DelegationRequest::Review {
+                        handle, operation, ..
+                    } => (
+                        "Review",
+                        match operation {
+                            ReviewOperation::Repair { request, .. } => request.clone(),
+                            _ => handle.clone(),
+                        },
+                    ),
                     DelegationRequest::Prepare { contract, .. } => {
                         ("Prepare", contract.request.clone())
                     }

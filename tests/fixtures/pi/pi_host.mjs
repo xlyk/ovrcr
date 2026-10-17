@@ -1,3 +1,4 @@
+import { applyReviewFixture } from "./pi_review.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { createHash } from "node:crypto";
 import { dependencyResult } from "./pi_dependencies.mjs";
@@ -370,7 +371,7 @@ async function main() {
       const submission = { schema: 1, identity: brief.identity, version: brief.result_version ?? 1, outcome: "success", summary: "Read the assigned repository README.", evidence: ["README:1 fixture"], unresolved: [] };
       if (brief.contract.scope.startsWith("DEPENDENCY_FIXTURE\n")) {
         dependencyResult(brief,path,submission);
-      } else if (brief.contract.coding) {
+      } else if (!applyReviewFixture(brief, path, submission, host) && brief.contract.coding) {
         if (process.cwd() !== brief.coding_workspace.path) throw new Error("coding child cwd differs from Server-owned workspace");
         writeFileSync(join(process.cwd(), "change.txt"), `${brief.handle}:${submission.version}\n`);
         const checked = spawnSync("/bin/sh", ["-c", "false"], {cwd:process.cwd(),encoding:"utf8"});

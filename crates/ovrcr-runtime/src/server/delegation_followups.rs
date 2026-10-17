@@ -655,6 +655,9 @@ impl ServerState {
         hold_before_effect("fallback-before-acceptance", &handle)?;
         let initial = self.owned_assignment(&auth, &handle)?;
         self.require_dependency_fresh(&initial)?;
+        self.require_review_acceptance(&auth, &initial)?;
+        #[cfg(feature = "acceptance-diagnostics")]
+        hold_before_effect("review-final-auth", &handle)?;
         let parent = self.session_for_control(auth.session)?;
         let session = self.assignment_session(&initial)?;
         let store = self.retained.lock();
@@ -668,6 +671,8 @@ impl ServerState {
             || record.result_version != result_version
             || record.identity != initial.identity
             || record.binding != initial.binding
+            || record.review != initial.review
+            || record.obligation_revision != initial.obligation_revision
         {
             return Err(lifecycle_error(
                 ErrorCode::Conflict,
@@ -706,6 +711,7 @@ impl ServerState {
                     text: "",
                 },
                 |agent| {
+                    self.require_review_acceptance_at_commit(&store, &record)?;
                     if let Some(previous) = &record.acceptance {
                         if previous.target != target {
                             return Err(lifecycle_error(
@@ -788,6 +794,11 @@ impl ServerState {
                         record.obligation_revision.checked_add(1).ok_or_else(|| {
                             lifecycle_error(ErrorCode::Conflict, "obligation revision exhausted")
                         })?;
+                    if let Some(reference) = record.preserved_review_acceptance(&target)? {
+                        record.acceptance = Some(reference);
+                        record.obligation_revision = next_obligation_revision;
+                        return store.save_assignment(&record);
+                    }
                     let name = format!("acceptance-v{result_version}.json");
                     let bytes = serde_json::to_vec(&serde_json::json!({
                         "schema": 2, "identity": identity, "result_version": result_version,
