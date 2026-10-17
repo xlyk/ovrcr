@@ -242,6 +242,7 @@ async function main() {
       const path = clean.match(/in (.+\/brief-v[1-9][0-9]*\.json)\. Read/)[1];
       const brief = JSON.parse(readFileSync(path, "utf8"));
       activeBrief = { path, brief };
+      writeFileSync(`${path}.native-argv`, JSON.stringify(process.argv.slice(2)));
       interrupting = false;
       writeFileSync(`${path}.started`, "CHILD_RESEARCH_STARTED");
       appendFileSync(`${path}.input-count`, "1\n");
@@ -377,7 +378,6 @@ async function main() {
         const checked = spawnSync("/bin/sh", ["-c", "false"], {cwd:process.cwd(),encoding:"utf8"});
         if (checked.error || checked.status !== 1) throw new Error("fixture check did not execute the expected actual failure");
         writeFileSync(`${path}.check.log`, `false exited ${checked.status}\n`);
-        writeFileSync(`${path}.native-argv`, JSON.stringify(process.argv.slice(2)));
         submission.outcome = "failed";
         submission.summary = "Isolated fixture edit; actual check failed.";
         submission.evidence = ["change.txt",`${path}.check.log`];
