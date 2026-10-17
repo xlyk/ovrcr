@@ -50,6 +50,19 @@ test("managed Pi exposes research assignment and explicit collection tools", asy
     const missing = await host.tool("ovrcr_start", {});
     assert.equal(missing.details.dispatch, "Refused");
     assert.equal(missing.details.handle, null);
+    const start = host.toolDefinition("ovrcr_start").execute;
+    for (const mode of ["coding", "review"]) {
+      const refused = await start("claude-refusal", {
+        project: "p", workspace: "w", scope: "Unsupported Claude mode",
+        acceptance_evidence: ["fixture"], provider: "claude", [mode]: {},
+      }, undefined, undefined, {});
+      assert.equal(refused.details.dispatch, "Refused");
+      assert.equal(refused.details.transport, "NotSent");
+      assert.equal(refused.details.handle, null);
+      assert.deepEqual(refused.details.identity, { session: null, run: null });
+      assert.equal(refused.details.reason, mode === "coding"
+        ? "Claude coding delegation is not supported" : "Claude independent review delegation is not supported");
+    }
     await assert.rejects(() => host.tool("ovrcr_inspect", {}), /missing required argument: handle/);
   } finally {
     process.env = before;

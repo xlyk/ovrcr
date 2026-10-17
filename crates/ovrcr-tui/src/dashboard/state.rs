@@ -3357,7 +3357,8 @@ impl Dashboard {
                 | Response::WorkflowRecovery(_)
                 | Response::Delegation(_)
                 | Response::DelegationObservation(_)
-                | Response::DelegationCapabilities(_) => {}
+                | Response::DelegationCapabilities(_)
+                | Response::AssignedRead(_) => {}
                 Response::HistoryOpened(opened) => {
                     self.accept_history_opened(request_id, opened);
                 }

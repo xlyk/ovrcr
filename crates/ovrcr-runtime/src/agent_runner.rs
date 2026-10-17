@@ -86,6 +86,7 @@ pub fn run_native_with_env(
         .env_remove("OVRCR_DELEGATION_TOKEN")
         .env_remove("OVRCR_DELEGATION_HOME")
         .env_remove("OVRCR_DELEGATION_SOCKET")
+        .env_remove(crate::claude_delegation::ARTIFACT_ENV)
         .envs(native_environment)
         .process_group(0);
     if let Some(channel) = &channel {

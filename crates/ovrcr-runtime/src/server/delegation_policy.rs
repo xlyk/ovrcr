@@ -76,6 +76,10 @@ pub(super) fn resolve(
         native_descendant_usage: false,
         reason: None,
     };
+    let harness = selection.provider.unwrap_or(policy.default_harness);
+    if harness == ovrcr_protocol::DelegationHarness::Claude {
+        response.capabilities = vec!["read".into(), "result_file".into()];
+    }
     if let Some(reason) = unavailable {
         response.reason = Some(reason);
         return response;
@@ -88,7 +92,6 @@ pub(super) fn resolve(
         response.reason = Some(reason.into());
         return response;
     }
-    let harness = selection.provider.unwrap_or(policy.default_harness);
     let mut candidates: Vec<_> = response
         .choices
         .iter()

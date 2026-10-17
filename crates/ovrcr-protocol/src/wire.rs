@@ -472,6 +472,7 @@ pub enum Response {
     DelegationCapabilities(Box<crate::DelegationCapabilities>),
     WorkflowParents(Vec<crate::WorkflowParent>),
     WorkflowRecovery(Box<crate::WorkflowRecovery>),
+    AssignedRead(Box<crate::AssignedReadResult>),
 }
 
 /// Which create/remove/close a Lifecycle job performed.
@@ -2047,6 +2048,7 @@ mod wire_snapshot {
         delivery_cases(&mut all);
         fallback_cases(&mut all);
         review_cases(&mut all);
+        native_read_cases(&mut all);
         all
     }
 
@@ -2962,6 +2964,77 @@ mod wire_snapshot {
         }
     }
 
+    fn native_read_cases(all: &mut Vec<(String, String)>) {
+        let identity = crate::AssignmentIdentity {
+            instance: "i".into(),
+            workflow: "w".into(),
+            controller: "c".into(),
+            controller_epoch: 1,
+            task: "t".into(),
+            attempt: 1,
+            contract: 1,
+            request: "r".into(),
+            session: Some(SessionId(2)),
+            run: Some(crate::SessionRunId(3)),
+        };
+        for (name, target) in [
+            ("Brief", crate::AssignedReadTarget::Brief),
+            ("Contract", crate::AssignedReadTarget::Contract),
+            ("Submission", crate::AssignedReadTarget::Submission),
+            (
+                "Workspace",
+                crate::AssignedReadTarget::Workspace {
+                    path: "README.md".into(),
+                },
+            ),
+            (
+                "Answer",
+                crate::AssignedReadTarget::Answer {
+                    request: "answer".into(),
+                },
+            ),
+        ] {
+            let request = Request::Delegation(Box::new(crate::DelegationRequest::Read {
+                auth: crate::DelegationAuth {
+                    session: SessionId(1),
+                    capability: "fixture".into(),
+                    source: None,
+                    controller: None,
+                },
+                read: crate::AssignedRead {
+                    handle: "r".into(),
+                    identity: identity.clone(),
+                    result_version: 3,
+                    control_epoch: 1,
+                    target,
+                    offset: 0,
+                },
+            }));
+            let bytes =
+                bincode::serde::encode_to_vec(&request, bincode::config::standard()).unwrap();
+            let (decoded, used): (Request, usize) =
+                bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+            assert_eq!(used, bytes.len());
+            assert_eq!(decoded, request);
+            all.push((format!("Delegation::Read::{name}"), encode(&request)));
+        }
+        let response = Response::AssignedRead(Box::new(crate::AssignedReadResult {
+            identity,
+            result_version: 3,
+            control_epoch: 1,
+            offset: 0,
+            next_offset: 4,
+            total_bytes: 4,
+            text: "read".into(),
+        }));
+        let bytes = bincode::serde::encode_to_vec(&response, bincode::config::standard()).unwrap();
+        let (decoded, used): (Response, usize) =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+        assert_eq!(used, bytes.len());
+        assert_eq!(decoded, response);
+        all.push(("Response::AssignedRead".into(), encode(&response)));
+    }
+
     // Regenerate with `cargo test -p ovrcr-protocol wire_snapshot -- --nocapture`
     // after bumping PROTOCOL_VERSION.
     const EXPECTED: &[(&str, &str)] = &[
@@ -3019,13 +3092,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0439017301630168016c0104",
+            "2a043a017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0439017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f043a017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -3056,18 +3129,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04390000"),
+        ("Response::NotificationNavigation", "0d043a0000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0439017301630168016c0104",
+            "0e01016e043a017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010439017301630168016c0164",
+            "0f010708090101690101043a017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004390107080901016901010439017301630168016c0164",
+            "10043a010708090101690101043a017301630168016c0164",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -3091,7 +3164,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0439017301630168016c0104",
+            "08016e043a017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -3468,6 +3541,30 @@ mod wire_snapshot {
         (
             "Request::Review::Stop",
             "321601076669787475726500000e696d706c656d656e746174696f6e0403",
+        ),
+        (
+            "Delegation::Read::Brief",
+            "321701076669787475726500000172016901770163010174010101720102010303010000",
+        ),
+        (
+            "Delegation::Read::Contract",
+            "321701076669787475726500000172016901770163010174010101720102010303010100",
+        ),
+        (
+            "Delegation::Read::Submission",
+            "321701076669787475726500000172016901770163010174010101720102010303010200",
+        ),
+        (
+            "Delegation::Read::Workspace",
+            "321701076669787475726500000172016901770163010174010101720102010303010309524541444d452e6d6400",
+        ),
+        (
+            "Delegation::Read::Answer",
+            "321701076669787475726500000172016901770163010174010101720102010303010406616e7377657200",
+        ),
+        (
+            "Response::AssignedRead",
+            "18016901770163010174010101720102010303010004040472656164",
         ),
     ];
 
