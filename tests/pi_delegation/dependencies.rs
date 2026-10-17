@@ -418,12 +418,55 @@ fn public_dependencies_verify_actual_commit_content_not_ancestry_and_keep_inheri
         accepted_children.push(completed);
     }
     graph["edges"][3]["selected"] = selection(&accepted_children[0]);
+    graph["edges"][3]["artifacts"] = json!(["a.txt", "good.txt"]);
+    let baseline: Value = serde_json::from_slice(
+        &fs::read(
+            &accepted_children[0]
+                .coding_target
+                .as_ref()
+                .unwrap()
+                .candidate
+                .input_baseline
+                .as_ref()
+                .unwrap()
+                .path,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        baseline["inputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|file| file["path"] == "a.txt")
+    );
+    assert!(
+        !baseline["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|file| file["path"] == "a.txt")
+    );
     configure(&f, 2, &graph);
-    let deep = start(
-        &f,
-        "deep",
-        json!({"expect":[{"path":"a.txt","content":"A"},{"path":"good.txt","content":"good"}],"outputs":[{"path":"deep.txt","content":"deep"}],"check_path":"deep.txt"}),
-        &["deep.txt"],
+    let deep_response = f.tool(
+        "ovrcr_start",
+        arguments(
+            "deep",
+            json!({"expect":[{"path":"a.txt","content":"A"},{"path":"good.txt","content":"good"}],"outputs":[{"path":"deep.txt","content":"deep"}],"check_path":"deep.txt"}),
+            &["deep.txt"],
+            "main",
+        ),
+    );
+    eprintln!(
+        "DEPENDENCY_R1_NAMED_ADMISSION dispatch={} reason={}",
+        deep_response["dispatch"], deep_response["reason"]
+    );
+    assert_eq!(deep_response["dispatch"], "Applied", "{deep_response}");
+    let deep: AssignmentSnapshot = serde_json::from_value(deep_response).unwrap();
+    eprintln!(
+        "DEPENDENCY_R1_NAMED_INPUT dispatch={:?} reason={:?}",
+        deep.dispatch, deep.reason
     );
     assert_eq!(deep.dispatch, DispatchStatus::Applied, "{deep:?}");
     let deep = accept(&f, &collect(&f, &deep));
@@ -1533,5 +1576,234 @@ fn public_dependency_invalidation_overflow_and_store_failure_leave_graph_and_obl
         f.child_count(),
         3,
         "failed metadata updates never allocate or stop native children"
+    );
+}
+
+#[test]
+fn public_dependency_removed_isolated_task_revokes_stale_delivery_and_archive_eligibility() {
+    // Separate fixtures prevent the original bug's new delivery from superseding
+    // the old archive head before the archive arm can exercise it.
+    let mut violations = Vec::new();
+    for arm in ["delivery", "archive"] {
+        let f = super::followups::OwnedFollowup::new();
+        let graph = json!({"tasks":[task("x",false),task("y",false)],"edges":[]});
+        configure(&f, 0, &graph);
+        let x = start(
+            &f,
+            "x",
+            json!({"outputs":[{"path":"x.txt","content":"X"}],"check_path":"x.txt"}),
+            &["x.txt"],
+        );
+        let y = start(
+            &f,
+            "y",
+            json!({"outputs":[{"path":"y.txt","content":"Y"}],"check_path":"y.txt"}),
+            &["y.txt"],
+        );
+        release(&f);
+        let x = accept(&f, &collect(&f, &x));
+        let y = accept(&f, &collect(&f, &y));
+        let continued: AssignmentSnapshot =
+            serde_json::from_value(super::followups::followup(&f, &x, None)).unwrap();
+        assert_eq!(continued.result_version, x.result_version + 1);
+        let x = accept(&f, &collect(&f, &continued));
+        assert_eq!(
+            x.history.len(),
+            1,
+            "preserve actual nonempty version history"
+        );
+        let history = serde_json::to_vec(&x.history).unwrap();
+        let mut immutable = vec![
+            x.brief.clone(),
+            x.result_path.clone(),
+            x.acceptance_ref.as_ref().unwrap().path.clone(),
+            x.coding_target.as_ref().unwrap().candidate.path.clone(),
+        ];
+        for version in &x.history {
+            immutable.extend([
+                version.contract.clone(),
+                version.brief.clone(),
+                version.acceptance.as_ref().unwrap().path.clone(),
+            ]);
+            let brief: Value = serde_json::from_slice(&fs::read(&version.brief).unwrap()).unwrap();
+            immutable.push(std::path::PathBuf::from(brief["output"].as_str().unwrap()));
+        }
+        let immutable: Vec<_> = immutable
+            .into_iter()
+            .map(|path| {
+                let bytes = fs::read(&path).unwrap();
+                (path, bytes)
+            })
+            .collect();
+        let db = rusqlite::Connection::open(f.live.config.join("registry.sqlite3")).unwrap();
+        let record = |handle: &str| {
+            db.query_row(
+                "SELECT metadata FROM delegations WHERE handle=?1",
+                [handle],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap()
+        };
+        let original_y = record(&y.handle);
+        let resource = |child: &AssignmentSnapshot| DeliveryResource {
+            handle: child.handle.clone(),
+            identity: child.identity.clone(),
+            result_version: child.result_version,
+            obligation_revision: child.obligation_revision,
+            publication: child.publication.as_ref().map(|p| p.identity.clone()),
+            acceptance: child.acceptance_ref.clone(),
+            evidence: vec![],
+            completed_obligations: vec!["accepted isolated dependency task".into()],
+            retention: RetentionChoice::ArchiveEligible,
+            previous: None,
+        };
+        let original = DeliveryDeclaration {
+            request: format!("removed-x-original-{arm}"),
+            workflow: x.identity.workflow.clone(),
+            scope: "Deliver accepted isolated X".into(),
+            provenance: "Explicit parent archive eligibility before removal".into(),
+            resources: vec![resource(&x)],
+        };
+        let delivered: WorkflowSnapshot =
+            serde_json::from_value(f.tool("ovrcr_deliver", json!({"declaration":original})))
+                .unwrap();
+        let old_delivery = delivered.deliveries.last().unwrap().clone();
+        let old_delivery_bytes = serde_json::to_vec(&old_delivery).unwrap();
+        let revised = json!({"tasks":[task("y",false)],"edges":[]});
+        let changed = configure(&f, 1, &revised);
+        let current: AssignmentSnapshot =
+            serde_json::from_value(f.tool("ovrcr_collect", json!({"handle":x.handle}))).unwrap();
+        let persisted: Value = serde_json::from_str(&record(&x.handle)).unwrap();
+        eprintln!(
+            "DEPENDENCY_R1_REMOVED arm={arm} invalidated={:?} old_obligation={} current_obligation={}",
+            changed.dependencies.as_ref().unwrap().invalidated_tasks,
+            x.obligation_revision,
+            current.obligation_revision
+        );
+        if changed.dependencies.as_ref().unwrap().version != 2
+            || !changed
+                .dependencies
+                .as_ref()
+                .unwrap()
+                .invalidated_tasks
+                .contains(&"x".into())
+            || current.obligation_revision != x.obligation_revision + 1
+            || persisted["obligation_revision"] != x.obligation_revision + 1
+        {
+            violations.push(format!(
+                "{arm}: removed X obligation did not advance with the graph"
+            ));
+        }
+        assert!(
+            current
+                .dependency_gap
+                .as_ref()
+                .is_some_and(|gap| gap.contains("removed"))
+        );
+        assert_eq!(serde_json::to_vec(&current.history).unwrap(), history);
+        // Replaying an immutable declaration remains historical inspection; it
+        // cannot restore the old obligation or grant current archive authority.
+        let replay: WorkflowSnapshot =
+            serde_json::from_value(f.tool("ovrcr_deliver", json!({"request":original.request})))
+                .unwrap();
+        assert_eq!(
+            serde_json::to_vec(
+                replay
+                    .deliveries
+                    .iter()
+                    .find(|entry| entry.reference == old_delivery.reference)
+                    .unwrap()
+            )
+            .unwrap(),
+            old_delivery_bytes
+        );
+        if arm == "delivery" {
+            let mut stale = original.clone();
+            stale.request = "removed-x-new-stale-delivery".into();
+            stale.resources[0].previous = Some(old_delivery.reference.clone());
+            let response = f.tool("ovrcr_deliver", json!({"declaration":stale}));
+            eprintln!(
+                "DEPENDENCY_R1_REMOVED_NEW_DELIVERY dispatch={} reason={} recorded={}",
+                response["dispatch"],
+                response["reason"],
+                response["deliveries"].is_array()
+            );
+            if !response["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("obligations changed"))
+                || response["deliveries"].is_array()
+            {
+                violations.push("new stale delivery was admitted for removed X".into());
+            }
+        } else {
+            let request = ArchiveRequest {
+                request: "removed-x-stale-archive".into(),
+                handle: x.handle.clone(),
+                expected_identity: x.identity.clone(),
+                expected_result_version: x.result_version,
+                expected_obligation_revision: x.obligation_revision,
+                expected_control_epoch: x.control.epoch,
+                delivery: old_delivery.reference.clone(),
+                continuation_of: None,
+            };
+            let response: AssignmentSnapshot = serde_json::from_value(
+                f.tool("ovrcr_archive", serde_json::to_value(&request).unwrap()),
+            )
+            .unwrap();
+            let receipt = response
+                .archive_receipts
+                .iter()
+                .find(|receipt| receipt.intent.request.request == request.request)
+                .unwrap();
+            eprintln!(
+                "DEPENDENCY_R1_REMOVED_ARCHIVE outcome={:?}",
+                receipt.outcome
+            );
+            if receipt.outcome
+                != (ArchiveOutcome::Refused {
+                    reason: ArchiveRefusal::ObligationChanged,
+                })
+            {
+                violations.push(format!(
+                    "old ArchiveEligible declaration admitted removed X: {:?}",
+                    receipt.outcome
+                ));
+            }
+        }
+        for (path, bytes) in &immutable {
+            assert_eq!(
+                &fs::read(path).unwrap(),
+                bytes,
+                "immutable acceptance/result/history file {}",
+                path.display()
+            );
+        }
+        assert_eq!(
+            record(&y.handle),
+            original_y,
+            "unrelated Y durable bytes are unchanged"
+        );
+        let y_now: AssignmentSnapshot =
+            serde_json::from_value(f.tool("ovrcr_collect", json!({"handle":y.handle}))).unwrap();
+        assert!(y_now.dependency_gap.is_none());
+        assert_eq!(y_now.obligation_revision, y.obligation_revision);
+        let y_delivery = DeliveryDeclaration {
+            request: format!("unrelated-y-still-current-{arm}"),
+            workflow: y.identity.workflow.clone(),
+            scope: "Deliver unaffected Y".into(),
+            provenance: "Independent accepted task retains its exact obligations".into(),
+            resources: vec![resource(&y)],
+        };
+        let y_delivery: WorkflowSnapshot =
+            serde_json::from_value(f.tool("ovrcr_deliver", json!({"declaration":y_delivery})))
+                .unwrap();
+        assert!(y_delivery.deliveries.iter().any(
+            |delivery| delivery.reference.request == format!("unrelated-y-still-current-{arm}")
+        ));
+        assert_eq!(record(&y.handle), original_y);
+    }
+    assert!(
+        violations.is_empty(),
+        "removed-task stale-authority violations: {violations:?}"
     );
 }
