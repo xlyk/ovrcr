@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync, rmSync, chmodSync, symlinkSync, appendFileSync, mkdirSync, openSync, closeSync, constants } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, chmodSync, symlinkSync, appendFileSync, mkdirSync, openSync, closeSync, constants, existsSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import childProcess, { execFileSync } from "node:child_process";
@@ -20,12 +20,13 @@ test("managed Pi exposes research assignment and explicit collection tools", asy
     writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(new URL("../src/ovrcr-reporting-transport.mjs", import.meta.url)));
     writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
     writeFileSync(join(dir, "ovrcr-delegation-continuation.mjs"), readFileSync(new URL("../src/ovrcr-delegation-continuation.mjs", import.meta.url)));
-    writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.mjs", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-pi-runtime.ts"), readFileSync(new URL("../src/ovrcr-pi-runtime.ts", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.ts", import.meta.url)));
     host = await createHost(join(dir, "reporting.ts"));
     assert.deepEqual(host.tools(), ["ovrcr_accept", "ovrcr_answer_question", "ovrcr_archive", "ovrcr_cancel_workflow", "ovrcr_capabilities", "ovrcr_capture_fallback", "ovrcr_checkpoint", "ovrcr_collect", "ovrcr_collect_question", "ovrcr_confirm_interrupt", "ovrcr_confirm_return", "ovrcr_deliver", "ovrcr_dependencies", "ovrcr_followup", "ovrcr_inspect", "ovrcr_interrupt", "ovrcr_mark_handled", "ovrcr_parents", "ovrcr_publish", "ovrcr_publish_question", "ovrcr_recover", "ovrcr_recover_fallback", "ovrcr_retry", "ovrcr_review", "ovrcr_start", "ovrcr_transfer", "ovrcr_wait"]);
     assert.deepEqual(host.toolDefinition("ovrcr_publish").parameters.required, ["handle", "submission"]);
     assert.deepEqual(host.toolDefinition("ovrcr_collect").parameters.required, ["handle"]);
-    assert.deepEqual(host.toolDefinition("ovrcr_start").parameters.anyOf, [{ required: ["handle"] }, { required: ["project", "workspace", "scope", "acceptance_evidence"] }]);
+    assert.deepEqual(host.toolDefinition("ovrcr_start").parameters.anyOf, [{ required: ["handle"], maxProperties: 1 }, { required: ["project", "workspace", "scope", "acceptance_evidence"], not: { required: ["handle"] } }]);
     const coding = host.toolDefinition("ovrcr_start").parameters.properties.coding;
     assert.deepEqual(coding.required,["requested_base","branch","authorized_paths","required_checks"]);
     assert.equal(coding.additionalProperties,false);
@@ -80,6 +81,7 @@ test("acceptance exclusivity rejects direct registered callbacks before transpor
       writeFileSync(join(dir, name), readFileSync(new URL(`../src/${name}`, import.meta.url)));
     }
     // This validation needs no optional installed-provider API or lifecycle event.
+    writeFileSync(join(dir, "ovrcr-pi-runtime.ts"), readFileSync(new URL("../src/ovrcr-pi-runtime.ts", import.meta.url)));
     writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), "export async function loadPiKeybindings(){return undefined}\nexport function inspectPiInterruptBinding(){return 'Unavailable'}\n");
     const host = await createHost(join(dir, "reporting.ts"));
     const callback = host.toolDefinition("ovrcr_accept").execute;
@@ -96,6 +98,67 @@ test("acceptance exclusivity rejects direct registered callbacks before transpor
       assert.equal(response.details.acceptance_ref, undefined);
       assert.equal(launches, 0, "invalid local arguments must never attempt control transport");
     }
+  } finally {
+    for (const [name, original] of originals) childProcess[name] = original;
+    syncBuiltinESMExports();
+    process.env = before;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("registered start rejects invalid action authority before intent or transport", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ovrcr-start-authority-"));
+  const before = { ...process.env };
+  const launchNames = ["spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync", "fork"];
+  const originals = new Map(launchNames.map(name => [name, childProcess[name]]));
+  let launches = 0;
+  try {
+    for (const name of launchNames) childProcess[name] = () => {
+      launches += 1;
+      throw new Error("invalid start must never launch control transport");
+    };
+    syncBuiltinESMExports();
+    Object.assign(process.env, {
+      OVRCR_AGENT_SOCKET: "/fixture/reporting", OVRCR_AGENT_TOKEN: "fixture-reporting",
+      OVRCR_DELEGATION_SESSION: "1", OVRCR_DELEGATION_TOKEN: "fixture-delegation",
+      OVRCR_DELEGATION_SOCKET: "/fixture/control", OVRCR_DELEGATION_HOME: dir,
+    });
+    writeFileSync(join(dir, "reporting.ts"), readFileSync(
+      new URL("../src/pi-reporting-extension.mjs", import.meta.url), "utf8"
+    ).replace("__OVRCR_BINARY__", JSON.stringify("/fixture/never-launch")));
+    for (const name of ["ovrcr-reporting-transport.mjs", "ovrcr-delegation-observer.mjs",
+      "ovrcr-delegation-continuation.mjs", "ovrcr-pi-runtime.ts"]) {
+      writeFileSync(join(dir, name), readFileSync(name === "ovrcr-pi-runtime.ts"
+        ? process.env.OVRCR_TEST_PI_RUNTIME_SOURCE ?? new URL(`../src/${name}`, import.meta.url)
+        : new URL(`../src/${name}`, import.meta.url)));
+    }
+    writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), "export async function loadPiKeybindings(){return undefined}\nexport function inspectPiInterruptBinding(){return 'Unavailable'}\n");
+    const host = await createHost(join(dir, "reporting.ts"));
+    const callback = host.toolDefinition("ovrcr_start").execute;
+    const research = { project: "p", workspace: "w", scope: "Read", acceptance_evidence: ["citation"] };
+    for (const fields of [
+      { permitted_actions: ["read", "result_file"] },
+      { permitted_actions: ["read", "write"] },
+      { permitted_actions: [] },
+      { permitted_actions: null },
+      { review: {}, permitted_actions: ["read", "result_file"] },
+      { coding: {}, permitted_actions: ["read", "write", "edit"] },
+      { coding: {}, permitted_actions: ["write", "read", "edit", "check"] },
+    ]) {
+      const response = await callback("direct-host", { ...research, ...fields }, undefined, undefined, {});
+      assert.equal(launches, 0, "invalid actions must not even query capabilities or reach Prepare");
+      assert.match(response.details.reason, /exactly.*read/);
+      assert.equal(response.details.dispatch, "Refused");
+      assert.equal(response.details.transport, "NotSent");
+      assert.equal(response.details.handle, null);
+      assert.equal(response.details.receipts, undefined);
+      assert.equal(existsSync(join(dir, "parent-intents")), false, "invalid actions must not persist an original intent");
+    }
+    const mixed = await callback("direct-host", { ...research, handle: "original" }, undefined, undefined, {});
+    assert.equal(mixed.details.dispatch, "Refused");
+    assert.equal(mixed.details.handle, "original");
+    assert.equal(launches, 0);
+    assert.equal(existsSync(join(dir, "parent-intents")), false);
   } finally {
     for (const [name, original] of originals) childProcess[name] = original;
     syncBuiltinESMExports();
@@ -145,10 +208,12 @@ writeFileSync(${JSON.stringify(state)}, JSON.stringify(value)); console.log(JSON
     writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(new URL("../src/ovrcr-reporting-transport.mjs", import.meta.url)));
     writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
     writeFileSync(join(dir, "ovrcr-delegation-continuation.mjs"), readFileSync(new URL("../src/ovrcr-delegation-continuation.mjs", import.meta.url)));
-    writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.mjs", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-pi-runtime.ts"), readFileSync(new URL("../src/ovrcr-pi-runtime.ts", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.ts", import.meta.url)));
     host = await createHost(join(dir, "reporting.ts"));
-    const first = (await host.tool("ovrcr_start", {project:"p",workspace:"w",scope:"Read",model_provider:"test",model:"fixture-model",acceptance_evidence:["citation"]})).details;
+    const first = (await host.tool("ovrcr_start", {project:"p",workspace:"w",scope:"Read",model_provider:"test",model:"fixture-model",acceptance_evidence:["citation"],...(loss === "before" ? {permitted_actions:["read"]} : {})})).details;
     assert.equal(first.dispatch, "Unknown");
+    assert.equal(first.transport, "Unknown", "a genuinely lost Prepare response remains uncertain");
     assert.equal(first.receipts, undefined, "transport failure must not fabricate Server receipts");
     const recovered = (await host.tool("ovrcr_start", {handle:first.handle})).details;
     assert.equal(recovered.dispatch, "Applied");
@@ -220,7 +285,8 @@ console.log(JSON.stringify({handle:fields.handle,identity:fields.expected_identi
     writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(new URL("../src/ovrcr-reporting-transport.mjs", import.meta.url)));
     writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
     writeFileSync(join(dir, "ovrcr-delegation-continuation.mjs"), readFileSync(new URL("../src/ovrcr-delegation-continuation.mjs", import.meta.url)));
-    writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.mjs", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-pi-runtime.ts"), readFileSync(new URL("../src/ovrcr-pi-runtime.ts", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.ts", import.meta.url)));
     host = await createHost(join(dir, "reporting.ts"));
     const first = (await host.tool("ovrcr_followup", {handle:"assignment",expected_identity:{request:"assignment",contract:1},expected_result_version:1,expected_control_epoch:1,text:"Clarify the scoped result"})).details;
     assert.equal(first.dispatch,"Unknown");
@@ -294,7 +360,8 @@ process.stdout.write(JSON.stringify({ cursor: { server_epoch: "fixture", sequenc
     writeFileSync(extension, readFileSync(new URL("../src/pi-reporting-extension.mjs", import.meta.url), "utf8").replace("__OVRCR_BINARY__", JSON.stringify(binary)));
     for (const name of ["ovrcr-reporting-transport.mjs", "ovrcr-delegation-observer.mjs"]) writeFileSync(join(dir, name), readFileSync(new URL(`../src/${name}`, import.meta.url)));
     for (const name of ["ovrcr-reporting-transport.mjs", "ovrcr-delegation-continuation.mjs"]) writeFileSync(join(dir, name), readFileSync(new URL(`../src/${name}`, import.meta.url)));
-    writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.mjs", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-pi-runtime.ts"), readFileSync(new URL("../src/ovrcr-pi-runtime.ts", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.ts", import.meta.url)));
     host = await createHost(extension, { idle: false });
     await host.tool("ovrcr_wait", { handles: ["A", "B"], wait_ms: 0 });
     await eventually(() => host.state.messages.length === 1);
@@ -333,7 +400,8 @@ test("retry rejects a FIFO intent before a blocking open can wait for a writer",
     writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(new URL("../src/ovrcr-reporting-transport.mjs", import.meta.url)));
     writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
     writeFileSync(join(dir, "ovrcr-delegation-continuation.mjs"), readFileSync(new URL("../src/ovrcr-delegation-continuation.mjs", import.meta.url)));
-    writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.mjs", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-pi-runtime.ts"), readFileSync(new URL("../src/ovrcr-pi-runtime.ts", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.ts", import.meta.url)));
     const host = await createHost(join(dir, "reporting.ts"));
     let waitedForWriter = false;
     // Release the original defect so a failed regression cannot hang Node's
@@ -374,7 +442,8 @@ else throw new Error('Unexpected effect '+operation);
     const source = readFileSync(new URL("../src/pi-reporting-extension.mjs", import.meta.url), "utf8").replace("__OVRCR_BINARY__", JSON.stringify(binary));
     writeFileSync(join(dir,"reporting.ts"),source);
     for (const file of ["ovrcr-reporting-transport.mjs","ovrcr-delegation-observer.mjs","ovrcr-delegation-continuation.mjs"]) writeFileSync(join(dir,file),readFileSync(new URL(`../src/${file}`,import.meta.url)));
-    writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.mjs", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-pi-runtime.ts"), readFileSync(new URL("../src/ovrcr-pi-runtime.ts", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.ts", import.meta.url)));
     host = await createHost(join(dir,"reporting.ts"));
     const starting = host.emit({type:"session_start",reason:"startup"});
     const deadline = Date.now()+5000;
@@ -413,7 +482,8 @@ const request=JSON.parse(input);appendFileSync(${JSON.stringify(calls)},Object.k
     Object.assign(process.env,{OVRCR_AGENT_SOCKET:"/fixture/reporting",OVRCR_AGENT_TOKEN:"reporting",OVRCR_DELEGATION_SESSION:"1",OVRCR_DELEGATION_TOKEN:"control",OVRCR_DELEGATION_SOCKET:"/fixture/control",OVRCR_DELEGATION_HOME:dir});
     writeFileSync(join(dir,"reporting.ts"),readFileSync(new URL("../src/pi-reporting-extension.mjs",import.meta.url),"utf8").replace("__OVRCR_BINARY__",JSON.stringify(binary)));
     for(const file of ["ovrcr-reporting-transport.mjs","ovrcr-delegation-observer.mjs","ovrcr-delegation-continuation.mjs"])writeFileSync(join(dir,file),readFileSync(new URL(`../src/${file}`,import.meta.url)));
-    writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.mjs", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-pi-runtime.ts"), readFileSync(new URL("../src/ovrcr-pi-runtime.ts", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.ts", import.meta.url)));
     mkdirSync(join(dir,"parent-intents"),{mode:0o700});
     const intent = join(dir,"parent-intents","original.json"), bytes = JSON.stringify({schema:1,request:"original",workflow:"old-workflow",controller:"old-controller"});
     writeFileSync(intent,bytes,{mode:0o600});
@@ -461,7 +531,8 @@ console.log(JSON.stringify(wire.Archive ? {handle:fields.handle,archive_receipts
     Object.assign(process.env,{OVRCR_AGENT_SOCKET:"/fixture/reporting",OVRCR_AGENT_TOKEN:"fixture-reporting",OVRCR_DELEGATION_SESSION:"1",OVRCR_DELEGATION_TOKEN:"fixture-secret",OVRCR_DELEGATION_SOCKET:"/fixture/control",OVRCR_DELEGATION_HOME:dir});
     writeFileSync(join(dir,"reporting.ts"),readFileSync(new URL("../src/pi-reporting-extension.mjs",import.meta.url),"utf8").replace("__OVRCR_BINARY__",JSON.stringify(binary)));
     for (const name of ["ovrcr-reporting-transport.mjs","ovrcr-delegation-observer.mjs","ovrcr-delegation-continuation.mjs"]) writeFileSync(join(dir,name),readFileSync(new URL(`../src/${name}`,import.meta.url)));
-    writeFileSync(join(dir,"ovrcr-pi-interrupt.ts"),readFileSync(new URL("../src/ovrcr-pi-interrupt.mjs",import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-pi-runtime.ts"), readFileSync(new URL("../src/ovrcr-pi-runtime.ts", import.meta.url)));
+    writeFileSync(join(dir,"ovrcr-pi-interrupt.ts"),readFileSync(new URL("../src/ovrcr-pi-interrupt.ts",import.meta.url)));
     host=await createHost(join(dir,"reporting.ts"));
     const name=operation === "Archive" ? "ovrcr_archive" : "ovrcr_deliver";
     const args=operation === "Archive" ? {handle:"assignment",expected_identity:{request:"assignment"},expected_result_version:1,expected_obligation_revision:1,expected_control_epoch:1,delivery:{request:"delivery",digest:"a".repeat(64)}} : {declaration:{workflow:"workflow",scope:"delivered finding",provenance:"parent decision",resources:[]}};

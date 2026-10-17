@@ -1391,9 +1391,9 @@ impl ServerState {
                         }
                         let coding = contract.coding.is_some();
                         let tools = if coding {
-                            "read,write,edit,bash,grep,find,ls"
+                            "read,write,edit,bash,grep,find,ls,ovrcr_publish,ovrcr_publish_question"
                         } else {
-                            "read,grep,find,ls"
+                            "read,grep,find,ls,ovrcr_publish,ovrcr_publish_question"
                         };
                         let argv = vec![
                             executable.into_os_string(),

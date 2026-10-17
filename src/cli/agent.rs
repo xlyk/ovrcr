@@ -113,7 +113,7 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
             ),
         ];
     }
-    let status = ovrcr::agent_runner::run_native_with_env(&argv, &delegation_environment, move |available, native_argv| {
+    let status = ovrcr::agent_runner::run_native_with_env(&argv, &delegation_environment, move |available, native_argv, native_environment| {
         if name == "hermes" {
             if !available {
                 drop(lease.take());
@@ -134,7 +134,7 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
         Some(match name.as_str() {
             "cursor-agent" => ovrcr::report::cursor::receiver(lease, native_argv),
             "codex" => ovrcr::report::codex::receiver(lease, native_argv),
-            "pi" => ovrcr::report::pi::receiver(lease, native_argv),
+            "pi" => ovrcr::report::pi::receiver_with_environment(lease, native_argv, native_environment),
             "omp" => ovrcr::report::omp::receiver(lease, native_argv),
             "grok" => ovrcr::report::grok::receiver(lease, native_argv),
             _ => ovrcr::report::admission::receiver(lease, native_argv),

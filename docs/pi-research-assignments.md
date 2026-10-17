@@ -13,7 +13,10 @@ Fallback uses `ovrcr_capture_fallback` and `ovrcr_recover_fallback`, followed by
 explicit typed `ovrcr_accept`; see [terminal fallback](pi-terminal-fallback.md).
 Questions use `ovrcr_publish_question`, `ovrcr_collect_question` and
 `ovrcr_answer_question`.
-A plain Pi process has no delegation authority.
+A plain Pi process has no delegation authority. The optional
+[local package](pi-package-setup.md) discovers the orchestrator skill for direct
+research, review or bounded coding without requiring Pocock stage skills. Managed
+reporting injection remains enabled and owns the single runtime initializer.
 
 ## Continue an existing parent workflow
 
@@ -203,7 +206,11 @@ repair keeps the original workspace, base and permission envelope. A revision
 may change only scope and acceptance evidence.
 
 Coding launches Pi with explicit `--no-approve`, disabled discovered extensions
-and skills, and `read,write,edit,bash,grep,find,ls`. The assignment permits only
+and skills, and `read,write,edit,bash,grep,find,ls`. Both research and coding also
+explicitly enable `ovrcr_publish` and `ovrcr_publish_question`: installed Pi applies
+`--tools` to custom tools as well as builtins, so registration alone cannot make
+child results or questions available. Parent control tools remain excluded.
+The assignment permits only
 read/write/edit/check within its authorized repository paths. This is a bounded
 assignment and tool policy, not an OS sandbox. It does not authorize commits,
 pushes, merges, deployment or credential access. Research keeps its read-only

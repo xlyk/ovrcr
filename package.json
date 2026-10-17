@@ -1,0 +1,16 @@
+{
+  "name": "ovrcr-pi",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./pi/extension.ts"
+    ],
+    "skills": [
+      "./pi/skills/ovrcr-orchestrator"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-tui": "*"
+  }
+}

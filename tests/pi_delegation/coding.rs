@@ -103,7 +103,10 @@ fn public_coding_uses_distinct_workspaces_and_reuses_safe_child_for_followup() {
         }
         assert!(!argv.iter().any(|arg| arg == "--approve"));
         let tools = argv.iter().position(|arg| arg == "--tools").unwrap();
-        assert_eq!(argv[tools + 1], "read,write,edit,bash,grep,find,ls");
+        assert_eq!(
+            argv[tools + 1],
+            "read,write,edit,bash,grep,find,ls,ovrcr_publish,ovrcr_publish_question"
+        );
     }
     assert_eq!(
         fs::read(fixture.live.repo.join("README")).unwrap(),
@@ -1943,4 +1946,96 @@ fn public_coding_replaced_parent_directory_preserves_containment_and_unrelated_w
         fs::metadata(&fixture.live.workspace_root).unwrap().ino(),
         root_inode
     );
+}
+
+// The installed SDK applies --tools to extension tools too; registration alone is insufficient.
+#[test]
+#[ignore = "dedicated installed-Pi effective child catalog gate; requires OVRCR_TEST_PI_PACKAGE_ROOT"]
+fn production_assignment_argv_preserves_installed_sdk_child_publication_tools() {
+    let sdk = std::env::var_os("OVRCR_TEST_PI_PACKAGE_ROOT")
+        .expect("set OVRCR_TEST_PI_PACKAGE_ROOT to the actual installed Pi SDK");
+    let fixture = super::followups::OwnedFollowup::new();
+    let research: AssignmentSnapshot = serde_json::from_value(fixture.start()).unwrap();
+    let coding = start(&fixture, "installed-child-tools");
+    let mut captures = Vec::new();
+    for (kind, assignment) in [("research", &research), ("coding", &coding)] {
+        assert_eq!(
+            assignment.dispatch,
+            DispatchStatus::Applied,
+            "{assignment:?}"
+        );
+        let path = assignment.brief.with_extension("json.native-argv");
+        wait_file(&path);
+        let argv: Vec<String> = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let entry = argv
+            .iter()
+            .position(|arg| arg == "-e")
+            .expect("real injection");
+        assert!(Path::new(&argv[entry + 1]).is_file());
+        assert_eq!(argv.iter().filter(|arg| *arg == "--tools").count(), 1);
+        captures.push(serde_json::json!({"kind":kind,"argv":argv}));
+        for group in fixture.live.session_groups() {
+            fixture.live.own_group(group);
+        }
+    }
+    let capture = fixture.live.root.path().join("installed-child-argv.json");
+    fs::write(&capture, serde_json::to_vec(&captures).unwrap()).unwrap();
+    eprintln!(
+        "PI_CHILD_TOOLS_ARGV {}",
+        serde_json::to_string(&captures).unwrap()
+    );
+    let log = fixture.live.root.path().join("installed-child-tools.log");
+    let mut command = std::process::Command::new("node");
+    command.env_clear();
+    for key in ["PATH", "LANG", "LC_ALL", "LC_CTYPE"] {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    let mut child = command
+        .args([
+            "--test",
+            "--test-concurrency=1",
+            "--test-reporter=tap",
+            "tests/pi_child_tools_installed.mjs",
+        ])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .env("HOME", fixture.live.root.path())
+        .env("TMPDIR", fixture.live.root.path())
+        .env("OVRCR_TEST_PI_PACKAGE_ROOT", sdk)
+        .env("OVRCR_TEST_PI_CHILD_ARGV", &capture)
+        .stdin(std::process::Stdio::null())
+        .stdout(fs::File::create(&log).unwrap())
+        .stderr(fs::File::options().append(true).open(&log).unwrap())
+        .spawn()
+        .expect("spawn actual installed SDK catalog check");
+    eprintln!(
+        "LIVE_OWNED_HELPER root={} helper={}",
+        fixture.live.root.path().display(),
+        child.id()
+    );
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            child.kill().expect("stop exact owned SDK child");
+            child.wait().expect("reap exact owned SDK child");
+            panic!("installed SDK effective catalog check exceeded 120 seconds");
+        }
+        std::thread::park_timeout(Duration::from_millis(10));
+    };
+    let output = fs::read_to_string(&log).unwrap();
+    eprintln!("{output}");
+    assert!(
+        status.success(),
+        "installed SDK effective catalog failed: {status}"
+    );
+    for required in ["# tests 2", "# pass 2", "# fail 0", "# skipped 0"] {
+        assert!(
+            output.lines().any(|line| line == required),
+            "missing SDK receipt: {required}"
+        );
+    }
 }

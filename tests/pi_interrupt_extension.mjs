@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { inspectPiInterruptBinding } from "../src/ovrcr-pi-interrupt.mjs";
+import { inspectPiInterruptBinding } from "../src/ovrcr-pi-interrupt.ts";
 
 function loaded(bindings = {}) {
   const active = { "app.interrupt": ["escape"], ...bindings };

@@ -30,7 +30,9 @@ pub fn run_native(
     argv: &[OsString],
     channel_ready: impl FnOnce(bool, &mut Vec<OsString>) -> Option<HookHandler>,
 ) -> Result<ExitStatus> {
-    run_native_with_env(argv, &[], channel_ready)
+    run_native_with_env(argv, &[], move |available, native_argv, _environment| {
+        channel_ready(available, native_argv)
+    })
 }
 
 /// Only the managed Pi wrapper supplies scoped delegation credentials. Raw hook
@@ -46,7 +48,11 @@ pub fn delegation_capability(hook: &str) -> String {
 pub fn run_native_with_env(
     argv: &[OsString],
     environment: &[(OsString, OsString)],
-    channel_ready: impl FnOnce(bool, &mut Vec<OsString>) -> Option<HookHandler>,
+    channel_ready: impl FnOnce(
+        bool,
+        &mut Vec<OsString>,
+        &mut Vec<(OsString, OsString)>,
+    ) -> Option<HookHandler>,
 ) -> Result<ExitStatus> {
     argv.first().context("native command is required")?;
     let mut signals = Signals::new([
@@ -61,7 +67,8 @@ pub fn run_native_with_env(
     let mut channel = InvocationChannel::new().ok();
     let mut argv = argv.to_vec();
     // The caller releases reporting ownership before an untracked native spawn.
-    let handler = channel_ready(channel.is_some(), &mut argv);
+    let mut native_environment = environment.to_vec();
+    let handler = channel_ready(channel.is_some(), &mut argv, &mut native_environment);
     let executable = argv.first().context("native command is required")?;
     let mut command = Command::new(executable);
     command
@@ -74,11 +81,12 @@ pub fn run_native_with_env(
         .env_remove("OVRCR_HOOK_TOKEN")
         .env_remove("OVRCR_AGENT_SOCKET")
         .env_remove("OVRCR_AGENT_TOKEN")
+        .env_remove("OVRCR_PI_ENTRY")
         .env_remove("OVRCR_DELEGATION_SESSION")
         .env_remove("OVRCR_DELEGATION_TOKEN")
         .env_remove("OVRCR_DELEGATION_HOME")
         .env_remove("OVRCR_DELEGATION_SOCKET")
-        .envs(environment.iter().cloned())
+        .envs(native_environment)
         .process_group(0);
     if let Some(channel) = &channel {
         command
