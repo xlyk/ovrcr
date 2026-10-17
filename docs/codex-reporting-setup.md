@@ -12,9 +12,9 @@ the same managed reporting contract:
 ovrcr agent run codex -- codex
 ```
 
-A direct `codex` launch is untracked; the managed wrapper is required even when the hooks are configured and doctor reports a supported version. Running the wrapper in a terminal outside OVRCR also leaves reporting unavailable. Managed launches restart any CODEX_HOME-owned `app-server --managed-daemon` so Codex 0.158+ hook subprocesses inherit the current private channel (that daemon otherwise keeps a stale `OVRCR_AGENT_SOCKET` across TUI relaunches). Keep `CODEX_HOME` as a real absolute path (not a `/tmp` symlink) — Codex rejects helper PATH aliases when it resolves under `/tmp`. Reporter attribution trusts strict descendants in the native process tree, including nested daemon-spawned helpers. The wrapper preserves ordinary native behavior when reporting cannot be admitted. Doctor reports Ready as available and Approval Input requests as available from verified root `PermissionRequest` hooks (`approval:{turn_id}`); questions remain unavailable until a distinct question open/close surface is verified. One working capability does not certify the other.
+A direct `codex` launch is untracked; the managed wrapper is required even when the hooks are configured and doctor reports a supported version. Running the wrapper in a terminal outside OVRCR also leaves reporting unavailable. Managed launches without `--no-daemon` restart any CODEX_HOME-owned `app-server --managed-daemon` so Codex 0.158+ hook subprocesses inherit the current private channel (that daemon otherwise keeps a stale `OVRCR_AGENT_SOCKET` across TUI relaunches). Keep `CODEX_HOME` as a real absolute path (not a `/tmp` symlink) — Codex rejects helper PATH aliases when it resolves under `/tmp`. Reporter attribution trusts strict descendants in the native process tree, including nested daemon-spawned helpers. The wrapper preserves ordinary native behavior when reporting cannot be admitted. Doctor reports Ready as available and Approval Input requests as available from verified root `PermissionRequest` hooks (`approval:{turn_id}`); questions remain unavailable until a distinct question open/close surface is verified. One working capability does not certify the other.
 
-The legacy `agent run --provider codex -- codex` form also works. A managed launch appends `--approve-for-me` when argv has no approve, approve-for-me, full-auto, or dangerously-* flag; an existing flag in that family is left untouched. The executable basename must be `codex`. Supported optional arguments are `--no-alt-screen`, `--approve-for-me`, `--full-auto` (obsolete; still admitted for saved sessions), `--dangerously-bypass-hook-trust`, and separate-token `--model/-m`, `--profile/-p`, `--sandbox/-s`, `--ask-for-approval/-a`, `--cd/-C` with a nonempty value that does not start with `-`. At most one initial prompt is supported; use `--` before a prompt matching a native subcommand. Trust hooks before submitting the first tracked prompt: an initial prompt supplied while Codex displays hook review may run untracked.
+The legacy `agent run --provider codex -- codex` form also works. A managed launch appends `--approve-for-me` when argv has no approve, approve-for-me, full-auto, or dangerously-* flag; an existing flag in that family is left untouched. The executable basename must be `codex`. Supported optional arguments are `--no-alt-screen`, `--no-daemon`, `--strict-config`, `--approve-for-me`, `--full-auto` (obsolete; still admitted for saved sessions), `--dangerously-bypass-hook-trust`, and separate-token `--model/-m`, `--profile/-p`, `--sandbox/-s`, `--ask-for-approval/-a`, `--cd/-C` with a nonempty value that does not start with `-`. At most one initial prompt is supported; use `--` before a prompt matching a native subcommand. Trust hooks before submitting the first tracked prompt: an initial prompt supplied while Codex displays hook review may run untracked.
 
 ## Print and review configuration
 
@@ -167,7 +167,7 @@ retains the row; Retry never starts fresh. Start new conversation is separate.
 
 Saved options are separate-token `--model/-m`, `--profile/-p`, `--sandbox/-s`,
 `--ask-for-approval/-a`, absolute `--cd/-C`, `--no-alt-screen`, `--approve-for-me`,
-and obsolete `--full-auto`.
+`--no-daemon`, `--strict-config`, and obsolete `--full-auto`.
 Task prompts are discarded. Other options, including `--dangerously-bypass-hook-trust`,
 inline configuration and relative `--cd`, leave recovery unavailable without changing
 existing reporting. Reopen keeps a saved `--approve-for-me` or `--full-auto` instead of rejecting it.
@@ -216,3 +216,5 @@ The [history invalidation probe](../research/codex-reporting-acceptance/history-
 ## Version compatibility
 
 There is no version gate. Doctor reports the observed `version`, `tested_versions`, `version_tested` and `version_gate: "none"`; admission never consults the version. Only the recorded tested versions carry native acceptance evidence. See [agent versions](agent-versions.md).
+
+Delegated Codex research uses a private strict named profile and the existing Reporter. Its source policy and remaining installed acceptance gates are documented in [Codex child delegation](pi-codex-delegation.md). Configuration alone does not certify native sandbox enforcement.

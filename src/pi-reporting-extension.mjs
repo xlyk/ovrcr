@@ -273,7 +273,8 @@ function registerDelegation(pi, producer, sourceKey) {
     return intent;
   };
   const readIntent = handle => originalIntent(handle);
-  const advance = async (handle, contract) => {
+  const advance = async (handle, contract, prepareOnly = false) => {
+    if (prepareOnly) return call({ Prepare: { auth: auth(), contract } });
     let snapshot;
     try { snapshot = await call({ Reconcile: { auth: auth(), request: handle } }); }
     catch (error) { if (error.code !== "NotFound") throw error; }
@@ -416,24 +417,27 @@ function registerDelegation(pi, producer, sourceKey) {
   });
   const repositoryPath = { type: "string", minLength: 1, maxLength: 4096, pattern: "^(?:[.]|[^/\\u0000-\\u001f]+(?:/[^/\\u0000-\\u001f]+)*)$" };
   const codingContract = object({requested_base:{type:"string",minLength:1,maxLength:256},branch:{type:"string",minLength:1,maxLength:256},authorized_paths:{type:"array",minItems:1,maxItems:64,items:repositoryPath},required_checks:{type:"array",minItems:1,maxItems:32,uniqueItems:true,items:{type:"string",minLength:1,maxLength:256}}});
-  tool("ovrcr_start", "Start one read-only research or isolated coding assignment with an advertised allowed selection or configured default. Returns immediately after dispatch. Coding requires a new workspace ID, requested base, authorized repository paths and named checks. Declared dependency tasks use their exact task/request IDs; review assignments supply exact target, axis and actual source_documents. Coding allows only read/write/edit/check; no commit/push/merge/deploy authority or OS sandbox is implied. Keep a refused handle and its resources; reconcile then explicitly use ovrcr_retry when eligible. Unknown effects must never be replaced.", { ...object({ handle: string, task: publicId, request: publicId, review: reviewAssignment, project: string, workspace: string, scope: string, coding: codingContract, ...selections, permitted_actions: { type: "array", items: string }, acceptance_evidence: { type: "array", items: string }, mandatory_capabilities: { type: "array", items: string } }, []), anyOf: [{ required: ["handle"] }, { required: ["project", "workspace", "scope", "acceptance_evidence"] }] }, async args => {
+  tool("ovrcr_start", "Start one read-only research or isolated coding assignment with an advertised allowed selection or configured default. prepare_only:true reserves the canonical assignment without launching or sending input; repeat {handle,prepare_only:true} after uncertainty. Omit it or explicitly use false to authorize normal dispatch. Returns immediately after dispatch. Coding requires a new workspace ID, requested base, authorized repository paths and named checks. Declared dependency tasks use their exact task/request IDs; review assignments supply exact target, axis and actual source_documents. Coding allows only read/write/edit/check; no commit/push/merge/deploy authority or OS sandbox is implied. Keep a refused handle and its resources; reconcile then explicitly use ovrcr_retry when eligible. Unknown effects must never be replaced.", { ...object({ handle: string, prepare_only: { type: "boolean" }, task: publicId, request: publicId, review: reviewAssignment, project: string, workspace: string, scope: string, coding: codingContract, ...selections, permitted_actions: { type: "array", items: string }, acceptance_evidence: { type: "array", items: string }, mandatory_capabilities: { type: "array", items: string } }, []), anyOf: [{ required: ["handle"] }, { required: ["project", "workspace", "scope", "acceptance_evidence"] }] }, async args => {
     let handle = args.handle;
+    if (args.prepare_only !== undefined && typeof args.prepare_only !== "boolean") return { handle: handle ?? null, dispatch: "Refused", transport: "NotSent", reason: "prepare_only must be a boolean" };
     const required = ["project", "workspace", "scope"];
-    if (handle !== undefined ? (!identity(handle) || Object.keys(args).some(key => key !== "handle")) : required.some(key => typeof args[key] !== "string" || !args[key].trim()) || !Array.isArray(args.acceptance_evidence) || !args.acceptance_evidence.length) {
-      return { handle: handle ?? null, dispatch: "Refused", reason: "Provide only handle to reconcile, or project, workspace, scope and acceptance_evidence to start" };
+    if (handle !== undefined ? (!identity(handle) || Object.keys(args).some(key => key !== "handle" && key !== "prepare_only")) : required.some(key => typeof args[key] !== "string" || !args[key].trim()) || !Array.isArray(args.acceptance_evidence) || !args.acceptance_evidence.length) {
+      return { handle: handle ?? null, dispatch: "Refused", reason: "Provide only handle and optional prepare_only to reconcile, or project, workspace, scope and acceptance_evidence to start" };
     }
     let attempted = false;
     try {
       if (handle) {
         const contract = await readIntent(handle);
         attempted = true;
-        return await advance(handle, contract);
+        return await advance(handle, contract, args.prepare_only === true);
       }
       if (args.review && args.provider !== undefined && args.provider !== "pi") {
         return {handle:null,dispatch:"Refused",transport:"NotSent",reason:"requested provider lacks authenticated typed independent-review publication; read/result_file alone is insufficient"};
       }
       const report = await call({ Capabilities: { auth: auth(), selection: Object.fromEntries(Object.keys(selections).filter(key => args[key] !== undefined).map(key => [key, args[key]])) } });
       if (args.mandatory_capabilities !== undefined && (!Array.isArray(args.mandatory_capabilities) || args.mandatory_capabilities.some(capability => !report.capabilities.includes(capability)))) return { handle: null, dispatch: "Refused", identity: { session: null, run: null }, reason: "unsupported mandatory capability" };
+      if (args.coding && ["isolated_workspace", "immutable_candidate", "write", "edit", "check"].some(capability => !report.capabilities.includes(capability))) return { handle: null, dispatch: "Refused", identity: { session: null, run: null }, reason: "requested harness does not support coding permissions; no assignment started" };
+      if (args.review && report.resolved_choice?.provider === "codex") return { handle: null, dispatch: "Refused", transport: "NotSent", identity: { session: null, run: null }, reason: "requested provider lacks authenticated typed independent-review publication; read/result_file alone is insufficient" };
       if (!report.resolved_choice || report.reason) return { handle: null, dispatch: "Refused", identity: { session: null, run: null }, reason: report.reason, choices: report.choices };
       handle = args.request ?? randomUUID();
       if (!identity(handle) || (args.task !== undefined && !identity(args.task))) throw new Error("invalid declared task/request identity");
@@ -441,8 +445,8 @@ function registerDelegation(pi, producer, sourceKey) {
       if (contract.scope.length > 32768 || contract.acceptance_evidence.length > 32 || contract.acceptance_evidence.some(value => typeof value !== "string" || !value || value.length > 4096)) return { handle, dispatch: "Refused", reason: "contract exceeds supported content limits" };
       await writePrivate(`${handle}.json`, contract);
       attempted = true;
-      return await advance(handle, contract);
-    } catch (error) { return { handle, dispatch: (error.refused || !attempted) ? "Refused" : "Unknown", transport: attempted ? "Unknown" : "NotSent", reason: String(error.message), recovery: "Call ovrcr_start with only this original handle; do not start a replacement assignment" }; }
+      return await advance(handle, contract, args.prepare_only === true);
+    } catch (error) { return { handle, dispatch: (error.refused || !attempted) ? "Refused" : "Unknown", transport: attempted ? "Unknown" : "NotSent", reason: String(error.message), ...(args.prepare_only === true ? { recovery_arguments: { handle, prepare_only: true }, recovery: "Call ovrcr_start using recovery_arguments to repeat Prepare only; do not advance or start a replacement assignment" } : { recovery: "Call ovrcr_start with only this original handle; do not start a replacement assignment" }) }; }
   });
   tool("ovrcr_retry", "Retry a reconciled zero-effect capacity refusal or a proven no-process coding launch failure with the exact original task, workspace/base and permissions. Persists and reuses one successor request; unknown/partial effects never qualify. If that successor is capacity-refused, retry its returned handle after capacity changes.", object({ handle: string }), async args => {
     let handle;

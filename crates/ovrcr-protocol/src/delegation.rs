@@ -183,8 +183,18 @@ impl ResearchContract {
                 return Err("invalid delegation identity");
             }
         }
-        if self.provider != "pi" {
-            return Err("this flow supports only Pi research assignments");
+        if !matches!(self.provider.as_str(), "pi" | "codex") {
+            return Err("this flow supports only Pi and Codex research assignments");
+        }
+        if self.provider == "codex" && self.model_provider != "openai" {
+            return Err(
+                "Codex delegation supports only the native OpenAI backend; custom backends are unavailable",
+            );
+        }
+        if self.provider == "codex" && self.coding.is_some() {
+            return Err(
+                "Codex delegation supports read-only research; coding permissions are unavailable",
+            );
         }
         if let Some(coding) = &self.coding {
             coding.validate()?;
@@ -926,6 +936,10 @@ mod tests {
             previous_request: None,
         };
         assert!(c.validate().is_ok());
+        c.provider = "codex".into();
+        assert!(c.validate().is_err());
+        c.model_provider = "openai".into();
+        assert!(c.validate().is_ok());
         c.permitted_actions.push("write".into());
         assert!(c.validate().is_err());
         c.permitted_actions.pop();
@@ -934,5 +948,52 @@ mod tests {
         c.mandatory_capabilities.pop();
         c.request = "../escape".into();
         assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn publication_bytes_preserve_legacy_research_and_exact_coding_payload() {
+        let legacy = br#"{"schema":1,"identity":{"instance":"instance","workflow":"workflow","controller":"parent","controller_epoch":1,"task":"task","attempt":1,"contract":1,"request":"request","session":2,"run":1},"version":1,"outcome":"success","summary":"Original research.","evidence":["README:1"],"unresolved":[]}"#;
+        let mut submission: ResearchSubmission = serde_json::from_slice(legacy).unwrap();
+        assert!(submission.coding.is_none());
+        assert_eq!(submission.publication_bytes().unwrap(), legacy);
+        assert_ne!(serde_json::to_vec(&submission).unwrap(), legacy);
+        let mut modern: serde_json::Value = serde_json::from_slice(legacy).unwrap();
+        modern["coding"] = serde_json::Value::Null;
+        modern["review"] = serde_json::Value::Null;
+        let restored: ResearchSubmission = serde_json::from_value(modern).unwrap();
+        assert_eq!(restored.publication_bytes().unwrap(), legacy);
+        submission.coding = Some(serde_json::from_value(serde_json::json!({
+            "checks":[{"name":"unit","command":"cargo test","outcome":"Passed","exit_code":0,"evidence":["unit.log"]}],
+            "candidate":{"path":"/assignment/candidate-v1.json","digest":"a".repeat(64),"workspace":"coding-one","base":"b".repeat(40),"git_identity":"generation-one","changed_artifacts":["change.txt"]}
+        })).unwrap());
+        assert_eq!(
+            submission.publication_bytes().unwrap(),
+            serde_json::to_vec(&submission).unwrap(),
+            "coding candidate/check bytes keep the accepted typed representation"
+        );
+    }
+
+    #[test]
+    fn codex_coding_is_refused_without_weakening_pi_coding_or_codex_research() {
+        let mut contract: ResearchContract = serde_json::from_value(serde_json::json!({
+            "schema":1,"workflow":"workflow","controller":"parent","task":"task","request":"request",
+            "project":"project","workspace":"coding-one","scope":"Bounded coding.",
+            "provider":"pi","model_provider":"openai","model":"exact-model",
+            "permitted_actions":["read","write","edit","check"],"acceptance_evidence":["candidate"],
+            "mandatory_capabilities":["isolated_workspace","immutable_candidate","write","edit","check"],
+            "coding":{"requested_base":"main","branch":"coding/one","authorized_paths":["change.txt"],"required_checks":["unit"]}
+        })).unwrap();
+        assert!(contract.validate().is_ok());
+        contract.provider = "codex".into();
+        assert_eq!(
+            contract.validate(),
+            Err("Codex delegation supports read-only research; coding permissions are unavailable")
+        );
+        contract.coding = None;
+        contract.permitted_actions = vec!["read".into()];
+        contract.mandatory_capabilities = vec!["read".into(), "result_file".into()];
+        assert!(contract.validate().is_ok());
+        contract.permitted_actions.push("write".into());
+        assert!(contract.validate().is_err());
     }
 }
