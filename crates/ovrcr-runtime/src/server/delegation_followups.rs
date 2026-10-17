@@ -15,6 +15,10 @@ pub(crate) struct VersionState {
     pub brief_digest: Option<String>,
     pub result_digest: Option<String>,
     pub acceptance: Option<AcceptanceReference>,
+    #[serde(default)]
+    pub captures: Vec<CaptureReference>,
+    #[serde(default)]
+    pub recoveries: Vec<RecoveryReference>,
     pub publication_intent: Option<PublicationIntent>,
     pub handled_publication: Option<PublicationIdentity>,
 }
@@ -33,6 +37,8 @@ pub(crate) struct FollowupIntent {
     pub digest: String,
     pub contract_digest: String,
     pub brief_digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_nonce: Option<String>,
 }
 
 impl Record {
@@ -44,6 +50,8 @@ impl Record {
             brief_digest: self.brief_digest.clone(),
             result_digest: self.result_digest.clone(),
             acceptance: self.acceptance.clone(),
+            captures: self.captures.clone(),
+            recoveries: self.recoveries.clone(),
             publication_intent: self.publication_intent.clone(),
             handled_publication: self.handled_publication.clone(),
         }
@@ -114,6 +122,7 @@ impl Record {
                 }
             }),
             acceptance: version.acceptance.clone(),
+            recoveries: version.recoveries.clone(),
         }
     }
 }
@@ -339,7 +348,8 @@ impl ServerState {
             }
             if record.publication_intent.as_ref().is_some_and(|intent| {
                 record.result_digest.as_ref() != Some(&intent.identity.digest)
-            }) {
+            }) && read_accepted_recovery(&record, &record.version())?.is_none()
+            {
                 return Err(lifecycle_error(
                     ErrorCode::Conflict,
                     "original publication is unresolved; recover it before changing the expected result",
@@ -371,8 +381,16 @@ impl ServerState {
                 &contract,
                 (!changed).then_some(record.contract_digest.as_str()),
             )?;
-            let brief =
-                followup_brief(&record, &target, result_version, &contract, &request, &text)?;
+            let fallback_nonce = crate::agent_runner::private_identifier()?;
+            let brief = followup_brief(
+                &record,
+                &target,
+                result_version,
+                &contract,
+                &request,
+                &text,
+                Some(&fallback_nonce),
+            )?;
             let intent = FollowupIntent {
                 request: request.clone(),
                 expected: expected.clone(),
@@ -384,6 +402,7 @@ impl ServerState {
                 digest: payload_digest.clone(),
                 contract_digest: digest(&bytes),
                 brief_digest: digest(&brief),
+                fallback_nonce: Some(fallback_nonce),
             };
             record.obligation_revision = record
                 .obligation_revision
@@ -436,6 +455,7 @@ impl ServerState {
             &contract,
             &request,
             &text,
+            intent.fallback_nonce.as_deref(),
         )?;
         let brief = matching_legacy_brief(brief, &contract, &intent.brief_digest)?;
         let bytes = contract_bytes(&contract, Some(&intent.contract_digest))?;
@@ -494,6 +514,8 @@ impl ServerState {
         record.publication_intent = None;
         record.handled_publication = None;
         record.acceptance = None;
+        record.captures.clear();
+        record.recoveries.clear();
         record.dispatch = DispatchStatus::InputUnknown;
         record.followup_outcome(
             &request,
@@ -602,11 +624,19 @@ impl ServerState {
                 .cloned()
                 .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "result version not found"))?
         };
-        let submission = read_version_submission(&record, &selected)?;
-        verify_acceptance(&record, &selected)?;
+        let recovery = read_accepted_recovery(&record, &selected)?;
+        let (submission, issue) = match read_version_submission(&record, &selected) {
+            Ok(submission) => (submission, None),
+            Err(error) if recovery.is_some() => (None, Some(error.to_string())),
+            Err(error) => return Err(error),
+        };
         let mut snapshot = self.reconciliation_snapshot(record)?;
         snapshot.historical_submission = submission;
+        snapshot.accepted_recovery = recovery;
+        snapshot.submission_issue = issue;
         snapshot.selected_version = Some(version);
+        snapshot.selected_acceptance_ref = selected.acceptance;
+        snapshot.selected_recoveries = selected.recoveries;
         Ok(snapshot)
     }
 
@@ -616,56 +646,44 @@ impl ServerState {
         handle: String,
         identity: AssignmentIdentity,
         result_version: u32,
-        result_digest: String,
+        target: AcceptanceTarget,
         expected_control_epoch: u64,
     ) -> Result<AssignmentSnapshot> {
-        let mut record = self.owned_assignment(&auth, &handle)?;
-        control::require_controller(&record.control, expected_control_epoch)?;
-        if record.control.attribution_invalidated {
-            return Err(lifecycle_error(
-                ErrorCode::Conflict,
-                "human changes require a fresh result version before acceptance",
-            ));
-        }
-        if record.identity != identity
-            || record.result_version != result_version
-            || record.result_digest.as_ref() != Some(&result_digest)
-        {
-            return Err(lifecycle_error(
-                ErrorCode::Conflict,
-                "acceptance must identify the exact current result",
-            ));
-        }
-        self.assignment_session(&record)?;
-        read_version_submission(&record, &record.version())?
-            .context("no published result to accept")?;
-        let bytes = serde_json::to_vec(
-            &serde_json::json!({ "schema": 1, "identity": identity, "result_version": result_version, "result_digest": result_digest, "parent": record.parent, "parent_run": record.parent_run, "parent_binding": record.parent_binding }),
-        )?;
-        let name = format!("acceptance-v{result_version}.json");
-        let reference = AcceptanceReference {
-            identity,
-            result_version,
-            result_digest,
-            path: record.root.join(&name),
-            digest: digest(&bytes),
-        };
-        if let Some(previous) = &record.acceptance
-            && previous != &reference
-        {
-            bail!("immutable acceptance reference changed");
-        }
+        hold_before_effect("fallback-before-acceptance", &handle)?;
+        let initial = self.owned_assignment(&auth, &handle)?;
         let parent = self.session_for_control(auth.session)?;
-        let session = self.assignment_session(&record)?;
+        let session = self.assignment_session(&initial)?;
+        let store = self.retained.lock();
+        let mut record = store
+            .assignment(&handle)?
+            .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "assignment disappeared"))?;
+        record.upgrade_legacy();
+        control::require_controller(&record.control, expected_control_epoch)?;
+        if record.control.attribution_invalidated
+            || record.identity != identity
+            || record.result_version != result_version
+            || record.identity != initial.identity
+            || record.binding != initial.binding
+        {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "acceptance must identify the exact current attributable result",
+            ));
+        }
+        let authority = self.require_workflow(&store, &auth, &record)?;
+        let parent_binding = authority.binding.clone();
         let child_binding = record
             .binding
             .clone()
-            .context("child assignment not bound")?;
-        let model = read_contract(&record)?.model;
-        // Same retained -> ordered Session -> file/metadata boundary as scoped input.
-        let store = self.retained.lock();
-        let authority = self.require_workflow(&store, &auth, &record)?;
-        let parent_binding = authority.binding.clone();
+            .ok_or_else(|| lifecycle_error(ErrorCode::Conflict, "child assignment not bound"))?;
+        let contract = read_contract(&record)?;
+        if matches!(&target, AcceptanceTarget::ParentRecovery { .. }) && contract.coding.is_some() {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "coding acceptance requires an authenticated child candidate; parent recovery cannot replace it",
+            ));
+        }
+        let model = contract.model;
         let captured_control = record.control.clone();
         session
             .with_delegated_context(
@@ -683,19 +701,122 @@ impl ServerState {
                     model: &model,
                     text: "",
                 },
-                |_| {
+                |agent| {
+                    if let Some(previous) = &record.acceptance {
+                        if previous.target != target {
+                            return Err(lifecycle_error(
+                                ErrorCode::Conflict,
+                                "this result already has a different immutable acceptance target",
+                            ));
+                        }
+                        return verify_acceptance(&record, &record.version());
+                    }
+                    match &target {
+                        AcceptanceTarget::ChildSubmission { digest: expected } => {
+                            if record.result_digest.as_ref() != Some(expected) {
+                                return Err(lifecycle_error(
+                                    ErrorCode::Conflict,
+                                    "acceptance child digest is not current",
+                                ));
+                            }
+                            read_version_submission(&record, &record.version())?.ok_or_else(
+                                || {
+                                    lifecycle_error(
+                                        ErrorCode::Conflict,
+                                        "no published child result to accept",
+                                    )
+                                },
+                            )?;
+                        }
+                        AcceptanceTarget::ParentRecovery {
+                            recovery_version,
+                            digest: expected,
+                        } => {
+                            let recovery = fallback::read_recovery(
+                                &record,
+                                &record.version(),
+                                *recovery_version,
+                                expected,
+                            )?;
+                            let directory = Directory::open(&record.root, false)?;
+                            let current = fallback::context(&record, &directory)?;
+                            let evidence = self.control_evidence(&record, agent)?;
+                            super::super::delegation_fallback::validate_capture(
+                                &recovery.capture,
+                                &current,
+                                &authority,
+                                &evidence,
+                            )
+                            .map_err(|error| {
+                                lifecycle_error(ErrorCode::Conflict, error.to_string())
+                            })?;
+                            let contract = format!("contract-v{}.json", identity.contract);
+                            let brief = format!("brief-v{result_version}.json");
+                            let original = format!("submission-v{result_version}.json");
+                            let checked = super::super::delegation_fallback::prepare_recovery(
+                                &super::super::delegation_fallback::FallbackFiles {
+                                    directory: &directory,
+                                    contract_name: &contract,
+                                    brief_name: &brief,
+                                    original_name: &original,
+                                },
+                                &recovery.capture,
+                                &current,
+                                &authority,
+                                &evidence,
+                                &FallbackRecoveryDraft {
+                                    capture_id: recovery.capture.id.clone(),
+                                    version: *recovery_version,
+                                    artifact: recovery.artifact.reference.clone(),
+                                    original: recovery.capture.original.clone(),
+                                    evidence: recovery.evidence.clone(),
+                                },
+                            )?;
+                            if checked != recovery {
+                                return Err(lifecycle_error(
+                                    ErrorCode::Conflict,
+                                    "recovery changed before explicit acceptance",
+                                ));
+                            }
+                        }
+                    }
+                    let next_obligation_revision =
+                        record.obligation_revision.checked_add(1).ok_or_else(|| {
+                            lifecycle_error(ErrorCode::Conflict, "obligation revision exhausted")
+                        })?;
+                    let name = format!("acceptance-v{result_version}.json");
+                    let bytes = serde_json::to_vec(&serde_json::json!({
+                        "schema": 2, "identity": identity, "result_version": result_version,
+                        "target": target, "author": authority,
+                    }))?;
+                    let reference = AcceptanceReference {
+                        identity: identity.clone(),
+                        result_version,
+                        target: target.clone(),
+                        path: record.root.join(&name),
+                        digest: digest(&bytes),
+                    };
+                    // A published file followed by a failed save remains an uncommitted gap.
+                    // A fresh authorized exact retry can commit it; conflicting bytes refuse.
                     publish_matching(&Directory::open(&record.root, false)?, &name, &bytes)?;
+                    if take_fault("fallback-acceptance-before-save", &handle).is_some() {
+                        bail!("acceptance file exposed but registry commit unconfirmed");
+                    }
                     record.acceptance = Some(reference);
+                    record.obligation_revision = next_obligation_revision;
                     store.save_assignment(&record)
                 },
             )?
             .ok_or_else(|| {
                 lifecycle_error(
                     ErrorCode::Conflict,
-                    "acceptance parent or child binding changed",
+                    "acceptance current source, parent or child binding changed",
                 )
             })?;
         drop(store);
+        if let Some(session) = record.identity.session {
+            self.delegation_observations.invalidate(session);
+        }
         self.assignment_snapshot(record)
     }
 }
@@ -707,6 +828,7 @@ fn followup_brief(
     contract: &ResearchContract,
     request: &str,
     text: &str,
+    fallback_nonce: Option<&str>,
 ) -> Result<Vec<u8>> {
     let publication = if contract.coding.is_some() {
         "Publish exact identity/result_version and actual named check outcomes. The same workspace/base/permission envelope applies. The Server captures a new complete immutable authorized delta; prior candidates stay unchanged. Do not commit, push, merge, deploy, access credentials or modify task/parent records. Only the parent can accept the result."
@@ -718,6 +840,10 @@ fn followup_brief(
     if let Some(resource) = &record.coding {
         value["coding_workspace"] = serde_json::to_value(resource)?;
     }
+    if let Some(nonce) = fallback_nonce {
+        value["fallback_nonce"] = nonce.into();
+        value["fallback"] = fallback::FALLBACK_INSTRUCTIONS.into();
+    }
     Ok(serde_json::to_vec_pretty(&value)?)
 }
 
@@ -728,15 +854,83 @@ pub(super) fn verify_acceptance(record: &Record, version: &VersionState) -> Resu
     let name = format!("acceptance-v{}.json", version.result_version);
     if reference.identity != version.identity
         || reference.result_version != version.result_version
-        || version.result_digest.as_ref() != Some(&reference.result_digest)
         || reference.path != record.root.join(&name)
     {
-        bail!("acceptance reference does not match the selected result");
+        bail!("acceptance reference does not match selected result");
     }
-    if digest(&Directory::open(&record.root, false)?.read(&name)?) != reference.digest {
+    let bytes = Directory::open(&record.root, false)?.read(&name)?;
+    if digest(&bytes) != reference.digest {
         bail!("immutable acceptance publication changed");
     }
+    let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+    if serde_json::from_value::<AssignmentIdentity>(value["identity"].clone())? != version.identity
+        || value["result_version"].as_u64() != Some(u64::from(version.result_version))
+    {
+        bail!("acceptance artifact identity changed");
+    }
+    match value["schema"].as_u64() {
+        Some(1) => match &reference.target {
+            AcceptanceTarget::ChildSubmission { digest }
+                if value["result_digest"].as_str() == Some(digest.as_str()) => {}
+            _ => bail!("legacy acceptance target changed"),
+        },
+        Some(2) => {
+            if serde_json::from_value::<AcceptanceTarget>(value["target"].clone())?
+                != reference.target
+            {
+                bail!("acceptance artifact target changed");
+            }
+            let author: WorkflowAuthority = serde_json::from_value(value["author"].clone())?;
+            if author.instance != version.identity.instance
+                || author.workflow != version.identity.workflow
+                || author.controller != version.identity.controller
+                || author.epoch == 0
+                || author.server_lifetime.is_empty()
+                || author.producer.is_empty()
+            {
+                bail!("acceptance historical author is incomplete");
+            }
+        }
+        _ => bail!("unsupported acceptance artifact schema"),
+    }
+    match &reference.target {
+        AcceptanceTarget::ChildSubmission { digest } => {
+            if version.result_digest.as_ref() != Some(digest) {
+                bail!("accepted child digest changed");
+            }
+            read_version_submission(record, version)?
+                .context("accepted child submission is absent")?;
+        }
+        AcceptanceTarget::ParentRecovery {
+            recovery_version,
+            digest,
+        } => {
+            let recovery = fallback::read_recovery(record, version, *recovery_version, digest)?;
+            let contract: ResearchContract = serde_json::from_slice(&recovery.contract.bytes)?;
+            if contract.coding.is_some() {
+                bail!("coding acceptance requires an authenticated selected child candidate");
+            }
+        }
+    }
     Ok(())
+}
+
+pub(super) fn read_accepted_recovery(
+    record: &Record,
+    version: &VersionState,
+) -> Result<Option<FallbackRecovery>> {
+    verify_acceptance(record, version)?;
+    match version
+        .acceptance
+        .as_ref()
+        .map(|reference| &reference.target)
+    {
+        Some(AcceptanceTarget::ParentRecovery {
+            recovery_version,
+            digest,
+        }) => fallback::read_recovery(record, version, *recovery_version, digest).map(Some),
+        _ => Ok(None),
+    }
 }
 
 pub(super) fn read_version_submission(
@@ -896,6 +1090,8 @@ mod tests {
             "publication_intent",
             "handled_publication",
             "acceptance",
+            "captures",
+            "recoveries",
             "previous_versions",
             "followups",
             "control",
@@ -917,6 +1113,8 @@ mod tests {
         assert_eq!(restored.result_version, 1);
         assert!(restored.previous_versions.is_empty());
         assert!(restored.acceptance.is_none());
+        assert!(restored.captures.is_empty());
+        assert!(restored.recoveries.is_empty());
         assert!(restored.publication_intent.is_none());
         assert!(restored.handled_publication.is_none());
         assert_eq!(restored.control, AssignmentControl::default());
@@ -1060,8 +1258,16 @@ mod tests {
             .unwrap(),
             old_payload
         );
-        let brief =
-            followup_brief(&record, &record.identity, 2, &contract, "followup", text).unwrap();
+        let brief = followup_brief(
+            &record,
+            &record.identity,
+            2,
+            &contract,
+            "followup",
+            text,
+            None,
+        )
+        .unwrap();
         let mut previous: serde_json::Value = serde_json::from_slice(&brief).unwrap();
         previous["contract"]
             .as_object_mut()

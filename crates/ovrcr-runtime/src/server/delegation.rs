@@ -9,6 +9,8 @@ mod cancellation_effects;
 pub(crate) mod control;
 #[path = "delegation_delivery.rs"]
 mod delivery;
+#[path = "delegation_fallback_routes.rs"]
+mod fallback;
 #[path = "delegation_followups.rs"]
 pub(super) mod followups;
 #[path = "delegation_interrupt.rs"]
@@ -77,6 +79,10 @@ pub(crate) struct Record {
     pub handled_publication: Option<PublicationIdentity>,
     #[serde(default)]
     pub acceptance: Option<AcceptanceReference>,
+    #[serde(default)]
+    pub captures: Vec<CaptureReference>,
+    #[serde(default)]
+    pub recoveries: Vec<RecoveryReference>,
     #[serde(default)]
     pub previous_versions: Vec<VersionState>,
     #[serde(default)]
@@ -848,9 +854,35 @@ impl ServerState {
             );
             std::fs::write(fault.with_extension("blocked"), "question-mutation-blocked")?;
         }
+        if let DelegationRequest::CaptureFallback {
+            auth,
+            handle,
+            expected_identity,
+            expected_result_version,
+            expected_control_epoch,
+        } = &request
+        {
+            return self.capture_fallback(
+                auth,
+                handle,
+                expected_identity,
+                *expected_result_version,
+                *expected_control_epoch,
+            );
+        }
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
         let record = match request {
+            DelegationRequest::CaptureFallback { .. } => {
+                unreachable!("capture routed before mutation lock")
+            }
+            DelegationRequest::RecoverFallback {
+                auth,
+                handle,
+                draft,
+            } => {
+                return self.recover_fallback(&auth, &handle, &draft);
+            }
             DelegationRequest::PublishQuestion {
                 auth,
                 handle,
@@ -1154,6 +1186,8 @@ impl ServerState {
                         publication_intent: None,
                         handled_publication: None,
                         acceptance: None,
+                        captures: Vec::new(),
+                        recoveries: Vec::new(),
                         previous_versions: Vec::new(),
                         followups: Vec::new(),
                         questions: Vec::new(),
@@ -1649,7 +1683,7 @@ impl ServerState {
                 handle,
                 identity,
                 result_version,
-                result_digest,
+                target,
                 expected_control_epoch,
             } => {
                 return self.record_acceptance(
@@ -1657,7 +1691,7 @@ impl ServerState {
                     handle,
                     identity,
                     result_version,
-                    result_digest,
+                    target,
                     expected_control_epoch,
                 );
             }
@@ -1722,9 +1756,28 @@ impl ServerState {
             }
             DelegationRequest::Collect { auth, handle } => {
                 let mut record = self.owned_assignment(&auth, &handle)?;
-                if let Some(publication) = self
-                    .assignment_publication(&record)
-                    .map_err(publication_error)?
+                let publication = match self.assignment_publication(&record) {
+                    Ok(publication) => publication,
+                    Err(issue) => {
+                        // Only a registered, verified recovery permits collection
+                        // without a child publication. File presence alone has no authority.
+                        let Some(reference) = record.recoveries.last() else {
+                            return Err(publication_error(issue));
+                        };
+                        fallback::read_recovery(
+                            &record,
+                            &record.version(),
+                            reference.version,
+                            &reference.digest,
+                        )?;
+                        // This reader also verifies any selected acceptance target.
+                        // Recovery metadata never becomes a child publication or result digest.
+                        let mut snapshot = self.snapshot_with_submission(record, None)?;
+                        snapshot.submission_issue = Some(publication_error(issue).to_string());
+                        return Ok(snapshot);
+                    }
+                };
+                if let Some(publication) = publication
                     && record.result_digest.is_none()
                 {
                     record.result_digest = Some(publication.digest);
@@ -2082,6 +2135,8 @@ impl ServerState {
         if let Some(resource) = &record.coding {
             value["coding_workspace"] = serde_json::to_value(resource)?;
         }
+        value["fallback_nonce"] = crate::agent_runner::private_identifier()?.into();
+        value["fallback"] = fallback::FALLBACK_INSTRUCTIONS.into();
         let brief = serde_json::to_vec_pretty(&value)?;
         Directory::open(&record.root, false)?.publish("brief-v1.json", &brief)?;
         record.brief_digest = Some(digest(&brief));
@@ -2090,33 +2145,39 @@ impl ServerState {
     }
 
     fn assignment_snapshot(&self, record: Record) -> Result<AssignmentSnapshot> {
-        let summary = record
-            .identity
-            .session
-            .and_then(|id| self.session_summary(id));
-        let submission = match &record.result_digest {
-            Some(expected) => {
-                if summary
-                    .as_ref()
-                    .is_none_or(|current| Some(current.run) != record.identity.run)
-                {
-                    bail!("submission belongs to a stale run");
-                }
-                if let Some(current) = summary
-                    .as_ref()
-                    .filter(|s| s.phase.is_live())
-                    .and_then(|s| s.agent.as_ref())
-                    && record.binding.as_ref() != Some(&current.binding)
-                {
-                    bail!("submission belongs to a changed conversation");
-                }
-                let _ = expected;
-                read_version_submission(&record, &record.version())?
+        let recovery = followups::read_accepted_recovery(&record, &record.version())?;
+        let read_child = || -> Result<Option<ResearchSubmission>> {
+            if record.result_digest.is_none() {
+                return Ok(None);
             }
-            None => None,
+            let summary = record
+                .identity
+                .session
+                .and_then(|id| self.session_summary(id));
+            if summary
+                .as_ref()
+                .is_none_or(|current| Some(current.run) != record.identity.run)
+            {
+                bail!("submission belongs to a stale run");
+            }
+            if let Some(current) = summary
+                .as_ref()
+                .filter(|s| s.phase.is_live())
+                .and_then(|s| s.agent.as_ref())
+                && record.binding.as_ref() != Some(&current.binding)
+            {
+                bail!("submission belongs to a changed conversation");
+            }
+            read_version_submission(&record, &record.version())
         };
-        followups::verify_acceptance(&record, &record.version())?;
-        self.snapshot_with_submission(record, submission)
+        let (submission, issue) = match read_child() {
+            Ok(submission) => (submission, None),
+            Err(error) if recovery.is_some() => (None, Some(error.to_string())),
+            Err(error) => return Err(error),
+        };
+        let mut snapshot = self.snapshot_with_submission(record, submission)?;
+        snapshot.submission_issue = issue;
+        Ok(snapshot)
     }
 
     fn reconciliation_snapshot(&self, record: Record) -> Result<AssignmentSnapshot> {
@@ -2187,6 +2248,13 @@ impl ServerState {
             .and_then(|agent| self.control_evidence(&record, agent).ok());
         let questions = self.question_states(&record);
         Ok(AssignmentSnapshot {
+            submission_issue: None,
+            selected_acceptance_ref: None,
+            selected_recoveries: vec![],
+            recoveries: record.recoveries.clone(),
+            fallback_capture: None,
+            recovered: None,
+            accepted_recovery: followups::read_accepted_recovery(&record, &version)?,
             questions,
             collected_question: None,
             obligation_revision: record.obligation_revision,
@@ -2479,6 +2547,8 @@ mod tests {
             publication_intent: None,
             handled_publication: None,
             acceptance: None,
+            captures: Vec::new(),
+            recoveries: Vec::new(),
             previous_versions: Vec::new(),
             followups: Vec::new(),
             questions: Vec::new(),
@@ -2938,6 +3008,7 @@ mod tests {
                 expected_result_version: version - 1,
                 expected_control_epoch: 1,
                 expected_parent_epoch: None, // Legacy fixture retains the original epoch-one provenance.
+                fallback_nonce: None,
                 target: target.clone(),
                 result_version: version,
                 digest: "payload".into(),
@@ -3051,6 +3122,7 @@ mod tests {
                 expected_result_version: value.result_version,
                 expected_control_epoch: 1,
                 expected_parent_epoch: None, // Legacy fixture retains the original epoch-one provenance.
+                fallback_nonce: None,
                 target: target.clone(),
                 result_version: result,
                 digest: "payload".into(),

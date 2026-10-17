@@ -213,7 +213,19 @@ impl DeliveryDeclaration {
                 acceptance.identity != resource.identity
                     || acceptance.result_version != resource.result_version
                     || !digest_valid(&acceptance.digest)
-                    || !digest_valid(&acceptance.result_digest)
+                    || match &acceptance.target {
+                        crate::AcceptanceTarget::ChildSubmission { digest } => {
+                            !digest_valid(digest)
+                        }
+                        crate::AcceptanceTarget::ParentRecovery {
+                            recovery_version,
+                            digest,
+                        } => {
+                            *recovery_version == 0
+                                || *recovery_version > 64
+                                || !digest_valid(digest)
+                        }
+                    }
             }) {
                 return Err("delivery artifact identity or digest changed");
             }

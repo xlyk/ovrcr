@@ -254,7 +254,8 @@ impl ServerState {
                 bail!("delivery acceptance reference changed");
             }
             let version = record.version();
-            read_version_submission(record, &version)?;
+            // Verify the selected coding-aware child publication or frozen recovery.
+            // A parent recovery never manufactures a child publication.
             followups::verify_acceptance(record, &version)?;
             // Acceptance was verified and privately published by RecordAcceptance;
             // compare its stored reference rather than reading a parent path.
