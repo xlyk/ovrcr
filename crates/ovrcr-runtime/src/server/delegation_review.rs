@@ -370,7 +370,7 @@ fn review_publication(
         .as_ref()
         .context("typed review contract missing")?;
     let version = record.version();
-    let submission = read_version_submission(&record, &version)?
+    let submission = read_version_submission(record, &version)?
         .context("independent review publication missing")?;
     let report = submission
         .review
@@ -844,10 +844,10 @@ impl ServerState {
                 if state.stopped.as_ref() == Some(&reason) {
                     return self.reconciliation_snapshot(record);
                 }
-                if let Some(round) = state.rounds.last_mut() {
-                    if let Some(acceptance) = record.acceptance.take() {
-                        round.superseded_acceptance = Some(acceptance);
-                    }
+                if let Some(round) = state.rounds.last_mut()
+                    && let Some(acceptance) = record.acceptance.take()
+                {
+                    round.superseded_acceptance = Some(acceptance);
                 }
                 record.obligation_revision = record
                     .obligation_revision
