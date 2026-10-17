@@ -709,3 +709,46 @@ a completed archive after its run increment. Use `ovrcr_collect` with an explici
 historical `version` to retrieve archived evidence; historical submissions never
 become current results. Parent exit or transfer can leave a certified stop for
 an explicitly authorized current owner to finish.
+
+
+## Declared dependency inputs
+
+`ovrcr_dependencies` records a parent-owned list of at most 64 tasks and 256
+blocking edges. Each task names its canonical task reference, exact internal task
+and request IDs, isolated workspace, and contract revision. Each edge names the
+output and exact repository paths it requires. Cycles, missing tasks, shared
+workspace owners and cross-project edges refuse before task launch. The parent
+still chooses which eligible task to start with `ovrcr_start`; the ordinary
+capacity/provider checks apply to every launch.
+
+Use the declared `task` and `request` when starting a graph member. An edge's
+`selected` value pins the original `coding_target`, exact `acceptance_ref`, and
+all declared required review references. Collection, Ready, a commit or a label
+cannot release an edge. A required review must come from an independent,
+read-only reviewer assignment whose immutable contract contains the exact
+candidate, review axis and actual source documents. Its authenticated typed
+review report must pass against those same references. A caller-supplied verdict
+or acceptance reference is insufficient.
+
+Before allocation, the Server compares required accepted bytes, modes and
+deletions with the successor's exact Git commit. `integrate_snapshots: true` is
+explicit parent authority to materialize compatible complete snapshot input in
+that task's new workspace. Incompatible preimages remain blocked. This operation
+never commits, changes a ref, pushes, merges or removes a workspace. Partial IO
+failures preserve resources and refuse launch; they do not claim rollback.
+
+The immutable private input baseline records both the commit anchor and complete
+selected lineage, including inherited untracked files. Successor candidate schema
+2 binds that baseline and checks only the successor's own changes against its
+`authorized_paths`. Reading inherited inputs grants no right to change them.
+Complete selected content remains available through later descendants even when
+an intermediate commit already contains an earlier input. Schema 1 candidates
+retain their original commit-relative meaning and bytes.
+
+Graph updates use `expected_version`; retain the returned request and repeat with
+only that request after a lost response. Changed task contracts require a higher
+revision and a fresh assignment when the base/input changes. Only that task and
+its descendants become stale. Public collection reports `dependency_gap` while
+preserving historical candidates and acceptance. Already running children remain
+observable. Invalidation never interrupts, rebases, resends input, or deletes
+resources. Exact unchanged independent branches keep their approvals.

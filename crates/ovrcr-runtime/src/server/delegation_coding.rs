@@ -5,7 +5,7 @@ use super::{ServerState, lifecycle_error};
 use anyhow::{Context, Result, bail};
 use ovrcr_protocol::*;
 #[path = "delegation_coding/publication.rs"]
-mod publication;
+pub(super) mod publication;
 use publication::CodingPublication;
 
 /// Borrowed selection from the existing validated VersionState/publication owner.
@@ -280,6 +280,7 @@ impl ServerState {
             );
         }
         drop(store);
+        self.require_dependency_fresh(&record)?;
         // Existing lifecycle callers use this gate before Git, registration and spawn.
         let project = self
             .registry
@@ -335,7 +336,13 @@ impl ServerState {
             .unwrap()
             .project(&previous.project)?
             .clone();
-        if crate::git::inspect_worktree(&project, &workspace)?.dirty {
+        let inspected = crate::git::inspect_worktree(&project, &workspace)?;
+        if let Some(baseline) = Self::read_input_baseline(previous)? {
+            if crate::git::resolve_commit(&workspace.path, "HEAD")? != resource.base {
+                bail!("coding retry commit anchor changed before launch");
+            }
+            crate::git::candidate::baseline::verify_workspace(&project, &workspace, &baseline)?;
+        } else if inspected.dirty {
             bail!("coding retry workspace changed before launch");
         }
         Ok(Some(resource.clone()))
@@ -349,6 +356,15 @@ impl ServerState {
         selected: &SelectedCodingVersion<'_>,
         submission: &mut ResearchSubmission,
     ) -> Result<Option<(String, Vec<u8>)>> {
+        self.validate_review_contract(selected.contract)?;
+        match (&selected.contract.review, &submission.review) {
+            (Some(assignment), Some(report))
+                if assignment.target == report.target && assignment.axis == report.axis => {}
+            (None, None) => {}
+            _ => {
+                bail!("review publication does not match its original independent review contract")
+            }
+        }
         if selected.contract.coding.is_none() {
             if submission.coding.is_some() {
                 bail!("research submissions cannot claim a coding candidate");
@@ -420,14 +436,26 @@ impl ServerState {
             || {
                 let (project, workspace) = self.coding_workspace(record)?;
                 let resource = record.coding.as_ref().context("coding intent missing")?;
-                let captured = crate::git::candidate::capture(
-                    &project,
-                    &workspace,
-                    &resource.base,
-                    &coding.authorized_paths,
-                )?;
+                let baseline = Self::read_input_baseline(record)?;
+                let scope = if baseline.is_some() {
+                    vec![".".into()]
+                } else {
+                    coding.authorized_paths.clone()
+                };
+                let captured =
+                    crate::git::candidate::capture(&project, &workspace, &resource.base, &scope)?;
+                let mut snapshot: crate::git::candidate::CandidateSnapshot =
+                    serde_json::from_slice(&captured)?;
+                if let Some(baseline) = baseline {
+                    baseline.validate_candidate(&snapshot, &coding.authorized_paths)?;
+                    snapshot.schema = 2;
+                    snapshot.input_baseline = record
+                        .dependencies
+                        .as_ref()
+                        .and_then(|saved| saved.baseline.clone());
+                }
                 Self::verify_coding_repository(&project)?;
-                serde_json::from_slice(&captured).map_err(Into::into)
+                Ok(snapshot)
             },
         )?;
         Self::verify_coding_provenance(record, selected, &publication)?;
@@ -513,7 +541,19 @@ impl ServerState {
             .as_ref()
             .context("missing original coding workspace provenance")?;
         let snapshot = &publication.snapshot;
-        snapshot.validate(&coding.authorized_paths)?;
+        let baseline = Self::read_input_baseline(record)?;
+        if snapshot.input_baseline
+            != record
+                .dependencies
+                .as_ref()
+                .and_then(|saved| saved.baseline.clone())
+        {
+            bail!("candidate authenticated input baseline reference changed");
+        }
+        match baseline {
+            Some(baseline) => baseline.validate_candidate(snapshot, &coding.authorized_paths)?,
+            None => snapshot.validate(&coding.authorized_paths)?,
+        }
         if publication.schema != 1
             || snapshot.project != record.project
             || snapshot.repository != resource.repository

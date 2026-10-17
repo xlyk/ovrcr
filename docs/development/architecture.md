@@ -46,6 +46,9 @@ Schema version 16 protects bounded trusted fallback capture/recovery references
 and typed acceptance in the same assignment/version rows. It adds no table or
 state owner. Task payloads stay in confined private files; frozen historical
 evidence is not current source authentication. See [terminal fallback](../pi-terminal-fallback.md).
+Schema version 17 protects bounded workflow dependency graphs, per-assignment input
+witnesses and authenticated review contracts from older writers. Complete inherited
+bytes and actual review source documents remain private task publications.
 Immutable task contracts, briefs and submissions remain private files outside
 child checkouts; see [Pi research assignments](../pi-research-assignments.md).
 SQLite owns identity, path, and root-setup metadata. The stored
