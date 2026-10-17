@@ -94,7 +94,7 @@ struct QuestionArgs {
 }
 
 enum Outcome {
-    Published(PublicationIdentity),
+    Published(Box<PublicationIdentity>),
     Refused(&'static str),
     ServerRefused(ovrcr::protocol::ErrorCode),
     Unknown,
@@ -176,7 +176,7 @@ fn expected_publication(request: &DelegationRequest) -> Option<PublicationIdenti
 
 fn confirmed(expected: &PublicationIdentity, actual: Option<PublicationIdentity>) -> Outcome {
     match actual {
-        Some(actual) if &actual == expected => Outcome::Published(actual),
+        Some(actual) if &actual == expected => Outcome::Published(Box::new(actual)),
         _ => Outcome::Unknown,
     }
 }
@@ -806,7 +806,7 @@ mod tests {
             &mut |_, request| {
                 sent += 1;
                 assert_eq!(expected_publication(&request).unwrap(), expected);
-                Outcome::Published(expected.clone())
+                Outcome::Published(Box::new(expected.clone()))
             },
         )
         .unwrap();
