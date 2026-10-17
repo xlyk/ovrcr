@@ -324,6 +324,32 @@ function registerDelegation(pi, producer, sourceKey) {
   const deliveryRef = object({ request: publicId, digest });
   const shortText = { type: "string", minLength: 1, maxLength: 1024 };
   const acceptanceRef = object({ identity: assignmentIdentity, result_version: resultVersion, result_digest: digest, path: boundedReference, digest });
+  const oid = {type:"string",pattern:"^(?:[a-f0-9]{40}|[a-f0-9]{64})$"};
+  const inputBaselineRef = object({path:boundedReference,digest});
+  const candidateRef = object({input_baseline:inputBaselineRef,path:boundedReference,digest,workspace:publicId,base:oid,git_identity:boundedReference,changed_artifacts:{type:"array",maxItems:1024,items:boundedReference}},["path","digest","workspace","base","git_identity","changed_artifacts"]);
+  const codingTarget = object({assignment:assignmentIdentity,publication:publicationIdentity,candidate:candidateRef,source_contract_digest:digest});
+  const reviewAxis = {type:"string",enum:["Standards","Spec"]};
+  const reviewSource = object({kind:{type:"string",enum:["Standards","Spec","Method"]},reference:boundedReference,digest});
+  const reviewSources = {type:"array",minItems:1,maxItems:32,items:reviewSource};
+  const reviewTarget = object({coding:codingTarget,sources:reviewSources});
+  const reviewRef = object({axis:reviewAxis,target:reviewTarget,reviewer:assignmentIdentity,publication:publicationIdentity});
+  const reviewAssignment = object({implementation:publicId,axis:reviewAxis,target:reviewTarget,source_documents:{type:"array",minItems:1,maxItems:32,items:object({source:reviewSource,content:{type:"string",minLength:1,maxLength:65536}})}});
+  const dependencyGraph = object({tasks:{type:"array",maxItems:64,items:object({task:publicId,canonical_task:boundedReference,request:publicId,project:publicId,workspace:publicId,revision:positiveInteger,integrate_snapshots:{type:"boolean"}})},edges:{type:"array",maxItems:256,items:object({predecessor:publicId,successor:publicId,output:shortText,artifacts:{type:"array",minItems:1,maxItems:64,items:boundedReference},required_reviews:{type:"array",maxItems:2,items:object({axis:reviewAxis,sources:reviewSources})},selected:nullable(object({target:codingTarget,acceptance:acceptanceRef,reviews:{type:"array",maxItems:2,items:reviewRef}}))})}});
+  tool("ovrcr_dependencies", "Declare or revise this workflow's bounded task edges and named accepted inputs. Each task owns one exact request/workspace/revision. No work launches. Cycles or conflicting owners refuse; selected predecessors need exact acceptance and declared independent review. integrate_snapshots explicitly permits compatible snapshot materialization without commits. Retain the original request to reconcile a lost reply.", {...object({request:publicId,expected_version:revision,graph:dependencyGraph},[]),anyOf:[{required:["request"]},{required:["expected_version","graph"]}]}, async args => {
+    let request=args.request;
+    if (args.graph!==undefined) {
+      request??=randomUUID();
+      if (!identity(request) || !Number.isSafeInteger(args.expected_version) || args.expected_version<0) throw new Error("invalid dependency graph request/version");
+      auth();
+      await writePrivate(`dependencies-${request}.json`,{schema:1,request,workflow,controller,expected_version:args.expected_version,graph:args.graph});
+    }
+    const intent=await originalIntent(request,"dependencies-");
+    if (intent.workflow!==workflow || intent.controller!==controller) throw new Error("dependency intent belongs to another workflow");
+    const rows=await call({SetDependencies:{auth:auth(),workflow,controller,expected_version:intent.expected_version,graph:intent.graph}});
+    if (!Array.isArray(rows)||rows.length!==1) throw new Error("dependency graph outcome unknown; recover the original request");
+    authority=rows[0].authority;
+    return {request,...rows[0]};
+  });
   const retention = { anyOf: [{ type: "string", const: "ArchiveEligible" }, object({ Keep: object({ reason: shortText }) })] };
   const deliveryResource = object({ handle: publicId, identity: assignmentIdentity, result_version: resultVersion, obligation_revision: positiveInteger,
     publication: nullable(publicationIdentity), acceptance: nullable(acceptanceRef),
@@ -390,7 +416,7 @@ function registerDelegation(pi, producer, sourceKey) {
   });
   const repositoryPath = { type: "string", minLength: 1, maxLength: 4096, pattern: "^(?:[.]|[^/\\u0000-\\u001f]+(?:/[^/\\u0000-\\u001f]+)*)$" };
   const codingContract = object({requested_base:{type:"string",minLength:1,maxLength:256},branch:{type:"string",minLength:1,maxLength:256},authorized_paths:{type:"array",minItems:1,maxItems:64,items:repositoryPath},required_checks:{type:"array",minItems:1,maxItems:32,uniqueItems:true,items:{type:"string",minLength:1,maxLength:256}}});
-  tool("ovrcr_start", "Start one read-only research or isolated coding assignment with an advertised allowed selection or configured default. Returns immediately after dispatch. Coding requires a new workspace ID, requested base, authorized repository paths and named checks. Coding allows only read/write/edit/check; no commit/push/merge/deploy authority or OS sandbox is implied. Keep a refused handle and its resources; reconcile then explicitly use ovrcr_retry when eligible. Unknown effects must never be replaced.", { ...object({ handle: string, project: string, workspace: string, scope: string, coding: codingContract, ...selections, permitted_actions: { type: "array", items: string }, acceptance_evidence: { type: "array", items: string }, mandatory_capabilities: { type: "array", items: string } }, []), anyOf: [{ required: ["handle"] }, { required: ["project", "workspace", "scope", "acceptance_evidence"] }] }, async args => {
+  tool("ovrcr_start", "Start one read-only research or isolated coding assignment with an advertised allowed selection or configured default. Returns immediately after dispatch. Coding requires a new workspace ID, requested base, authorized repository paths and named checks. Declared dependency tasks use their exact task/request IDs; review assignments supply exact target, axis and actual source_documents. Coding allows only read/write/edit/check; no commit/push/merge/deploy authority or OS sandbox is implied. Keep a refused handle and its resources; reconcile then explicitly use ovrcr_retry when eligible. Unknown effects must never be replaced.", { ...object({ handle: string, task: publicId, request: publicId, review: reviewAssignment, project: string, workspace: string, scope: string, coding: codingContract, ...selections, permitted_actions: { type: "array", items: string }, acceptance_evidence: { type: "array", items: string }, mandatory_capabilities: { type: "array", items: string } }, []), anyOf: [{ required: ["handle"] }, { required: ["project", "workspace", "scope", "acceptance_evidence"] }] }, async args => {
     let handle = args.handle;
     const required = ["project", "workspace", "scope"];
     if (handle !== undefined ? (!identity(handle) || Object.keys(args).some(key => key !== "handle")) : required.some(key => typeof args[key] !== "string" || !args[key].trim()) || !Array.isArray(args.acceptance_evidence) || !args.acceptance_evidence.length) {
@@ -406,8 +432,9 @@ function registerDelegation(pi, producer, sourceKey) {
       const report = await call({ Capabilities: { auth: auth(), selection: Object.fromEntries(Object.keys(selections).filter(key => args[key] !== undefined).map(key => [key, args[key]])) } });
       if (args.mandatory_capabilities !== undefined && (!Array.isArray(args.mandatory_capabilities) || args.mandatory_capabilities.some(capability => !report.capabilities.includes(capability)))) return { handle: null, dispatch: "Refused", identity: { session: null, run: null }, reason: "unsupported mandatory capability" };
       if (!report.resolved_choice || report.reason) return { handle: null, dispatch: "Refused", identity: { session: null, run: null }, reason: report.reason, choices: report.choices };
-      handle = randomUUID();
-      const contract = { schema: 1, workflow, controller, task: randomUUID(), request: handle, project: args.project, workspace: args.workspace, scope: args.scope, ...report.resolved_choice, permitted_actions: args.permitted_actions ?? (args.coding ? ["read","write","edit","check"] : ["read"]), acceptance_evidence: args.acceptance_evidence ?? [], mandatory_capabilities: args.mandatory_capabilities ?? ["read", "result_file"], limits: report.effective_limits, previous_request: null, coding: args.coding ?? null };
+      handle = args.request ?? randomUUID();
+      if (!identity(handle) || (args.task !== undefined && !identity(args.task))) throw new Error("invalid declared task/request identity");
+      const contract = { schema: 1, workflow, controller, task: args.task ?? randomUUID(), request: handle, project: args.project, workspace: args.workspace, scope: args.scope, ...report.resolved_choice, permitted_actions: args.permitted_actions ?? (args.coding ? ["read","write","edit","check"] : ["read"]), acceptance_evidence: args.acceptance_evidence ?? [], mandatory_capabilities: args.mandatory_capabilities ?? ["read", "result_file"], limits: report.effective_limits, previous_request: null, coding: args.coding ?? null, ...(args.review ? {review:args.review} : {}) };
       if (contract.scope.length > 32768 || contract.acceptance_evidence.length > 32 || contract.acceptance_evidence.some(value => typeof value !== "string" || !value || value.length > 4096)) return { handle, dispatch: "Refused", reason: "contract exceeds supported content limits" };
       await writePrivate(`${handle}.json`, contract);
       attempted = true;

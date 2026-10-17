@@ -2141,6 +2141,7 @@ impl ServerState {
         }
         if let Some(handle) = assignment {
             self.record_coding_workspace(handle, &workspace, WorkspaceCreation::Registered)?;
+            self.materialize_dependency_inputs(handle)?;
             if delegation::take_fault("coding-after-registration", handle).is_some() {
                 return Err(crate::session::NoProcessStarted::context(anyhow::anyhow!(
                     "owned failure after workspace registration before managed launch"

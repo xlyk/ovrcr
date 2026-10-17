@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { createHash } from "node:crypto";
+import { dependencyResult } from "./pi_dependencies.mjs";
 // Test host for the OVRCR reporting extensions. It serves both harnesses: Pi and Oh My
 // Pi share the event vocabulary, and the grammar below covers the events only one of them
 // emits (agent_settled for Pi, session_switch and a continuing agent_end for Oh My Pi).
@@ -165,7 +166,6 @@ async function main() {
       `${process.env.OVRCR_AGENT_SOCKET ?? ""}\n${process.env.OVRCR_AGENT_TOKEN ?? ""}\n${process.pid}\n`,
     );
   }
-  process.stdout.write("PI_NATIVE_READY\n");
   let index = 0;
   const pendingTools = new Map();
   let toolPublication = 0;
@@ -209,7 +209,9 @@ async function main() {
       input.write(bytes);
     });
   }
-  for await (const line of createInterface({ input })) {
+  const lines = createInterface({ input });
+  process.stdout.write("PI_NATIVE_READY\n");
+  for await (const line of lines) {
     const clean = line.replaceAll("\x1b[200~", "").replaceAll("\x1b[201~", "");
     const [command, a, b, c] = clean.split(":");
     if (host && command === "tool") {
@@ -366,7 +368,9 @@ async function main() {
       }
       while (!existsSync(process.env.OVRCR_TEST_DELEGATION_RESULT_GATE)) await new Promise(resolve => setTimeout(resolve, 10));
       const submission = { schema: 1, identity: brief.identity, version: brief.result_version ?? 1, outcome: "success", summary: "Read the assigned repository README.", evidence: ["README:1 fixture"], unresolved: [] };
-      if (brief.contract.coding) {
+      if (brief.contract.scope.startsWith("DEPENDENCY_FIXTURE\n")) {
+        dependencyResult(brief,path,submission);
+      } else if (brief.contract.coding) {
         if (process.cwd() !== brief.coding_workspace.path) throw new Error("coding child cwd differs from Server-owned workspace");
         writeFileSync(join(process.cwd(), "change.txt"), `${brief.handle}:${submission.version}\n`);
         const checked = spawnSync("/bin/sh", ["-c", "false"], {cwd:process.cwd(),encoding:"utf8"});

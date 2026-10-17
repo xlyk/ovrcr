@@ -101,15 +101,37 @@ pub struct CodingCheck {
     pub evidence: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CandidateReference {
+    #[serde(default)]
+    pub input_baseline: Option<crate::InputBaselineReference>,
     pub path: PathBuf,
     pub digest: String,
     pub workspace: String,
     pub base: String,
     pub git_identity: String,
     pub changed_artifacts: Vec<String>,
+}
+
+// JSON omits only the new absent extension. Binary framing always carries it.
+impl Serialize for CandidateReference {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let include = !serializer.is_human_readable() || self.input_baseline.is_some();
+        let mut state =
+            serializer.serialize_struct("CandidateReference", if include { 7 } else { 6 })?;
+        if include {
+            state.serialize_field("input_baseline", &self.input_baseline)?;
+        }
+        state.serialize_field("path", &self.path)?;
+        state.serialize_field("digest", &self.digest)?;
+        state.serialize_field("workspace", &self.workspace)?;
+        state.serialize_field("base", &self.base)?;
+        state.serialize_field("git_identity", &self.git_identity)?;
+        state.serialize_field("changed_artifacts", &self.changed_artifacts)?;
+        state.end()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

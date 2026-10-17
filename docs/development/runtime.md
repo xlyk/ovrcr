@@ -112,3 +112,14 @@ Candidate capture runs without retained/Session locks. Its in-memory bytes gain
 a discoverable filename only after the existing child-authenticated publication
 intent binds the exact enriched result digest. Recovery uses original stored
 bytes and selected version/contract; it never captures a newer checkout.
+
+
+Dependency edges stay in the existing WorkflowRecord. The parent declares the
+bounded graph; ordinary Prepare/Launch/SendInitial retain scheduling and effects.
+Prepare authenticates selected original candidate/acceptance/reviewer files and
+pins a private complete input baseline. Lifecycle workspace registration precedes
+compatible snapshot materialization, and the existing creation gate rechecks
+parent/source authority before spawn. Initial input rechecks actual baseline
+content and ancestor candidate/review versions. Followup and acceptance reject
+stale dependency witnesses; collection preserves the original evidence and
+reports the gap. Graph revision changes do not interrupt existing children.

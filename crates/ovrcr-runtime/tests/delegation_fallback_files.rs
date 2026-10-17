@@ -50,6 +50,7 @@ impl Fixture {
             limits: DelegationLimits::default(),
             previous_request: None,
             coding: None,
+            review: None,
         };
         // Deliberate whitespace proves exact original bytes, not reserialization.
         let contract_bytes = serde_json::to_vec_pretty(&contract).unwrap();
@@ -668,6 +669,7 @@ fn valid_child_publication_is_collected_normally_and_never_replaced_by_fallback(
         version: 1,
         outcome: "success".into(),
         coding: None,
+        review: None,
         summary: "The original valid result".into(),
         evidence: vec!["README".into()],
         unresolved: vec![],

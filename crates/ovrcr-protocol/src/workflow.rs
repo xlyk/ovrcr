@@ -102,6 +102,7 @@ pub struct WorkflowTransitionReceipt {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkflowSnapshot {
+    pub dependencies: Option<crate::DependencyState>,
     pub authority: WorkflowAuthority,
     pub active: bool,
     /// Includes prepared assignments and assignments from earlier controller epochs.
@@ -160,6 +161,13 @@ pub struct WorkflowParent {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorkflowRequest {
+    SetDependencies {
+        auth: DelegationAuth,
+        workflow: String,
+        expected_version: u64,
+        controller: String,
+        graph: crate::DependencyGraph,
+    },
     Parents {
         auth: DelegationAuth,
     },
