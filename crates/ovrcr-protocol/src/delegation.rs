@@ -183,8 +183,31 @@ impl ResearchContract {
                 return Err("invalid delegation identity");
             }
         }
-        if self.provider != "pi" {
-            return Err("this flow supports only Pi research assignments");
+        match self.provider.as_str() {
+            "pi" => {}
+            "claude" => {
+                if self.model_provider != "native" {
+                    return Err(
+                        "Claude requires the explicit native backend; no substitute selected",
+                    );
+                }
+                if self.coding.is_some() {
+                    return Err("Claude coding delegation is not supported");
+                }
+                if self.review.is_some() {
+                    return Err("Claude independent review delegation is not supported");
+                }
+                if self.model.is_empty()
+                    || self.model.len() > 256
+                    || !self
+                        .model
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || b"_.:/[]-".contains(&byte))
+                {
+                    return Err("unsupported native Claude model selection");
+                }
+            }
+            _ => return Err("unsupported delegation harness"),
         }
         if let Some(coding) = &self.coding {
             coding.validate()?;
@@ -851,11 +874,136 @@ pub enum DelegationRequest {
         handle: String,
         operation: crate::ReviewOperation,
     },
+    Read {
+        auth: DelegationAuth,
+        read: AssignedRead,
+    },
+}
+
+/// Native research reads use current child authority; paths never choose a root.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AssignedRead {
+    pub handle: String,
+    pub identity: AssignmentIdentity,
+    pub result_version: u32,
+    pub control_epoch: u64,
+    pub target: AssignedReadTarget,
+    pub offset: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AssignedReadTarget {
+    Brief,
+    Contract,
+    Submission,
+    Workspace { path: String },
+    Answer { request: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AssignedReadResult {
+    pub identity: AssignmentIdentity,
+    pub result_version: u32,
+    pub control_epoch: u64,
+    pub offset: u32,
+    pub next_offset: u32,
+    pub total_bytes: u32,
+    pub text: String,
+}
+
+impl AssignedReadResult {
+    /// Paging is explicit. Invalid UTF-8, offsets and oversized files refuse;
+    /// no output silently loses bytes or splits a character.
+    pub fn from_bytes(read: &AssignedRead, bytes: &[u8]) -> Result<Self, &'static str> {
+        if bytes.len() > 512 * 1024 {
+            return Err("file exceeds 512 KiB read bound");
+        }
+        let text = std::str::from_utf8(bytes).map_err(|_| "file is not UTF-8")?;
+        let start = read.offset as usize;
+        if start > text.len() || !text.is_char_boundary(start) {
+            return Err("read offset is outside a UTF-8 boundary");
+        }
+        let mut end = start.saturating_add(8192).min(text.len());
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        Ok(Self {
+            identity: read.identity.clone(),
+            result_version: read.result_version,
+            control_epoch: read.control_epoch,
+            offset: read.offset,
+            next_offset: end as u32,
+            total_bytes: bytes.len() as u32,
+            text: text[start..end].into(),
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn assigned_read_pages_utf8_explicitly_and_refuses_invalid_bounds() {
+        let read = AssignedRead {
+            handle: "handle".into(),
+            identity: AssignmentIdentity {
+                instance: "i".into(),
+                workflow: "w".into(),
+                controller: "c".into(),
+                controller_epoch: 1,
+                task: "t".into(),
+                attempt: 1,
+                contract: 1,
+                request: "handle".into(),
+                session: Some(crate::SessionId(1)),
+                run: Some(crate::SessionRunId(1)),
+            },
+            result_version: 1,
+            control_epoch: 1,
+            target: AssignedReadTarget::Brief,
+            offset: 0,
+        };
+        let bytes = format!("{}éend", "a".repeat(8191)).into_bytes();
+        let page = AssignedReadResult::from_bytes(&read, &bytes).unwrap();
+        assert_eq!(page.text.len(), 8191);
+        assert_eq!(page.next_offset, 8191);
+        assert_eq!(page.total_bytes, bytes.len() as u32);
+        let next = AssignedRead {
+            offset: page.next_offset,
+            ..read.clone()
+        };
+        let final_page = AssignedReadResult::from_bytes(&next, &bytes).unwrap();
+        assert_eq!(final_page.text, "éend");
+        assert_eq!(
+            format!("{}{}", page.text, final_page.text).as_bytes(),
+            bytes
+        );
+        assert!(
+            AssignedReadResult::from_bytes(
+                &AssignedRead {
+                    offset: 8192,
+                    ..read.clone()
+                },
+                &bytes
+            )
+            .is_err()
+        );
+        assert!(
+            AssignedReadResult::from_bytes(
+                &AssignedRead {
+                    offset: u32::MAX,
+                    ..read.clone()
+                },
+                &bytes
+            )
+            .is_err()
+        );
+        assert!(AssignedReadResult::from_bytes(&read, &[255]).is_err());
+        assert!(AssignedReadResult::from_bytes(&read, &vec![b'a'; 512 * 1024 + 1]).is_err());
+    }
+
     #[test]
     fn mandatory_limits_refuse_unsupported_budgets_and_out_of_range_admission() {
         assert!(DelegationLimits::default().validate().is_ok());
@@ -926,6 +1074,30 @@ mod tests {
             previous_request: None,
         };
         assert!(c.validate().is_ok());
+        let mut native = c.clone();
+        native.provider = "claude".into();
+        native.model_provider = "native".into();
+        native.model = "requested-alias".into();
+        assert!(native.validate().is_ok());
+        assert_eq!(native.model, "requested-alias");
+        for backend in ["anthropic", "custom"] {
+            native.model_provider = backend.into();
+            assert_eq!(
+                native.validate(),
+                Err("Claude requires the explicit native backend; no substitute selected")
+            );
+        }
+        native.model_provider = "native".into();
+        native.coding = Some(crate::CodingContract {
+            requested_base: "HEAD".into(),
+            branch: "native-coding".into(),
+            authorized_paths: vec!["README.md".into()],
+            required_checks: vec!["cargo test".into()],
+        });
+        assert_eq!(
+            native.validate(),
+            Err("Claude coding delegation is not supported")
+        );
         c.permitted_actions.push("write".into());
         assert!(c.validate().is_err());
         c.permitted_actions.pop();
@@ -934,5 +1106,27 @@ mod tests {
         c.mandatory_capabilities.pop();
         c.request = "../escape".into();
         assert!(c.validate().is_err());
+    }
+    #[test]
+    fn publication_bytes_preserve_legacy_research_and_exact_coding_payload() {
+        let legacy = br#"{"schema":1,"identity":{"instance":"instance","workflow":"workflow","controller":"parent","controller_epoch":1,"task":"task","attempt":1,"contract":1,"request":"request","session":2,"run":1},"version":1,"outcome":"success","summary":"Original research.","evidence":["README:1"],"unresolved":[]}"#;
+        let mut submission: ResearchSubmission = serde_json::from_slice(legacy).unwrap();
+        assert!(submission.coding.is_none());
+        assert_eq!(submission.publication_bytes().unwrap(), legacy);
+        assert_ne!(serde_json::to_vec(&submission).unwrap(), legacy);
+        let mut modern: serde_json::Value = serde_json::from_slice(legacy).unwrap();
+        modern["coding"] = serde_json::Value::Null;
+        modern["review"] = serde_json::Value::Null;
+        let restored: ResearchSubmission = serde_json::from_value(modern).unwrap();
+        assert_eq!(restored.publication_bytes().unwrap(), legacy);
+        submission.coding = Some(serde_json::from_value(serde_json::json!({
+            "checks":[{"name":"unit","command":"cargo test","outcome":"Passed","exit_code":0,"evidence":["unit.log"]}],
+            "candidate":{"path":"/assignment/candidate-v1.json","digest":"a".repeat(64),"workspace":"coding-one","base":"b".repeat(40),"git_identity":"generation-one","changed_artifacts":["change.txt"]}
+        })).unwrap());
+        assert_eq!(
+            submission.publication_bytes().unwrap(),
+            serde_json::to_vec(&submission).unwrap(),
+            "coding candidate/check bytes keep the accepted typed representation"
+        );
     }
 }

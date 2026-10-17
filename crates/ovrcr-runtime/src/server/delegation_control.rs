@@ -488,7 +488,7 @@ impl ServerState {
         let authenticated = self.owned_assignment(&auth, &handle)?;
         let parent = self.session_for_control(auth.session)?;
         let child = self.assignment_session(&authenticated)?;
-        let model = read_contract(&authenticated)?.model;
+        let model = expected_native_model(&authenticated)?;
         let store = self.retained.lock();
         let mut record = store
             .assignment(&handle)?

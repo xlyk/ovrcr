@@ -1041,7 +1041,12 @@ impl Session {
             })
         };
         Ok(self
-            .with_delegated_context(&input, |_| {
+            .with_delegated_context(&input, |agent| {
+                if agent.binding.provider == ovrcr_protocol::AgentProvider::Claude
+                    && !agent.input_requests.is_empty()
+                {
+                    return Ok(rejected());
+                }
                 let mut writer = self.writer.lock().unwrap();
                 let failure = crate::server::delegation::take_fault("input", input.request);
                 Ok(write_delegated(&mut **writer, &bytes, failure))
@@ -1259,7 +1264,7 @@ impl Session {
         &self,
         capability: &str,
         binding: &ovrcr_protocol::AgentBinding,
-        action: impl FnOnce() -> Result<T>,
+        action: impl FnOnce(&ovrcr_protocol::AgentSnapshot) -> Result<T>,
     ) -> Result<T> {
         let state = self.state.lock().unwrap();
         if !state.phase.is_live()
@@ -1275,7 +1280,13 @@ impl Session {
         {
             bail!("child publication binding changed");
         }
-        action()
+        action(
+            state
+                .reporting
+                .snapshot
+                .as_ref()
+                .context("child publication binding missing")?,
+        )
     }
 
     pub fn send_text(&self, text: &str, submit: bool) -> Result<()> {

@@ -5,18 +5,7 @@ use std::ffi::OsStr;
 use std::io::Read;
 use std::path::Path;
 
-const MARKER: &str = ": ovrcr-managed-claude-v1; ";
-const HOOKS: &[&str] = &[
-    "SessionStart",
-    "UserPromptSubmit",
-    "PreToolUse",
-    "PostToolUse",
-    "PostToolUseFailure",
-    "Notification",
-    "Stop",
-    "StopFailure",
-    "SessionEnd",
-];
+use ovrcr_runtime::claude_recovery::{REPORTER_EVENTS as HOOKS, REPORTER_MARKER as MARKER};
 
 pub(super) fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
@@ -305,7 +294,11 @@ fn refresh_interval(value: &mut Value) -> anyhow::Result<()> {
 pub(super) fn compose(text: &str, executable: &str) -> anyhow::Result<String> {
     let original: Value = serde_json::from_str(text)?;
     anyhow::ensure!(original.is_object(), "settings must be a JSON object");
-    let value = compose_value(original.clone(), executable)?;
+    let value = if original.as_object().is_some_and(|object| object.is_empty()) {
+        ovrcr_runtime::claude_recovery::reporter_settings(executable)
+    } else {
+        compose_value(original.clone(), executable)?
+    };
     if value == original {
         return Ok(text.to_owned());
     }

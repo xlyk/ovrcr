@@ -53,6 +53,11 @@ Schema version 18 protects bounded independent review references, applicable fin
 corrective policy and original repair intents from older writers. Actual source
 prose, findings and corrective text remain immutable private task files. Human-readable
 absent review fields preserve old authenticated bytes; binary framing carries the option.
+Schema version 19 additionally protects retained native resolved-model, profile/executable
+identity and the generated-policy manifest from older writers. It adds no owner or
+store. Native discovery creates no Session or Reporter lease. The actual postallocation
+Reporter model/binding and every existing effect fence remain authoritative; preflight
+is not installed TUI enforcement proof.
 Immutable task contracts, briefs and submissions remain private files outside
 child checkouts; see [Pi research assignments](../pi-research-assignments.md).
 SQLite owns identity, path, and root-setup metadata. The stored

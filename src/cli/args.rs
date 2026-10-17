@@ -63,6 +63,12 @@ pub(super) enum Command {
     /// Question publication, private collection and scoped answers are separate
     /// requests. An answer receipt confirms delivery only, never native approval.
     Delegation,
+    /// Serve assigned-child publication over bounded stdio MCP; no parent operations.
+    DelegationPublisher {
+        /// Add confined reads for this assigned native Claude research handle.
+        #[arg(long)]
+        read_handle: Option<String>,
+    },
     /// Run a native agent with invocation supervision.
     Agent {
         #[command(subcommand)]

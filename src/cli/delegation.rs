@@ -42,6 +42,9 @@ pub(super) fn run() -> AppResult<()> {
         Response::DelegationCapabilities(capabilities) => {
             super::print_json(&serde_json::to_value(capabilities).map_err(RuntimeError::internal)?)
         }
+        Response::AssignedRead(read) => {
+            super::print_json(&serde_json::to_value(read).map_err(RuntimeError::internal)?)
+        }
         Response::Error { code, message } => Err(RuntimeError::new(code, message)),
         _ => Err(RuntimeError::new(
             ErrorCode::Internal,
