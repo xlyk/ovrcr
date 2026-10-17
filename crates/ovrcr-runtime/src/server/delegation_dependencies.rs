@@ -530,6 +530,11 @@ impl ServerState {
                         content: file.base_content.clone(),
                         digest: file.base_digest.clone(),
                     }
+                } else if let Some(file) = inherited
+                    .as_ref()
+                    .and_then(|baseline| baseline.inputs.iter().find(|file| &file.path == artifact))
+                {
+                    file.clone()
                 } else {
                     bail!("named required predecessor output is absent from complete candidate");
                 };

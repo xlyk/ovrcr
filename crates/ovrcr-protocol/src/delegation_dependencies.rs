@@ -227,6 +227,12 @@ impl DependencyGraph {
             .tasks
             .iter()
             .filter(|task| !previous.tasks.contains(task))
+            .chain(
+                previous
+                    .tasks
+                    .iter()
+                    .filter(|task| !self.tasks.contains(task)),
+            )
             .map(|task| task.task.clone())
             .collect();
         for edge in self
@@ -298,6 +304,21 @@ mod tests {
         graph.edges.pop();
         graph.tasks[1].workspace = "a".into();
         assert!(graph.validate().is_err());
+    }
+    #[test]
+    fn removed_tasks_invalidate_previous_descendants_and_preserve_independent_branch() {
+        let original = DependencyGraph {
+            tasks: vec![task("a"), task("b"), task("c"), task("x"), task("y")],
+            edges: vec![edge("a", "b"), edge("b", "c")],
+        };
+        let revised = DependencyGraph {
+            tasks: vec![task("b"), task("c"), task("y")],
+            edges: vec![edge("b", "c")],
+        };
+        assert!(original.validate().is_ok());
+        assert!(revised.validate().is_ok());
+        assert_eq!(revised.affected(&original), ["a", "b", "c", "x"]);
+        assert_eq!(original.affected(&original), Vec::<String>::new());
     }
     #[test]
     fn contract_change_invalidates_descendants_and_preserves_independent_branch() {
