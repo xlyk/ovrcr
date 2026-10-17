@@ -2379,10 +2379,10 @@ fn contract_document(contract: &ResearchContract) -> Result<serde_json::Value> {
 
 fn research_contract_bytes(contract: &ResearchContract) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec(contract)?;
-    if contract.review.is_none() {
-        if let Some(prefix) = bytes.strip_suffix(b",\"review\":null}") {
-            bytes = [prefix, b"}"].concat();
-        }
+    if contract.review.is_none()
+        && let Some(prefix) = bytes.strip_suffix(b",\"review\":null}")
+    {
+        bytes = [prefix, b"}"].concat();
     }
     if contract.coding.is_none() {
         let suffix = b",\"coding\":null}";
@@ -2397,10 +2397,10 @@ fn research_contract_bytes(contract: &ResearchContract) -> Result<Vec<u8>> {
 /// Default new wire fields never rewrite previously authenticated research files.
 pub(super) fn submission_bytes(submission: &ResearchSubmission) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec(submission)?;
-    if submission.review.is_none() {
-        if let Some(prefix) = bytes.strip_suffix(b",\"review\":null}") {
-            bytes = [prefix, b"}"].concat();
-        }
+    if submission.review.is_none()
+        && let Some(prefix) = bytes.strip_suffix(b",\"review\":null}")
+    {
+        bytes = [prefix, b"}"].concat();
     }
     if submission.coding.is_none() {
         let suffix = b",\"coding\":null}";
