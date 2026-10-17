@@ -161,6 +161,7 @@ impl ResearchContract {
         }
         self.limits.validate()?;
         if let Some(review) = &self.review {
+            crate::require_typed_review_provider(&self.provider)?;
             review.validate()?;
             if self.coding.is_some() || self.permitted_actions != ["read"] {
                 return Err("independent review requires a read-only research assignment");
@@ -366,7 +367,28 @@ impl Serialize for ResearchSubmission {
 }
 
 impl ResearchSubmission {
+    /// The canonical bytes authenticated by child publication and historical readers.
+    pub fn publication_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        let mut bytes = serde_json::to_vec(self)?;
+        if self.review.is_none()
+            && let Some(prefix) = bytes.strip_suffix(b",\"review\":null}")
+        {
+            bytes = [prefix, b"}"].concat();
+        }
+        if self.coding.is_none() {
+            let suffix = b",\"coding\":null}";
+            if bytes.ends_with(suffix) {
+                bytes.truncate(bytes.len() - suffix.len());
+                bytes.push(b'}');
+            }
+        }
+        Ok(bytes)
+    }
+
     pub fn validate(&self, identity: &AssignmentIdentity) -> Result<(), &'static str> {
+        if let Some(review) = &self.review {
+            review.validate()?;
+        }
         if self.schema != DELEGATION_SCHEMA || self.version == 0 {
             return Err("unsupported or stale submission version");
         }
@@ -628,6 +650,12 @@ pub struct AssignmentSnapshot {
     pub selected_acceptance_ref: Option<AcceptanceReference>,
     #[serde(default)]
     pub selected_recoveries: Vec<crate::RecoveryReference>,
+    #[serde(default)]
+    pub review: Option<crate::ReviewStatus>,
+    #[serde(default)]
+    pub review_assignment: Option<crate::ReviewAssignment>,
+    #[serde(default)]
+    pub review_scope: Option<String>,
 }
 
 /// A hint cursor is valid only for one Server lifetime. It is not task completion.
@@ -817,6 +845,11 @@ pub enum DelegationRequest {
         auth: DelegationAuth,
         handle: String,
         draft: Box<crate::FallbackRecoveryDraft>,
+    },
+    Review {
+        auth: DelegationAuth,
+        handle: String,
+        operation: crate::ReviewOperation,
     },
 }
 

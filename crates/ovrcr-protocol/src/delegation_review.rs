@@ -212,3 +212,156 @@ impl ReviewReport {
         Ok(())
     }
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewDeclaration {
+    pub request: String,
+    pub target: CodingTargetReference,
+    pub requirements: Vec<ReviewRequirement>,
+    pub sources: Vec<ReviewSource>,
+    pub repair_limit: Option<RepairLimit>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RepairLimitSource {
+    ExplicitTask,
+    RepositoryPolicy,
+    CoordinatorDefault,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepairLimit {
+    pub rounds: u32,
+    pub source: RepairLimitSource,
+    pub reference: String,
+}
+
+impl Default for RepairLimit {
+    fn default() -> Self {
+        Self {
+            rounds: 3,
+            source: RepairLimitSource::CoordinatorDefault,
+            reference: "coordinator default: three corrective rounds; not user approval".into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReviewStop {
+    LimitExhausted,
+    NoProgress,
+    MissingChecks,
+    MissingDecision,
+    UnsafeChild,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum ReviewOperation {
+    Declare(Box<ReviewDeclaration>),
+    Assignment {
+        axis: ReviewAxis,
+    },
+    Collect {
+        axis: ReviewAxis,
+        reviewer: String,
+    },
+    Repair {
+        request: String,
+        expected_control_epoch: u64,
+    },
+    Stop {
+        reason: ReviewStop,
+    },
+}
+
+impl RepairLimit {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.rounds == 0 || self.rounds > 32 || !bounded(&self.reference, 4096) {
+            return Err("repair policy requires 1..32 finite rounds and declared provenance");
+        }
+        Ok(())
+    }
+}
+
+impl ReviewDeclaration {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if !bounded(&self.request, 128)
+            || !self
+                .request
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
+            || self.requirements.len() > 2
+            || self.sources.len() > 64
+        {
+            return Err("invalid review declaration bounds");
+        }
+        if let Some(limit) = &self.repair_limit {
+            limit.validate()?;
+        }
+        for (index, requirement) in self.requirements.iter().enumerate() {
+            if self.requirements[..index]
+                .iter()
+                .any(|old| old.axis == requirement.axis)
+            {
+                return Err("duplicate required review axis");
+            }
+            ReviewTarget {
+                coding: self.target.clone(),
+                sources: requirement.sources.clone(),
+            }
+            .validate(&requirement.axis)?;
+            if requirement.sources.iter().any(|reference| {
+                !self
+                    .sources
+                    .iter()
+                    .any(|source| &source.source == reference)
+            }) {
+                return Err("review declaration must supply every actual source document");
+            }
+        }
+        if self
+            .sources
+            .iter()
+            .any(|source| !bounded(&source.content, 65536))
+            || self
+                .sources
+                .iter()
+                .map(|source| source.content.len())
+                .sum::<usize>()
+                > 131072
+        {
+            return Err("actual review sources exceed private brief bounds");
+        }
+        Ok(())
+    }
+}
+
+/// Worker checks, independent review and integration remain separate evidence.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewStatus {
+    pub target: CodingTargetReference,
+    pub requirements: Vec<ReviewRequirement>,
+    pub evidence: Vec<ReviewReference>,
+    pub limit: RepairLimit,
+    pub consumed_rounds: u32,
+    pub pending_repair: Option<String>,
+    pub stopped: Option<ReviewStop>,
+    pub independent_review_satisfied: bool,
+}
+
+/// Existing native research-only publishers do not authenticate typed review reports.
+pub fn require_typed_review_provider(provider: &str) -> Result<(), &'static str> {
+    if provider != "pi" {
+        return Err(
+            "requested provider lacks authenticated typed independent-review publication; read/result_file alone is insufficient",
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "delegation_review_tests.rs"]
+mod tests;
