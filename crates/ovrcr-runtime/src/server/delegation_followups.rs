@@ -850,8 +850,12 @@ fn followup_brief(
     } else {
         "Call ovrcr_publish with the exact identity and result_version as submission.version. Only this child can publish; it cannot accept the result. Research tools remain read-only."
     };
+    let publication = publication.replace(
+        "ovrcr_publish",
+        &child_tool(&contract.provider, "ovrcr_publish"),
+    );
     let mut value = serde_json::json!({"schema":1,"handle":record.handle,"identity":identity,"contract":contract_document(contract)?,
-        "request":request,"followup":text,"result_version":version,"output":record.root.join(format!("submission-v{version}.json")),"publication":publication,"questions":questions::QUESTION_INSTRUCTIONS});
+        "request":request,"followup":text,"result_version":version,"output":record.root.join(format!("submission-v{version}.json")),"publication":publication,"questions":child_questions(&contract.provider)});
     if let Some(resource) = &record.coding {
         value["coding_workspace"] = serde_json::to_value(resource)?;
     }

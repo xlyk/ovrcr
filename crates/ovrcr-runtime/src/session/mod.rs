@@ -1041,7 +1041,12 @@ impl Session {
             })
         };
         Ok(self
-            .with_delegated_context(&input, |_| {
+            .with_delegated_context(&input, |agent| {
+                if agent.binding.provider == ovrcr_protocol::AgentProvider::Codex
+                    && !agent.input_requests.is_empty()
+                {
+                    return Ok(rejected());
+                }
                 let mut writer = self.writer.lock().unwrap();
                 let failure = crate::server::delegation::take_fault("input", input.request);
                 Ok(write_delegated(&mut **writer, &bytes, failure))
