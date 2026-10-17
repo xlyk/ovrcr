@@ -20,6 +20,8 @@ mod interrupt_effects;
 #[path = "delegation_questions.rs"]
 mod questions;
 use questions::{AnswerIntent, QuestionPublicationIntent};
+#[path = "delegation_dependencies.rs"]
+mod dependencies;
 #[path = "delegation_policy.rs"]
 mod policy;
 
@@ -47,6 +49,8 @@ pub(crate) struct PublicationIntent {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Record {
+    #[serde(default)]
+    pub dependencies: Option<dependencies::DependencyWitness>,
     pub handle: String,
     #[serde(default)]
     pub coding: Option<CodingWorkspace>,
@@ -966,6 +970,14 @@ impl ServerState {
                 } else {
                     None
                 };
+                let dependency_witness = if is_new {
+                    let root = std::fs::canonicalize(&self.registry_path)?
+                        .join("workflows")
+                        .join(&handle);
+                    self.prepare_dependency_inputs(&auth, &contract, coding_intent.as_ref(), &root)?
+                } else {
+                    None
+                };
                 let mut record = if let Some(mut record) = previous {
                     self.current_workflow_authority(&auth, &record.identity.workflow)?;
                     if record
@@ -1125,6 +1137,7 @@ impl ServerState {
                         }
                         store.save_workflow(&super::delegation_recovery::WorkflowRecord {
                             schema: 1,
+                            dependencies: None,
                             authority,
                             departure: None,
                             admission: None,
@@ -1139,6 +1152,7 @@ impl ServerState {
                         .join("workflows")
                         .join(&handle);
                     let mut record = Record {
+                        dependencies: dependency_witness,
                         obligation_revision: 1,
                         archive_receipts: vec![],
                         control: AssignmentControl::default(),
@@ -1285,6 +1299,7 @@ impl ServerState {
                     return self.reconciliation_snapshot(record);
                 }
                 if record.dispatch == DispatchStatus::Prepared {
+                    self.require_dependency_fresh(&record)?;
                     let contract = read_contract(&record)?;
                     let policy = self.contract_policy(&contract, availability == Some(true))?;
                     if let Some(reason) = policy.reason {
@@ -1589,7 +1604,9 @@ impl ServerState {
                     if Some(digest(&bytes)) != record.brief_digest {
                         bail!("immutable brief changed");
                     }
+                    self.verify_dependency_workspace(&record)?;
                     hold_before_input(&handle)?;
+                    self.require_dependency_fresh(&record)?;
                     record.dispatch = DispatchStatus::InputUnknown;
                     record.outcome(
                         DispatchOperation::InitialInput,
@@ -2137,6 +2154,13 @@ impl ServerState {
         }
         value["fallback_nonce"] = crate::agent_runner::private_identifier()?.into();
         value["fallback"] = fallback::FALLBACK_INSTRUCTIONS.into();
+        if let Some(baseline) = record
+            .dependencies
+            .as_ref()
+            .and_then(|saved| saved.baseline.as_ref())
+        {
+            value["input_baseline"] = serde_json::to_value(baseline)?;
+        }
         let brief = serde_json::to_vec_pretty(&value)?;
         Directory::open(&record.root, false)?.publish("brief-v1.json", &brief)?;
         record.brief_digest = Some(digest(&brief));
@@ -2247,6 +2271,21 @@ impl ServerState {
             .and_then(|summary| summary.agent.as_ref())
             .and_then(|agent| self.control_evidence(&record, agent).ok());
         let questions = self.question_states(&record);
+        let coding_target = submission
+            .as_ref()
+            .and_then(|submission| submission.coding.as_ref())
+            .and_then(|coding| coding.candidate.clone())
+            .zip(publication.clone())
+            .map(|(candidate, publication)| CodingTargetReference {
+                assignment: record.identity.clone(),
+                publication: publication.identity,
+                candidate,
+                source_contract_digest: record.contract_digest.clone(),
+            });
+        let dependency_gap = self
+            .require_dependency_fresh(&record)
+            .err()
+            .map(|error| error.to_string());
         Ok(AssignmentSnapshot {
             submission_issue: None,
             selected_acceptance_ref: None,
@@ -2255,6 +2294,8 @@ impl ServerState {
             fallback_capture: None,
             recovered: None,
             accepted_recovery: followups::read_accepted_recovery(&record, &version)?,
+            coding_target,
+            dependency_gap,
             questions,
             collected_question: None,
             obligation_revision: record.obligation_revision,
@@ -2338,6 +2379,11 @@ fn contract_document(contract: &ResearchContract) -> Result<serde_json::Value> {
 
 fn research_contract_bytes(contract: &ResearchContract) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec(contract)?;
+    if contract.review.is_none()
+        && let Some(prefix) = bytes.strip_suffix(b",\"review\":null}")
+    {
+        bytes = [prefix, b"}"].concat();
+    }
     if contract.coding.is_none() {
         let suffix = b",\"coding\":null}";
         if bytes.ends_with(suffix) {
@@ -2349,8 +2395,13 @@ fn research_contract_bytes(contract: &ResearchContract) -> Result<Vec<u8>> {
 }
 
 /// Default new wire fields never rewrite previously authenticated research files.
-fn submission_bytes(submission: &ResearchSubmission) -> Result<Vec<u8>> {
+pub(super) fn submission_bytes(submission: &ResearchSubmission) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec(submission)?;
+    if submission.review.is_none()
+        && let Some(prefix) = bytes.strip_suffix(b",\"review\":null}")
+    {
+        bytes = [prefix, b"}"].concat();
+    }
     if submission.coding.is_none() {
         let suffix = b",\"coding\":null}";
         if bytes.ends_with(suffix) {
@@ -2474,6 +2525,7 @@ mod tests {
             .unwrap()
             .join(root.file_name().unwrap());
         let contract = ResearchContract {
+            review: None,
             coding: None,
             schema: 1,
             workflow: "workflow".into(),
@@ -2499,6 +2551,7 @@ mod tests {
             .unwrap();
         let allocated = status != DispatchStatus::Prepared;
         Record {
+            dependencies: None,
             obligation_revision: 1,
             archive_receipts: vec![],
             control: AssignmentControl::default(),

@@ -623,6 +623,7 @@ fn production_publication_reconciliation_requires_authenticated_intent_and_exact
     let f = Fixture::new(10000);
     let child = f.start("NO_READY authenticated file recovery");
     let submission = ResearchSubmission {
+        review: None,
         coding: None,
         schema: 1,
         identity: child.identity.clone(),
@@ -799,6 +800,7 @@ fn production_versioned_publications_keep_authorship_handling_and_observation_cu
     let pending = f.observe(&[&second.handle], Some(&initial.cursor), 0);
     assert!(pending.observations[0].publication.is_none());
     let bytes = authored_research_bytes(&ResearchSubmission {
+        review: None,
         coding: None,
         schema: 1,
         identity: second.identity.clone(),

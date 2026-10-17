@@ -5,6 +5,8 @@ mod assignment_control;
 mod coding;
 #[path = "pi_delegation/delivery.rs"]
 mod delivery;
+#[path = "pi_delegation/dependencies.rs"]
+mod dependencies;
 #[path = "pi_delegation/fallback.rs"]
 mod fallback;
 #[path = "pi_delegation/followups.rs"]
@@ -1493,13 +1495,24 @@ impl RecoveryFixture {
             let Response::Inventory { sessions, .. } = live.request(Request::Inspect) else {
                 panic!("inventory")
             };
-            if sessions
+            let bound = sessions
                 .iter()
-                .any(|s| s.id == parent.id && s.agent.is_some())
-            {
+                .any(|s| s.id == parent.id && s.agent.is_some());
+            let native_ready = matches!(
+                live.request(Request::ReadTerminal {
+                    session: parent.id,
+                    max_lines: Some(20),
+                }),
+                Response::TerminalText { text, .. }
+                    if text.lines().any(|line| line.trim() == "PI_NATIVE_READY")
+            );
+            if bound && native_ready {
                 break;
             }
-            assert!(Instant::now() < deadline, "parent binding");
+            assert!(
+                Instant::now() < deadline,
+                "parent binding and native input readiness"
+            );
             std::thread::sleep(Duration::from_millis(10));
         }
         Self {

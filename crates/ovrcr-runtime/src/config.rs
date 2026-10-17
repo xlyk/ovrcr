@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 16;
+const SCHEMA_VERSION: i64 = 17;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -379,6 +379,10 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
         // Older writers discard trusted fallback evidence and typed acceptance.
         transaction.pragma_update(None, "user_version", 16)?;
     }
+    if schema_identity(&transaction)?.1 < 17 {
+        // Older writers discard bounded dependency input witnesses and review contracts.
+        transaction.pragma_update(None, "user_version", 17)?;
+    }
     transaction.commit().context("commit registry migration")?;
     Ok(connection)
 }
@@ -407,7 +411,7 @@ pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
     if application != APPLICATION_ID
         || !matches!(
             version,
-            1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | SCHEMA_VERSION
+            1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | SCHEMA_VERSION
         )
     {
         bail!(

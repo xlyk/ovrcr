@@ -28,6 +28,8 @@ pub(crate) struct ResumeAdmission {
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowRecord {
     #[serde(default)]
+    pub dependencies: Option<DependencyState>,
+    #[serde(default)]
     pub deliveries: Vec<RecordedDelivery>,
     pub schema: u32,
     pub authority: WorkflowAuthority,
@@ -55,6 +57,12 @@ pub(crate) fn identifier(value: &str) -> bool {
 impl WorkflowRecord {
     pub(crate) fn validate(&self) -> Result<()> {
         self.validate_deliveries()?;
+        if let Some(dependencies) = &self.dependencies {
+            dependencies.graph.validate().map_err(anyhow::Error::msg)?;
+            if dependencies.version == 0 {
+                bail!("invalid dependency graph version");
+            }
+        }
         let valid_authority = |a: &WorkflowAuthority| {
             a.epoch > 0
                 && a.parent.0 > 0
@@ -824,6 +832,7 @@ impl ServerState {
             .map(|capture| self.cancellation_view(capture))
             .transpose()?;
         Ok(WorkflowSnapshot {
+            dependencies: row.dependencies,
             authority: row.authority,
             active,
             handles,
@@ -837,6 +846,19 @@ impl ServerState {
     }
     pub(crate) fn workflow_request(&self, request: WorkflowRequest) -> Result<Response> {
         match request {
+            WorkflowRequest::SetDependencies {
+                auth,
+                workflow,
+                expected_version,
+                controller,
+                graph,
+            } => Ok(Response::Workflows(vec![self.set_dependencies(
+                auth,
+                workflow,
+                expected_version,
+                controller,
+                graph,
+            )?])),
             WorkflowRequest::DeclareDelivery { auth, declaration } => {
                 Ok(Response::Workflows(vec![
                     self.declare_delivery(auth, declaration)?,
@@ -1286,6 +1308,7 @@ mod tests {
     }
     fn original() -> WorkflowRecord {
         WorkflowRecord {
+            dependencies: None,
             deliveries: vec![],
             schema: 1,
             authority: WorkflowAuthority {

@@ -96,7 +96,7 @@ impl std::fmt::Debug for DelegationAuth {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchContract {
     pub schema: u32,
@@ -119,6 +119,39 @@ pub struct ResearchContract {
     pub previous_request: Option<String>,
     #[serde(default)]
     pub coding: Option<crate::CodingContract>,
+    #[serde(default)]
+    pub review: Option<crate::ReviewAssignment>,
+}
+
+// Keep absent review extensions out of historical JSON; framing carries every field.
+impl Serialize for ResearchContract {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let include = !serializer.is_human_readable() || self.review.is_some();
+        let mut state =
+            serializer.serialize_struct("ResearchContract", if include { 18 } else { 17 })?;
+        state.serialize_field("schema", &self.schema)?;
+        state.serialize_field("workflow", &self.workflow)?;
+        state.serialize_field("controller", &self.controller)?;
+        state.serialize_field("task", &self.task)?;
+        state.serialize_field("request", &self.request)?;
+        state.serialize_field("project", &self.project)?;
+        state.serialize_field("workspace", &self.workspace)?;
+        state.serialize_field("scope", &self.scope)?;
+        state.serialize_field("permitted_actions", &self.permitted_actions)?;
+        state.serialize_field("provider", &self.provider)?;
+        state.serialize_field("model_provider", &self.model_provider)?;
+        state.serialize_field("model", &self.model)?;
+        state.serialize_field("acceptance_evidence", &self.acceptance_evidence)?;
+        state.serialize_field("mandatory_capabilities", &self.mandatory_capabilities)?;
+        state.serialize_field("limits", &self.limits)?;
+        state.serialize_field("previous_request", &self.previous_request)?;
+        state.serialize_field("coding", &self.coding)?;
+        if include {
+            state.serialize_field("review", &self.review)?;
+        }
+        state.end()
+    }
 }
 
 impl ResearchContract {
@@ -127,6 +160,12 @@ impl ResearchContract {
             return Err("unsupported contract schema");
         }
         self.limits.validate()?;
+        if let Some(review) = &self.review {
+            review.validate()?;
+            if self.coding.is_some() || self.permitted_actions != ["read"] {
+                return Err("independent review requires a read-only research assignment");
+            }
+        }
         if self.previous_request.as_ref() == Some(&self.request) {
             return Err("retry cannot refer to itself");
         }
@@ -288,7 +327,7 @@ pub struct AssignmentResources {
     pub coding: Option<crate::CodingWorkspace>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchSubmission {
     pub schema: u32,
@@ -300,6 +339,30 @@ pub struct ResearchSubmission {
     pub unresolved: Vec<String>,
     #[serde(default)]
     pub coding: Option<crate::CodingSubmission>,
+    #[serde(default)]
+    pub review: Option<crate::ReviewReport>,
+}
+
+// Keep absent review extensions out of historical JSON; framing carries every field.
+impl Serialize for ResearchSubmission {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let include = !serializer.is_human_readable() || self.review.is_some();
+        let mut state =
+            serializer.serialize_struct("ResearchSubmission", if include { 9 } else { 8 })?;
+        state.serialize_field("schema", &self.schema)?;
+        state.serialize_field("identity", &self.identity)?;
+        state.serialize_field("version", &self.version)?;
+        state.serialize_field("outcome", &self.outcome)?;
+        state.serialize_field("summary", &self.summary)?;
+        state.serialize_field("evidence", &self.evidence)?;
+        state.serialize_field("unresolved", &self.unresolved)?;
+        state.serialize_field("coding", &self.coding)?;
+        if include {
+            state.serialize_field("review", &self.review)?;
+        }
+        state.end()
+    }
 }
 
 impl ResearchSubmission {
@@ -328,6 +391,9 @@ impl ResearchSubmission {
         }
         if let Some(coding) = &self.coding {
             coding.validate()?;
+        }
+        if let Some(review) = &self.review {
+            review.validate()?;
         }
         if self.outcome == "success" && self.evidence.is_empty() {
             return Err("success requires evidence");
@@ -514,6 +580,8 @@ pub struct AssignmentVersion {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssignmentSnapshot {
+    pub coding_target: Option<crate::CodingTargetReference>,
+    pub dependency_gap: Option<String>,
     pub handle: String,
     pub identity: AssignmentIdentity,
     pub dispatch: DispatchStatus,
@@ -805,6 +873,7 @@ mod tests {
     #[test]
     fn research_contract_rejects_unenforceable_permissions_and_capabilities() {
         let mut c = ResearchContract {
+            review: None,
             coding: None,
             schema: 1,
             workflow: "wf".into(),

@@ -1,4 +1,5 @@
 //! Immutable, scope-confined deltas. Capture never commits, changes a ref or pushes.
+pub mod baseline;
 use super::{git_stdout, inspect_worktree, run_git, worktree_identity};
 use crate::config::{ProjectRecord, WorkspaceRecord};
 use anyhow::{Context, Result, bail};
@@ -56,6 +57,8 @@ impl CandidateFile {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CandidateSnapshot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_baseline: Option<ovrcr_protocol::InputBaselineReference>,
     pub schema: u32,
     pub project: String,
     pub repository: std::path::PathBuf,
@@ -70,8 +73,10 @@ impl CandidateSnapshot {
     /// Validate stored bytes without consulting or reopening the disposable checkout.
     pub fn validate(&self, scope: &[String]) -> Result<()> {
         validate_scope(scope)?;
-        if self.schema != 1
-            || !self.repository.is_absolute()
+        if !matches!(
+            (self.schema, self.input_baseline.is_some()),
+            (1, false) | (2, true)
+        ) || !self.repository.is_absolute()
             || !is_oid(&self.base)
             || !is_oid(&self.head)
             || self.git_identity.is_empty()
@@ -481,6 +486,7 @@ pub fn capture(
         bail!("candidate changed during capture; no candidate published");
     }
     let snapshot = CandidateSnapshot {
+        input_baseline: None,
         schema: 1,
         project: project.name.clone(),
         repository: std::fs::canonicalize(&project.repo)?,
@@ -552,6 +558,7 @@ mod tests {
             digest: Some(format!("{:x}", Sha256::digest(bytes))),
         };
         let snapshot = CandidateSnapshot {
+            input_baseline: None,
             schema: 1,
             project: "project".into(),
             repository: "/repo".into(),

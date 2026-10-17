@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct CodingPublication {
+pub(in crate::server) struct CodingPublication {
     pub schema: u32,
     pub report: ResearchSubmission,
     pub snapshot: crate::git::candidate::CandidateSnapshot,
@@ -110,6 +110,7 @@ impl CodingPublication {
             }
         }
         result.candidate = Some(CandidateReference {
+            input_baseline: self.snapshot.input_baseline.clone(),
             path,
             digest,
             workspace: self.snapshot.workspace.clone(),
@@ -129,7 +130,8 @@ impl CodingPublication {
             && (expected.kind != PublicationKind::Submission
                 || expected.assignment != submission.identity
                 || expected.version != submission.version
-                || expected.digest != super::digest(&serde_json::to_vec(&submission)?))
+                || expected.digest
+                    != super::digest(&crate::server::delegation::submission_bytes(&submission)?))
         {
             bail!("candidate result does not match its authenticated publication intent");
         }
@@ -161,6 +163,7 @@ mod tests {
     }
     fn snapshot(bytes: &[u8]) -> CandidateSnapshot {
         CandidateSnapshot {
+            input_baseline: None,
             schema: 1,
             project: "project".into(),
             repository: "/repo".into(),

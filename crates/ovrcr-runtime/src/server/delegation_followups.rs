@@ -356,6 +356,7 @@ impl ServerState {
                 ));
             }
             self.assignment_session(&record)?;
+            self.require_dependency_fresh(&record)?;
             let original = read_contract(&record)?;
             let changed = revised.is_some();
             let contract = revision_contract(&original, revised.clone())?;
@@ -489,7 +490,9 @@ impl ServerState {
             return self.reconciliation_snapshot(record);
         }
         drop(publication_guard);
+        self.require_dependency_fresh(&record)?;
         hold_before_input(&request)?;
+        self.require_dependency_fresh(&record)?;
         let session = match self.assignment_session(&record) {
             Ok(session) => session,
             Err(_) => return self.reject_followup(record, &request),
@@ -651,6 +654,7 @@ impl ServerState {
     ) -> Result<AssignmentSnapshot> {
         hold_before_effect("fallback-before-acceptance", &handle)?;
         let initial = self.owned_assignment(&auth, &handle)?;
+        self.require_dependency_fresh(&initial)?;
         let parent = self.session_for_control(auth.session)?;
         let session = self.assignment_session(&initial)?;
         let store = self.retained.lock();
@@ -1158,6 +1162,7 @@ mod tests {
             super::super::tests::record(dir.path().join("assignment"), DispatchStatus::Applied);
         let directory = Directory::open(&record.root, false).unwrap();
         let result = ResearchSubmission {
+            review: None,
             coding: None,
             schema: 1,
             identity: record.identity.clone(),
