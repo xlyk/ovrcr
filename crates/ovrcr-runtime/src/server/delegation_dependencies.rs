@@ -21,6 +21,8 @@ pub(crate) struct DependencyWitness {
     pub baseline: Option<InputBaselineReference>,
 }
 
+type DependencyInputs = (String, Vec<CodingTargetReference>, Vec<CandidateFile>, bool);
+
 fn input_digest(graph: &DependencyGraph, task: &str) -> Result<String> {
     let ancestors = graph.ancestors(task);
     let mut tasks: Vec<_> = graph
@@ -122,24 +124,24 @@ impl ServerState {
             bail!("dependency version changed; recover the original graph");
         }
         for task in &graph.tasks {
-            if let Some(record) = store.assignment(&task.request)? {
-                if record.identity.workflow != workflow
+            if let Some(record) = store.assignment(&task.request)?
+                && (record.identity.workflow != workflow
                     || record.identity.controller != authority.controller
                     || record.identity.task != task.task
                     || record.project != task.project
-                    || record.workspace != task.workspace
-                {
-                    bail!("task request belongs to a foreign assignment/workspace");
-                }
+                    || record.workspace != task.workspace)
+            {
+                bail!("task request belongs to a foreign assignment/workspace");
             }
         }
         let old = row.dependencies.as_ref().map(|saved| &saved.graph);
         if let Some(old) = old {
             for task in &graph.tasks {
-                if let Some(prior) = old.tasks.iter().find(|prior| prior.task == task.task) {
-                    if task != prior && task.revision <= prior.revision {
-                        bail!("changed task contract requires a new task revision");
-                    }
+                if let Some(prior) = old.tasks.iter().find(|prior| prior.task == task.task)
+                    && task != prior
+                    && task.revision <= prior.revision
+                {
+                    bail!("changed task contract requires a new task revision");
                 }
             }
         }
@@ -408,7 +410,7 @@ impl ServerState {
         &self,
         auth: &DelegationAuth,
         contract: &ResearchContract,
-    ) -> Result<Option<(String, Vec<CodingTargetReference>, Vec<CandidateFile>, bool)>> {
+    ) -> Result<Option<DependencyInputs>> {
         let Some(graph) = self.dependency_graph(&contract.workflow)? else {
             return Ok(None);
         };
