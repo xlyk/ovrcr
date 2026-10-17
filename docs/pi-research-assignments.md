@@ -752,3 +752,14 @@ its descendants become stale. Public collection reports `dependency_gap` while
 preserving historical candidates and acceptance. Already running children remain
 observable. Invalidation never interrupts, rebases, resends input, or deletes
 resources. Exact unchanged independent branches keep their approvals.
+
+
+## Parent-owned independent coding review
+
+Use [independent review and corrective follow-ups](pi-independent-review.md) for the public `ovrcr_review` workflow. Direct tasks declare only requested or repository-required axes; Pocock implementation uses separate Standards and Spec assignments following the installed review procedure. Each read-only reviewer receives the exact complete immutable candidate/base and only its own actual source documents. Worker self-review and native helpers remain worker evidence.
+
+The parent records a finite applicable corrective limit. Later omitted limits inherit its original provenance and consumed rounds. The coordinator default is three rounds and is recorded as a default. Only the coding contract's named required checks gate repair and acceptance; optional failures and missing/unrun checks remain visible for parent judgment. Findings return through the existing same-child Followup input owner and its control/conversation/uncertainty fences.
+
+Changed review requirements or sources advance the existing obligation revision, clear current acceptance and preserve old immutable acceptance bytes. Explicit reacceptance must satisfy current review gates. Old delivery declarations do not satisfy the changed obligations. Review and acceptance grant no commit, push, publication or merge authority. Native research-only publishers require typed-review schema qualification or pre-effect refusal; read/result_file alone is insufficient.
+
+Orchestrator packages should link this procedure from their implementation, delegation and record references. The canonical supplied planning drafts remain unchanged; package discovery and full workflow composition are separately integrated.

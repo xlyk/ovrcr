@@ -19,6 +19,8 @@ pub(crate) mod interrupt;
 mod interrupt_effects;
 #[path = "delegation_questions.rs"]
 mod questions;
+#[path = "delegation_review.rs"]
+mod review;
 use questions::{AnswerIntent, QuestionPublicationIntent};
 #[path = "delegation_dependencies.rs"]
 mod dependencies;
@@ -49,6 +51,8 @@ pub(crate) struct PublicationIntent {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Record {
+    #[serde(default)]
+    pub review: Option<review::ReviewRecord>,
     #[serde(default)]
     pub dependencies: Option<dependencies::DependencyWitness>,
     pub handle: String,
@@ -153,7 +157,10 @@ impl Record {
     /// Validate operation evidence before using it to authorize another effect.
     /// Receipt reconstruction is never an independent source of budget proof.
     fn spent_execution_attempts(&self) -> Option<u32> {
-        if self.obligation_revision == 0 || self.validate_archive_storage().is_err() {
+        if self.obligation_revision == 0
+            || self.validate_archive_storage().is_err()
+            || self.validate_review_storage().is_err()
+        {
             return None;
         }
         if self.identity.session.is_some() != self.identity.run.is_some()
@@ -887,6 +894,13 @@ impl ServerState {
             } => {
                 return self.recover_fallback(&auth, &handle, &draft);
             }
+            DelegationRequest::Review {
+                auth,
+                handle,
+                operation,
+            } => {
+                return self.coordinate_review(auth, handle, operation);
+            }
             DelegationRequest::PublishQuestion {
                 auth,
                 handle,
@@ -936,6 +950,7 @@ impl ServerState {
                         lifecycle_error(ErrorCode::Conflict, "parent Pi conversation is not bound")
                     })?;
                 self.require_dispatch_open(&self.retained.lock(), &contract.workflow)?;
+                self.validate_review_assignment(&auth, &contract)?;
                 let handle = contract.request.clone();
                 let previous = self.retained.lock().assignment(&handle)?;
                 let bytes = contract_bytes(
@@ -1152,6 +1167,7 @@ impl ServerState {
                         .join("workflows")
                         .join(&handle);
                     let mut record = Record {
+                        review: None,
                         dependencies: dependency_witness,
                         obligation_revision: 1,
                         archive_receipts: vec![],
@@ -1261,6 +1277,7 @@ impl ServerState {
                     );
                     publication_guard.save_assignment(&record)?;
                 }
+                self.reserve_review_seat(&auth, &contract)?;
                 record
             }
             DelegationRequest::Launch {
@@ -1271,6 +1288,7 @@ impl ServerState {
                 self.require_dispatch_open(&self.retained.lock(), &identity.workflow)?;
                 let authority = self.current_workflow_authority(&auth, &identity.workflow)?;
                 let mut record = self.owned_assignment(&auth, &handle)?;
+                self.validate_review_assignment(&auth, &read_contract(&record)?)?;
                 if !record.intent(DispatchOperation::Launch, &identity)? {
                     self.validate_allocation(&record)?;
                     return self.reconciliation_snapshot(record);
@@ -1498,6 +1516,7 @@ impl ServerState {
                 expected_control_epoch,
             } => {
                 let mut record = self.owned_assignment(&auth, &handle)?;
+                self.validate_review_assignment(&auth, &read_contract(&record)?)?;
                 self.require_dispatch_open(&self.retained.lock(), &record.identity.workflow)?;
                 if record.identity.session.is_none() || record.identity.run.is_none() {
                     return Err(lifecycle_error(
@@ -1876,6 +1895,7 @@ impl ServerState {
                 if submission.version != record.result_version {
                     bail!("submission belongs to a stale result version");
                 }
+                self.validate_review_submission(&record, &submission)?;
                 let contract = read_contract(&record)?;
                 let authenticated = record
                     .publication_intent
@@ -2271,6 +2291,10 @@ impl ServerState {
             .and_then(|summary| summary.agent.as_ref())
             .and_then(|agent| self.control_evidence(&record, agent).ok());
         let questions = self.question_states(&record);
+        let review = record
+            .review
+            .as_ref()
+            .and_then(|review| review.status(&record));
         let coding_target = submission
             .as_ref()
             .and_then(|submission| submission.coding.as_ref())
@@ -2294,6 +2318,9 @@ impl ServerState {
             fallback_capture: None,
             recovered: None,
             accepted_recovery: followups::read_accepted_recovery(&record, &version)?,
+            review,
+            review_assignment: None,
+            review_scope: None,
             coding_target,
             dependency_gap,
             questions,
@@ -2396,20 +2423,7 @@ fn research_contract_bytes(contract: &ResearchContract) -> Result<Vec<u8>> {
 
 /// Default new wire fields never rewrite previously authenticated research files.
 pub(super) fn submission_bytes(submission: &ResearchSubmission) -> Result<Vec<u8>> {
-    let mut bytes = serde_json::to_vec(submission)?;
-    if submission.review.is_none()
-        && let Some(prefix) = bytes.strip_suffix(b",\"review\":null}")
-    {
-        bytes = [prefix, b"}"].concat();
-    }
-    if submission.coding.is_none() {
-        let suffix = b",\"coding\":null}";
-        if bytes.ends_with(suffix) {
-            bytes.truncate(bytes.len() - suffix.len());
-            bytes.push(b'}');
-        }
-    }
-    Ok(bytes)
+    Ok(submission.publication_bytes()?)
 }
 
 fn legacy_contract_bytes(contract: &ResearchContract) -> Result<Option<Vec<u8>>> {
@@ -2551,6 +2565,7 @@ mod tests {
             .unwrap();
         let allocated = status != DispatchStatus::Prepared;
         Record {
+            review: None,
             dependencies: None,
             obligation_revision: 1,
             archive_receipts: vec![],

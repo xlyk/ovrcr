@@ -49,6 +49,10 @@ evidence is not current source authentication. See [terminal fallback](../pi-ter
 Schema version 17 protects bounded workflow dependency graphs, per-assignment input
 witnesses and authenticated review contracts from older writers. Complete inherited
 bytes and actual review source documents remain private task publications.
+Schema version 18 protects bounded independent review references, applicable finite
+corrective policy and original repair intents from older writers. Actual source
+prose, findings and corrective text remain immutable private task files. Human-readable
+absent review fields preserve old authenticated bytes; binary framing carries the option.
 Immutable task contracts, briefs and submissions remain private files outside
 child checkouts; see [Pi research assignments](../pi-research-assignments.md).
 SQLite owns identity, path, and root-setup metadata. The stored

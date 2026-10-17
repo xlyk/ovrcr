@@ -429,6 +429,9 @@ function registerDelegation(pi, producer, sourceKey) {
         attempted = true;
         return await advance(handle, contract);
       }
+      if (args.review && args.provider !== undefined && args.provider !== "pi") {
+        return {handle:null,dispatch:"Refused",transport:"NotSent",reason:"requested provider lacks authenticated typed independent-review publication; read/result_file alone is insufficient"};
+      }
       const report = await call({ Capabilities: { auth: auth(), selection: Object.fromEntries(Object.keys(selections).filter(key => args[key] !== undefined).map(key => [key, args[key]])) } });
       if (args.mandatory_capabilities !== undefined && (!Array.isArray(args.mandatory_capabilities) || args.mandatory_capabilities.some(capability => !report.capabilities.includes(capability)))) return { handle: null, dispatch: "Refused", identity: { session: null, run: null }, reason: "unsupported mandatory capability" };
       if (!report.resolved_choice || report.reason) return { handle: null, dispatch: "Refused", identity: { session: null, run: null }, reason: report.reason, choices: report.choices };
@@ -512,6 +515,10 @@ function registerDelegation(pi, producer, sourceKey) {
       const snapshot = await call({ Followup: { auth: auth(), ...fields } });
       return { ...snapshot, request };
     } catch (error) { return { handle: args.handle, request: request ?? null, dispatch: error.refused || !attempted ? "Refused" : "Unknown", transport: attempted ? "Unknown" : "NotSent", reason: String(error.message), recovery: "Recover with only this handle and original request; do not create another request while input is unknown or partial" }; }
+  });
+  tool("ovrcr_review", "Coordinate declared parent-owned independent review on an exact complete coding target. operation is Declare, Assignment, Collect, Repair or Stop. Declare supplies actual separate axis source documents/digests and a finite policy; omitted later limits inherit the original policy. Assignment returns review_assignment and review_scope for common read-only ovrcr_start. Repair uses one original request/control epoch through common Followup; after uncertainty repeat that exact operation, never a replacement request. Pi typed review is supported by this schema; unqualified native research-only publishers are refused before effects. Review success never publishes, pushes, merges or replaces worker/integration checks.", object({handle:publicId,operation:{type:"object"}}), async args => {
+    try { return await call({Review:{...args,auth:auth()}}); }
+    catch (error) { return {handle:args.handle,dispatch:error.refused ? "Refused":"Unknown",reason:String(error.message),recovery:"Repeat only the exact original operation and request; reconcile original assignment and repair receipts before further effects"}; }
   });
   const acceptParameters = object({ handle: string, identity: { type: "object" }, result_version: { type: "integer", minimum: 1 }, target: { type: "object" }, result_digest: string, expected_control_epoch: { type: "integer", minimum: 1 } }, ["handle", "identity", "result_version", "expected_control_epoch"]);
   acceptParameters.oneOf = [{ required: ["target"] }, { required: ["result_digest"] }];
