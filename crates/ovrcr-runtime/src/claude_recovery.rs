@@ -6,6 +6,31 @@ use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+/// Shared nonsecret recipe data; Reporter still owns the invocation lifecycle.
+pub const REPORTER_MARKER: &str = ": ovrcr-managed-claude-v1; ";
+pub const REPORTER_EVENTS: &[&str] = &[
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "Notification",
+    "Stop",
+    "StopFailure",
+    "SessionEnd",
+];
+
+pub fn reporter_settings(executable: &str) -> serde_json::Value {
+    let quoted = format!("'{}'", executable.replace('\'', "'\"'\"'"));
+    let mut hooks = serde_json::Map::new();
+    for event in REPORTER_EVENTS {
+        hooks.insert((*event).into(), serde_json::json!([{"hooks":[{"type":"command",
+            "command":format!("{REPORTER_MARKER}{quoted} report claude --stdin-json"),"timeout":2,"async":false}]}]));
+    }
+    serde_json::json!({"hooks":hooks,"statusLine":{"type":"command",
+        "command":format!("{REPORTER_MARKER}{quoted} report claude-statusline --stdin-json"),"refreshInterval":60}})
+}
+
 pub fn config_dir() -> Result<PathBuf> {
     let directory = std::env::var_os("CLAUDE_CONFIG_DIR")
         .filter(|value| !value.is_empty())
@@ -48,7 +73,8 @@ pub fn launch_options(argv: &[OsString]) -> Result<Vec<String>> {
             .split_once('=')
             .map_or((arg, None), |(a, b)| (a, Some(b)));
         match name {
-            "--model" | "--permission-mode" | "--agent" | "--settings" | "--setting-sources" => {
+            "--model" | "--permission-mode" | "--agent" | "--settings" | "--setting-sources"
+            | "--tools" | "--mcp-config" => {
                 let value = if let Some(value) = inline {
                     value
                 } else {
@@ -57,10 +83,10 @@ pub fn launch_options(argv: &[OsString]) -> Result<Vec<String>> {
                         .and_then(|value| value.to_str())
                         .context("missing Claude option value")?
                 };
-                if name == "--settings" {
+                if name == "--settings" || name == "--mcp-config" {
                     let path = Path::new(value);
                     if !path.is_file() {
-                        bail!("Claude settings must reference an existing file for recovery");
+                        bail!("Claude policy must reference an existing file for recovery");
                     }
                     options.push(name.into());
                     options.push(
@@ -183,6 +209,7 @@ mod tests {
             "--append-system-prompt",
             "--agents",
             "--settings",
+            "--mcp-config",
         ] {
             assert!(
                 launch_options(&args(&["claude", option, "{private inline configuration}"]))
@@ -221,6 +248,44 @@ mod tests {
                 "claude".into(),
                 "--settings".into(),
                 settings.into_os_string()
+            ])
+            .is_err()
+        );
+    }
+    #[test]
+    fn assigned_read_policy_recovery_retains_disabled_builtins_and_one_exact_mcp_file() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("mcp.json");
+        std::fs::write(&config, "{\"mcpServers\":{}}").unwrap();
+        let options = launch_options(&[
+            "claude".into(),
+            "--tools".into(),
+            "".into(),
+            "--strict-mcp-config".into(),
+            "--mcp-config".into(),
+            config.clone().into_os_string(),
+            "--permission-mode".into(),
+            "default".into(),
+        ])
+        .unwrap();
+        assert_eq!(
+            options,
+            vec![
+                "--tools".to_owned(),
+                "".into(),
+                "--strict-mcp-config".into(),
+                "--mcp-config".into(),
+                config.canonicalize().unwrap().to_str().unwrap().into(),
+                "--permission-mode".into(),
+                "default".into()
+            ]
+        );
+        std::fs::remove_file(&config).unwrap();
+        assert!(
+            launch_options(&[
+                "claude".into(),
+                "--mcp-config".into(),
+                config.into_os_string()
             ])
             .is_err()
         );

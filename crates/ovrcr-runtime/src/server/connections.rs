@@ -654,6 +654,12 @@ pub(super) fn handle_request_with_id(
             }
         }
         Request::Delegation(request) => {
+            if let ovrcr_protocol::DelegationRequest::Read { auth, read } = request.as_ref() {
+                return state.read_assignment(auth, read).map_or_else(
+                    |error| error_response(ErrorCode::Conflict, error_chain_string(&error)),
+                    |read| Response::AssignedRead(Box::new(read)),
+                );
+            }
             if let ovrcr_protocol::DelegationRequest::Observe {
                 auth,
                 handles,

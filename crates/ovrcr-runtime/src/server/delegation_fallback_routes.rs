@@ -83,7 +83,7 @@ impl ServerState {
         let directory = Directory::open(&record.root, false)?;
         let current = context(&record, &directory)?;
         let authority = self.require_workflow(&store, auth, &record)?;
-        let model = read_contract(&record)?.model;
+        let model = expected_native_model(&record)?;
         let parent_binding = authority.binding.clone();
         let child_binding = current.binding.clone();
         let captured_control = current.control.clone();
