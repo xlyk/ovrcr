@@ -34,6 +34,18 @@ export function applyReviewFixture(brief, path, submission, host) {
     submission.outcome = blocked ? "blocked" : bad ? "failed" : "success";
     submission.summary = blocked ? "The supplied task leaves a real human decision unresolved." : bad ? "Pinned untracked artifact fails executable addition assertion." : "This independent axis has no blocking findings.";
     submission.evidence = [`${path}.artifact-check`];
+    // Controlled model contradictions still publish through the registered child tool.
+    // Keep the typed Passed report and its executable evidence intact; only the
+    // enclosing completion/coverage differs in these three regression assignments.
+    const outer = assignment.source_documents.find(source => source.content.includes("REVIEW_FIXTURE_OUTER_"))?.content;
+    if (outer) {
+      if (submission.review.outcome !== "Passed" || result.status !== 0) throw new Error("outer-review fixture requires a genuinely passing pinned artifact");
+      if (outer.includes("REVIEW_FIXTURE_OUTER_BLOCKED")) submission.outcome = "blocked";
+      else if (outer.includes("REVIEW_FIXTURE_OUTER_FAILED")) submission.outcome = "failed";
+      else if (outer.includes("REVIEW_FIXTURE_OUTER_UNRESOLVED")) submission.unresolved = ["Required review coverage remains incomplete."];
+      else throw new Error("unknown outer-review regression mode");
+      submission.summary = "The typed axis passed its executable check, but the enclosing review completion or coverage remains incomplete.";
+    }
     return true;
   }
   if (!brief.contract.scope.startsWith("REVIEW_FIXTURE_")) return false;

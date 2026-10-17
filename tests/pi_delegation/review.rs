@@ -1859,3 +1859,151 @@ fn public_review_preserves_direct_contracts_but_never_falls_back_from_governed_s
         "the original governed reviewer is never replayed"
     );
 }
+
+fn incomplete_outer_review_cannot_satisfy_acceptance(
+    mode: &str,
+    outcome: &str,
+    unresolved: &[&str],
+) {
+    let fixture = super::followups::OwnedFollowup::new();
+    let worker = worker(&fixture, "CLEAN");
+    let worker_input_count = fixture.input_count(&worker);
+    assert_eq!(worker_input_count, 1);
+    let worker_result = publication_snapshot(&fixture, &worker);
+    assert_eq!(
+        worker_result.submission.as_ref().unwrap().outcome,
+        "success"
+    );
+    let checks = &worker_result
+        .submission
+        .as_ref()
+        .unwrap()
+        .coding
+        .as_ref()
+        .unwrap()
+        .checks;
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0].name, "addition");
+    assert_eq!(checks[0].outcome, CheckOutcome::Passed);
+    let document = source(
+        ReviewSourceKind::Spec,
+        "fixture://incomplete-review-completion",
+        &format!(
+            "REVIEW_FIXTURE_OUTER_{mode}: addition passes, but the enclosing independent review is incomplete."
+        ),
+    );
+    let current: AssignmentSnapshot = serde_json::from_value(review(
+        &fixture,
+        &worker,
+        ReviewOperation::Declare(Box::new(ReviewDeclaration {
+            request: "incomplete-review-completion".into(),
+            target: target(&fixture, &worker),
+            requirements: vec![ReviewRequirement {
+                axis: ReviewAxis::Spec,
+                sources: vec![document.source.clone()],
+            }],
+            sources: vec![document],
+            repair_limit: None,
+        })),
+    ))
+    .unwrap();
+    let selected: AssignmentSnapshot = serde_json::from_value(review(
+        &fixture,
+        &current,
+        ReviewOperation::Assignment {
+            axis: ReviewAxis::Spec,
+        },
+    ))
+    .unwrap();
+    let started: AssignmentSnapshot = serde_json::from_value(fixture.tool(
+        "ovrcr_start",
+        serde_json::json!({
+            "project": PROJECT,
+            "workspace": fixture.workspace,
+            "scope": selected.review_scope.unwrap(),
+            "review": selected.review_assignment.unwrap(),
+            "model_provider": "test",
+            "model": "fixture-model",
+            "acceptance_evidence": ["exact typed review with incomplete enclosing completion"]
+        }),
+    ))
+    .unwrap();
+    assert_eq!(started.dispatch, DispatchStatus::Applied, "{started:?}");
+    let reviewer = super::followups::complete(&fixture, &started);
+    let published = publication_snapshot(&fixture, &reviewer);
+    let submission = published.submission.as_ref().unwrap();
+    assert_eq!(submission.outcome, outcome);
+    assert_eq!(
+        submission.unresolved,
+        unresolved
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect::<Vec<_>>()
+    );
+    let report = submission.review.as_ref().unwrap();
+    assert_eq!(report.outcome, ReviewOutcome::Passed);
+    assert!(report.findings.iter().all(|finding| !finding.blocking));
+    let artifact: serde_json::Value = serde_json::from_slice(
+        &fs::read(reviewer.brief.with_extension("json.artifact-check")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(artifact["exit"], 0);
+    let original_path = reviewer
+        .brief
+        .parent()
+        .unwrap()
+        .join(format!("submission-v{}.json", reviewer.result_version));
+    let original_bytes = fs::read(&original_path).unwrap();
+    assert_eq!(
+        digest(&original_bytes),
+        published.publication.as_ref().unwrap().identity.digest
+    );
+    let collected = review(
+        &fixture,
+        &current,
+        ReviewOperation::Collect {
+            axis: ReviewAxis::Spec,
+            reviewer: reviewer.handle.clone(),
+        },
+    );
+    let observed: AssignmentSnapshot = serde_json::from_value(fixture.tool(
+        "ovrcr_collect",
+        serde_json::json!({"handle": current.handle}),
+    ))
+    .unwrap();
+    let acceptance = accept(&fixture, &current);
+    assert_eq!(fs::read(&original_path).unwrap(), original_bytes);
+    assert_eq!(fixture.child_count(), 2);
+    assert_eq!(fixture.input_count(&current), worker_input_count);
+    let status = observed.review.as_ref().unwrap();
+    assert!(
+        !status.independent_review_satisfied,
+        "typed Passed with outer outcome={outcome}, unresolved={unresolved:?}: collected={collected}, status={status:?}, acceptance={acceptance}"
+    );
+    assert_eq!(acceptance["dispatch"], "Refused", "{acceptance}");
+    let after: AssignmentSnapshot = serde_json::from_value(fixture.tool(
+        "ovrcr_collect",
+        serde_json::json!({"handle": current.handle}),
+    ))
+    .unwrap();
+    assert!(after.acceptance_ref.is_none());
+}
+
+#[test]
+fn public_review_passed_report_with_blocked_submission_never_satisfies_acceptance() {
+    incomplete_outer_review_cannot_satisfy_acceptance("BLOCKED", "blocked", &[]);
+}
+
+#[test]
+fn public_review_passed_report_with_failed_submission_never_satisfies_acceptance() {
+    incomplete_outer_review_cannot_satisfy_acceptance("FAILED", "failed", &[]);
+}
+
+#[test]
+fn public_review_passed_report_with_unresolved_submission_never_satisfies_acceptance() {
+    incomplete_outer_review_cannot_satisfy_acceptance(
+        "UNRESOLVED",
+        "success",
+        &["Required review coverage remains incomplete."],
+    );
+}

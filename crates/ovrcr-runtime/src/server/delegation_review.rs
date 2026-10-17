@@ -397,6 +397,13 @@ fn review_publication(
             "independent review publication identity changed",
         ));
     }
+    if report.outcome == ReviewOutcome::Passed
+        && (submission.outcome != "success" || !submission.unresolved.is_empty())
+    {
+        return Err(review_error(
+            "independent review Passed requires a successful enclosing submission with no unresolved coverage",
+        ));
+    }
     Ok((
         ReviewReference {
             axis: axis.clone(),
