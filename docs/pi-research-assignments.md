@@ -551,8 +551,16 @@ A stopped or missing child does not refund a possibly consumed attempt.
 
 The child reads the assigned brief and calls `ovrcr_publish` with its `handle`
 and a `submission` containing `schema: 1`, the exact `identity` object from the
-brief, `version` equal to that brief's `result_version`, `outcome` (`success`, `failed`, or `blocked`), `summary`,
-`evidence`, and `unresolved` arrays. Success requires evidence. The Server checks
+brief, `version` equal to that brief's `result_version`, `outcome` (`success`, `failed`, or `blocked`), `summary` text,
+and `evidence` and `unresolved` arrays. Success requires evidence. The registered Pi
+tool exposes these required fields, their identity/version shapes and common
+constraints, and rejects unknown submission fields. Summary must contain non-whitespace
+text and fit 65536 UTF-8 bytes; each array has at most 64 strings of up to 4096
+UTF-8 bytes. The Server enforces whitespace and byte bounds and authenticates the exact
+current identity and version. Optional `coding` and `review` accept objects or null in the
+Pi tool schema to preserve typed publication compatibility; their nested contracts
+remain Server-validated and are not fully described by this common schema.
+The Server checks
 the child's current session, run and provider conversation before publishing a
 complete, immutable `submission-v<version>.json`. A parent or sibling cannot publish for
 it. A modified, partial, foreign, stale or symlinked publication cannot satisfy

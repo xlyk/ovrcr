@@ -14,6 +14,7 @@ assert.equal(metadata.name, "@earendil-works/pi-coding-agent");
 assert.equal(metadata.version, "0.87.1");
 const launches = JSON.parse(readFileSync(capture, "utf8"));
 assert.deepEqual(launches.map(launch => launch.kind), ["research", "coding"]);
+import { assertPublishContract } from "./fixtures/pi/pi_publish_contract.mjs";
 const sdk = await import(pathToFileURL(join(piRoot, "dist/index.js")).href);
 
 for (const { kind, argv } of launches) {
@@ -40,6 +41,8 @@ for (const { kind, argv } of launches) {
         noContextFiles: true, noPromptTemplates: true, noThemes: true });
       await resourceLoader.reload();
       assert.deepEqual(resourceLoader.getExtensions().errors, []);
+      const publisher = resourceLoader.getExtensions().extensions.find(extension => extension.tools.has("ovrcr_publish")).tools.get("ovrcr_publish").definition;
+      await assertPublishContract(publisher, piRoot);
       const registered = resourceLoader.getExtensions().extensions.flatMap(extension => [...extension.tools.keys()]);
       for (const name of ["ovrcr_publish", "ovrcr_publish_question"]) assert.ok(registered.includes(name));
       const modelRuntime = await sdk.ModelRuntime.create({ authPath: join(agentDir, "auth.json"),

@@ -626,5 +626,21 @@ function registerDelegation(pi, producer, sourceKey, binary) {
       return { ...snapshot, request };
     } catch (error) { return { handle: args.handle, request: request ?? null, dispatch: error.refused || !attempted ? "Refused" : "Unknown", transport: attempted ? "Unknown" : "NotSent", reason: String(error.message), recovery: "Inspect/recover only the original answer request; delivery is not consumption or acceptance" }; }
   });
-  tool("ovrcr_publish", "Publish the assigned child's immutable result. Coding reports include actual named checks with Passed/Failed/Missing/Unrun outcomes, command, exit_code and evidence, and candidate:null; only the Server attaches the complete immutable candidate. Use the exact identity and result_version from the current brief (result_version is submission.version). This does not accept the work.", object({ handle: string, submission: { type: "object" } }), args => call({ Publish: { auth: auth(), handle: args.handle, submission: args.submission } }));
+  const resultNotes = { type: "array", maxItems: 64, items: { type: "string", maxLength: 4096 } };
+  // Share the existing public identity/version shapes. The Server still authenticates
+  // current identity/version, enforces UTF-8 byte bounds and validates typed extensions.
+  const submission = {
+    ...object({ schema: { type: "integer", const: 1 }, identity: assignmentIdentity, version: resultVersion,
+      outcome: { type: "string", enum: ["success", "failed", "blocked"] },
+      summary: { type: "string", minLength: 1, maxLength: 65536, description: "Non-whitespace summary, at most 65536 UTF-8 bytes; the Server enforces whitespace and byte bounds." },
+      evidence: resultNotes, unresolved: resultNotes,
+      coding: nullable({ type: "object", description: "Optional CodingSubmission; the Server validates its nested candidate/checks contract." }),
+      review: nullable({ type: "object", description: "Optional ReviewReport; the Server validates its nested exact target, axis, outcome and findings contract." }),
+    }, ["schema", "identity", "version", "outcome", "summary", "evidence", "unresolved"]),
+    anyOf: [
+      { properties: { outcome: { const: "success" }, evidence: { type: "array", minItems: 1 } } },
+      { properties: { outcome: { enum: ["failed", "blocked"] } } },
+    ],
+  };
+  tool("ovrcr_publish", "Publish the assigned child's immutable result. submission requires schema:1, exact identity, version, outcome (success/failed/blocked), summary, evidence and unresolved arrays; success requires evidence. Summary is bounded to 65536 UTF-8 bytes and each evidence/unresolved entry to 4096 bytes (up to 64 each). Coding reports include actual named checks with Passed/Failed/Missing/Unrun outcomes, command, exit_code and evidence, and candidate:null; only the Server attaches the complete immutable candidate. Use the exact identity and result_version from the current brief (result_version is submission.version). This does not accept the work.", object({ handle: publicId, submission }), args => call({ Publish: { auth: auth(), handle: args.handle, submission: args.submission } }));
 }
