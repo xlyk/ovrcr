@@ -411,6 +411,15 @@ fn process_info(pid: i32) -> Result<Option<Process>> {
         ),
     }))
 }
+// Acceptance receipts reuse the supervisor's OS birth/parent/group reader.
+#[cfg(feature = "acceptance-diagnostics")]
+pub(crate) fn diagnostic_process_info(pid: i32) -> Result<Option<Value>> {
+    process_info(pid)?
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(Into::into)
+}
+
 fn retain_owned(
     owned: &mut BTreeMap<i32, Process>,
     groups: &mut BTreeSet<i32>,

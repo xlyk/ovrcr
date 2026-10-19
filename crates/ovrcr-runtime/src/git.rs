@@ -1,11 +1,13 @@
 pub mod candidate;
+#[cfg(feature = "acceptance-diagnostics")]
+mod diagnostics;
 use anyhow::{Context, Result, bail};
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, ExitStatus, Output};
 
 use crate::config::{ProjectRecord, Registry, WorkspaceRecord};
 
@@ -844,11 +846,12 @@ fn local_branches(repo: &Path) -> Result<Vec<String>> {
 /// `refs/heads/wip/<branch>` when `branch` is a legal Git ref suffix.
 pub fn wip_refname(branch: &str) -> Result<String> {
     let name = format!("refs/heads/wip/{branch}");
-    let status = Command::new("git")
-        .args(["check-ref-format", &name])
-        .env_remove("GIT_DIR")
-        .status()
-        .context("run git check-ref-format")?;
+    let status = git_status(
+        Command::new("git")
+            .args(["check-ref-format", &name])
+            .env_remove("GIT_DIR"),
+    )
+    .context("run git check-ref-format")?;
     if !status.success() {
         bail!("checkout {branch:?} cannot be saved as {name}");
     }
@@ -910,9 +913,8 @@ pub fn publish_wip(worktree: &Path, branch: &str) -> Result<()> {
         &format!("{refname}:{refname}"),
     ])
     .env("GIT_TERMINAL_PROMPT", "0");
-    let output = push
-        .output()
-        .with_context(|| format!("run git push in {}", worktree.display()))?;
+    let output =
+        git_output(&mut push).with_context(|| format!("run git push in {}", worktree.display()))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!("git push failed ({}): {}", output.status, stderr.trim());
@@ -926,6 +928,33 @@ impl Drop for RemoveOnDrop<'_> {
     fn drop(&mut self) {
         let _ = fs::remove_file(self.0);
     }
+}
+
+fn git_output(command: &mut Command) -> io::Result<Output> {
+    #[cfg(feature = "acceptance-diagnostics")]
+    {
+        diagnostics::output(command)
+    }
+    #[cfg(not(feature = "acceptance-diagnostics"))]
+    {
+        command.output()
+    }
+}
+
+fn git_status(command: &mut Command) -> io::Result<ExitStatus> {
+    #[cfg(feature = "acceptance-diagnostics")]
+    {
+        diagnostics::status(command)
+    }
+    #[cfg(not(feature = "acceptance-diagnostics"))]
+    {
+        command.status()
+    }
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+pub(crate) fn finish_diagnostics() -> io::Result<()> {
+    diagnostics::finish()
 }
 
 fn git_command(repo: &Path) -> Command {
@@ -944,9 +973,8 @@ fn git_command(repo: &Path) -> Command {
 fn git_index(repo: &Path, index: &Path, args: &[&str]) -> Result<()> {
     let mut command = git_command(repo);
     command.args(args).env("GIT_INDEX_FILE", index);
-    let output = command
-        .output()
-        .with_context(|| format!("run git in {}", repo.display()))?;
+    let output =
+        git_output(&mut command).with_context(|| format!("run git in {}", repo.display()))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!("git command failed ({}): {}", output.status, stderr.trim());
@@ -957,9 +985,8 @@ fn git_index(repo: &Path, index: &Path, args: &[&str]) -> Result<()> {
 fn git_index_stdout(repo: &Path, index: &Path, args: &[&str]) -> Result<String> {
     let mut command = git_command(repo);
     command.args(args).env("GIT_INDEX_FILE", index);
-    let output = command
-        .output()
-        .with_context(|| format!("run git in {}", repo.display()))?;
+    let output =
+        git_output(&mut command).with_context(|| format!("run git in {}", repo.display()))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!("git command failed ({}): {}", output.status, stderr.trim());
@@ -984,13 +1011,36 @@ fn try_git_stdout(repo: &Path, args: &[OsString]) -> Option<String> {
 }
 
 fn run_git(repo: &Path, args: &[OsString]) -> Result<Output> {
-    let output = git_command(repo)
-        .args(args)
-        .output()
+    let output = git_output(git_command(repo).args(args))
         .with_context(|| format!("run git in {}", repo.display()))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!("git command failed ({}): {}", output.status, stderr.trim());
     }
     Ok(output)
+}
+
+#[cfg(test)]
+mod output_semantics_tests {
+    use super::*;
+
+    #[test]
+    fn default_output_and_status_keep_stdin_eof_streams_and_nonzero_status() {
+        #[cfg(feature = "acceptance-diagnostics")]
+        assert!(finish_diagnostics().is_ok());
+        let captured = git_output(Command::new("/bin/sh").args([
+            "-c",
+            "read -r ignored; printf output; printf error >&2; exit 7",
+        ]))
+        .unwrap();
+        assert_eq!(captured.stdout, b"output");
+        assert_eq!(captured.stderr, b"error");
+        assert_eq!(captured.status.code(), Some(7));
+        assert_eq!(
+            git_status(Command::new("/bin/sh").args(["-c", "exit 9"]))
+                .unwrap()
+                .code(),
+            Some(9)
+        );
+    }
 }

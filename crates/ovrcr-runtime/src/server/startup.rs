@@ -386,13 +386,18 @@ fn run_server_inner(
     bridge
         .join()
         .map_err(|_| anyhow::anyhow!("server event bridge panicked"))?;
+    #[cfg(feature = "acceptance-diagnostics")]
+    let git_diagnostics = crate::git::finish_diagnostics();
     drop(build_publication);
     let _ = fs::remove_file(&paths.socket);
     match &task_shutdown {
         Ok(()) => eprintln!("ovrcr server stopped"),
         Err(error) => eprintln!("ovrcr server stopped with task shutdown error: {error:#}"),
     }
-    task_shutdown
+    task_shutdown?;
+    #[cfg(feature = "acceptance-diagnostics")]
+    git_diagnostics?;
+    Ok(())
 }
 
 /// Prepare the socket's parent directory for a server that a client is
