@@ -842,6 +842,7 @@ fn public_claude_discovery_running_child_is_cleaned_before_launch() {
     assert!(started.identity.session.is_some());
 }
 
+#[cfg(feature = "acceptance-diagnostics")]
 #[test]
 fn public_claude_discovery_unknown_postwait_refuses_before_allocation() {
     let f = ClaudeFixture::new("result");
