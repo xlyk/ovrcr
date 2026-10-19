@@ -95,27 +95,33 @@ function statusline() {
 }
 
 // Speak the actual bounded MCP CLI protocol; no arbitrary parent request surface.
-function mcpCall(name, arguments_) {
+function mcpCall(name, arguments_, id = 2) {
   const path = option("--mcp-config");
   if (!args.includes("--mcp-config") || !path) throw new Error("missing production MCP configuration");
-  const config = JSON.parse(readFileSync(path, "utf8"));
-  const server = config.mcpServers?.ovrcr_child;
+  const mcpConfig = JSON.parse(readFileSync(path, "utf8"));
+  const server = mcpConfig.mcpServers?.ovrcr_child;
   if (!server || !server.command?.startsWith("/") || server.args?.length !== 3 || server.args?.[0] !== "delegation-publisher" || server.args?.[1] !== "--read-handle") {
     throw new Error("native fixture requires the exact production publisher command");
   }
   const frames = [
     { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "claude-fixture", version: "1" } } },
     { jsonrpc: "2.0", method: "notifications/initialized" },
-    { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: arguments_ } },
+    { jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: arguments_ } },
   ];
   try {
     const stdout = execFileSync(server.command, server.args, {
       input: frames.map(frame => JSON.stringify(frame)).join("\n") + "\n",
       encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 15000, maxBuffer: 131072,
     });
-    const replies = stdout.trim().split("\n").map(line => JSON.parse(line));
-    const outcome = replies.find(reply => reply.id === 2)?.result?.structuredContent;
-    return outcome ?? { status: "unknown" };
+    const lines = stdout.trim().split("\n");
+    const index = lines.findIndex(line => JSON.parse(line).id === id);
+    const reply = index < 0 ? undefined : JSON.parse(lines[index]);
+    if (mode() === "read-pages" && name === "ovrcr_read" && arguments_.target?.Workspace?.path === "escape-heavy") {
+      atomic(config(`delegation-read-page-${arguments_.offset}.json`), {
+        reply, encoded_bytes: index < 0 ? null : Buffer.byteLength(lines[index]),
+      });
+    }
+    return reply?.result?.structuredContent ?? { status: "unknown" };
   } catch {
     return { status: "unknown" };
   }
@@ -127,10 +133,11 @@ function publish(kind, payload, handle = active.brief.handle) {
   const outcome = mcpCall(name, { handle, [field]: payload });
   return outcome.status === "published" ? { details: outcome } : { error: outcome.status, details: outcome };
 }
-function readCurrent(request) {
+function readCurrent(request, id = 2) {
   let text = "";
-  for (let pages = 0; pages <= 64; pages++) {
-    const outcome = mcpCall("ovrcr_read", request);
+  // A 512 KiB file needs at most 129 pages when a 4096-byte boundary backs up by 3 UTF-8 bytes.
+  for (let pages = 0; pages < 129; pages++) {
+    const outcome = mcpCall("ovrcr_read", request, id);
     if (outcome.status !== "read") throw new Error(`current scoped read refused: ${outcome.status}`);
     text += outcome.read.text;
     if (outcome.read.next_offset === outcome.read.total_bytes) return text;
@@ -186,6 +193,10 @@ for await (const line of createInterface({ input: process.stdin })) {
     const brief = JSON.parse(readCurrent(read));
     const workspaceRead = { ...read, target: { Workspace: { path: "README.md" } }, offset: 0 };
     atomic(`${briefPath}.read`, mcpCall("ovrcr_read", workspaceRead));
+    if (mode() === "read-pages") {
+      const text = readCurrent({ ...workspaceRead, target: { Workspace: { path: "escape-heavy" } } }, "\0".repeat(128));
+      atomic(`${briefPath}.paged-read`, { text });
+    }
     if (existsSync(config("delegation-read-cases.json"))) {
       const cases = JSON.parse(readFileSync(config("delegation-read-cases.json"), "utf8"));
       atomic(`${briefPath}.read-cases`, cases.map(delta => mcpCall("ovrcr_read", { ...workspaceRead, ...delta, identity: { ...workspaceRead.identity, ...(delta.identity ?? {}) } })));

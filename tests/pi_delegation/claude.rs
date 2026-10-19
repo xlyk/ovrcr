@@ -474,6 +474,79 @@ fn public_claude_native_conversation_replacement_cannot_receive_followup() {
 }
 
 #[test]
+fn public_claude_mcp_escape_heavy_read_pages_preserve_bytes_and_offsets() {
+    let f = ClaudeFixture::new("read-pages");
+    let Response::Inventory { registry, .. } = f.live.request(Request::Inspect) else {
+        panic!("inventory")
+    };
+    let workspace = &registry.workspace(PROJECT, &f.workspace).unwrap().path;
+    let bytes = [
+        vec![0; 8191],
+        "é".as_bytes().to_vec(),
+        vec![0; 4096],
+        "終".as_bytes().to_vec(),
+    ]
+    .concat();
+    fs::write(workspace.join("escape-heavy"), &bytes).unwrap();
+    let reply = f.start_claude();
+    assert_eq!(reply["dispatch"], "Applied", "{reply}");
+    let started: AssignmentSnapshot = serde_json::from_value(reply).unwrap();
+    let mut offset = 0;
+    let mut reconstructed = Vec::new();
+    let mut pages = 0;
+    while offset < bytes.len() {
+        let path = f
+            .profile
+            .join(format!("delegation-read-page-{offset}.json"));
+        wait_file(&path);
+        let frame: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        let reply = &frame["reply"];
+        assert_eq!(reply["id"], "\0".repeat(128));
+        assert!(frame["encoded_bytes"].as_u64().unwrap() <= 65_536);
+        let value = &reply["result"]["structuredContent"];
+        assert_eq!(value["status"], "read", "{value}");
+        assert_eq!(reply["result"]["isError"], false);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(
+                reply["result"]["content"][0]["text"].as_str().unwrap()
+            )
+            .unwrap(),
+            *value
+        );
+        let read = &value["read"];
+        assert_eq!(
+            read["identity"],
+            serde_json::to_value(&started.identity).unwrap()
+        );
+        assert_eq!(read["result_version"], started.result_version);
+        assert_eq!(read["control_epoch"], started.control.epoch);
+        assert_eq!(read["offset"].as_u64().unwrap() as usize, offset);
+        assert_eq!(read["total_bytes"].as_u64().unwrap() as usize, bytes.len());
+        let text = read["text"].as_str().unwrap();
+        assert!(!text.is_empty() && text.len() <= 4096);
+        let next = read["next_offset"].as_u64().unwrap() as usize;
+        assert_eq!(next, offset + text.len());
+        assert!(next > offset && next <= bytes.len());
+        eprintln!(
+            "ASSIGNED_READ_PAGE offset={offset} next={next} encoded_bytes={}",
+            frame["encoded_bytes"]
+        );
+        reconstructed.extend_from_slice(text.as_bytes());
+        offset = next;
+        pages += 1;
+        assert!(pages <= 4);
+    }
+    assert_eq!(pages, 4);
+    assert_eq!(reconstructed, bytes);
+    let completed = started.brief.with_extension("json.paged-read");
+    wait_file(&completed);
+    let completed: serde_json::Value =
+        serde_json::from_slice(&fs::read(completed).unwrap()).unwrap();
+    assert_eq!(completed["text"].as_str().unwrap().as_bytes(), bytes);
+    assert!(f.reconcile(&started.handle).submission.is_none());
+}
+
+#[test]
 fn public_claude_mcp_read_confines_actual_workspace_and_authority() {
     use std::os::unix::fs::symlink;
     let f = ClaudeFixture::new("no-stop");

@@ -914,6 +914,10 @@ pub struct AssignedReadResult {
 }
 
 impl AssignedReadResult {
+    /// Leaves room for both MCP text representations, bounded identity metadata
+    /// and a maximally escaped 128-byte request id under the 65536-byte reply cap.
+    pub const MAX_PAGE_BYTES: usize = 4096;
+
     /// Paging is explicit. Invalid UTF-8, offsets and oversized files refuse;
     /// no output silently loses bytes or splits a character.
     pub fn from_bytes(read: &AssignedRead, bytes: &[u8]) -> Result<Self, &'static str> {
@@ -925,7 +929,7 @@ impl AssignedReadResult {
         if start > text.len() || !text.is_char_boundary(start) {
             return Err("read offset is outside a UTF-8 boundary");
         }
-        let mut end = start.saturating_add(8192).min(text.len());
+        let mut end = start.saturating_add(Self::MAX_PAGE_BYTES).min(text.len());
         while !text.is_char_boundary(end) {
             end -= 1;
         }
@@ -965,10 +969,14 @@ mod tests {
             target: AssignedReadTarget::Brief,
             offset: 0,
         };
-        let bytes = format!("{}éend", "a".repeat(8191)).into_bytes();
+        let bytes =
+            format!("{}éend", "a".repeat(AssignedReadResult::MAX_PAGE_BYTES - 1)).into_bytes();
         let page = AssignedReadResult::from_bytes(&read, &bytes).unwrap();
-        assert_eq!(page.text.len(), 8191);
-        assert_eq!(page.next_offset, 8191);
+        assert_eq!(page.text.len(), AssignedReadResult::MAX_PAGE_BYTES - 1);
+        assert_eq!(
+            page.next_offset as usize,
+            AssignedReadResult::MAX_PAGE_BYTES - 1
+        );
         assert_eq!(page.total_bytes, bytes.len() as u32);
         let next = AssignedRead {
             offset: page.next_offset,
@@ -983,7 +991,7 @@ mod tests {
         assert!(
             AssignedReadResult::from_bytes(
                 &AssignedRead {
-                    offset: 8192,
+                    offset: AssignedReadResult::MAX_PAGE_BYTES as u32,
                     ..read.clone()
                 },
                 &bytes

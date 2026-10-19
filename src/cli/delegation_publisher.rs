@@ -165,7 +165,7 @@ fn forward(authority: &Authority, request: DelegationRequest) -> Outcome {
                     && result.next_offset >= result.offset
                     && result.next_offset <= result.total_bytes
                     && result.total_bytes <= 512 * 1024
-                    && result.text.len() <= 8192
+                    && result.text.len() <= AssignedReadResult::MAX_PAGE_BYTES
                     && result.text.len() == (result.next_offset - result.offset) as usize =>
             {
                 Outcome::Read(*result)
@@ -622,6 +622,85 @@ mod tests {
     }
     fn ready() -> Phase {
         Phase::Ready
+    }
+
+    #[test]
+    fn assigned_read_worst_case_mcp_envelope_fits_output_bound() {
+        let mut authority = authority();
+        authority.auth.session = SessionId(u64::MAX);
+        authority.read_handle = Some("_".repeat(128));
+        let read = AssignedRead {
+            handle: "_".repeat(128),
+            identity: AssignmentIdentity {
+                instance: "_".repeat(128),
+                workflow: "_".repeat(128),
+                controller: "_".repeat(128),
+                controller_epoch: u64::MAX,
+                task: "_".repeat(128),
+                attempt: u32::MAX,
+                contract: u32::MAX,
+                request: "_".repeat(128),
+                session: Some(SessionId(u64::MAX)),
+                run: Some(ovrcr::protocol::SessionRunId(u64::MAX)),
+            },
+            result_version: u32::MAX,
+            control_epoch: u64::MAX,
+            target: ovrcr::protocol::AssignedReadTarget::Brief,
+            offset: 512 * 1024 - 8192,
+        };
+        assert!(valid_identity(&read.identity));
+        let request_id = "\0".repeat(128);
+        let frames = [
+            initialize(),
+            json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+            json!({"jsonrpc":"2.0","id":request_id,"method":"tools/call",
+                "params":{"name":READ,"arguments":read}}),
+        ];
+        let input = frames
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        let mut output = Vec::new();
+        let mut calls = 0;
+        serve(
+            &mut io::Cursor::new(input),
+            &mut output,
+            Ok(authority),
+            |_, request| {
+                let DelegationRequest::Read { read, .. } = request else {
+                    panic!("only read")
+                };
+                calls += 1;
+                Outcome::Read(AssignedReadResult::from_bytes(&read, &vec![0; 512 * 1024]).unwrap())
+            },
+        )
+        .unwrap();
+        assert_eq!(calls, 1);
+        let output = String::from_utf8(output).unwrap();
+        let line = output.lines().last().unwrap();
+        eprintln!(
+            "ASSIGNED_READ_ENCODED_BYTES={} cap={MAX_OUTPUT}",
+            line.len()
+        );
+        assert!(line.len() <= MAX_OUTPUT);
+        let reply: Value = serde_json::from_str(line).unwrap();
+        assert_eq!(reply["id"], request_id);
+        assert_eq!(reply["result"]["isError"], false);
+        assert_eq!(reply["result"]["structuredContent"]["status"], "read");
+        assert_eq!(
+            reply["result"]["structuredContent"]["read"]["text"]
+                .as_str()
+                .unwrap()
+                .len(),
+            4096
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(reply["result"]["content"][0]["text"].as_str().unwrap())
+                .unwrap(),
+            reply["result"]["structuredContent"]
+        );
     }
 
     #[test]
