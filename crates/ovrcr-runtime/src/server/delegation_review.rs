@@ -4,7 +4,7 @@ use super::*;
 
 const MAX_REVIEW_CANDIDATES: usize = 33;
 #[path = "delegation_review/view.rs"]
-pub(super) mod view;
+pub(in crate::server) mod view;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ReviewRecord {
@@ -459,21 +459,25 @@ impl ServerState {
         let Some(assignment) = &mut contract.review else {
             return Ok(());
         };
-        let implementation = self.owned_assignment(auth, &assignment.implementation)?;
+        let implementation = self
+            .owned_assignment(auth, &assignment.implementation)
+            .map_err(|error| review_error(format!("review Blocked: {error}")))?;
         if implementation.review.is_some() {
             return Ok(());
         }
         let requested_view = assignment.target.view.clone();
         self.require_review_target(&implementation, &assignment.target.coding)?;
-        self.validate_review_contract(contract)?;
+        self.validate_review_contract(contract)
+            .map_err(|error| review_error(format!("review Blocked: {error}")))?;
         let previous = self.retained.lock().assignment(&contract.request)?;
-        let view = if let Some(previous) = previous {
-            read_contract(&previous)?
+        let (view, prepared) = if let Some(previous) = previous {
+            let view = read_contract(&previous)?
                 .review
                 .context("original direct review contract missing")?
                 .target
                 .view
-                .context("original direct readable view missing")?
+                .context("original direct readable view missing")?;
+            (view, None)
         } else {
             let assignment = contract.review.as_ref().unwrap();
             let declared = ReviewDeclaration {
@@ -487,10 +491,15 @@ impl ServerState {
                 repair_limit: None,
                 context_paths: assignment.context_paths.clone(),
             };
-            view::publish(&implementation, &declared)?
-                .pop()
+            let prepared = view::prepare(&implementation, &declared)
+                .map_err(|error| review_error(format!("review Blocked: {error}")))?;
+            let reference = prepared
+                .references
+                .last()
                 .context("direct review view missing")?
                 .1
+                .clone();
+            (reference, Some(prepared))
         };
         if requested_view
             .as_ref()
@@ -501,6 +510,15 @@ impl ServerState {
             ));
         }
         contract.review.as_mut().unwrap().target.view = Some(view);
+        view::readable_contract(contract)
+            .map_err(|error| review_error(format!("review brief Blocked: {error}")))?;
+        if let Some(prepared) = prepared {
+            hold_before_effect("review-view-prepared", &contract.request)?;
+            let store = self.retained.lock();
+            self.require_workflow(&store, auth, &implementation)?;
+            let directory = Directory::open(&implementation.root, false)?;
+            prepared.publish(&directory)?;
+        }
         Ok(())
     }
 
@@ -556,6 +574,8 @@ impl ServerState {
         require_typed_review_provider(&contract.provider)
             .map_err(|reason| lifecycle_error(ErrorCode::InvalidRequest, reason))?;
         self.validate_review_contract(contract)?;
+        view::readable_contract(contract)
+            .map_err(|error| review_error(format!("review brief Blocked: {error}")))?;
         if contract.coding.is_some() || contract.permitted_actions != ["read"] {
             return Err(review_error(
                 "independent review requires a fresh read-only assignment and exact separate axis context",
@@ -836,8 +856,9 @@ impl ServerState {
                         "review/repair policy is stopped; a new declaration cannot invent approval",
                     ));
                 }
-                let views = view::publish(&record, &declared)
+                let prepared = view::prepare(&record, &declared)
                     .map_err(|error| review_error(format!("review Blocked: {error}")))?;
+                let views = prepared.references.clone();
                 let review = record.review.as_mut().context("review policy missing")?;
                 let superseded_acceptance = record.acceptance.take();
                 record.obligation_revision = record
@@ -855,9 +876,11 @@ impl ServerState {
                     superseded_acceptance,
                     views,
                 });
+                hold_before_effect("review-view-prepared", &declared.request)?;
                 let store = self.retained.lock();
                 self.require_workflow(&store, &auth, &record)?;
                 let directory = Directory::open(&record.root, false)?;
+                prepared.publish(&directory)?;
                 publish_matching(
                     &directory,
                     &format!("review-{}.json", declared.request),
@@ -1075,7 +1098,9 @@ impl ServerState {
         if record.review.is_none() {
             return Ok(());
         }
-        record.validate_review_storage()?;
+        record
+            .validate_review_storage()
+            .map_err(|error| review_error(format!("review Blocked: {error}")))?;
         let round = current_round(record)?;
         // Preauthentication checked the Git base; final checks read immutable files only.
         if coding_target_from_result(record)? != round.target {
@@ -1138,7 +1163,9 @@ impl ServerState {
         if record.review.is_none() {
             return Ok(());
         }
-        record.validate_review_storage()?;
+        record
+            .validate_review_storage()
+            .map_err(|error| review_error(format!("review Blocked: {error}")))?;
         if record
             .review
             .as_ref()

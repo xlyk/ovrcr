@@ -392,6 +392,7 @@ async function main() {
         writeFileSync(`${path}.late-result`,JSON.stringify(late));
       }
       previousSubmission = structuredClone(submission);
+      if (brief.contract.review) writeFileSync(`${path}.review-attempted`,JSON.stringify(submission));
       let result;
       try { result = await host.tool("ovrcr_publish", { handle: brief.handle, submission }); }
       catch (error) { result = { error: String(error) }; }

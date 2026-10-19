@@ -387,6 +387,10 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
         // Older writers discard independent review policy and finite corrective receipts.
         transaction.pragma_update(None, "user_version", 18)?;
     }
+    if schema_identity(&transaction)?.1 < 19 {
+        // Older writers discard authenticated readable review-view references.
+        transaction.pragma_update(None, "user_version", 19)?;
+    }
     transaction.commit().context("commit registry migration")?;
     Ok(connection)
 }

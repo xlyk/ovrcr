@@ -49,10 +49,20 @@ base. Candidate limits remain 1024 files, 256 KiB combined decoded delta bytes a
 unreadable, missing, private or unsafe content blocks before Launch; reviewers also
 report Blocked if a necessary context file was not selected. Modes and symlink
 targets are readable data, never executable files or followed links in the view.
+The pinned Pi 0.87.1 `read` tool continues by line and cannot return a line above
+51,200 UTF-8 bytes. Such a line blocks complete coverage before Launch, including
+a source string whose JSON escaping makes its immutable brief line too long.
+The Server reports that exact gap; it does not shorten text or grant a shell.
+It also blocks ASCII text signatures that the installed tool interprets as GIF or
+WebP images, since that tool returns an image notice instead of the complete text.
 
 The Server checks private ownership/modes, manifest and file digests, exact target,
-sources, context, axis and round before launch/input and collection. A missing,
+sources, context, axis and round before launch/input, publication and collection. A missing,
 tampered, stale or swapped view cannot satisfy Passed review or a dependency edge.
+It prepares Git/content outside the store guard, then publishes bounded immutable
+files under the existing current-workflow guard. A retired parent cannot leave new
+view files or assignments after that preparation. Private-file publication IO
+failures retain their ordinary uncertain effect status and original handle.
 Schema 19 protects the new references from older writers. Upgrading leaves old
 retained rows and immutable publications unchanged; an old continuation lacking a
 readable view reports an explicit gap. A fresh declaration/review can supply new

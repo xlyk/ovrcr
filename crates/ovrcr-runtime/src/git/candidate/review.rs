@@ -46,11 +46,32 @@ pub fn context(repository: &Path, base: &str, paths: &[String]) -> Result<Vec<Ca
 
 pub fn readable(bytes: &[u8]) -> Result<&str> {
     let text = std::str::from_utf8(bytes).context("binary review content is not readable")?;
+    // Pi sniffs these ASCII signatures as images even when the file ends in .txt.
+    if bytes.starts_with(b"GIF87a")
+        || bytes.starts_with(b"GIF89a")
+        || (bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP"))
+    {
+        bail!(
+            "complete readonly coverage gap: installed Pi read interprets these bytes as an image instead of returning the complete source text"
+        );
+    }
     if text
         .chars()
         .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
     {
         bail!("binary review content cannot be presented completely as readable text");
+    }
+    // Installed Pi 0.87.1 read only continues by line and emits no overlong-line bytes.
+    if let Some((line, bytes)) = text
+        .split('\n')
+        .enumerate()
+        .find(|(_, line)| line.len() > 50 * 1024)
+    {
+        bail!(
+            "complete readonly coverage gap: line {} is {} bytes, above the installed Pi read limit of 51200 bytes per line; no byte-offset continuation is available",
+            line + 1,
+            bytes.len()
+        );
     }
     Ok(text)
 }

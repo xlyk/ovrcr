@@ -365,6 +365,12 @@ impl ServerState {
                 bail!("review publication does not match its original independent review contract")
             }
         }
+        if let Some(assignment) = &selected.contract.review {
+            let directory = Directory::open(&record.root, false)?;
+            selected.validate(record, &directory)?;
+            selected.validate_submission(submission)?;
+            super::delegation::review::view::verify_contract(assignment)?;
+        }
         if selected.contract.coding.is_none() {
             if submission.coding.is_some() {
                 bail!("research submissions cannot claim a coding candidate");
@@ -573,6 +579,14 @@ impl ServerState {
         selected: &SelectedCodingVersion<'_>,
         submission: &ResearchSubmission,
     ) -> Result<()> {
+        if let Some(assignment) = &selected.contract.review
+            && assignment.target.view.is_some()
+        {
+            let directory = Directory::open(&record.root, false)?;
+            selected.validate(record, &directory)?;
+            selected.validate_submission(submission)?;
+            super::delegation::review::view::verify_contract(assignment)?;
+        }
         if selected.contract.coding.is_none() {
             if submission.coding.is_some() {
                 bail!("research result cannot claim a coding candidate");

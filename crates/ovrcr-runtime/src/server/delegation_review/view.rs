@@ -41,11 +41,27 @@ fn axis_name(axis: &ReviewAxis) -> &'static str {
     }
 }
 
-pub(super) fn publish(
-    record: &Record,
-    declared: &ReviewDeclaration,
-) -> Result<Vec<(ReviewAxis, ReviewViewReference)>> {
+pub(super) struct Prepared {
+    pub references: Vec<(ReviewAxis, ReviewViewReference)>,
+    files: Vec<(String, Vec<u8>)>,
+}
+
+impl Prepared {
+    /// Caller holds the existing current-workflow guard across these bounded writes.
+    pub fn publish(self, directory: &Directory) -> Result<()> {
+        for (name, bytes) in self.files {
+            publish_matching(directory, &name, &bytes)?;
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn prepare(record: &Record, declared: &ReviewDeclaration) -> Result<Prepared> {
     use crate::server::delegation_coding::publication::CodingPublication;
+    // These exact source strings occupy single escaped lines in the child brief.
+    readable(&serde_json::to_vec_pretty(&serde_json::json!({
+        "contract": { "review": { "source_documents": declared.sources } }
+    }))?)?;
     let directory = Directory::open(&record.root, false)?;
     let name = format!("candidate-v{}.json", declared.target.publication.version);
     if declared.target.candidate.path != record.root.join(&name) {
@@ -123,11 +139,22 @@ pub(super) fn publish(
         ));
         publications.push((name, bytes));
     }
-    // Validate every byte/bound first: never launch with an omitted or truncated image.
-    for (name, bytes) in publications {
-        publish_matching(&directory, &name, &bytes)?;
+    // Validate every byte/bound before entering the existing publication guard.
+    for (_, bytes) in &publications {
+        readable(bytes)?;
     }
-    Ok(views)
+    Ok(Prepared {
+        references: views,
+        files: publications,
+    })
+}
+
+/// Match the contract's indentation in the actual pretty-printed immutable brief.
+pub(super) fn readable_contract(contract: &ResearchContract) -> Result<()> {
+    readable(&serde_json::to_vec_pretty(&serde_json::json!({
+        "contract": contract_document(contract)?
+    }))?)?;
+    Ok(())
 }
 
 fn add(
@@ -168,16 +195,51 @@ pub(in crate::server) fn verify(
     target: &ReviewTarget,
     axis: &ReviewAxis,
 ) -> Result<()> {
+    verify_files(&record.root, target, axis)
+}
+
+/// Only call after SelectedCodingVersion authenticates the immutable reviewer contract.
+pub(in crate::server) fn verify_contract(assignment: &ReviewAssignment) -> Result<()> {
+    use crate::server::delegation_coding::publication::CodingPublication;
+    let target = &assignment.target.coding;
+    let root = target
+        .candidate
+        .path
+        .parent()
+        .context("candidate root missing")?;
+    let name = format!("candidate-v{}.json", target.publication.version);
+    if target.candidate.path != root.join(&name) {
+        bail!("review candidate has no original publication path");
+    }
+    let directory = Directory::open(root, false)?;
+    let bytes = directory.read(&name)?;
+    if digest(&bytes) != target.candidate.digest {
+        bail!("immutable reviewed candidate changed");
+    }
+    let publication: CodingPublication = serde_json::from_slice(&bytes)?;
+    if publication.snapshot.input_baseline != target.candidate.input_baseline {
+        bail!("reviewed inherited baseline reference changed");
+    }
+    if let Some(baseline) = &target.candidate.input_baseline
+        && (baseline.path != root.join("input-baseline-v1.json")
+            || digest(&directory.read("input-baseline-v1.json")?) != baseline.digest)
+    {
+        bail!("immutable reviewed inherited baseline changed");
+    }
+    verify_files(root, &assignment.target, &assignment.axis)
+}
+
+fn verify_files(root: &std::path::Path, target: &ReviewTarget, axis: &ReviewAxis) -> Result<()> {
     let reference = target
         .view
         .as_ref()
         .context("complete readable review view missing; Blocked before launch")?;
     reference.validate().map_err(anyhow::Error::msg)?;
     let prefix = format!("review-view-{}-{}", reference.round, axis_name(axis));
-    if reference.path != record.root.join(format!("{prefix}.json")) {
+    if reference.path != root.join(format!("{prefix}.json")) {
         bail!("review view escaped its original private assignment");
     }
-    let directory = Directory::open(&record.root, false)?;
+    let directory = Directory::open(root, false)?;
     let bytes = directory.read(&format!("{prefix}.json"))?;
     if digest(&bytes) != reference.digest {
         bail!("immutable readable review view changed");
@@ -197,7 +259,7 @@ pub(in crate::server) fn verify(
         for (side, artifact) in [("before", &entry.before), ("after", &entry.after)] {
             if let Some(artifact) = artifact {
                 let name = format!("{prefix}-{index}-{side}.txt");
-                if artifact.path != record.root.join(&name) {
+                if artifact.path != root.join(&name) {
                     bail!("readable review artifact escaped its private assignment");
                 }
                 let bytes = directory.read(&name)?;
