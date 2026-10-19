@@ -3,6 +3,8 @@
 use super::*;
 
 const MAX_REVIEW_CANDIDATES: usize = 33;
+#[path = "delegation_review/view.rs"]
+pub(super) mod view;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ReviewRecord {
@@ -28,6 +30,8 @@ struct ReviewRound {
     evidence: Vec<ReviewReference>,
     outcomes: Vec<(ReviewAxis, ReviewOutcome)>,
     superseded_acceptance: Option<AcceptanceReference>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    views: Vec<(ReviewAxis, ReviewViewReference)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +85,10 @@ impl ReviewRecord {
                         evidence.axis == requirement.axis
                             && evidence.target.coding == current.target
                             && evidence.target.sources == requirement.sources
+                            && current.views.iter().any(|(axis, view)| {
+                                *axis == requirement.axis
+                                    && evidence.target.view.as_ref() == Some(view)
+                            })
                     }) && current.outcomes.iter().any(|(axis, outcome)| {
                         *axis == requirement.axis && *outcome == ReviewOutcome::Passed
                     })
@@ -148,6 +156,28 @@ impl Record {
                 || round.outcomes.len() != round.evidence.len()
             {
                 bail!("independent review metadata differs from its immutable declaration");
+            }
+            for (axis, reference) in &round.views {
+                let sources = &round
+                    .requirements
+                    .iter()
+                    .find(|r| &r.axis == axis)
+                    .context("review view has an undeclared axis")?
+                    .sources;
+                view::verify(
+                    self,
+                    &ReviewTarget {
+                        coding: round.target.clone(),
+                        sources: sources.clone(),
+                        view: Some(reference.clone()),
+                    },
+                    axis,
+                )?;
+                if reference.round != round.declaration
+                    || reference.context_paths != declared.context_paths
+                {
+                    bail!("review view differs from its immutable round/context selection");
+                }
             }
             if let Some(acceptance) = &round.superseded_acceptance {
                 let expected = self.root.join(format!(
@@ -293,7 +323,7 @@ fn required_check_outcomes(
 }
 
 /// Fixed, axis-specific context. Sources are in contract.review.source_documents.
-/// The candidate file contains all tracked/untracked delta bytes, modes and deletions.
+/// The Server authenticates complete readable content before any reviewer launch.
 pub(super) fn review_scope(assignment: &ReviewAssignment) -> String {
     let axis = match assignment.axis {
         ReviewAxis::Standards => {
@@ -304,10 +334,14 @@ pub(super) fn review_scope(assignment: &ReviewAssignment) -> String {
         }
     };
     format!(
-        "Independently review the {:?} axis only. Read the exact documents in contract.review.source_documents and verify their SHA256 digests. Read the complete immutable coding publication at {} (SHA256 {}). Compare its complete snapshot, including untracked files, deletions, modes and safe symlinks, against pinned Git base {}. Read unchanged base context from the snapshot repository with git show <base>:<path>; refuse missing or corrupt base objects or candidate bytes. Never substitute HEAD or the current implementation checkout. {} Publish a typed review report for the exact contract.review target and axis. Keep blocking findings identifiable across correction rounds. Do not implement fixes, reuse the implementation conversation, consult the other axis, or launch another outer review team.",
+        "Independently review the {:?} axis only. Read the actual documents in contract.review.source_documents. Read the complete Server-authenticated readable manifest at {} and every before/after/inherited/context file it names. Modes, deletions and symlink targets are explicit manifest entries. The Server authenticates their bytes, original candidate, inherited baseline, exact base {}, sources, axis and round; no reviewer shell, hashing or decoding is required. Missing/unreadable content or necessary context not supplied means Blocked; never omit coverage or substitute HEAD/current checkout. {} Publish a typed review report copying the exact contract.review target (including view) and axis. Keep blocking findings identifiable across correction rounds. Do not implement fixes, reuse the implementation conversation, consult the other axis, or launch another outer review team.",
         assignment.axis,
-        assignment.target.coding.candidate.path.display(),
-        assignment.target.coding.candidate.digest,
+        assignment
+            .target
+            .view
+            .as_ref()
+            .map(|view| view.path.display().to_string())
+            .unwrap_or_else(|| "MISSING VIEW: Blocked".into()),
         assignment.target.coding.candidate.base,
         axis
     )
@@ -416,6 +450,60 @@ fn review_publication(
 }
 
 impl ServerState {
+    /// Enrich direct review at the same Prepare owner, without adding workflow stages.
+    pub(super) fn materialize_direct_review(
+        &self,
+        auth: &DelegationAuth,
+        contract: &mut ResearchContract,
+    ) -> Result<()> {
+        let Some(assignment) = &mut contract.review else {
+            return Ok(());
+        };
+        let implementation = self.owned_assignment(auth, &assignment.implementation)?;
+        if implementation.review.is_some() {
+            return Ok(());
+        }
+        let requested_view = assignment.target.view.clone();
+        self.require_review_target(&implementation, &assignment.target.coding)?;
+        self.validate_review_contract(contract)?;
+        let previous = self.retained.lock().assignment(&contract.request)?;
+        let view = if let Some(previous) = previous {
+            read_contract(&previous)?
+                .review
+                .context("original direct review contract missing")?
+                .target
+                .view
+                .context("original direct readable view missing")?
+        } else {
+            let assignment = contract.review.as_ref().unwrap();
+            let declared = ReviewDeclaration {
+                request: contract.request.clone(),
+                target: assignment.target.coding.clone(),
+                requirements: vec![ReviewRequirement {
+                    axis: assignment.axis.clone(),
+                    sources: assignment.target.sources.clone(),
+                }],
+                sources: assignment.source_documents.clone(),
+                repair_limit: None,
+                context_paths: assignment.context_paths.clone(),
+            };
+            view::publish(&implementation, &declared)?
+                .pop()
+                .context("direct review view missing")?
+                .1
+        };
+        if requested_view
+            .as_ref()
+            .is_some_and(|requested| requested != &view)
+        {
+            return Err(review_error(
+                "direct review supplied a stale or foreign readable view",
+            ));
+        }
+        contract.review.as_mut().unwrap().target.view = Some(view);
+        Ok(())
+    }
+
     /// Uses the authenticated immutable result owner, never the mutable checkout.
     pub(super) fn review_coding_target(&self, record: &Record) -> Result<CodingTargetReference> {
         let target = coding_target_from_result(record)?;
@@ -423,6 +511,16 @@ impl ServerState {
             .coding
             .as_ref()
             .context("original coding workspace provenance missing")?;
+        let project = self
+            .registry
+            .lock()
+            .unwrap()
+            .project(&record.project)?
+            .clone();
+        Self::verify_coding_repository(&project)?;
+        if std::fs::canonicalize(&project.repo)? != resource.repository {
+            return Err(review_error("original review repository identity changed"));
+        }
         if crate::git::resolve_commit(&resource.repository, &target.candidate.base)?
             != target.candidate.base
         {
@@ -464,8 +562,11 @@ impl ServerState {
             ));
         }
         let implementation = self.owned_assignment(auth, &assignment.implementation)?;
-        implementation.validate_review_storage()?;
+        implementation
+            .validate_review_storage()
+            .map_err(|error| review_error(format!("review Blocked: {error}")))?;
         self.require_review_target(&implementation, &assignment.target.coding)?;
+        view::verify_current(&implementation, &assignment.target, &assignment.axis)?;
         if implementation.identity.request == contract.request
             || implementation.identity.workflow != contract.workflow
         {
@@ -476,6 +577,16 @@ impl ServerState {
         // Accepted direct review contracts have no coordinator ledger dependency.
         // A present policy is always validated and governed; errors never fall back.
         if implementation.review.is_none() {
+            if assignment
+                .target
+                .view
+                .as_ref()
+                .is_none_or(|view| view.round != contract.request)
+            {
+                return Err(review_error(
+                    "direct review view belongs to another immutable assignment",
+                ));
+            }
             return Ok(());
         }
         if contract.scope != review_scope(assignment) {
@@ -653,7 +764,9 @@ impl ServerState {
         operation: ReviewOperation,
     ) -> Result<AssignmentSnapshot> {
         let mut record = self.owned_assignment(&auth, &handle)?;
-        record.validate_review_storage()?;
+        record
+            .validate_review_storage()
+            .map_err(|error| review_error(format!("review Blocked: {error}")))?;
         match operation {
             ReviewOperation::Declare(declared) => {
                 declared.validate().map_err(anyhow::Error::msg)?;
@@ -704,7 +817,14 @@ impl ServerState {
                     ));
                 }
                 if review.rounds.last().is_some_and(|round| {
-                    round.target == declared.target && round.requirements == declared.requirements
+                    round.target == declared.target
+                        && round.requirements == declared.requirements
+                        && (round.requirements.is_empty()
+                            || round.views.len() == round.requirements.len())
+                        && round
+                            .views
+                            .iter()
+                            .all(|(_, view)| view.context_paths == declared.context_paths)
                 }) {
                     return Err(review_error(
                         "unchanged review target already has a declaration; reconcile its original request",
@@ -716,41 +836,9 @@ impl ServerState {
                         "review/repair policy is stopped; a new declaration cannot invent approval",
                     ));
                 }
-                // Keep only evidence whose entire axis target/source contract is unchanged.
-                let mut seats = Vec::new();
-                let mut evidence = Vec::new();
-                let mut outcomes = Vec::new();
-                if let Some(previous) = review
-                    .rounds
-                    .last()
-                    .filter(|round| round.target == declared.target)
-                {
-                    for requirement in &declared.requirements {
-                        if previous.requirements.contains(requirement) {
-                            seats.extend(
-                                previous
-                                    .seats
-                                    .iter()
-                                    .filter(|seat| seat.axis == requirement.axis)
-                                    .cloned(),
-                            );
-                            evidence.extend(
-                                previous
-                                    .evidence
-                                    .iter()
-                                    .filter(|value| value.axis == requirement.axis)
-                                    .cloned(),
-                            );
-                            outcomes.extend(
-                                previous
-                                    .outcomes
-                                    .iter()
-                                    .filter(|(axis, _)| *axis == requirement.axis)
-                                    .cloned(),
-                            );
-                        }
-                    }
-                }
+                let views = view::publish(&record, &declared)
+                    .map_err(|error| review_error(format!("review Blocked: {error}")))?;
+                let review = record.review.as_mut().context("review policy missing")?;
                 let superseded_acceptance = record.acceptance.take();
                 record.obligation_revision = record
                     .obligation_revision
@@ -761,10 +849,11 @@ impl ServerState {
                     declaration: declared.request.clone(),
                     target: declared.target.clone(),
                     requirements: declared.requirements.clone(),
-                    seats,
-                    evidence,
-                    outcomes,
+                    seats: Vec::new(),
+                    evidence: Vec::new(),
+                    outcomes: Vec::new(),
                     superseded_acceptance,
+                    views,
                 });
                 let store = self.retained.lock();
                 self.require_workflow(&store, &auth, &record)?;
@@ -796,10 +885,21 @@ impl ServerState {
                 let supplied = declaration(&record, &round.declaration)?;
                 let assignment = ReviewAssignment {
                     implementation: handle,
-                    axis,
+                    axis: axis.clone(),
                     target: ReviewTarget {
                         coding: round.target.clone(),
                         sources: requirement.sources.clone(),
+                        view: Some(
+                            round
+                                .views
+                                .iter()
+                                .find(|(selected, _)| selected == &axis)
+                                .context(
+                                    "readable review view missing; declare a fresh review round",
+                                )?
+                                .1
+                                .clone(),
+                        ),
                     },
                     source_documents: requirement
                         .sources
@@ -813,6 +913,7 @@ impl ServerState {
                                 .context("review source missing")
                         })
                         .collect::<Result<_>>()?,
+                    context_paths: supplied.context_paths.clone(),
                 };
                 let mut snapshot = self.reconciliation_snapshot(record)?;
                 snapshot.review_scope = Some(review_scope(&assignment));

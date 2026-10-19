@@ -55,6 +55,94 @@ fn release(f: &RecoveryFixture) {
 }
 
 #[test]
+fn public_dependencies_readable_review_keeps_complete_authenticated_inherited_inputs() {
+    use sha2::{Digest, Sha256};
+    let f = super::followups::OwnedFollowup::new();
+    let mut graph =
+        json!({"tasks":[task("a",false),task("b",true)],"edges":[edge("a","b","a.txt")]});
+    configure(&f, 0, &graph);
+    release(&f);
+    let a = start(
+        &f,
+        "a",
+        json!({"outputs":[{"path":"a.txt","content":"complete inherited A"}],"check_path":"a.txt"}),
+        &["a.txt"],
+    );
+    let a = accept(&f, &collect(&f, &a));
+    graph["edges"][0]["selected"] = selection(&a);
+    configure(&f, 1, &graph);
+    let b = start(
+        &f,
+        "b",
+        json!({"expect":[{"path":"a.txt","content":"complete inherited A"}],"outputs":[{"path":"b.txt","content":"own B"}],"check_path":"b.txt"}),
+        &["b.txt"],
+    );
+    let b = collect(&f, &b);
+    let content = "Preserve inherited A and add own B.";
+    let source = ReviewSource {
+        source: ReviewSourceReference {
+            kind: ReviewSourceKind::Spec,
+            reference: "fixture://inherited-task".into(),
+            digest: format!("{:x}", Sha256::digest(content.as_bytes())),
+        },
+        content: content.into(),
+    };
+    let declared: AssignmentSnapshot = serde_json::from_value(f.tool("ovrcr_review",json!({"handle":b.handle,"operation":{"Declare":{
+        "request":"inherited-readable-review","target":b.coding_target,"requirements":[{"axis":"Spec","sources":[source.source]}],"sources":[source],"repair_limit":null
+    }}}))).unwrap();
+    let selected: AssignmentSnapshot = serde_json::from_value(f.tool(
+        "ovrcr_review",
+        json!({"handle":declared.handle,"operation":{"Assignment":{"axis":"Spec"}}}),
+    ))
+    .unwrap();
+    let assignment = selected.review_assignment.unwrap();
+    let view = assignment.target.view.unwrap();
+    let bytes = fs::read(&view.path).unwrap();
+    let manifest: Value = serde_json::from_slice(&bytes).unwrap();
+    let inherited = manifest["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["kind"] == "inherited" && file["path"] == "a.txt")
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(inherited["after"]["path"].as_str().unwrap()).unwrap(),
+        "complete inherited A"
+    );
+    assert!(assignment.target.coding.candidate.input_baseline.is_some());
+    fs::write(
+        b.resources.coding.as_ref().unwrap().path.join("a.txt"),
+        "later checkout bytes",
+    )
+    .unwrap();
+    let replay: AssignmentSnapshot = serde_json::from_value(f.tool(
+        "ovrcr_review",
+        json!({"handle":declared.handle,"operation":{"Assignment":{"axis":"Spec"}}}),
+    ))
+    .unwrap();
+    assert_eq!(replay.review_assignment.unwrap().target.view, Some(view));
+    assert_eq!(
+        fs::read(
+            manifest["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|file| file["kind"] == "inherited")
+                .unwrap()["after"]["path"]
+                .as_str()
+                .unwrap()
+        )
+        .unwrap(),
+        b"complete inherited A"
+    );
+    assert_eq!(
+        f.child_count(),
+        2,
+        "view preparation launches no reviewer or extra implementation"
+    );
+}
+
+#[test]
 fn public_dependencies_gate_inputs_preserve_complete_untracked_lineage_and_invalidate_only_descendants()
  {
     let f = super::followups::OwnedFollowup::new();

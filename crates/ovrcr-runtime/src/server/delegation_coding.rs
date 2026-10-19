@@ -63,7 +63,7 @@ impl SelectedCodingVersion<'_> {
 
 impl ServerState {
     /// A matching path/base does not authorize a replacement registered repository.
-    fn verify_coding_repository(project: &ProjectRecord) -> Result<()> {
+    pub(super) fn verify_coding_repository(project: &ProjectRecord) -> Result<()> {
         let root = project
             .workspaces
             .iter()

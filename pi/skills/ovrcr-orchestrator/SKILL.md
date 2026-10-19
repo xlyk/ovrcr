@@ -47,7 +47,7 @@ clarifications within existing authority. Unknown native prompts remain gaps.
 For coding, retain the complete authenticated candidate and actual checks. Apply
 the user/repository review scope. Missing required independent review leaves work
 unaccepted; native helpers and worker self-checks do not satisfy it. The optional
-future review procedure in the references is usable only when its public tool is
+review procedure in the references is usable only when its public tool is
 actually available.
 
 Keep one concise workflow record and one continuation note. Use `ovrcr_checkpoint`

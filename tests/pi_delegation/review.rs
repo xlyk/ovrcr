@@ -116,6 +116,7 @@ fn declared(
             requirements,
             sources: documents,
             repair_limit: limit,
+            context_paths: vec![],
         })),
     ))
     .unwrap()
@@ -542,7 +543,7 @@ fn public_review_refuses_foreign_changed_source_and_self_axis_claims_before_inpu
         let reason = output["reason"].as_str().unwrap();
         if changed == "source" {
             assert!(
-                reason.contains("axis/source contract was not declared"),
+                reason.contains("readable review view has stale/swapped"),
                 "{changed}: {reason}"
             );
         } else {
@@ -824,7 +825,7 @@ fn public_review_capacity_refusal_retries_one_fresh_seat_without_duplicate_team(
 }
 
 #[test]
-fn public_review_source_change_retains_only_the_exact_unchanged_independent_axis() {
+fn public_review_new_round_requires_fresh_independent_axes_even_for_unchanged_source() {
     let fixture = super::followups::OwnedFollowup::new();
     let initial = worker(&fixture, "REPAIR");
     let current = declared(&fixture, &initial, true, None);
@@ -836,15 +837,6 @@ fn public_review_source_change_retains_only_the_exact_unchanged_independent_axis
         serde_json::json!({"handle":current.handle}),
     ))
     .unwrap();
-    let spec_reference = before
-        .review
-        .as_ref()
-        .unwrap()
-        .evidence
-        .iter()
-        .find(|reference| reference.axis == ReviewAxis::Spec)
-        .unwrap()
-        .clone();
     let mut documents = sources();
     documents[1]
         .content
@@ -871,13 +863,12 @@ fn public_review_source_change_retains_only_the_exact_unchanged_independent_axis
             ],
             sources: documents,
             repair_limit: None,
+            context_paths: vec![],
         })),
     ))
     .unwrap();
-    assert_eq!(
-        updated.review.as_ref().unwrap().evidence,
-        vec![spec_reference]
-    );
+    assert!(updated.review.as_ref().unwrap().evidence.is_empty());
+    assert_eq!(before.review.as_ref().unwrap().evidence.len(), 2);
     assert_eq!(
         review(
             &fixture,
@@ -889,22 +880,22 @@ fn public_review_source_change_retains_only_the_exact_unchanged_independent_axis
         )["dispatch"],
         "Refused"
     );
-    let retained: AssignmentSnapshot = serde_json::from_value(review(
+    let stale_spec = review(
         &fixture,
         &updated,
         ReviewOperation::Collect {
             axis: ReviewAxis::Spec,
-            reviewer: spec.handle,
+            reviewer: spec.handle.clone(),
         },
-    ))
-    .unwrap();
-    assert_eq!(retained.review.as_ref().unwrap().evidence.len(), 1);
+    );
+    assert_eq!(stale_spec["dispatch"], "Refused");
+    axis(&fixture, &updated, ReviewAxis::Spec);
     axis(&fixture, &updated, ReviewAxis::Standards);
     assert_eq!(fs::read(&spec.result_path).unwrap(), original_spec_bytes);
     assert_eq!(
         fixture.child_count(),
-        4,
-        "only the changed Standards source requires another independent context"
+        5,
+        "each axis needs the new immutable round even when its source is unchanged"
     );
 }
 
@@ -1078,6 +1069,7 @@ fn public_direct_coding_without_review_does_not_create_an_unrequested_team() {
             requirements: vec![],
             sources: vec![],
             repair_limit: None,
+            context_paths: vec![],
         })),
     ))
     .unwrap();
@@ -1249,6 +1241,7 @@ fn public_review_blocked_human_decision_stops_without_inventing_an_answer_or_rep
             }],
             sources: vec![document],
             repair_limit: None,
+            context_paths: vec![],
         })),
     ))
     .unwrap();
@@ -1743,8 +1736,10 @@ fn public_review_preserves_direct_contracts_but_never_falls_back_from_governed_s
         target: ReviewTarget {
             coding: target(&fixture, &current),
             sources: vec![document.source.clone()],
+            view: None,
         },
         source_documents: vec![document],
+        context_paths: vec![],
     };
     let started: AssignmentSnapshot = serde_json::from_value(fixture.tool("ovrcr_start", serde_json::json!({
         "project":PROJECT,"workspace":fixture.workspace,"scope":"Direct independent Spec review from its exact immutable typed contract",
@@ -1754,16 +1749,19 @@ fn public_review_preserves_direct_contracts_but_never_falls_back_from_governed_s
     let completed = super::followups::complete(&fixture, &started);
     let published = publication_snapshot(&fixture, &completed);
     assert_ne!(published.identity.session, current.identity.session);
-    assert_eq!(
-        published
-            .submission
-            .as_ref()
-            .unwrap()
-            .review
-            .as_ref()
-            .unwrap()
-            .target,
-        direct.target
+    let actual_target = &published
+        .submission
+        .as_ref()
+        .unwrap()
+        .review
+        .as_ref()
+        .unwrap()
+        .target;
+    assert_eq!(actual_target.coding, direct.target.coding);
+    assert_eq!(actual_target.sources, direct.target.sources);
+    assert!(
+        actual_target.view.is_some(),
+        "Prepare enriches the legacy direct request"
     );
     assert_eq!(
         published
@@ -1830,6 +1828,7 @@ fn public_review_preserves_direct_contracts_but_never_falls_back_from_governed_s
             }],
             sources: changed,
             repair_limit: None,
+            context_paths: vec![],
         })),
     ))
     .unwrap();
@@ -1840,7 +1839,7 @@ fn public_review_preserves_direct_contracts_but_never_falls_back_from_governed_s
         stale["reason"]
             .as_str()
             .unwrap()
-            .contains("axis/source contract was not declared"),
+            .contains("view is not the current declared axis/round"),
         "{stale}"
     );
     assert_eq!(
@@ -1904,6 +1903,7 @@ fn incomplete_outer_review_cannot_satisfy_acceptance(
             }],
             sources: vec![document],
             repair_limit: None,
+            context_paths: vec![],
         })),
     ))
     .unwrap();
@@ -2005,5 +2005,229 @@ fn public_review_passed_report_with_unresolved_submission_never_satisfies_accept
         "UNRESOLVED",
         "success",
         &["Required review coverage remains incomplete."],
+    );
+}
+
+#[test]
+fn public_review_direct_readable_context_uses_exact_base_and_replays_original_contract() {
+    let fixture = super::followups::OwnedFollowup::new();
+    fs::write(
+        fixture.live.repo.join("context.txt"),
+        "original unchanged caller\n",
+    )
+    .unwrap();
+    live::git(&fixture.live.repo, &["add", "context.txt"]);
+    live::git(&fixture.live.repo, &["commit", "-m", "original context"]);
+    let current = worker(&fixture, "CLEAN");
+    let document = sources().pop().unwrap();
+    let direct = ReviewAssignment {
+        implementation: current.handle.clone(),
+        axis: ReviewAxis::Spec,
+        target: ReviewTarget {
+            coding: target(&fixture, &current),
+            sources: vec![document.source.clone()],
+            view: None,
+        },
+        source_documents: vec![document],
+        context_paths: vec!["context.txt".into()],
+    };
+    // Both the original repository HEAD and implementation checkout move after capture.
+    fs::write(fixture.live.repo.join("context.txt"), "later moving HEAD\n").unwrap();
+    live::git(&fixture.live.repo, &["add", "context.txt"]);
+    live::git(&fixture.live.repo, &["commit", "-m", "moving context"]);
+    fs::write(
+        current
+            .resources
+            .coding
+            .as_ref()
+            .unwrap()
+            .path
+            .join("calc.cjs"),
+        "mutable checkout is not review input\n",
+    )
+    .unwrap();
+    let started: AssignmentSnapshot = serde_json::from_value(fixture.tool("ovrcr_start", serde_json::json!({
+        "project":PROJECT,"workspace":fixture.workspace,"scope":"Preserve my direct review scope", "review":direct,
+        "model_provider":"test","model":"fixture-model","acceptance_evidence":["complete readable exact-base context"]
+    }))).unwrap();
+    assert_eq!(started.dispatch, DispatchStatus::Applied, "{started:?}");
+    let completed = super::followups::complete(&fixture, &started);
+    let brief: serde_json::Value =
+        serde_json::from_slice(&fs::read(&completed.brief).unwrap()).unwrap();
+    assert_eq!(
+        brief["contract"]["scope"],
+        "Preserve my direct review scope"
+    );
+    let reference = &brief["contract"]["review"]["target"]["view"];
+    assert_eq!(reference["round"], completed.handle);
+    let path = reference["path"].as_str().unwrap();
+    let original = fs::read(path).unwrap();
+    let manifest: serde_json::Value = serde_json::from_slice(&original).unwrap();
+    let files = manifest["files"].as_array().unwrap();
+    let context = files
+        .iter()
+        .find(|entry| entry["kind"] == "context")
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(context["after"]["path"].as_str().unwrap()).unwrap(),
+        "original unchanged caller\n"
+    );
+    let candidate = files
+        .iter()
+        .find(|entry| entry["path"] == "calc.cjs")
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(candidate["after"]["path"].as_str().unwrap()).unwrap(),
+        "module.exports = { add: (a, b) => a + b };\n"
+    );
+    let before = fs::read(&completed.brief).unwrap();
+    let replay: AssignmentSnapshot = serde_json::from_value(fixture.tool(
+        "ovrcr_start",
+        serde_json::json!({"handle":completed.handle}),
+    ))
+    .unwrap();
+    assert_eq!(replay.identity, completed.identity);
+    assert_eq!(fixture.input_count(&completed), 1);
+    assert_eq!(fs::read(path).unwrap(), original);
+    assert_eq!(fs::read(&completed.brief).unwrap(), before);
+    assert!(
+        fixture.reconcile(&current.handle).review.is_none(),
+        "direct review adds no coordinator stages or policy"
+    );
+}
+
+#[test]
+fn public_review_readable_artifact_tamper_modes_escape_and_swapped_axis_refuse_before_launch() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = super::followups::OwnedFollowup::new();
+    let current = worker(&fixture, "CLEAN");
+    let current = declared(&fixture, &current, true, None);
+    let selected: AssignmentSnapshot = serde_json::from_value(review(
+        &fixture,
+        &current,
+        ReviewOperation::Assignment {
+            axis: ReviewAxis::Spec,
+        },
+    ))
+    .unwrap();
+    let assignment = selected.review_assignment.unwrap();
+    let reference = assignment.target.view.as_ref().unwrap();
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&reference.path).unwrap()).unwrap();
+    let image = std::path::PathBuf::from(manifest["files"][0]["after"]["path"].as_str().unwrap());
+    let original = fs::read(&image).unwrap();
+    let count = fixture.child_count();
+    for damage in ["tamper", "missing", "mode", "symlink"] {
+        match damage {
+            "tamper" => fs::write(&image, "swapped readable bytes").unwrap(),
+            "missing" => fs::remove_file(&image).unwrap(),
+            "mode" => fs::set_permissions(&image, fs::Permissions::from_mode(0o644)).unwrap(),
+            "symlink" => {
+                fs::remove_file(&image).unwrap();
+                std::os::unix::fs::symlink("/etc/hosts", &image).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let result = fixture.tool("ovrcr_start", serde_json::json!({"project":PROJECT,"workspace":fixture.workspace,"scope":selected.review_scope,"review":assignment,"model_provider":"test","model":"fixture-model","acceptance_evidence":["exact authenticated view"]}));
+        assert_eq!(result["dispatch"], "Refused", "{damage}: {result}");
+        assert_eq!(fixture.child_count(), count);
+        if fs::symlink_metadata(&image).is_ok() {
+            fs::remove_file(&image).unwrap();
+        }
+        fs::write(&image, &original).unwrap();
+        fs::set_permissions(&image, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    for damage in ["axis", "round", "digest", "escape", "context"] {
+        let mut changed = assignment.clone();
+        let view = changed.target.view.as_mut().unwrap();
+        match damage {
+            "axis" => changed.axis = ReviewAxis::Standards,
+            "round" => view.round = "another-round".into(),
+            "digest" => view.digest = "0".repeat(64),
+            "escape" => view.path = "/etc/hosts".into(),
+            "context" => {
+                view.context_paths.push("README".into());
+                changed.context_paths = view.context_paths.clone();
+            }
+            _ => unreachable!(),
+        }
+        let result = fixture.tool("ovrcr_start", serde_json::json!({"project":PROJECT,"workspace":fixture.workspace,"scope":selected.review_scope,"review":changed,"model_provider":"test","model":"fixture-model","acceptance_evidence":["exact authenticated view"]}));
+        assert_eq!(result["dispatch"], "Refused", "{damage}: {result}");
+        assert_eq!(fixture.child_count(), count);
+    }
+}
+
+#[test]
+fn public_review_necessary_binary_missing_private_and_directory_context_blocks_before_launch() {
+    let fixture = super::followups::OwnedFollowup::new();
+    fs::write(fixture.live.repo.join("binary-context"), [0, 255, 0]).unwrap();
+    fs::create_dir(fixture.live.repo.join("context-dir")).unwrap();
+    fs::write(fixture.live.repo.join("context-dir/file"), "caller\n").unwrap();
+    live::git(
+        &fixture.live.repo,
+        &["add", "binary-context", "context-dir"],
+    );
+    live::git(
+        &fixture.live.repo,
+        &["commit", "-m", "context refusal inputs"],
+    );
+    let current = worker(&fixture, "CLEAN");
+    let count = fixture.child_count();
+    for path in [
+        "binary-context",
+        "missing",
+        ".git/config",
+        ".env",
+        "../escape",
+        "context-dir",
+    ] {
+        let document = sources().pop().unwrap();
+        let assignment = ReviewAssignment {
+            implementation: current.handle.clone(),
+            axis: ReviewAxis::Spec,
+            target: ReviewTarget {
+                coding: target(&fixture, &current),
+                sources: vec![document.source.clone()],
+                view: None,
+            },
+            source_documents: vec![document],
+            context_paths: vec![path.into()],
+        };
+        let result = fixture.tool("ovrcr_start",serde_json::json!({"project":PROJECT,"workspace":fixture.workspace,"scope":"Necessary context must be readable", "review":assignment,"model_provider":"test","model":"fixture-model","acceptance_evidence":["complete necessary context"]}));
+        assert_eq!(result["dispatch"], "Refused", "{path}: {result}");
+        assert_eq!(fixture.child_count(), count);
+    }
+}
+
+#[test]
+fn public_review_binary_candidate_blocks_readonly_launch_without_omitting_the_file() {
+    let fixture = super::followups::OwnedFollowup::new();
+    let current = worker(&fixture, "BINARY_CLEAN");
+    let document = sources().pop().unwrap();
+    let assignment = ReviewAssignment {
+        implementation: current.handle.clone(),
+        axis: ReviewAxis::Spec,
+        target: ReviewTarget {
+            coding: target(&fixture, &current),
+            sources: vec![document.source.clone()],
+            view: None,
+        },
+        source_documents: vec![document],
+        context_paths: vec![],
+    };
+    let original = fs::read(&assignment.target.coding.candidate.path).unwrap();
+    let result = fixture.tool("ovrcr_start",serde_json::json!({"project":PROJECT,"workspace":fixture.workspace,"scope":"Review every changed file", "review":assignment,"model_provider":"test","model":"fixture-model","acceptance_evidence":["complete readable candidate"]}));
+    assert_eq!(result["dispatch"], "Refused", "{result}");
+    assert!(
+        result["reason"]
+            .as_str()
+            .unwrap()
+            .contains("binary review content"),
+        "{result}"
+    );
+    assert_eq!(fixture.child_count(), 1);
+    assert_eq!(
+        fs::read(&assignment.target.coding.candidate.path).unwrap(),
+        original
     );
 }

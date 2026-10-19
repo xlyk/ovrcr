@@ -2879,6 +2879,7 @@ mod wire_snapshot {
             }],
             sources: vec![source.clone()],
             repair_limit: None,
+            context_paths: vec![],
         };
         let assignment = crate::ReviewAssignment {
             implementation: "implementation".into(),
@@ -2886,8 +2887,10 @@ mod wire_snapshot {
             target: crate::ReviewTarget {
                 coding: coding.clone(),
                 sources: vec![source.source.clone()],
+                view: None,
             },
             source_documents: vec![source],
+            context_paths: vec![],
         };
         let report = crate::ReviewReport {
             target: assignment.target.clone(),

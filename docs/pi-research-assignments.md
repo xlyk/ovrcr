@@ -777,4 +777,4 @@ The parent records a finite applicable corrective limit. Later omitted limits in
 
 Changed review requirements or sources advance the existing obligation revision, clear current acceptance and preserve old immutable acceptance bytes. Explicit reacceptance must satisfy current review gates. Old delivery declarations do not satisfy the changed obligations. Review and acceptance grant no commit, push, publication or merge authority. Native research-only publishers require typed-review schema qualification or pre-effect refusal; read/result_file alone is insufficient.
 
-Orchestrator packages should link this procedure from their implementation, delegation and record references. The canonical supplied planning drafts remain unchanged; package discovery and full workflow composition are separately integrated.
+Orchestrator packages should link this procedure from their implementation, delegation and record references. The packaged [workflow coordinator](../pi/skills/ovrcr-orchestrator/references/workflow.md) supports idea, existing-spec and approved-ticket starts while reading the installed stage procedures. The canonical supplied planning drafts remain unchanged.

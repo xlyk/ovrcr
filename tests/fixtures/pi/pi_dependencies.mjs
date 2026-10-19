@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import {readFileSync,writeFileSync,mkdirSync,unlinkSync,chmodSync,symlinkSync,lstatSync,readlinkSync,existsSync} from "node:fs";
 import {join,dirname} from "node:path";
 import {spawnSync} from "node:child_process";
-import {createHash} from "node:crypto";
 
 export function dependencyResult(brief,path,submission) {
   const config=JSON.parse(brief.contract.scope.slice("DEPENDENCY_FIXTURE\n".length));
@@ -18,10 +17,14 @@ export function dependencyResult(brief,path,submission) {
   }
   if (brief.contract.review) {
     const review=brief.contract.review;
-    for (const source of review.source_documents) assert.equal(createHash("sha256").update(source.content).digest("hex"),source.source.digest);
-    assert.equal(createHash("sha256").update(readFileSync(review.target.coding.candidate.path)).digest("hex"),review.target.coding.candidate.digest);
+    const view=JSON.parse(readFileSync(review.target.view.path,"utf8"));
+    assert.equal(view.axis,review.axis);
+    assert.equal(view.round,review.target.view.round);
+    for (const file of view.files) {
+      for (const side of ["before","after"]) if (file[side]) readFileSync(file[side].path,"utf8");
+    }
     submission.review={target:review.target,axis:review.axis,outcome:"Passed",findings:[]};
-    submission.evidence=["exact immutable candidate and axis source bytes verified"];
+    submission.evidence=["complete Server-authenticated readable candidate/inherited/context and actual axis sources inspected"];
     return;
   }
   assert.equal(root,brief.coding_workspace.path);

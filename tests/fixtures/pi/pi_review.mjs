@@ -1,38 +1,33 @@
 // Deterministic model work only; publication still uses the real registered child tool.
-import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, unlinkSync, existsSync, symlinkSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { runInNewContext } from "node:vm";
 
-const digest = bytes => createHash("sha256").update(bytes).digest("hex");
 const checked = bytes => spawnSync(process.execPath, ["-e", `${bytes.toString("utf8")}\nconst observed=module.exports.add(2,3);console.log(observed);if(observed!==5)process.exit(7);`], {encoding:"utf8"});
 
 export function applyReviewFixture(brief, path, submission, host) {
   if (brief.contract.review) {
     const assignment = brief.contract.review;
-    for (const source of assignment.source_documents) {
-      if (digest(source.content) !== source.source.digest) throw new Error("fixture source digest changed");
+    const view = JSON.parse(readFileSync(assignment.target.view.path, "utf8"));
+    if (view.axis !== assignment.axis || view.round !== assignment.target.view.round) throw new Error("fixture exact readable view missing");
+    for (const file of view.files) {
+      for (const side of ["before", "after"]) if (file[side]) readFileSync(file[side].path, "utf8");
     }
-    const bytes = readFileSync(assignment.target.coding.candidate.path);
-    if (digest(bytes) !== assignment.target.coding.candidate.digest) throw new Error("fixture candidate digest changed");
-    const {snapshot} = JSON.parse(bytes);
-    const base = spawnSync("git", ["-C",snapshot.repository,"cat-file","-e",`${snapshot.base}^{commit}`], {encoding:"utf8"});
-    if (base.status !== 0) throw new Error("fixture exact base context missing");
-    const original = spawnSync("git", ["-C",snapshot.repository,"show",`${snapshot.base}:obsolete.txt`], {encoding:"utf8"});
-    if (original.status !== 0 || original.stdout !== "original base context\n") throw new Error("fixture complete original base source context missing");
-    const file = snapshot.files.find(file => file.path === "calc.cjs");
-    if (!file?.content) throw new Error("fixture complete untracked candidate omitted");
-    const artifact = Buffer.from(file.content,"base64");
-    if (digest(artifact) !== file.digest) throw new Error("fixture artifact digest changed");
-    const result = checked(artifact);
-    if (result.error || ![0,7].includes(result.status)) throw new Error("fixture executable assertion did not run");
-    writeFileSync(`${path}.artifact-check`, JSON.stringify({exit:result.status,target:assignment.target,files:snapshot.files.map(file=>({path:file.path,mode:file.mode}))}));
+    const file = view.files.find(file => file.kind === "candidate" && file.path === "calc.cjs");
+    if (!file?.after) throw new Error("fixture complete untracked readable candidate omitted");
+    const artifact = readFileSync(file.after.path,"utf8");
+    const module = {exports:{}};
+    runInNewContext(artifact,{module},{timeout:1000});
+    const observed = module.exports.add(2,3);
+    const result = {status:observed===5 ? 0 : 7,stdout:String(observed)};
+    writeFileSync(`${path}.artifact-check`, JSON.stringify({exit:result.status,target:assignment.target,readable_input_only:true,files:view.files.filter(file=>file.kind==="candidate").map(file=>({path:file.path,mode:file.after_mode}))}));
     const source = assignment.target.sources[0];
     const blocked = assignment.axis === "Spec" && assignment.source_documents.some(source => source.content.includes("REVIEW_FIXTURE_HUMAN_DECISION"));
     const bad = assignment.axis === "Spec" && result.status !== 0;
     submission.review = {target:assignment.target,axis:assignment.axis,outcome:blocked ? "Blocked" : bad ? "ChangesRequired" : "Passed",findings:bad ? [{id:"addition",blocking:true,location:"calc.cjs:1",finding:`add(2,3) returns ${result.stdout.trim()}; implement addition.`,source}] : []};
     submission.outcome = blocked ? "blocked" : bad ? "failed" : "success";
-    submission.summary = blocked ? "The supplied task leaves a real human decision unresolved." : bad ? "Pinned untracked artifact fails executable addition assertion." : "This independent axis has no blocking findings.";
+    submission.summary = blocked ? "The supplied task leaves a real human decision unresolved." : bad ? "Pinned readable artifact has an addition defect." : "This independent axis has no blocking findings.";
     submission.evidence = [`${path}.artifact-check`];
     // Controlled model contradictions still publish through the registered child tool.
     // Keep the typed Passed report and its executable evidence intact; only the
@@ -57,6 +52,7 @@ export function applyReviewFixture(brief, path, submission, host) {
   const code = `module.exports = { add: (a, b) => ${expression} };\n`;
   writeFileSync(join(process.cwd(),"calc.cjs"),code);
   writeFileSync(join(process.cwd(),"README"),`candidate version ${brief.result_version ?? 1}\n`);
+  if (brief.contract.scope.includes("BINARY")) writeFileSync(join(process.cwd(),"README"),Buffer.from([0,255,0]));
   const obsolete = join(process.cwd(),"obsolete.txt");
   if (existsSync(obsolete)) unlinkSync(obsolete);
   const script = join(process.cwd(),"executable.sh");

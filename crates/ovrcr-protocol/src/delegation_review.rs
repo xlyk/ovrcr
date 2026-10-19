@@ -31,20 +31,34 @@ pub struct ReviewSource {
     pub content: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewTarget {
     pub coding: CodingTargetReference,
     pub sources: Vec<ReviewSourceReference>,
+    #[serde(default)]
+    pub view: Option<ReviewViewReference>,
 }
 
+/// Server-authenticated readable content; the child never hashes or decodes it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewViewReference {
+    pub path: std::path::PathBuf,
+    pub digest: String,
+    pub round: String,
+    pub context_paths: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewAssignment {
     pub implementation: String,
     pub axis: ReviewAxis,
     pub target: ReviewTarget,
     pub source_documents: Vec<ReviewSource>,
+    #[serde(default)]
+    pub context_paths: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -134,6 +148,9 @@ impl ReviewTarget {
                 _ => {}
             }
         }
+        if let Some(view) = &self.view {
+            view.validate()?;
+        }
         let required = match axis {
             ReviewAxis::Standards => ReviewSourceKind::Method,
             ReviewAxis::Spec => ReviewSourceKind::Spec,
@@ -147,6 +164,15 @@ impl ReviewTarget {
 
 impl ReviewAssignment {
     pub fn validate(&self) -> Result<(), &'static str> {
+        validate_context_paths(&self.context_paths)?;
+        if self
+            .target
+            .view
+            .as_ref()
+            .is_some_and(|view| view.context_paths != self.context_paths)
+        {
+            return Err("review assignment context differs from its readable view");
+        }
         if !bounded(&self.implementation, 128)
             || !self
                 .implementation
@@ -212,7 +238,7 @@ impl ReviewReport {
         Ok(())
     }
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewDeclaration {
     pub request: String,
@@ -220,6 +246,102 @@ pub struct ReviewDeclaration {
     pub requirements: Vec<ReviewRequirement>,
     pub sources: Vec<ReviewSource>,
     pub repair_limit: Option<RepairLimit>,
+    #[serde(default)]
+    pub context_paths: Vec<String>,
+}
+
+// Historical JSON omits absent extensions; binary framing carries every field.
+impl Serialize for ReviewTarget {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let include = !serializer.is_human_readable() || self.view.is_some();
+        let mut state = serializer.serialize_struct("ReviewTarget", if include { 3 } else { 2 })?;
+        state.serialize_field("coding", &self.coding)?;
+        state.serialize_field("sources", &self.sources)?;
+        if include {
+            state.serialize_field("view", &self.view)?;
+        }
+        state.end()
+    }
+}
+
+impl Serialize for ReviewAssignment {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let include = !serializer.is_human_readable() || !self.context_paths.is_empty();
+        let mut state =
+            serializer.serialize_struct("ReviewAssignment", if include { 5 } else { 4 })?;
+        state.serialize_field("implementation", &self.implementation)?;
+        state.serialize_field("axis", &self.axis)?;
+        state.serialize_field("target", &self.target)?;
+        state.serialize_field("source_documents", &self.source_documents)?;
+        if include {
+            state.serialize_field("context_paths", &self.context_paths)?;
+        }
+        state.end()
+    }
+}
+
+impl Serialize for ReviewDeclaration {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let include = !serializer.is_human_readable() || !self.context_paths.is_empty();
+        let mut state =
+            serializer.serialize_struct("ReviewDeclaration", if include { 6 } else { 5 })?;
+        state.serialize_field("request", &self.request)?;
+        state.serialize_field("target", &self.target)?;
+        state.serialize_field("requirements", &self.requirements)?;
+        state.serialize_field("sources", &self.sources)?;
+        state.serialize_field("repair_limit", &self.repair_limit)?;
+        if include {
+            state.serialize_field("context_paths", &self.context_paths)?;
+        }
+        state.end()
+    }
+}
+
+impl ReviewViewReference {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if !self.path.is_absolute()
+            || self
+                .path
+                .to_str()
+                .is_none_or(|path| !bounded(path, 4096) || path.chars().any(char::is_control))
+            || self.path.components().any(|part| {
+                !matches!(
+                    part,
+                    std::path::Component::RootDir | std::path::Component::Normal(_)
+                )
+            })
+            || !digest(&self.digest)
+            || !bounded(&self.round, 128)
+            || !self
+                .round
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
+        {
+            return Err("review view requires an exact private reference and round");
+        }
+        validate_context_paths(&self.context_paths)
+    }
+}
+
+pub fn validate_context_paths(paths: &[String]) -> Result<(), &'static str> {
+    if paths.len() > 32 {
+        return Err("review context exceeds 32 explicit files");
+    }
+    for (index, path) in paths.iter().enumerate() {
+        if !bounded(path, 4096)
+            || path.chars().any(char::is_control)
+            || path
+                .split('/')
+                .any(|part| part.is_empty() || part == "." || part == "..")
+            || paths[..index].contains(path)
+        {
+            return Err("review context requires distinct normalized repository-relative files");
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -287,6 +409,7 @@ impl RepairLimit {
 
 impl ReviewDeclaration {
     pub fn validate(&self) -> Result<(), &'static str> {
+        validate_context_paths(&self.context_paths)?;
         if !bounded(&self.request, 128)
             || !self
                 .request
@@ -310,6 +433,7 @@ impl ReviewDeclaration {
             ReviewTarget {
                 coding: self.target.clone(),
                 sources: requirement.sources.clone(),
+                view: None,
             }
             .validate(&requirement.axis)?;
             if requirement.sources.iter().any(|reference| {

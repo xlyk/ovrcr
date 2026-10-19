@@ -30,8 +30,10 @@ fn assignment(axis: ReviewAxis) -> ReviewAssignment {
         target: ReviewTarget {
             coding: target(),
             sources: vec![source.source.clone()],
+            view: None,
         },
         source_documents: vec![source],
+        context_paths: vec![],
     }
 }
 
@@ -110,7 +112,15 @@ fn repair_policy_is_finite_and_default_provenance_does_not_claim_approval() {
 }
 #[test]
 fn review_policy_and_exact_report_roundtrip_over_the_production_codec() {
-    let assignment = assignment(ReviewAxis::Spec);
+    let mut assignment = assignment(ReviewAxis::Spec);
+    assignment.context_paths = vec!["src/caller.rs".into()];
+    assignment.target.view = Some(ReviewViewReference {
+        path: "/private/task/review-view-round-spec.json".into(),
+        digest: "f".repeat(64),
+        round: "round".into(),
+        context_paths: assignment.context_paths.clone(),
+    });
+    assignment.validate().unwrap();
     let report = ReviewReport {
         axis: assignment.axis,
         target: assignment.target,
@@ -122,6 +132,33 @@ fn review_policy_and_exact_report_roundtrip_over_the_production_codec() {
         bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
     assert_eq!(decoded, report);
     assert_eq!(used, bytes.len());
+}
+
+#[test]
+fn readable_review_context_refuses_recursion_duplicates_traversal_and_stale_selection() {
+    let mut original = assignment(ReviewAxis::Spec);
+    original.context_paths = vec!["src/caller.rs".into()];
+    original.target.view = Some(ReviewViewReference {
+        path: "/private/view.json".into(),
+        digest: "f".repeat(64),
+        round: "round".into(),
+        context_paths: original.context_paths.clone(),
+    });
+    original.validate().unwrap();
+    for paths in [
+        vec!["../private".into()],
+        vec!["/absolute".into()],
+        vec!["src//file".into()],
+        vec!["same".into(), "same".into()],
+        (0..33).map(|i| format!("file-{i}")).collect(),
+    ] {
+        assert!(validate_context_paths(&paths).is_err(), "{paths:?}");
+    }
+    let mut stale = original.clone();
+    stale.context_paths.clear();
+    assert!(stale.validate().is_err());
+    original.target.view.as_mut().unwrap().round = "../escape".into();
+    assert!(original.validate().is_err());
 }
 
 #[test]
