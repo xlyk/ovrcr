@@ -26,6 +26,15 @@ pub enum SettingWrite {
     Entry(&'static [&'static str], &'static str),
 }
 
+impl SettingWrite {
+    /// Refusal text shared by the loader and the writer.
+    pub fn expected(self) -> &'static str {
+        match self {
+            Self::Text(expected) | Self::Typed(expected) | Self::Entry(_, expected) => expected,
+        }
+    }
+}
+
 /// What a write accepts and what the Dashboard editor presents.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shape {
@@ -223,34 +232,8 @@ fn display_choices(choices: &BTreeMap<String, LaunchChoice>) -> Option<String> {
     display(&spelled)
 }
 
-fn value_of(settings: &Settings, path: &str) -> Option<String> {
-    let quota = &settings.quota;
-    let path_text = |path: &std::path::Path| Some(path.display().to_string());
-    match path {
-        "desktop_notifications" => display(&settings.desktop_notifications),
-        "ready_sound" => display(&settings.ready_sound),
-        ReadySoundChoice::KEY => settings
-            .ready_sound_choice
-            .map(|choice| choice.as_str().into()),
-        ThemeId::KEY => Some(settings.theme.as_str().into()),
-        "iterm_focus" => display(&settings.iterm_focus),
-        "automatic_local_terminals" => Some(settings.automatic_local_terminals.as_str().into()),
-        "title_model" => settings.title_model.clone(),
-        "branch_prefix" => Some(settings.branch_prefix.clone()),
-        "save_uncommitted_work" => display(&settings.save_uncommitted_work),
-        "picker_roots" => display(&settings.picker_roots),
-        "agents" => display(&settings.agents),
-        "launch_choices" => display_choices(&settings.launch_choices),
-        "quota.enabled" => display(&quota.enabled),
-        "quota.claude.probe" => display(&quota.claude_probe),
-        "quota.codex.command" => path_text(&quota.codex.command),
-        "quota.codex.home" => quota.codex.home.as_deref().and_then(path_text),
-        "quota.grok.command" => path_text(&quota.grok.command),
-        "quota.grok.home" => quota.grok.home.as_deref().and_then(path_text),
-        "quota.cursor.dashboard" => display(&quota.cursor.dashboard),
-        "quota.cursor.state_db" => quota.cursor.state_db.as_deref().and_then(path_text),
-        _ => None,
-    }
+fn path_text(path: &std::path::Path) -> Option<String> {
+    Some(path.display().to_string())
 }
 
 const CATALOG: [Entry; 20] = [
@@ -262,7 +245,7 @@ const CATALOG: [Entry; 20] = [
         label: "Desktop notifications",
         off_state: Some(DESKTOP_NOTIFICATIONS_OFF),
         about: NOTIFY_ABOUT,
-        value: |settings| value_of(settings, "desktop_notifications"),
+        value: |settings| display(&settings.desktop_notifications),
         show_off: |settings| !settings.desktop_notifications,
     },
     Entry {
@@ -273,7 +256,7 @@ const CATALOG: [Entry; 20] = [
         label: "Ready sound",
         off_state: None,
         about: SOUND_ABOUT,
-        value: |settings| value_of(settings, "ready_sound"),
+        value: |settings| display(&settings.ready_sound),
         show_off: |_| false,
     },
     Entry {
@@ -287,7 +270,11 @@ const CATALOG: [Entry; 20] = [
         label: "Ready sound choice",
         off_state: None,
         about: SOUND_CHOICE_ABOUT,
-        value: |settings| value_of(settings, ReadySoundChoice::KEY),
+        value: |settings| {
+            settings
+                .ready_sound_choice
+                .map(|choice| choice.as_str().into())
+        },
         show_off: |_| false,
     },
     Entry {
@@ -298,7 +285,7 @@ const CATALOG: [Entry; 20] = [
         label: "Exact iTerm focus",
         off_state: Some(ITERM_FOCUS_OFF),
         about: ITERM_ABOUT,
-        value: |settings| value_of(settings, "iterm_focus"),
+        value: |settings| display(&settings.iterm_focus),
         show_off: |settings| !settings.iterm_focus,
     },
     Entry {
@@ -312,7 +299,7 @@ const CATALOG: [Entry; 20] = [
         label: "Theme",
         off_state: None,
         about: THEME_ABOUT,
-        value: |settings| value_of(settings, ThemeId::KEY),
+        value: |settings| Some(settings.theme.as_str().into()),
         show_off: |_| false,
     },
     Entry {
@@ -326,7 +313,7 @@ const CATALOG: [Entry; 20] = [
         label: "Automatic local terminals",
         off_state: None,
         about: &[],
-        value: |settings| value_of(settings, "automatic_local_terminals"),
+        value: |settings| Some(settings.automatic_local_terminals.as_str().into()),
         show_off: |_| false,
     },
     Entry {
@@ -337,7 +324,7 @@ const CATALOG: [Entry; 20] = [
         label: "Save uncommitted work",
         off_state: Some(SAVE_UNCOMMITTED_WORK_OFF),
         about: &[SAVE_UNCOMMITTED_WORK_OFF],
-        value: |settings| value_of(settings, "save_uncommitted_work"),
+        value: |settings| display(&settings.save_uncommitted_work),
         show_off: |settings| !settings.save_uncommitted_work,
     },
     Entry {
@@ -348,7 +335,7 @@ const CATALOG: [Entry; 20] = [
         label: "Branch prefix",
         off_state: None,
         about: &[],
-        value: |settings| value_of(settings, "branch_prefix"),
+        value: |settings| Some(settings.branch_prefix.clone()),
         show_off: |_| false,
     },
     Entry {
@@ -359,7 +346,7 @@ const CATALOG: [Entry; 20] = [
         label: "Picker roots",
         off_state: None,
         about: &[],
-        value: |settings| value_of(settings, "picker_roots"),
+        value: |settings| display(&settings.picker_roots),
         show_off: |_| false,
     },
     Entry {
@@ -370,7 +357,7 @@ const CATALOG: [Entry; 20] = [
         label: "Title model",
         off_state: Some(TITLES_OFF),
         about: TITLE_ABOUT,
-        value: |settings| value_of(settings, "title_model"),
+        value: |settings| settings.title_model.clone(),
         show_off: |settings| settings.title_model.is_none(),
     },
     Entry {
@@ -381,7 +368,7 @@ const CATALOG: [Entry; 20] = [
         label: "Native account usage",
         off_state: Some(QUOTA_OFF),
         about: QUOTA_ABOUT,
-        value: |settings| value_of(settings, "quota.enabled"),
+        value: |settings| display(&settings.quota.enabled),
         show_off: |settings| !settings.quota.enabled,
     },
     Entry {
@@ -392,7 +379,7 @@ const CATALOG: [Entry; 20] = [
         label: "Claude allowance probe",
         off_state: Some(CLAUDE_PROBE_DESCRIPTION),
         about: &[CLAUDE_PROBE_DESCRIPTION],
-        value: |settings| value_of(settings, "quota.claude.probe"),
+        value: |settings| display(&settings.quota.claude_probe),
         show_off: |settings| !settings.quota.claude_probe,
     },
     Entry {
@@ -403,7 +390,7 @@ const CATALOG: [Entry; 20] = [
         label: "Codex command",
         off_state: None,
         about: &[],
-        value: |settings| value_of(settings, "quota.codex.command"),
+        value: |settings| path_text(&settings.quota.codex.command),
         show_off: |_| false,
     },
     Entry {
@@ -414,7 +401,7 @@ const CATALOG: [Entry; 20] = [
         label: "Codex home",
         off_state: None,
         about: &[],
-        value: |settings| value_of(settings, "quota.codex.home"),
+        value: |settings| settings.quota.codex.home.as_deref().and_then(path_text),
         show_off: |_| false,
     },
     Entry {
@@ -425,7 +412,7 @@ const CATALOG: [Entry; 20] = [
         label: "Grok command",
         off_state: None,
         about: &[],
-        value: |settings| value_of(settings, "quota.grok.command"),
+        value: |settings| path_text(&settings.quota.grok.command),
         show_off: |_| false,
     },
     Entry {
@@ -436,7 +423,7 @@ const CATALOG: [Entry; 20] = [
         label: "Grok home",
         off_state: None,
         about: &[],
-        value: |settings| value_of(settings, "quota.grok.home"),
+        value: |settings| settings.quota.grok.home.as_deref().and_then(path_text),
         show_off: |_| false,
     },
     Entry {
@@ -447,7 +434,7 @@ const CATALOG: [Entry; 20] = [
         label: "Cursor dashboard usage",
         off_state: Some(CURSOR_QUOTA_DESCRIPTION),
         about: &[CURSOR_QUOTA_DESCRIPTION],
-        value: |settings| value_of(settings, "quota.cursor.dashboard"),
+        value: |settings| display(&settings.quota.cursor.dashboard),
         show_off: |settings| !settings.quota.cursor.dashboard,
     },
     Entry {
@@ -458,7 +445,14 @@ const CATALOG: [Entry; 20] = [
         label: "Cursor state database",
         off_state: None,
         about: STATE_DB_ABOUT,
-        value: |settings| value_of(settings, "quota.cursor.state_db"),
+        value: |settings| {
+            settings
+                .quota
+                .cursor
+                .state_db
+                .as_deref()
+                .and_then(path_text)
+        },
         show_off: |_| false,
     },
     Entry {
@@ -469,7 +463,7 @@ const CATALOG: [Entry; 20] = [
         label: "Agent overrides",
         off_state: None,
         about: &[],
-        value: |settings| value_of(settings, "agents"),
+        value: |settings| display(&settings.agents),
         show_off: |_| false,
     },
     Entry {
@@ -480,7 +474,7 @@ const CATALOG: [Entry; 20] = [
         label: "Remembered launches",
         off_state: None,
         about: &[],
-        value: |settings| value_of(settings, "launch_choices"),
+        value: |settings| display_choices(&settings.launch_choices),
         show_off: |_| false,
     },
 ];
@@ -489,6 +483,7 @@ const CATALOG: [Entry; 20] = [
 mod tests {
     use super::*;
     use crate::AutomaticLocalTerminals;
+    use std::path::PathBuf;
 
     fn dotted(path: &str) -> Vec<SettingName<'_>> {
         path.split('.').map(SettingName::Key).collect()
@@ -696,6 +691,10 @@ mod tests {
             Some(SettingWrite::Text("a \"provider/model\" string"))
         );
         assert_eq!(
+            write_of(&dotted("title_model")).unwrap().expected(),
+            "a \"provider/model\" string"
+        );
+        assert_eq!(
             write_of(&dotted("quota.cursor.state_db")),
             Some(SettingWrite::Text("an absolute path"))
         );
@@ -754,5 +753,55 @@ mod tests {
                 ),
             }
         }
+    }
+
+    #[test]
+    fn each_entry_reads_its_own_effective_value() {
+        let mut launch_choices = BTreeMap::new();
+        launch_choices.insert("my.project".into(), LaunchChoice::Agent("claude".into()));
+        let settings = Settings {
+            desktop_notifications: true,
+            ready_sound_choice: Some(ReadySoundChoice::Chime),
+            theme: ThemeId::parse("catppuccin-latte").unwrap(),
+            automatic_local_terminals: AutomaticLocalTerminals::Off,
+            title_model: Some("pi/test".into()),
+            branch_prefix: "kh/".into(),
+            picker_roots: vec![PathBuf::from("/tmp/a")],
+            agents: vec![crate::AgentOverride {
+                name: "claude".into(),
+                argv: vec!["claude".into()],
+            }],
+            launch_choices,
+            quota: crate::QuotaSettings {
+                codex: crate::NativeCommand {
+                    home: Some(PathBuf::from("/tmp/codex-home")),
+                    ..Settings::default().quota.codex
+                },
+                ..Settings::default().quota
+            },
+            ..Settings::default()
+        };
+        let value = |path| {
+            entries()
+                .iter()
+                .find(|entry| entry.path == path)
+                .unwrap()
+                .value(&settings)
+        };
+        assert_eq!(value("desktop_notifications").as_deref(), Some("true"));
+        assert_eq!(value(ReadySoundChoice::KEY).as_deref(), Some("chime"));
+        assert_eq!(value(ThemeId::KEY).as_deref(), Some("catppuccin-latte"));
+        assert_eq!(value("automatic_local_terminals").as_deref(), Some("off"));
+        assert_eq!(value("title_model").as_deref(), Some("pi/test"));
+        assert_eq!(value("branch_prefix").as_deref(), Some("kh/"));
+        assert_eq!(
+            value("quota.codex.home").as_deref(),
+            Some("/tmp/codex-home")
+        );
+        assert!(value("picker_roots").unwrap().contains("/tmp/a"));
+        assert!(value("agents").unwrap().contains("claude"));
+        let choices = value("launch_choices").unwrap();
+        assert!(choices.contains("my.project"), "{choices}");
+        assert!(choices.contains("claude"), "{choices}");
     }
 }

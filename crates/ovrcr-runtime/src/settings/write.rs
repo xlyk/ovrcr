@@ -13,28 +13,6 @@ use ovrcr_protocol::{SettingName, SettingWrite};
 use std::path::Path;
 use toml_edit::{InlineTable, Item, Table, TableLike, Value};
 
-/// What a setting path names, for the value checks before the edit.
-#[derive(Clone, Copy)]
-enum Kind {
-    /// String-valued. A value that is not TOML is taken verbatim, so
-    /// `ovrcr settings set branch_prefix kh/` needs no quotes.
-    Text(&'static str),
-    /// Any other type; the loader checks it after the edit.
-    Typed(&'static str),
-    /// One element or entry of a collection, given as an inline table. Given
-    /// fields are set, declared fields left out are removed, and fields the
-    /// document has that are not declared are kept.
-    Entry(&'static [&'static str], &'static str),
-}
-
-impl Kind {
-    fn expected(self) -> &'static str {
-        match self {
-            Self::Text(name) | Self::Typed(name) | Self::Entry(_, name) => name,
-        }
-    }
-}
-
 /// Set (`Some` TOML value text) or remove (`None`) the setting `path` names in
 /// the settings document at `document`. Index `len` of a list appends.
 pub fn set(document: &Path, path: &str, value: Option<&str>) -> anyhow::Result<()> {
@@ -80,7 +58,7 @@ pub fn set(document: &Path, path: &str, value: Option<&str>) -> anyhow::Result<(
 }
 
 /// The segments and kind of a declared setting path, or `None`.
-fn declared(path: &str) -> Option<(Vec<Segment>, Kind)> {
+fn declared(path: &str) -> Option<(Vec<Segment>, SettingWrite)> {
     let segments = parse_path(path)?;
     let names: Vec<SettingName> = segments
         .iter()
@@ -89,17 +67,13 @@ fn declared(path: &str) -> Option<(Vec<Segment>, Kind)> {
             Segment::Index(index) => SettingName::Index(*index),
         })
         .collect();
-    let kind = match ovrcr_protocol::write_of(&names)? {
-        SettingWrite::Text(expected) => Kind::Text(expected),
-        SettingWrite::Typed(expected) => Kind::Typed(expected),
-        SettingWrite::Entry(fields, expected) => Kind::Entry(fields, expected),
-    };
+    let kind = ovrcr_protocol::write_of(&names)?;
     Some((segments, kind))
 }
 
 /// `picker_roots[2]`, `agents[1].argv`, or TOML dotted keys such as
 /// `launch_choices."project.with.dots".kind`.
-fn parse_path(path: &str) -> Option<Vec<Segment>> {
+pub(super) fn parse_path(path: &str) -> Option<Vec<Segment>> {
     let keys = |text: &str| {
         toml_edit::Key::parse(text).ok().map(|keys| {
             keys.into_iter()
@@ -123,18 +97,18 @@ fn parse_path(path: &str) -> Option<Vec<Segment>> {
     keys(path)
 }
 
-fn typed_value(kind: Kind, text: &str) -> anyhow::Result<Value> {
+fn typed_value(kind: SettingWrite, text: &str) -> anyhow::Result<Value> {
     let mut value = match (text.parse::<Value>(), kind) {
         (Ok(value), _) => value,
-        (Err(_), Kind::Text(_)) => Value::from(text),
+        (Err(_), SettingWrite::Text(_)) => Value::from(text),
         (Err(_), kind) => bail!("{text:?} is not a TOML value; expected {}", kind.expected()),
     };
     value.decor_mut().clear();
     match (kind, &value) {
-        (Kind::Text(expected), value) if !value.is_str() => {
+        (SettingWrite::Text(expected), value) if !value.is_str() => {
             bail!("got {value}; expected {expected}")
         }
-        (Kind::Entry(fields, expected), value) => {
+        (SettingWrite::Entry(fields, expected), value) => {
             let Some(table) = value.as_inline_table() else {
                 bail!("got {value}; expected {expected}")
             };
@@ -151,7 +125,7 @@ fn typed_value(kind: Kind, text: &str) -> anyhow::Result<Value> {
 fn apply(
     root: &mut Item,
     segments: &[Segment],
-    kind: Kind,
+    kind: SettingWrite,
     value: Option<Value>,
 ) -> anyhow::Result<String> {
     match segments {
@@ -282,13 +256,13 @@ fn implicit_table(inline: bool) -> Item {
 fn set_field(
     table: &mut dyn TableLike,
     key: &str,
-    kind: Kind,
+    kind: SettingWrite,
     value: Option<Value>,
     inline: bool,
 ) -> String {
     match (value, kind) {
         (None, _) => return remove_keeping_comments(table, key, String::new()),
-        (Some(value), Kind::Entry(fields, _)) => {
+        (Some(value), SettingWrite::Entry(fields, _)) => {
             let entry = table.entry(key).or_insert_with(|| {
                 if inline {
                     Item::Value(InlineTable::new().into())
@@ -311,7 +285,7 @@ fn element(
     list: &str,
     item: &mut Item,
     index: usize,
-    kind: Kind,
+    kind: SettingWrite,
     value: Option<Value>,
 ) -> anyhow::Result<()> {
     if item.is_none() {
@@ -319,7 +293,7 @@ fn element(
             bail!("no such element; {list} has 0");
         }
         *item = match kind {
-            Kind::Entry(..) => Item::ArrayOfTables(Default::default()),
+            SettingWrite::Entry(..) => Item::ArrayOfTables(Default::default()),
             _ => Item::Value(toml_edit::Array::new().into()),
         };
     }
@@ -342,13 +316,13 @@ fn element(
             if index == len {
                 tables.push(Table::new());
             }
-            let Kind::Entry(fields, _) = kind else {
+            let SettingWrite::Entry(fields, _) = kind else {
                 unreachable!("only agents is an array of tables")
             };
             merge(tables.get_mut(index).unwrap(), fields, &value);
         }
         (Item::Value(Value::Array(array)), Some(value)) => match kind {
-            Kind::Entry(fields, _) => {
+            SettingWrite::Entry(fields, _) => {
                 if index == len {
                     array.push(InlineTable::new());
                 }
@@ -520,6 +494,34 @@ mod tests {
 
     const ORIGINAL: &str =
         "# my settings\nbranch_prefix = 'kh/' # mine\n\n[future]\nvalue = 42 # keep\n";
+
+    fn steps(path: &str) -> Vec<String> {
+        parse_path(path)
+            .unwrap_or_else(|| panic!("unparsed setting path {path}"))
+            .into_iter()
+            .map(|segment| match segment {
+                Segment::Key(name) => name,
+                Segment::Index(index) => index.to_string(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn parse_path_is_the_only_setting_path_grammar() {
+        assert_eq!(steps("quota.codex.command"), ["quota", "codex", "command"]);
+        assert_eq!(steps("picker_roots[2]"), ["picker_roots", "2"]);
+        assert_eq!(steps("agents[0].argv"), ["agents", "0", "argv"]);
+        assert_eq!(steps("launch_choices.plain"), ["launch_choices", "plain"]);
+        assert_eq!(
+            steps(r#"launch_choices."my.project""#),
+            ["launch_choices", "my.project"]
+        );
+        assert_eq!(
+            steps(r#"launch_choices."my.project".kind"#),
+            ["launch_choices", "my.project", "kind"]
+        );
+        assert!(parse_path("picker_roots[").is_none());
+    }
 
     type Check = fn(&Settings) -> bool;
 
