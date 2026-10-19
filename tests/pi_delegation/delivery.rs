@@ -104,6 +104,7 @@ fn persisted(f: &RecoveryFixture, handle: &str) -> serde_json::Value {
         .unwrap();
     serde_json::from_str(&raw).unwrap()
 }
+#[cfg(feature = "acceptance-diagnostics")]
 fn stopped_row(f: &RecoveryFixture, id: SessionId) -> (u64, bool, u8) {
     let (run, stopped, disposition): (i64, bool, u8) = database(f)
         .query_row(

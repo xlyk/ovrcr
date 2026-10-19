@@ -1581,6 +1581,7 @@ fn public_parent_transfer_requires_fresh_unaccepted_capture_and_preserves_commit
     }
 }
 
+#[cfg(feature = "acceptance-diagnostics")]
 fn restart_owned_server(f: &RecoveryFixture) {
     let groups = f.live.session_groups();
     for group in &groups {

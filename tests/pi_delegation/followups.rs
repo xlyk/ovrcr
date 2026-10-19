@@ -11,6 +11,7 @@ impl OwnedFollowup {
             None, false, true,
         )))
     }
+    #[cfg(feature = "acceptance-diagnostics")]
     fn with_model(model: Option<&str>) -> Self {
         Self(Some(RecoveryFixture::with_model(model)))
     }
