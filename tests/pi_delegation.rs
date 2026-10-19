@@ -1958,116 +1958,120 @@ fn public_legacy_accounting_migration_preserves_effects_and_original_contract_by
         serde_json::from_value(followups::followup(&fixture, &current, None)).unwrap();
     assert_eq!(clarified.result_version, 2);
     assert_eq!(clarified.execution_attempts, Some(1));
-    let clarified = followups::complete(&fixture, &clarified);
+    let _clarified = followups::complete(&fixture, &clarified);
     let replayed: AssignmentSnapshot = serde_json::from_value(fixture.recover(handle)).unwrap();
     assert_eq!(replayed.result_version, 2);
     assert_eq!(replayed.execution_attempts, Some(1));
     assert_eq!(fs::read(&contract_path).unwrap(), old_bytes);
 
-    let mut revised: ResearchContract = serde_json::from_slice(&old_bytes).unwrap();
-    revised.scope = "Clarify the original README citation.".into();
-    fixture.proxy.arm(ControlRule {
-        operation: "Followup",
-        loss: 2,
-        fault: Some(("followup-after-files", 0)),
-    });
-    let pending: AssignmentSnapshot =
-        serde_json::from_value(followups::followup(&fixture, &clarified, Some(revised))).unwrap();
-    assert_eq!(pending.result_version, 2);
-    let request = pending.receipts.last().unwrap().request.clone();
-    let private = fixture
-        .live
-        .config
-        .join("parent-intents")
-        .join(format!("followup-{request}.json"));
-    let mut saved: serde_json::Value =
-        serde_json::from_slice(&fs::read(&private).unwrap()).unwrap();
-    saved["revised_contract"]
-        .as_object_mut()
-        .unwrap()
-        .remove("limits");
-    saved["revised_contract"]
-        .as_object_mut()
-        .unwrap()
-        .remove("previous_request");
-    fs::write(&private, serde_json::to_vec(&saved).unwrap()).unwrap();
-    let root = contract_path.parent().unwrap();
-    let contract_v2 = root.join("contract-v2.json");
-    let modern = fs::read_to_string(&contract_v2).unwrap();
-    let boundary = modern.rfind(",\"limits\":").unwrap();
-    let legacy_revision = format!("{}}}", &modern[..boundary]).into_bytes();
-    fs::write(&contract_v2, &legacy_revision).unwrap();
-    let brief_v3 = root.join("brief-v3.json");
-    let mut brief: serde_json::Value =
-        serde_json::from_slice(&fs::read(&brief_v3).unwrap()).unwrap();
-    brief["contract"].as_object_mut().unwrap().remove("limits");
-    brief["contract"]
-        .as_object_mut()
-        .unwrap()
-        .remove("previous_request");
-    let legacy_brief = serde_json::to_vec_pretty(&brief).unwrap();
-    fs::write(&brief_v3, &legacy_brief).unwrap();
-    let mut payload = serde_json::to_vec(&(
-        &pending.identity,
-        pending.result_version,
-        saved["expected_control_epoch"].as_u64().unwrap(),
-        saved["text"].as_str().unwrap(),
-    ))
-    .unwrap();
-    payload.pop();
-    payload.push(b',');
-    payload.extend_from_slice(&legacy_revision);
-    payload.push(b']');
-    let payload_path = root.join(format!("followup-{request}.json"));
-    fs::write(&payload_path, &payload).unwrap();
-    let hash = |path: &Path| {
-        let output = std::process::Command::new("node").args(["--input-type=module", "-e", "import {createHash} from 'node:crypto';import {readFileSync} from 'node:fs';console.log(createHash('sha256').update(readFileSync(process.argv[1])).digest('hex'));"]).arg(path).output().unwrap();
-        assert!(output.status.success());
-        String::from_utf8(output.stdout).unwrap().trim().to_owned()
-    };
-    let metadata: String = db
-        .query_row(
-            "SELECT metadata FROM delegations WHERE handle=?1",
-            [handle],
-            |row| row.get(0),
+    #[cfg(feature = "acceptance-diagnostics")]
+    {
+        let mut revised: ResearchContract = serde_json::from_slice(&old_bytes).unwrap();
+        revised.scope = "Clarify the original README citation.".into();
+        fixture.proxy.arm(ControlRule {
+            operation: "Followup",
+            loss: 2,
+            fault: Some(("followup-after-files", 0)),
+        });
+        let pending: AssignmentSnapshot =
+            serde_json::from_value(followups::followup(&fixture, &_clarified, Some(revised)))
+                .unwrap();
+        assert_eq!(pending.result_version, 2);
+        let request = pending.receipts.last().unwrap().request.clone();
+        let private = fixture
+            .live
+            .config
+            .join("parent-intents")
+            .join(format!("followup-{request}.json"));
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(&private).unwrap()).unwrap();
+        saved["revised_contract"]
+            .as_object_mut()
+            .unwrap()
+            .remove("limits");
+        saved["revised_contract"]
+            .as_object_mut()
+            .unwrap()
+            .remove("previous_request");
+        fs::write(&private, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let root = contract_path.parent().unwrap();
+        let contract_v2 = root.join("contract-v2.json");
+        let modern = fs::read_to_string(&contract_v2).unwrap();
+        let boundary = modern.rfind(",\"limits\":").unwrap();
+        let legacy_revision = format!("{}}}", &modern[..boundary]).into_bytes();
+        fs::write(&contract_v2, &legacy_revision).unwrap();
+        let brief_v3 = root.join("brief-v3.json");
+        let mut brief: serde_json::Value =
+            serde_json::from_slice(&fs::read(&brief_v3).unwrap()).unwrap();
+        brief["contract"].as_object_mut().unwrap().remove("limits");
+        brief["contract"]
+            .as_object_mut()
+            .unwrap()
+            .remove("previous_request");
+        let legacy_brief = serde_json::to_vec_pretty(&brief).unwrap();
+        fs::write(&brief_v3, &legacy_brief).unwrap();
+        let mut payload = serde_json::to_vec(&(
+            &pending.identity,
+            pending.result_version,
+            saved["expected_control_epoch"].as_u64().unwrap(),
+            saved["text"].as_str().unwrap(),
+        ))
+        .unwrap();
+        payload.pop();
+        payload.push(b',');
+        payload.extend_from_slice(&legacy_revision);
+        payload.push(b']');
+        let payload_path = root.join(format!("followup-{request}.json"));
+        fs::write(&payload_path, &payload).unwrap();
+        let hash = |path: &Path| {
+            let output = std::process::Command::new("node").args(["--input-type=module", "-e", "import {createHash} from 'node:crypto';import {readFileSync} from 'node:fs';console.log(createHash('sha256').update(readFileSync(process.argv[1])).digest('hex'));"]).arg(path).output().unwrap();
+            assert!(output.status.success());
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        };
+        let metadata: String = db
+            .query_row(
+                "SELECT metadata FROM delegations WHERE handle=?1",
+                [handle],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let mut record: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+        let last = record["followups"]
+            .as_array_mut()
+            .unwrap()
+            .last_mut()
+            .unwrap();
+        last["digest"] = hash(&payload_path).into();
+        last["contract_digest"] = hash(&contract_v2).into();
+        last["brief_digest"] = hash(&brief_v3).into();
+        db.execute(
+            "UPDATE delegations SET metadata=?1 WHERE handle=?2",
+            rusqlite::params![record.to_string(), handle],
         )
         .unwrap();
-    let mut record: serde_json::Value = serde_json::from_str(&metadata).unwrap();
-    let last = record["followups"]
-        .as_array_mut()
-        .unwrap()
-        .last_mut()
+        let recovered: AssignmentSnapshot = serde_json::from_value(fixture.tool(
+            "ovrcr_followup",
+            serde_json::json!({"handle":handle,"request":request}),
+        ))
         .unwrap();
-    last["digest"] = hash(&payload_path).into();
-    last["contract_digest"] = hash(&contract_v2).into();
-    last["brief_digest"] = hash(&brief_v3).into();
-    db.execute(
-        "UPDATE delegations SET metadata=?1 WHERE handle=?2",
-        rusqlite::params![record.to_string(), handle],
-    )
-    .unwrap();
-    let recovered: AssignmentSnapshot = serde_json::from_value(fixture.tool(
-        "ovrcr_followup",
-        serde_json::json!({"handle":handle,"request":request}),
-    ))
-    .unwrap();
-    assert_eq!(recovered.result_version, 3);
-    assert_eq!(recovered.identity.contract, 2);
-    assert_eq!(recovered.execution_attempts, Some(1));
-    assert_eq!(fixture.child_count(), 1);
-    let completed = followups::complete(&fixture, &recovered);
-    assert_eq!(completed.execution_attempts, Some(1));
-    assert_eq!(fixture.input_count(&completed), 1);
-    assert_eq!(fs::read(&contract_path).unwrap(), old_bytes);
-    assert_eq!(fs::read(&contract_v2).unwrap(), legacy_revision);
-    assert_eq!(fs::read(&brief_v3).unwrap(), legacy_brief);
-    let again: AssignmentSnapshot = serde_json::from_value(fixture.tool(
-        "ovrcr_followup",
-        serde_json::json!({"handle":handle,"request":request}),
-    ))
-    .unwrap();
-    assert_eq!(again.receipts, completed.receipts);
-    assert_eq!(again.execution_attempts, Some(1));
+        assert_eq!(recovered.result_version, 3);
+        assert_eq!(recovered.identity.contract, 2);
+        assert_eq!(recovered.execution_attempts, Some(1));
+        assert_eq!(fixture.child_count(), 1);
+        let completed = followups::complete(&fixture, &recovered);
+        assert_eq!(completed.execution_attempts, Some(1));
+        assert_eq!(fixture.input_count(&completed), 1);
+        assert_eq!(fs::read(&contract_path).unwrap(), old_bytes);
+        assert_eq!(fs::read(&contract_v2).unwrap(), legacy_revision);
+        assert_eq!(fs::read(&brief_v3).unwrap(), legacy_brief);
+        let again: AssignmentSnapshot = serde_json::from_value(fixture.tool(
+            "ovrcr_followup",
+            serde_json::json!({"handle":handle,"request":request}),
+        ))
+        .unwrap();
+        assert_eq!(again.receipts, completed.receipts);
+        assert_eq!(again.execution_attempts, Some(1));
+    }
 }
 
 #[cfg(feature = "acceptance-diagnostics")]

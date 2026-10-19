@@ -46,6 +46,20 @@ impl Drop for SupervisorOwnership {
     fn drop(&mut self) {
         #[cfg(feature = "acceptance-diagnostics")]
         let gate = hold_test_supervisor_disconnect(self.session);
+        let session = self
+            .state
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&self.session)
+            .cloned();
+        if session.is_none_or(|session| !session.agent_supervisor_is_current(&self.identity)) {
+            #[cfg(feature = "acceptance-diagnostics")]
+            if let Some(gate) = gate {
+                let _ = std::fs::write(gate.with_extension("skipped"), self.session.0.to_string());
+            }
+            return;
+        }
         // This is outside the dispatcher; preserve lifecycle delivery when its queue is full.
         let _ = self
             .state
@@ -62,7 +76,8 @@ impl Drop for SupervisorOwnership {
 }
 
 // Select one valid producer ordering for the final-parent-exit acceptance case.
-// Never retain a Server/Session lock here or discard the original disconnect.
+// Never retain a Server/Session lock while held. After release, an already
+// obsolete owner is explicitly skipped; only the send path records enqueued.
 #[cfg(feature = "acceptance-diagnostics")]
 fn hold_test_supervisor_disconnect(session: SessionId) -> Option<PathBuf> {
     let fault = PathBuf::from(std::env::var_os("OVRCR_TEST_DELEGATION_FAULT")?);

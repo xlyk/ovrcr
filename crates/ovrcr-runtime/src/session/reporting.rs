@@ -610,6 +610,18 @@ impl Session {
         Ok(Response::AgentOperation(result))
     }
 
+    /// A watched connection's private identity is never reused after it closes.
+    /// Callers must release the Server session-map lock before taking this lock.
+    pub(crate) fn agent_supervisor_is_current(&self, owner: &Arc<()>) -> bool {
+        self.state
+            .lock()
+            .unwrap()
+            .reporting
+            .owner
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, owner))
+    }
+
     pub(crate) fn agent_supervisor_disconnected(&self, owner: &Arc<()>) -> bool {
         let mut state = self.state.lock().unwrap();
         if !state

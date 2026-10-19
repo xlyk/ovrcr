@@ -942,7 +942,7 @@ fn parent_exit_before_archive_filing(final_parent_pin: bool, remove_parent: bool
     };
     if let Some(disconnects) = &disconnects {
         disconnects.release();
-        disconnects.wait_enqueued();
+        disconnects.wait_skipped();
     }
     let original = receipt(&pending, "parent-exits").clone();
     assert_eq!(original.outcome, ArchiveOutcome::StoppedArchivePending);
@@ -1522,10 +1522,13 @@ impl SupervisorDisconnectGates {
         }
     }
 
-    fn wait_enqueued(&self) {
+    fn wait_skipped(&self) {
         for (id, gate) in &self.gates {
             wait_exact_fault_marker(&gate.with_extension("hit"), &id.0.to_string());
-            wait_exact_fault_marker(&gate.with_extension("enqueued"), &id.0.to_string());
+            // Actual parent exit and child stop already retired these owners
+            // before the held disconnect handlers are released.
+            wait_exact_fault_marker(&gate.with_extension("skipped"), &id.0.to_string());
+            assert!(!gate.with_extension("enqueued").exists());
         }
         self.assert_no_timeout();
     }

@@ -7107,6 +7107,140 @@ mod agent_reporting {
     }
 
     #[test]
+    fn agent_report_replaced_supervisor_does_not_enter_full_dispatch_queue() {
+        let f = Fixture::new();
+        let auth = f.acquire();
+        let binding = f.bind(&auth, None, "A", "bind");
+        assert_eq!(
+            f.report(&binding, 1, activity(AgentActivity::Busy)),
+            Response::Ok
+        );
+        let (old, old_handler) = supervisor_connection(&f, &auth);
+        // Same lease, different private connection Arc. The old one cannot be
+        // made current again after its synchronous request loop has ended.
+        let (current, current_handler) = supervisor_connection(&f, &auth);
+        let before = f.session.summary();
+
+        // Reuse the same known-dequeue barrier for stale and current owners.
+        let hold_full_dispatch = || {
+            let retained = f.state.retained.lock();
+            let (completion, _) = mpsc::sync_channel(1);
+            f.state
+                .dispatch
+                .try_send(DispatchMessage::AgentCommand {
+                    request: Request::AgentStatus {
+                        auth: auth.clone(),
+                        operation: "bind".into(),
+                    },
+                    owner: None,
+                    completion,
+                })
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while f.state.dispatch.snapshot().pending_items != 0 && Instant::now() < deadline {
+                thread::yield_now();
+            }
+            assert_eq!(f.state.dispatch.snapshot().pending_items, 0);
+            // That known command was popped and cannot pass the retained guard.
+            // Only now fill all64 slots; there is no later first-pop race.
+            for _ in 0..RAW_DISPATCH_QUEUE_CAPACITY {
+                let (completion, _) = mpsc::sync_channel(1);
+                match f.state.dispatch.try_send(DispatchMessage::AgentCommand {
+                    request: Request::AgentStatus {
+                        auth: auth.clone(),
+                        operation: "bind".into(),
+                    },
+                    owner: None,
+                    completion,
+                }) {
+                    Ok(()) => {}
+                    Err(_) => panic!("dispatcher must hold all64 queued commands"),
+                }
+            }
+            assert_eq!(
+                f.state.dispatch.snapshot().pending_items,
+                RAW_DISPATCH_QUEUE_CAPACITY
+            );
+            retained
+        };
+        let retained = hold_full_dispatch();
+        drop(old);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !old_handler.is_finished() && Instant::now() < deadline {
+            thread::yield_now();
+        }
+        let obsolete_handler_finished = old_handler.is_finished();
+        let pending_while_full = f.state.dispatch.snapshot().pending_items;
+        // Release before any assertion on the regression: the original bug
+        // blocks its handler here, and must still be able to drain and clean up.
+        drop(retained);
+        assert!(join_test_thread_bounded(
+            old_handler,
+            Duration::from_secs(2)
+        ));
+        f.request(Request::AgentStatus {
+            auth: auth.clone(),
+            operation: "bind".into(),
+        });
+        let after_old = f.session.summary();
+
+        // Preserve the consumer's Arc fence if a replacement happens after a
+        // producer checked current ownership but before dispatch. This is the
+        // genuine original reservation owner, not a fabricated lease or Arc.
+        f.state
+            .dispatch
+            .send(DispatchMessage::AgentDisconnected {
+                session: SessionId(900),
+                owner: f.owner.clone(),
+            })
+            .unwrap();
+        f.request(Request::AgentStatus {
+            auth: auth.clone(),
+            operation: "bind".into(),
+        });
+        let after_queued_old = f.session.summary();
+        let retained = hold_full_dispatch();
+        drop(current);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !current_handler.is_finished() && Instant::now() < deadline {
+            thread::yield_now();
+        }
+        let current_finished_while_full = current_handler.is_finished();
+        let pending_with_current = f.state.dispatch.snapshot().pending_items;
+        drop(retained);
+        assert!(join_test_thread_bounded(
+            current_handler,
+            Duration::from_secs(2)
+        ));
+        f.request(Request::AgentStatus {
+            auth,
+            operation: "bind".into(),
+        });
+        let lost = f.session.summary().agent.unwrap();
+
+        assert!(
+            obsolete_handler_finished,
+            "replaced supervisor must close without enqueueing into the full dispatcher"
+        );
+        assert_eq!(pending_while_full, RAW_DISPATCH_QUEUE_CAPACITY);
+        assert!(
+            !current_finished_while_full,
+            "current disconnect must wait for queue capacity"
+        );
+        assert_eq!(pending_with_current, RAW_DISPATCH_QUEUE_CAPACITY);
+        assert_eq!(after_old, before);
+        assert_eq!(
+            after_queued_old, before,
+            "consumer must still fence a queued stale owner"
+        );
+        assert_eq!(lost.health.state, ReporterHealth::Unavailable);
+        assert_eq!(
+            lost.health.reason.as_deref(),
+            Some("supervisor_disconnected")
+        );
+    }
+
+    #[test]
     fn agent_report_supervisor_connection_loss_and_late_cleanup() {
         let f = Fixture::new();
         let auth = f.acquire();
