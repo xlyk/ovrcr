@@ -11,3 +11,7 @@ retries = 2
 # one screen matcher is already red.
 fail-fast = true
 slow-timeout = { period = "60s", terminate-after = 5 }
+
+[[profile.ci.overrides]]
+filter = 'binary(=server_lifecycle) & (test(=desktop_notifications_bridge_click_discards_transient_drafts_and_releases_capture) | test(=desktop_notifications_bridge_click_focuses_existing_split_without_duplicating_target) | test(=desktop_notifications_bridge_click_lands_in_browse_without_reviewing_or_answering))'
+threads-required = "num-test-threads"

@@ -11854,6 +11854,7 @@ fn desktop_navigation_click(
     let mut child = fixture
         .command()
         .args(["bridge", "navigate", "--stdin"])
+        .env("OVRCR_TEST_BRIDGE_OWNER_DIAGNOSTICS", "1")
         .stdin(Stdio::piped())
         .stdout(output(&stdout))
         .stderr(output(&stderr))
