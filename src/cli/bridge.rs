@@ -112,6 +112,9 @@ fn compatible_executable(
     if current_hash? != expected {
         return Ok(false);
     }
+    if current.as_os_str() == original.as_os_str() {
+        return Ok(true);
+    }
     let original_hash = ovrcr::server::bridge_executable_sha256(original, deadline);
     owner_diagnostic(
         "original-hash",
@@ -564,6 +567,39 @@ mod tests {
             !compatible_executable(&packaged, &original, &cached, deadline).unwrap(),
             "replacing both paths cannot rewrite the running Server's cached digest"
         );
+    }
+
+    #[test]
+    fn bridge_callback_same_path_preserves_hash_guards_and_distinct_hardlinks() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let root = tempfile::tempdir().unwrap();
+        let original = root.path().join("original");
+        std::fs::write(&original, b"reviewed executable").unwrap();
+        std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let deadline = Instant::now() + CALLBACK_BUDGET;
+        let cached = ovrcr::server::bridge_executable_sha256(&original, deadline).unwrap();
+        assert!(compatible_executable(&original, &original, &cached, deadline).unwrap());
+        assert!(!compatible_executable(&original, &original, &"0".repeat(64), deadline).unwrap());
+        assert_eq!(
+            compatible_executable(&original, &original, &cached, Instant::now())
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::TimedOut
+        );
+        let linked = root.path().join("symlink");
+        symlink(&original, &linked).unwrap();
+        assert!(compatible_executable(&linked, &linked, &cached, deadline).is_err());
+        std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(compatible_executable(&original, &original, &cached, deadline).is_err());
+        std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let hardlink = root.path().join("hardlink");
+        std::fs::hard_link(&original, &hardlink).unwrap();
+        assert_ne!(original.as_os_str(), hardlink.as_os_str());
+        eprintln!("BRIDGE_DISTINCT_HARDLINK_HASHES_BEGIN");
+        assert!(compatible_executable(&hardlink, &original, &cached, deadline).unwrap());
+        eprintln!("BRIDGE_DISTINCT_HARDLINK_HASHES_END");
+        std::fs::write(&original, b"replacement bytes").unwrap();
+        assert!(!compatible_executable(&hardlink, &original, &cached, deadline).unwrap());
     }
 
     #[test]

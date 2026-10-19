@@ -130,14 +130,67 @@ fn fixture() -> Result<(AcceptanceFixture, AssignmentSnapshot, SessionId)> {
 fn assigned_child_is_view_only_until_explicit_dashboard_takeover_and_return() -> Result<()> {
     let (mut fixture, assignment, _parent) = fixture()?;
     let child = assignment.identity.session.context("assigned child")?;
-    let initial = fixture
+    let before_title = fixture
         .list()?
         .projects
         .into_iter()
         .flat_map(|p| p.workspaces)
         .flat_map(|w| w.sessions)
         .find(|s| s.id == child)
+        .context("child before title")?;
+    let title = "takeover-child-323";
+    assert_eq!(
+        fixture.request(Request::SetSessionTitle {
+            session: child,
+            title: Some(title.into()),
+        }),
+        Response::Ok
+    );
+    let renamed = fixture.list()?;
+    assert_eq!(
+        renamed
+            .projects
+            .iter()
+            .flat_map(|p| &p.workspaces)
+            .flat_map(|w| &w.sessions)
+            .filter(|s| s.display_name() == title)
+            .count(),
+        1
+    );
+    // In this fresh fixture the child is last; split wraps to the local terminal.
+    let other = renamed
+        .projects
+        .iter()
+        .flat_map(|p| &p.workspaces)
+        .flat_map(|w| &w.sessions)
+        .find(|s| s.workspace == before_title.workspace && s.name == "local")
+        .context("other local pane")?
+        .clone();
+    assert_eq!(other.kind, SessionKind::Terminal);
+    let initial = renamed
+        .projects
+        .into_iter()
+        .flat_map(|p| p.workspaces)
+        .flat_map(|w| w.sessions)
+        .find(|s| s.id == child)
         .context("child summary")?;
+    assert_eq!(initial.display_name(), title);
+    assert_eq!(initial.run, before_title.run);
+    assert_eq!(initial.assignment_control, before_title.assignment_control);
+    assert_eq!(
+        initial.assignment_control.as_ref().unwrap().control,
+        AssignmentControl::default()
+    );
+    let candidate = format!("› {title} (#{})", child.0);
+    let sole_child_candidate = |screen: &str| {
+        let rows: Vec<_> = screen
+            .lines()
+            .skip_while(|line| !line.contains("┌ Agents"))
+            .take_while(|line| !line.contains('└'))
+            .filter(|line| line.contains("(#"))
+            .collect();
+        rows.len() == 1 && rows[0].contains(&candidate)
+    };
     let mut dashboard = OuterDashboard::start(
         &fixture,
         PtySize {
@@ -147,25 +200,101 @@ fn assigned_child_is_view_only_until_explicit_dashboard_takeover_and_return() ->
             pixel_height: 0,
         },
     )?;
-    dashboard.send(format!("s{}\r", initial.display_name()).as_bytes())?;
+    dashboard.send(format!("s{}", initial.display_name()).as_bytes())?;
+    dashboard.wait_for_screen(sole_child_candidate, wait_deadline())?;
+    dashboard.send(b"\r")?;
     dashboard.wait_for_screen(
         |screen| {
-            screen.contains("Pi control")
+            screen.contains(title)
+                && screen.contains("Pi control")
                 && screen.contains("view only")
                 && screen.contains("CHILD_RESULT_PUBLISHED")
                 && !screen.contains("┌ Agents")
         },
         wait_deadline(),
     )?;
+    dashboard.send(b"\x07")?;
+    dashboard.wait_for_screen(|screen| screen.contains("BROWSE"), wait_deadline())?;
     dashboard.send(b"\x1b[200~FORBIDDEN_BEFORE_TAKEOVER\x1b[201~")?;
-    // Passive split/focus/resize/hide affects only view subscriptions.
-    dashboard.send(b"v\t")?;
-    dashboard.resize(42, 170)?;
-    dashboard.send(b"x")?;
-    dashboard.send(format!("s{}\r", initial.display_name()).as_bytes())?;
+    // Passive split/focus/resize/hide affects only view subscriptions. The
+    // unread child metadata hides geometry, so use the local pane's ready
+    // dimensions: the global handshake acknowledges all target snapshots.
+    let split = ovrcr::tui::pane_rects(ratatui::layout::Rect::new(0, 0, 160, 40), 2, 0);
+    let other_ready = format!(
+        "{} {}x{}",
+        other.display_name(),
+        split[1].terminal.width,
+        split[1].terminal.height
+    );
+    let metadata = |screen: &str, rect: ratatui::layout::Rect| -> String {
+        screen
+            .lines()
+            .skip(usize::from(rect.y))
+            .take(usize::from(rect.height))
+            .map(|line| {
+                line.chars()
+                    .skip(usize::from(rect.x))
+                    .take(usize::from(rect.width))
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    dashboard.send(b"v")?;
     dashboard.wait_for_screen(
         |screen| {
-            screen.contains("Pi control")
+            metadata(screen, split[1].metadata).starts_with(&format!("> {other_ready}"))
+                && metadata(screen, split[0].terminal).contains("CHILD_RESULT_PUBLISHED")
+        },
+        wait_deadline(),
+    )?;
+    dashboard.find_text_in_rect(split[0].terminal, "CHILD_RESULT_PUBLISHED")?;
+    dashboard.send(b"\t")?;
+    dashboard.wait_for_screen(
+        |screen| {
+            metadata(screen, split[1].metadata).starts_with(&format!("  {other_ready}"))
+                && metadata(screen, split[0].terminal).contains("CHILD_RESULT_PUBLISHED")
+        },
+        wait_deadline(),
+    )?;
+    dashboard.find_text_in_rect(split[0].terminal, "CHILD_RESULT_PUBLISHED")?;
+    dashboard.resize(42, 170)?;
+    let resized = ovrcr::tui::pane_rects(ratatui::layout::Rect::new(0, 0, 170, 42), 2, 0);
+    let resized_other = format!(
+        "  {} {}x{}",
+        other.display_name(),
+        resized[1].terminal.width,
+        resized[1].terminal.height
+    );
+    dashboard.wait_for_screen(
+        |screen| {
+            metadata(screen, resized[1].metadata).starts_with(&resized_other)
+                && metadata(screen, resized[0].terminal).contains("CHILD_RESULT_PUBLISHED")
+        },
+        wait_deadline(),
+    )?;
+    dashboard.find_text_in_rect(resized[0].terminal, "CHILD_RESULT_PUBLISHED")?;
+    dashboard.send(b"x")?;
+    let other_pid = other.pid.context("local pane PID")?;
+    dashboard.wait_for_screen(
+        |screen| {
+            screen.contains("BROWSE")
+                && screen.contains(other.display_name())
+                && screen.contains(&format!("pid: {other_pid}"))
+                && !screen.contains("CHILD_RESULT_PUBLISHED")
+                && screen.lines().all(|line| {
+                    line.chars().nth(usize::from(resized[0].terminal.right())) != Some('│')
+                })
+        },
+        wait_deadline(),
+    )?;
+    dashboard.send(format!("s{}", initial.display_name()).as_bytes())?;
+    dashboard.wait_for_screen(sole_child_candidate, wait_deadline())?;
+    dashboard.send(b"\r")?;
+    dashboard.wait_for_screen(
+        |screen| {
+            screen.contains(title)
+                && screen.contains("Pi control")
                 && screen.contains("view only")
                 && screen.contains("CHILD_RESULT_PUBLISHED")
         },
@@ -190,6 +319,8 @@ fn assigned_child_is_view_only_until_explicit_dashboard_takeover_and_return() ->
             .read_terminal(child)?
             .contains("FORBIDDEN_BEFORE_TAKEOVER")
     );
+    dashboard.send(b"\x07")?;
+    dashboard.wait_for_screen(|screen| screen.contains("BROWSE"), wait_deadline())?;
     dashboard.send(b"H")?;
     dashboard.wait_for_screen(|screen| screen.contains("Human control"), wait_deadline())?;
     dashboard.send(b"\r")?;

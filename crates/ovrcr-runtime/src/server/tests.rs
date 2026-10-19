@@ -7121,8 +7121,27 @@ mod agent_reporting {
         let (current, current_handler) = supervisor_connection(&f, &auth);
         let before = f.session.summary();
 
-        // Reuse the same known-dequeue barrier for stale and current owners.
+        let drain_dispatch = || {
+            let (completion, completed) = mpsc::sync_channel(1);
+            f.state
+                .dispatch
+                .send(DispatchMessage::AgentCommand {
+                    request: Request::AgentStatus {
+                        auth: auth.clone(),
+                        operation: "bind".into(),
+                    },
+                    owner: None,
+                    completion,
+                })
+                .unwrap();
+            completed.recv_timeout(Duration::from_secs(2)).unwrap()
+        };
+        // Complete a FIFO barrier outside retained before the next full batch.
         let hold_full_dispatch = || {
+            assert_eq!(
+                drain_dispatch(),
+                Response::AgentOperation(AgentOperationResult::Bound(binding.clone()))
+            );
             let retained = f.state.retained.lock();
             let (completion, _) = mpsc::sync_channel(1);
             f.state
@@ -7173,15 +7192,37 @@ mod agent_reporting {
         let pending_while_full = f.state.dispatch.snapshot().pending_items;
         // Release before any assertion on the regression: the original bug
         // blocks its handler here, and must still be able to drain and clean up.
-        drop(retained);
+        let (drain_returned_while_full, drained) = thread::scope(|scope| {
+            let (completion, completed) = mpsc::sync_channel(1);
+            let (started, starting) = mpsc::sync_channel(1);
+            scope.spawn(move || {
+                started.send(()).unwrap();
+                completion.send(drain_dispatch()).unwrap();
+            });
+            starting.recv_timeout(Duration::from_secs(2)).unwrap();
+            let early = completed.recv_timeout(Duration::from_millis(100));
+            drop(retained);
+            match early {
+                Ok(response) => (true, response),
+                Err(mpsc::RecvTimeoutError::Timeout) => (
+                    false,
+                    completed.recv_timeout(Duration::from_secs(2)).unwrap(),
+                ),
+                Err(error) => panic!("drain worker failed: {error}"),
+            }
+        });
         assert!(join_test_thread_bounded(
             old_handler,
             Duration::from_secs(2)
         ));
-        f.request(Request::AgentStatus {
-            auth: auth.clone(),
-            operation: "bind".into(),
-        });
+        assert!(
+            !drain_returned_while_full,
+            "FIFO completion barrier must not return while all64 commands are held"
+        );
+        assert_eq!(
+            drained,
+            Response::AgentOperation(AgentOperationResult::Bound(binding.clone()))
+        );
         let after_old = f.session.summary();
 
         // Preserve the consumer's Arc fence if a replacement happens after a
@@ -7194,10 +7235,10 @@ mod agent_reporting {
                 owner: f.owner.clone(),
             })
             .unwrap();
-        f.request(Request::AgentStatus {
-            auth: auth.clone(),
-            operation: "bind".into(),
-        });
+        assert_eq!(
+            drain_dispatch(),
+            Response::AgentOperation(AgentOperationResult::Bound(binding.clone()))
+        );
         let after_queued_old = f.session.summary();
         let retained = hold_full_dispatch();
         drop(current);
@@ -7212,10 +7253,10 @@ mod agent_reporting {
             current_handler,
             Duration::from_secs(2)
         ));
-        f.request(Request::AgentStatus {
-            auth,
-            operation: "bind".into(),
-        });
+        assert_eq!(
+            drain_dispatch(),
+            Response::AgentOperation(AgentOperationResult::Bound(binding.clone()))
+        );
         let lost = f.session.summary().agent.unwrap();
 
         assert!(

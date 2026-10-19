@@ -12392,10 +12392,22 @@ fn desktop_notifications_bridge_click_discards_transient_drafts_and_releases_cap
         dashboard.select("setup", "HOOK_READY");
         dashboard.send(keys);
         dashboard.wait_screen(|screen| screen.contains(visible));
-        desktop_navigation_applied(
-            desktop_navigation_click(&fixture, &ticket, label),
-            &dashboard,
-        );
+        let callback = desktop_navigation_click(&fixture, &ticket, label);
+        #[cfg(feature = "acceptance-diagnostics")]
+        {
+            let diagnostics = String::from_utf8_lossy(&callback.stderr);
+            assert_eq!(
+                diagnostics.matches("stage=current-hash ").count(),
+                1,
+                "{diagnostics}"
+            );
+            assert_eq!(
+                diagnostics.matches("stage=original-hash ").count(),
+                0,
+                "same named executable must not be hashed twice: {diagnostics}"
+            );
+        }
+        desktop_navigation_applied(callback, &dashboard);
         dashboard.wait_screen(|screen| {
             screen.contains("BROWSE")
                 && screen.contains("CODEX_CALLBACK=1")
