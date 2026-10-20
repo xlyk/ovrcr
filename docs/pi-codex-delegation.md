@@ -4,8 +4,10 @@ This #329 source candidate integrates the full seven-commit #329 feature boundar
 onto accepted #334 `420a462a`, which includes the #322/#327 prerequisites. Its
 common Pi runtime retains the accepted invocation, source and action fences.
 The eight affected Node suites passed 103 tests during integration; the final
-closed replay schema is checked by the 17-test delegation suite. Rust checks
-and installed-provider task acceptance on this integration remain unrun.
+closed replay schema is checked by the 17-test delegation suite. Focused Rust
+Codex/publisher fixtures, shared-input regressions, owning unit checks and both
+owning Clippy configurations have passed. Current-revision capacity, paired
+build, hosted CI and installed-provider task acceptance remain open.
 
 Earlier local verification at source checkpoint `292f59fe` passed 57 tests with
 29 fixture lifecycles and 15 production-extension Node tests. Those historical
@@ -104,6 +106,15 @@ Reporter hooks, then starts native Codex with the exact requested model,
 No additional service, process owner or scheduler is introduced. The no-daemon
 route skips retirement of an existing native daemon. Ordinary managed launches
 retain their current behavior.
+
+Initial task input waits while the native Reporter has not supplied model
+evidence. If the connected original child reports a different model, dispatch
+returns Refused with a clear reason and a rejected InitialInput receipt before
+writing task bytes. It retains that child's identity and the spent launch;
+inspect the original child rather than assuming launch was rolled back.
+Replaying the same handle or initial request preserves the refusal without
+sending input or creating a replacement. A changed run or conversation remains
+ineligible for replay.
 
 The candidate profile denies filesystem access at the root, allows minimal
 platform reads and the actual workspace, denies the OVRCR instance, then allows

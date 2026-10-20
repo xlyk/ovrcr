@@ -685,28 +685,123 @@ fn codex_child_publication_cannot_gain_parent_control_or_use_replaced_conversati
 
 #[test]
 fn codex_initial_input_waits_for_exact_native_model_and_never_adopts_a_later_generation() {
-    for reported in ["omit", "wrong-native-model"] {
-        let f = CodexFixture::new(reported);
-        let value = f.call(
-            "ovrcr_start",
-            f.request_args("Wait for real native model evidence."),
-        );
-        let waiting: AssignmentSnapshot = serde_json::from_value(value).unwrap();
-        assert_eq!(waiting.dispatch, DispatchStatus::Launched);
-        let root = f.child_root(&waiting);
-        wait_file(&root.join("startup.json"));
-        assert!(!root.join("brief-inputs.jsonl").exists());
-        f.action(
-            &waiting,
-            json!({"operation":"replace","return_original":true}),
-        );
-        let refused = f.call("ovrcr_start", json!({"handle":waiting.handle}));
-        assert_eq!(refused["dispatch"], "Refused");
-        assert!(
-            !root.join("brief-inputs.jsonl").exists(),
-            "A-B-A cannot gain input authority"
-        );
-    }
+    // Missing model evidence remains pending; it must not become a mismatch refusal.
+    let f = CodexFixture::new("omit");
+    let value = f.call(
+        "ovrcr_start",
+        f.request_args("Wait for real native model evidence."),
+    );
+    let waiting: AssignmentSnapshot = serde_json::from_value(value).unwrap();
+    assert_eq!(waiting.dispatch, DispatchStatus::Launched);
+    let root = f.child_root(&waiting);
+    wait_file(&root.join("startup.json"));
+    assert!(!root.join("brief-inputs.jsonl").exists());
+    f.action(
+        &waiting,
+        json!({"operation":"replace","return_original":true}),
+    );
+    let refused = f.call("ovrcr_start", json!({"handle":waiting.handle}));
+    assert_eq!(refused["dispatch"], "Refused");
+    assert!(
+        !root.join("brief-inputs.jsonl").exists(),
+        "A-B-A cannot gain input authority"
+    );
+}
+
+#[test]
+fn codex_initial_input_refuses_observed_model_mismatch_and_replays_without_input() {
+    let f = CodexFixture::new("wrong-native-model");
+    let refused: AssignmentSnapshot = serde_json::from_value(f.call(
+        "ovrcr_start",
+        f.request_args("Refuse a different observed native model without sending task input."),
+    ))
+    .unwrap();
+    assert_eq!(
+        refused.dispatch,
+        DispatchStatus::Refused,
+        "a definite reported model mismatch must return a clear refusal, not silently remain Launched"
+    );
+    let reason = refused
+        .reason
+        .as_deref()
+        .expect("model refusal needs a reason");
+    assert!(
+        reason.contains("model") && reason.contains("requested"),
+        "{reason}"
+    );
+    assert!(reason.contains("no bytes written"), "{reason}");
+    assert!(
+        reason.contains("original child") && reason.contains("replay"),
+        "{reason}"
+    );
+    let initial = refused
+        .receipts
+        .iter()
+        .find(|receipt| receipt.operation == DispatchOperation::InitialInput)
+        .unwrap();
+    assert_eq!(initial.outcome, DispatchOutcome::Rejected);
+    assert!(initial.input.is_none());
+    assert_eq!(initial.reason, refused.reason);
+    assert_eq!(initial.identity, refused.identity);
+    assert_eq!(refused.execution_attempts, Some(1));
+    assert!(!refused.retryable_capacity_refusal);
+    let root = f.child_root(&refused);
+    wait_file(&root.join("startup.json"));
+    let child = f.child(&refused);
+    let agent = child.agent.as_ref().unwrap();
+    assert_eq!(agent.health.state, ReporterHealth::Connected);
+    assert_eq!(
+        agent.metrics.as_ref().unwrap().sample.model.as_deref(),
+        Some("wrong-native-model")
+    );
+    assert_eq!(agent.binding.generation, 1);
+    assert_eq!(Some(child.id), refused.identity.session);
+    assert_eq!(Some(child.run), refused.identity.run);
+    assert!(!root.join("brief-inputs.jsonl").exists());
+
+    let replay: AssignmentSnapshot =
+        serde_json::from_value(f.call("ovrcr_start", json!({"handle":refused.handle}))).unwrap();
+    assert_eq!(replay.dispatch, DispatchStatus::Refused);
+    assert_eq!(replay.identity, refused.identity);
+    assert_eq!(replay.control, refused.control);
+    assert_eq!(replay.reason, refused.reason);
+    assert_eq!(replay.receipts, refused.receipts);
+    assert_eq!(replay.execution_attempts, Some(1));
+    let original = f.proxy.original(DispatchOperation::InitialInput);
+    let Response::Delegation(exact_replay) =
+        f.request(Request::Delegation(Box::new(original.clone())))
+    else {
+        panic!("exact original request must reconcile its refusal");
+    };
+    assert_eq!(exact_replay.dispatch, DispatchStatus::Refused);
+    assert_eq!(exact_replay.identity, refused.identity);
+    assert_eq!(exact_replay.reason, refused.reason);
+    assert_eq!(exact_replay.receipts, refused.receipts);
+    assert_eq!(
+        f.child(&refused).agent.as_ref().unwrap().binding,
+        agent.binding
+    );
+    assert!(
+        !root.join("brief-inputs.jsonl").exists(),
+        "refusal replay sends no task bytes"
+    );
+
+    f.action(
+        &refused,
+        json!({"operation":"replace","return_original":true}),
+    );
+    assert!(f.child(&refused).agent.unwrap().binding.generation > agent.binding.generation);
+    assert!(matches!(
+        f.request(Request::Delegation(Box::new(original))),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+    assert!(
+        !root.join("brief-inputs.jsonl").exists(),
+        "A-B-A cannot revive rejected input authority"
+    );
 }
 
 #[test]

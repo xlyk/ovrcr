@@ -1670,13 +1670,18 @@ impl ServerState {
                             return self.reconciliation_snapshot(record);
                         }
                     }
-                    if agent
+                    let Some(model) = agent
                         .metrics
                         .as_ref()
                         .and_then(|m| m.sample.model.as_deref())
-                        != Some(contract.model.as_str())
-                    {
+                    else {
                         return self.assignment_snapshot(record);
+                    };
+                    if model != contract.model.as_str() {
+                        return self.reject_initial(
+                            record,
+                            "native model differs from requested model; no bytes written; inspect the original child without replay",
+                        );
                     }
                     let bytes = Directory::open(&record.root, false)?.read("brief-v1.json")?;
                     if Some(digest(&bytes)) != record.brief_digest {
