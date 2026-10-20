@@ -1,5 +1,6 @@
 pub mod agent_runner;
 pub mod claude_recovery;
+pub mod codex_delegation;
 pub mod codex_recovery;
 pub mod config;
 pub mod extension_recovery;

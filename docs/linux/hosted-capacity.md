@@ -6,6 +6,10 @@ It enables `acceptance-diagnostics`, selects the test by its exact name, and use
 `--ignored --exact --nocapture`. The job does not configure provider credentials
 or start a paid native provider session.
 
+Before the timed load, the fixture reserves, watches and binds all 50 sessions
+serially. The measured load runs all 50 reporting workers concurrently; this gate
+does not measure admission-burst throughput.
+
 The test retains its original acceptance limits: 50 sessions, 600 reports per
 session over 60 seconds, 3,000 rejected stale reports, five failed collectors,
 control latency below 250 ms at p99 and below one second at maximum, and sampled

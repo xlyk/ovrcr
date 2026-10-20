@@ -37,17 +37,29 @@ enum InitialSource {
     Resume,
 }
 
+struct ParsedLaunch {
+    kind: EligibleLaunch,
+    no_daemon: bool,
+}
+
 fn eligible_launch(argv: &[OsString]) -> Option<EligibleLaunch> {
+    parsed_launch(argv).map(|launch| launch.kind)
+}
+
+fn parsed_launch(argv: &[OsString]) -> Option<ParsedLaunch> {
     if argv.first().and_then(|s| Path::new(s).file_name()) != Some(OsStr::new("codex")) {
         return None;
     }
     let mut args = argv[1..].iter();
     let mut prompt = false;
     let mut resume = None;
+    let mut no_daemon = false;
     while let Some(arg) = args.next() {
         let arg = arg.to_str()?;
         match arg {
-            "--no-alt-screen"
+            "--no-daemon" => no_daemon = true,
+            "--strict-config"
+            | "--no-alt-screen"
             | "--approve-for-me"
             | "--full-auto"
             | "--dangerously-bypass-hook-trust" => {}
@@ -59,8 +71,12 @@ fn eligible_launch(argv: &[OsString]) -> Option<EligibleLaunch> {
                 }
             }
             "--" => {
-                return (resume.is_none() && !prompt && args.count() == 1)
-                    .then_some(EligibleLaunch::Fresh);
+                return (resume.is_none() && !prompt && args.count() == 1).then_some(
+                    ParsedLaunch {
+                        kind: EligibleLaunch::Fresh,
+                        no_daemon,
+                    },
+                );
             }
             "resume" if resume.is_none() && !prompt => {
                 let value = args.next()?.to_str()?;
@@ -104,6 +120,13 @@ fn eligible_launch(argv: &[OsString]) -> Option<EligibleLaunch> {
         (None, _) => Some(EligibleLaunch::Fresh),
         (Some(_), true) => None,
     }
+    .map(|kind| ParsedLaunch { kind, no_daemon })
+}
+
+// Keep the retirement decision pure so prompt/option boundaries are testable
+// without touching a native daemon.
+fn should_retire_managed_daemon(argv: &[OsString]) -> bool {
+    parsed_launch(argv).is_some_and(|launch| !launch.no_daemon)
 }
 
 pub fn receiver(lease: Option<InvocationLease>, argv: &[OsString]) -> HookHandler {
@@ -118,7 +141,7 @@ pub fn receiver(lease: Option<InvocationLease>, argv: &[OsString]) -> HookHandle
     let unavailable = if launch.is_some() { None } else { preflight };
     // Admitted fresh or exact resume: refresh managed daemon so 0.158+ hooks
     // inherit this invocation's private channel.
-    if unavailable.is_none() {
+    if unavailable.is_none() && should_retire_managed_daemon(argv) {
         ovrcr_runtime::codex_recovery::prepare_managed_launch();
     }
     let mut reporter = Reporter::new(AgentProvider::Codex, lease, None);
@@ -1114,6 +1137,60 @@ mod tests {
                 "identity_transition_unavailable".to_owned()
             )]
         );
+    }
+
+    #[test]
+    fn daemon_retirement_respects_option_values_and_literal_prompt_boundary() {
+        let id = "01a08e5c-7480-7052-9964-9224aadebef0";
+        // A valued option consumes the next token. The existing grammar refuses
+        // dash-prefixed values; they must not become admitted no-daemon flags.
+        for option in ["--profile", "-p", "--model", "-m"] {
+            let argv = ["codex", option, "--no-daemon"].map(OsString::from);
+            assert!(parsed_launch(&argv).is_none(), "{option}");
+            assert!(!should_retire_managed_daemon(&argv));
+        }
+        for (values, retire) in [
+            (vec!["codex"], true),
+            (vec!["codex", "Read README"], true),
+            (vec!["codex", "--", "--no-daemon"], true),
+            (vec!["codex", "--model", "gpt", "--", "--no-daemon"], true),
+            (vec!["codex", "--no-daemon"], false),
+            (vec!["codex", "--no-daemon", "--", "literal prompt"], false),
+            (vec!["codex", "--profile", "--no-daemon"], false),
+            (vec!["codex", "--model", "--no-daemon"], false),
+            (vec!["codex", "resume", id], true),
+            (vec!["codex", "--no-daemon", "resume", id], false),
+            (vec!["codex", "resume", id, "--no-daemon"], false),
+            (vec!["codex", "exec"], false),
+            (vec!["codex", "--", "--no-daemon", "extra"], false),
+            (vec!["codex", "--unknown"], false),
+        ] {
+            let argv = values.iter().map(OsString::from).collect::<Vec<_>>();
+            assert_eq!(should_retire_managed_daemon(&argv), retire, "{values:?}");
+        }
+    }
+
+    #[test]
+    fn private_policy_safe_flags_preserve_fresh_and_exact_resume_reporting() {
+        let args = |values: &[&str]| values.iter().map(OsString::from).collect::<Vec<_>>();
+        let flags = [
+            "codex",
+            "--profile",
+            "ovrcr-research",
+            "--ask-for-approval",
+            "never",
+            "--no-daemon",
+            "--strict-config",
+        ];
+        assert_eq!(eligible_launch(&args(&flags)), Some(EligibleLaunch::Fresh));
+        let id = "01a08e5c-7480-7052-9964-9224aadebef0";
+        let mut resume = flags.to_vec();
+        resume.extend(["resume", id]);
+        assert_eq!(
+            eligible_launch(&args(&resume)),
+            Some(EligibleLaunch::Resume(id.into()))
+        );
+        assert!(ovrcr_runtime::codex_recovery::launch_options(&args(&flags)).is_ok());
     }
 
     #[test]

@@ -133,7 +133,8 @@ impl Record {
         // Recognize that journaled state without repairing unknown history.
         self.execution_attempts.is_some_and(|count| count > 0)
             && self.binding.as_ref().is_some_and(|binding| {
-                binding.provider == AgentProvider::Pi && binding.generation == 1
+                matches!(binding.provider, AgentProvider::Pi | AgentProvider::Codex)
+                    && binding.generation == 1
             })
             && self.initial_control_epoch.is_some()
             && self.initial_parent_epoch.is_some()
@@ -796,11 +797,30 @@ impl ServerState {
         self.delegation_auth(auth)?;
         self.reject_assigned_input(auth.session)?;
         let (settings, invalid) = self.policy_snapshot();
-        let (inventory, unavailable) = match available_models() {
+        let harness = selection.provider.unwrap_or(settings.default_harness);
+        let inventory = match harness {
+            DelegationHarness::Pi => available_models(),
+            DelegationHarness::Codex
+                if selection
+                    .model_provider
+                    .as_deref()
+                    .is_none_or(|p| p == "openai") =>
+            {
+                crate::codex_delegation::models()
+            }
+            DelegationHarness::Codex => bail!(
+                "Codex delegation supports only the native OpenAI backend; no substitute selected"
+            ),
+            _ => bail!("requested delegation harness is unavailable; no substitute selected"),
+        };
+        let (inventory, unavailable) = match inventory {
             Ok(inventory) => (inventory, invalid),
             Err(_) => (
                 Vec::new(),
-                Some("Pi model inventory is unavailable; no substitute selected".into()),
+                Some(format!(
+                    "{} model inventory or required native policy is unavailable; no substitute selected",
+                    harness.name()
+                )),
             ),
         };
         let (live, children) = self.delegation_live_counts()?;
@@ -1373,6 +1393,11 @@ impl ServerState {
                         // Resolve the executable before charging: lookup cannot create
                         // a process, and an error here must leave Prepared unspent.
                         let executable = std::env::current_exe()?;
+                        let codex_executable = if contract.provider == "codex" {
+                            Some(crate::codex_delegation::executable()?)
+                        } else {
+                            None
+                        };
                         record.execution_attempts = Some(
                             spent
                                 .checked_add(1)
@@ -1395,23 +1420,55 @@ impl ServerState {
                         } else {
                             "read,grep,find,ls,ovrcr_publish,ovrcr_publish_question"
                         };
-                        let argv = vec![
-                            executable.into_os_string(),
-                            "agent".into(),
-                            "run".into(),
-                            "pi".into(),
-                            "--".into(),
-                            "pi".into(),
-                            "--no-approve".into(),
-                            "--no-extensions".into(),
-                            "--no-skills".into(),
-                            "--tools".into(),
-                            tools.into(),
-                            "--provider".into(),
-                            contract.model_provider.clone().into(),
-                            "--model".into(),
-                            contract.model.clone().into(),
-                        ];
+                        let argv = if contract.provider == "codex" {
+                            let home = std::fs::canonicalize(&self.registry_path)?
+                                .join("codex-children")
+                                .join(&handle);
+                            vec![
+                                "/usr/bin/env".into(),
+                                format!("CODEX_HOME={}", home.display()).into(),
+                                format!(
+                                    "{}={}",
+                                    crate::codex_delegation::ARTIFACT_ENV,
+                                    record.root.display()
+                                )
+                                .into(),
+                                executable.into_os_string(),
+                                "agent".into(),
+                                "run".into(),
+                                "codex".into(),
+                                "--".into(),
+                                codex_executable
+                                    .context("Codex executable was not resolved")?
+                                    .into_os_string(),
+                                "--model".into(),
+                                contract.model.clone().into(),
+                                "--profile".into(),
+                                crate::codex_delegation::PROFILE.into(),
+                                "--ask-for-approval".into(),
+                                "never".into(),
+                                "--no-daemon".into(),
+                                "--strict-config".into(),
+                            ]
+                        } else {
+                            vec![
+                                executable.into_os_string(),
+                                "agent".into(),
+                                "run".into(),
+                                "pi".into(),
+                                "--".into(),
+                                "pi".into(),
+                                "--no-approve".into(),
+                                "--no-extensions".into(),
+                                "--no-skills".into(),
+                                "--tools".into(),
+                                tools.into(),
+                                "--provider".into(),
+                                contract.model_provider.clone().into(),
+                                "--model".into(),
+                                contract.model.clone().into(),
+                            ]
+                        };
                         let result = if let Some(coding_contract) = &contract.coding {
                             {
                                 let store = self.retained.lock();
@@ -1446,9 +1503,11 @@ impl ServerState {
                                     project: contract.project,
                                     workspace: contract.workspace,
                                     name: String::new(),
-                                    label: Some("Pi research".into()),
+                                    label: Some(format!("{} research", contract.provider)),
                                     argv,
-                                    kind: SessionKind::Agent { name: "pi".into() },
+                                    kind: SessionKind::Agent {
+                                        name: contract.provider.clone(),
+                                    },
                                 },
                                 None,
                                 Some(&handle),
@@ -1592,8 +1651,9 @@ impl ServerState {
                         }
                     };
                     let summary = session.summary();
+                    let contract = read_contract(&record)?;
                     let Some(agent) = summary.agent.as_ref().filter(|agent| {
-                        agent.binding.provider == AgentProvider::Pi
+                        agent.binding.provider.name() == contract.provider
                             && agent.health.state == ReporterHealth::Connected
                     }) else {
                         return self.assignment_snapshot(record);
@@ -1610,7 +1670,6 @@ impl ServerState {
                             return self.reconciliation_snapshot(record);
                         }
                     }
-                    let contract = read_contract(&record)?;
                     if agent
                         .metrics
                         .as_ref()
@@ -1869,11 +1928,10 @@ impl ServerState {
                 handle,
                 mut submission,
             } => {
-                let mut record = self
-                    .retained
-                    .lock()
-                    .assignment(&handle)?
-                    .context("assignment not found")?;
+                let mut record =
+                    self.retained.lock().assignment(&handle)?.ok_or_else(|| {
+                        lifecycle_error(ErrorCode::NotFound, "assignment not found")
+                    })?;
                 let session = self.assignment_publisher(&auth, &record)?;
                 if Some(auth.session) != record.identity.session
                     || Some(session.run()) != record.identity.run
@@ -1886,14 +1944,17 @@ impl ServerState {
                 self.assignment_session(&record)?;
                 submission
                     .validate(&record.identity)
-                    .map_err(anyhow::Error::msg)?;
+                    .map_err(|reason| lifecycle_error(ErrorCode::Conflict, reason))?;
                 if record.dispatch != DispatchStatus::Applied
                     && record.dispatch != DispatchStatus::InputUnknown
                 {
                     bail!("initial assignment has not been delivered");
                 }
                 if submission.version != record.result_version {
-                    bail!("submission belongs to a stale result version");
+                    return Err(lifecycle_error(
+                        ErrorCode::Conflict,
+                        "submission belongs to a stale result version",
+                    ));
                 }
                 self.validate_review_submission(&record, &submission)?;
                 let contract = read_contract(&record)?;
@@ -1931,7 +1992,10 @@ impl ServerState {
                     .as_ref()
                     .is_some_and(|old| old != &hash)
                 {
-                    bail!("submission version is already published");
+                    return Err(lifecycle_error(
+                        ErrorCode::Conflict,
+                        "submission version is already published",
+                    ));
                 }
                 let binding = record
                     .binding
@@ -1964,7 +2028,7 @@ impl ServerState {
                     );
                 }
                 record = latest;
-                session.with_delegation_binding(&auth.capability, &binding, || {
+                let publication = session.with_delegation_binding(&auth.capability, &binding, || {
                     record.publication_intent = Some(PublicationIntent {
                         identity: publication,
                         binding: binding.clone(),
@@ -1992,11 +2056,18 @@ impl ServerState {
                         directory.sync()?;
                     }
                     record.result_digest = Some(hash);
-                    store.save_assignment(&record)
+                    store.save_assignment(&record)?;
+                    self.assignment_publication(&record).map_err(publication_error)
                 })?;
                 drop(store);
                 self.delegation_observations.invalidate(auth.session);
-                record
+                let publication = publication.map(|identity| PublicationState {
+                    handled: record.handled_publication.as_ref() == Some(&identity),
+                    identity,
+                });
+                let mut snapshot = self.reconciliation_snapshot(record)?;
+                snapshot.publication = publication;
+                return Ok(snapshot);
             }
         };
         self.reconciliation_snapshot(record)
@@ -2167,8 +2238,12 @@ impl ServerState {
         } else {
             "Call ovrcr_publish. Only this child can publish; it cannot accept the result. Research tools are read-only."
         };
+        let publication = publication.replace(
+            "ovrcr_publish",
+            &child_tool(&contract.provider, "ovrcr_publish"),
+        );
         let mut value = serde_json::json!({"schema":1,"handle":handle,"identity":record.identity,"contract":contract_document(&contract)?,
-            "result_version":1,"output":record.root.join("submission-v1.json"),"publication":publication,"questions":questions::QUESTION_INSTRUCTIONS});
+            "result_version":1,"output":record.root.join("submission-v1.json"),"publication":publication,"questions":child_questions(&contract.provider)});
         if let Some(resource) = &record.coding {
             value["coding_workspace"] = serde_json::to_value(resource)?;
         }
@@ -2367,6 +2442,23 @@ impl ServerState {
     }
 }
 
+fn child_tool(provider: &str, tool: &str) -> String {
+    if provider == "codex" {
+        format!(
+            "the {} MCP server's {tool} tool",
+            crate::codex_delegation::MCP_SERVER
+        )
+    } else {
+        tool.to_owned()
+    }
+}
+fn child_questions(provider: &str) -> String {
+    questions::QUESTION_INSTRUCTIONS.replace(
+        "ovrcr_publish_question",
+        &child_tool(provider, "ovrcr_publish_question"),
+    )
+}
+
 fn publication_error(issue: PublicationIssue) -> anyhow::Error {
     anyhow::anyhow!(match issue {
         PublicationIssue::Invalid => "submission publication changed or is partial",
@@ -2395,8 +2487,9 @@ fn assignment_prompt(
         ""
     };
     format!(
-        "Perform the {mode} assignment in {}. Read that immutable brief with your read tool; {purpose}publish the exact requested result_version with ovrcr_publish using handle {handle} and the identity in that brief. Do not modify task or parent records. A terminal success line is not a submission.",
-        brief.display()
+        "Perform the {mode} assignment in {}. Read that immutable brief with your read tool; {purpose}publish the exact requested result_version with {} using handle {handle} and the identity in that brief. Do not modify task or parent records. A terminal success line is not a submission.",
+        brief.display(),
+        child_tool(&contract.provider, "ovrcr_publish")
     )
 }
 
@@ -2522,8 +2615,15 @@ fn available_models() -> Result<Vec<DelegationChoice>> {
 }
 
 fn available_model(contract: &ResearchContract) -> Result<()> {
-    if !available_models()?.iter().any(|choice| {
-        choice.model_provider == contract.model_provider && choice.model == contract.model
+    let inventory = match contract.provider.as_str() {
+        "pi" => available_models()?,
+        "codex" if contract.model_provider == "openai" => crate::codex_delegation::models()?,
+        _ => bail!("requested harness/backend is unsupported; no substitute selected"),
+    };
+    if !inventory.iter().any(|choice| {
+        choice.provider.name() == contract.provider
+            && choice.model_provider == contract.model_provider
+            && choice.model == contract.model
     }) {
         bail!("requested exact model is unavailable");
     }
@@ -2779,8 +2879,14 @@ mod tests {
             DispatchOperation::InitialInput,
             DispatchOutcome::Accepted,
         );
-        for count in [1, 3] {
+        for (provider, count) in [
+            (AgentProvider::Pi, 1),
+            (AgentProvider::Pi, 3),
+            (AgentProvider::Codex, 1),
+            (AgentProvider::Codex, 3),
+        ] {
             let mut valid = pending.clone();
+            valid.binding.as_mut().unwrap().provider = provider;
             valid.execution_attempts = Some(count);
             valid.identity.attempt = 2;
             valid.previous_request = Some("prior-request".into());
@@ -2865,7 +2971,7 @@ mod tests {
                         .unwrap()
                         .result_version = 2
                 }
-                "foreign provider" => bad.binding.as_mut().unwrap().provider = AgentProvider::Codex,
+                "foreign provider" => bad.binding.as_mut().unwrap().provider = AgentProvider::Grok,
                 "replacement generation" => bad.binding.as_mut().unwrap().generation = 2,
                 "zero generation" => bad.binding.as_mut().unwrap().generation = 0,
                 "zero count" => bad.execution_attempts = Some(0),

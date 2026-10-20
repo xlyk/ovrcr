@@ -45,6 +45,27 @@ fn send(s: &mut UnixStream, request: Request) -> Response {
     }
     response
 }
+fn admission_failure(index: usize, phase: &str, response: &Response) -> ! {
+    let (variant, detail) = match response {
+        Response::Error {
+            code: ErrorCode::Conflict,
+            message,
+        } if message == "dispatcher queue is full" => {
+            ("Error", "Conflict: dispatcher queue is full")
+        }
+        Response::Error { .. } => ("Error", "other refusal"),
+        Response::AgentOperation(AgentOperationResult::Reserved(_)) => {
+            ("AgentOperation::Reserved", "unexpected")
+        }
+        Response::AgentOperation(AgentOperationResult::Bound(_)) => {
+            ("AgentOperation::Bound", "unexpected")
+        }
+        Response::AgentOperation(_) => ("AgentOperation::Other", "unexpected"),
+        Response::Ok => ("Ok", "unexpected"),
+        _ => ("OtherResponse", "unexpected"),
+    };
+    panic!("reporter admission index={index} phase={phase} response={variant} detail={detail}");
+}
 /// A live server on a test thread, with fifty sessions' worth of project and
 /// workspace already registered.
 struct Fixture(Live);
@@ -394,78 +415,84 @@ fn fifty_session_reporting_capacity() {
         full.0.saturating_sub(baseline.0) < 3 * 1024 * 1024,
         "RSS budget before load"
     );
+    let mut admitted = Vec::new();
+    for (index, ((session, capability), helper)) in identities.into_iter().zip(helpers).enumerate()
+    {
+        let usage = ready[index].take().unwrap().usage;
+        let mut s = connect(&fixture.socket);
+        let response = send(
+            &mut s,
+            Request::ReserveAgent(ReserveAgent {
+                pi_resume: None,
+                session,
+                capability: AgentSecret(capability),
+                operation: "reserve".into(),
+                expected_epoch: 0,
+                invocation: format!("inv-{index}"),
+                provider: AgentProvider::Claude,
+            }),
+        );
+        let Response::AgentOperation(AgentOperationResult::Reserved(reservation)) = response else {
+            admission_failure(index, "Reserve", &response);
+        };
+        let auth = SupervisorAuth {
+            session,
+            lease: reservation.lease,
+        };
+        let mut owner = connect(&fixture.socket);
+        let response = send(&mut owner, Request::SupervisorHello(auth.clone()));
+        if response != Response::Ok {
+            admission_failure(index, "Hello", &response);
+        }
+        s = connect(&fixture.socket);
+        let binding = match send(
+            &mut s,
+            Request::Supervisor(SupervisorRequest {
+                auth: auth.clone(),
+                operation: "bind".into(),
+                command: AgentCommand::Bind {
+                    expected_binding: None,
+                    conversation: format!("root-{index}"),
+                },
+            }),
+        ) {
+            Response::AgentOperation(AgentOperationResult::Bound(binding)) => binding,
+            Response::Error { code, message } => {
+                let reason = match message.as_str() {
+                    "dispatcher queue is full" => "dispatcher_full",
+                    "dispatcher is unavailable" => "dispatcher_unavailable",
+                    "session not found" => "session_not_found",
+                    "agent session is unavailable" => "session_unavailable",
+                    "supervisor lease is stale or invalid" => "stale_lease",
+                    "agent binding changed" => "binding_changed",
+                    "wrong supervisor session" => "wrong_session",
+                    "operation ID was reused with different arguments" => "operation_reused",
+                    "binding generation exhausted" => "generation_exhausted",
+                    "missing reservation" => "missing_reservation",
+                    _ => "unclassified",
+                };
+                panic!(
+                    "[capacity-bind] index={index} response=Error code={code:?} reason={reason}"
+                );
+            }
+            Response::AgentOperation(result) => panic!(
+                "[capacity-bind] index={index} response=AgentOperation operation={:?}",
+                std::mem::discriminant(&result)
+            ),
+            response => panic!(
+                "[capacity-bind] index={index} response={:?}",
+                std::mem::discriminant(&response)
+            ),
+        };
+        admitted.push((
+            index, session, capability, helper, usage, auth, owner, binding, s,
+        ));
+    }
+    assert_eq!(admitted.len(), 50);
     let start = Instant::now() + Duration::from_secs(2);
     let mut workers = Vec::new();
-    for (index, ((session, capability), mut helper)) in
-        identities.into_iter().zip(helpers).enumerate()
-    {
-        let socket = fixture.socket.clone();
-        let usage = ready[index].take().unwrap().usage;
+    for (index, session, capability, mut helper, usage, auth, owner, binding, mut s) in admitted {
         workers.push(thread::spawn(move || {
-            let mut s = connect(&socket);
-            let Response::AgentOperation(AgentOperationResult::Reserved(reservation)) = send(
-                &mut s,
-                Request::ReserveAgent(ReserveAgent {
-                    pi_resume: None,
-                    session,
-                    capability: AgentSecret(capability),
-                    operation: "reserve".into(),
-                    expected_epoch: 0,
-                    invocation: format!("inv-{index}"),
-                    provider: AgentProvider::Claude,
-                }),
-            ) else {
-                panic!("reserve");
-            };
-            let auth = SupervisorAuth {
-                session,
-                lease: reservation.lease,
-            };
-            let mut owner = connect(&socket);
-            assert_eq!(
-                send(&mut owner, Request::SupervisorHello(auth.clone())),
-                Response::Ok
-            );
-            s = connect(&socket);
-            let binding = match send(
-                &mut s,
-                Request::Supervisor(SupervisorRequest {
-                    auth: auth.clone(),
-                    operation: "bind".into(),
-                    command: AgentCommand::Bind {
-                        expected_binding: None,
-                        conversation: format!("root-{index}"),
-                    },
-                }),
-            ) {
-                Response::AgentOperation(AgentOperationResult::Bound(binding)) => binding,
-                Response::Error { code, message } => {
-                    let reason = match message.as_str() {
-                        "dispatcher queue is full" => "dispatcher_full",
-                        "dispatcher is unavailable" => "dispatcher_unavailable",
-                        "session not found" => "session_not_found",
-                        "agent session is unavailable" => "session_unavailable",
-                        "supervisor lease is stale or invalid" => "stale_lease",
-                        "agent binding changed" => "binding_changed",
-                        "wrong supervisor session" => "wrong_session",
-                        "operation ID was reused with different arguments" => "operation_reused",
-                        "binding generation exhausted" => "generation_exhausted",
-                        "missing reservation" => "missing_reservation",
-                        _ => "unclassified",
-                    };
-                    panic!(
-                        "[capacity-bind] index={index} response=Error code={code:?} reason={reason}"
-                    );
-                }
-                Response::AgentOperation(result) => panic!(
-                    "[capacity-bind] index={index} response=AgentOperation operation={:?}",
-                    std::mem::discriminant(&result)
-                ),
-                response => panic!(
-                    "[capacity-bind] index={index} response={:?}",
-                    std::mem::discriminant(&response)
-                ),
-            };
             let mut max_late = 0;
             for tick in 1..=600 {
                 let scheduled = start + Duration::from_millis((tick - 1) * 100);
