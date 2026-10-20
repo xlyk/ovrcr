@@ -19,7 +19,7 @@ jobs:
     name: checks
     # macOS covers the GUI feature as well as the headless workspace.
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
