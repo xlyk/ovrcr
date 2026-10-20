@@ -50,6 +50,51 @@ fn accept(f: &RecoveryFixture, source: &AssignmentSnapshot) -> AssignmentSnapsho
 fn selection(source: &AssignmentSnapshot) -> Value {
     json!({"target":source.coding_target.as_ref().unwrap(),"acceptance":source.acceptance_ref.as_ref().unwrap(),"reviews":[]})
 }
+// Collect authenticates the typed publication; preserve its Server-enriched target.
+fn published_review_target(reviewer: &AssignmentSnapshot, requested: &Value) -> Value {
+    let report = reviewer
+        .submission
+        .as_ref()
+        .unwrap()
+        .review
+        .as_ref()
+        .unwrap();
+    assert_eq!(report.axis, ReviewAxis::Spec);
+    assert_eq!(report.outcome, ReviewOutcome::Passed);
+    let target = json!(report.target);
+    assert_eq!(target["coding"], requested["coding"]);
+    assert_eq!(target["sources"], requested["sources"]);
+    let view = report
+        .target
+        .view
+        .as_ref()
+        .expect("complete authenticated review view");
+    assert_eq!(view.round, reviewer.identity.request);
+    assert_eq!(
+        view.path.parent(),
+        report.target.coding.candidate.path.parent()
+    );
+    let contract_path = reviewer
+        .brief
+        .parent()
+        .unwrap()
+        .join(format!("contract-v{}.json", reviewer.identity.contract));
+    let contract: Value = serde_json::from_slice(&fs::read(contract_path).unwrap()).unwrap();
+    assert_eq!(contract["review"]["target"], target);
+    assert_eq!(
+        contract["review"]["implementation"],
+        requested["coding"]["assignment"]["request"]
+    );
+    assert_eq!(
+        reviewer.publication.as_ref().unwrap().identity.assignment,
+        reviewer.identity
+    );
+    assert_ne!(
+        reviewer.identity.session,
+        report.target.coding.assignment.session
+    );
+    target
+}
 fn release(f: &RecoveryFixture) {
     fs::write(f.live.root.path().join("allow-result"), "1").unwrap();
 }
@@ -405,14 +450,28 @@ fn public_dependencies_authenticate_exact_independent_review_and_refuse_inherite
     assert_eq!(blocked["dispatch"], "Refused");
     assert_eq!(f.child_count(), 1);
     let target = json!({"coding":a.coding_target,"sources":[source.clone()]});
-    let reviewer:AssignmentSnapshot=serde_json::from_value(f.tool("ovrcr_start",json!({"project":PROJECT,"workspace":f.workspace,"scope":"DEPENDENCY_FIXTURE\n{}","model_provider":"test","model":"fixture-model","acceptance_evidence":["exact independent spec review"],"review":{"implementation":a.handle,"axis":"Spec","target":target,"source_documents":[{"source":source,"content":"actual fixture spec"}]}}))).unwrap();
+    let reviewer_start = f.tool("ovrcr_start",json!({"project":PROJECT,"workspace":f.workspace,"scope":"DEPENDENCY_FIXTURE\n{}","model_provider":"test","model":"fixture-model","acceptance_evidence":["exact independent spec review"],"review":{"implementation":a.handle,"axis":"Spec","target":target,"source_documents":[{"source":source,"content":"actual fixture spec"}]}}));
+    eprintln!("DEPENDENCY_REVIEW_DISPATCH case=write-scope stage=reviewer reply={reviewer_start}");
+    assert_eq!(
+        reviewer_start["dispatch"], "Applied",
+        "reviewer must start before dependent admission: {reviewer_start}"
+    );
+    let reviewer: AssignmentSnapshot = serde_json::from_value(reviewer_start).unwrap();
     let reviewer = collect(&f, &reviewer);
+    let target = published_review_target(&reviewer, &target);
     assert_ne!(reviewer.identity.session, a.identity.session);
     let review = json!({"axis":"Spec","target":target,"reviewer":reviewer.identity,"publication":reviewer.publication.as_ref().unwrap().identity});
     graph["edges"][0]["selected"]["reviews"] = json!([review]);
     configure(&f, 2, &graph);
-    let b: AssignmentSnapshot =
-        serde_json::from_value(f.tool("ovrcr_start", json!({"handle":"request-b"}))).unwrap();
+    let dependent_start = f.tool("ovrcr_start", json!({"handle":"request-b"}));
+    eprintln!(
+        "DEPENDENCY_REVIEW_DISPATCH case=write-scope stage=dependent reply={dependent_start}"
+    );
+    assert_eq!(
+        dependent_start["dispatch"], "Applied",
+        "exact independent review must admit dependent before checking inherited write scope: {dependent_start}"
+    );
+    let b: AssignmentSnapshot = serde_json::from_value(dependent_start).unwrap();
     assert_eq!(b.dispatch, DispatchStatus::Applied);
     wait_file(&b.brief.with_extension("json.published"));
     let publication: Value =
@@ -1272,14 +1331,28 @@ fn public_dependency_rejects_foreign_stale_wrong_axis_and_changed_immutable_revi
     let a = accept(&f, &collect(&f, &a));
     let source = json!({"kind":"Spec","reference":"fixture:spec","digest":"b8d21caa27bc9cca1b5087d6d9b4e2e89afa68375aaa4d318fac1e28316ac7e5"});
     let target = json!({"coding":a.coding_target,"sources":[source.clone()]});
-    let reviewer:AssignmentSnapshot = serde_json::from_value(f.tool("ovrcr_start", json!({"project":PROJECT,"workspace":f.workspace,"scope":"DEPENDENCY_FIXTURE\n{}","model_provider":"test","model":"fixture-model","acceptance_evidence":["exact independent spec review"],"review":{"implementation":a.handle,"axis":"Spec","target":target,"source_documents":[{"source":source,"content":"actual fixture spec"}]}}))).unwrap();
+    let reviewer_start = f.tool("ovrcr_start", json!({"project":PROJECT,"workspace":f.workspace,"scope":"DEPENDENCY_FIXTURE\n{}","model_provider":"test","model":"fixture-model","acceptance_evidence":["exact independent spec review"],"review":{"implementation":a.handle,"axis":"Spec","target":target,"source_documents":[{"source":source,"content":"actual fixture spec"}]}}));
+    eprintln!(
+        "DEPENDENCY_REVIEW_DISPATCH case=source-attacks stage=reviewer reply={reviewer_start}"
+    );
+    assert_eq!(
+        reviewer_start["dispatch"], "Applied",
+        "reviewer must start before dependent admission: {reviewer_start}"
+    );
+    let reviewer: AssignmentSnapshot = serde_json::from_value(reviewer_start).unwrap();
     let reviewer = collect(&f, &reviewer);
+    let target = published_review_target(&reviewer, &target);
     let stale_review = json!({"axis":"Spec","target":target,"reviewer":reviewer.identity,"publication":reviewer.publication.as_ref().unwrap().identity});
     // A real authenticated second publication makes the original exact evidence stale.
     let continued: AssignmentSnapshot =
         serde_json::from_value(super::followups::followup(&f, &reviewer, None)).unwrap();
     assert_eq!(continued.result_version, reviewer.result_version + 1);
     let reviewer = collect(&f, &continued);
+    let continued_target = published_review_target(&reviewer, &target);
+    assert_eq!(
+        continued_target, target,
+        "same-contract reviewer follow-up keeps the exact original readable target"
+    );
     assert_eq!(reviewer.publication.as_ref().unwrap().identity.version, 2);
     let review = json!({"axis":"Spec","target":target,"reviewer":reviewer.identity,"publication":reviewer.publication.as_ref().unwrap().identity});
     graph["edges"][0]["required_reviews"] = json!([{"axis":"Spec","sources":[source]}]);
@@ -1295,6 +1368,7 @@ fn public_dependency_rejects_foreign_stale_wrong_axis_and_changed_immutable_revi
         "wrong-axis",
         "wrong-source",
         "changed-source-bytes",
+        "missing-view",
     ] {
         let mut bad = valid.clone();
         match attack {
@@ -1310,6 +1384,9 @@ fn public_dependency_rejects_foreign_stale_wrong_axis_and_changed_immutable_revi
             "wrong-source" => {
                 bad["edges"][0]["required_reviews"][0]["sources"][0]["digest"] =
                     json!("0".repeat(64))
+            }
+            "missing-view" => {
+                bad["edges"][0]["selected"]["reviews"][0]["target"]["view"] = Value::Null
             }
             "changed-source-bytes" => {
                 let mut changed: Value = serde_json::from_slice(&contract_bytes).unwrap();
@@ -1341,7 +1418,15 @@ fn public_dependency_rejects_foreign_stale_wrong_axis_and_changed_immutable_revi
         assert!(!f.live.workspace_root.join("dependency-b").exists());
     }
     configure(&f, version, &valid);
-    let b: AssignmentSnapshot = serde_json::from_value(f.recover("request-b")).unwrap();
+    let dependent_start = f.recover("request-b");
+    eprintln!(
+        "DEPENDENCY_REVIEW_DISPATCH case=source-attacks stage=dependent reply={dependent_start}"
+    );
+    assert_eq!(
+        dependent_start["dispatch"], "Applied",
+        "restored exact independent review must admit dependent: {dependent_start}"
+    );
+    let b: AssignmentSnapshot = serde_json::from_value(dependent_start).unwrap();
     assert_eq!(b.dispatch, DispatchStatus::Applied);
     let _ = accept(&f, &collect(&f, &b));
     assert_eq!(f.child_count(), 3);
