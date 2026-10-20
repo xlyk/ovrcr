@@ -673,18 +673,63 @@ fn public_review_refuses_missing_base_and_corrupt_complete_snapshot_without_reca
 
 #[test]
 fn public_review_capacity_refusal_retries_one_fresh_seat_without_duplicate_team() {
+    capacity_review_retry(true);
+}
+
+#[test]
+fn public_review_direct_capacity_retry_preserves_original_readable_view_and_round() {
+    capacity_review_retry(false);
+}
+
+fn capacity_review_retry(declared_policy: bool) {
     let fixture = super::followups::OwnedFollowup::new();
-    let initial = worker(&fixture, "REPAIR");
-    let current = declared(&fixture, &initial, false, None);
-    let selected: AssignmentSnapshot = serde_json::from_value(review(
-        &fixture,
-        &current,
-        ReviewOperation::Assignment {
+    if !declared_policy {
+        fs::write(
+            fixture.live.repo.join("review-context.txt"),
+            "original unchanged caller\n",
+        )
+        .unwrap();
+        live::git(&fixture.live.repo, &["add", "review-context.txt"]);
+        live::git(
+            &fixture.live.repo,
+            &["commit", "-m", "direct review context"],
+        );
+    }
+    let initial = worker(&fixture, if declared_policy { "REPAIR" } else { "CLEAN" });
+    let (current, original_assignment, review_scope) = if declared_policy {
+        let current = declared(&fixture, &initial, false, None);
+        let selected: AssignmentSnapshot = serde_json::from_value(review(
+            &fixture,
+            &current,
+            ReviewOperation::Assignment {
+                axis: ReviewAxis::Spec,
+            },
+        ))
+        .unwrap();
+        (
+            current,
+            selected.review_assignment.unwrap(),
+            selected.review_scope.unwrap(),
+        )
+    } else {
+        let document = sources().pop().unwrap();
+        let assignment = ReviewAssignment {
+            implementation: initial.handle.clone(),
             axis: ReviewAxis::Spec,
-        },
-    ))
-    .unwrap();
-    let original_assignment = selected.review_assignment.unwrap();
+            target: ReviewTarget {
+                coding: target(&fixture, &initial),
+                sources: vec![document.source.clone()],
+                view: None,
+            },
+            source_documents: vec![document],
+            context_paths: vec!["review-context.txt".into()],
+        };
+        (
+            initial.clone(),
+            assignment,
+            "Direct read-only review needs no declared stages".into(),
+        )
+    };
     let set_limit = |limit: &str| {
         let output = fixture
             .live
@@ -736,7 +781,7 @@ fn public_review_capacity_refusal_retries_one_fresh_seat_without_duplicate_team(
     assert_eq!(occupied.live_children, baseline.live_children);
     assert_eq!(occupied.available_slots, 0);
     let refused: AssignmentSnapshot = serde_json::from_value(fixture.tool("ovrcr_start",serde_json::json!({
-        "project":PROJECT,"workspace":fixture.workspace,"scope":selected.review_scope,"review":original_assignment,
+        "project":PROJECT,"workspace":fixture.workspace,"scope":review_scope,"review":original_assignment,
         "model_provider":"test","model":"fixture-model","acceptance_evidence":["typed independent report"],
         "required_limits":{"min_free_slots_after_launch":headroom}
     }))).unwrap();
@@ -749,6 +794,53 @@ fn public_review_capacity_refusal_retries_one_fresh_seat_without_duplicate_team(
     let original_contract_bytes = fs::read(&original_contract_path).unwrap();
     let original_contract: ResearchContract =
         serde_json::from_slice(&original_contract_bytes).unwrap();
+    let original_view = original_contract
+        .review
+        .as_ref()
+        .unwrap()
+        .target
+        .view
+        .as_ref()
+        .unwrap()
+        .clone();
+    let original_view_bytes = fs::read(&original_view.path).unwrap();
+    let manifest: serde_json::Value = serde_json::from_slice(&original_view_bytes).unwrap();
+    let mut original_images = std::collections::BTreeMap::new();
+    for file in manifest["files"].as_array().unwrap() {
+        for side in ["before", "after"] {
+            if let Some(path) = file[side]["path"].as_str() {
+                original_images.insert(std::path::PathBuf::from(path), fs::read(path).unwrap());
+            }
+        }
+    }
+    if !declared_policy {
+        assert_eq!(original_view.round, refused.handle);
+        assert!(
+            current.review.is_none(),
+            "direct review adds no declared policy"
+        );
+        fs::write(
+            fixture.live.repo.join("review-context.txt"),
+            "moving HEAD must not replace original context\n",
+        )
+        .unwrap();
+        live::git(&fixture.live.repo, &["add", "review-context.txt"]);
+        live::git(
+            &fixture.live.repo,
+            &["commit", "-m", "move context after refusal"],
+        );
+        fs::write(
+            current
+                .resources
+                .coding
+                .as_ref()
+                .unwrap()
+                .path
+                .join("calc.cjs"),
+            "mutable checkout must not become retry evidence\n",
+        )
+        .unwrap();
+    }
     assert_eq!(original_contract.limits, occupied.effective_limits);
     assert_eq!(original_contract.limits.max_live_children, Some(3));
     assert_eq!(
@@ -769,10 +861,17 @@ fn public_review_capacity_refusal_retries_one_fresh_seat_without_duplicate_team(
     assert_eq!(restored.live_children, baseline.live_children);
     assert_eq!(restored.effective_limits, original_contract.limits);
     assert_eq!(restored.available_slots, 1);
-    let retry: AssignmentSnapshot = serde_json::from_value(
-        fixture.tool("ovrcr_retry", serde_json::json!({"handle":refused.handle})),
-    )
-    .unwrap();
+    let retry_result = fixture.tool("ovrcr_retry", serde_json::json!({"handle":refused.handle}));
+    eprintln!(
+        "DIRECT_REVIEW_CAPACITY_RETRY declared={declared_policy} original_view={original_view:?} result={retry_result}"
+    );
+    if !declared_policy {
+        assert_eq!(
+            retry_result["dispatch"], "Applied",
+            "direct capacity retry must preserve the original authenticated view and exact contract: {retry_result}"
+        );
+    }
+    let retry: AssignmentSnapshot = serde_json::from_value(retry_result).unwrap();
     assert_eq!(retry.dispatch, DispatchStatus::Applied, "{retry:?}");
     assert_eq!(retry.identity.attempt, 2);
     assert_eq!(retry.identity.task, refused.identity.task);
@@ -787,20 +886,31 @@ fn public_review_capacity_refusal_retries_one_fresh_seat_without_duplicate_team(
         original_contract_bytes
     );
     let retry = super::followups::complete(&fixture, &retry);
-    let result: AssignmentSnapshot = serde_json::from_value(review(
-        &fixture,
-        &current,
-        ReviewOperation::Collect {
-            axis: ReviewAxis::Spec,
-            reviewer: retry.handle.clone(),
-        },
-    ))
-    .unwrap();
-    assert_eq!(result.review.as_ref().unwrap().evidence.len(), 1);
-    assert_eq!(
-        result.review.as_ref().unwrap().evidence[0].reviewer,
-        retry.identity
-    );
+    if declared_policy {
+        let result: AssignmentSnapshot = serde_json::from_value(review(
+            &fixture,
+            &current,
+            ReviewOperation::Collect {
+                axis: ReviewAxis::Spec,
+                reviewer: retry.handle.clone(),
+            },
+        ))
+        .unwrap();
+        assert_eq!(result.review.as_ref().unwrap().evidence.len(), 1);
+        assert_eq!(
+            result.review.as_ref().unwrap().evidence[0].reviewer,
+            retry.identity
+        );
+    } else {
+        let result = publication_snapshot(&fixture, &retry);
+        let report = result.submission.as_ref().unwrap().review.as_ref().unwrap();
+        assert_eq!(report.outcome, ReviewOutcome::Passed);
+        assert_eq!(report.target.view, Some(original_view.clone()));
+        assert_eq!(fs::read(&original_view.path).unwrap(), original_view_bytes);
+        for (path, bytes) in &original_images {
+            assert_eq!(fs::read(path).unwrap(), *bytes);
+        }
+    }
     let again: AssignmentSnapshot = serde_json::from_value(
         fixture.tool("ovrcr_retry", serde_json::json!({"handle":refused.handle})),
     )
@@ -811,12 +921,127 @@ fn public_review_capacity_refusal_retries_one_fresh_seat_without_duplicate_team(
         2,
         "the original capacity refusal never created a native reviewer context"
     );
-    let duplicate = fixture.tool("ovrcr_start",serde_json::json!({
-        "project":PROJECT,"workspace":fixture.workspace,"scope":selected.review_scope,"review":original_assignment,
-        "model_provider":"test","model":"fixture-model","acceptance_evidence":["typed independent report"],
-        "required_limits":{"min_free_slots_after_launch":headroom}
-    }));
-    assert_eq!(duplicate["dispatch"], "Refused");
+    if declared_policy {
+        let duplicate = fixture.tool("ovrcr_start",serde_json::json!({
+            "project":PROJECT,"workspace":fixture.workspace,"scope":review_scope,"review":original_assignment,
+            "model_provider":"test","model":"fixture-model","acceptance_evidence":["typed independent report"],
+            "required_limits":{"min_free_slots_after_launch":headroom}
+        }));
+        assert_eq!(duplicate["dispatch"], "Refused");
+    } else {
+        let private_files = || -> std::collections::BTreeSet<_> {
+            fs::read_dir(original_view.path.parent().unwrap())
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect()
+        };
+        let metadata = || {
+            let db = rusqlite::Connection::open_with_flags(
+                fixture.live.config.join("registry.sqlite3"),
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )
+            .unwrap();
+            db.prepare("SELECT handle,metadata FROM delegations ORDER BY handle")
+                .unwrap()
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+        let before_files = private_files();
+        let before_metadata = metadata();
+        let DelegationRequest::Prepare { auth, .. } =
+            fixture.proxy.original(DispatchOperation::Prepare)
+        else {
+            unreachable!()
+        };
+        for damage in [
+            "scope",
+            "source",
+            "foreign-task",
+            "live-context",
+            "foreign-view",
+        ] {
+            let mut changed = original_contract.clone();
+            changed.request = format!("invalid-direct-retry-{damage}");
+            changed.previous_request = Some(refused.handle.clone());
+            match damage {
+                "scope" => changed.scope.push_str(" different logical task"),
+                "source" => {
+                    let assignment = changed.review.as_mut().unwrap();
+                    assignment.source_documents[0]
+                        .content
+                        .push_str(" changed originating source");
+                    let document = &mut assignment.source_documents[0];
+                    document.source.digest = digest(document.content.as_bytes());
+                    assignment.target.sources = vec![document.source.clone()];
+                }
+                "foreign-task" => changed.previous_request = Some(current.handle.clone()),
+                "live-context" => changed.previous_request = Some(retry.handle.clone()),
+                "foreign-view" => {
+                    changed
+                        .review
+                        .as_mut()
+                        .unwrap()
+                        .target
+                        .view
+                        .as_mut()
+                        .unwrap()
+                        .digest = "0".repeat(64)
+                }
+                _ => unreachable!(),
+            }
+            let response =
+                fixture
+                    .live
+                    .request(Request::Delegation(Box::new(DelegationRequest::Prepare {
+                        auth: auth.clone(),
+                        contract: changed,
+                    })));
+            assert!(
+                matches!(response, Response::Error { .. }),
+                "{damage}: {response:?}"
+            );
+            assert_eq!(
+                private_files(),
+                before_files,
+                "{damage} cannot publish a replacement view"
+            );
+            assert_eq!(
+                metadata(),
+                before_metadata,
+                "{damage} cannot register or rewrite an assignment"
+            );
+            assert_eq!(fixture.child_count(), 2);
+        }
+        let image = manifest["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|file| file["kind"] == "candidate" && file["path"] == "calc.cjs")
+            .unwrap()["after"]["path"]
+            .as_str()
+            .unwrap();
+        let mut tampered = fs::read(image).unwrap();
+        tampered.extend_from_slice(b"// changed original direct review view\n");
+        fs::write(image, tampered).unwrap();
+        let rejected = fixture.tool("ovrcr_retry", serde_json::json!({"handle":refused.handle}));
+        assert_eq!(rejected["dispatch"], "Refused", "{rejected}");
+        assert_eq!(private_files(), before_files);
+        assert_eq!(metadata(), before_metadata);
+        assert_eq!(fixture.child_count(), 2);
+        fs::write(
+            image,
+            original_images.get(std::path::Path::new(image)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(fs::read(&original_view.path).unwrap(), original_view_bytes);
+        for (path, bytes) in &original_images {
+            assert_eq!(fs::read(path).unwrap(), *bytes);
+        }
+    }
     assert_eq!(fixture.child_count(), 2);
     assert_eq!(
         fixture.reconcile(&initial.handle).identity,
@@ -2349,11 +2574,40 @@ fn public_review_necessary_line_beyond_installed_read_limit_blocks_without_trunc
         context_paths: vec!["necessary-long-line".into()],
     };
     let candidate = fs::read(&assignment.target.coding.candidate.path).unwrap();
-    let before: std::collections::BTreeSet<_> =
+    // Directory::write uses exactly .<64 lower hex> while atomically replacing
+    // observation checkpoints. Its concurrent scratch lifetime is not a publication.
+    let publication_name = |name: &std::ffi::OsStr| {
+        !name.to_str().is_some_and(|name| {
+            name.len() == 65
+                && name.starts_with('.')
+                && name.as_bytes()[1..]
+                    .iter()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+        })
+    };
+    assert!(!publication_name(std::ffi::OsStr::new(&format!(
+        ".{}",
+        "a0".repeat(32)
+    ))));
+    for retained in [
+        format!(".{}", "A0".repeat(32)),
+        format!(".{}", "g0".repeat(32)),
+        format!(".{}", "a".repeat(63)),
+        format!(".{}", "a".repeat(65)),
+        "a".repeat(64),
+        ".private-publication".into(),
+        "review-view-round-spec.json".into(),
+    ] {
+        assert!(publication_name(std::ffi::OsStr::new(&retained)));
+    }
+    let publications = || -> std::collections::BTreeSet<_> {
         fs::read_dir(assignment.target.coding.candidate.path.parent().unwrap())
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
-            .collect();
+            .filter(|name| publication_name(name))
+            .collect()
+    };
+    let before = publications();
     let result = fixture.tool("ovrcr_start",serde_json::json!({"project":PROJECT,"workspace":fixture.workspace,"scope":"Read every byte of the necessary context", "review":assignment,"model_provider":"test","model":"fixture-model","acceptance_evidence":["complete ordinary readonly representation"]}));
     assert_eq!(result["dispatch"], "Refused", "{result}");
     let reason = result["reason"].as_str().unwrap();
@@ -2362,11 +2616,7 @@ fn public_review_necessary_line_beyond_installed_read_limit_blocks_without_trunc
         "{result}"
     );
     assert_eq!(fixture.child_count(), 1);
-    let after: std::collections::BTreeSet<_> =
-        fs::read_dir(assignment.target.coding.candidate.path.parent().unwrap())
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .collect();
+    let after = publications();
     assert_eq!(
         after, before,
         "unsupported context must not publish partial views"
@@ -2394,11 +2644,7 @@ fn public_review_necessary_line_beyond_installed_read_limit_blocks_without_trunc
         "{result}"
     );
     assert_eq!(fixture.child_count(), 1);
-    let after_source: std::collections::BTreeSet<_> =
-        fs::read_dir(assignment.target.coding.candidate.path.parent().unwrap())
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .collect();
+    let after_source = publications();
     assert_eq!(
         after_source, before,
         "unreadable source must not publish views"
@@ -2416,11 +2662,7 @@ fn public_review_necessary_line_beyond_installed_read_limit_blocks_without_trunc
             "{result}"
         );
         assert_eq!(fixture.child_count(), 1);
-        let after: std::collections::BTreeSet<_> =
-            fs::read_dir(assignment.target.coding.candidate.path.parent().unwrap())
-                .unwrap()
-                .map(|entry| entry.unwrap().file_name())
-                .collect();
+        let after = publications();
         assert_eq!(after, before, "unsupported context must not publish views");
     }
 }
@@ -2541,6 +2783,102 @@ fn public_review_publication_refuses_exact_passed_report_after_initial_input_vie
     );
     assert_eq!(fs::read(&current.result_path).unwrap(), original_submission);
     assert_eq!(fixture.child_count(), 2);
+}
+
+#[test]
+fn public_review_exact_accepted_receipt_replays_after_later_view_tamper() {
+    let fixture = super::followups::OwnedFollowup::new();
+    let initial = worker(&fixture, "CLEAN");
+    let current = declared(&fixture, &initial, false, None);
+    let reviewer = axis(&fixture, &current, ReviewAxis::Spec);
+    let current = fixture.reconcile(&current.handle);
+    let published = publication_snapshot(&fixture, &current);
+    let args = serde_json::json!({
+        "handle":current.handle,"identity":current.identity,"result_version":current.result_version,
+        "result_digest":published.publication.as_ref().unwrap().identity.digest,
+        "expected_control_epoch":current.control.epoch
+    });
+    let accepted: AssignmentSnapshot =
+        serde_json::from_value(fixture.tool("ovrcr_accept", args.clone())).unwrap();
+    assert_eq!(accepted.dispatch, DispatchStatus::Applied, "{accepted:?}");
+    let receipt = accepted
+        .acceptance_ref
+        .clone()
+        .expect("original acceptance committed");
+    let receipt_bytes = fs::read(&receipt.path).unwrap();
+    let reference = &accepted.review.as_ref().unwrap().evidence[0];
+    let view = reference.target.view.as_ref().unwrap();
+    let manifest_bytes = fs::read(&view.path).unwrap();
+    let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
+    let image = manifest["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["kind"] == "candidate" && file["path"] == "calc.cjs")
+        .unwrap()["after"]["path"]
+        .as_str()
+        .unwrap();
+    let image_bytes = fs::read(image).unwrap();
+    let report_bytes = fs::read(&reviewer.result_path).unwrap();
+    let candidate_bytes = fs::read(&reference.target.coding.candidate.path).unwrap();
+    let metadata = || {
+        let db = rusqlite::Connection::open_with_flags(
+            fixture.live.config.join("registry.sqlite3"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        db.query_row(
+            "SELECT metadata FROM delegations WHERE handle=?1",
+            [&current.handle],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap()
+    };
+    let original_metadata = metadata();
+    let input_count = fixture.input_count(&accepted);
+    let byte_count = fixture.byte_count(&accepted);
+    let mut tampered = image_bytes.clone();
+    tampered.extend_from_slice(b"// private view changed after durable acceptance\n");
+    fs::write(image, &tampered).unwrap();
+    let replay = fixture.tool("ovrcr_accept", args.clone());
+    eprintln!("EXACT_ACCEPTED_RECEIPT_REPLAY original={receipt:?} reply={replay}");
+    assert_eq!(
+        replay["dispatch"], "Applied",
+        "an exact committed receipt replay must not become a first acceptance: {replay}"
+    );
+    let replay: AssignmentSnapshot = serde_json::from_value(replay).unwrap();
+    assert_eq!(replay.acceptance_ref, Some(receipt.clone()));
+    assert_eq!(replay.obligation_revision, accepted.obligation_revision);
+    assert_eq!(metadata(), original_metadata);
+    assert_eq!(fs::read(&receipt.path).unwrap(), receipt_bytes);
+    assert_eq!(fs::read(image).unwrap(), tampered);
+    assert_eq!(fs::read(&view.path).unwrap(), manifest_bytes);
+    assert_eq!(fs::read(&reviewer.result_path).unwrap(), report_bytes);
+    assert_eq!(
+        fs::read(&reference.target.coding.candidate.path).unwrap(),
+        candidate_bytes
+    );
+    assert_eq!(fixture.input_count(&accepted), input_count);
+    assert_eq!(fixture.byte_count(&accepted), byte_count);
+    assert_eq!(fixture.child_count(), 2);
+    // Check request fences with a valid view, so tamper cannot mask their rejection.
+    fs::write(image, &image_bytes).unwrap();
+    for damage in ["target", "identity", "version", "control"] {
+        let mut changed = args.clone();
+        match damage {
+            "target" => changed["result_digest"] = "0".repeat(64).into(),
+            "identity" => changed["identity"]["contract"] = (current.identity.contract + 1).into(),
+            "version" => changed["result_version"] = (current.result_version + 1).into(),
+            "control" => changed["expected_control_epoch"] = (current.control.epoch + 1).into(),
+            _ => unreachable!(),
+        }
+        let rejected = fixture.tool("ovrcr_accept", changed);
+        assert_eq!(rejected["dispatch"], "Refused", "{damage}: {rejected}");
+        assert_eq!(metadata(), original_metadata);
+        assert_eq!(fs::read(&receipt.path).unwrap(), receipt_bytes);
+        assert_eq!(fixture.input_count(&accepted), input_count);
+        assert_eq!(fixture.byte_count(&accepted), byte_count);
+    }
 }
 
 #[test]

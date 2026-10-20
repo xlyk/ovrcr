@@ -40,6 +40,9 @@ The parent's original intent remains unchanged. A repeated Prepare uses the stor
 view and ordinary contract-byte reconciliation, so moving HEAD or the implementation
 checkout never changes that review input. Copy the enriched target from the child
 contract into its typed report.
+An eligible zero-effect capacity retry retains the original direct view and its
+request-bound round through the authenticated retry lineage. It does not prepare
+a new view from the current checkout or change the logical contract.
 
 Context permits 32 explicit files and 256 KiB combined decoded bytes, with no
 recursive directories. It comes only from the original repository and exact pinned
@@ -59,6 +62,11 @@ WebP images, since that tool returns an image notice instead of the complete tex
 The Server checks private ownership/modes, manifest and file digests, exact target,
 sources, context, axis and round before launch/input, publication and collection. A missing,
 tampered, stale or swapped view cannot satisfy Passed review or a dependency edge.
+After acceptance is durable, an exact receipt replay still returns that authenticated
+receipt under the current identity, target, version, control and authority fences.
+Later private-view damage cannot turn that replay into a first acceptance. A first
+acceptance still requires the complete current view; replay grants no new input or
+acceptance authority and does not rewrite the original receipt.
 It prepares Git/content outside the store guard, then publishes bounded immutable
 files under the existing current-workflow guard. A retired parent cannot leave new
 view files or assignments after that preparation. Private-file publication IO

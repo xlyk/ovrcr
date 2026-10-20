@@ -478,6 +478,20 @@ impl ServerState {
                 .view
                 .context("original direct readable view missing")?;
             (view, None)
+        } else if let Some(predecessor) = &contract.previous_request {
+            let previous = self.owned_assignment(auth, predecessor)?;
+            let prior = read_contract(&previous)?;
+            let view = prior
+                .review
+                .as_ref()
+                .and_then(|assignment| assignment.target.view.clone())
+                .ok_or_else(|| {
+                    review_error("retry predecessor lacks its original direct readable view")
+                })?;
+            let mut enriched = contract.clone();
+            enriched.review.as_mut().unwrap().target.view = Some(view.clone());
+            self.verify_review_retry(auth, &enriched)?;
+            (view, None)
         } else {
             let assignment = contract.review.as_ref().unwrap();
             let declared = ReviewDeclaration {
@@ -597,11 +611,15 @@ impl ServerState {
         // Accepted direct review contracts have no coordinator ledger dependency.
         // A present policy is always validated and governed; errors never fall back.
         if implementation.review.is_none() {
+            let retry = self.verify_review_retry(auth, contract)?;
+            let origin = retry
+                .as_ref()
+                .map_or(contract.request.as_str(), |(_, origin)| origin.as_str());
             if assignment
                 .target
                 .view
                 .as_ref()
-                .is_none_or(|view| view.round != contract.request)
+                .is_none_or(|view| view.round != origin)
             {
                 return Err(review_error(
                     "direct review view belongs to another immutable assignment",
@@ -663,7 +681,7 @@ impl ServerState {
         for seat in &round.seats {
             if seat.axis == assignment.axis
                 && seat.handle != contract.request
-                && retry.as_ref() != Some(&seat.handle)
+                && retry.as_ref().map(|(previous, _)| previous) != Some(&seat.handle)
             {
                 return Err(review_error(
                     "this candidate/axis already has an original reviewer assignment; reconcile it",
@@ -683,9 +701,10 @@ impl ServerState {
         &self,
         auth: &DelegationAuth,
         contract: &ResearchContract,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<(String, String)>> {
         let original = contract.previous_request.clone();
         let mut previous = original.clone();
+        let mut origin = contract.request.clone();
         let mut count = 0;
         while let Some(handle) = previous {
             count += 1;
@@ -694,23 +713,25 @@ impl ServerState {
             }
             let record = self.owned_assignment(auth, &handle)?;
             let prior = read_contract(&record)?;
+            let mut comparable = contract.clone();
+            comparable.request = prior.request.clone();
+            comparable.previous_request = prior.previous_request.clone();
             if record.dispatch != DispatchStatus::Refused
                 || !record.retryable_capacity_refusal
                 || record.identity.session.is_some()
                 || record.identity.run.is_some()
                 || record.binding.is_some()
                 || record.execution_attempts != Some(0)
-                || prior.review != contract.review
-                || prior.scope != contract.scope
-                || prior.workflow != contract.workflow
+                || comparable != prior
             {
                 return Err(review_error(
                     "only a proven zero-effect capacity refusal preserves a fresh independent reviewer context",
                 ));
             }
+            origin = prior.request.clone();
             previous = prior.previous_request;
         }
-        Ok(original)
+        Ok(original.map(|previous| (previous, origin)))
     }
 
     pub(super) fn validate_review_submission(
