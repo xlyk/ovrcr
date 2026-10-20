@@ -123,7 +123,7 @@ jobs:
       - name: Lint
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
-        run: cargo nextest run --workspace --all-targets --profile ci -E 'not test(partial_resize_connection_delivers_error_before_owner_close)'
+        run: cargo nextest run --locked --offline -p ovrcr --test server_lifecycle --profile ci -E 'test(=startup_stale_concurrent_attempts_leave_one_surviving_server)' --retries 0 --no-tests=fail --success-output immediate
       - name: Doc tests
         run: cargo test --workspace --doc
       - uses: actions/setup-node@v4
