@@ -68,17 +68,3 @@ Load more when crossing boundaries. No bulk loading at startup.
 | Domain vocabulary, architectural decisions | [Domain docs](docs/agents/domain.md) |
 
 Tools: `rg` search; `git` + `gh` GitHub; `op` 1Password.
-
-## Cursor Cloud specific instructions
-
-Linux agents are headless. The GUI feature has no Linux windowing backend;
-match the `linux` job in `.github/workflows/ci.yml` and omit `--all-features`.
-
-- Rust stable, at least the workspace `rust-version` (1.95), plus rustfmt
-  and clippy. The default image may be older.
-- `zsh` is required. Shell integration tests invoke `/bin/zsh`.
-- Node 22 runs `node --test tests/pi_reporting_extension.mjs
-  tests/omp_reporting_extension.mjs tests/pi_delegation_extension.mjs`.
-- `cargo nextest` uses the `ci` profile in `.config/nextest.toml`.
-- Nothing starts on boot. Drive the CLI with an isolated `OVRCR_HOME`
-  and `OVRCR_SOCKET`.
