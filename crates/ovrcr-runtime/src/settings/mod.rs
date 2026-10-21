@@ -422,7 +422,7 @@ impl Loader<'_> {
             }
         }
         for (name, message) in &wrong {
-            let display = format!("{key}.{name}");
+            let display = dotted_child(key, name);
             let line = self.line(&display);
             self.finding_at(display, line, message.clone());
         }
@@ -438,10 +438,7 @@ impl Loader<'_> {
     }
 
     fn line_at_index(&self, key: &str, index: usize) -> Option<u32> {
-        let mut path: Vec<_> = key
-            .split('.')
-            .map(|name| Segment::Key(name.into()))
-            .collect();
+        let mut path = write::parse_path(key)?;
         path.push(Segment::Index(index));
         self.line_path(&path)
     }
@@ -518,11 +515,7 @@ impl Loader<'_> {
     }
 
     fn line(&self, key: &str) -> Option<u32> {
-        let path: Vec<_> = key
-            .split('.')
-            .map(|name| Segment::Key(name.into()))
-            .collect();
-        self.line_path(&path)
+        self.line_path(&write::parse_path(key)?)
     }
 
     /// Line of the last key on `path`, through tables, `[[array]]` tables and
@@ -617,6 +610,12 @@ fn element_message(message: String, expected: &str) -> String {
         return format!("{head}, expected {expected}");
     }
     message
+}
+
+/// `parent.name`, quoting `name` when it is not a bare key so `parse_path` can
+/// round-trip a project such as `my.project`.
+fn dotted_child(parent: &str, name: &str) -> String {
+    format!("{parent}.{}", toml_edit::Key::new(name))
 }
 
 fn line_at(text: &str, offset: usize) -> u32 {
@@ -1073,6 +1072,50 @@ launch_choices = { kept = { kind = \"Terminal\" }, bad = \"nope\" }
             }),
             "a wrong-typed element must not wipe its collection: {:?}",
             report.findings
+        );
+    }
+
+    /// A map key that itself contains a dot is one path step. Splitting the
+    /// finding key on `.` looks up `my` and then `project` and misses the line.
+    #[test]
+    fn quoted_dotted_launch_choice_finding_names_that_line() {
+        let report = read(
+            "\
+# kept
+ready_sound = true
+[launch_choices]
+\"my.project\" = { kind = 7 }
+plain = { kind = \"Terminal\" }
+",
+        );
+        assert_eq!(
+            report.settings.launch_choices.get("plain"),
+            Some(&LaunchChoice::Terminal)
+        );
+        finding("launch_choices.\"my.project\"", 4, "invalid type", &report);
+    }
+
+    /// Unknown fields already walk structured path steps, so a dotted project
+    /// key keeps the field's line. This locks that line while path parsing
+    /// moves to `parse_path`.
+    #[test]
+    fn quoted_dotted_launch_choice_unknown_field_keeps_its_line() {
+        let report = read(
+            "\
+[launch_choices.\"my.project\"]
+kind = \"Terminal\"
+extra = 1
+",
+        );
+        assert_eq!(
+            report.settings.launch_choices.get("my.project"),
+            Some(&LaunchChoice::Terminal)
+        );
+        finding(
+            "launch_choices.my.project.extra",
+            3,
+            "unknown setting; ignored",
+            &report,
         );
     }
 
