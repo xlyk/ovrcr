@@ -451,7 +451,7 @@ impl ServerState {
             .binding
             .clone()
             .context("archive child has no reporting binding")?;
-        let model = read_contract(&record)?.model;
+        let model = expected_native_model(&record)?;
         let control = record.control.clone();
         hold_before_effect("archive-before-admission", &request.request)?;
         // Shared Session seam uses the existing ordered paired-state checks and

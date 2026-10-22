@@ -476,6 +476,10 @@ function registerDelegation(pi, producer, sourceKey, binary) {
     if (handle !== undefined ? (!identity(handle) || Object.keys(args).some(key => key !== "handle" && key !== "prepare_only")) : required.some(key => typeof args[key] !== "string" || !args[key].trim()) || !Array.isArray(args.acceptance_evidence) || !args.acceptance_evidence.length) {
       return { handle: handle ?? null, dispatch: "Refused", reason: "Provide only handle and optional prepare_only to reconcile, or project, workspace, scope and acceptance_evidence to start" };
     }
+    if (!handle && args.provider === "claude" && (args.coding || args.review)) {
+      return { handle: null, dispatch: "Refused", transport: "NotSent", identity: { session: null, run: null },
+        reason: args.coding ? "Claude coding delegation is not supported" : "Claude independent review delegation is not supported" };
+    }
     const actions = args.coding ? ["read", "write", "edit", "check"] : ["read"];
     if (!handle && args.permitted_actions !== undefined && (!Array.isArray(args.permitted_actions)
         || args.permitted_actions.length !== actions.length

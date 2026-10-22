@@ -2,6 +2,7 @@ mod agent;
 mod agent_setup;
 mod args;
 mod bridge;
+mod claude_delegation;
 mod codex_delegation;
 mod codex_setup;
 mod cursor;
@@ -97,7 +98,7 @@ fn run(cli: Cli) -> AppResult<()> {
         }
         Command::Agent { command } => agent::run(command),
         Command::Delegation => delegation::run(),
-        Command::DelegationPublisher => delegation_publisher::run(),
+        Command::DelegationPublisher { read_handle } => delegation_publisher::run(read_handle),
         Command::Task(args) => {
             ovrcr::task_cli::run_task(args.command, json_output).map_err(RuntimeError::internal)
         }

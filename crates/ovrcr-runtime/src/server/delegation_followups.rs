@@ -538,7 +538,7 @@ impl ServerState {
             &record
                 .root
                 .join(format!("brief-v{}.json", record.result_version)),
-            &record.handle,
+            &record,
             true,
         );
         match session.send_delegated_text(crate::session::DelegatedInput {
@@ -555,7 +555,7 @@ impl ServerState {
                 .binding
                 .as_ref()
                 .context("child assignment not bound")?,
-            model: &contract.model,
+            model: &expected_native_model(&record)?,
             text: &prompt,
         }) {
             Ok(crate::session::DelegatedDelivery::Applied(input)) => {
@@ -705,7 +705,7 @@ impl ServerState {
                 "coding acceptance requires an authenticated child candidate; parent recovery cannot replace it",
             ));
         }
-        let model = contract.model;
+        let model = expected_native_model(&record)?;
         let captured_control = record.control.clone();
         session
             .with_delegated_context(

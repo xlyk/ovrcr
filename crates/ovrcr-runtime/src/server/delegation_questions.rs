@@ -248,7 +248,7 @@ fn check_storage(record: &Record) -> Result<()> {
 pub(super) const QUESTION_INSTRUCTIONS: &str = "Before waiting on a model-originated question, call ovrcr_publish_question with schema 1, this brief's exact identity and result_version, a bounded question_id, question_version 1, supersedes null, kind Clarification or HumanDecision, exact question, context and choices. Only one unanswered current question is supported; same-ID revisions increment question_version and name the exact predecessor reference. Publication does not approve anything. Wait for the scoped answer; never infer approval from silence, a default or a timeout. Native approval/login prompts are separate and may remain unresolved; never publish credential values.";
 
 impl Record {
-    fn current_question(&self) -> Option<&QuestionPublicationIntent> {
+    pub(super) fn current_question(&self) -> Option<&QuestionPublicationIntent> {
         self.questions.iter().rev().find(|q| {
             q.reference.assignment == self.identity
                 && q.reference.result_version == self.result_version
@@ -486,6 +486,15 @@ impl ServerState {
                 "child conversation binding changed",
             ));
         }
+        if contract.provider == "claude" {
+            require_native_publication(
+                record,
+                summary
+                    .agent
+                    .as_ref()
+                    .context("native publisher binding unavailable")?,
+            )?;
+        }
         // Both callers also fence capability, live phase and full binding under
         // the captured Session's state lock at publication. Removal revokes that
         // capability, so a captured Arc cannot publish after retirement.
@@ -571,7 +580,8 @@ impl ServerState {
                 "initial assignment has not been delivered",
             ));
         }
-        child.with_delegation_binding(&auth.capability, &binding, || {
+        child.with_delegation_binding(&auth.capability, &binding, |agent| {
+            require_native_publication(&record, agent)?;
             let prepared = PreparedQuestion::prepare(&question, &record.identity, record.result_version, &binding, &record.questions)?;
             let existing = record.questions.iter().any(|q| q.reference == prepared.intent.reference);
             if let Some(current) = record.current_question() {
@@ -714,7 +724,7 @@ impl ServerState {
         record.require_question(&answer.question)?;
         let parent = self.session_for_control(auth.session)?;
         let child = self.assignment_session(&record)?;
-        let model = read_contract(&record)?.model;
+        let model = expected_native_model(&record)?;
         let child_binding = record.binding.clone().context("child is not bound")?;
         let store = self.retained.lock();
         record = store
@@ -831,7 +841,7 @@ impl ServerState {
                 "immutable answer bytes changed before input",
             ));
         }
-        let prompt = format!(
+        let mut prompt = format!(
             "Read the scoped answer in {} for question {} version {}. It applies only to that exact published question; continue the same assignment and result version. This is not permission to widen scope or answer a native approval/login prompt.",
             record
                 .root
@@ -840,6 +850,22 @@ impl ServerState {
             answer.question.question_id,
             answer.question.question_version
         );
+        if read_contract(&record)?.provider == "claude" {
+            let read = AssignedRead {
+                handle: record.handle.clone(),
+                identity: record.identity.clone(),
+                result_version: record.result_version,
+                control_epoch: answer.control_epoch,
+                target: AssignedReadTarget::Answer {
+                    request: answer.request.clone(),
+                },
+                offset: 0,
+            };
+            prompt.push_str(&format!(
+                " Use ovrcr_read. OVRCR_READ_ARGUMENTS:{} END_OVRCR_READ_ARGUMENTS",
+                serde_json::to_string(&read)?
+            ));
+        }
         record.answer_outcome(
             &answer.request,
             DispatchOutcome::Unknown,

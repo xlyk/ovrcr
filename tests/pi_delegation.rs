@@ -1252,6 +1252,7 @@ impl ControlProxy {
                         ("Archive", archive.request.clone())
                     }
                     DelegationRequest::Interrupt { handle, .. } => ("Interrupt", handle.clone()),
+                    DelegationRequest::Read { read, .. } => ("Read", read.handle.clone()),
                     DelegationRequest::ConfirmInterrupt { handle, .. } => {
                         ("ConfirmInterrupt", handle.clone())
                     }
@@ -1358,6 +1359,10 @@ impl ControlProxy {
                         DispatchOperation::Prepare,
                         DelegationRequest::Prepare { .. }
                     ) | (DispatchOperation::Launch, DelegationRequest::Launch { .. })
+                        | (
+                            DispatchOperation::Followup,
+                            DelegationRequest::Followup { .. }
+                        )
                         | (
                             DispatchOperation::InitialInput,
                             DelegationRequest::SendInitial { .. }
@@ -2750,3 +2755,6 @@ mod observation;
 
 #[path = "pi_delegation/cancellation.rs"]
 mod cancellation;
+
+#[path = "pi_delegation/claude.rs"]
+mod claude;

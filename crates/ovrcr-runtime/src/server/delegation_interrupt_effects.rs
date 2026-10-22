@@ -77,7 +77,7 @@ impl ServerState {
             }
             let parent = self.session_for_control(auth.session)?;
             let child = self.assignment_session(record)?;
-            let model = read_contract(record)?.model;
+            let model = expected_native_model(record)?;
             let binding = record.binding.as_ref().context("assignment is not bound")?;
             child
                 .with_delegated_context(
@@ -172,7 +172,7 @@ impl ServerState {
         }
         let parent = self.session_for_control(auth.session)?;
         let child = self.assignment_session(record)?;
-        let model = read_contract(record)?.model;
+        let model = expected_native_model(record)?;
         let captured = record.control.clone();
         let delivered = child.send_delegated_interrupt(
             &DelegatedInput {
@@ -305,7 +305,7 @@ impl ServerState {
         }
         let child = self.assignment_session(&record)?;
         let parent = self.session_for_control(auth.session)?;
-        let model = read_contract(&record)?.model;
+        let model = expected_native_model(&record)?;
         let captured = record.control.clone();
         child
             .with_delegated_context(

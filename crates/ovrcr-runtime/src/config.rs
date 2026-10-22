@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 19;
+const SCHEMA_VERSION: i64 = 20;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -390,6 +390,10 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
     if schema_identity(&transaction)?.1 < 19 {
         // Older writers discard authenticated readable review-view references.
         transaction.pragma_update(None, "user_version", 19)?;
+    }
+    if schema_identity(&transaction)?.1 < 20 {
+        // Older writers discard native resolved-model/profile/policy authority.
+        transaction.pragma_update(None, "user_version", 20)?;
     }
     transaction.commit().context("commit registry migration")?;
     Ok(connection)
@@ -1107,6 +1111,55 @@ mod tests {
             assert_eq!(
                 std::fs::read(evidence.join(name)).unwrap(),
                 bytes.as_bytes()
+            );
+        }
+    }
+
+    #[test]
+    fn schema_eighteen_upgrade_preserves_native_proof_policy_and_dependency_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("instance");
+        initialize_registry(&config).unwrap();
+        let database = database_path(&config);
+        let connection = Connection::open(&database).unwrap();
+        connection.pragma_update(None, "user_version", 18).unwrap();
+        // Opaque preservation is not validation or proof of native availability.
+        let metadata = r#"{"native_model":{"requested":"alias","resolved":"native-model","profile":"private-profile","binary_digest":"original-binary"},"native_policy":{"recipe":"original-recipe","settings":"original-settings","mcp":"original-mcp"},"dependency_witnesses":[{"digest":"original-input"}],"review":{"base":"original-review-base"},"receipts":[{"outcome":"Unknown"}]}"#;
+        connection
+            .execute(
+                "INSERT INTO delegations(handle,workflow,metadata) VALUES('native','workflow',?1)",
+                [metadata],
+            )
+            .unwrap();
+        let evidence = config.join("workflows/native");
+        std::fs::create_dir_all(&evidence).unwrap();
+        let names = [
+            "claude-settings.json",
+            "claude-mcp.json",
+            "claude-policy.json",
+            "submission-v1.json",
+        ];
+        for name in names {
+            std::fs::write(evidence.join(name), format!("original {name}")).unwrap();
+        }
+        drop(connection);
+        load_registry(&config).unwrap();
+        assert_eq!(schema_version(&database), 18, "offline reads never migrate");
+        initialize_registry(&config).unwrap();
+        assert_eq!(schema_version(&database), SCHEMA_VERSION);
+        let stored: String = Connection::open(&database)
+            .unwrap()
+            .query_row(
+                "SELECT metadata FROM delegations WHERE handle='native'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, metadata);
+        for name in names {
+            assert_eq!(
+                std::fs::read_to_string(evidence.join(name)).unwrap(),
+                format!("original {name}")
             );
         }
     }

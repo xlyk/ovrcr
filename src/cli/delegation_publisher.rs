@@ -1,9 +1,10 @@
-//! Two native-child MCP tools. The Server owns authorization and immutable files.
+//! Native-child publication and optional assigned-Claude reads. The Server owns authorization and immutable files.
 //! Native clients use `ovrcr delegation-publisher` over bounded stdio JSON-RPC.
 use super::{AppResult, RuntimeError};
 use ovrcr::protocol::{
-    AssignmentIdentity, AssignmentQuestion, DelegationAuth, DelegationRequest, PublicationIdentity,
-    PublicationKind, Request, ResearchSubmission, Response, SessionId, client, exchange_preamble,
+    AssignedRead, AssignedReadResult, AssignmentIdentity, AssignmentQuestion, DelegationAuth,
+    DelegationRequest, PublicationIdentity, PublicationKind, Request, ResearchSubmission, Response,
+    SessionId, client, exchange_preamble,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -20,10 +21,12 @@ const MAX_LINE: usize = 524_288;
 const MAX_OUTPUT: usize = 65_536;
 const SUBMISSION: &str = "ovrcr_publish";
 const QUESTION: &str = "ovrcr_publish_question";
+const READ: &str = "ovrcr_read";
 
 struct Authority {
     auth: DelegationAuth,
     socket: PathBuf,
+    read_handle: Option<String>,
 }
 
 impl Authority {
@@ -58,6 +61,7 @@ impl Authority {
                 controller: None,
             },
             socket,
+            read_handle: None,
         })
     }
 }
@@ -94,6 +98,7 @@ struct QuestionArgs {
 }
 
 enum Outcome {
+    Read(AssignedReadResult),
     Published(Box<PublicationIdentity>),
     Refused(&'static str),
     ServerRefused(ovrcr::protocol::ErrorCode),
@@ -102,6 +107,7 @@ enum Outcome {
 
 fn tool_result(outcome: Outcome) -> Value {
     let (failed, value) = match outcome {
+        Outcome::Read(read) => (false, json!({"status":"read","read":read})),
         Outcome::Published(publication) => (
             false,
             json!({"status":"published","publication":publication,
@@ -126,8 +132,13 @@ fn tool_result(outcome: Outcome) -> Value {
 }
 
 fn forward(authority: &Authority, request: DelegationRequest) -> Outcome {
-    let Some(expected) = expected_publication(&request) else {
-        return Outcome::Refused("only serializable child publication is supported");
+    let expected = if matches!(&request, DelegationRequest::Read { .. }) {
+        None
+    } else {
+        let Some(publication) = expected_publication(&request) else {
+            return Outcome::Refused("only typed child operations are supported");
+        };
+        Some(publication)
     };
     // Bounds precede the preamble; no request is sent until that handshake succeeds.
     let Ok(mut stream) = UnixStream::connect(&authority.socket) else {
@@ -140,8 +151,40 @@ fn forward(authority: &Authority, request: DelegationRequest) -> Outcome {
     {
         return Outcome::Refused("managed Server handshake failed; no publication sent");
     }
-    match client::request(&mut stream, 1, Request::Delegation(Box::new(request))) {
-        Ok(response) => response_outcome(&expected, response),
+    match client::request(
+        &mut stream,
+        1,
+        Request::Delegation(Box::new(request.clone())),
+    ) {
+        Ok(response) => match (&request, response) {
+            (DelegationRequest::Read { read, .. }, Response::AssignedRead(result))
+                if result.identity == read.identity
+                    && result.result_version == read.result_version
+                    && result.control_epoch == read.control_epoch
+                    && result.offset == read.offset
+                    && result.next_offset >= result.offset
+                    && result.next_offset <= result.total_bytes
+                    && result.total_bytes <= 512 * 1024
+                    && result.text.len() <= AssignedReadResult::MAX_PAGE_BYTES
+                    && result.text.len() == (result.next_offset - result.offset) as usize =>
+            {
+                Outcome::Read(*result)
+            }
+            (
+                DelegationRequest::Read { .. },
+                Response::Error {
+                    code:
+                        ovrcr::protocol::ErrorCode::Internal
+                        | ovrcr::protocol::ErrorCode::PartialFailure,
+                    ..
+                },
+            ) => Outcome::Unknown,
+            (DelegationRequest::Read { .. }, Response::Error { code, .. }) => {
+                Outcome::ServerRefused(code)
+            }
+            (DelegationRequest::Read { .. }, _) => Outcome::Unknown,
+            (_, response) => response_outcome(&expected.unwrap(), response),
+        },
         Err(_) => Outcome::Unknown,
     }
 }
@@ -306,6 +349,25 @@ fn publication_request(
                 question: args.question,
             })
         }
+        READ => {
+            let read: AssignedRead = serde_json::from_value(call.arguments.clone())
+                .map_err(|_| "invalid assigned read arguments")?;
+            if authority.read_handle.as_deref() != Some(read.handle.as_str())
+                || !valid_handle(&read.handle)
+                || !valid_identity(&read.identity)
+                || read.identity.session != Some(authority.auth.session)
+                || read.result_version == 0
+                || read.control_epoch == 0
+                || read.offset > 512 * 1024
+                || !exact(&call.arguments, &read)
+            {
+                return Err("invalid or foreign assigned read arguments");
+            }
+            Ok(DelegationRequest::Read {
+                auth: authority.auth.clone(),
+                read,
+            })
+        }
         _ => Err("unknown publication tool"),
     }
 }
@@ -345,6 +407,22 @@ fn catalog() -> Value {
         {"name":QUESTION,"description":"Publish this child's exact model-originated question before waiting. Native login/approval prompts are separate; never include credentials. Publication grants no approval.",
          "inputSchema":object(json!({"handle":id,"question":question})),"annotations":{"readOnlyHint":false,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}}
     ]})
+}
+
+fn read_catalog() -> Value {
+    let id = json!({"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_-]+$"});
+    let integer = json!({"type":"integer","minimum":1});
+    let identity = object(
+        json!({"instance":id,"workflow":id,"controller":id,"controller_epoch":integer,
+        "task":id,"attempt":integer,"contract":integer,"request":id,"session":integer,"run":integer}),
+    );
+    let target = json!({"anyOf":[{"enum":["Brief","Contract","Submission"]},
+        object(json!({"Workspace":object(json!({"path":{"type":"string","minLength":1,"maxLength":4096}}))})),
+        object(json!({"Answer":object(json!({"request":id}))}))]});
+    json!({"name":READ,"description":"Read only this current assignment's brief/contract/result or a regular UTF-8 file in its assigned checkout. Supply the exact current identity, version and control epoch from the input. Each result explicitly reports byte offsets and total size; continue at next_offset. No filesystem writes, shell, foreign task or parent operations.",
+        "inputSchema":object(json!({"handle":id,"identity":identity,"result_version":integer,"control_epoch":integer,
+            "target":target,"offset":{"type":"integer","minimum":0,"maximum":524288}})),
+        "annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}})
 }
 
 fn message(
@@ -409,14 +487,29 @@ fn message(
             }) {
                 return error(-32602, "catalog has no pagination cursor");
             }
-            catalog()
+            let mut catalog = catalog();
+            if authority
+                .as_ref()
+                .is_ok_and(|authority| authority.read_handle.is_some())
+            {
+                catalog["tools"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(read_catalog());
+            }
+            catalog
         }
         "tools/call" => {
             let Ok(call) = serde_json::from_value::<Call>(params.cloned().unwrap_or(Value::Null))
             else {
                 return error(-32602, "invalid tool call");
             };
-            if ![SUBMISSION, QUESTION].contains(&call.name.as_str()) {
+            if ![SUBMISSION, QUESTION].contains(&call.name.as_str())
+                && !(call.name == READ
+                    && authority
+                        .as_ref()
+                        .is_ok_and(|authority| authority.read_handle.is_some()))
+            {
                 return error(-32602, "unknown tool");
             }
             match authority {
@@ -479,8 +572,17 @@ fn serve(
     }
 }
 
-pub(super) fn run() -> AppResult<()> {
-    let authority = Authority::load(|key| std::env::var(key).ok());
+pub(super) fn run(read_handle: Option<String>) -> AppResult<()> {
+    let authority = Authority::load(|key| std::env::var(key).ok()).and_then(|mut authority| {
+        if read_handle
+            .as_ref()
+            .is_some_and(|handle| !valid_handle(handle))
+        {
+            return Err("invalid assigned read handle");
+        }
+        authority.read_handle = read_handle;
+        Ok(authority)
+    });
     serve(
         &mut io::stdin().lock(),
         &mut io::stdout().lock(),
@@ -520,6 +622,120 @@ mod tests {
     }
     fn ready() -> Phase {
         Phase::Ready
+    }
+
+    #[test]
+    fn assigned_read_worst_case_mcp_envelope_fits_output_bound() {
+        let mut authority = authority();
+        authority.auth.session = SessionId(u64::MAX);
+        authority.read_handle = Some("_".repeat(128));
+        let read = AssignedRead {
+            handle: "_".repeat(128),
+            identity: AssignmentIdentity {
+                instance: "_".repeat(128),
+                workflow: "_".repeat(128),
+                controller: "_".repeat(128),
+                controller_epoch: u64::MAX,
+                task: "_".repeat(128),
+                attempt: u32::MAX,
+                contract: u32::MAX,
+                request: "_".repeat(128),
+                session: Some(SessionId(u64::MAX)),
+                run: Some(ovrcr::protocol::SessionRunId(u64::MAX)),
+            },
+            result_version: u32::MAX,
+            control_epoch: u64::MAX,
+            target: ovrcr::protocol::AssignedReadTarget::Brief,
+            offset: 512 * 1024 - 8192,
+        };
+        assert!(valid_identity(&read.identity));
+        let request_id = "\0".repeat(128);
+        let frames = [
+            initialize(),
+            json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+            json!({"jsonrpc":"2.0","id":request_id,"method":"tools/call",
+                "params":{"name":READ,"arguments":read}}),
+        ];
+        let input = frames
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        let mut output = Vec::new();
+        let mut calls = 0;
+        serve(
+            &mut io::Cursor::new(input),
+            &mut output,
+            Ok(authority),
+            |_, request| {
+                let DelegationRequest::Read { read, .. } = request else {
+                    panic!("only read")
+                };
+                calls += 1;
+                Outcome::Read(AssignedReadResult::from_bytes(&read, &vec![0; 512 * 1024]).unwrap())
+            },
+        )
+        .unwrap();
+        assert_eq!(calls, 1);
+        let output = String::from_utf8(output).unwrap();
+        let line = output.lines().last().unwrap();
+        eprintln!(
+            "ASSIGNED_READ_ENCODED_BYTES={} cap={MAX_OUTPUT}",
+            line.len()
+        );
+        assert!(line.len() <= MAX_OUTPUT);
+        let reply: Value = serde_json::from_str(line).unwrap();
+        assert_eq!(reply["id"], request_id);
+        assert_eq!(reply["result"]["isError"], false);
+        assert_eq!(reply["result"]["structuredContent"]["status"], "read");
+        assert_eq!(
+            reply["result"]["structuredContent"]["read"]["text"]
+                .as_str()
+                .unwrap()
+                .len(),
+            4096
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(reply["result"]["content"][0]["text"].as_str().unwrap())
+                .unwrap(),
+            reply["result"]["structuredContent"]
+        );
+    }
+
+    #[test]
+    fn assigned_read_mode_is_exact_and_default_catalog_stays_closed() {
+        assert_eq!(catalog()["tools"].as_array().unwrap().len(), 2);
+        let mut authority = authority();
+        let args = json!({"handle":"handle","identity":identity(),"result_version":1,"control_epoch":1,"target":{"Workspace":{"path":"README.md"}},"offset":0});
+        let parse = |value| Call {
+            name: READ.into(),
+            arguments: value,
+            _meta: None,
+        };
+        assert!(publication_request(parse(args.clone()), &authority).is_err());
+        authority.read_handle = Some("handle".into());
+        assert!(matches!(
+            publication_request(parse(args.clone()), &authority).unwrap(),
+            DelegationRequest::Read { .. }
+        ));
+        for (field, value) in [
+            ("handle", json!("foreign")),
+            ("offset", json!(524289)),
+            ("control_epoch", json!(0)),
+            ("extra", json!("root")),
+            (
+                "target",
+                json!({"Workspace":{"path":"README.md","root":"/"}}),
+            ),
+        ] {
+            let mut bad = args.clone();
+            bad[field] = value;
+            assert!(
+                publication_request(parse(bad), &authority).is_err(),
+                "accepted {field}"
+            );
+        }
     }
 
     #[test]

@@ -1042,8 +1042,10 @@ impl Session {
         };
         Ok(self
             .with_delegated_context(&input, |agent| {
-                if agent.binding.provider == ovrcr_protocol::AgentProvider::Codex
-                    && !agent.input_requests.is_empty()
+                if matches!(
+                    agent.binding.provider,
+                    ovrcr_protocol::AgentProvider::Claude | ovrcr_protocol::AgentProvider::Codex
+                ) && !agent.input_requests.is_empty()
                 {
                     return Ok(rejected());
                 }
@@ -1264,7 +1266,7 @@ impl Session {
         &self,
         capability: &str,
         binding: &ovrcr_protocol::AgentBinding,
-        action: impl FnOnce() -> Result<T>,
+        action: impl FnOnce(&ovrcr_protocol::AgentSnapshot) -> Result<T>,
     ) -> Result<T> {
         let state = self.state.lock().unwrap();
         if !state.phase.is_live()
@@ -1280,7 +1282,13 @@ impl Session {
         {
             bail!("child publication binding changed");
         }
-        action()
+        action(
+            state
+                .reporting
+                .snapshot
+                .as_ref()
+                .context("child publication binding missing")?,
+        )
     }
 
     pub fn send_text(&self, text: &str, submit: bool) -> Result<()> {
