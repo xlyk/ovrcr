@@ -63,3 +63,25 @@ Apply the following with the actual accepted `ovrcr_review` procedure. Its absen
 is a capability gap, not a requirement to import unfinished code or self-approve.
 
 Pin the authenticated complete coding candidate and actual base, including untracked changes when commits are prohibited. Supply actual Standards documents plus the installed method only to Standards; supply the originating Spec/direct brief only to Spec. Collect attributable exact-axis reports. Route blocking findings through Repair to the same safe implementation conversation using one original request/control epoch. Omitted later limits inherit the original applicable policy/provenance and consumed rounds; the coordinator default of three is recorded as a default. Stop for exhausted/stalled repair, missing required checks or unanswered decisions. Optional check outcomes stay visible for parent judgment.
+
+For declared review, include necessary unchanged context as context_paths in Declare
+(at most 32 explicit repository files, 256 KiB combined; no recursive directories).
+Assignment returns review_assignment/review_scope for read-only ovrcr_start. Direct
+review can instead supply optional context_paths with its existing review argument;
+Server Prepare adds the same readable view without requiring a declared policy or
+Pocock stages. Keep a direct review's requested scope intact.
+
+Read the returned contract.review.target.view manifest and every ordinary readable
+before/after/inherited/context file it names. The Server authenticates the original
+candidate, complete inherited baseline, sources, axis, exact base and declaration
+round (or direct request identity). Reviewers need no shell, Git, hashing or base64
+decoder. Modes, deletions and safe symlink targets remain explicit content. The
+Server resolves unchanged context from the original repository's pinned base, never
+HEAD or the changed checkout. Copy the exact enriched target into the typed report.
+
+Missing necessary context, binary/unreadable content, invalid modes/paths, limits
+that cannot hold the complete view, or tampered/stale files means Blocked. Never
+omit/truncate content or publish Passed with a coverage gap. Ask the parent for a
+new explicit context selection when necessary. New declarations/candidates require
+fresh independent axes for their exact round; prior publications remain historical
+evidence. The same implementer repairs, then publishes a fresh candidate for review.

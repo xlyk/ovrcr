@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 18;
+const SCHEMA_VERSION: i64 = 19;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -387,6 +387,10 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
         // Older writers discard independent review policy and finite corrective receipts.
         transaction.pragma_update(None, "user_version", 18)?;
     }
+    if schema_identity(&transaction)?.1 < 19 {
+        // Older writers discard authenticated readable review-view references.
+        transaction.pragma_update(None, "user_version", 19)?;
+    }
     transaction.commit().context("commit registry migration")?;
     Ok(connection)
 }
@@ -431,6 +435,7 @@ pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
                 | 15
                 | 16
                 | 17
+                | 18
                 | SCHEMA_VERSION
         )
     {
@@ -1102,6 +1107,61 @@ mod tests {
             assert_eq!(
                 std::fs::read(evidence.join(name)).unwrap(),
                 bytes.as_bytes()
+            );
+        }
+    }
+
+    #[test]
+    fn schema_eighteen_upgrade_preserves_original_review_records_and_private_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("instance");
+        initialize_registry(&home).unwrap();
+        let database = database_path(&home);
+        let connection = Connection::open(&database).unwrap();
+        connection.pragma_update(None, "user_version", 18).unwrap();
+        let original = r#"{"review":{"rounds":[{"declaration":"old-round","evidence":[]}],"repairs":[]},"previous_versions":[{"contract_digest":"original"}]}"#;
+        connection.execute("INSERT INTO delegations(handle,workflow,metadata) VALUES('original','workflow',?1)", [original]).unwrap();
+        let evidence = home.join("workflows/original");
+        std::fs::create_dir_all(&evidence).unwrap();
+        for name in [
+            "contract-v1.json",
+            "candidate-v1.json",
+            "review-old-round.json",
+            "submission-v1.json",
+            "acceptance-v1.json",
+        ] {
+            std::fs::write(evidence.join(name), format!("immutable original {name}")).unwrap();
+        }
+        drop(connection);
+        load_registry(&home).unwrap();
+        assert_eq!(
+            schema_version(&database),
+            18,
+            "offline read never migrates accepted335 storage"
+        );
+        initialize_registry(&home).unwrap();
+        assert_eq!(schema_version(&database), SCHEMA_VERSION);
+        let connection = Connection::open(&database).unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT metadata FROM delegations WHERE handle='original'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            original
+        );
+        for name in [
+            "contract-v1.json",
+            "candidate-v1.json",
+            "review-old-round.json",
+            "submission-v1.json",
+            "acceptance-v1.json",
+        ] {
+            assert_eq!(
+                std::fs::read_to_string(evidence.join(name)).unwrap(),
+                format!("immutable original {name}")
             );
         }
     }

@@ -36,6 +36,12 @@ test("managed Pi exposes research assignment and explicit collection tools", asy
     assert.equal(graph.properties.edges.maxItems,256);
     assert.equal(graph.additionalProperties,false);
     assert.equal(host.toolDefinition("ovrcr_start").parameters.properties.review.additionalProperties,false);
+    const reviewSchema = host.toolDefinition("ovrcr_start").parameters.properties.review;
+    assert.equal(reviewSchema.properties.context_paths.maxItems,32);
+    assert.equal(reviewSchema.properties.context_paths.uniqueItems,true);
+    assert.ok(!reviewSchema.required.includes("context_paths"),"legacy direct review remains valid");
+    assert.ok(!reviewSchema.properties.target.required.includes("view"),"Server Prepare enriches direct review");
+    assert.equal(reviewSchema.properties.target.properties.view.anyOf[0].properties.round.pattern,"^[A-Za-z0-9_-]+$");
     assert.equal(coding.properties.authorized_paths.minItems,1);
     assert.equal(coding.properties.required_checks.uniqueItems,true);
     assert.deepEqual(host.toolDefinition("ovrcr_followup").parameters.anyOf, [{required:["handle","request"]},{required:["handle","expected_identity","expected_result_version","expected_control_epoch","text"]}]);

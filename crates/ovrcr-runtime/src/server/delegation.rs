@@ -20,7 +20,7 @@ mod interrupt_effects;
 #[path = "delegation_questions.rs"]
 mod questions;
 #[path = "delegation_review.rs"]
-mod review;
+pub(super) mod review;
 use questions::{AnswerIntent, QuestionPublicationIntent};
 #[path = "delegation_dependencies.rs"]
 mod dependencies;
@@ -952,7 +952,7 @@ impl ServerState {
                     "capabilities require the discovery response path",
                 ));
             }
-            DelegationRequest::Prepare { auth, contract } => {
+            DelegationRequest::Prepare { auth, mut contract } => {
                 contract
                     .validate()
                     .map_err(|reason| lifecycle_error(ErrorCode::InvalidRequest, reason))?;
@@ -970,6 +970,7 @@ impl ServerState {
                         lifecycle_error(ErrorCode::Conflict, "parent Pi conversation is not bound")
                     })?;
                 self.require_dispatch_open(&self.retained.lock(), &contract.workflow)?;
+                self.materialize_direct_review(&auth, &mut contract)?;
                 self.validate_review_assignment(&auth, &contract)?;
                 let handle = contract.request.clone();
                 let previous = self.retained.lock().assignment(&handle)?;

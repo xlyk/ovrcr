@@ -1,5 +1,6 @@
 //! Immutable, scope-confined deltas. Capture never commits, changes a ref or pushes.
 pub mod baseline;
+pub mod review;
 use super::{git_stdout, inspect_worktree, run_git, worktree_identity};
 use crate::config::{ProjectRecord, WorkspaceRecord};
 use anyhow::{Context, Result, bail};
@@ -620,7 +621,7 @@ mod tests {
         );
     }
 
-    fn capture_fixture() -> (tempfile::TempDir, ProjectRecord, WorkspaceRecord, String) {
+    pub(super) fn capture_fixture() -> (tempfile::TempDir, ProjectRecord, WorkspaceRecord, String) {
         use std::os::unix::fs::PermissionsExt;
         let root = tempfile::tempdir().unwrap();
         let repo = root.path().join("repo");

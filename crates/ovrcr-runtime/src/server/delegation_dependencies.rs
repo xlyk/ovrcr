@@ -222,7 +222,14 @@ impl ServerState {
         let expected = ReviewTarget {
             coding: target.clone(),
             sources: required.sources.clone(),
+            view: reference.target.view.clone(),
         };
+        let implementation = self
+            .retained
+            .lock()
+            .assignment(&target.assignment.request)?
+            .context("review implementation missing")?;
+        super::review::view::verify_current(&implementation, &expected, &required.axis)?;
         expected
             .validate(&required.axis)
             .map_err(anyhow::Error::msg)?;
