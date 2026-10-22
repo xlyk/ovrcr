@@ -96,7 +96,19 @@ impl ClaudeFixture {
     }
 
     fn started(&self) -> AssignmentSnapshot {
-        let reply = self.start_claude();
+        self.started_policy(false)
+    }
+
+    fn started_policy(&self, helpers: bool) -> AssignmentSnapshot {
+        let reply = if helpers {
+            self.tool("ovrcr_start", serde_json::json!({
+                "project":PROJECT,"workspace":self.workspace,"provider":"claude","model_provider":"native","model":"fixture-model",
+                "scope":"Read README using the assigned native research helper.","acceptance_evidence":["README citation"],
+                "mandatory_capabilities":["read","result_file","native_helpers"]
+            }))
+        } else {
+            self.start_claude()
+        };
         assert_eq!(reply["dispatch"], "Applied", "{reply}");
         let snapshot: AssignmentSnapshot = serde_json::from_value(reply).unwrap();
         wait_file(&snapshot.brief.with_extension("json.started"));
@@ -107,7 +119,7 @@ impl ClaudeFixture {
         assert!(args.iter().any(|arg| arg == "--permission-mode"));
         assert_eq!(
             args[args.iter().position(|arg| arg == "--tools").unwrap() + 1],
-            ""
+            if helpers { "Agent" } else { "" }
         );
         assert!(args.iter().any(|arg| arg == "--strict-mcp-config"));
         let mcp: serde_json::Value = serde_json::from_slice(
@@ -177,6 +189,103 @@ impl ClaudeFixture {
             })
             .count()
     }
+}
+
+#[test]
+fn public_claude_native_helper_opt_in_seals_read_only_recipe_and_preserves_recovery() {
+    let f = ClaudeFixture::new("no-stop");
+    let capabilities = f.tool(
+        "ovrcr_capabilities",
+        serde_json::json!({"provider":"claude","model_provider":"native","model":"fixture-model"}),
+    );
+    assert_eq!(capabilities["native_helpers"], true);
+    assert_eq!(capabilities["native_descendant_usage"], false);
+    let first = f.started_policy(true);
+    let launch: serde_json::Value =
+        serde_json::from_slice(&fs::read(f.profile.join("delegation-launch.json")).unwrap())
+            .unwrap();
+    let args: Vec<std::ffi::OsString> = launch["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|arg| arg.as_str().unwrap().into())
+        .collect();
+    let agents = args.windows(2).find(|a| a[0] == "--agents").unwrap()[1]
+        .to_str()
+        .unwrap();
+    assert_eq!(
+        ovrcr_runtime::claude_delegation::helper_model(agents).unwrap(),
+        "fixture-model-resolved"
+    );
+    let definitions: serde_json::Value = serde_json::from_str(agents).unwrap();
+    assert_eq!(
+        definitions["ovrcr-assigned-research"]["tools"],
+        serde_json::json!(["mcp__ovrcr_child__ovrcr_read"])
+    );
+    let root = first.brief.parent().unwrap();
+    let settings: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("claude-settings.json")).unwrap()).unwrap();
+    assert_eq!(
+        settings["env"]["CLAUDE_CODE_SUBAGENT_MODEL"],
+        "fixture-model-resolved"
+    );
+    assert_eq!(
+        settings["permissions"]["deny"],
+        serde_json::json!(["Agent(fork)"])
+    );
+    let options = ovrcr_runtime::claude_recovery::launch_options(
+        &[
+            vec![f.live.claude.command.clone().into_os_string()],
+            args.clone(),
+        ]
+        .concat(),
+    )
+    .unwrap();
+    assert!(
+        options
+            .windows(2)
+            .any(|a| a[0] == "--agents" && a[1] == agents)
+    );
+    // Actual Reporter admission must retain the same recipe, not silently drop recovery.
+    let db = rusqlite::Connection::open(f.live.config.join("registry.sqlite3")).unwrap();
+    let metadata: String = db
+        .query_row(
+            "SELECT reference FROM agent_conversations WHERE session=?1",
+            [i64::try_from(first.identity.session.unwrap().0).unwrap()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let recovery: ovrcr_protocol::ConversationReference = serde_json::from_str(&metadata).unwrap();
+    let ovrcr_protocol::ConversationReference::Claude(recovery) = recovery else {
+        panic!("wrong recovery provider")
+    };
+    assert_eq!(
+        recovery.options, options,
+        "native admission lost generated recovery"
+    );
+    ovrcr_runtime::claude_recovery::validate(&recovery).unwrap();
+    let result = complete(&f, &first);
+    assert_eq!(result.acceptance, "pending");
+    assert_eq!(
+        f.child_count(),
+        1,
+        "native helper policy adds no OVRCR Session"
+    );
+    // All later production effects recheck the sealed force-model/fork policy.
+    let mut changed = settings.clone();
+    changed["env"]["CLAUDE_CODE_SUBAGENT_MODEL"] = "foreign-model".into();
+    fs::write(
+        root.join("claude-settings.json"),
+        serde_json::to_vec(&changed).unwrap(),
+    )
+    .unwrap();
+    let before = f.input_count(&result);
+    let refused = followup(&f, &result, None);
+    assert!(
+        refused.get("error").is_some() || refused["dispatch"] != "Applied",
+        "{refused}"
+    );
+    assert_eq!(f.input_count(&result), before);
 }
 
 #[test]
@@ -791,29 +900,32 @@ fn public_claude_coding_and_valid_review_refuse_without_discovery_or_intent() {
 
 #[test]
 fn public_claude_sealed_policy_replacement_refuses_real_read_and_publication() {
-    let f = ClaudeFixture::new("policy-before-publish");
-    let started = f.started();
-    fs::write(f.live.root.path().join("allow-result"), b"go").unwrap();
-    wait_file(&started.brief.with_extension("json.published"));
-    let read: serde_json::Value = serde_json::from_slice(
-        &fs::read(started.brief.with_extension("json.replaced-read")).unwrap(),
-    )
-    .unwrap();
-    let published: serde_json::Value =
-        serde_json::from_slice(&fs::read(started.brief.with_extension("json.published")).unwrap())
-            .unwrap();
-    assert_eq!(read["status"], "refused", "{read}");
-    assert_eq!(published["error"], "refused", "{published}");
-    assert_eq!(published["details"]["status"], "refused");
-    assert_eq!(published["details"]["code"], "Conflict");
-    assert!(published["details"].get("sent").is_none());
-    let current = f.reconcile(&started.handle);
-    assert_eq!(current.identity, started.identity);
-    assert!(current.submission.is_none());
-    assert!(current.publication.is_none());
-    assert!(current.acceptance_ref.is_none());
-    assert!(!started.result_path.exists());
-    assert_eq!(current.acceptance, "pending");
+    for helpers in [false, true] {
+        let f = ClaudeFixture::new("policy-before-publish");
+        let started = f.started_policy(helpers);
+        fs::write(f.live.root.path().join("allow-result"), b"go").unwrap();
+        wait_file(&started.brief.with_extension("json.published"));
+        let read: serde_json::Value = serde_json::from_slice(
+            &fs::read(started.brief.with_extension("json.replaced-read")).unwrap(),
+        )
+        .unwrap();
+        let published: serde_json::Value = serde_json::from_slice(
+            &fs::read(started.brief.with_extension("json.published")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(read["status"], "refused", "{read}");
+        assert_eq!(published["error"], "refused", "{published}");
+        assert_eq!(published["details"]["status"], "refused");
+        assert_eq!(published["details"]["code"], "Conflict");
+        assert!(published["details"].get("sent").is_none());
+        let current = f.reconcile(&started.handle);
+        assert_eq!(current.identity, started.identity);
+        assert!(current.submission.is_none());
+        assert!(current.publication.is_none());
+        assert!(current.acceptance_ref.is_none());
+        assert!(!started.result_path.exists());
+        assert_eq!(current.acceptance, "pending");
+    }
 }
 
 #[test]

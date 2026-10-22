@@ -99,6 +99,18 @@ pub fn launch_options(argv: &[OsString]) -> Result<Vec<String>> {
                     options.extend([name.into(), value.into()]);
                 }
             }
+            "--agents" => {
+                let value = if let Some(value) = inline {
+                    value
+                } else {
+                    index += 1;
+                    argv.get(index)
+                        .and_then(|value| value.to_str())
+                        .context("missing Claude helper recipe")?
+                };
+                crate::claude_delegation::helper_model(value)?;
+                options.extend([name.into(), value.into()]);
+            }
             "--strict-mcp-config"
             | "--verbose"
             | "--dangerously-skip-permissions"
@@ -217,6 +229,86 @@ mod tests {
                 "{option}"
             );
         }
+    }
+
+    #[test]
+    fn generated_native_helper_recipe_is_retained_but_changed_inline_policy_is_refused() {
+        let generated = crate::claude_delegation::helper_agents("claude-exact-1");
+        let options = launch_options(&[
+            "claude".into(),
+            "--agents".into(),
+            generated.clone().into(),
+            "--agent".into(),
+            "ovrcr-assigned-coordinator".into(),
+        ])
+        .unwrap();
+        assert_eq!(
+            options,
+            [
+                "--agents",
+                &generated,
+                "--agent",
+                "ovrcr-assigned-coordinator"
+            ]
+        );
+        let reference = ClaudeConversation {
+            conversation: "00000000-0000-4000-8000-000000000001".into(),
+            executable: "/bin/claude".into(),
+            history: "/private/history.jsonl".into(),
+            config_dir: "/private/profile".into(),
+            options: options.clone(),
+        };
+        validate(&reference).unwrap();
+        let mut changed = reference.clone();
+        changed.options[1] = generated.replace("mcp__ovrcr_child__ovrcr_read", "Bash");
+        assert!(validate(&changed).is_err());
+        changed.options[1] = "{}".into();
+        assert!(validate(&changed).is_err());
+        changed.options[1] = "x".repeat(4097);
+        assert!(validate(&changed).is_err());
+    }
+
+    #[test]
+    fn generated_native_helper_resume_reconstructs_exact_owned_recipe() {
+        const KEY: &str = "OVRCR_CLAUDE_HELPER_RESUME_TEST";
+        let Some(root) = std::env::var_os(KEY) else {
+            // Isolate the provider configuration without racing other tests' environment.
+            let root = tempfile::tempdir().unwrap();
+            std::fs::write(root.path().join("history.jsonl"), "").unwrap();
+            assert!(std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "claude_recovery::tests::generated_native_helper_resume_reconstructs_exact_owned_recipe", "--nocapture"])
+                .env(KEY, root.path()).env("CLAUDE_CONFIG_DIR", root.path())
+                .status().unwrap().success());
+            return;
+        };
+        let root = PathBuf::from(root);
+        let generated = crate::claude_delegation::helper_agents("claude-exact-1");
+        let mut reference = ClaudeConversation {
+            conversation: "00000000-0000-4000-8000-000000000001".into(),
+            executable: "/bin/sh".into(),
+            history: root.join("history.jsonl"),
+            config_dir: root.clone(),
+            options: vec![
+                "--agents".into(),
+                generated,
+                "--agent".into(),
+                "ovrcr-assigned-coordinator".into(),
+            ],
+        };
+        let argv = resume_argv(&reference).unwrap();
+        assert_eq!(argv[5], "/bin/sh");
+        assert_eq!(argv[6], "--resume");
+        assert_eq!(argv[7], reference.conversation.as_str());
+        assert_eq!(
+            &argv[8..],
+            reference
+                .options
+                .iter()
+                .map(OsString::from)
+                .collect::<Vec<_>>()
+        );
+        reference.options[1] = "{}".into();
+        assert!(resume_argv(&reference).is_err());
     }
 
     #[test]

@@ -89,9 +89,24 @@ fn prepare_assigned(argv: &[OsString]) -> Result<()> {
                 == Some(contract.request.as_str()),
         "unsupported or foreign Claude research policy"
     );
+    let helper_model = if contract.native_helpers() {
+        let value = argv
+            .windows(2)
+            .find(|args| args[0] == "--agents")
+            .and_then(|args| args[1].to_str())
+            .context("native helper recipe missing")?;
+        Some(claude_delegation::helper_model(value)?)
+    } else {
+        None
+    };
     let executable = claude_delegation::executable()?;
     ensure!(
-        argv == claude_delegation::launch_argv(&executable, &contract.model, &artifacts),
+        argv == claude_delegation::launch_argv(
+            &executable,
+            &contract.model,
+            &artifacts,
+            helper_model.as_deref()
+        ),
         "native Claude argv differs from assigned read-only policy"
     );
     ensure!(
@@ -100,10 +115,13 @@ fn prepare_assigned(argv: &[OsString]) -> Result<()> {
         "managed Claude child authority unavailable"
     );
     let binary = std::env::current_exe()?.canonicalize()?;
-    let reporter =
-        super::agent_setup::compose("{}", binary.to_str().context("non-UTF8 Reporter path")?)?;
+    let reporter = super::agent_setup::compose(
+        &claude_delegation::helper_settings(helper_model.as_deref()).to_string(),
+        binary.to_str().context("non-UTF8 Reporter path")?,
+    )?;
     immutable(&artifacts.join("claude-settings.json"), reporter.as_bytes())?;
-    let files = claude_delegation::policy_files(&binary, &contract.request)?;
+    let files =
+        claude_delegation::policy_files(&binary, &contract.request, helper_model.as_deref())?;
     ensure!(
         files.settings == reporter.as_bytes(),
         "assigned settings differ from the trusted Reporter recipe"
