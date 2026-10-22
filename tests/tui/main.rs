@@ -67,6 +67,7 @@ fn session_summary(
         name: name.into(),
         title: None,
         manual_title: None,
+        assignment_control: None,
         label: label.into(),
         pid,
         started_unix_ms: Some(started_unix_ms),

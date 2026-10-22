@@ -6,8 +6,22 @@ owned reporting extension into a private per-invocation directory, and adds
 `-e <path>` beside your own extensions. A plain `pi` launch stays untracked. Nothing
 under `~/.pi` is read or written by OVRCR.
 
-Managed Pi also exposes the limited [research assignment flow](pi-research-assignments.md).
+The optional [local orchestration package](pi-package-setup.md) adds the discoverable
+orchestrator skill. It keeps this injected entry as the managed runtime owner;
+package discovery never creates a second Reporter or source credential. Install
+or remove that package only in the intended Pi profile.
+
+Managed Pi also exposes the [research and isolated coding assignment flow](pi-research-assignments.md).
 Task contents use that separate control/file path and never enter reporting.
+
+The private Pi entry is `ovrcr-pi-reporting.ts`, with its optional
+`ovrcr-pi-interrupt.ts` helper beside the shared runtime, transport, continuation and
+observer modules. Pi's supported loader awaits the async factory before exposing
+handlers. The optional public `getKeybindings` API is loaded there; its live
+configured manager is sampled at each `agent_start`. An absent API keeps ordinary
+reporting operational and reports native interruption as unavailable. Reload,
+replacement and reporting gaps discard the previous turn's capability. This
+does not change your extensions, skills, settings or native keybindings.
 
 ## What is reported
 
@@ -58,9 +72,10 @@ arguments or results, titles or credentials.
 
 ## Removal
 
-There is nothing to remove: the extension lives only in the invocation's private
+For injected reporting there is nothing to remove: the extension lives only in the invocation's private
 directory and is deleted when the invocation ends. Stop using the managed launch to
-stop reporting.
+stop reporting. To remove optional package discovery, use the
+[package removal instructions](pi-package-setup.md#remove-the-package) in the same Pi profile.
 
 ## Boundaries
 

@@ -27,6 +27,8 @@ use std::{
 /// Bounded delivery shared by every provider extension; materialized as its sibling.
 pub const TRANSPORT_SOURCE: &str = include_str!("../ovrcr-reporting-transport.mjs");
 const TRANSPORT_FILE: &str = "ovrcr-reporting-transport.mjs";
+const DELEGATION_CONTINUATION_SOURCE: &str = include_str!("../ovrcr-delegation-continuation.mjs");
+const DELEGATION_OBSERVER_SOURCE: &str = include_str!("../ovrcr-delegation-observer.mjs");
 const BINARY_TOKEN: &str = "__OVRCR_BINARY__";
 
 /// Everything that differs between one extension-reporting provider and the next.
@@ -69,6 +71,21 @@ fn materialize_extension(harness: &Harness) -> std::io::Result<(PathBuf, PathBuf
         Ok(path)
     };
     write(TRANSPORT_FILE, TRANSPORT_SOURCE)?;
+    if harness.provider == AgentProvider::Pi {
+        write(
+            "ovrcr-pi-runtime.ts",
+            include_str!("../ovrcr-pi-runtime.ts"),
+        )?;
+        write(
+            "ovrcr-pi-interrupt.ts",
+            include_str!("../ovrcr-pi-interrupt.ts"),
+        )?;
+        write("ovrcr-delegation-observer.mjs", DELEGATION_OBSERVER_SOURCE)?;
+        write(
+            "ovrcr-delegation-continuation.mjs",
+            DELEGATION_CONTINUATION_SOURCE,
+        )?;
+    }
     let path = write(harness.extension_file, &source)?;
     Ok((dir, path))
 }
@@ -82,6 +99,15 @@ pub fn receiver(
     harness: &'static Harness,
     lease: Option<InvocationLease>,
     argv: &mut Vec<OsString>,
+) -> HookHandler {
+    receiver_with_environment(harness, lease, argv, &mut Vec::new())
+}
+
+pub fn receiver_with_environment(
+    harness: &'static Harness,
+    lease: Option<InvocationLease>,
+    argv: &mut Vec<OsString>,
+    environment: &mut Vec<(OsString, OsString)>,
 ) -> HookHandler {
     // Capture only non-secret launch references, before adding our temporary extension.
     let recovery = (|| {
@@ -114,7 +140,15 @@ pub fn receiver(
         Ok((dir, path)) => {
             scratch = Some(dir);
             argv.insert(1, "-e".into());
-            argv.insert(2, path.into_os_string());
+            argv.insert(2, path.clone().into_os_string());
+            if harness.provider == AgentProvider::Pi {
+                environment.push((
+                    "OVRCR_PI_ENTRY".into(),
+                    serde_json::json!({ "schema": 1, "path": path })
+                        .to_string()
+                        .into(),
+                ));
+            }
             None
         }
         Err(error) => Some(format!("extension not materialized: {error}")),
@@ -239,6 +273,13 @@ impl reporter::Frames for Events {
                 if let Some(unavailable) = reporter.bind_or_disable(session, deadline, false) {
                     return unavailable;
                 }
+                // Source authority is certified only after the rooted frame binds successfully.
+                let _ = reporter.workflow_source(
+                    instance,
+                    payload["reason"].as_str().unwrap_or("startup"),
+                    serde_json::from_value(payload["source_key"].clone()).ok(),
+                    deadline,
+                );
                 // A fresh binding starts without a published model: inventing one from a
                 // previous generation or from the launch argv is not this receiver's job.
                 self.model = None;
@@ -267,6 +308,18 @@ impl reporter::Frames for Events {
                 // identity. Permanent disablement is reserved for unresolvable identity or
                 // ordering ambiguity (#88); recovering a lost close is #91's job.
                 if let Some(answer) = reporter.admit_cycle(&turn) {
+                    if self.harness.provider == AgentProvider::Pi && answer == reporter::ACCEPTED {
+                        return reporter.publish(
+                            AgentObservation::NativeControl(Some(
+                                ovrcr_protocol::NativeControlSample {
+                                    turn,
+                                    interrupt: native_interrupt(payload),
+                                    settled: false,
+                                },
+                            )),
+                            deadline,
+                        );
+                    }
                     return answer;
                 }
                 if let Some(unavailable) = reporter.bind_or_disable(session, deadline, false) {
@@ -302,6 +355,12 @@ impl reporter::Frames for Events {
                 }
             }
             "session_shutdown" => {
+                if self.harness.provider == AgentProvider::Pi {
+                    let cleared = reporter.publish(AgentObservation::NativeControl(None), deadline);
+                    if cleared != reporter::ACCEPTED {
+                        return cleared;
+                    }
+                }
                 // `reason` is a bounded discriminant: compared against the known set and never
                 // retained. Anything else is unknown and retires the producer rather than
                 // disabling it.
@@ -312,7 +371,11 @@ impl reporter::Frames for Events {
                     )
                 });
                 if reason == Some("quit") {
-                    reporter.disable();
+                    if self.harness.provider == AgentProvider::Pi {
+                        reporter.close();
+                    } else {
+                        reporter.disable();
+                    }
                 } else {
                     // Replacement or reload: the harness re-runs factories; the next
                     // session_start admits them. The lease and binding are still live here, so
@@ -321,6 +384,9 @@ impl reporter::Frames for Events {
                     // the same snapshot and keeps a stale WaitingInput with nothing on screen.
                     if let Some(closed) = self.retire_requests(reporter, deadline) {
                         return closed;
+                    }
+                    if reason == Some("reload") && self.harness.provider == AgentProvider::Pi {
+                        let _ = reporter.workflow_departure(false, deadline);
                     }
                     reporter.retire(instance);
                     self.current = None;
@@ -392,12 +458,27 @@ impl reporter::Frames for Events {
             AgentObservation::Activity(ActivitySample {
                 state,
                 quality,
-                turn,
+                turn: turn.clone(),
             }),
             deadline,
         );
         if activity != reporter::ACCEPTED {
             return activity;
+        }
+        if self.harness.provider == AgentProvider::Pi {
+            let sample = turn.map(|turn| ovrcr_protocol::NativeControlSample {
+                turn,
+                interrupt: if event == "agent_start" {
+                    native_interrupt(payload)
+                } else {
+                    ovrcr_protocol::NativeInterruptCapability::Unavailable
+                },
+                settled: event == "agent_settled",
+            });
+            let native = reporter.publish(AgentObservation::NativeControl(sample), deadline);
+            if native != reporter::ACCEPTED {
+                return native;
+            }
         }
         if matches!(event, "session_start" | "agent_start")
             && let Some(mut reference) = self.recovery.clone()
@@ -421,6 +502,15 @@ impl reporter::Frames for Events {
             return failed;
         }
         activity
+    }
+}
+
+fn native_interrupt(payload: &serde_json::Value) -> ovrcr_protocol::NativeInterruptCapability {
+    use ovrcr_protocol::NativeInterruptCapability::*;
+    match payload["interrupt"].as_str() {
+        Some("Escape") => Escape,
+        Some("Unsupported") => Unsupported,
+        _ => Unavailable,
     }
 }
 
@@ -1499,9 +1589,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 (1, 1, AgentActivity::Idle, None),
-                (1, 2, AgentActivity::Busy, Some("a:1".into())),
+                // Native control shares Reporter's existing revision sequence.
+                (1, 3, AgentActivity::Busy, Some("a:1".into())),
                 (2, 1, AgentActivity::Busy, Some("a:1".into())),
-                (2, 2, AgentActivity::ResponseReady, Some("a:1".into())),
+                (2, 3, AgentActivity::ResponseReady, Some("a:1".into())),
             ]
         );
         // The recovery names the binding it is replacing, so a generation the supervisor

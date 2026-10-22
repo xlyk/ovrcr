@@ -60,9 +60,66 @@ connection and run as one Server Lifecycle job on a dedicated worker under
 `mutation_lock` (ADR 0010). Input and SetView keep flowing on the reader while
 the job runs. Assigned runs receive an immutable input-ownership marker before
 Session publication; generic input checks that marker without taking the
-lifecycle mutation lock. Scoped delegation input checks the current parent and
-child bindings under their Session state locks through the PTY write. A second Lifecycle job is refused. Completion is a typed
+lifecycle mutation lock. Explicit assigned-human input has a separate gate:
+retained authority, child state, writer, active Dashboard slot, acknowledged view.
+It validates the captured child epoch/run/view and current Human owner, then
+persists a content-free human-input revision before bytes. It never takes the
+lifecycle mutation lock. Takeover/return use the same durable per-child control
+record; neither changes immutable assigned membership. Scoped delegation input
+checks its captured control epoch and current parent/child bindings under their
+Session state locks through the PTY write. Parent effects additionally hold the
+retained workflow owner through the final publication/spawn/write fence, validate
+the captured controller epoch, and authenticate the current in-memory source key.
+Source registration and Reporter disconnect retirement follow retained → Session
+lock order. Explicit parent transfers use the same retained row and never reset
+child control or immutable assignment identity. A second Lifecycle job is refused. Completion is a typed
 `LifecycleCompleted` event correlated by the accepting request id, plus
 `HierarchyChanged` as today. CLI-only RemoveSession and DeleteArchived stay
 synchronous on the caller.
 
+Workflow cancellation lives in that same durable WorkflowRecord. Commit the
+bounded complete capture, fixed member identities/gaps and child interrupt
+intents atomically before effects. A tombstone gates new and resumed Accepted
+dispatch after discovery and survives parent transfer. Native interrupts use
+the exact current child writer with an Unknown receipt and advanced child
+barrier already durable. Confirm only that barrier with fresh same-turn Pi
+agent_settled evidence under current parent/child locks; preserve historical
+delivery uncertainty and unrelated input or attribution fences. Wait aborts
+terminate only their observer helper. No operation archives or removes resources.
+
+
+Delegated archive commits an exact-run Archive barrier and unknown stop receipt
+before capability revocation, then releases mutation/retained/Session state for
+the existing owned termination chain. Its termination mutex is acquired with
+try-lock before ordered Session state and released before completion relocks.
+Stop proof plus pending receipt commit together; archive/run advancement plus
+final receipt and exact barrier retirement commit together. Retained caches
+publish only after those commits. Final filing pins the current parent source
+through commit, including continuations. An explicit continuation consumes its
+protected slot/bytes only on successful filing and never performs another stop.
+Same-resource lifecycle changes respect the barrier; unrelated input/view remain
+available during the stop. Archive preserves private evidence and workspaces.
+
+Coding delegation uses the same already-locked combined workspace/managed-launch
+body. Record proposed repository/path/pinned base before Git; save created Git
+generation before registration and registered resource before native launch.
+Revalidate the registered repository root's existing Git generation at coding
+intent, effect and current-capture gates, with Git outside retained/Session guards.
+A NoProcessStarted proof is independent of worktree existence. Final rejected
+launch receipts stay immutable; only one explicit linked successor may reuse a
+verified no-process/no-input workspace. Unknown ownership never permits adoption.
+Candidate capture runs without retained/Session locks. Its in-memory bytes gain
+a discoverable filename only after the existing child-authenticated publication
+intent binds the exact enriched result digest. Recovery uses original stored
+bytes and selected version/contract; it never captures a newer checkout.
+
+
+Dependency edges stay in the existing WorkflowRecord. The parent declares the
+bounded graph; ordinary Prepare/Launch/SendInitial retain scheduling and effects.
+Prepare authenticates selected original candidate/acceptance/reviewer files and
+pins a private complete input baseline. Lifecycle workspace registration precedes
+compatible snapshot materialization, and the existing creation gate rechecks
+parent/source authority before spawn. Initial input rechecks actual baseline
+content and ancestor candidate/review versions. Followup and acceptance reject
+stale dependency witnesses; collection preserves the original evidence and
+reports the gap. Graph revision changes do not interrupt existing children.

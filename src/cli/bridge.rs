@@ -42,17 +42,26 @@ pub(super) fn owner() -> super::AppResult<()> {
     let call: protocol::BridgeOwnerCall =
         serde_json::from_slice(&bytes).map_err(RuntimeError::internal)?;
     let context = &call.owner.context;
-    if !call.owner.validate()
-        || !std::env::current_exe().ok().is_some_and(|path| {
-            compatible_executable(
-                &path,
-                std::path::Path::new(&context.callback_executable),
-                &context.callback_executable_sha256,
-                deadline,
-            )
-            .unwrap_or(false)
-        })
-    {
+    let valid = call.owner.validate();
+    owner_diagnostic("ticket-validation", deadline, None, Ok(valid));
+    let compatible = valid
+        && match std::env::current_exe() {
+            Ok(path) => {
+                owner_diagnostic("current-exe", deadline, Some(&path), Ok(true));
+                compatible_executable(
+                    &path,
+                    std::path::Path::new(&context.callback_executable),
+                    &context.callback_executable_sha256,
+                    deadline,
+                )
+                .unwrap_or(false)
+            }
+            Err(error) => {
+                owner_diagnostic("current-exe", deadline, None, Err(&error));
+                false
+            }
+        };
+    if !compatible {
         return Err(RuntimeError::new(
             protocol::ErrorCode::InvalidRequest,
             "invalid Bridge owner context",
@@ -93,10 +102,77 @@ fn compatible_executable(
     expected: &str,
     deadline: Instant,
 ) -> io::Result<bool> {
-    Ok(
-        ovrcr::server::bridge_executable_sha256(current, deadline)? == expected
-            && ovrcr::server::bridge_executable_sha256(original, deadline)? == expected,
-    )
+    let current_hash = ovrcr::server::bridge_executable_sha256(current, deadline);
+    owner_diagnostic(
+        "current-hash",
+        deadline,
+        Some(current),
+        current_hash.as_ref().map(|hash| hash == expected),
+    );
+    if current_hash? != expected {
+        return Ok(false);
+    }
+    if current.as_os_str() == original.as_os_str() {
+        return Ok(true);
+    }
+    let original_hash = ovrcr::server::bridge_executable_sha256(original, deadline);
+    owner_diagnostic(
+        "original-hash",
+        deadline,
+        Some(original),
+        original_hash.as_ref().map(|hash| hash == expected),
+    );
+    Ok(original_hash? == expected)
+}
+
+// Opt-in diagnostics contain no ticket, token, digest, path or environment value.
+fn owner_diagnostic(
+    stage: &str,
+    deadline: Instant,
+    path: Option<&std::path::Path>,
+    result: Result<bool, &io::Error>,
+) {
+    #[cfg(feature = "acceptance-diagnostics")]
+    if std::env::var_os("OVRCR_TEST_BRIDGE_OWNER_DIAGNOSTICS").is_some() {
+        let elapsed = Instant::now()
+            .saturating_duration_since(deadline - CALLBACK_BUDGET)
+            .as_millis();
+        let outcome = match result {
+            Ok(value) => format!("matches={value}"),
+            Err(error) => format!(
+                "error_kind={:?} raw_os_error={:?} error={error}",
+                error.kind(),
+                error.raw_os_error()
+            ),
+        };
+        let identity = path
+            .map(|path| match std::fs::symlink_metadata(path) {
+                Ok(m) => format!(
+                    "bytes={} dev={} ino={} uid={} mode={:o} mtime={}.{} ctime={}.{} symlink={}",
+                    m.len(),
+                    m.dev(),
+                    m.ino(),
+                    m.uid(),
+                    m.mode(),
+                    m.mtime(),
+                    m.mtime_nsec(),
+                    m.ctime(),
+                    m.ctime_nsec(),
+                    m.file_type().is_symlink()
+                ),
+                Err(error) => format!(
+                    "metadata_error_kind={:?} metadata_raw_os_error={:?}",
+                    error.kind(),
+                    error.raw_os_error()
+                ),
+            })
+            .unwrap_or_else(|| "identity=none".into());
+        eprintln!(
+            "OVRCR_BRIDGE_OWNER_DIAGNOSTIC stage={stage} elapsed_ms={elapsed} {outcome} {identity}"
+        );
+    }
+    #[cfg(not(feature = "acceptance-diagnostics"))]
+    let _ = (stage, deadline, path, result);
 }
 
 fn read_ticket(deadline: Instant) -> io::Result<Vec<u8>> {
@@ -491,6 +567,39 @@ mod tests {
             !compatible_executable(&packaged, &original, &cached, deadline).unwrap(),
             "replacing both paths cannot rewrite the running Server's cached digest"
         );
+    }
+
+    #[test]
+    fn bridge_callback_same_path_preserves_hash_guards_and_distinct_hardlinks() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let root = tempfile::tempdir().unwrap();
+        let original = root.path().join("original");
+        std::fs::write(&original, b"reviewed executable").unwrap();
+        std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let deadline = Instant::now() + CALLBACK_BUDGET;
+        let cached = ovrcr::server::bridge_executable_sha256(&original, deadline).unwrap();
+        assert!(compatible_executable(&original, &original, &cached, deadline).unwrap());
+        assert!(!compatible_executable(&original, &original, &"0".repeat(64), deadline).unwrap());
+        assert_eq!(
+            compatible_executable(&original, &original, &cached, Instant::now())
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::TimedOut
+        );
+        let linked = root.path().join("symlink");
+        symlink(&original, &linked).unwrap();
+        assert!(compatible_executable(&linked, &linked, &cached, deadline).is_err());
+        std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(compatible_executable(&original, &original, &cached, deadline).is_err());
+        std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let hardlink = root.path().join("hardlink");
+        std::fs::hard_link(&original, &hardlink).unwrap();
+        assert_ne!(original.as_os_str(), hardlink.as_os_str());
+        eprintln!("BRIDGE_DISTINCT_HARDLINK_HASHES_BEGIN");
+        assert!(compatible_executable(&hardlink, &original, &cached, deadline).unwrap());
+        eprintln!("BRIDGE_DISTINCT_HARDLINK_HASHES_END");
+        std::fs::write(&original, b"replacement bytes").unwrap();
+        assert!(!compatible_executable(&hardlink, &original, &cached, deadline).unwrap());
     }
 
     #[test]

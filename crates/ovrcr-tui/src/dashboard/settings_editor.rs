@@ -78,6 +78,8 @@ enum Kind {
     Path,
     /// TOML value text written as typed, such as an argv array literal.
     Toml,
+    /// A typed TOML value with its catalog description retained for editing.
+    Typed(&'static str),
     /// No in-place edit; the row's children are.
     Fixed,
 }
@@ -432,6 +434,7 @@ fn editor_kind(
             Kind::Toggle(entry.value(settings).as_deref() == Some("true"))
         }
         ovrcr_protocol::Shape::Text(_) => Kind::Text,
+        ovrcr_protocol::Shape::Typed(expected) => Kind::Typed(expected),
         ovrcr_protocol::Shape::Path(_) => Kind::Path,
         ovrcr_protocol::Shape::Pick { options, .. } => Kind::Pick(
             options
@@ -808,7 +811,7 @@ impl Dashboard {
                 edit.text.clear();
             }
             Kind::Path => edit.picker = Some(PathPicker::new()),
-            Kind::Text | Kind::Toml => {}
+            Kind::Text | Kind::Toml | Kind::Typed(_) => {}
         }
         self.settings_editor.cursor = TextCursor::default();
         self.settings_editor.edit = Some(edit);
@@ -945,7 +948,7 @@ impl Dashboard {
                     return DashboardAction::Redraw;
                 }
             },
-            (Kind::Toml, _) => edit.text.trim().to_string(),
+            (Kind::Toml | Kind::Typed(_), _) => edit.text.trim().to_string(),
             _ => toml_string(edit.text.trim()),
         };
         let text = edit.text.trim();
@@ -1177,6 +1180,9 @@ impl Dashboard {
                             "TOML array, e.g. [\"claude\", \"--verbose\"] · Enter save · Esc cancel"
                                 .into()
                         }
+                        (Kind::Typed(expected), _) => {
+                            format!("Expected {expected} · Enter save · Esc cancel")
+                        }
                         (Kind::Path, _) => "Tab complete · Enter save · Esc cancel".into(),
                         _ => "Enter save · Esc cancel".into(),
                     },
@@ -1270,6 +1276,53 @@ mod tests {
     }
 
     #[test]
+    fn progress_deadline_label_and_edit_hint_describe_an_integer() {
+        let mut d = editor(false);
+        d.handle_server_message(ovrcr_protocol::ServerMessage::Event(
+            ovrcr_protocol::ServerEvent::SettingsChanged(Box::new(report(
+                Settings::default(),
+                vec![(
+                    "delegation.progress_deadline_ms",
+                    Some("300000"),
+                    SettingSource::Default,
+                )],
+            ))),
+        ));
+        d.key(KeyCode::Char('/'));
+        for ch in "delegation.progress_deadline_ms".chars() {
+            d.key(KeyCode::Char(ch));
+        }
+        d.key(KeyCode::Enter);
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+        d.draw(&mut terminal).unwrap();
+        let text = |terminal: &ratatui::Terminal<ratatui::backend::TestBackend>| {
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+        };
+        assert!(text(&terminal).contains(&format!("{:<27}300000", "Progress deadline (ms)")));
+        d.key(KeyCode::Enter);
+        d.draw(&mut terminal).unwrap();
+        let drawn = text(&terminal);
+        assert!(drawn.contains("an integer from 1 to 86400000"), "{drawn}");
+        assert!(!drawn.contains("TOML array"), "{drawn}");
+        let DashboardAction::Request(ClientMessage {
+            request: Request::SetSetting { path, value },
+            ..
+        }) = d.key(KeyCode::Enter)
+        else {
+            panic!("expected typed setting request");
+        };
+        assert_eq!(path, "delegation.progress_deadline_ms");
+        assert_eq!(value.as_deref(), Some("300000"));
+    }
+
+    #[test]
     fn groups_come_in_the_documented_order() {
         let mut headers: Vec<_> = items(&report(Settings::default(), Vec::new()), &[])
             .into_iter()
@@ -1285,7 +1338,8 @@ mod tests {
                 "Titles",
                 "Usage",
                 "Agents",
-                "Remembered launches"
+                "Remembered launches",
+                "Delegation"
             ]
         );
     }
@@ -1404,6 +1458,139 @@ mod tests {
                 ..
             }) => (path, value),
             other => panic!("expected SetSetting, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn delegation_toml_editor_sends_typed_values_and_waits_for_server_publication() {
+        use ovrcr_protocol::{ErrorCode, ServerEvent, ServerMessage};
+        for (path, value) in [
+            ("delegation.max_live_children", "6"),
+            ("delegation.max_execution_attempts", "2"),
+            ("delegation.allowed_models", "[\"test/model\"]"),
+        ] {
+            let mut d = editor(false);
+            let before = d.settings.clone();
+            let mut reading = report(before.clone(), Vec::new());
+            reading.rows =
+                ovrcr_protocol::setting_rows(&before, &Settings::default(), &Default::default());
+            d.handle_server_message(ServerMessage::Event(ServerEvent::SettingsChanged(
+                Box::new(reading),
+            )));
+            assert_eq!(d.editor_rows()[0].id, "desktop_notifications");
+            d.settings_editor.selected = Some(path.into());
+            d.key(KeyCode::Enter);
+            let length = d.settings_editor.edit.as_ref().unwrap().text.len();
+            d.key(KeyCode::End);
+            for _ in 0..length {
+                d.key(KeyCode::Backspace);
+            }
+            d.settings_editor_paste(value);
+            let DashboardAction::Request(message) = d.key(KeyCode::Enter) else {
+                panic!("typed edit must send request")
+            };
+            let Request::SetSetting {
+                path: requested,
+                value: written,
+            } = message.request
+            else {
+                panic!("SetSetting")
+            };
+            assert_eq!(requested, path);
+            assert_eq!(written.as_deref(), Some(value));
+            assert_eq!(d.settings, before, "no optimistic policy change");
+            assert!(d.settings_editor_response(
+                message.request_id,
+                &Response::Error {
+                    code: ErrorCode::InvalidRequest,
+                    message: "fixture save refused".into()
+                }
+            ));
+            assert_eq!(d.settings, before);
+            assert_eq!(
+                d.settings_editor.refused.get(path).map(String::as_str),
+                Some("fixture save refused")
+            );
+        }
+    }
+
+    #[test]
+    fn delegation_editor_renders_typed_guidance_and_preserves_raw_toml_writes() {
+        for (filter, expected_path, hint, value) in [
+            (
+                "delegation.max_live_children",
+                "delegation.max_live_children",
+                "Expected an integer from 1 to 50",
+                "6",
+            ),
+            (
+                "delegation.max_execution_attempts",
+                "delegation.max_execution_attempts",
+                "Expected a positive integer",
+                "2",
+            ),
+            (
+                "delegation.allowed_models",
+                "delegation.allowed_models",
+                "Expected an array of backend/model strings",
+                "[\"test/model\"]",
+            ),
+            (
+                "agents[0]",
+                "agents[0].argv",
+                "TOML array, e.g.",
+                "[\"one\", \"--verbose\"]",
+            ),
+        ] {
+            let mut d = editor(false);
+            let mut reading = report(d.settings.clone(), Vec::new());
+            reading.rows = ovrcr_protocol::setting_rows(
+                &d.settings,
+                &Settings::default(),
+                &Default::default(),
+            );
+            d.handle_server_message(ovrcr_protocol::ServerMessage::Event(
+                ovrcr_protocol::ServerEvent::SettingsChanged(Box::new(reading)),
+            ));
+            d.key(KeyCode::Char('/'));
+            for ch in filter.chars() {
+                d.key(KeyCode::Char(ch));
+            }
+            d.key(KeyCode::Enter);
+            d.key(KeyCode::Enter);
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 40)).unwrap();
+            d.draw(&mut terminal).unwrap();
+            let drawn: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            assert!(
+                drawn.contains(hint),
+                "{filter}: expected typed guidance, got {drawn}"
+            );
+            if filter.starts_with("delegation.") {
+                assert!(
+                    !drawn.contains("TOML array, e.g."),
+                    "{filter}: unrelated argv-array guidance"
+                );
+            }
+            let length = d.settings_editor.edit.as_ref().unwrap().text.len();
+            d.key(KeyCode::End);
+            for _ in 0..length {
+                d.key(KeyCode::Backspace);
+            }
+            d.settings_editor_paste(value);
+            let (path, written) = setting_write(d.key(KeyCode::Enter));
+            assert_eq!(path, expected_path);
+            assert_eq!(
+                written.as_deref(),
+                Some(value),
+                "typed and argv values remain raw TOML"
+            );
         }
     }
 

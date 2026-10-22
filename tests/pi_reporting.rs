@@ -169,7 +169,11 @@ fn pi_extension_source_embeds_the_json_escaped_binary_path() {
         "{source}"
     );
     assert!(!source.contains("__OVRCR_BINARY__"));
-    assert!(source.contains("[\"report\", \"pi\", \"--stdin\"]"));
+    assert!(source.contains("import { initializeOvrcr } from \"./ovrcr-pi-runtime.ts\""));
+    assert!(source.contains("entry: \"injected\", binary: OVRCR_BINARY"));
+    assert!(
+        include_str!("../src/ovrcr-pi-runtime.ts").contains("[\"report\", \"pi\", \"--stdin\"]")
+    );
 }
 
 fn fake_harness(dir: &std::path::Path, name: &str, version_line: &str) -> std::path::PathBuf {
@@ -278,5 +282,41 @@ fn pi_and_omp_doctor_classify_versions_as_evidence_not_an_allowlist() {
             !dir.path().join("socket").exists(),
             "doctor must not start a server"
         );
+    }
+}
+
+#[test]
+fn untracked_native_launch_clears_inherited_pi_package_selection() {
+    let root = tempfile::tempdir().unwrap();
+    for provider in ["pi", "omp"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+            .args([
+                "agent",
+                "run",
+                provider,
+                "--",
+                "/bin/sh",
+                "-c",
+                r#"test -z "${OVRCR_PI_ENTRY+x}" && printf PACKAGE_SELECTION_CLEARED"#,
+            ])
+            .env("HOME", root.path())
+            .env("OVRCR_HOME", root.path())
+            .env("OVRCR_SOCKET", root.path().join("socket"))
+            .env(
+                "OVRCR_PI_ENTRY",
+                r#"{"schema":1,"path":"/foreign/entry.ts"}"#,
+            )
+            .env_remove("OVRCR_HOOK_SOCKET")
+            .env_remove("OVRCR_SESSION_ID")
+            .env_remove("OVRCR_HOOK_TOKEN")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{provider}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"PACKAGE_SELECTION_CLEARED", "{provider}");
     }
 }

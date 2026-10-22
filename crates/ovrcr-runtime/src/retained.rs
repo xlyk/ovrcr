@@ -13,11 +13,70 @@ use std::path::{Path, PathBuf};
 /// Non-payload assignment authority shares the registry migration/connection owner.
 pub(crate) fn create_delegation_schema(connection: &Connection) -> Result<()> {
     connection.execute_batch("CREATE TABLE delegation_instance (id TEXT NOT NULL); CREATE TABLE delegations (handle TEXT PRIMARY KEY, workflow TEXT NOT NULL, session INTEGER, metadata TEXT NOT NULL); CREATE INDEX delegations_by_session ON delegations(session); CREATE INDEX delegations_by_workflow ON delegations(workflow);")?;
+    connection.execute_batch(
+        "CREATE TABLE delegation_workflows (workflow TEXT PRIMARY KEY, metadata TEXT NOT NULL);",
+    )?;
     connection.execute(
         "INSERT INTO delegation_instance (id) VALUES (?1)",
         [crate::agent_runner::private_identifier()?],
     )?;
     Ok(())
+}
+
+fn save_assignment_on(
+    connection: &Connection,
+    value: &crate::server::delegation::Record,
+) -> Result<()> {
+    if value.captures.len() > 64
+        || value.recoveries.len() > 64
+        || value
+            .previous_versions
+            .iter()
+            .any(|v| v.captures.len() > 64 || v.recoveries.len() > 64)
+    {
+        bail!("fallback metadata capacity exceeded; history is retained");
+    }
+    let metadata = serde_json::to_string(value)?;
+    if metadata.len() > 2 * 1024 * 1024 {
+        bail!("assignment metadata capacity exceeded; history is retained");
+    }
+    value.validate_archive_storage()?;
+    use rusqlite::OptionalExtension;
+    let workflow: Option<String> = connection
+        .query_row(
+            "SELECT metadata FROM delegation_workflows WHERE workflow=?1",
+            [&value.identity.workflow],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(raw) = workflow {
+        let workflow: crate::server::delegation_recovery::WorkflowRecord =
+            serde_json::from_str(&raw)?;
+        workflow.validate()?;
+        if workflow
+            .deliveries
+            .iter()
+            .any(|d| value.delivery_request_used(&d.reference.request))
+            || workflow
+                .transfers
+                .iter()
+                .any(|t| value.delivery_request_used(&t.request))
+            || workflow
+                .cancellation
+                .as_ref()
+                .is_some_and(|c| value.delivery_request_used(&c.receipt.request))
+        {
+            bail!("assignment request already identifies an immutable workflow operation");
+        }
+    }
+    connection.execute("INSERT INTO delegations (handle, workflow, session, metadata) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(handle) DO UPDATE SET session=excluded.session, metadata=excluded.metadata", params![value.handle, value.identity.workflow, value.identity.session.map(|id| sql_integer(id.0)).transpose()?, metadata])?;
+    Ok(())
+}
+
+fn decode_assignment(raw: &str) -> Result<crate::server::delegation::Record> {
+    let record: crate::server::delegation::Record = serde_json::from_str(raw)?;
+    record.validate_archive_storage()?;
+    Ok(record)
 }
 
 pub(crate) fn create_schema(connection: &Connection) -> Result<()> {
@@ -224,12 +283,13 @@ impl RetainedSession {
             context_usage: None,
             title: self.effective_title(),
             manual_title: self.metadata.pinned_title.clone(),
+            assignment_control: None,
         }
     }
 }
 
 pub(crate) struct SessionStore {
-    connection: Connection,
+    pub(crate) connection: Connection,
     records: HashMap<SessionId, RetainedSession>,
     boot_id: Option<String>,
 }
@@ -322,6 +382,13 @@ impl SessionStore {
             .query_row("SELECT id FROM delegation_instance", [], |row| row.get(0))?)
     }
 
+    pub(crate) fn assignment_count(&self) -> Result<u64> {
+        let count: i64 =
+            self.connection
+                .query_row("SELECT count(*) FROM delegations", [], |row| row.get(0))?;
+        Ok(count.try_into()?)
+    }
+
     pub(crate) fn assignment(
         &self,
         handle: &str,
@@ -335,14 +402,76 @@ impl SessionStore {
                 |row| row.get(0),
             )
             .optional()?;
-        value
-            .map(|v| serde_json::from_str(&v).map_err(Into::into))
-            .transpose()
+        value.map(|v| decode_assignment(&v)).transpose()
+    }
+
+    /// Task identity is Server-owned metadata, not a second task-file parser.
+    pub(crate) fn task_assignment(
+        &self,
+        workflow: &str,
+        task: &str,
+    ) -> Result<Option<crate::server::delegation::Record>> {
+        use rusqlite::OptionalExtension;
+        let value: Option<String> = self.connection.query_row(
+            "SELECT metadata FROM delegations WHERE workflow = ?1 AND json_extract(metadata, '$.identity.task') = ?2 LIMIT 1",
+            params![workflow, task], |row| row.get(0),
+        ).optional()?;
+        value.map(|value| decode_assignment(&value)).transpose()
+    }
+
+    pub(crate) fn assignment_successor(
+        &self,
+        previous_request: &str,
+    ) -> Result<Option<crate::server::delegation::Record>> {
+        use rusqlite::OptionalExtension;
+        let value: Option<String> = self.connection.query_row(
+            "SELECT metadata FROM delegations WHERE json_extract(metadata, '$.previous_request') = ?1 LIMIT 1",
+            [previous_request], |row| row.get(0),
+        ).optional()?;
+        value.map(|value| decode_assignment(&value)).transpose()
     }
 
     pub(crate) fn save_assignment(&self, value: &crate::server::delegation::Record) -> Result<()> {
-        self.connection.execute("INSERT INTO delegations (handle, workflow, session, metadata) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(handle) DO UPDATE SET session=excluded.session, metadata=excluded.metadata", params![value.handle, value.identity.workflow, value.identity.session.map(|id| sql_integer(id.0)).transpose()?, serde_json::to_string(value)?])?;
+        save_assignment_on(&self.connection, value)
+    }
+
+    /// Link and publish a retry in the same transaction. The lifecycle lock
+    /// excludes competing creators; this also closes the two-write crash gap.
+    pub(crate) fn save_assignment_successor(
+        &self,
+        previous: &crate::server::delegation::Record,
+        successor: &crate::server::delegation::Record,
+    ) -> Result<()> {
+        let mut previous = previous.clone();
+        if previous
+            .successor_request
+            .as_ref()
+            .is_some_and(|request| request != &successor.handle)
+        {
+            bail!("capacity refusal already has a different successor request");
+        }
+        previous.successor_request = Some(successor.handle.clone());
+        let transaction = self.connection.unchecked_transaction()?;
+        save_assignment_on(&transaction, successor)?;
+        save_assignment_on(&transaction, &previous)?;
+        transaction.commit()?;
         Ok(())
+    }
+
+    pub(crate) fn assigned_record(
+        &self,
+        id: SessionId,
+    ) -> Result<Option<crate::server::delegation::Record>> {
+        use rusqlite::OptionalExtension;
+        let raw: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT metadata FROM delegations WHERE session = ?1",
+                [sql_integer(id.0)?],
+                |row| row.get(0),
+            )
+            .optional()?;
+        raw.map(|raw| decode_assignment(&raw)).transpose()
     }
 
     pub(crate) fn assigned(&self, id: SessionId) -> Result<bool> {
@@ -485,6 +614,30 @@ impl SessionStore {
         record.failure = None;
         record.title_revision = 0;
         Ok(record.clone())
+    }
+
+    pub(crate) fn publish_stopped(&mut self, id: SessionId, run: SessionRunId) {
+        let row = self
+            .records
+            .get_mut(&id)
+            .expect("committed retained stop row");
+        assert_eq!(row.run, run);
+        row.stopped = true;
+    }
+
+    pub(crate) fn publish_archived(
+        &mut self,
+        id: SessionId,
+        run: SessionRunId,
+        next: SessionRunId,
+    ) {
+        let row = self
+            .records
+            .get_mut(&id)
+            .expect("committed retained archive row");
+        assert_eq!(row.run, run);
+        row.run = next;
+        row.disposition = Disposition::Archived;
     }
 
     pub fn mark_stopped(&mut self, id: SessionId, run: SessionRunId) -> Result<bool> {
@@ -1151,6 +1304,7 @@ mod tests {
                  DROP TABLE conversation_subjects;
                  DROP TABLE delegations;
                  DROP TABLE delegation_instance;
+                 DROP TABLE delegation_workflows;
                  PRAGMA user_version = 3;",
             )
             .unwrap();
@@ -1194,6 +1348,7 @@ mod tests {
                  DROP TABLE conversation_subjects;
                  DROP TABLE delegations;
                  DROP TABLE delegation_instance;
+                 DROP TABLE delegation_workflows;
                  PRAGMA user_version = 2;",
             )
             .unwrap();

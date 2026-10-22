@@ -108,3 +108,39 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 - Never bypass a tool's access denial through another control channel or modify the user's live agent configuration to make an acceptance check pass.
 - Interactive Dashboard fixtures can encounter optional native-hook or Bridge setup offers. Decline recognized optional offers with `n`, leave unknown decisions unanswered, and wait for the actual alternate-screen Dashboard before sending test input. Preserve fresh-output assertions separately from waits for already-rendered state. The development GUI retains a single Cmd-K intent across dashboard restart; tests must not resend the shortcut to compensate for startup.
 - The shared initial-admission lifecycle cases can fail with `supervisor must select a fresh UUID` when a saturated host pushes the fixture's `/bin/sh` reply past the product's one-second probe budget; read a recurrence as contention unless its evidence says otherwise, per the [issue #62 diagnosis](../../research/issue-62-lifecycle-diagnosis/README.md).
+
+## Git owner acceptance receipts
+
+With `acceptance-diagnostics`, a private fixture can set
+`OVRCR_GIT_DIAGNOSTICS_DIR` to a fresh, owned, absolute directory with mode
+0700 and `OVRCR_GIT_DIAGNOSTICS_RUN` to a nonsecret identifier of at most 64
+ASCII letters, digits, underscores, or hyphens. The fixed `git-owner.jsonl`
+file is created exclusively with mode 0600. Without the feature or opt-in,
+Git keeps its original `Command.output` and `Command.status` paths.
+
+The journal records construction sequence, original owner and child identity
+(PID, parent, actual group, birth), original wait status or signal, pipe drain,
+and health. It excludes arguments, environment, working directory, output,
+and error bodies. Bounds are 8192 calls, 8 MiB, 1024 bytes per row, and a
+512-byte terminal-seal reserve. Identity, overflow, and write failures remain
+sticky; recording failures never skip the original wait or change the Git
+result. Diagnostics add no signals, timeouts, or retries. Final diagnostic
+health is returned only after the terminal write and sync. Opted-in Server
+shutdown returns an error if that health is unqualified, preserving any
+existing task-shutdown error first. Feature-off/no-opt-in Server behavior
+is unchanged. A healthy-looking seal alone cannot attest its own final sync:
+qualification requires both the healthy journal and the original opted-in
+Server wait with status 0, never status inferred from kernel absence.
+
+Normal Server shutdown writes a terminal seal only after its existing owner
+joins. Pending calls, early shutdown errors, missing rows, and unhealthy seals
+remain unqualified. The private CLI fixture must drain and reap its clients
+and native owners before Server shutdown and retain its original Server wait.
+These receipts do not prove arbitrary descendant or process-group closure;
+nested Git roles and unmatched hooks need their separate lifecycle evidence.
+
+The terminal call is sole and last after the existing owner joins. The fixture
+must have drained/reaped all clients and native owners first; it must not admit
+new Git work after that boundary. Late begin or duplicate finalization is
+unhealthy, even when failed persistence leaves prior healthy seal bytes.
+This fixture prerequisite does not add joins or general client containment.

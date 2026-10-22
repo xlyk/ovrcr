@@ -1485,6 +1485,87 @@ impl Default for QuotaSettings {
     }
 }
 
+/// Harness choices that can be requested by delegation policy. Availability is
+/// advertised separately: a configured choice does not install an adapter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DelegationHarness {
+    Claude,
+    Codex,
+    Grok,
+    Pi,
+}
+
+impl DelegationHarness {
+    pub const NAMES: &'static [&'static str] = &["claude", "codex", "grok", "pi"];
+
+    pub fn parse(name: &str) -> Option<Self> {
+        Some(match name {
+            "claude" => Self::Claude,
+            "codex" => Self::Codex,
+            "grok" => Self::Grok,
+            "pi" => Self::Pi,
+            _ => return None,
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::Grok => "grok",
+            Self::Pi => "pi",
+        }
+    }
+}
+
+/// Server-owned delegation policy; no extension-local settings document.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DelegationSettings {
+    /// Observation stall reporting only; never interrupts child work.
+    pub progress_deadline_ms: u64,
+    pub enabled: bool,
+    pub allowed_harnesses: Vec<DelegationHarness>,
+    /// Exact backend/model selections. Empty adds no restriction to inventory.
+    pub allowed_models: Vec<String>,
+    pub default_harness: DelegationHarness,
+    pub default_model: Option<String>,
+    pub max_live_children: u16,
+    /// Per logical task. Known zero-effect refusals do not consume this budget;
+    /// launches that started or may have started consume one execution attempt.
+    pub max_execution_attempts: Option<u32>,
+}
+
+impl Default for DelegationSettings {
+    fn default() -> Self {
+        Self {
+            progress_deadline_ms: 300_000,
+            enabled: true,
+            allowed_harnesses: vec![DelegationHarness::Pi],
+            allowed_models: Vec::new(),
+            default_harness: DelegationHarness::Pi,
+            default_model: None,
+            max_live_children: 50,
+            max_execution_attempts: None,
+        }
+    }
+}
+
+impl DelegationSettings {
+    pub fn valid_model(selection: &str) -> bool {
+        selection.len() <= 513
+            && !selection.chars().any(char::is_control)
+            && selection.split_once('/').is_some_and(|(backend, model)| {
+                !backend.is_empty()
+                    && !model.is_empty()
+                    && backend.trim() == backend
+                    && model.trim() == model
+                    && backend.len() <= 256
+                    && model.len() <= 256
+            })
+    }
+}
+
 /// Every effective value. `picker_roots` is already `~`-expanded.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
@@ -1506,6 +1587,8 @@ pub struct Settings {
     pub agents: Vec<AgentOverride>,
     pub launch_choices: BTreeMap<String, LaunchChoice>,
     pub quota: QuotaSettings,
+    #[serde(default)]
+    pub delegation: DelegationSettings,
     /// Consent setting, off until set. When on, a dirty feature worktree is
     /// pushed to `origin/wip/<branch>` when that workspace is removed and when
     /// the server shuts down, without a prompt. The checkout's own branch is
@@ -1544,6 +1627,7 @@ impl Default for Settings {
             agents: Vec::new(),
             launch_choices: BTreeMap::new(),
             quota: QuotaSettings::default(),
+            delegation: DelegationSettings::default(),
             save_uncommitted_work: false,
         }
     }

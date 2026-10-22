@@ -1,3 +1,5 @@
+#[path = "terminal_acceptance/assignment_control.rs"]
+mod assignment_control;
 #[path = "support/dashboard_proxy.rs"]
 mod dashboard_proxy;
 #[path = "support/live.rs"]
@@ -982,6 +984,7 @@ fn agent_attention_ranks_accepted_reports_and_selects_the_real_destination() -> 
                 &mut admission,
                 1,
                 Request::ReserveAgent(p::ReserveAgent {
+                    pi_resume: None,
                     session: session.id,
                     capability: p::AgentSecret(capability),
                     operation: "fixture-reserve".into(),
@@ -2174,6 +2177,9 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     );
 
     dashboard.send(b"[gv")?;
+    // OSC52 is emitted before the deferred redraw. Establish Copy first so
+    // the later Browse wait cannot accept the unchanged pre-Copy frame.
+    dashboard.wait_for_screen(|screen| screen.contains("COPY  "), wait_deadline())?;
     dashboard.send(b"lllllly")?;
     dashboard.wait_for_output(b"\x1b]52;c;V0FJVElORw==\x1b\\", wait_deadline())?;
     dashboard.send(b"\x1b")?;

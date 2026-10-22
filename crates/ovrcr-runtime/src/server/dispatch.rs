@@ -150,17 +150,54 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: ReportingReceiver<Dispa
                             // Keep the established retained -> Session lock order. The
                             // authenticated operation persists before publishing its receipt.
                             let mut retained = state.retained.lock();
-                            session.agent_command(&request, owner.as_ref(), |command| match command
-                            {
-                                ovrcr_protocol::AgentCommand::RetainConversation {
-                                    reference,
-                                    ..
-                                } => {
+                            session.agent_command(&request, owner.as_ref(), |action| match action {
+                                crate::session::AgentPersistence::Reservation(reserve) => retained
+                                    .admit_workflow_resume(
+                                        id,
+                                        session.run(),
+                                        reserve,
+                                        &state.server_lifetime,
+                                    ),
+                                crate::session::AgentPersistence::Command(
+                                    ovrcr_protocol::AgentCommand::WorkflowSource {
+                                        binding,
+                                        producer,
+                                        reason,
+                                        ..
+                                    },
+                                ) => retained.workflow_source(
+                                    id,
+                                    session.run(),
+                                    binding,
+                                    producer,
+                                    reason,
+                                    &state.server_lifetime,
+                                ),
+                                crate::session::AgentPersistence::Command(
+                                    ovrcr_protocol::AgentCommand::WorkflowDeparture {
+                                        binding,
+                                        producer,
+                                        reaped,
+                                    },
+                                ) => retained.workflow_departure(
+                                    id,
+                                    session.run(),
+                                    binding,
+                                    producer,
+                                    *reaped,
+                                    &state.server_lifetime,
+                                ),
+                                crate::session::AgentPersistence::Command(
+                                    ovrcr_protocol::AgentCommand::RetainConversation {
+                                        reference,
+                                        ..
+                                    },
+                                ) => {
                                     retained.retain_conversation(id, session.run(), Some(reference))
                                 }
-                                ovrcr_protocol::AgentCommand::InvalidateConversation => {
-                                    retained.retain_conversation(id, session.run(), None)
-                                }
+                                crate::session::AgentPersistence::Command(
+                                    ovrcr_protocol::AgentCommand::InvalidateConversation,
+                                ) => retained.retain_conversation(id, session.run(), None),
                                 _ => Ok(()),
                             })
                         };
@@ -178,10 +215,16 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: ReportingReceiver<Dispa
             }
             DispatchMessage::AgentDisconnected { session, owner } => {
                 let session = state.sessions.lock().unwrap().get(&session).cloned();
-                if let Some(session) = session
-                    && session.agent_supervisor_disconnected(&owner)
-                {
-                    publish_session_changed(&state, session.id());
+                if let Some(session) = session {
+                    let changed = {
+                        // Retirement shares the final workflow publication fence with
+                        // source registration; never retire between validation and effect.
+                        let _retained = state.retained.lock();
+                        session.agent_supervisor_disconnected(&owner)
+                    };
+                    if changed {
+                        publish_session_changed(&state, session.id());
+                    }
                 }
             }
             DispatchMessage::Stop => break,
@@ -410,8 +453,12 @@ fn persist_session_exit(state: &ServerState, session: &Session) {
 }
 
 pub(super) fn publish_session_changed(state: &ServerState, id: SessionId) {
+    if let Err(error) = state.refresh_assignment_binding(id) {
+        eprintln!("assignment control observation failed: {error:#}");
+    }
     state.refresh_claude_quota();
     if let Some(summary) = state.session_summary(id) {
+        state.delegation_observations.session_changed(&summary);
         state
             .dashboard
             .try_send(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
@@ -465,6 +512,10 @@ fn dispatch_session_event(state: &Arc<ServerState>, event: SessionEvent) {
                 }));
         }
     } else {
+        // RestoreInputFailed returned above; this exact run's Exited state is applied.
+        #[cfg(feature = "acceptance-diagnostics")]
+        let _ =
+            super::delegation::take_fault("session-exit-applied", &format!("{}-{}", id.0, run.0));
         persist_session_exit(state, &session);
         publish_session_changed(state, id);
         state

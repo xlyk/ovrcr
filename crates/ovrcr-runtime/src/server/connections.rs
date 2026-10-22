@@ -44,6 +44,22 @@ struct SupervisorOwnership {
 }
 impl Drop for SupervisorOwnership {
     fn drop(&mut self) {
+        #[cfg(feature = "acceptance-diagnostics")]
+        let gate = hold_test_supervisor_disconnect(self.session);
+        let session = self
+            .state
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&self.session)
+            .cloned();
+        if session.is_none_or(|session| !session.agent_supervisor_is_current(&self.identity)) {
+            #[cfg(feature = "acceptance-diagnostics")]
+            if let Some(gate) = gate {
+                let _ = std::fs::write(gate.with_extension("skipped"), self.session.0.to_string());
+            }
+            return;
+        }
         // This is outside the dispatcher; preserve lifecycle delivery when its queue is full.
         let _ = self
             .state
@@ -52,7 +68,37 @@ impl Drop for SupervisorOwnership {
                 session: self.session,
                 owner: self.identity.clone(),
             });
+        #[cfg(feature = "acceptance-diagnostics")]
+        if let Some(gate) = gate {
+            let _ = std::fs::write(gate.with_extension("enqueued"), self.session.0.to_string());
+        }
     }
+}
+
+// Select one valid producer ordering for the final-parent-exit acceptance case.
+// Never retain a Server/Session lock while held. After release, an already
+// obsolete owner is explicitly skipped; only the send path records enqueued.
+#[cfg(feature = "acceptance-diagnostics")]
+fn hold_test_supervisor_disconnect(session: SessionId) -> Option<PathBuf> {
+    let fault = PathBuf::from(std::env::var_os("OVRCR_TEST_DELEGATION_FAULT")?);
+    let gate = fault
+        .parent()?
+        .join(format!("supervisor-disconnect-{}", session.0));
+    let hold = gate.with_extension("hold");
+    if std::fs::metadata(&hold).ok()?.len() != 4 || std::fs::read(&hold).ok()?.as_slice() != b"hold"
+    {
+        return None;
+    }
+    std::fs::write(gate.with_extension("hit"), session.0.to_string()).ok()?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !gate.with_extension("release").exists() {
+        if std::time::Instant::now() >= deadline {
+            let _ = std::fs::write(gate.with_extension("timeout"), session.0.to_string());
+            break;
+        }
+        std::thread::park_timeout(Duration::from_millis(5));
+    }
+    Some(gate)
 }
 
 pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
@@ -597,7 +643,65 @@ pub(super) fn handle_request_with_id(
             request_id,
             HistoryRequest::End { session, snapshot },
         ),
+        Request::Workflow(request) => state.workflow_request(*request).unwrap_or_else(|error| {
+            error_response(ErrorCode::Conflict, error_chain_string(&error))
+        }),
+        Request::DashboardWorkflow(request) => {
+            let Some(owner) = owner.filter(|owner| dashboard && state.dashboard.owns(owner)) else {
+                return error_response(
+                    ErrorCode::Conflict,
+                    "workflow recovery requires the owning Dashboard",
+                );
+            };
+            match request {
+                ovrcr_protocol::DashboardWorkflowRequest::Candidates { parent, run } => {
+                    state.workflow_candidates(owner, parent, run).map_or_else(
+                        |error| error_response(ErrorCode::Conflict, error_chain_string(&error)),
+                        |choices| Response::WorkflowCandidates(Box::new(choices)),
+                    )
+                }
+                ovrcr_protocol::DashboardWorkflowRequest::Transfer(transfer) => state
+                    .transfer_workflow(*transfer, Some(owner), None)
+                    .map_or_else(
+                        |error| error_response(ErrorCode::Conflict, error_chain_string(&error)),
+                        |snapshot| Response::Workflows(vec![snapshot]),
+                    ),
+            }
+        }
         Request::Delegation(request) => {
+            if let ovrcr_protocol::DelegationRequest::Observe {
+                auth,
+                handles,
+                after,
+                wait_ms,
+            } = request.as_ref()
+            {
+                return state
+                    .observe_delegations(auth, handles, after.clone(), *wait_ms)
+                    .map_or_else(
+                        |error| error_response(ErrorCode::Conflict, error_chain_string(&error)),
+                        |batch| Response::DelegationObservation(Box::new(batch)),
+                    );
+            }
+            if let ovrcr_protocol::DelegationRequest::Capabilities { auth, selection } =
+                request.as_ref()
+            {
+                return state.delegation_capabilities(auth, selection).map_or_else(
+                    |error| {
+                        error_response(
+                            error
+                                .downcast_ref::<super::LifecycleFailure>()
+                                .map_or(ErrorCode::Internal, |failure| failure.code.clone()),
+                            error_chain_string(&error),
+                        )
+                    },
+                    |capabilities| Response::DelegationCapabilities(Box::new(capabilities)),
+                );
+            }
+            let archiving = matches!(
+                request.as_ref(),
+                ovrcr_protocol::DelegationRequest::Archive { .. }
+            );
             let launching = matches!(
                 request.as_ref(),
                 ovrcr_protocol::DelegationRequest::Launch { .. }
@@ -612,7 +716,12 @@ pub(super) fn handle_request_with_id(
                     )
                 },
                 |snapshot| {
-                    if launching && snapshot.identity.session.is_some() {
+                    if (launching && snapshot.identity.session.is_some())
+                        || (archiving
+                            && snapshot.archive_receipts.iter().any(|r| {
+                                matches!(r.outcome, ovrcr_protocol::ArchiveOutcome::Archived { .. })
+                            }))
+                    {
                         state.dashboard.try_send(ServerMessage::Event(
                             ServerEvent::HierarchyChanged(state.hierarchy()),
                         ));
@@ -620,6 +729,50 @@ pub(super) fn handle_request_with_id(
                     Response::Delegation(Box::new(snapshot))
                 },
             )
+        }
+        Request::AssignmentControl(transition) => {
+            let Some(owner) = owner.filter(|owner| dashboard && state.dashboard.owns(owner)) else {
+                return error_response(
+                    ErrorCode::Conflict,
+                    "assignment control requires the owning Dashboard",
+                );
+            };
+            state.assignment_control(owner, transition).map_or_else(
+                |error| error_response(ErrorCode::Conflict, error_chain_string(&error)),
+                |_| Response::Ok,
+            )
+        }
+        Request::AssignedHumanInput {
+            session,
+            run,
+            control_epoch,
+            view_revision,
+            bytes,
+        } => {
+            let Some(owner) = owner.filter(|owner| dashboard && state.dashboard.owns(owner)) else {
+                return error_response(
+                    ErrorCode::Conflict,
+                    "human assignment input requires the owning Dashboard",
+                );
+            };
+            state
+                .assigned_human_input(owner, session, run, control_epoch, view_revision, &bytes)
+                .map_or_else(
+                    |error| {
+                        error_response(
+                            if error
+                                .chain()
+                                .any(|cause| cause.downcast_ref::<std::io::Error>().is_some())
+                            {
+                                ErrorCode::Internal
+                            } else {
+                                ErrorCode::Conflict
+                            },
+                            error_chain_string(&error),
+                        )
+                    },
+                    |_| Response::Ok,
+                )
         }
         Request::Input {
             session,

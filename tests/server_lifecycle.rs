@@ -10503,6 +10503,34 @@ fn pi_callback(fixture: &ControlFixture, session: SessionId, index: &mut usize, 
     *index += 1;
 }
 
+// Native completion closes the watch, but the shell marker does not acknowledge
+// Server-side lease release. Observe both within the marker's existing bound.
+fn pi_exit_and_wait_for_lease_release(fixture: &ControlFixture, session: SessionId) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains_until(session, "PI_NATIVE_EXIT=17", deadline);
+    loop {
+        let current = fixture.session_summary(session);
+        if current.agent.as_ref().unwrap().health.state
+            == ovrcr::protocol::ReporterHealth::Unavailable
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "native owner exited but its lease is still held: {current:?}"
+        );
+        thread::yield_now();
+    }
+}
+
 #[test]
 fn pi_managed_extension_reports_busy_ready_error_idle_and_fences_producers() {
     let _guard = env_lock();
@@ -10697,25 +10725,28 @@ fn pi_managed_extension_reports_busy_ready_error_idle_and_fences_producers() {
         }
     }
     pi_callback(&fixture, summary.id, &mut index, "session_shutdown:quit");
+    assert_eq!(
+        fixture
+            .session_summary(summary.id)
+            .agent
+            .unwrap()
+            .health
+            .state,
+        ReporterHealth::Connected,
+        "quit alone cannot prove the native owner departed"
+    );
+    pi_exit_and_wait_for_lease_release(&fixture, summary.id);
+
     let after = fixture.session_summary(summary.id).agent.unwrap();
     assert_eq!(
         after.health.state,
         ReporterHealth::Unavailable,
-        "quit releases the lease"
+        "the reaped native owner releases the lease"
     );
     assert!(
         fixture.session_summary(summary.id).unread.is_some(),
         "reporter loss keeps Unread"
     );
-    assert_eq!(
-        fixture.request(Request::SendTerminal {
-            session: summary.id,
-            text: "exit".into(),
-            submit: true,
-        }),
-        Response::Ok
-    );
-    fixture.wait_terminal_contains(summary.id, "PI_NATIVE_EXIT=17");
 }
 
 #[test]
@@ -10753,7 +10784,7 @@ fn pi_managed_launch_preserves_argv_exit_and_environment_and_plain_launch_is_unt
     fixture.record_process_group(&managed);
     // The real receiver materializes the owned extension and prepends only its -e path.
     fixture.wait_terminal_contains(managed.id, "PI_ARGS=-e ");
-    fixture.wait_terminal_contains(managed.id, "ovrcr-pi-reporting.mjs");
+    fixture.wait_terminal_contains(managed.id, "ovrcr-pi-reporting.ts");
     fixture.wait_terminal_contains(managed.id, "--model x/y hello world");
     fixture.wait_terminal_contains(managed.id, "PI_HOOK=[]");
     fixture.wait_terminal_contains(managed.id, "PI_CHANNEL=[set]");
@@ -10764,7 +10795,7 @@ fn pi_managed_launch_preserves_argv_exit_and_environment_and_plain_launch_is_unt
     let extension = std::fs::read_to_string(&extension_record).unwrap();
     let extension = Path::new(extension.trim());
     assert!(
-        extension.ends_with("ovrcr-pi-reporting.mjs"),
+        extension.ends_with("ovrcr-pi-reporting.ts"),
         "{extension:?}"
     );
     let removed = Instant::now() + wait_deadline();
@@ -11823,6 +11854,7 @@ fn desktop_navigation_click(
     let mut child = fixture
         .command()
         .args(["bridge", "navigate", "--stdin"])
+        .env("OVRCR_TEST_BRIDGE_OWNER_DIAGNOSTICS", "1")
         .stdin(Stdio::piped())
         .stdout(output(&stdout))
         .stderr(output(&stderr))
@@ -12360,10 +12392,22 @@ fn desktop_notifications_bridge_click_discards_transient_drafts_and_releases_cap
         dashboard.select("setup", "HOOK_READY");
         dashboard.send(keys);
         dashboard.wait_screen(|screen| screen.contains(visible));
-        desktop_navigation_applied(
-            desktop_navigation_click(&fixture, &ticket, label),
-            &dashboard,
-        );
+        let callback = desktop_navigation_click(&fixture, &ticket, label);
+        #[cfg(feature = "acceptance-diagnostics")]
+        {
+            let diagnostics = String::from_utf8_lossy(&callback.stderr);
+            assert_eq!(
+                diagnostics.matches("stage=current-hash ").count(),
+                1,
+                "{diagnostics}"
+            );
+            assert_eq!(
+                diagnostics.matches("stage=original-hash ").count(),
+                0,
+                "same named executable must not be hashed twice: {diagnostics}"
+            );
+        }
+        desktop_navigation_applied(callback, &dashboard);
         dashboard.wait_screen(|screen| {
             screen.contains("BROWSE")
                 && screen.contains("CODEX_CALLBACK=1")
@@ -14263,6 +14307,18 @@ fn pi_input_request_shows_waiting_alerts_once_and_restores_the_underlying_activi
 
     // A reporter that is gone cannot vouch for the dialog it left open; Unread survives.
     pi_callback(&fixture, summary.id, &mut index, "session_shutdown:quit");
+    assert_eq!(
+        fixture
+            .session_summary(summary.id)
+            .agent
+            .unwrap()
+            .health
+            .state,
+        ReporterHealth::Connected,
+        "quit alone cannot prove the native owner departed"
+    );
+    pi_exit_and_wait_for_lease_release(&fixture, summary.id);
+
     let lost = fixture.session_summary(summary.id);
     let agent = lost
         .agent
@@ -14888,6 +14944,13 @@ fn pi_doctor_reports_bound_lifecycle_activity_and_transport_loss() {
     assert_eq!(ready["lifecycle"]["activity"], "ResponseReady");
     assert_eq!(ready["lifecycle"]["unread"], true);
     pi_callback(&fixture, summary.id, &mut index, "session_shutdown:quit");
+    let shutting_down = doctor(&fixture);
+    assert_eq!(
+        shutting_down["lifecycle"]["health"], "Connected",
+        "quit alone cannot prove the native owner departed"
+    );
+    pi_exit_and_wait_for_lease_release(&fixture, summary.id);
+
     let lost = doctor(&fixture);
     assert_eq!(lost["lifecycle"]["health"], "Unavailable");
     assert!(
@@ -17915,6 +17978,7 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"
         &mut reporting,
         10,
         Request::ReserveAgent(ReserveAgent {
+            pi_resume: None,
             session: summary.id,
             capability: AgentSecret(capability),
             operation: "private-reserve".into(),
@@ -19395,6 +19459,7 @@ fn iterm_owner_cli(
     let mut child = fixture
         .command()
         .args(["bridge", "owner", "--stdin"])
+        .env("OVRCR_TEST_BRIDGE_OWNER_DIAGNOSTICS", "1")
         .stdin(Stdio::piped())
         .stdout(output)
         .stderr(error)
@@ -19428,10 +19493,11 @@ fn iterm_owner_cli(
     };
     assert!(live::wait_group_absent(group, Duration::from_secs(2)));
     fixture.forget_group(group);
+    let diagnostics = std::fs::read_to_string(error_path).unwrap();
+    eprintln!("ITERM_OWNER_CLI_DIAGNOSTIC label={label} status={status}\n{diagnostics}");
     assert!(
         status.success(),
-        "current-owner CLI failed: {status}; {}",
-        std::fs::read_to_string(error_path).unwrap()
+        "current-owner CLI {label} failed: {status}; {diagnostics}"
     );
     let result: ovrcr::protocol::BridgeOwnerResult =
         serde_json::from_slice(&std::fs::read(output_path).unwrap()).unwrap();

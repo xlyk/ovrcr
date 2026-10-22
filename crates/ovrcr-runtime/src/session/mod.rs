@@ -15,13 +15,20 @@ pub use ovrcr_protocol::{
     AgentActivity, SessionId, SessionKind, SessionPhase, SessionRunId, SessionSummary, TerminalSize,
 };
 
-/// The native spawn primitive failed before the requested program could execute.
+/// Lifecycle preparation or native spawn failed before the requested process started.
 #[derive(Debug)]
-pub(crate) struct NoProcessStarted;
+pub(crate) struct NoProcessStarted(String);
+
+impl NoProcessStarted {
+    pub(crate) fn context(error: anyhow::Error) -> anyhow::Error {
+        let diagnostic = Self(error.to_string());
+        error.context(diagnostic)
+    }
+}
 
 impl std::fmt::Display for NoProcessStarted {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("no process was started")
+        formatter.write_str(&self.0)
     }
 }
 
@@ -60,6 +67,7 @@ mod process;
 mod reporting;
 use io::{read_pty, wait_for_child};
 use process::*;
+pub(crate) use reporting::AgentPersistence;
 
 /// How long `terminate` waits after SIGTERM before hanging up a process
 /// group that is still present. Interactive shells ignore SIGTERM, so this
@@ -282,13 +290,80 @@ type TermResultHook = Arc<dyn Fn() -> Option<bool> + Send + Sync>;
 #[cfg(test)]
 type ListingErrorHook = Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>;
 
+#[derive(Clone, Copy)]
+pub(crate) enum DelegatedAuthority {
+    Controller,
+    QuestionAnswer,
+    ConfirmHumanReturn,
+    Interrupt,
+}
+
 pub(crate) struct DelegatedInput<'a> {
+    pub request: &'a str,
+    pub control: &'a ovrcr_protocol::AssignmentControl,
+    pub control_epoch: u64,
+    pub authority: DelegatedAuthority,
     pub parent: &'a Session,
+    pub parent_producer: Option<&'a str>,
+    pub parent_source: Option<&'a ovrcr_protocol::AgentSecret>,
     pub parent_binding: &'a ovrcr_protocol::AgentBinding,
     pub capability: &'a str,
     pub child_binding: &'a ovrcr_protocol::AgentBinding,
     pub model: &'a str,
     pub text: &'a str,
+}
+
+#[derive(Debug)]
+pub(crate) enum DelegatedDelivery {
+    Rejected(ovrcr_protocol::InputDelivery),
+    Applied(ovrcr_protocol::InputDelivery),
+    Partial(ovrcr_protocol::InputDelivery),
+    Unknown(ovrcr_protocol::InputDelivery),
+}
+
+fn write_delegated(
+    writer: &mut dyn std::io::Write,
+    text: &[u8],
+    fail_after: Option<usize>,
+) -> DelegatedDelivery {
+    let mut bytes = text.to_vec();
+    bytes.push(b'\r');
+    let mut written = 0;
+    while written < bytes.len() {
+        let end = fail_after.unwrap_or(bytes.len()).min(bytes.len());
+        let result = if written >= end {
+            Err(std::io::Error::other("injected assigned write failure"))
+        } else {
+            writer.write(&bytes[written..end])
+        };
+        match result {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Ok(0) | Err(_) => {
+                let delivery = ovrcr_protocol::InputDelivery {
+                    written_bytes: written as u64,
+                    total_bytes: bytes.len() as u64,
+                    submit_written: false,
+                };
+                return if written == 0 {
+                    DelegatedDelivery::Rejected(delivery)
+                } else {
+                    DelegatedDelivery::Partial(delivery)
+                };
+            }
+            Ok(count) => written += count,
+        }
+    }
+    let delivery = ovrcr_protocol::InputDelivery {
+        written_bytes: written as u64,
+        total_bytes: bytes.len() as u64,
+        submit_written: true,
+    };
+    if fail_after == Some(bytes.len()) || fail_after == Some(usize::MAX) || writer.flush().is_err()
+    {
+        DelegatedDelivery::Unknown(delivery)
+    } else {
+        DelegatedDelivery::Applied(delivery)
+    }
 }
 
 pub struct Session {
@@ -345,6 +420,16 @@ pub(crate) const NO_REGISTER: SessionRegister<'static> = &|_| {};
 pub(crate) struct LeaderWaitOverride<'a> {
     pub(crate) timeout: Duration,
     pub(crate) probe: &'a (dyn Fn(libc::pid_t) -> bool + Send + Sync),
+}
+
+pub(crate) struct SessionTermination<'a> {
+    session: &'a Session,
+    _guard: std::sync::MutexGuard<'a, ()>,
+}
+impl SessionTermination<'_> {
+    pub(crate) fn terminate(&self, grace: Duration) -> Result<()> {
+        self.session.terminate_guarded(grace)
+    }
 }
 
 impl Session {
@@ -432,7 +517,7 @@ impl Session {
             .argv
             .first()
             .context("session command cannot be empty")
-            .context(NoProcessStarted)?
+            .map_err(NoProcessStarted::context)?
             .clone();
         let pty = native_pty_system();
         let pair = pty
@@ -442,7 +527,7 @@ impl Session {
                 pixel_width: 0,
                 pixel_height: 0,
             })
-            .context(NoProcessStarted)?;
+            .map_err(NoProcessStarted::context)?;
         let mut command = CommandBuilder::new(argv0);
         command.args(spec.argv.iter().skip(1));
         #[cfg(test)]
@@ -453,7 +538,7 @@ impl Session {
             command.env("OVRCR_RESTORE_COMMAND", restore_command);
         }
         let shell_startup =
-            shell_prompt::configure(&mut command, &spec.argv).context(NoProcessStarted)?;
+            shell_prompt::configure(&mut command, &spec.argv).map_err(NoProcessStarted::context)?;
         command.env_remove("OVRCR_AGENT_SOCKET");
         command.env_remove("OVRCR_AGENT_TOKEN");
         command.env_remove("OVRCR_HOOK_SOCKET");
@@ -467,7 +552,7 @@ impl Session {
         let mut child = pair
             .slave
             .spawn_command(command)
-            .context(NoProcessStarted)?;
+            .map_err(NoProcessStarted::context)?;
         let pid = child.process_id().context("PTY child has no process ID")?;
 
         let (leader_timeout, leader_probe) = match &leader_wait {
@@ -515,6 +600,7 @@ impl Session {
                 archived: false,
                 title: None,
                 manual_title: None,
+                assignment_control: None,
                 id,
                 run: spec.run,
                 kind: spec.kind.clone(),
@@ -935,7 +1021,10 @@ impl Session {
 
     /// The caller holds SessionStore before entering here. Reporter binding changes
     /// share these state mutexes; hold them through the actual PTY write, in ID order.
-    pub(crate) fn send_delegated_text(&self, input: DelegatedInput<'_>) -> Result<bool> {
+    pub(crate) fn send_delegated_text(
+        &self,
+        input: DelegatedInput<'_>,
+    ) -> Result<DelegatedDelivery> {
         let bracketed = self
             .terminal
             .lock()
@@ -944,15 +1033,112 @@ impl Session {
             .screen()
             .bracketed_paste();
         let bytes = encode_paste(input.text, bracketed);
+        let rejected = || {
+            DelegatedDelivery::Rejected(ovrcr_protocol::InputDelivery {
+                written_bytes: 0,
+                total_bytes: bytes.len() as u64 + 1,
+                submit_written: false,
+            })
+        };
+        Ok(self
+            .with_delegated_context(&input, |_| {
+                let mut writer = self.writer.lock().unwrap();
+                let failure = crate::server::delegation::take_fault("input", input.request);
+                Ok(write_delegated(&mut **writer, &bytes, failure))
+            })?
+            .unwrap_or_else(rejected))
+    }
+
+    /// One native Escape byte, with no paste framing or submit. The caller has
+    /// already durably recorded Unknown and the exact interrupt barrier.
+    pub(crate) fn send_delegated_interrupt(
+        &self,
+        input: &DelegatedInput<'_>,
+        validate: impl FnOnce(&ovrcr_protocol::AgentSnapshot) -> Result<()>,
+    ) -> Result<
+        Option<(
+            ovrcr_protocol::DispatchOutcome,
+            ovrcr_protocol::InputDelivery,
+        )>,
+    > {
+        use ovrcr_protocol::{DispatchOutcome, InputDelivery};
+        self.with_delegated_context(input, |agent| {
+            validate(agent)?;
+            let mut writer = self.writer.lock().unwrap();
+            let mut delivery = InputDelivery {
+                written_bytes: 0,
+                total_bytes: 1,
+                submit_written: false,
+            };
+            if crate::server::delegation::take_fault("interrupt-before-write", input.request)
+                .is_some()
+            {
+                return Ok((DispatchOutcome::Rejected, delivery));
+            }
+            let outcome = match writer.write(&[0x1b]) {
+                Ok(1) => {
+                    delivery.written_bytes = 1;
+                    if crate::server::delegation::take_fault("interrupt-after-write", input.request)
+                        .is_some()
+                        || writer.flush().is_err()
+                    {
+                        DispatchOutcome::Unknown
+                    } else {
+                        DispatchOutcome::Applied
+                    }
+                }
+                Ok(0) => DispatchOutcome::Rejected,
+                Ok(_) => DispatchOutcome::Unknown,
+                Err(_) => DispatchOutcome::Rejected,
+            };
+            Ok((outcome, delivery))
+        })
+    }
+
+    /// Caller holds SessionStore before these Session locks (ascending ID order).
+    /// The action must use that held store and must not reenter Session state.
+    pub(crate) fn with_delegated_context<T>(
+        &self,
+        input: &DelegatedInput<'_>,
+        action: impl FnOnce(&ovrcr_protocol::AgentSnapshot) -> Result<T>,
+    ) -> Result<Option<T>> {
+        self.with_delegated_state(input, |child| {
+            action(child.reporting.snapshot.as_ref().unwrap())
+        })
+    }
+
+    pub(crate) fn with_delegated_archive(
+        &self,
+        input: &DelegatedInput<'_>,
+        commit: impl FnOnce() -> Result<()>,
+    ) -> Result<Option<()>> {
+        self.with_delegated_state(input, |child| {
+            commit()?;
+            child.reporting.lost("capability_revoked");
+            child.hook_capability = None;
+            Ok(())
+        })
+    }
+
+    fn with_delegated_state<T>(
+        &self,
+        input: &DelegatedInput<'_>,
+        action: impl FnOnce(&mut SessionState) -> Result<T>,
+    ) -> Result<Option<T>> {
         #[cfg(test)]
         if let Some(hook) = self.before_delegated_input.lock().unwrap().clone() {
             hook();
         }
         if self.id() == input.parent.id() {
-            return Ok(false);
+            return Ok(None);
         }
-        let write = |parent: &SessionState, child: &SessionState| -> Result<bool> {
+        let apply = |parent: &SessionState, child: &mut SessionState| -> Result<Option<T>> {
             let parent_valid = parent.phase == SessionPhase::Running
+                && parent.reporting.active()
+                && parent.reporting.source.as_ref() == input.parent_source
+                && input
+                    .parent_producer
+                    .is_none_or(|producer| parent.reporting.producer.as_deref() == Some(producer))
                 && parent.hook_capability.as_ref().is_some_and(|token| {
                     crate::agent_runner::delegation_capability(&capability_hex(token))
                         == input.capability
@@ -965,6 +1151,8 @@ impl Session {
                 && child.hook_capability.is_some()
                 && child.reporting.snapshot.as_ref().is_some_and(|snapshot| {
                     &snapshot.binding == input.child_binding
+                        && (!matches!(input.authority, DelegatedAuthority::QuestionAnswer)
+                            || snapshot.input_requests.is_empty())
                         && snapshot.health.state == ovrcr_protocol::ReporterHealth::Connected
                         && snapshot
                             .metrics
@@ -972,28 +1160,99 @@ impl Session {
                             .and_then(|metrics| metrics.sample.model.as_deref())
                             == Some(input.model)
                 });
-            if !parent_valid || !child_valid {
-                return Ok(false);
+            let control_valid = input.control.epoch == input.control_epoch
+                && input.control.owner == ovrcr_protocol::ControlOwner::Controller
+                && match input.authority {
+                    DelegatedAuthority::Controller | DelegatedAuthority::QuestionAnswer => {
+                        input.control.barrier.is_none()
+                    }
+                    DelegatedAuthority::Interrupt => matches!(
+                        input.control.barrier,
+                        Some(ovrcr_protocol::ControlBarrier::Interrupt { .. })
+                    ),
+                    DelegatedAuthority::ConfirmHumanReturn => matches!(
+                        input.control.barrier,
+                        Some(ovrcr_protocol::ControlBarrier::HumanReturn { .. })
+                    ),
+                };
+            if !parent_valid || !child_valid || !control_valid {
+                return Ok(None);
             }
-            let mut writer = self.writer.lock().unwrap();
-            writer
-                .write_all(&bytes)
-                .context("write assigned text to PTY")?;
-            writer
-                .write_all(b"\r")
-                .context("submit assigned text to PTY")?;
-            writer.flush().context("flush assigned PTY")?;
-            Ok(true)
+            action(child).map(Some)
         };
         if input.parent.id().0 < self.id().0 {
             let parent = input.parent.state.lock().unwrap();
-            let child = self.state.lock().unwrap();
-            write(&parent, &child)
+            let mut child = self.state.lock().unwrap();
+            apply(&parent, &mut child)
         } else {
-            let child = self.state.lock().unwrap();
+            let mut child = self.state.lock().unwrap();
             let parent = input.parent.state.lock().unwrap();
-            write(&parent, &child)
+            apply(&parent, &mut child)
         }
+    }
+
+    /// Attribution survives an intentional pause, while input admission remains Running-only.
+    /// Caller owns retained metadata; inspect the exact reporting binding under child state.
+    pub(crate) fn with_assignment_attribution<T>(
+        &self,
+        run: ovrcr_protocol::SessionRunId,
+        binding: &ovrcr_protocol::AgentBinding,
+        action: impl FnOnce(&ovrcr_protocol::AgentSnapshot) -> Result<T>,
+    ) -> Result<T> {
+        let state = self.state.lock().unwrap();
+        let snapshot = state
+            .reporting
+            .snapshot
+            .as_ref()
+            .filter(|snapshot| {
+                self.run() == run
+                    && matches!(state.phase, SessionPhase::Running | SessionPhase::Paused)
+                    && state.hook_capability.is_some()
+                    && &snapshot.binding == binding
+                    && snapshot.health.state == ovrcr_protocol::ReporterHealth::Connected
+            })
+            .context("assigned attribution binding is unavailable or changed")?;
+        action(snapshot)
+    }
+
+    /// Caller owns retained metadata; this is the final current-child reporting fence.
+    pub(crate) fn with_assignment_context<T>(
+        &self,
+        run: ovrcr_protocol::SessionRunId,
+        binding: &ovrcr_protocol::AgentBinding,
+        action: impl FnOnce(&ovrcr_protocol::AgentSnapshot) -> Result<T>,
+    ) -> Result<T> {
+        let state = self.state.lock().unwrap();
+        let snapshot = state
+            .reporting
+            .snapshot
+            .as_ref()
+            .filter(|snapshot| {
+                self.run() == run
+                    && state.phase == SessionPhase::Running
+                    && state.hook_capability.is_some()
+                    && &snapshot.binding == binding
+                    && snapshot.health.state == ovrcr_protocol::ReporterHealth::Connected
+            })
+            .context("assigned run or reporting binding is unavailable or changed")?;
+        action(snapshot)
+    }
+
+    /// Generic writers always reject assigned membership. Only Server-validated human
+    /// input reaches this separate writer, with retained authority held by its caller.
+    pub(crate) fn with_assignment_writer<T>(
+        &self,
+        run: ovrcr_protocol::SessionRunId,
+        binding: &ovrcr_protocol::AgentBinding,
+        action: impl FnOnce(&mut dyn std::io::Write) -> Result<T>,
+    ) -> Result<T> {
+        if !self.has_assigned_input() {
+            bail!("human assignment input requires immutable membership");
+        }
+        self.with_assignment_context(run, binding, |_| {
+            let mut writer = self.writer.lock().unwrap();
+            action(&mut **writer)
+        })
     }
 
     pub(crate) fn with_delegation_binding<T>(
@@ -1054,8 +1313,25 @@ impl Session {
         }
     }
 
+    pub(crate) fn try_termination(&self) -> Result<Option<SessionTermination<'_>>> {
+        match self.terminate_lock.try_lock() {
+            Ok(guard) => Ok(Some(SessionTermination {
+                session: self,
+                _guard: guard,
+            })),
+            Err(std::sync::TryLockError::WouldBlock) => Ok(None),
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                bail!("Session termination owner poisoned")
+            }
+        }
+    }
+
     pub fn terminate(&self, grace: Duration) -> Result<()> {
         let _termination = self.terminate_lock.lock().unwrap();
+        self.terminate_guarded(grace)
+    }
+
+    fn terminate_guarded(&self, grace: Duration) -> Result<()> {
         if matches!(
             self.state.lock().unwrap().phase,
             SessionPhase::Exited { .. }

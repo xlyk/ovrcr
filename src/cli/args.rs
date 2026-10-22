@@ -59,7 +59,9 @@ pub(super) enum Command {
         #[command(subcommand)]
         command: BridgeCommand,
     },
-    /// Submit one delegation control request as JSON on stdin; connect only.
+    /// Submit research/coding assignment and workflow control JSON on stdin (including interrupt/cancel/delivery/archive); connect only.
+    /// Question publication, private collection and scoped answers are separate
+    /// requests. An answer receipt confirms delivery only, never native approval.
     Delegation,
     /// Run a native agent with invocation supervision.
     Agent {

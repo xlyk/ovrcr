@@ -10,8 +10,13 @@ pub(super) struct Outbox {
 
 impl Outbox {
     pub(super) fn discard_input(&mut self) {
-        self.queue
-            .retain(|message| !matches!(message.request, ovrcr_protocol::Request::Input { .. }));
+        self.queue.retain(|message| {
+            !matches!(
+                message.request,
+                ovrcr_protocol::Request::Input { .. }
+                    | ovrcr_protocol::Request::AssignedHumanInput { .. }
+            )
+        });
     }
     pub(super) fn push(&mut self, message: ClientMessage) {
         self.queue.push_back(message);

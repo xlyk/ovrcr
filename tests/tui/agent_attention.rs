@@ -70,6 +70,9 @@ fn reporting(
         } else {
             Vec::new()
         },
+
+        native_control: None,
+        native_control_revision: 0,
     });
     // Accepted effective activity, not this deliberately conflicting legacy rollup, wins.
     row.activity = AgentActivity::Error;

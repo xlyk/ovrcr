@@ -62,9 +62,18 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
             argv,
         ),
     };
+    let mut argv = argv;
+    ovrcr::protocol::apply_default_auto_trust(&name, &mut argv);
+    let pi_resume = if name == "pi" && ovrcr::report::pi::eligible_argv(&argv) {
+        ovrcr_runtime::extension_recovery::explicit_pi_resume(&argv)
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
     let swallow_conflict = name != "claude";
     let mut lease = {
-        ovrcr::report::reserve_invocation_for(provider(&name))
+        ovrcr::report::reserve_invocation_with_resume(provider(&name), pi_resume)
             .or_else(|error| {
                 if swallow_conflict {
                     Ok(None)
@@ -80,10 +89,6 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
                 }
             })?
     };
-    let mut argv = argv;
-    // Managed Claude, Codex, Pi, and Oh My Pi auto-trust unless the caller already
-    // passed a permission, approve, auto-trust, or dangerously-* flag.
-    ovrcr::protocol::apply_default_auto_trust(&name, &mut argv);
     let mut delegation_environment = Vec::new();
     if name == "pi"
         && let (Ok(session), Ok(token), Ok(socket)) = (
@@ -108,7 +113,7 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
             ),
         ];
     }
-    let status = ovrcr::agent_runner::run_native_with_env(&argv, &delegation_environment, move |available, native_argv| {
+    let status = ovrcr::agent_runner::run_native_with_env(&argv, &delegation_environment, move |available, native_argv, native_environment| {
         if name == "hermes" {
             if !available {
                 drop(lease.take());
@@ -129,7 +134,7 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
         Some(match name.as_str() {
             "cursor-agent" => ovrcr::report::cursor::receiver(lease, native_argv),
             "codex" => ovrcr::report::codex::receiver(lease, native_argv),
-            "pi" => ovrcr::report::pi::receiver(lease, native_argv),
+            "pi" => ovrcr::report::pi::receiver_with_environment(lease, native_argv, native_environment),
             "omp" => ovrcr::report::omp::receiver(lease, native_argv),
             "grok" => ovrcr::report::grok::receiver(lease, native_argv),
             _ => ovrcr::report::admission::receiver(lease, native_argv),

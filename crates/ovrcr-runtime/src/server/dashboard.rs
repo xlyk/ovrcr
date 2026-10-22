@@ -204,6 +204,53 @@ impl ActiveDashboard {
         Some(f(current))
     }
 
+    /// Keep the real person-owned slot through a durable workflow transfer.
+    pub(super) fn with_workflow_owner<T>(
+        &self,
+        owner: &Arc<()>,
+        action: impl FnOnce() -> T,
+    ) -> Option<T> {
+        self.with_owned(owner, |current| {
+            if current.sink.is_closing() || peer_has_closed(&current.stream) {
+                None
+            } else {
+                Some(action())
+            }
+        })
+        .flatten()
+    }
+
+    /// Caller has acquired retained, child state and writer before this slot.
+    /// Keep owner/view validation atomic with one PTY effect; never wait for a
+    /// writer or send a socket response from the callback.
+    pub(super) fn with_focused_input<T>(
+        &self,
+        owner: &Arc<()>,
+        session: SessionId,
+        run: SessionRunId,
+        revision: u64,
+        action: impl FnOnce() -> T,
+    ) -> Option<T> {
+        self.with_owned(owner, |current| {
+            if current.sink.is_closing() || peer_has_closed(&current.stream) {
+                return None;
+            }
+            let view = self.view.lock().unwrap();
+            if !view.as_ref().is_some_and(|view| {
+                view.revision == revision
+                    && view.focused == Some(session)
+                    && view
+                        .panes
+                        .iter()
+                        .any(|pane| pane.session == session && pane.run == run)
+            }) {
+                return None;
+            }
+            Some(action())
+        })
+        .flatten()
+    }
+
     pub(super) fn view(&self) -> Option<DashboardView> {
         self.view.lock().unwrap().clone()
     }

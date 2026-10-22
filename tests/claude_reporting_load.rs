@@ -406,6 +406,7 @@ fn fifty_session_reporting_capacity() {
             let Response::AgentOperation(AgentOperationResult::Reserved(reservation)) = send(
                 &mut s,
                 Request::ReserveAgent(ReserveAgent {
+                    pi_resume: None,
                     session,
                     capability: AgentSecret(capability),
                     operation: "reserve".into(),
@@ -426,7 +427,7 @@ fn fifty_session_reporting_capacity() {
                 Response::Ok
             );
             s = connect(&socket);
-            let Response::AgentOperation(AgentOperationResult::Bound(binding)) = send(
+            let binding = match send(
                 &mut s,
                 Request::Supervisor(SupervisorRequest {
                     auth: auth.clone(),
@@ -436,8 +437,34 @@ fn fifty_session_reporting_capacity() {
                         conversation: format!("root-{index}"),
                     },
                 }),
-            ) else {
-                panic!("bind");
+            ) {
+                Response::AgentOperation(AgentOperationResult::Bound(binding)) => binding,
+                Response::Error { code, message } => {
+                    let reason = match message.as_str() {
+                        "dispatcher queue is full" => "dispatcher_full",
+                        "dispatcher is unavailable" => "dispatcher_unavailable",
+                        "session not found" => "session_not_found",
+                        "agent session is unavailable" => "session_unavailable",
+                        "supervisor lease is stale or invalid" => "stale_lease",
+                        "agent binding changed" => "binding_changed",
+                        "wrong supervisor session" => "wrong_session",
+                        "operation ID was reused with different arguments" => "operation_reused",
+                        "binding generation exhausted" => "generation_exhausted",
+                        "missing reservation" => "missing_reservation",
+                        _ => "unclassified",
+                    };
+                    panic!(
+                        "[capacity-bind] index={index} response=Error code={code:?} reason={reason}"
+                    );
+                }
+                Response::AgentOperation(result) => panic!(
+                    "[capacity-bind] index={index} response=AgentOperation operation={:?}",
+                    std::mem::discriminant(&result)
+                ),
+                response => panic!(
+                    "[capacity-bind] index={index} response={:?}",
+                    std::mem::discriminant(&response)
+                ),
             };
             let mut max_late = 0;
             for tick in 1..=600 {

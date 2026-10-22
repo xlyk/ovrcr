@@ -215,6 +215,8 @@ fn unavailable_reporter_mutes_the_status_glyph() {
         health_revision: 1,
         input_requests: Vec::new(),
         input_revision: 0,
+        native_control: None,
+        native_control_revision: 0,
     });
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     for (health, color) in [
@@ -440,6 +442,8 @@ fn reviewed_ready_hides_the_checkmark_and_the_sidebar_draws_no_unread_circle() {
         health_revision: 0,
         input_requests: Vec::new(),
         input_revision: 0,
+        native_control: None,
+        native_control_revision: 0,
     };
     let observation = |turn: &str| ReadyObservation {
         binding: binding.clone(),
@@ -861,6 +865,8 @@ fn sidebar_shows_the_agent_and_current_model_on_one_row() {
         health_revision: 1,
         input_requests: Vec::new(),
         input_revision: 0,
+        native_control: None,
+        native_control_revision: 0,
     });
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_focus(SessionId(5));

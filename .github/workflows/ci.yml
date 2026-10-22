@@ -65,7 +65,35 @@ jobs:
         with:
           node-version: 22
       - name: Extension tests
-        run: node --test tests/pi_reporting_extension.mjs tests/omp_reporting_extension.mjs tests/pi_delegation_extension.mjs
+        run: node --test tests/pi_package_bootstrap.mjs tests/pi_reporting_extension.mjs tests/omp_reporting_extension.mjs tests/pi_delegation_extension.mjs tests/pi_interrupt_extension.mjs tests/pi_question_extension.mjs tests/pi_continuation_records.mjs tests/pi_observation_extension.mjs
+      - name: Provision pinned Pi loader test host
+        run: |
+          mkdir -p "$RUNNER_TEMP/ovrcr-pi-package-evidence"
+          npm install --prefix "$RUNNER_TEMP/ovrcr-pi-package-host" --no-audit --no-fund --ignore-scripts @earendil-works/pi-coding-agent@0.87.1
+          cp "$RUNNER_TEMP/ovrcr-pi-package-host/package-lock.json" "$RUNNER_TEMP/ovrcr-pi-package-evidence/package-lock.json"
+          cp "$RUNNER_TEMP/ovrcr-pi-package-host/node_modules/@earendil-works/pi-coding-agent/package.json" "$RUNNER_TEMP/ovrcr-pi-package-evidence/host-package.json"
+      - name: Installed Pi package through production materialization
+        env:
+          OVRCR_TEST_PI_PACKAGE_ROOT: ${{ runner.temp }}/ovrcr-pi-package-host/node_modules/@earendil-works/pi-coding-agent
+        run: |
+          set -o pipefail
+          cargo test -p ovrcr --test pi_package --features acceptance-diagnostics production_materializer_loads_local_package_with_one_injected_owner -- --ignored --exact --nocapture --test-threads=1 2>&1 | tee "$RUNNER_TEMP/ovrcr-pi-package-evidence/test.log"
+      # The nested tests/pi_child_tools_installed.mjs needs actual assignment argv;
+      # it must not enter the ordinary extension-test batch above.
+      - name: Installed Pi effective child tools through production assignment argv
+        env:
+          OVRCR_TEST_PI_PACKAGE_ROOT: ${{ runner.temp }}/ovrcr-pi-package-host/node_modules/@earendil-works/pi-coding-agent
+        run: |
+          set -o pipefail
+          cargo test -p ovrcr --test pi_delegation --features acceptance-diagnostics coding::production_assignment_argv_preserves_installed_sdk_child_publication_tools -- --ignored --exact --nocapture --test-threads=1 2>&1 | tee "$RUNNER_TEMP/ovrcr-pi-package-evidence/child-tools.log"
+      - name: Upload installed Pi loader evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pi-package-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ovrcr-pi-package-evidence/
+          if-no-files-found: error
+          retention-days: 14
 
   linux:
     name: linux
@@ -102,7 +130,35 @@ jobs:
         with:
           node-version: 22
       - name: Extension tests
-        run: node --test tests/pi_reporting_extension.mjs tests/omp_reporting_extension.mjs tests/pi_delegation_extension.mjs
+        run: node --test tests/pi_package_bootstrap.mjs tests/pi_reporting_extension.mjs tests/omp_reporting_extension.mjs tests/pi_delegation_extension.mjs tests/pi_interrupt_extension.mjs tests/pi_question_extension.mjs tests/pi_continuation_records.mjs tests/pi_observation_extension.mjs
+      - name: Provision pinned Pi loader test host
+        run: |
+          mkdir -p "$RUNNER_TEMP/ovrcr-pi-package-evidence"
+          npm install --prefix "$RUNNER_TEMP/ovrcr-pi-package-host" --no-audit --no-fund --ignore-scripts @earendil-works/pi-coding-agent@0.87.1
+          cp "$RUNNER_TEMP/ovrcr-pi-package-host/package-lock.json" "$RUNNER_TEMP/ovrcr-pi-package-evidence/package-lock.json"
+          cp "$RUNNER_TEMP/ovrcr-pi-package-host/node_modules/@earendil-works/pi-coding-agent/package.json" "$RUNNER_TEMP/ovrcr-pi-package-evidence/host-package.json"
+      - name: Installed Pi package through production materialization
+        env:
+          OVRCR_TEST_PI_PACKAGE_ROOT: ${{ runner.temp }}/ovrcr-pi-package-host/node_modules/@earendil-works/pi-coding-agent
+        run: |
+          set -o pipefail
+          cargo test -p ovrcr --test pi_package --features acceptance-diagnostics production_materializer_loads_local_package_with_one_injected_owner -- --ignored --exact --nocapture --test-threads=1 2>&1 | tee "$RUNNER_TEMP/ovrcr-pi-package-evidence/test.log"
+      # The nested tests/pi_child_tools_installed.mjs needs actual assignment argv;
+      # it must not enter the ordinary extension-test batch above.
+      - name: Installed Pi effective child tools through production assignment argv
+        env:
+          OVRCR_TEST_PI_PACKAGE_ROOT: ${{ runner.temp }}/ovrcr-pi-package-host/node_modules/@earendil-works/pi-coding-agent
+        run: |
+          set -o pipefail
+          cargo test -p ovrcr --test pi_delegation --features acceptance-diagnostics coding::production_assignment_argv_preserves_installed_sdk_child_publication_tools -- --ignored --exact --nocapture --test-threads=1 2>&1 | tee "$RUNNER_TEMP/ovrcr-pi-package-evidence/child-tools.log"
+      - name: Upload installed Pi loader evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pi-package-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ovrcr-pi-package-evidence/
+          if-no-files-found: error
+          retention-days: 14
 
   linux-capacity:
     name: linux capacity

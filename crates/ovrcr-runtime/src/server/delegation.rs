@@ -1,7 +1,36 @@
 //! Server-owned assignment control. Task payloads live only in private publications.
+#[path = "delegation_archive.rs"]
+mod archive;
+#[path = "delegation_cancellation.rs"]
+pub(crate) mod cancellation;
+#[path = "delegation_cancellation_effects.rs"]
+mod cancellation_effects;
+#[path = "delegation_control.rs"]
+pub(crate) mod control;
+#[path = "delegation_delivery.rs"]
+mod delivery;
+#[path = "delegation_fallback_routes.rs"]
+mod fallback;
+#[path = "delegation_followups.rs"]
+pub(super) mod followups;
+#[path = "delegation_interrupt.rs"]
+pub(crate) mod interrupt;
+#[path = "delegation_interrupt_effects.rs"]
+mod interrupt_effects;
+#[path = "delegation_questions.rs"]
+mod questions;
+#[path = "delegation_review.rs"]
+mod review;
+use questions::{AnswerIntent, QuestionPublicationIntent};
+#[path = "delegation_dependencies.rs"]
+mod dependencies;
+#[path = "delegation_policy.rs"]
+mod policy;
+
 use super::delegation_files::Directory;
 use super::{ServerState, lifecycle_error};
 use anyhow::{Context, Result, bail};
+use followups::{FollowupIntent, VersionState, initial_result_version, read_version_submission};
 use ovrcr_protocol::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -13,9 +42,34 @@ use std::{
     time::{Duration, Instant},
 };
 
+// Interface shared with the publication/wake slice. A missing intent is not evidence.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct PublicationIntent {
+    pub identity: PublicationIdentity,
+    pub binding: AgentBinding,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Record {
+    #[serde(default)]
+    pub review: Option<review::ReviewRecord>,
+    #[serde(default)]
+    pub dependencies: Option<dependencies::DependencyWitness>,
     pub handle: String,
+    #[serde(default)]
+    pub coding: Option<CodingWorkspace>,
+    #[serde(default)]
+    pub control: AssignmentControl,
+    #[serde(default)]
+    pub takeover_evidence: Option<AssignmentControlEvidence>,
+    #[serde(default)]
+    pub control_intents: Vec<control::ControlIntent>,
+    #[serde(default)]
+    pub interrupt_intents: Vec<interrupt_effects::InterruptIntent>,
+    #[serde(default)]
+    pub initial_control_epoch: Option<u64>,
+    #[serde(default)]
+    pub initial_parent_epoch: Option<u64>,
     pub identity: AssignmentIdentity,
     pub binding: Option<AgentBinding>,
     pub parent_binding: AgentBinding,
@@ -25,20 +79,678 @@ pub(crate) struct Record {
     pub contract_digest: String,
     pub brief_digest: Option<String>,
     pub result_digest: Option<String>,
+    #[serde(default = "initial_result_version")]
+    pub result_version: u32,
+    #[serde(default)]
+    pub publication_intent: Option<PublicationIntent>,
+    #[serde(default)]
+    pub handled_publication: Option<PublicationIdentity>,
+    #[serde(default)]
+    pub acceptance: Option<AcceptanceReference>,
+    #[serde(default)]
+    pub captures: Vec<CaptureReference>,
+    #[serde(default)]
+    pub recoveries: Vec<RecoveryReference>,
+    #[serde(default)]
+    pub previous_versions: Vec<VersionState>,
+    #[serde(default)]
+    pub followups: Vec<FollowupIntent>,
+    #[serde(default)]
+    pub questions: Vec<QuestionPublicationIntent>,
+    #[serde(default)]
+    pub answers: Vec<AnswerIntent>,
     pub dispatch: DispatchStatus,
     pub reason: Option<String>,
+    #[serde(default)]
+    pub project: String,
+    #[serde(default)]
+    pub workspace: String,
+    #[serde(default)]
+    pub receipts: Vec<DispatchReceipt>,
+    #[serde(default)]
+    pub request_digests: Vec<(DispatchOperation, String)>,
+    #[serde(default)]
+    pub previous_request: Option<String>,
+    #[serde(default)]
+    pub successor_request: Option<String>,
+    #[serde(default)]
+    pub execution_attempts: Option<u32>,
+    #[serde(default)]
+    pub retryable_capacity_refusal: bool,
+    #[serde(default = "ovrcr_protocol::initial_obligation_revision")]
+    pub obligation_revision: u64,
+    #[serde(default)]
+    pub archive_receipts: Vec<ArchiveReceipt>,
 }
 
-fn digest(bytes: &[u8]) -> String {
+// Three initial operation slots plus bounded same-child followups; never evict evidence.
+const MAX_DELEGATION_RECORDS: u64 = 4096;
+
+impl Record {
+    fn pending_initial_binding(&self) -> bool {
+        // SendInitial freezes this binding before native model readiness. It
+        // has spent one launch, but has not crossed the input boundary yet.
+        // Recognize that journaled state without repairing unknown history.
+        self.execution_attempts.is_some_and(|count| count > 0)
+            && self.binding.as_ref().is_some_and(|binding| {
+                binding.provider == AgentProvider::Pi && binding.generation == 1
+            })
+            && self.initial_control_epoch.is_some()
+            && self.initial_parent_epoch.is_some()
+            && self
+                .receipt(DispatchOperation::Launch)
+                .is_some_and(|receipt| receipt.outcome == DispatchOutcome::Applied)
+            && self
+                .receipt(DispatchOperation::InitialInput)
+                .is_some_and(|receipt| {
+                    receipt.outcome == DispatchOutcome::Accepted
+                        && receipt.request == self.handle
+                        && receipt.identity == self.identity
+                        && receipt.result_version == self.result_version
+                })
+            && self
+                .request_digests
+                .iter()
+                .any(|(operation, _)| *operation == DispatchOperation::InitialInput)
+    }
+
+    /// Validate operation evidence before using it to authorize another effect.
+    /// Receipt reconstruction is never an independent source of budget proof.
+    fn spent_execution_attempts(&self) -> Option<u32> {
+        if self.obligation_revision == 0
+            || self.validate_archive_storage().is_err()
+            || self.validate_review_storage().is_err()
+        {
+            return None;
+        }
+        if self.identity.session.is_some() != self.identity.run.is_some()
+            || self.handle != self.identity.request
+            || self.receipts.len() > 3 + followups::MAX_FOLLOWUPS + 64 + MAX_ASSIGNMENT_QUESTIONS
+            || self.control_intents.len() > 64
+            || self.interrupt_intents.len() > 64
+            || self.interrupt_intents.len()
+                != self
+                    .control_intents
+                    .iter()
+                    .filter(|i| i.operation == DispatchOperation::Interrupt)
+                    .count()
+            || self.followups.len() > followups::MAX_FOLLOWUPS
+            || self.request_digests.len() > 3
+        {
+            return None;
+        }
+        let allocated = self.identity.session.is_some();
+        let consistent = match self.dispatch {
+            DispatchStatus::Prepared => !allocated && self.binding.is_none(),
+            DispatchStatus::LaunchUnknown => self.binding.is_none(),
+            DispatchStatus::Launched => {
+                allocated && (self.binding.is_none() || self.pending_initial_binding())
+            }
+            DispatchStatus::InputUnknown | DispatchStatus::Applied => {
+                allocated && self.binding.is_some()
+            }
+            DispatchStatus::Refused => self.binding.is_none() || allocated,
+        };
+        if !consistent {
+            return None;
+        }
+        let first = self.previous_versions.first();
+        let initial_identity = first.map_or(&self.identity, |v| &v.identity);
+        let initial_digest = first.map_or(&self.contract_digest, |v| &v.contract_digest);
+        let versions: Vec<_> = self
+            .previous_versions
+            .iter()
+            .chain(std::iter::once(&self.version()))
+            .cloned()
+            .collect();
+        if !self.valid_question_evidence(&versions) {
+            return None;
+        }
+        if versions[0].result_version != 1
+            || versions.iter().enumerate().any(|(index, v)| {
+                (index > 0 && v.result_version <= versions[index - 1].result_version)
+                    || v.identity.session != self.identity.session
+                    || v.identity.run != self.identity.run
+                    || {
+                        let mut identity = v.identity.clone();
+                        identity.contract = initial_identity.contract;
+                        identity != *initial_identity
+                    }
+            })
+        {
+            return None;
+        }
+        // Reservations are dense; materialized versions need not be. A rejected
+        // stale-control intent retains its files and numbers without advancing
+        // the current version. Validate both histories rather than guessing gaps.
+        let mut reserved_result: u32 = 1;
+        let mut reserved_contract = initial_identity.contract;
+        let mut materialized = 0;
+        for (index, intent) in self.followups.iter().enumerate() {
+            let expected = &versions[materialized];
+            let receipt = self.request_receipt(&intent.request, DispatchOperation::Followup)?;
+            let mut target = intent.expected.clone();
+            target.contract = intent.target.contract;
+            if intent.expected != expected.identity
+                || intent.expected_result_version != expected.result_version
+                || intent.result_version != reserved_result.checked_add(1)?
+                || !(intent.target.contract == intent.expected.contract
+                    || intent.target.contract == reserved_contract.checked_add(1)?)
+                || target != intent.target
+            {
+                return None;
+            }
+            reserved_result = intent.result_version;
+            reserved_contract = reserved_contract.max(intent.target.contract);
+            let next = versions
+                .get(materialized + 1)
+                .filter(|version| version.result_version == intent.result_version);
+            if let Some(next) = next {
+                if receipt.outcome == DispatchOutcome::Accepted
+                    || next.identity != intent.target
+                    || next.contract_digest != intent.contract_digest
+                    || next.brief_digest.as_deref() != Some(intent.brief_digest.as_str())
+                {
+                    return None;
+                }
+                materialized += 1;
+            } else if receipt.outcome != DispatchOutcome::Rejected
+                && !(receipt.outcome == DispatchOutcome::Accepted
+                    && index + 1 == self.followups.len())
+            {
+                return None;
+            }
+        }
+        if materialized + 1 != versions.len() {
+            return None;
+        }
+        let mut prepare_identity = initial_identity.clone();
+        prepare_identity.session = None;
+        prepare_identity.run = None;
+        for (index, receipt) in self.receipts.iter().enumerate() {
+            if matches!(
+                receipt.operation,
+                DispatchOperation::Takeover
+                    | DispatchOperation::HumanReturn
+                    | DispatchOperation::ConfirmHumanReturn
+                    | DispatchOperation::Interrupt
+                    | DispatchOperation::ConfirmInterrupt
+            ) {
+                let intent = self
+                    .control_intents
+                    .iter()
+                    .find(|intent| intent.request == receipt.request)?;
+                let version = versions
+                    .iter()
+                    .find(|v| v.result_version == receipt.result_version)?;
+                if intent.operation != receipt.operation
+                    || receipt.identity != version.identity
+                    || self.receipts[..index]
+                        .iter()
+                        .any(|old| old.request == receipt.request)
+                {
+                    return None;
+                }
+                if receipt.operation == DispatchOperation::Interrupt {
+                    self.interrupt_intents
+                        .iter()
+                        .find(|intent| intent.request == receipt.request)?
+                        .validate(receipt)
+                        .ok()?;
+                }
+                continue;
+            }
+            if receipt.operation == DispatchOperation::AnswerQuestion {
+                let intent = self.answers.iter().find(|a| a.request == receipt.request)?;
+                if receipt.identity != intent.question.assignment
+                    || receipt.result_version != intent.question.result_version
+                    || self.receipts[..index]
+                        .iter()
+                        .any(|old| old.request == receipt.request)
+                {
+                    return None;
+                }
+                continue;
+            }
+            if receipt.operation == DispatchOperation::Followup {
+                let intent = self
+                    .followups
+                    .iter()
+                    .find(|f| f.request == receipt.request)?;
+                let expected = versions
+                    .iter()
+                    .find(|v| v.result_version == intent.expected_result_version)?;
+                let mut target = intent.expected.clone();
+                target.contract = intent.target.contract;
+                if intent.expected != expected.identity
+                    || target != intent.target
+                    || receipt.identity != intent.target
+                    || receipt.result_version != intent.result_version
+                    || self.receipts[..index]
+                        .iter()
+                        .any(|old| old.request == receipt.request)
+                {
+                    return None;
+                }
+                continue;
+            }
+            let expected = if receipt.operation == DispatchOperation::InitialInput {
+                initial_identity
+            } else {
+                &prepare_identity
+            };
+            if receipt.request != self.identity.request
+                || receipt.result_version != 1
+                || &receipt.identity != expected
+                || self.receipts[..index]
+                    .iter()
+                    .any(|old| old.operation == receipt.operation)
+            {
+                return None;
+            }
+        }
+        if self.followups.iter().enumerate().any(|(index, f)| {
+            self.request_receipt(&f.request, DispatchOperation::Followup)
+                .is_none()
+                || self.followups[..index]
+                    .iter()
+                    .any(|old| old.request == f.request)
+        }) {
+            return None;
+        }
+        if self
+            .control_intents
+            .iter()
+            .enumerate()
+            .any(|(index, intent)| {
+                !matches!(
+                    intent.operation,
+                    DispatchOperation::Takeover
+                        | DispatchOperation::HumanReturn
+                        | DispatchOperation::ConfirmHumanReturn
+                        | DispatchOperation::Interrupt
+                        | DispatchOperation::ConfirmInterrupt
+                ) || self
+                    .request_receipt(&intent.request, intent.operation)
+                    .is_none()
+                    || self.control_intents[..index]
+                        .iter()
+                        .any(|old| old.request == intent.request)
+            })
+        {
+            return None;
+        }
+        for (index, (operation, saved)) in self.request_digests.iter().enumerate() {
+            if !matches!(
+                operation,
+                DispatchOperation::Prepare
+                    | DispatchOperation::Launch
+                    | DispatchOperation::InitialInput
+            ) {
+                return None;
+            }
+            let receipt = self.receipt(*operation)?;
+            let expected =
+                digest(&serde_json::to_vec(&(*operation, initial_digest, &receipt.identity)).ok()?);
+            if saved != &expected
+                || self.request_digests[..index]
+                    .iter()
+                    .any(|(old, _)| old == operation)
+            {
+                return None;
+            }
+        }
+        let launch = self.receipt(DispatchOperation::Launch).map(|r| r.outcome);
+        let initial = self.receipt(DispatchOperation::InitialInput);
+        let crossed = matches!(
+            launch,
+            Some(DispatchOutcome::Applied | DispatchOutcome::Unknown | DispatchOutcome::Partial)
+        ) || initial.is_some()
+            || !self.followups.is_empty()
+            || self.control_intents.iter().any(|intent| {
+                intent.operation != DispatchOperation::Interrupt
+                    || self
+                        .request_receipt(&intent.request, intent.operation)
+                        .is_none_or(|receipt| receipt.outcome != DispatchOutcome::Rejected)
+            })
+            || !self.previous_versions.is_empty()
+            || self.binding.is_some()
+            || matches!(
+                self.dispatch,
+                DispatchStatus::LaunchUnknown
+                    | DispatchStatus::Launched
+                    | DispatchStatus::InputUnknown
+                    | DispatchStatus::Applied
+            );
+        if let Some(count) = self.execution_attempts {
+            // Allocating a row alone is not execution, and an authoritative
+            // pre-process rejection may retain that allocated identity.
+            if count == 0
+                && (crossed
+                    || self.identity.session.is_some() && launch != Some(DispatchOutcome::Rejected))
+            {
+                return None;
+            }
+            return Some(count);
+        }
+        // Old records can establish one first attempt, never an unknown cumulative
+        // retry history. Current resource absence is deliberately not consulted.
+        if self.identity.attempt != 1 || self.previous_request.is_some() {
+            return None;
+        }
+        let contract = read_contract(self).ok()?;
+        if contract.validate().is_err()
+            || contract.previous_request.is_some()
+            || contract.request != self.identity.request
+            || contract.workflow != self.identity.workflow
+            || contract.controller != self.identity.controller
+            || contract.task != self.identity.task
+        {
+            return None;
+        }
+        if matches!(self.dispatch, DispatchStatus::Prepared) {
+            if crossed || self.identity.session.is_some() {
+                return None;
+            }
+            let prepare = self.receipt(DispatchOperation::Prepare).map(|r| r.outcome);
+            // Raw legacy Prepared was durably replaced with LaunchUnknown before
+            // the native boundary. A validated intact record with no operation
+            // evidence contradicting it retains that old pre-effect invariant.
+            return if self.receipts.is_empty() && self.request_digests.is_empty()
+                || prepare == Some(DispatchOutcome::Applied)
+                    && matches!(launch, None | Some(DispatchOutcome::Accepted))
+            {
+                Some(0)
+            } else {
+                None
+            };
+        }
+        if crossed || self.identity.session.is_some() {
+            return Some(1);
+        }
+        // Refused/Rejected is not no-process proof: it may follow earlier effects.
+        None
+    }
+
+    fn receipt(&self, operation: DispatchOperation) -> Option<&DispatchReceipt> {
+        self.receipts
+            .iter()
+            .find(|receipt| receipt.operation == operation)
+    }
+
+    fn intent(
+        &mut self,
+        operation: DispatchOperation,
+        identity: &AssignmentIdentity,
+    ) -> Result<bool> {
+        let initial_digest = self
+            .previous_versions
+            .first()
+            .map_or(&self.contract_digest, |version| &version.contract_digest);
+        let expected = digest(&serde_json::to_vec(&(operation, initial_digest, identity))?);
+        if let Some((_, saved)) = self
+            .request_digests
+            .iter()
+            .find(|(kind, _)| *kind == operation)
+        {
+            if saved != &expected {
+                return Err(lifecycle_error(
+                    ErrorCode::Conflict,
+                    "operation identity or contract changed",
+                ));
+            }
+            return Ok(self
+                .receipt(operation)
+                .is_some_and(|r| r.outcome == DispatchOutcome::Accepted));
+        }
+        if let Some(receipt) = self.receipt(operation) {
+            // A legacy receipt without a provable original request is never unsent.
+            if &receipt.identity != identity {
+                return Err(lifecycle_error(
+                    ErrorCode::Conflict,
+                    "legacy operation identity changed",
+                ));
+            }
+            return Ok(false);
+        }
+        if &self.identity != identity {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "assignment binding changed",
+            ));
+        }
+        self.request_digests.push((operation, expected));
+        self.receipts.push(DispatchReceipt {
+            request: self.identity.request.clone(),
+            operation,
+            result_version: 1,
+            identity: identity.clone(),
+            outcome: DispatchOutcome::Accepted,
+            input: None,
+            reason: None,
+        });
+        Ok(true)
+    }
+
+    fn outcome(
+        &mut self,
+        operation: DispatchOperation,
+        outcome: DispatchOutcome,
+        input: Option<InputDelivery>,
+        reason: Option<&str>,
+    ) {
+        let receipt = self
+            .receipts
+            .iter_mut()
+            .find(|r| r.operation == operation)
+            .expect("durable operation intent");
+        receipt.outcome = outcome;
+        receipt.input = input;
+        receipt.reason = reason.map(str::to_owned);
+        self.reason = reason.map(str::to_owned);
+    }
+
+    fn upgrade_legacy(&mut self) {
+        // Derive before receipts are synthesized; do not bless their provenance.
+        self.execution_attempts = self.spent_execution_attempts();
+        if !self.receipts.is_empty() {
+            return;
+        }
+        let valid = read_contract(self).ok();
+        if let Some(contract) = &valid {
+            self.project = contract.project.clone();
+            self.workspace = contract.workspace.clone();
+        }
+        let status = self.dispatch.clone();
+        let allocated = self.identity.session.is_some() && self.identity.run.is_some();
+        let consistent = match status {
+            DispatchStatus::Prepared => {
+                self.identity.session.is_none()
+                    && self.identity.run.is_none()
+                    && self.binding.is_none()
+            }
+            DispatchStatus::LaunchUnknown => {
+                self.identity.session.is_some() == self.identity.run.is_some()
+                    && self.binding.is_none()
+            }
+            DispatchStatus::Launched => allocated && self.binding.is_none(),
+            DispatchStatus::InputUnknown | DispatchStatus::Applied => {
+                allocated && self.binding.is_some()
+            }
+            DispatchStatus::Refused => {
+                self.identity.session.is_some() == self.identity.run.is_some()
+                    && (self.binding.is_none() || allocated)
+            }
+        };
+        let mut prepare_identity = self.identity.clone();
+        prepare_identity.session = None;
+        prepare_identity.run = None;
+        for operation in [
+            DispatchOperation::Prepare,
+            DispatchOperation::Launch,
+            DispatchOperation::InitialInput,
+        ] {
+            let outcome = if valid.is_none() || !consistent {
+                DispatchOutcome::Unknown
+            } else {
+                match (operation, &status) {
+                    (DispatchOperation::Prepare, _) => DispatchOutcome::Applied,
+                    (DispatchOperation::Launch, DispatchStatus::Prepared) => {
+                        DispatchOutcome::Accepted
+                    }
+                    (DispatchOperation::Launch, DispatchStatus::LaunchUnknown) => {
+                        DispatchOutcome::Unknown
+                    }
+                    (DispatchOperation::Launch, DispatchStatus::Refused)
+                        if self.binding.is_none() =>
+                    {
+                        DispatchOutcome::Rejected
+                    }
+                    (DispatchOperation::Launch, _) => DispatchOutcome::Applied,
+                    (
+                        DispatchOperation::InitialInput,
+                        DispatchStatus::Prepared | DispatchStatus::LaunchUnknown,
+                    ) => continue,
+                    (DispatchOperation::InitialInput, DispatchStatus::Launched)
+                        if self.binding.is_none() =>
+                    {
+                        DispatchOutcome::Accepted
+                    }
+                    (DispatchOperation::InitialInput, DispatchStatus::Applied) => {
+                        DispatchOutcome::Applied
+                    }
+                    (DispatchOperation::InitialInput, DispatchStatus::Refused)
+                        if self.binding.is_some() =>
+                    {
+                        DispatchOutcome::Rejected
+                    }
+                    (DispatchOperation::InitialInput, DispatchStatus::Refused) => continue,
+                    (DispatchOperation::InitialInput, _) => DispatchOutcome::Unknown,
+                    (
+                        DispatchOperation::Followup
+                        | DispatchOperation::AnswerQuestion
+                        | DispatchOperation::Takeover
+                        | DispatchOperation::HumanReturn
+                        | DispatchOperation::ConfirmHumanReturn
+                        | DispatchOperation::Interrupt
+                        | DispatchOperation::ConfirmInterrupt,
+                        _,
+                    ) => {
+                        unreachable!("legacy dispatch has no followups")
+                    }
+                }
+            };
+            let identity = if operation == DispatchOperation::InitialInput {
+                self.identity.clone()
+            } else {
+                prepare_identity.clone()
+            };
+            let _ = self.intent(operation, &identity);
+            // Legacy allocations can differ from their original pre-launch request.
+            if self.receipt(operation).is_none() {
+                self.receipts.push(DispatchReceipt {
+                    request: self.identity.request.clone(),
+                    operation,
+                    result_version: 1,
+                    identity,
+                    outcome,
+                    input: None,
+                    reason: Some(if valid.is_some() && consistent {
+                        "reconstructed from legacy durable status and validated contract"
+                    } else {
+                        "legacy dispatch is unclassifiable; preserve the original intent and do not replay"
+                    }.into()),
+                });
+            } else {
+                self.outcome(operation, outcome, None, None);
+            }
+        }
+    }
+}
+
+/// Only acceptance builds expose deterministic faults, and each rule is consumed once.
+pub(crate) fn take_fault(point: &str, handle: &str) -> Option<usize> {
+    #[cfg(feature = "acceptance-diagnostics")]
+    {
+        let path = std::env::var_os("OVRCR_TEST_DELEGATION_FAULT")?;
+        let bytes = std::fs::read(&path).ok()?;
+        if bytes.len() > 512 {
+            return None;
+        }
+        let value = std::str::from_utf8(&bytes).ok()?;
+        let mut parts = value.trim().split('|');
+        if parts.next()? != point || parts.next()? != handle {
+            return None;
+        }
+        let count = parts.next()?.parse().ok()?;
+        std::fs::remove_file(&path).ok()?;
+        let _ = std::fs::write(PathBuf::from(path).with_extension("hit"), point);
+        Some(count)
+    }
+    #[cfg(not(feature = "acceptance-diagnostics"))]
+    {
+        let _ = (point, handle);
+        None
+    }
+}
+
+fn hold_before_input(handle: &str) -> Result<()> {
+    hold_before_effect("input-before-write", handle)
+}
+
+pub(super) fn hold_before_effect(point: &str, handle: &str) -> Result<()> {
+    #[cfg(feature = "acceptance-diagnostics")]
+    if take_fault(point, handle).is_some() {
+        let release = PathBuf::from(
+            std::env::var_os("OVRCR_TEST_DELEGATION_FAULT").context("missing owned fault path")?,
+        )
+        .with_extension("release");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !release.exists() {
+            if Instant::now() >= deadline {
+                bail!("owned input barrier was not released");
+            }
+            std::thread::park_timeout(Duration::from_millis(5));
+        }
+        std::fs::remove_file(release)?;
+    }
+    #[cfg(not(feature = "acceptance-diagnostics"))]
+    let _ = (point, handle);
+    Ok(())
+}
+
+fn publish_matching(directory: &Directory, name: &str, bytes: &[u8]) -> Result<()> {
+    if let Err(error) = directory.publish(name, bytes)
+        && directory.read(name).ok().as_deref() != Some(bytes)
+    {
+        return Err(error);
+    }
+    directory.sync()
+}
+
+pub(super) fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
 impl ServerState {
-    fn delegation_auth(
+    pub(super) fn delegation_auth(
         &self,
         auth: &DelegationAuth,
     ) -> Result<std::sync::Arc<crate::session::Session>> {
-        let session = self.session_for_control(auth.session)?;
+        // Callers may already hold retained storage. Authentication needs a live
+        // Session; the control lookup's retained error classification would relock it.
+        let session = self
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&auth.session)
+            .cloned()
+            .ok_or_else(|| {
+                lifecycle_error(
+                    ErrorCode::Conflict,
+                    "delegation requires the current managed Pi capability",
+                )
+            })?;
         if !matches!(session.summary().kind, SessionKind::Agent { ref name } if name == "pi")
             || !session.authorizes_delegation(&auth.capability)
         {
@@ -50,23 +762,19 @@ impl ServerState {
         Ok(session)
     }
 
-    fn owned_assignment(&self, auth: &DelegationAuth, handle: &str) -> Result<Record> {
-        let parent = self.delegation_auth(auth)?;
-        let record = self
+    pub(super) fn owned_assignment(&self, auth: &DelegationAuth, handle: &str) -> Result<Record> {
+        self.delegation_auth(auth)?;
+        #[cfg(feature = "acceptance-diagnostics")]
+        hold_before_effect("assignment-after-auth", handle)?;
+        let mut record = self
             .retained
             .lock()
             .assignment(handle)?
-            .context("assignment not found")?;
-        if record.parent != auth.session
-            || record.parent_run != parent.run()
-            || parent.summary().agent.as_ref().map(|agent| &agent.binding)
-                != Some(&record.parent_binding)
-        {
-            return Err(lifecycle_error(
-                ErrorCode::Conflict,
-                "assignment controller changed",
-            ));
-        }
+            .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "assignment not found"))?;
+        let store = self.retained.lock();
+        self.require_workflow(&store, auth, &record)?;
+        drop(store);
+        record.upgrade_legacy();
         Ok(record)
     }
 
@@ -80,13 +788,57 @@ impl ServerState {
         Ok(())
     }
 
+    pub(crate) fn delegation_capabilities(
+        &self,
+        auth: &DelegationAuth,
+        selection: &DelegationSelection,
+    ) -> Result<DelegationCapabilities> {
+        self.delegation_auth(auth)?;
+        self.reject_assigned_input(auth.session)?;
+        let (settings, invalid) = self.policy_snapshot();
+        let (inventory, unavailable) = match available_models() {
+            Ok(inventory) => (inventory, invalid),
+            Err(_) => (
+                Vec::new(),
+                Some("Pi model inventory is unavailable; no substitute selected".into()),
+            ),
+        };
+        let (live, children) = self.delegation_live_counts()?;
+        Ok(policy::resolve(
+            &settings,
+            selection,
+            inventory,
+            live,
+            children,
+            unavailable,
+        ))
+    }
+
     pub(crate) fn delegation(&self, request: DelegationRequest) -> Result<AssignmentSnapshot> {
+        if let DelegationRequest::Archive { auth, archive } = request {
+            return self.archive_assignment(auth, archive, Duration::from_secs(5));
+        }
         // Capability discovery is outside lifecycle serialization. A concurrent launch
         // still rechecks its durable status under the lock before creating anything.
-        let availability = if let DelegationRequest::Launch { auth, handle } = &request {
+        let availability = if let DelegationRequest::Launch { auth, handle, .. } = &request {
             let record = self.owned_assignment(auth, handle)?;
             if record.dispatch == DispatchStatus::Prepared {
                 Some(available_model(&read_contract(&record)?).is_ok())
+            } else {
+                None
+            }
+        } else if let DelegationRequest::Prepare { auth, contract } = &request {
+            contract
+                .validate()
+                .map_err(|reason| lifecycle_error(ErrorCode::InvalidRequest, reason))?;
+            self.delegation_auth(auth)?;
+            if self
+                .retained
+                .lock()
+                .assignment(&contract.request)?
+                .is_none()
+            {
+                Some(available_model(contract).is_ok())
             } else {
                 None
             }
@@ -95,14 +847,99 @@ impl ServerState {
         };
         // Same serialization as session admission: validation, receipts and effects cannot
         // race another lifecycle mutation or a competing assignment input.
+        #[cfg(feature = "acceptance-diagnostics")]
+        if let DelegationRequest::PublishQuestion { handle, .. } = &request
+            && take_fault("question-mutation-blocked", handle).is_some()
+        {
+            // Prove actual lock contention for the owning forced-order test. The
+            // ordinary lock below remains the only admission/ordering mechanism.
+            if !matches!(
+                self.mutation_lock.try_lock(),
+                Err(std::sync::TryLockError::WouldBlock)
+            ) {
+                bail!("owned question ordering probe expected blocked mutation admission");
+            }
+            let fault = PathBuf::from(
+                std::env::var_os("OVRCR_TEST_DELEGATION_FAULT")
+                    .context("missing owned fault path")?,
+            );
+            std::fs::write(fault.with_extension("blocked"), "question-mutation-blocked")?;
+        }
+        if let DelegationRequest::CaptureFallback {
+            auth,
+            handle,
+            expected_identity,
+            expected_result_version,
+            expected_control_epoch,
+        } = &request
+        {
+            return self.capture_fallback(
+                auth,
+                handle,
+                expected_identity,
+                *expected_result_version,
+                *expected_control_epoch,
+            );
+        }
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
         let record = match request {
+            DelegationRequest::CaptureFallback { .. } => {
+                unreachable!("capture routed before mutation lock")
+            }
+            DelegationRequest::RecoverFallback {
+                auth,
+                handle,
+                draft,
+            } => {
+                return self.recover_fallback(&auth, &handle, &draft);
+            }
+            DelegationRequest::Review {
+                auth,
+                handle,
+                operation,
+            } => {
+                return self.coordinate_review(auth, handle, operation);
+            }
+            DelegationRequest::PublishQuestion {
+                auth,
+                handle,
+                question,
+            } => {
+                return self.publish_question(auth, handle, question);
+            }
+            DelegationRequest::CollectQuestion {
+                auth,
+                handle,
+                reference,
+            } => {
+                return self.collect_question(auth, handle, reference);
+            }
+            DelegationRequest::AnswerQuestion {
+                auth,
+                handle,
+                answer,
+                expected_parent_epoch,
+            } => {
+                return self.answer_question(auth, handle, answer, expected_parent_epoch);
+            }
+            DelegationRequest::Archive { .. } => {
+                unreachable!("archive routed before lifecycle guard")
+            }
+            DelegationRequest::Capabilities { .. } => {
+                return Err(lifecycle_error(
+                    ErrorCode::InvalidRequest,
+                    "capabilities require the discovery response path",
+                ));
+            }
             DelegationRequest::Prepare { auth, contract } => {
                 contract
                     .validate()
                     .map_err(|reason| lifecycle_error(ErrorCode::InvalidRequest, reason))?;
                 let parent = self.delegation_auth(&auth)?;
+                if !parent.authorizes_workflow_source(auth.source.as_ref()) {
+                    bail!("parent Pi source capability is missing or retired");
+                }
                 self.reject_assigned_input(auth.session)?;
                 let parent_binding = parent
                     .summary()
@@ -112,48 +949,257 @@ impl ServerState {
                     .ok_or_else(|| {
                         lifecycle_error(ErrorCode::Conflict, "parent Pi conversation is not bound")
                     })?;
+                self.require_dispatch_open(&self.retained.lock(), &contract.workflow)?;
+                self.validate_review_assignment(&auth, &contract)?;
                 let handle = contract.request.clone();
-                let bytes = serde_json::to_vec(&contract)?;
+                let previous = self.retained.lock().assignment(&handle)?;
+                let bytes = contract_bytes(
+                    &contract,
+                    previous.as_ref().map(|record| {
+                        record
+                            .previous_versions
+                            .first()
+                            .map_or(record.contract_digest.as_str(), |v| {
+                                v.contract_digest.as_str()
+                            })
+                    }),
+                )?;
                 let contract_digest = digest(&bytes);
-                let store = self.retained.lock();
-                if let Some(record) = store.assignment(&handle)? {
-                    if record.parent != auth.session
-                        || record.parent_run != parent.run()
-                        || record.parent_binding != parent_binding
-                        || record.contract_digest != contract_digest
+                let is_new = previous.is_none();
+                let prepared_policy = if is_new {
+                    Some(self.contract_policy(&contract, availability == Some(true))?)
+                } else {
+                    None
+                };
+                let coding_intent = if is_new {
+                    if let Some(predecessor) = &contract.previous_request {
+                        let previous = self
+                            .retained
+                            .lock()
+                            .assignment(predecessor)?
+                            .context("previous assignment missing")?;
+                        self.coding_retry_resource(&previous)?
+                    } else {
+                        self.coding_workspace_intent(&contract)?
+                    }
+                } else {
+                    None
+                };
+                let dependency_witness = if is_new {
+                    let root = std::fs::canonicalize(&self.registry_path)?
+                        .join("workflows")
+                        .join(&handle);
+                    self.prepare_dependency_inputs(&auth, &contract, coding_intent.as_ref(), &root)?
+                } else {
+                    None
+                };
+                let mut record = if let Some(mut record) = previous {
+                    self.current_workflow_authority(&auth, &record.identity.workflow)?;
+                    if record
+                        .previous_versions
+                        .first()
+                        .map_or(&record.contract_digest, |version| &version.contract_digest)
+                        != &contract_digest
                     {
                         return Err(lifecycle_error(
                             ErrorCode::Conflict,
                             "request identity already belongs to another contract or controller",
                         ));
                     }
+                    record.upgrade_legacy();
                     record
                 } else {
-                    if let Some(previous) = store.workflow_controller(&contract.workflow)?
-                        && (previous.identity.controller != contract.controller
-                            || previous.parent != auth.session
-                            || previous.parent_run != parent.run()
-                            || previous.parent_binding != parent_binding)
+                    let store = self.retained.lock();
+                    // Reservation/source replacement also takes retained before Session state.
+                    // Capture the secret-authenticated source atomically at this publication fence.
+                    let (binding, producer) = parent
+                        .authenticated_workflow_source(&auth)
+                        .context("parent Pi source capability is missing or retired")?;
+                    if binding != parent_binding {
+                        bail!("parent binding changed before Prepare");
+                    }
+                    if store.assignment_count()? >= MAX_DELEGATION_RECORDS {
+                        return Err(lifecycle_error(
+                            ErrorCode::Conflict,
+                            "delegation receipt storage is full (4096 assignments); existing assignments remain recoverable; new admission requires supported retention maintenance",
+                        ));
+                    }
+                    let policy = prepared_policy
+                        .as_ref()
+                        .context("new assignment policy unavailable")?;
+                    if let Some(reason) = &policy.reason {
+                        return Err(lifecycle_error(ErrorCode::Conflict, reason));
+                    }
+                    if contract.previous_request.is_none()
+                        && contract.limits != policy.effective_limits
                     {
                         return Err(lifecycle_error(
                             ErrorCode::Conflict,
-                            "workflow already has a different controller",
+                            "resolve effective delegation limits before Prepare",
                         ));
+                    }
+                    let previous = if let Some(previous_request) = &contract.previous_request {
+                        let mut previous = store
+                            .assignment(previous_request)?
+                            .context("previous assignment not found")?;
+                        previous.upgrade_legacy();
+                        if previous.identity.workflow != contract.workflow
+                            || previous.identity.controller != contract.controller
+                        {
+                            return Err(lifecycle_error(
+                                ErrorCode::Conflict,
+                                "retry controller changed",
+                            ));
+                        }
+                        if previous.dispatch != DispatchStatus::Refused
+                            || !(previous.retryable_capacity_refusal
+                                || coding_intent
+                                    .as_ref()
+                                    .is_some_and(|resource| resource.no_process_started))
+                            || previous.result_version != 1
+                            || !previous.previous_versions.is_empty()
+                            || !previous.followups.is_empty()
+                            || !previous.control_intents.is_empty()
+                            || previous.control != AssignmentControl::default()
+                            || previous.publication_intent.is_some()
+                            || previous.result_digest.is_some()
+                            || previous.unresolved_input()
+                            || (previous.coding.is_none()
+                                && (previous.identity.session.is_some()
+                                    || previous.identity.run.is_some()))
+                            || !previous
+                                .receipt(DispatchOperation::Launch)
+                                .is_some_and(|receipt| receipt.outcome == DispatchOutcome::Rejected)
+                        {
+                            return Err(lifecycle_error(
+                                ErrorCode::Conflict,
+                                "only an authoritative zero-effect capacity refusal or proven no-process coding failure can be retried",
+                            ));
+                        }
+                        let old_contract = read_contract(&previous)?;
+                        let mut comparable = contract.clone();
+                        comparable.request = old_contract.request.clone();
+                        comparable.previous_request = old_contract.previous_request.clone();
+                        if comparable != old_contract
+                            || previous.spent_execution_attempts().is_none()
+                        {
+                            return Err(lifecycle_error(
+                                ErrorCode::Conflict,
+                                "retry must preserve the exact logical task and effective contract",
+                            ));
+                        }
+                        if previous
+                            .successor_request
+                            .as_ref()
+                            .is_some_and(|request| request != &contract.request)
+                            || store
+                                .assignment_successor(previous_request)?
+                                .is_some_and(|record| record.handle != contract.request)
+                        {
+                            return Err(lifecycle_error(
+                                ErrorCode::Conflict,
+                                "capacity refusal already has a successor; reconcile that request",
+                            ));
+                        }
+                        Some(previous)
+                    } else {
+                        if store
+                            .task_assignment(&contract.workflow, &contract.task)?
+                            .is_some()
+                        {
+                            return Err(lifecycle_error(
+                                ErrorCode::Conflict,
+                                "logical task already exists; reconcile its original request",
+                            ));
+                        }
+                        None
+                    };
+                    if let Some(workflow) = store.workflow(&contract.workflow)? {
+                        workflow.require(
+                            &auth,
+                            parent.run(),
+                            &binding,
+                            &producer,
+                            &self.server_lifetime,
+                        )?;
+                        if workflow.authority.controller != contract.controller {
+                            bail!("workflow logical controller changed");
+                        }
+                    } else {
+                        if store.workflow_controller(&contract.workflow)?.is_some() {
+                            bail!(
+                                "legacy workflow has no current authority; explicit recovery is required"
+                            );
+                        }
+                        if store.workflows()?.total >= super::delegation_recovery::MAX_WORKFLOWS {
+                            bail!("workflow storage is full");
+                        }
+                        let authority = WorkflowAuthority {
+                            instance: store.delegation_instance()?,
+                            workflow: contract.workflow.clone(),
+                            controller: contract.controller.clone(),
+                            epoch: 1,
+                            parent: auth.session,
+                            parent_run: parent.run(),
+                            binding,
+                            producer,
+                            server_lifetime: self.server_lifetime.clone(),
+                        };
+                        if let Some(fence) = &auth.controller
+                            && fence != &authority.fence()
+                        {
+                            bail!("new workflow authority fence changed");
+                        }
+                        store.save_workflow(&super::delegation_recovery::WorkflowRecord {
+                            schema: 1,
+                            dependencies: None,
+                            authority,
+                            departure: None,
+                            admission: None,
+                            reopen_run: None,
+                            pointer: None,
+                            transfers: Vec::new(),
+                            cancellation: None,
+                            deliveries: vec![],
+                        })?;
                     }
                     let root = std::fs::canonicalize(&self.registry_path)?
                         .join("workflows")
                         .join(&handle);
-                    let directory = Directory::open(&root, true)?;
-                    let record = Record {
-                        handle,
+                    let mut record = Record {
+                        review: None,
+                        dependencies: dependency_witness,
+                        obligation_revision: 1,
+                        archive_receipts: vec![],
+                        control: AssignmentControl::default(),
+                        takeover_evidence: None,
+                        control_intents: vec![],
+                        interrupt_intents: vec![],
+                        initial_control_epoch: None,
+                        initial_parent_epoch: None,
+                        handle: handle.clone(),
+                        coding: coding_intent.clone(),
                         identity: AssignmentIdentity {
                             instance: store.delegation_instance()?,
                             workflow: contract.workflow.clone(),
                             controller: contract.controller.clone(),
-                            controller_epoch: 1,
+                            controller_epoch: store
+                                .workflow(&contract.workflow)?
+                                .context("workflow disappeared")?
+                                .authority
+                                .epoch,
                             task: contract.task.clone(),
-                            attempt: 1,
-                            contract: 1,
+                            attempt: match &previous {
+                                Some(record) => record
+                                    .identity
+                                    .attempt
+                                    .checked_add(1)
+                                    .context("attempt identity exhausted")?,
+                                None => 1,
+                            },
+                            contract: previous
+                                .as_ref()
+                                .map_or(1, |record| record.identity.contract),
                             request: contract.request.clone(),
                             session: None,
                             run: None,
@@ -166,35 +1212,191 @@ impl ServerState {
                         contract_digest,
                         brief_digest: None,
                         result_digest: None,
+                        result_version: 1,
+                        publication_intent: None,
+                        handled_publication: None,
+                        acceptance: None,
+                        captures: Vec::new(),
+                        recoveries: Vec::new(),
+                        previous_versions: Vec::new(),
+                        followups: Vec::new(),
+                        questions: Vec::new(),
+                        answers: Vec::new(),
                         dispatch: DispatchStatus::Prepared,
                         reason: None,
+                        project: contract.project.clone(),
+                        workspace: contract.workspace.clone(),
+                        receipts: Vec::new(),
+                        request_digests: Vec::new(),
+                        previous_request: contract.previous_request.clone(),
+                        successor_request: None,
+                        execution_attempts: Some(
+                            previous
+                                .as_ref()
+                                .and_then(Record::spent_execution_attempts)
+                                .unwrap_or(0),
+                        ),
+                        retryable_capacity_refusal: false,
                     };
-                    directory.publish("contract-v1.json", &bytes)?;
-                    store.save_assignment(&record)?;
+                    record.intent(DispatchOperation::Prepare, &record.identity.clone())?;
+                    if let Some(previous) = &previous {
+                        store.save_assignment_successor(previous, &record)?;
+                    } else {
+                        store.save_assignment(&record)?;
+                    }
                     record
+                };
+                if record
+                    .receipt(DispatchOperation::Prepare)
+                    .is_some_and(|r| r.outcome != DispatchOutcome::Applied)
+                {
+                    record.outcome(DispatchOperation::Prepare, DispatchOutcome::Unknown, None, Some("contract publication is unresolved; recover with the exact original intent"));
+                    self.retained.lock().save_assignment(&record)?;
+                    if take_fault("prepare-before-file", &handle).is_some() {
+                        return self.reconciliation_snapshot(record);
+                    }
+                    let publication_guard = self.retained.lock();
+                    self.require_workflow(&publication_guard, &auth, &record)?;
+                    self.require_dispatch_open(&publication_guard, &record.identity.workflow)?;
+                    let directory = Directory::open(&record.root, true)?;
+                    if let Err(error) = directory.publish("contract-v1.json", &bytes)
+                        && directory.read("contract-v1.json").ok().as_ref() != Some(&bytes)
+                    {
+                        return Err(error);
+                    }
+                    if take_fault("prepare-after-file", &handle).is_some() {
+                        drop(publication_guard);
+                        return self.reconciliation_snapshot(record);
+                    }
+                    directory.sync()?;
+                    record.outcome(
+                        DispatchOperation::Prepare,
+                        DispatchOutcome::Applied,
+                        None,
+                        None,
+                    );
+                    publication_guard.save_assignment(&record)?;
                 }
+                self.reserve_review_seat(&auth, &contract)?;
+                record
             }
-            DelegationRequest::Launch { auth, handle } => {
+            DelegationRequest::Launch {
+                auth,
+                handle,
+                identity,
+            } => {
+                self.require_dispatch_open(&self.retained.lock(), &identity.workflow)?;
+                let authority = self.current_workflow_authority(&auth, &identity.workflow)?;
                 let mut record = self.owned_assignment(&auth, &handle)?;
+                self.validate_review_assignment(&auth, &read_contract(&record)?)?;
+                if !record.intent(DispatchOperation::Launch, &identity)? {
+                    self.validate_allocation(&record)?;
+                    return self.reconciliation_snapshot(record);
+                }
+                if authority.epoch != identity.controller_epoch {
+                    return Err(lifecycle_error(
+                        ErrorCode::Conflict,
+                        "launch belongs to a retired parent epoch; reconcile without replay",
+                    ));
+                }
+                self.retained.lock().save_assignment(&record)?;
+                if take_fault("launch-after-intent", &handle).is_some() {
+                    return self.reconciliation_snapshot(record);
+                }
+                if !record
+                    .receipt(DispatchOperation::Prepare)
+                    .is_some_and(|r| r.outcome == DispatchOutcome::Applied)
+                {
+                    record.outcome(
+                        DispatchOperation::Launch,
+                        DispatchOutcome::Rejected,
+                        None,
+                        Some("contract publication is not committed; recover the original Prepare"),
+                    );
+                    self.retained.lock().save_assignment(&record)?;
+                    return self.reconciliation_snapshot(record);
+                }
                 if record.dispatch == DispatchStatus::Prepared {
+                    self.require_dependency_fresh(&record)?;
                     let contract = read_contract(&record)?;
-                    // The real provider inventory is checked before creating a session.
-                    if availability != Some(true) {
+                    let policy = self.contract_policy(&contract, availability == Some(true))?;
+                    if let Some(reason) = policy.reason {
                         record.dispatch = DispatchStatus::Refused;
-                        record.reason =
-                            Some("requested Pi/model unavailable; no substitute launched".into());
+                        record.outcome(
+                            DispatchOperation::Launch,
+                            DispatchOutcome::Rejected,
+                            None,
+                            Some(&reason),
+                        );
                         self.retained.lock().save_assignment(&record)?;
                     } else {
-                        if self.check_live_capacity().is_err() {
+                        if self.check_live_capacity().is_err() || policy.available_slots == 0 {
                             record.dispatch = DispatchStatus::Refused;
-                            record.reason = Some("all 50 live process slots are occupied".into());
+                            record.reason = Some(if policy.live_sessions >= 50 {
+                                "all 50 live process slots are occupied".into()
+                            } else {
+                                "delegation live-child limit or minimum free slots after launch prevents admission".into()
+                            });
+                            record.retryable_capacity_refusal =
+                                record.spent_execution_attempts().is_some();
+                            let reason = record.reason.clone();
+                            record.outcome(
+                                DispatchOperation::Launch,
+                                DispatchOutcome::Rejected,
+                                None,
+                                reason.as_deref(),
+                            );
                             self.retained.lock().save_assignment(&record)?;
-                            return self.assignment_snapshot(record);
+                            return self.reconciliation_snapshot(record);
                         }
+                        let spent = record.spent_execution_attempts().ok_or_else(|| {
+                            lifecycle_error(
+                                ErrorCode::Conflict,
+                                "execution-attempt history is unknown; reconcile without replay",
+                            )
+                        })?;
+                        if policy
+                            .effective_limits
+                            .max_execution_attempts
+                            .is_some_and(|limit| spent >= limit)
+                        {
+                            record.dispatch = DispatchStatus::Refused;
+                            record.outcome(
+                                DispatchOperation::Launch,
+                                DispatchOutcome::Rejected,
+                                None,
+                                Some("logical task execution-attempt limit reached"),
+                            );
+                            self.retained.lock().save_assignment(&record)?;
+                            return self.reconciliation_snapshot(record);
+                        }
+                        // Resolve the executable before charging: lookup cannot create
+                        // a process, and an error here must leave Prepared unspent.
+                        let executable = std::env::current_exe()?;
+                        record.execution_attempts = Some(
+                            spent
+                                .checked_add(1)
+                                .context("execution-attempt count exhausted")?,
+                        );
                         record.dispatch = DispatchStatus::LaunchUnknown;
+                        record.outcome(
+                            DispatchOperation::Launch,
+                            DispatchOutcome::Unknown,
+                            None,
+                            Some("launch effect is unresolved; do not replay"),
+                        );
                         self.retained.lock().save_assignment(&record)?;
+                        if take_fault("launch-before-effect", &handle).is_some() {
+                            return self.reconciliation_snapshot(record);
+                        }
+                        let coding = contract.coding.is_some();
+                        let tools = if coding {
+                            "read,write,edit,bash,grep,find,ls,ovrcr_publish,ovrcr_publish_question"
+                        } else {
+                            "read,grep,find,ls,ovrcr_publish,ovrcr_publish_question"
+                        };
                         let argv = vec![
-                            std::env::current_exe()?.into_os_string(),
+                            executable.into_os_string(),
                             "agent".into(),
                             "run".into(),
                             "pi".into(),
@@ -204,37 +1406,101 @@ impl ServerState {
                             "--no-extensions".into(),
                             "--no-skills".into(),
                             "--tools".into(),
-                            "read,grep,find,ls".into(),
+                            tools.into(),
                             "--provider".into(),
-                            contract.model_provider.into(),
+                            contract.model_provider.clone().into(),
                             "--model".into(),
-                            contract.model.into(),
+                            contract.model.clone().into(),
                         ];
-                        let result = self.create_session_locked(
-                            CreateSessionRequest {
-                                project: contract.project,
-                                workspace: contract.workspace,
-                                name: String::new(),
-                                label: Some("Pi research".into()),
-                                argv,
-                                kind: SessionKind::Agent { name: "pi".into() },
-                            },
-                            None,
-                            Some(&handle),
-                        );
+                        let result = if let Some(coding_contract) = &contract.coding {
+                            {
+                                let store = self.retained.lock();
+                                self.require_workflow(&store, &auth, &record)?;
+                                self.require_dispatch_open(&store, &record.identity.workflow)?;
+                            }
+                            let resource =
+                                record.coding.as_mut().context("coding intent missing")?;
+                            if resource.creation == WorkspaceCreation::Prepared {
+                                resource.creation = WorkspaceCreation::Creating;
+                            }
+                            let base = resource.base.clone();
+                            self.retained.lock().save_assignment(&record)?;
+                            self.create_workspace_locked(
+                                contract.project.clone(),
+                                contract.workspace.clone(),
+                                BranchRequest::New {
+                                    branch: coding_contract.branch.clone(),
+                                    base,
+                                },
+                                super::WorkspaceLaunch::Session(SessionLaunch {
+                                    argv,
+                                    label: Some("Pi coding".into()),
+                                    kind: SessionKind::Agent { name: "pi".into() },
+                                }),
+                                Some(&handle),
+                            )
+                            .map(|_| ())
+                        } else {
+                            self.create_session_locked(
+                                CreateSessionRequest {
+                                    project: contract.project,
+                                    workspace: contract.workspace,
+                                    name: String::new(),
+                                    label: Some("Pi research".into()),
+                                    argv,
+                                    kind: SessionKind::Agent { name: "pi".into() },
+                                },
+                                None,
+                                Some(&handle),
+                            )
+                            .map(|_| ())
+                        };
                         record = self
                             .retained
                             .lock()
                             .assignment(&handle)?
                             .context("assignment disappeared")?;
+                        if take_fault("launch-after-effect", &handle).is_some() {
+                            return self.reconciliation_snapshot(record);
+                        }
                         match result {
-                            Ok(_) => record.dispatch = DispatchStatus::Launched,
+                            Ok(_) => {
+                                record.dispatch = DispatchStatus::Launched;
+                                record.outcome(
+                                    DispatchOperation::Launch,
+                                    DispatchOutcome::Applied,
+                                    None,
+                                    None,
+                                );
+                            }
                             Err(error) => {
-                                record.reason = Some("launch did not complete; inspect retained session before taking further action".into());
-                                if error.is::<crate::session::NoProcessStarted>()
-                                    || record.identity.session.is_none()
-                                {
+                                let no_process = error.is::<crate::session::NoProcessStarted>()
+                                    || record
+                                        .coding
+                                        .as_ref()
+                                        .is_some_and(|resource| resource.no_process_started);
+                                if no_process {
+                                    record.execution_attempts = Some(spent);
+                                }
+                                if let Some(resource) = &mut record.coding {
+                                    resource.no_process_started = no_process;
+                                    if resource.creation == WorkspaceCreation::Creating {
+                                        resource.creation = WorkspaceCreation::Unresolved;
+                                    }
+                                }
+                                let reason = format!(
+                                    "launch did not complete; retained resources require reconciliation: {error:#}"
+                                );
+                                if no_process || record.identity.session.is_none() {
                                     record.dispatch = DispatchStatus::Refused;
+                                    record.outcome(
+                                        DispatchOperation::Launch,
+                                        DispatchOutcome::Rejected,
+                                        None,
+                                        Some(&reason),
+                                    );
+                                } else {
+                                    record.reason = Some(reason);
                                 }
                             }
                         }
@@ -247,16 +1513,84 @@ impl ServerState {
                 auth,
                 handle,
                 identity,
+                expected_control_epoch,
             } => {
                 let mut record = self.owned_assignment(&auth, &handle)?;
-                if record.identity != identity {
+                self.validate_review_assignment(&auth, &read_contract(&record)?)?;
+                self.require_dispatch_open(&self.retained.lock(), &record.identity.workflow)?;
+                if record.identity.session.is_none() || record.identity.run.is_none() {
                     return Err(lifecycle_error(
                         ErrorCode::Conflict,
-                        "assignment binding changed",
+                        "initial input requires the original allocated child run",
                     ));
                 }
+                let had_initial_intent = record.receipt(DispatchOperation::InitialInput).is_some();
+                let legacy_pending_input = record.initial_control_epoch.is_none()
+                    && record
+                        .receipt(DispatchOperation::InitialInput)
+                        .is_some_and(|receipt| receipt.outcome == DispatchOutcome::Accepted);
+                if !record.intent(DispatchOperation::InitialInput, &identity)? {
+                    self.validate_allocation(&record)?;
+                    return self.reconciliation_snapshot(record);
+                }
+                if legacy_pending_input {
+                    return self.reject_initial(record, "legacy initial input has no captured control epoch; inspect without replay");
+                }
+                // Accepted initial intents retain their original authority through recovery.
+                // Terminalize only a durably stale captured intent, never a caller-only mismatch.
+                if record.initial_control_epoch.is_some_and(|captured| {
+                    control::require_controller(&record.control, captured).is_err()
+                        || record.control.attribution_invalidated
+                }) {
+                    return self.reject_initial(
+                        record,
+                        "captured initial input control authority changed; no bytes written",
+                    );
+                }
+                if record
+                    .initial_control_epoch
+                    .is_some_and(|epoch| epoch != expected_control_epoch)
+                {
+                    return Err(lifecycle_error(
+                        ErrorCode::Conflict,
+                        "initial request control epoch changed",
+                    ));
+                }
+                let authority =
+                    self.current_workflow_authority(&auth, &record.identity.workflow)?;
+                if record
+                    .initial_parent_epoch
+                    .is_some_and(|epoch| epoch != authority.epoch)
+                    || (record.initial_parent_epoch.is_none()
+                        && authority.epoch != 1
+                        && had_initial_intent)
+                {
+                    return Err(lifecycle_error(
+                        ErrorCode::Conflict,
+                        "captured parent authority changed; old Accepted input is suspended without replay",
+                    ));
+                }
+                record.initial_parent_epoch = Some(authority.epoch);
+                record.initial_control_epoch = Some(expected_control_epoch);
+                if control::require_controller(&record.control, expected_control_epoch).is_err()
+                    || record.control.attribution_invalidated
+                {
+                    return self.reject_initial(
+                        record,
+                        "initial input control authority changed; no bytes written",
+                    );
+                }
+                self.retained.lock().save_assignment(&record)?;
                 if record.dispatch == DispatchStatus::Launched {
-                    let session = self.assignment_session(&record)?;
+                    let session = match self.assignment_session(&record) {
+                        Ok(session) => session,
+                        Err(_) => {
+                            return self.reject_initial(
+                                record,
+                                "child run or conversation changed before initial input",
+                            );
+                        }
+                    };
                     let summary = session.summary();
                     let Some(agent) = summary.agent.as_ref().filter(|agent| {
                         agent.binding.provider == AgentProvider::Pi
@@ -264,6 +1598,18 @@ impl ServerState {
                     }) else {
                         return self.assignment_snapshot(record);
                     };
+                    if record.binding.is_none() {
+                        // A newly spawned Session starts at generation zero; its first
+                        // Bind is generation one. Never adopt a replacement as the target.
+                        if agent.binding.generation != 1 {
+                            return self.reject_initial(record, "the fresh child's initial conversation was replaced; do not replay");
+                        }
+                        record.binding = Some(agent.binding.clone());
+                        self.retained.lock().save_assignment(&record)?;
+                        if take_fault("input-target-captured", &handle).is_some() {
+                            return self.reconciliation_snapshot(record);
+                        }
+                    }
                     let contract = read_contract(&record)?;
                     if agent
                         .metrics
@@ -273,35 +1619,62 @@ impl ServerState {
                     {
                         return self.assignment_snapshot(record);
                     }
-                    record.binding = Some(agent.binding.clone());
                     let bytes = Directory::open(&record.root, false)?.read("brief-v1.json")?;
                     if Some(digest(&bytes)) != record.brief_digest {
                         bail!("immutable brief changed");
                     }
+                    self.verify_dependency_workspace(&record)?;
+                    hold_before_input(&handle)?;
+                    self.require_dependency_fresh(&record)?;
                     record.dispatch = DispatchStatus::InputUnknown;
+                    record.outcome(
+                        DispatchOperation::InitialInput,
+                        DispatchOutcome::Unknown,
+                        None,
+                        Some("initial input effect is unknown; do not replay"),
+                    );
                     let parent = self.session_for_control(auth.session)?;
                     let store = self.retained.lock();
+                    let authority = self.require_workflow(&store, &auth, &record)?;
+                    self.require_dispatch_open(&store, &record.identity.workflow)?;
+                    if record.initial_parent_epoch != Some(authority.epoch) {
+                        bail!("captured parent authority changed before input");
+                    }
                     store.save_assignment(&record)?;
-                    let text = format!(
-                        "Perform the read-only research assignment in {}. Read that immutable brief with your read tool; publish the complete result with ovrcr_publish using handle {} and the exact identity in the brief. Do not modify task or parent records. A terminal success line is not a submission.",
-                        record.root.join("brief-v1.json").display(),
-                        record.handle
+                    let text = assignment_prompt(
+                        &contract,
+                        &record.root.join("brief-v1.json"),
+                        &record.handle,
+                        false,
                     );
                     match session.send_delegated_text(crate::session::DelegatedInput {
+                    parent_producer: Some(&authority.producer),
+                    parent_source: auth.source.as_ref(),
+                        request: &handle,
+                        control: &record.control,
+                        control_epoch: expected_control_epoch,
+                        authority: crate::session::DelegatedAuthority::Controller,
                         parent: &parent,
-                        parent_binding: &record.parent_binding,
+                        parent_binding: &authority.binding,
                         capability: &auth.capability,
                         child_binding: record.binding.as_ref().unwrap(),
                         model: &contract.model,
                         text: &text,
                     }) {
-                        Ok(true) => record.dispatch = DispatchStatus::Applied,
-                        Ok(false) => {
-                            record.dispatch = DispatchStatus::Refused;
-                            record.reason = Some(
-                                "controller or child binding changed before initial input".into(),
-                            );
+                        Ok(crate::session::DelegatedDelivery::Applied(input)) => {
+                            if take_fault("input-after-effect", &handle).is_some() {
+                                drop(store);
+                                return self.reconciliation_snapshot(record);
+                            }
+                            record.dispatch = DispatchStatus::Applied;
+                            record.outcome(DispatchOperation::InitialInput, DispatchOutcome::Applied, Some(input), None);
                         }
+                        Ok(crate::session::DelegatedDelivery::Rejected(input)) => {
+                            record.dispatch = DispatchStatus::Refused;
+                            record.outcome(DispatchOperation::InitialInput, DispatchOutcome::Rejected, Some(input), Some("initial input was rejected without writing bytes"));
+                        }
+                        Ok(crate::session::DelegatedDelivery::Partial(input)) => record.outcome(DispatchOperation::InitialInput, DispatchOutcome::Partial, Some(input), Some("only a prefix reached the PTY; do not replay")),
+                        Ok(crate::session::DelegatedDelivery::Unknown(input)) => record.outcome(DispatchOperation::InitialInput, DispatchOutcome::Unknown, Some(input), Some("input bytes reached the PTY but completion is uncertain; do not replay")),
                         Err(_) => {
                             record.reason =
                                 Some("initial input effect is unknown; do not replay".into())
@@ -311,21 +1684,197 @@ impl ServerState {
                 }
                 record
             }
-            DelegationRequest::Inspect { auth, handle }
-            | DelegationRequest::Collect { auth, handle } => {
-                self.owned_assignment(&auth, &handle)?
+            DelegationRequest::Followup {
+                auth,
+                handle,
+                request,
+                expected_identity,
+                expected_result_version,
+                expected_control_epoch,
+                text,
+                revised_contract,
+            } => {
+                return self.followup(
+                    auth,
+                    handle,
+                    request,
+                    (
+                        expected_identity,
+                        expected_result_version,
+                        expected_control_epoch,
+                    ),
+                    text,
+                    revised_contract.map(|contract| *contract),
+                );
+            }
+            DelegationRequest::CollectVersion {
+                auth,
+                handle,
+                version,
+            } => {
+                return self.collect_version(auth, handle, version);
+            }
+            DelegationRequest::RecordAcceptance {
+                auth,
+                handle,
+                identity,
+                result_version,
+                target,
+                expected_control_epoch,
+            } => {
+                return self.record_acceptance(
+                    auth,
+                    handle,
+                    identity,
+                    result_version,
+                    target,
+                    expected_control_epoch,
+                );
+            }
+            DelegationRequest::Interrupt {
+                auth,
+                handle,
+                request,
+                expected_identity,
+                expected_result_version,
+                expected_control_epoch,
+            } => {
+                return self.interrupt_assignment(
+                    auth,
+                    handle,
+                    request,
+                    expected_identity,
+                    expected_result_version,
+                    expected_control_epoch,
+                );
+            }
+            DelegationRequest::ConfirmInterrupt {
+                auth,
+                handle,
+                request,
+                interrupted_request,
+                expected_control_epoch,
+                evidence,
+            } => {
+                return self.confirm_interrupt(
+                    auth,
+                    handle,
+                    request,
+                    interrupted_request,
+                    expected_control_epoch,
+                    *evidence,
+                );
+            }
+            DelegationRequest::ConfirmHumanReturn {
+                auth,
+                handle,
+                request,
+                returned_request,
+                expected_control_epoch,
+                evidence,
+            } => {
+                return self
+                    .confirm_human_return(
+                        auth,
+                        handle,
+                        request,
+                        returned_request,
+                        expected_control_epoch,
+                        *evidence,
+                    )
+                    .map_err(|error| lifecycle_error(ErrorCode::Conflict, format!("{error:#}")));
+            }
+            DelegationRequest::Inspect { auth, handle } => {
+                return self.assignment_snapshot(self.owned_assignment(&auth, &handle)?);
+            }
+            DelegationRequest::Reconcile { auth, request } => {
+                return self.reconciliation_snapshot(self.owned_assignment(&auth, &request)?);
+            }
+            DelegationRequest::Collect { auth, handle } => {
+                let mut record = self.owned_assignment(&auth, &handle)?;
+                let publication = match self.assignment_publication(&record) {
+                    Ok(publication) => publication,
+                    Err(issue) => {
+                        // Only a registered, verified recovery permits collection
+                        // without a child publication. File presence alone has no authority.
+                        let Some(reference) = record.recoveries.last() else {
+                            return Err(publication_error(issue));
+                        };
+                        fallback::read_recovery(
+                            &record,
+                            &record.version(),
+                            reference.version,
+                            &reference.digest,
+                        )?;
+                        // This reader also verifies any selected acceptance target.
+                        // Recovery metadata never becomes a child publication or result digest.
+                        let mut snapshot = self.snapshot_with_submission(record, None)?;
+                        snapshot.submission_issue = Some(publication_error(issue).to_string());
+                        return Ok(snapshot);
+                    }
+                };
+                if let Some(publication) = publication
+                    && record.result_digest.is_none()
+                {
+                    record.result_digest = Some(publication.digest);
+                    let store = self.retained.lock();
+                    self.require_workflow(&store, &auth, &record)?;
+                    store.save_assignment(&record)?;
+                }
+                return self.assignment_snapshot(record);
+            }
+            DelegationRequest::MarkHandled {
+                auth,
+                handle,
+                publication,
+            } => {
+                if matches!(publication.kind, PublicationKind::Question { .. }) {
+                    return self.handle_question(auth, handle, publication);
+                }
+                let mut record = self.owned_assignment(&auth, &handle)?;
+                let parent = self.delegation_auth(&auth)?;
+                let child = self.assignment_session(&record)?;
+                // Reporter binding replacements use this same retained -> Session order.
+                // Keep the verified controller/child generations stable through the write.
+                let store = self.retained.lock();
+                let authority = self.require_workflow(&store, &auth, &record)?;
+                if parent.run() != authority.parent_run
+                    || parent.summary().agent.as_ref().map(|a| &a.binding)
+                        != Some(&authority.binding)
+                    || Some(child.run()) != record.identity.run
+                    || child.summary().agent.as_ref().map(|a| &a.binding) != record.binding.as_ref()
+                {
+                    bail!("assignment controller or child conversation changed");
+                }
+                let current = self
+                    .assignment_publication(&record)
+                    .map_err(publication_error)?;
+                if current.as_ref() != Some(&publication) {
+                    bail!("handled identity does not match current publication");
+                }
+                record.result_digest = Some(publication.digest.clone());
+                record.handled_publication = Some(publication);
+                store.save_assignment(&record)?;
+                drop(store);
+                if let Some(session) = record.identity.session {
+                    self.delegation_observations.invalidate(session);
+                }
+                return self.assignment_snapshot(record);
+            }
+            DelegationRequest::Observe { .. } => {
+                bail!("Observe must use the bounded control observation path")
             }
             DelegationRequest::Publish {
                 auth,
                 handle,
-                submission,
+                mut submission,
             } => {
                 let mut record = self
                     .retained
                     .lock()
                     .assignment(&handle)?
                     .context("assignment not found")?;
-                let session = self.delegation_auth(&auth)?;
+                let session = self.assignment_publisher(&auth, &record)?;
                 if Some(auth.session) != record.identity.session
                     || Some(session.run()) != record.identity.run
                 {
@@ -343,7 +1892,39 @@ impl ServerState {
                 {
                     bail!("initial assignment has not been delivered");
                 }
-                let bytes = serde_json::to_vec(&submission)?;
+                if submission.version != record.result_version {
+                    bail!("submission belongs to a stale result version");
+                }
+                self.validate_review_submission(&record, &submission)?;
+                let contract = read_contract(&record)?;
+                let authenticated = record
+                    .publication_intent
+                    .as_ref()
+                    .map(|intent| intent.identity.clone())
+                    .or_else(|| {
+                        record
+                            .result_digest
+                            .as_ref()
+                            .map(|digest| PublicationIdentity {
+                                assignment: record.identity.clone(),
+                                kind: PublicationKind::Submission,
+                                version: record.result_version,
+                                digest: digest.clone(),
+                            })
+                    });
+                let selected = super::delegation_coding::SelectedCodingVersion {
+                    identity: &record.identity,
+                    result_version: record.result_version,
+                    contract: &contract,
+                    contract_digest: &record.contract_digest,
+                    publication: authenticated.as_ref(),
+                };
+                let captured_control = record.control.clone();
+                let captured_identity = record.identity.clone();
+                let captured_version = record.result_version;
+                let prepared_candidate =
+                    self.capture_coding_submission(&record, &selected, &mut submission)?;
+                let bytes = submission_bytes(&submission)?;
                 let hash = digest(&bytes);
                 if record
                     .result_digest
@@ -356,22 +1937,152 @@ impl ServerState {
                     .binding
                     .clone()
                     .context("child assignment is not bound")?;
+                let publication = PublicationIdentity {
+                    assignment: record.identity.clone(),
+                    kind: PublicationKind::Submission,
+                    version: submission.version,
+                    digest: hash.clone(),
+                };
+                if record.publication_intent.as_ref().is_some_and(|intent| {
+                    intent.identity != publication || intent.binding != binding
+                }) {
+                    bail!("submission version has a different authenticated publication intent");
+                }
                 let store = self.retained.lock();
+                let latest = store
+                    .assignment(&handle)?
+                    .context("assignment disappeared during candidate capture")?;
+                if latest.identity != captured_identity
+                    || latest.result_version != captured_version
+                    || latest.control != captured_control
+                    || latest.binding.as_ref() != Some(&binding)
+                    || latest.contract_digest != record.contract_digest
+                    || latest.coding != record.coding
+                {
+                    bail!(
+                        "assignment authority or version changed during candidate capture; no publication committed"
+                    );
+                }
+                record = latest;
                 session.with_delegation_binding(&auth.capability, &binding, || {
+                    record.publication_intent = Some(PublicationIntent {
+                        identity: publication,
+                        binding: binding.clone(),
+                    });
+                    store.save_assignment(&record)?;
+                    if let Some(prepared) = &prepared_candidate {
+                        Self::commit_coding_candidate(&record,prepared,&submission)?;
+                        if take_fault("coding-after-candidate",&handle).is_some() {
+                            bail!("owned interruption after authenticated candidate commit before result file");
+                        }
+                    }
                     let directory = Directory::open(&record.root, false)?;
-                    if let Err(error) = directory.publish("submission-v1.json", &bytes)
-                        && directory.read("submission-v1.json").ok().as_ref() != Some(&bytes)
-                    {
-                        return Err(error);
+                    if let Err(error) = directory.publish(
+                        &format!("submission-v{}.json", record.result_version),
+                        &bytes,
+                    ) {
+                        if directory
+                            .read(&format!("submission-v{}.json", record.result_version))
+                            .ok()
+                            .as_ref()
+                            != Some(&bytes)
+                        {
+                            return Err(error);
+                        }
+                        directory.sync()?;
                     }
                     record.result_digest = Some(hash);
                     store.save_assignment(&record)
                 })?;
                 drop(store);
+                self.delegation_observations.invalidate(auth.session);
                 record
             }
         };
-        self.assignment_snapshot(record)
+        self.reconciliation_snapshot(record)
+    }
+
+    /// Authorship comes from durable child authorization, never parseable file presence.
+    pub(super) fn assignment_publication(
+        &self,
+        record: &Record,
+    ) -> std::result::Result<Option<PublicationIdentity>, PublicationIssue> {
+        let directory =
+            Directory::open(&record.root, false).map_err(|_| PublicationIssue::Unavailable)?;
+        let expected = if let Some(intent) = &record.publication_intent {
+            if intent.identity.assignment != record.identity
+                || intent.identity.version != record.result_version
+                || intent.identity.kind != PublicationKind::Submission
+                || record.binding.as_ref() != Some(&intent.binding)
+                || record
+                    .result_digest
+                    .as_ref()
+                    .is_some_and(|d| d != &intent.identity.digest)
+            {
+                return Err(PublicationIssue::Invalid);
+            }
+            Some(intent.identity.clone())
+        } else {
+            record
+                .result_digest
+                .as_ref()
+                .map(|digest| PublicationIdentity {
+                    assignment: record.identity.clone(),
+                    kind: PublicationKind::Submission,
+                    version: record.result_version,
+                    digest: digest.clone(),
+                })
+        };
+        let bytes = match directory.read(&format!("submission-v{}.json", record.result_version)) {
+            Ok(bytes) => bytes,
+            Err(error)
+                if expected.is_none()
+                    && error.chain().any(|e| {
+                        e.downcast_ref::<std::io::Error>()
+                            .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+                    }) =>
+            {
+                return Ok(None);
+            }
+            Err(error)
+                if record.coding.is_some()
+                    && expected.is_some()
+                    && error.chain().any(|cause| {
+                        cause
+                            .downcast_ref::<std::io::Error>()
+                            .is_some_and(|cause| cause.kind() == std::io::ErrorKind::NotFound)
+                    }) =>
+            {
+                let authenticated = expected.as_ref().ok_or(PublicationIssue::Uncommitted)?;
+                let bytes = Self::recover_coding_result(record, authenticated)
+                    .map_err(|_| PublicationIssue::Unavailable)?;
+                let name = format!("submission-v{}.json", record.result_version);
+                if directory.publish(&name, &bytes).is_err()
+                    && directory.read(&name).ok().as_ref() != Some(&bytes)
+                {
+                    return Err(PublicationIssue::Unavailable);
+                }
+                directory
+                    .sync()
+                    .map_err(|_| PublicationIssue::Unavailable)?;
+                bytes
+            }
+            Err(_) => return Err(PublicationIssue::Unavailable),
+        };
+        let expected = expected.ok_or(PublicationIssue::Uncommitted)?;
+        if digest(&bytes) != expected.digest {
+            return Err(PublicationIssue::Invalid);
+        }
+        let mut version = record.version();
+        version.result_digest = Some(expected.digest.clone());
+        read_version_submission(record, &version).map_err(|_| PublicationIssue::Invalid)?;
+        // A previous link may have succeeded while its directory fsync failed.
+        if record.result_digest.is_none() {
+            directory
+                .sync()
+                .map_err(|_| PublicationIssue::Unavailable)?;
+        }
+        Ok(Some(expected))
     }
 
     fn assignment_session(
@@ -381,15 +2092,56 @@ impl ServerState {
         let id = record.identity.session.context("assignment has no child")?;
         let session = self.session_for_control(id)?;
         if Some(session.run()) != record.identity.run {
-            bail!("assigned run changed");
+            return Err(lifecycle_error(ErrorCode::Conflict, "assigned run changed"));
         }
         let summary = session.summary();
         if let Some(binding) = &record.binding
             && summary.agent.as_ref().map(|agent| &agent.binding) != Some(binding)
         {
-            bail!("child conversation binding changed");
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "child conversation binding changed",
+            ));
         }
         Ok(session)
+    }
+
+    fn validate_allocation(&self, record: &Record) -> Result<()> {
+        if let Some(summary) = record
+            .identity
+            .session
+            .and_then(|id| self.session_summary(id))
+        {
+            if Some(summary.run) != record.identity.run {
+                return Err(lifecycle_error(
+                    ErrorCode::Conflict,
+                    "assigned run changed; reconcile the original receipt",
+                ));
+            }
+            if summary.phase.is_live()
+                && record.binding.as_ref().is_some_and(|binding| {
+                    summary.agent.as_ref().map(|a| &a.binding) != Some(binding)
+                })
+            {
+                return Err(lifecycle_error(
+                    ErrorCode::Conflict,
+                    "child conversation binding changed; reconcile the original receipt",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn reject_initial(&self, mut record: Record, reason: &str) -> Result<AssignmentSnapshot> {
+        record.dispatch = DispatchStatus::Refused;
+        record.outcome(
+            DispatchOperation::InitialInput,
+            DispatchOutcome::Rejected,
+            None,
+            Some(reason),
+        );
+        self.retained.lock().save_assignment(&record)?;
+        self.reconciliation_snapshot(record)
     }
 
     // Called after row allocation and before spawn. The durable run identity here is
@@ -410,9 +2162,26 @@ impl ServerState {
         ));
         self.retained.lock().save_assignment(&record)?;
         let contract = read_contract(&record)?;
-        let brief = serde_json::to_vec_pretty(
-            &serde_json::json!({"schema": 1, "handle": handle, "identity": record.identity, "contract": contract, "output": record.root.join("submission-v1.json"), "publication": "Call ovrcr_publish. Only this child can publish; it cannot accept the result. Research tools are read-only."}),
-        )?;
+        let publication = if contract.coding.is_some() {
+            "Call ovrcr_publish with actual named check outcomes (Passed/Failed/Missing/Unrun). The Server captures a complete immutable authorized delta against coding_workspace.base. Do not commit, push, merge, deploy, access credentials or modify task/parent records. Tool selection is not an OS sandbox. Only the parent can accept the result."
+        } else {
+            "Call ovrcr_publish. Only this child can publish; it cannot accept the result. Research tools are read-only."
+        };
+        let mut value = serde_json::json!({"schema":1,"handle":handle,"identity":record.identity,"contract":contract_document(&contract)?,
+            "result_version":1,"output":record.root.join("submission-v1.json"),"publication":publication,"questions":questions::QUESTION_INSTRUCTIONS});
+        if let Some(resource) = &record.coding {
+            value["coding_workspace"] = serde_json::to_value(resource)?;
+        }
+        value["fallback_nonce"] = crate::agent_runner::private_identifier()?.into();
+        value["fallback"] = fallback::FALLBACK_INSTRUCTIONS.into();
+        if let Some(baseline) = record
+            .dependencies
+            .as_ref()
+            .and_then(|saved| saved.baseline.as_ref())
+        {
+            value["input_baseline"] = serde_json::to_value(baseline)?;
+        }
+        let brief = serde_json::to_vec_pretty(&value)?;
         Directory::open(&record.root, false)?.publish("brief-v1.json", &brief)?;
         record.brief_digest = Some(digest(&brief));
         self.retained.lock().save_assignment(&record)?;
@@ -420,39 +2189,146 @@ impl ServerState {
     }
 
     fn assignment_snapshot(&self, record: Record) -> Result<AssignmentSnapshot> {
+        let recovery = followups::read_accepted_recovery(&record, &record.version())?;
+        let read_child = || -> Result<Option<ResearchSubmission>> {
+            if record.result_digest.is_none() {
+                return Ok(None);
+            }
+            let summary = record
+                .identity
+                .session
+                .and_then(|id| self.session_summary(id));
+            if summary
+                .as_ref()
+                .is_none_or(|current| Some(current.run) != record.identity.run)
+            {
+                bail!("submission belongs to a stale run");
+            }
+            if let Some(current) = summary
+                .as_ref()
+                .filter(|s| s.phase.is_live())
+                .and_then(|s| s.agent.as_ref())
+                && record.binding.as_ref() != Some(&current.binding)
+            {
+                bail!("submission belongs to a changed conversation");
+            }
+            read_version_submission(&record, &record.version())
+        };
+        let (submission, issue) = match read_child() {
+            Ok(submission) => (submission, None),
+            Err(error) if recovery.is_some() => (None, Some(error.to_string())),
+            Err(error) => return Err(error),
+        };
+        let mut snapshot = self.snapshot_with_submission(record, submission)?;
+        snapshot.submission_issue = issue;
+        Ok(snapshot)
+    }
+
+    fn reconciliation_snapshot(&self, record: Record) -> Result<AssignmentSnapshot> {
+        self.snapshot_with_submission(record, None)
+    }
+
+    fn snapshot_with_submission(
+        &self,
+        record: Record,
+        submission: Option<ResearchSubmission>,
+    ) -> Result<AssignmentSnapshot> {
         let summary = record
             .identity
             .session
             .and_then(|id| self.session_summary(id));
-        let submission = match &record.result_digest {
-            Some(expected) => {
-                if summary
-                    .as_ref()
-                    .is_none_or(|current| Some(current.run) != record.identity.run)
-                {
-                    bail!("submission belongs to a stale run");
-                }
-                if let Some(current) = summary
-                    .as_ref()
-                    .filter(|s| s.phase.is_live())
-                    .and_then(|s| s.agent.as_ref())
-                    && record.binding.as_ref() != Some(&current.binding)
-                {
-                    bail!("submission belongs to a changed conversation");
-                }
-                let bytes = Directory::open(&record.root, false)?.read("submission-v1.json")?;
-                if &digest(&bytes) != expected {
-                    bail!("submission publication changed or is partial");
-                }
-                let result: ResearchSubmission = serde_json::from_slice(&bytes)?;
-                result
-                    .validate(&record.identity)
-                    .map_err(anyhow::Error::msg)?;
-                Some(result)
-            }
-            None => None,
+        let project = if record.project.is_empty() {
+            summary.as_ref().map(|s| s.project.clone())
+        } else {
+            Some(record.project.clone())
         };
+        let workspace = if record.workspace.is_empty() {
+            summary.as_ref().map(|s| s.workspace.clone())
+        } else {
+            Some(record.workspace.clone())
+        };
+        let workspace_present =
+            project
+                .as_ref()
+                .zip(workspace.as_ref())
+                .is_some_and(|(project, workspace)| {
+                    self.registry
+                        .lock()
+                        .unwrap()
+                        .workspace(project, workspace)
+                        .is_ok()
+                });
+        let resources = AssignmentResources {
+            coding: record.coding.clone(),
+            project,
+            workspace,
+            workspace_present,
+            current_session: summary.as_ref().map(|s| CurrentAssignmentSession {
+                session: s.id,
+                run: s.run,
+                phase: s.phase.clone(),
+            }),
+        };
+        let version = record.version();
+        let publication = if submission.is_some() {
+            record.version_reference(&version).publication
+        } else {
+            None
+        };
+        let history = record
+            .previous_versions
+            .iter()
+            .map(|v| record.version_reference(v))
+            .collect();
+        let brief = record
+            .root
+            .join(format!("brief-v{}.json", record.result_version));
+        let result_path = record
+            .root
+            .join(format!("submission-v{}.json", record.result_version));
+        let control_evidence = summary
+            .as_ref()
+            .and_then(|summary| summary.agent.as_ref())
+            .and_then(|agent| self.control_evidence(&record, agent).ok());
+        let questions = self.question_states(&record);
+        let review = record
+            .review
+            .as_ref()
+            .and_then(|review| review.status(&record));
+        let coding_target = submission
+            .as_ref()
+            .and_then(|submission| submission.coding.as_ref())
+            .and_then(|coding| coding.candidate.clone())
+            .zip(publication.clone())
+            .map(|(candidate, publication)| CodingTargetReference {
+                assignment: record.identity.clone(),
+                publication: publication.identity,
+                candidate,
+                source_contract_digest: record.contract_digest.clone(),
+            });
+        let dependency_gap = self
+            .require_dependency_fresh(&record)
+            .err()
+            .map(|error| error.to_string());
         Ok(AssignmentSnapshot {
+            submission_issue: None,
+            selected_acceptance_ref: None,
+            selected_recoveries: vec![],
+            recoveries: record.recoveries.clone(),
+            fallback_capture: None,
+            recovered: None,
+            accepted_recovery: followups::read_accepted_recovery(&record, &version)?,
+            review,
+            review_assignment: None,
+            review_scope: None,
+            coding_target,
+            dependency_gap,
+            questions,
+            collected_question: None,
+            obligation_revision: record.obligation_revision,
+            archive_receipts: record.archive_receipts.clone(),
+            control: record.control.clone(),
+            control_evidence,
             handle: record.handle,
             identity: record.identity,
             dispatch: record.dispatch,
@@ -465,23 +2341,132 @@ impl ServerState {
                 .as_ref()
                 .and_then(|s| s.agent.as_ref())
                 .map(|a| a.binding.conversation.clone()),
-            brief: record.root.join("brief-v1.json"),
-            result_path: record.root.join("submission-v1.json"),
+            brief,
+            result_path,
             submission,
-            acceptance: "pending".into(),
+            acceptance: if record.control.attribution_invalidated {
+                "suspended"
+            } else if record.acceptance.is_some() {
+                "accepted"
+            } else {
+                "pending"
+            }
+            .into(),
+            result_version: record.result_version,
+            publication,
+            acceptance_ref: record.acceptance,
+            history,
+            selected_version: None,
+            historical_submission: None,
+            receipts: record.receipts,
+            resources,
+            retryable_capacity_refusal: record.retryable_capacity_refusal,
+            successor_request: record.successor_request,
+            execution_attempts: record.execution_attempts,
         })
     }
 }
 
+fn publication_error(issue: PublicationIssue) -> anyhow::Error {
+    anyhow::anyhow!(match issue {
+        PublicationIssue::Invalid => "submission publication changed or is partial",
+        PublicationIssue::Unavailable =>
+            "submission publication unavailable; authenticated intent is retained",
+        PublicationIssue::Uncommitted => "publication has no authenticated child intent",
+    })
+}
+
+/// Preserve the exact older canonical bytes when the only added fields were
+/// absent defaults. A different contract never acquires the old digest.
+fn assignment_prompt(
+    contract: &ResearchContract,
+    brief: &std::path::Path,
+    handle: &str,
+    followup: bool,
+) -> String {
+    let mode = if contract.coding.is_some() {
+        "coding"
+    } else {
+        "read-only research"
+    };
+    let purpose = if followup {
+        "this is a scoped followup in the same assignment. "
+    } else {
+        ""
+    };
+    format!(
+        "Perform the {mode} assignment in {}. Read that immutable brief with your read tool; {purpose}publish the exact requested result_version with ovrcr_publish using handle {handle} and the identity in that brief. Do not modify task or parent records. A terminal success line is not a submission.",
+        brief.display()
+    )
+}
+
+fn contract_document(contract: &ResearchContract) -> Result<serde_json::Value> {
+    Ok(serde_json::from_slice(&research_contract_bytes(contract)?)?)
+}
+
+fn research_contract_bytes(contract: &ResearchContract) -> Result<Vec<u8>> {
+    let mut bytes = serde_json::to_vec(contract)?;
+    if contract.review.is_none()
+        && let Some(prefix) = bytes.strip_suffix(b",\"review\":null}")
+    {
+        bytes = [prefix, b"}"].concat();
+    }
+    if contract.coding.is_none() {
+        let suffix = b",\"coding\":null}";
+        if bytes.ends_with(suffix) {
+            bytes.truncate(bytes.len() - suffix.len());
+            bytes.push(b'}');
+        }
+    }
+    Ok(bytes)
+}
+
+/// Default new wire fields never rewrite previously authenticated research files.
+pub(super) fn submission_bytes(submission: &ResearchSubmission) -> Result<Vec<u8>> {
+    Ok(submission.publication_bytes()?)
+}
+
+fn legacy_contract_bytes(contract: &ResearchContract) -> Result<Option<Vec<u8>>> {
+    if contract.coding.is_some()
+        || contract.limits != DelegationLimits::default()
+        || contract.previous_request.is_some()
+    {
+        return Ok(None);
+    }
+    let bytes = research_contract_bytes(contract)?;
+    let suffix = format!(
+        ",\"limits\":{},\"previous_request\":null}}",
+        serde_json::to_string(&DelegationLimits::default())?
+    );
+    Ok(bytes.strip_suffix(suffix.as_bytes()).map(|prefix| {
+        let mut legacy = prefix.to_vec();
+        legacy.push(b'}');
+        legacy
+    }))
+}
+
+fn contract_bytes(contract: &ResearchContract, expected: Option<&str>) -> Result<Vec<u8>> {
+    let bytes = research_contract_bytes(contract)?;
+    if let Some(expected) = expected
+        && digest(&bytes) != expected
+        && let Some(legacy) = legacy_contract_bytes(contract)?
+        && digest(&legacy) == expected
+    {
+        return Ok(legacy);
+    }
+    Ok(bytes)
+}
+
 fn read_contract(record: &Record) -> Result<ResearchContract> {
-    let bytes = Directory::open(&record.root, false)?.read("contract-v1.json")?;
+    let bytes = Directory::open(&record.root, false)?
+        .read(&format!("contract-v{}.json", record.identity.contract))?;
     if digest(&bytes) != record.contract_digest {
         bail!("immutable contract changed");
     }
     Ok(serde_json::from_slice(&bytes)?)
 }
 
-fn available_model(contract: &ResearchContract) -> Result<()> {
+fn available_models() -> Result<Vec<DelegationChoice>> {
     // Provider inventory is local to the same inherited profile as the eventual child.
     // File-backed bounded output avoids a full pipe blocking the probe at exit.
     let mut output = tempfile::tempfile()?;
@@ -512,12 +2497,802 @@ fn available_model(contract: &ResearchContract) -> Result<()> {
     output.seek(SeekFrom::Start(0))?;
     let mut text = String::new();
     output.take(512 * 1024).read_to_string(&mut text)?;
-    if !text.lines().any(|line| {
+    let mut choices = Vec::new();
+    for line in text.lines() {
         let mut fields = line.split_whitespace();
-        fields.next() == Some(contract.model_provider.as_str())
-            && fields.next() == Some(contract.model.as_str())
+        let (Some(backend), Some(model)) = (fields.next(), fields.next()) else {
+            continue;
+        };
+        if backend == "provider" && model == "model" {
+            continue;
+        }
+        if !DelegationSettings::valid_model(&format!("{backend}/{model}")) {
+            continue;
+        }
+        choices.push(DelegationChoice {
+            provider: DelegationHarness::Pi,
+            model_provider: backend.into(),
+            model: model.into(),
+        });
+    }
+    if serde_json::to_vec(&choices)?.len() > 512 * 1024 {
+        bail!("provider inventory exceeds response bound");
+    }
+    Ok(choices)
+}
+
+fn available_model(contract: &ResearchContract) -> Result<()> {
+    if !available_models()?.iter().any(|choice| {
+        choice.model_provider == contract.model_provider && choice.model == contract.model
     }) {
         bail!("requested exact model is unavailable");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    pub(super) fn record(root: PathBuf, status: DispatchStatus) -> Record {
+        let root = std::fs::canonicalize(root.parent().unwrap())
+            .unwrap()
+            .join(root.file_name().unwrap());
+        let contract = ResearchContract {
+            review: None,
+            coding: None,
+            schema: 1,
+            workflow: "workflow".into(),
+            controller: "controller".into(),
+            task: "task".into(),
+            request: "request".into(),
+            project: "project".into(),
+            workspace: "workspace".into(),
+            scope: "Read README".into(),
+            permitted_actions: vec!["read".into()],
+            provider: "pi".into(),
+            model_provider: "test".into(),
+            model: "fixture-model".into(),
+            acceptance_evidence: vec!["citation".into()],
+            mandatory_capabilities: vec!["read".into()],
+            limits: DelegationLimits::default(),
+            previous_request: None,
+        };
+        let bytes = serde_json::to_vec(&contract).unwrap();
+        Directory::open(&root, true)
+            .unwrap()
+            .publish("contract-v1.json", &bytes)
+            .unwrap();
+        let allocated = status != DispatchStatus::Prepared;
+        Record {
+            review: None,
+            dependencies: None,
+            obligation_revision: 1,
+            archive_receipts: vec![],
+            control: AssignmentControl::default(),
+            takeover_evidence: None,
+            control_intents: vec![],
+            interrupt_intents: vec![],
+            initial_control_epoch: None,
+            initial_parent_epoch: None,
+            handle: "request".into(),
+            coding: None,
+            identity: AssignmentIdentity {
+                instance: "instance".into(),
+                workflow: "workflow".into(),
+                controller: "controller".into(),
+                controller_epoch: 1,
+                task: "task".into(),
+                attempt: 1,
+                contract: 1,
+                request: "request".into(),
+                session: allocated.then_some(SessionId(2)),
+                run: allocated.then_some(SessionRunId(1)),
+            },
+            binding: matches!(
+                status,
+                DispatchStatus::Applied | DispatchStatus::InputUnknown
+            )
+            .then(|| AgentBinding {
+                provider: AgentProvider::Pi,
+                invocation: "child".into(),
+                conversation: "child-A".into(),
+                generation: 1,
+            }),
+            parent_binding: AgentBinding {
+                provider: AgentProvider::Pi,
+                invocation: "parent".into(),
+                conversation: "A".into(),
+                generation: 1,
+            },
+            parent: SessionId(1),
+            parent_run: SessionRunId(1),
+            root,
+            contract_digest: digest(&bytes),
+            brief_digest: None,
+            result_digest: None,
+            result_version: 1,
+            publication_intent: None,
+            handled_publication: None,
+            acceptance: None,
+            captures: Vec::new(),
+            recoveries: Vec::new(),
+            previous_versions: Vec::new(),
+            followups: Vec::new(),
+            questions: Vec::new(),
+            answers: Vec::new(),
+            dispatch: status,
+            reason: None,
+            project: String::new(),
+            workspace: String::new(),
+            receipts: vec![],
+            request_digests: vec![],
+            previous_request: None,
+            successor_request: None,
+            execution_attempts: None,
+            retryable_capacity_refusal: false,
+        }
+    }
+
+    #[test]
+    fn legacy_dispatch_never_infers_unsent_from_missing_receipts() {
+        for (status, operation, expected) in [
+            (
+                DispatchStatus::Prepared,
+                DispatchOperation::Launch,
+                DispatchOutcome::Accepted,
+            ),
+            (
+                DispatchStatus::LaunchUnknown,
+                DispatchOperation::Launch,
+                DispatchOutcome::Unknown,
+            ),
+            (
+                DispatchStatus::InputUnknown,
+                DispatchOperation::InitialInput,
+                DispatchOutcome::Unknown,
+            ),
+            (
+                DispatchStatus::Applied,
+                DispatchOperation::InitialInput,
+                DispatchOutcome::Applied,
+            ),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut value = record(directory.path().join("assignment"), status);
+            value.upgrade_legacy();
+            assert_eq!(value.receipt(operation).unwrap().outcome, expected);
+            assert_eq!(value.project, "project");
+            assert!(value.receipts.len() <= 3);
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let mut value = record(
+            directory.path().join("assignment"),
+            DispatchStatus::Prepared,
+        );
+        std::fs::write(value.root.join("contract-v1.json"), b"{}").unwrap();
+        value.upgrade_legacy();
+        assert!(
+            value
+                .receipts
+                .iter()
+                .all(|r| r.outcome == DispatchOutcome::Unknown)
+        );
+        assert!(
+            !value
+                .intent(DispatchOperation::Launch, &value.identity.clone())
+                .unwrap()
+        );
+        let directory = tempfile::tempdir().unwrap();
+        let mut contradictory =
+            record(directory.path().join("assignment"), DispatchStatus::Applied);
+        contradictory.binding = None;
+        contradictory.upgrade_legacy();
+        assert!(
+            contradictory
+                .receipts
+                .iter()
+                .all(|r| r.outcome == DispatchOutcome::Unknown)
+        );
+    }
+
+    #[test]
+    fn duplicate_launch_matches_original_identity_after_allocation() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut value = record(
+            directory.path().join("assignment"),
+            DispatchStatus::Prepared,
+        );
+        let original = value.identity.clone();
+        assert!(value.intent(DispatchOperation::Launch, &original).unwrap());
+        value.outcome(
+            DispatchOperation::Launch,
+            DispatchOutcome::Applied,
+            None,
+            None,
+        );
+        value.identity.session = Some(SessionId(2));
+        value.identity.run = Some(SessionRunId(1));
+        assert!(!value.intent(DispatchOperation::Launch, &original).unwrap());
+        let mut conflicting = original;
+        conflicting.contract += 1;
+        assert!(
+            value
+                .intent(DispatchOperation::Launch, &conflicting)
+                .is_err()
+        );
+        assert_eq!(value.receipts.len(), 1);
+    }
+
+    fn operation(value: &mut Record, operation: DispatchOperation, outcome: DispatchOutcome) {
+        let mut identity = value.identity.clone();
+        if operation != DispatchOperation::InitialInput {
+            identity.session = None;
+            identity.run = None;
+        }
+        // Test fixtures start pending before allocation, then simulate persisted outcomes.
+        value.request_digests.retain(|(kind, _)| *kind != operation);
+        value.receipts.retain(|r| r.operation != operation);
+        value.receipts.push(DispatchReceipt {
+            request: value.handle.clone(),
+            operation,
+            result_version: 1,
+            identity: identity.clone(),
+            outcome,
+            input: None,
+            reason: None,
+        });
+        value.request_digests.push((
+            operation,
+            digest(&serde_json::to_vec(&(operation, &value.contract_digest, &identity)).unwrap()),
+        ));
+    }
+
+    #[test]
+    fn pending_initial_binding_preserves_only_valid_known_accounting() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut pending = record(
+            directory.path().join("assignment"),
+            DispatchStatus::Launched,
+        );
+        pending.binding = Some(AgentBinding {
+            provider: AgentProvider::Pi,
+            invocation: "child".into(),
+            conversation: "child-A".into(),
+            generation: 1,
+        });
+        pending.initial_control_epoch = Some(1);
+        pending.initial_parent_epoch = Some(1);
+        pending.execution_attempts = Some(1);
+        operation(
+            &mut pending,
+            DispatchOperation::Prepare,
+            DispatchOutcome::Applied,
+        );
+        operation(
+            &mut pending,
+            DispatchOperation::Launch,
+            DispatchOutcome::Applied,
+        );
+        operation(
+            &mut pending,
+            DispatchOperation::InitialInput,
+            DispatchOutcome::Accepted,
+        );
+        for count in [1, 3] {
+            let mut valid = pending.clone();
+            valid.execution_attempts = Some(count);
+            valid.identity.attempt = 2;
+            valid.previous_request = Some("prior-request".into());
+            // Keep every receipt and digest paired with the immutable retry identity.
+            operation(
+                &mut valid,
+                DispatchOperation::Prepare,
+                DispatchOutcome::Applied,
+            );
+            operation(
+                &mut valid,
+                DispatchOperation::Launch,
+                DispatchOutcome::Applied,
+            );
+            operation(
+                &mut valid,
+                DispatchOperation::InitialInput,
+                DispatchOutcome::Accepted,
+            );
+            let before = serde_json::to_vec(&valid).unwrap();
+            assert_eq!(valid.spent_execution_attempts(), Some(count));
+            valid.upgrade_legacy();
+            assert_eq!(serde_json::to_vec(&valid).unwrap(), before);
+        }
+        for case in [
+            "missing receipt",
+            "missing digest",
+            "rejected",
+            "applied",
+            "unknown",
+            "partial",
+            "foreign identity",
+            "foreign request",
+            "foreign result",
+            "foreign provider",
+            "replacement generation",
+            "zero generation",
+            "zero count",
+            "unknown count",
+            "wrong digest",
+            "missing child epoch",
+            "missing parent epoch",
+            "unpaired run",
+        ] {
+            let mut bad = pending.clone();
+            match case {
+                "missing receipt" => bad
+                    .receipts
+                    .retain(|r| r.operation != DispatchOperation::InitialInput),
+                "missing digest" => bad
+                    .request_digests
+                    .retain(|(op, _)| *op != DispatchOperation::InitialInput),
+                "rejected" | "applied" | "unknown" | "partial" => operation(
+                    &mut bad,
+                    DispatchOperation::InitialInput,
+                    match case {
+                        "rejected" => DispatchOutcome::Rejected,
+                        "applied" => DispatchOutcome::Applied,
+                        "unknown" => DispatchOutcome::Unknown,
+                        _ => DispatchOutcome::Partial,
+                    },
+                ),
+                "foreign identity" => {
+                    bad.receipts
+                        .iter_mut()
+                        .find(|r| r.operation == DispatchOperation::InitialInput)
+                        .unwrap()
+                        .identity
+                        .run = Some(SessionRunId(2))
+                }
+                "foreign request" => {
+                    bad.receipts
+                        .iter_mut()
+                        .find(|r| r.operation == DispatchOperation::InitialInput)
+                        .unwrap()
+                        .request = "other".into()
+                }
+                "foreign result" => {
+                    bad.receipts
+                        .iter_mut()
+                        .find(|r| r.operation == DispatchOperation::InitialInput)
+                        .unwrap()
+                        .result_version = 2
+                }
+                "foreign provider" => bad.binding.as_mut().unwrap().provider = AgentProvider::Codex,
+                "replacement generation" => bad.binding.as_mut().unwrap().generation = 2,
+                "zero generation" => bad.binding.as_mut().unwrap().generation = 0,
+                "zero count" => bad.execution_attempts = Some(0),
+                "unknown count" => bad.execution_attempts = None,
+                "wrong digest" => {
+                    bad.request_digests
+                        .iter_mut()
+                        .find(|(op, _)| *op == DispatchOperation::InitialInput)
+                        .unwrap()
+                        .1 = "changed".into()
+                }
+                "missing child epoch" => bad.initial_control_epoch = None,
+                "missing parent epoch" => bad.initial_parent_epoch = None,
+                "unpaired run" => bad.identity.run = None,
+                _ => unreachable!(),
+            }
+            assert_eq!(bad.spent_execution_attempts(), None, "{case}");
+            bad.upgrade_legacy();
+            assert_eq!(bad.execution_attempts, None, "{case}");
+        }
+    }
+
+    #[test]
+    fn execution_accounting_uses_receipts_and_never_resource_absence() {
+        let cases = [
+            ("raw prepared", Some(0)),
+            ("accepted launch", Some(0)),
+            ("prepare unknown", None),
+            ("unknown launch without row", Some(1)),
+            ("partial launch without row", Some(1)),
+            ("applied launch", Some(1)),
+            ("rejected input after launch", Some(1)),
+            ("refused without proof", None),
+            ("rejected without proof", None),
+            ("known preflight refusal", Some(0)),
+            ("allocated preflight refusal", Some(0)),
+            ("known capacity refusal", Some(0)),
+            ("zero contradicts unknown", None),
+            ("zero contradicts input", None),
+            ("prepared contradicts launch", None),
+            ("unpaired allocation", None),
+            ("wrong receipt identity", None),
+            ("wrong operation digest", None),
+            ("duplicate receipt", None),
+            ("missing predecessor count", None),
+            ("known inherited count", Some(2)),
+            ("known count after removal", Some(2)),
+            ("invalid legacy contract", None),
+            ("contradictory applied binding", None),
+        ];
+        for (name, expected) in cases {
+            let directory = tempfile::tempdir().unwrap();
+            let mut value = record(
+                directory.path().join("assignment"),
+                DispatchStatus::Prepared,
+            );
+            match name {
+                "raw prepared" => {}
+                "accepted launch"
+                | "prepare unknown"
+                | "wrong receipt identity"
+                | "wrong operation digest"
+                | "duplicate receipt" => {
+                    operation(
+                        &mut value,
+                        DispatchOperation::Prepare,
+                        DispatchOutcome::Applied,
+                    );
+                    operation(
+                        &mut value,
+                        DispatchOperation::Launch,
+                        DispatchOutcome::Accepted,
+                    );
+                    match name {
+                        "prepare unknown" => operation(
+                            &mut value,
+                            DispatchOperation::Prepare,
+                            DispatchOutcome::Unknown,
+                        ),
+                        "wrong receipt identity" => {
+                            value.receipts[0].identity.task = "other".into()
+                        }
+                        "wrong operation digest" => value.request_digests[0].1 = "changed".into(),
+                        "duplicate receipt" => value.receipts.push(value.receipts[0].clone()),
+                        _ => {}
+                    }
+                }
+                "unknown launch without row"
+                | "partial launch without row"
+                | "zero contradicts unknown" => {
+                    value.dispatch = DispatchStatus::LaunchUnknown;
+                    operation(
+                        &mut value,
+                        DispatchOperation::Launch,
+                        if name == "partial launch without row" {
+                            DispatchOutcome::Partial
+                        } else {
+                            DispatchOutcome::Unknown
+                        },
+                    );
+                    if name == "zero contradicts unknown" {
+                        value.execution_attempts = Some(0);
+                    }
+                }
+                "applied launch" | "rejected input after launch" | "zero contradicts input" => {
+                    value.dispatch = DispatchStatus::Launched;
+                    value.identity.session = Some(SessionId(2));
+                    value.identity.run = Some(SessionRunId(1));
+                    operation(
+                        &mut value,
+                        DispatchOperation::Launch,
+                        DispatchOutcome::Applied,
+                    );
+                    if name != "applied launch" {
+                        operation(
+                            &mut value,
+                            DispatchOperation::InitialInput,
+                            DispatchOutcome::Rejected,
+                        );
+                        value.dispatch = DispatchStatus::Refused;
+                    }
+                    if name == "zero contradicts input" {
+                        value.execution_attempts = Some(0);
+                    }
+                }
+                "refused without proof"
+                | "rejected without proof"
+                | "known preflight refusal"
+                | "allocated preflight refusal"
+                | "known capacity refusal" => {
+                    value.dispatch = DispatchStatus::Refused;
+                    if name != "refused without proof" {
+                        operation(
+                            &mut value,
+                            DispatchOperation::Launch,
+                            DispatchOutcome::Rejected,
+                        );
+                    }
+                    if name.contains("preflight") || name == "known capacity refusal" {
+                        value.execution_attempts = Some(0);
+                    }
+                    if name == "allocated preflight refusal" {
+                        value.identity.session = Some(SessionId(2));
+                        value.identity.run = Some(SessionRunId(1));
+                    }
+                    value.retryable_capacity_refusal = name == "known capacity refusal";
+                }
+                "prepared contradicts launch" => operation(
+                    &mut value,
+                    DispatchOperation::Launch,
+                    DispatchOutcome::Unknown,
+                ),
+                "unpaired allocation" => value.identity.run = Some(SessionRunId(1)),
+                "missing predecessor count" | "known inherited count" => {
+                    value.identity.attempt = 2;
+                    value.previous_request = Some("previous".into());
+                    if name == "known inherited count" {
+                        value.execution_attempts = Some(2);
+                    }
+                }
+                "known count after removal" => {
+                    value.dispatch = DispatchStatus::Refused;
+                    value.execution_attempts = Some(2);
+                }
+                "invalid legacy contract" => {
+                    std::fs::write(value.root.join("contract-v1.json"), b"{}").unwrap()
+                }
+                "contradictory applied binding" => {
+                    value.dispatch = DispatchStatus::Applied;
+                    value.identity.session = Some(SessionId(2));
+                    value.identity.run = Some(SessionRunId(1));
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(value.spent_execution_attempts(), expected, "{name}");
+            value.upgrade_legacy();
+            assert_eq!(
+                value.execution_attempts, expected,
+                "derive before synthesized receipts: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn same_child_versions_keep_one_execution_and_initial_receipt_anchors() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut value = record(dir.path().join("assignment"), DispatchStatus::Applied);
+        for op in [
+            DispatchOperation::Prepare,
+            DispatchOperation::Launch,
+            DispatchOperation::InitialInput,
+        ] {
+            operation(&mut value, op, DispatchOutcome::Applied);
+        }
+        value.execution_attempts = Some(1);
+        let initial_receipts = value.receipts.clone();
+        let initial_digests = value.request_digests.clone();
+        for version in 2..=65 {
+            let expected = value.identity.clone();
+            let mut target = expected.clone();
+            if version % 2 == 0 {
+                target.contract += 1;
+            }
+            let request = format!("followup-{version}");
+            value.followups.push(FollowupIntent {
+                request: request.clone(),
+                expected,
+                expected_result_version: version - 1,
+                expected_control_epoch: 1,
+                expected_parent_epoch: None, // Legacy fixture retains the original epoch-one provenance.
+                fallback_nonce: None,
+                target: target.clone(),
+                result_version: version,
+                digest: "payload".into(),
+                contract_digest: format!("contract-{version}"),
+                brief_digest: "brief".into(),
+            });
+            value.receipts.push(DispatchReceipt {
+                request,
+                operation: DispatchOperation::Followup,
+                result_version: version,
+                identity: target.clone(),
+                outcome: DispatchOutcome::Applied,
+                input: None,
+                reason: None,
+            });
+            value.previous_versions.push(value.version());
+            value.identity = target;
+            value.result_version = version;
+            value.contract_digest = format!("contract-{version}");
+            value.brief_digest = Some("brief".into());
+            assert_eq!(
+                value.spent_execution_attempts(),
+                Some(1),
+                "version {version}"
+            );
+            value.upgrade_legacy();
+            assert_eq!(value.execution_attempts, Some(1));
+            assert_eq!(&value.receipts[..3], initial_receipts.as_slice());
+            assert_eq!(value.request_digests, initial_digests);
+        }
+        for index in 0..64 {
+            value
+                .record_control(
+                    &format!("control-{index}"),
+                    match index % 3 {
+                        0 => DispatchOperation::Takeover,
+                        1 => DispatchOperation::HumanReturn,
+                        _ => DispatchOperation::ConfirmHumanReturn,
+                    },
+                    &index,
+                )
+                .unwrap();
+            assert_eq!(
+                value.spent_execution_attempts(),
+                Some(1),
+                "control operation {index}"
+            );
+        }
+        let last_followup = value
+            .receipts
+            .iter()
+            .rposition(|r| r.operation == DispatchOperation::Followup)
+            .unwrap();
+        for outcome in [
+            DispatchOutcome::Unknown,
+            DispatchOutcome::Partial,
+            DispatchOutcome::Rejected,
+        ] {
+            value.receipts[last_followup].outcome = outcome;
+            value.dispatch = DispatchStatus::Refused;
+            assert_eq!(value.spent_execution_attempts(), Some(1));
+        }
+        let mut zero = value.clone();
+        zero.execution_attempts = Some(0);
+        assert_eq!(zero.spent_execution_attempts(), None);
+        let mut malformed = value.clone();
+        malformed.receipts.last_mut().unwrap().identity.contract += 1;
+        assert_eq!(malformed.spent_execution_attempts(), None);
+        let mut malformed = value.clone();
+        malformed.previous_versions[0].result_version = 9;
+        assert_eq!(malformed.spent_execution_attempts(), None);
+        let mut malformed = value.clone();
+        malformed.request_digests[0].1 = value.contract_digest.clone();
+        assert_eq!(malformed.spent_execution_attempts(), None);
+        value.receipts.push(value.receipts.last().unwrap().clone());
+        assert_eq!(value.spent_execution_attempts(), None);
+    }
+
+    #[test]
+    fn reserved_gaps_require_rejected_intents_and_exact_materialized_lineage() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut value = record(dir.path().join("assignment"), DispatchStatus::Applied);
+        for op in [
+            DispatchOperation::Prepare,
+            DispatchOperation::Launch,
+            DispatchOperation::InitialInput,
+        ] {
+            operation(&mut value, op, DispatchOutcome::Applied);
+        }
+        value.execution_attempts = Some(1);
+        // Reserve/reject revision2, continue unchanged at result3, then revise
+        // to contract3/result4. Only the actual results enter version history.
+        for (result, contract, outcome, advance) in [
+            (2, 2, DispatchOutcome::Rejected, false),
+            (3, 1, DispatchOutcome::Applied, true),
+            (4, 3, DispatchOutcome::Applied, true),
+        ] {
+            let expected = value.identity.clone();
+            let mut target = expected.clone();
+            target.contract = contract;
+            let request = format!("reserved-{result}");
+            let contract_digest = if contract == expected.contract {
+                value.contract_digest.clone()
+            } else {
+                format!("contract-{contract}")
+            };
+            let brief_digest = format!("brief-{result}");
+            value.followups.push(FollowupIntent {
+                request: request.clone(),
+                expected,
+                expected_result_version: value.result_version,
+                expected_control_epoch: 1,
+                expected_parent_epoch: None, // Legacy fixture retains the original epoch-one provenance.
+                fallback_nonce: None,
+                target: target.clone(),
+                result_version: result,
+                digest: "payload".into(),
+                contract_digest: contract_digest.clone(),
+                brief_digest: brief_digest.clone(),
+            });
+            value.receipts.push(DispatchReceipt {
+                request,
+                operation: DispatchOperation::Followup,
+                result_version: result,
+                identity: target.clone(),
+                outcome,
+                input: None,
+                reason: None,
+            });
+            if advance {
+                value.previous_versions.push(value.version());
+                value.identity = target;
+                value.result_version = result;
+                value.contract_digest = contract_digest;
+                value.brief_digest = Some(brief_digest);
+            }
+            assert_eq!(value.spent_execution_attempts(), Some(1));
+        }
+        let mut restored: Record =
+            serde_json::from_slice(&serde_json::to_vec(&value).unwrap()).unwrap();
+        restored.upgrade_legacy();
+        assert_eq!(
+            restored.execution_attempts,
+            Some(1),
+            "retained metadata reload keeps proof"
+        );
+        for case in [
+            "unbacked result",
+            "unbacked contract",
+            "duplicate reservation",
+            "duplicate request",
+            "unknown skipped",
+            "partial skipped",
+            "accepted skipped",
+            "missing materialization",
+            "changed digest",
+            "changed receipt",
+            "zero count",
+        ] {
+            let mut bad = value.clone();
+            match case {
+                "unbacked result" => {
+                    bad.followups.remove(0);
+                    bad.receipts.remove(3);
+                }
+                "unbacked contract" => {
+                    bad.followups[0].target.contract = 1;
+                    bad.receipts[3].identity.contract = 1;
+                }
+                "duplicate reservation" => bad.followups[1].result_version = 2,
+                "duplicate request" => bad.followups[1].request = bad.followups[0].request.clone(),
+                "unknown skipped" => bad.receipts[3].outcome = DispatchOutcome::Unknown,
+                "partial skipped" => bad.receipts[3].outcome = DispatchOutcome::Partial,
+                "accepted skipped" => bad.receipts[3].outcome = DispatchOutcome::Accepted,
+                "missing materialization" => {
+                    bad.previous_versions.remove(1);
+                }
+                "changed digest" => bad.previous_versions[1].brief_digest = Some("foreign".into()),
+                "changed receipt" => bad.receipts[4].identity.contract = 2,
+                "zero count" => bad.execution_attempts = Some(0),
+                _ => unreachable!(),
+            }
+            assert_eq!(bad.spent_execution_attempts(), None, "{case}");
+            bad.upgrade_legacy();
+            assert_eq!(bad.execution_attempts, None, "{case}");
+        }
+    }
+
+    #[test]
+    fn old_contract_bytes_preserve_immutable_digest_without_weakening_comparison() {
+        let directory = tempfile::tempdir().unwrap();
+        let value = record(
+            directory.path().join("assignment"),
+            DispatchStatus::Prepared,
+        );
+        let contract = read_contract(&value).unwrap();
+        let modern = serde_json::to_vec(&contract).unwrap();
+        let suffix = format!(
+            ",\"limits\":{},\"previous_request\":null,\"coding\":null}}",
+            serde_json::to_string(&DelegationLimits::default()).unwrap()
+        );
+        let mut old = modern.strip_suffix(suffix.as_bytes()).unwrap().to_vec();
+        old.push(b'}');
+        let old_digest = digest(&old);
+        assert_eq!(contract_bytes(&contract, Some(&old_digest)).unwrap(), old);
+        let mut changed = contract.clone();
+        changed.scope.push_str(" changed");
+        assert_ne!(
+            digest(&contract_bytes(&changed, Some(&old_digest)).unwrap()),
+            old_digest
+        );
+        changed = contract;
+        changed.limits.max_execution_attempts = Some(1);
+        assert_ne!(
+            digest(&contract_bytes(&changed, Some(&old_digest)).unwrap()),
+            old_digest
+        );
+    }
 }

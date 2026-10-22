@@ -1,4 +1,5 @@
 mod agents;
+mod assignment_control;
 mod copy;
 mod desktop;
 mod event_loop;
@@ -227,6 +228,9 @@ fn pane_rects_with_preference(
 
 pub(super) struct HeldMouse {
     pub(super) session: SessionId,
+    pub(super) run: ovrcr_protocol::SessionRunId,
+    pub(super) control_epoch: Option<u64>,
+    pub(super) view_revision: u64,
     pub(super) event: MouseEvent,
     pub(super) mode: vt100::MouseProtocolMode,
     pub(super) encoding: vt100::MouseProtocolEncoding,

@@ -1,5 +1,9 @@
 pub(crate) mod delegation;
+mod delegation_coding;
+mod delegation_fallback;
 mod delegation_files;
+mod delegation_observation;
+pub(crate) mod delegation_recovery;
 use crate::config::{
     ProjectRecord, Registry, WorkspaceRecord, initialize_registry, save_registry_atomic,
 };
@@ -14,7 +18,8 @@ use anyhow::{Context, Result, bail};
 use ovrcr_protocol::{
     BranchRequest, ClientMessage, ClientRole, DashboardView, ErrorCode, HierarchySnapshot,
     PROTOCOL_VERSION, ProjectSummary, Request, Response, ServerEvent, ServerMessage, SessionKind,
-    SessionRunId, WorkspaceSummary, read_frame, read_preamble, write_frame, write_preamble,
+    SessionRunId, WorkspaceCreation, WorkspaceSummary, read_frame, read_preamble, write_frame,
+    write_preamble,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs::{self, File, OpenOptions};
@@ -239,6 +244,7 @@ struct WipTarget {
 
 pub struct ServerState {
     server_lifetime: String,
+    delegation_observations: delegation_observation::Observations,
     callback_executable_sha256: Option<String>,
     pub tasks: Option<Arc<TaskManager>>,
     socket: PathBuf,
@@ -441,11 +447,9 @@ impl ServerState {
             let boot_id = retained.boot_id().map(str::to_owned);
             (record, session, boot_id)
         };
-        Some(Self::summary_for_record(
-            &record,
-            session.as_ref(),
-            boot_id.as_deref(),
-        ))
+        let mut summary = Self::summary_for_record(&record, session.as_ref(), boot_id.as_deref());
+        self.project_assignment_control(&mut summary);
+        Some(summary)
     }
 
     pub(crate) fn session_summaries(&self) -> Vec<SessionSummary> {
@@ -461,7 +465,10 @@ impl ServerState {
         };
         rows.into_iter()
             .map(|(record, session)| {
-                Self::summary_for_record(&record, session.as_ref(), boot_id.as_deref())
+                let mut summary =
+                    Self::summary_for_record(&record, session.as_ref(), boot_id.as_deref());
+                self.project_assignment_control(&mut summary);
+                summary
             })
             .collect()
     }
@@ -567,6 +574,22 @@ impl ServerState {
             .map_err(|error| lifecycle_error(input_error_code(&error), error_chain_string(&error)))
     }
 
+    fn reject_archive_lifecycle(&self, id: SessionId) -> Result<()> {
+        let retained = self.retained.lock();
+        // Missing public IDs keep each caller's existing NotFound classification.
+        if retained.get(id).is_some()
+            && retained
+                .assigned_record(id)?
+                .is_some_and(|row| row.archive_pending().is_some())
+        {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "delegated archive owns this exact run; reconcile its original receipt",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn close_terminal(
         &self,
         id: SessionId,
@@ -578,6 +601,7 @@ impl ServerState {
         {
             let _mutation = self.mutation_lock.lock().unwrap();
             self.reject_if_stopping()?;
+            self.reject_archive_lifecycle(id)?;
             let summary = self
                 .session_summary(id)
                 .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
@@ -605,6 +629,7 @@ impl ServerState {
     }
 
     fn archive_session_locked(&self, id: SessionId, run: SessionRunId) -> Result<()> {
+        self.reject_archive_lifecycle(id)?;
         self.retained.lock().set_archived(id, run, true)?;
         if let Some(session) = self.sessions.lock().unwrap().remove(&id) {
             session.revoke_hook_capability();
@@ -616,6 +641,7 @@ impl ServerState {
     pub fn delete_archived_session(&self, id: SessionId, expected: SessionRunId) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
+        self.reject_archive_lifecycle(id)?;
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
@@ -632,6 +658,7 @@ impl ServerState {
     pub fn unarchive_session(&self, id: SessionId, expected: SessionRunId) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
+        self.reject_archive_lifecycle(id)?;
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
@@ -653,6 +680,7 @@ impl ServerState {
     ) -> Result<SessionControlTarget> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
+        self.reject_archive_lifecycle(id)?;
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
@@ -733,6 +761,7 @@ impl ServerState {
     pub fn set_session_paused(&self, id: SessionId, paused: bool) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
+        self.reject_archive_lifecycle(id)?;
         let session = self.session_for_control(id)?;
         let control = session.set_paused(paused).map(|_| ());
         let refresh = self.refresh_session_locked(id);
@@ -770,94 +799,109 @@ impl ServerState {
         ready: Option<Arc<dyn Fn() + Send + Sync>>,
         assignment: Option<&str>,
     ) -> Result<SessionSummary> {
-        if request.argv.is_empty() {
-            return Err(lifecycle_error(
-                ErrorCode::InvalidRequest,
-                "session command cannot be empty",
-            ));
-        }
-        let workspace_record = self
-            .registry
-            .lock()
-            .unwrap()
-            .workspace(&request.project, &request.workspace)
-            .map_err(|error| lifecycle_error(ErrorCode::NotFound, error.to_string()))?
-            .clone();
-        let cwd = workspace_record.path.clone();
-        if !cwd.is_dir() {
-            return Err(lifecycle_error(
-                ErrorCode::NotFound,
-                "working directory is unavailable",
-            ));
-        }
-        let display =
-            git::checkout_name(&cwd).unwrap_or_else(|_| git::UNAVAILABLE_CHECKOUT.to_owned());
-        let automatic = request.name.is_empty();
-        {
-            let retained = self.retained.lock();
-            let used: std::collections::HashSet<_> = retained
-                .records()
-                .filter(|record| {
-                    record.metadata.project == request.project
-                        && record.metadata.workspace == request.workspace
-                })
-                .map(|record| record.metadata.name.as_str())
-                .collect();
-            if automatic {
-                request.name = display.clone();
-                let mut suffix = 2u64;
-                while used.contains(request.name.as_str()) {
-                    request.name = format!("{display}-{suffix}");
-                    suffix += 1;
-                }
-            } else if used.contains(request.name.as_str()) {
+        // Every error in this preflight precedes the sole native spawn call.
+        let record = (|| -> Result<_> {
+            if request.argv.is_empty() {
                 return Err(lifecycle_error(
-                    ErrorCode::AlreadyExists,
-                    "duplicate session name",
+                    ErrorCode::InvalidRequest,
+                    "session command cannot be empty",
                 ));
             }
-        }
-        let pinned_title = if automatic || matches!(request.kind, SessionKind::Agent { .. }) {
-            None
-        } else {
-            Some(
-                crate::session::sanitize_title(&request.name).ok_or_else(|| {
-                    lifecycle_error(ErrorCode::InvalidRequest, "title must contain visible text")
-                })?,
-            )
-        };
-        self.check_live_capacity()?;
-        let label = default_session_label(&request.kind, request.label, &request.argv);
-        let record = self.retained.lock().create(SessionMetadata {
-            project: request.project,
-            workspace: request.workspace,
-            name: request.name,
-            label,
-            cwd,
-            kind: request.kind,
-            pinned_title,
-            application_title: None,
-        })?;
-        if let Some(handle) = assignment {
-            self.bind_assignment(handle, &record)?;
-        }
-        let result = self.spawn_record_locked(record.id, record.run, request.argv, ready, None);
-        if let Err(error) = &result {
-            let removed = {
-                let mut retained = self.retained.lock();
-                let current = retained.get(record.id).map(|record| record.run);
-                match current {
-                    Some(run) if run.0 == 0 || error.is::<crate::session::NoProcessStarted>() => {
-                        retained.remove(record.id, run)?
-                    }
-                    _ => false,
-                }
-            };
-            if removed {
-                self.dashboard.forget_session(record.id);
+            let workspace_record = self
+                .registry
+                .lock()
+                .unwrap()
+                .workspace(&request.project, &request.workspace)
+                .map_err(|error| lifecycle_error(ErrorCode::NotFound, error.to_string()))?
+                .clone();
+            let cwd = workspace_record.path.clone();
+            if !cwd.is_dir() {
+                return Err(lifecycle_error(
+                    ErrorCode::NotFound,
+                    "working directory is unavailable",
+                ));
             }
+            let display =
+                git::checkout_name(&cwd).unwrap_or_else(|_| git::UNAVAILABLE_CHECKOUT.to_owned());
+            let automatic = request.name.is_empty();
+            {
+                let retained = self.retained.lock();
+                let used: std::collections::HashSet<_> = retained
+                    .records()
+                    .filter(|record| {
+                        record.metadata.project == request.project
+                            && record.metadata.workspace == request.workspace
+                    })
+                    .map(|record| record.metadata.name.as_str())
+                    .collect();
+                if automatic {
+                    request.name = display.clone();
+                    let mut suffix = 2u64;
+                    while used.contains(request.name.as_str()) {
+                        request.name = format!("{display}-{suffix}");
+                        suffix += 1;
+                    }
+                } else if used.contains(request.name.as_str()) {
+                    return Err(lifecycle_error(
+                        ErrorCode::AlreadyExists,
+                        "duplicate session name",
+                    ));
+                }
+            }
+            let pinned_title = if automatic || matches!(request.kind, SessionKind::Agent { .. }) {
+                None
+            } else {
+                Some(
+                    crate::session::sanitize_title(&request.name).ok_or_else(|| {
+                        lifecycle_error(
+                            ErrorCode::InvalidRequest,
+                            "title must contain visible text",
+                        )
+                    })?,
+                )
+            };
+            self.check_live_capacity()?;
+            let label = default_session_label(&request.kind, request.label, &request.argv);
+            let record = self.retained.lock().create(SessionMetadata {
+                project: request.project,
+                workspace: request.workspace,
+                name: request.name,
+                label,
+                cwd,
+                kind: request.kind,
+                pinned_title,
+                application_title: None,
+            })?;
+            if let Some(handle) = assignment {
+                self.bind_assignment(handle, &record)?;
+            }
+            Ok(record)
+        })()
+        .map_err(crate::session::NoProcessStarted::context)?;
+        let error = match self.spawn_record_locked(record.id, record.run, request.argv, ready, None)
+        {
+            Ok(summary) => return Ok(summary),
+            Err(error) => error,
+        };
+        let cleanup = {
+            let mut retained = self.retained.lock();
+            let current = retained.get(record.id).map(|record| record.run);
+            match current {
+                Some(run) if run.0 == 0 || error.is::<crate::session::NoProcessStarted>() => {
+                    retained.remove(record.id, run)
+                }
+                _ => Ok(false),
+            }
+        };
+        match cleanup {
+            Ok(removed) => {
+                if removed {
+                    self.dashboard.forget_session(record.id);
+                }
+                Err(error)
+            }
+            Err(cleanup) => Err(error.context(format!("session cleanup failed: {cleanup:#}"))),
         }
-        result
     }
 
     fn check_live_capacity(&self) -> Result<()> {
@@ -887,31 +931,37 @@ impl ServerState {
         ready: Option<Arc<dyn Fn() + Send + Sync>>,
         restore_command: Option<String>,
     ) -> Result<SessionSummary> {
-        self.check_live_capacity()?;
-        let cwd = self
-            .retained
-            .lock()
-            .get(id)
-            .map(|record| record.metadata.cwd.clone());
-        if let Some(cwd) = cwd {
-            self.refuse_root_launch(&cwd)?;
-        }
-        let socket = validate_bound_socket(&self.socket)?;
-        let capability = generate_hook_capability()?;
-        let events = self
-            .events
-            .lock()
-            .unwrap()
-            .as_ref()
-            .context("server event channel closed")?
-            .clone();
-        let record = self.retained.lock().begin_run(id, expected_run)?;
-        if let Some(old) = self.sessions.lock().unwrap().remove(&id) {
-            old.revoke_hook_capability();
-        }
-        self.dashboard.forget_session(id);
+        // Every failure in this preparation is provably before native spawn.
+        // Keep that proof across allocation; later row/process absence proves nothing.
+        let (record, socket, capability, events, assigned_input) = (|| -> Result<_> {
+            self.check_live_capacity()?;
+            let cwd = self
+                .retained
+                .lock()
+                .get(id)
+                .map(|record| record.metadata.cwd.clone());
+            if let Some(cwd) = cwd {
+                self.refuse_root_launch(&cwd)?;
+            }
+            let socket = validate_bound_socket(&self.socket)?;
+            let capability = generate_hook_capability()?;
+            let events = self
+                .events
+                .lock()
+                .unwrap()
+                .as_ref()
+                .context("server event channel closed")?
+                .clone();
+            let record = self.retained.lock().begin_run(id, expected_run)?;
+            if let Some(old) = self.sessions.lock().unwrap().remove(&id) {
+                old.revoke_hook_capability();
+            }
+            self.dashboard.forget_session(id);
+            let assigned_input = self.retained.lock().assigned(id)?;
+            Ok((record, socket, capability, events, assigned_input))
+        })()
+        .map_err(crate::session::NoProcessStarted::context)?;
         let metadata = &record.metadata;
-        let assigned_input = self.retained.lock().assigned(id)?;
         let spec = SessionSpec {
             restore_command,
             run: record.run,
@@ -948,7 +998,36 @@ impl ServerState {
                 ready();
             }
         };
-        if let Err(error) = Session::spawn_registered(id, spec, size, events, &register) {
+        let spawn_result = {
+            // Only the parent's initial assigned launch needs this fence. An explicit
+            // person-requested reopen has a different child run and keeps its own contract.
+            let store = assigned_input.then(|| self.retained.lock());
+            if let Some(store) = &store {
+                let assignment = store
+                    .assigned_record(id)?
+                    .context("assigned launch membership disappeared")?;
+                if assignment.identity.run == Some(record.run) {
+                    let workflow = store
+                        .workflow(&assignment.identity.workflow)?
+                        .context("assigned launch authority disappeared")?;
+                    let authority = &workflow.authority;
+                    let parent = self.session_for_control(authority.parent)?;
+                    if workflow.departure.is_some()
+                        || authority.server_lifetime != self.server_lifetime
+                        || authority.epoch != assignment.identity.controller_epoch
+                        || authority.parent_run != parent.run()
+                        || parent.workflow_source()
+                            != Some((authority.binding.clone(), authority.producer.clone()))
+                    {
+                        return Err(crate::session::NoProcessStarted::context(anyhow::anyhow!(
+                            "assigned launch parent authority changed"
+                        )));
+                    }
+                }
+            }
+            Session::spawn_registered(id, spec, size, events, &register)
+        };
+        if let Err(error) = spawn_result {
             if let Some(failed) = self.sessions.lock().unwrap().remove(&id) {
                 failed.revoke_hook_capability();
             }
@@ -981,7 +1060,7 @@ impl ServerState {
                 true,
             );
             return Err(if no_process {
-                failure.context(crate::session::NoProcessStarted)
+                crate::session::NoProcessStarted::context(failure)
             } else {
                 failure
             });
@@ -1087,6 +1166,7 @@ impl ServerState {
     }
 
     fn acknowledge_stopped_locked(&self, id: SessionId, expected_run: SessionRunId) -> Result<()> {
+        self.reject_archive_lifecycle(id)?;
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
@@ -1123,6 +1203,7 @@ impl ServerState {
     ) -> Result<SessionSummary> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
+        self.reject_archive_lifecycle(id)?;
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
@@ -1161,6 +1242,7 @@ impl ServerState {
         acknowledge_stopped: bool,
     ) -> Result<SessionSummary> {
         self.reject_if_stopping()?;
+        self.reject_archive_lifecycle(id)?;
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
@@ -1283,6 +1365,14 @@ impl ServerState {
                 command
             }
         });
+        if let Some(reference) = record.conversation.as_ref() {
+            self.retained.lock().record_workflow_reopen(
+                id,
+                expected_run,
+                reference,
+                &self.server_lifetime,
+            )?;
+        }
         let summary = self.spawn_record_locked(id, expected_run, vec![shell], None, staged)?;
         if let Some(command) = input {
             let session = self
@@ -1343,6 +1433,7 @@ impl ServerState {
     }
 
     fn remove_session_locked(&self, id: SessionId) -> Result<()> {
+        self.reject_archive_lifecycle(id)?;
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
@@ -1386,6 +1477,7 @@ impl ServerState {
         let retained = SessionStore::open(&registry_path).unwrap();
         Arc::new(Self {
             server_lifetime: navigation::new_identity().unwrap(),
+            delegation_observations: delegation_observation::Observations::default(),
             callback_executable_sha256: Some("0".repeat(64)),
             tasks: Some(tasks),
             quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
@@ -1809,6 +1901,16 @@ impl ServerState {
     pub fn remove_project(&self, name: &str) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
+        let protected: Vec<_> = self
+            .retained
+            .lock()
+            .records()
+            .filter(|row| row.metadata.project == name)
+            .map(|row| row.id)
+            .collect();
+        for id in protected {
+            self.reject_archive_lifecycle(id)?;
+        }
         if self
             .tasks
             .as_ref()
@@ -1956,6 +2058,23 @@ impl ServerState {
     ) -> Result<Option<SessionSummary>> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
+        self.create_workspace_locked(project, name, branch, launch, None)
+    }
+
+    /// The lifecycle/delegation caller already owns mutation_lock.
+    fn create_workspace_locked(
+        &self,
+        project: String,
+        name: String,
+        branch: BranchRequest,
+        launch: WorkspaceLaunch,
+        assignment: Option<&str>,
+    ) -> Result<Option<SessionSummary>> {
+        self.reject_if_stopping()?;
+        let retained_workspace = match assignment {
+            Some(handle) => self.coding_retained_workspace(handle)?,
+            None => None,
+        };
         let project_record = self
             .registry
             .lock()
@@ -1963,10 +2082,14 @@ impl ServerState {
             .project(&project)
             .map_err(|error| lifecycle_error(ErrorCode::NotFound, error.to_string()))?
             .clone();
+        let already_registered = retained_workspace
+            .as_ref()
+            .is_some_and(|workspace| project_record.workspaces.contains(workspace));
         if project_record
             .workspaces
             .iter()
             .any(|workspace| workspace.id == name)
+            && !already_registered
         {
             return Err(lifecycle_error(
                 ErrorCode::AlreadyExists,
@@ -1977,9 +2100,30 @@ impl ServerState {
             BranchRequest::New { branch, base } => BranchSpec::New { branch, base },
             BranchRequest::Existing { branch } => BranchSpec::Existing { branch },
         };
-        let workspace = git::create_worktree(&project_record, &name, branch)
-            .with_context(|| format!("create workspace {project}/{name}"))?;
-        {
+        if let Some(handle) = assignment {
+            self.coding_require_creation_open(handle)?;
+        }
+        let workspace = match retained_workspace {
+            Some(workspace) => workspace,
+            None => git::create_worktree(&project_record, &name, branch)
+                .with_context(|| format!("create workspace {project}/{name}"))?,
+        };
+        if !already_registered {
+            if let Some(handle) = assignment {
+                self.record_coding_workspace(
+                    handle,
+                    &workspace,
+                    WorkspaceCreation::CreatedUnregistered,
+                )?;
+                if delegation::take_fault("coding-before-registration", handle).is_some() {
+                    return Err(crate::session::NoProcessStarted::context(anyhow::anyhow!(
+                        "owned failure after Git creation before registry publication"
+                    )));
+                }
+            }
+            if let Some(handle) = assignment {
+                self.coding_require_creation_open(handle)?;
+            }
             let mut registry = self.registry.lock().unwrap();
             let mut next = registry.clone();
             next.add_workspace(&project, workspace.clone())?;
@@ -1994,6 +2138,15 @@ impl ServerState {
                 ));
             }
             *registry = next;
+        }
+        if let Some(handle) = assignment {
+            self.record_coding_workspace(handle, &workspace, WorkspaceCreation::Registered)?;
+            self.materialize_dependency_inputs(handle)?;
+            if delegation::take_fault("coding-after-registration", handle).is_some() {
+                return Err(crate::session::NoProcessStarted::context(anyhow::anyhow!(
+                    "owned failure after workspace registration before managed launch"
+                )));
+            }
         }
         let (launch, session_name) = match launch {
             WorkspaceLaunch::None => return Ok(None),
@@ -2020,6 +2173,10 @@ impl ServerState {
                 )
             }
         };
+        if let Some(handle) = assignment {
+            self.coding_require_creation_open(handle)?;
+            self.record_coding_spawn_possible(handle)?;
+        }
         self.create_session_locked(
             ovrcr_protocol::CreateSessionRequest {
                 project,
@@ -2030,7 +2187,7 @@ impl ServerState {
                 kind: launch.kind,
             },
             None,
-            None,
+            assignment,
         )
         .map(Some)
         .map_err(|error| {
@@ -2040,7 +2197,8 @@ impl ServerState {
             {
                 return error;
             }
-            lifecycle_error_with_hierarchy(
+            let no_process = error.is::<crate::session::NoProcessStarted>();
+            let failure = lifecycle_error_with_hierarchy(
                 ErrorCode::PartialFailure,
                 format!(
                     "worktree for workspace {} remains at {}: {}",
@@ -2049,7 +2207,12 @@ impl ServerState {
                     error_chain_string(&error)
                 ),
                 true,
-            )
+            );
+            if no_process {
+                crate::session::NoProcessStarted::context(failure)
+            } else {
+                failure
+            }
         })
     }
 
@@ -2126,6 +2289,19 @@ impl ServerState {
                     .collect::<Vec<_>>(),
             )
         };
+        let protected: Vec<_> = self
+            .retained
+            .lock()
+            .records()
+            .filter(|row| {
+                row.metadata.project == project
+                    && (row.metadata.workspace == workspace.id || row.metadata.workspace == name)
+            })
+            .map(|row| row.id)
+            .collect();
+        for id in protected {
+            self.reject_archive_lifecycle(id)?;
+        }
         // Another project may register this checkout as its protected root.
         if repository_roots
             .iter()

@@ -376,6 +376,17 @@ pub enum Request {
         save: bool,
     },
     Delegation(Box<crate::DelegationRequest>),
+    Workflow(Box<crate::WorkflowRequest>),
+    DashboardWorkflow(crate::DashboardWorkflowRequest),
+    AssignmentControl(crate::AssignmentControlRequest),
+    /// Human authority is captured when enqueued and checked at the final PTY fence.
+    AssignedHumanInput {
+        session: SessionId,
+        run: SessionRunId,
+        control_epoch: u64,
+        view_revision: u64,
+        bytes: Vec<u8>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -455,6 +466,12 @@ pub enum Response {
     ITermFocusPrepared(Option<crate::BridgeActivationTarget>),
     BridgeOwner(crate::BridgeOwnerResult),
     Delegation(Box<crate::AssignmentSnapshot>),
+    Workflows(Vec<crate::WorkflowSnapshot>),
+    WorkflowCandidates(Box<crate::WorkflowCandidates>),
+    DelegationObservation(Box<crate::DelegationObservationBatch>),
+    DelegationCapabilities(Box<crate::DelegationCapabilities>),
+    WorkflowParents(Vec<crate::WorkflowParent>),
+    WorkflowRecovery(Box<crate::WorkflowRecovery>),
 }
 
 /// Which create/remove/close a Lifecycle job performed.
@@ -645,6 +662,8 @@ mod wire_snapshot {
                     kind: crate::InputKind::Approval,
                 }],
                 input_revision: 3,
+                native_control: None,
+                native_control_revision: 0,
             }),
             agent_epoch: 0,
             unread: Some(unread()),
@@ -660,6 +679,7 @@ mod wire_snapshot {
             }),
             title: None,
             manual_title: None,
+            assignment_control: None,
         }
     }
 
@@ -1475,6 +1495,8 @@ mod wire_snapshot {
             }),
         ));
         let auth = crate::DelegationAuth {
+            controller: None,
+            source: None,
             session: SessionId(1),
             capability: "fixture".into(),
         };
@@ -1491,6 +1513,8 @@ mod wire_snapshot {
             run: Some(crate::SessionRunId(1)),
         };
         let contract = crate::ResearchContract {
+            review: None,
+            coding: None,
             schema: 1,
             workflow: "w".into(),
             controller: "c".into(),
@@ -1505,8 +1529,17 @@ mod wire_snapshot {
             model: "m".into(),
             acceptance_evidence: vec!["cite".into()],
             mandatory_capabilities: vec!["read".into()],
+            limits: crate::DelegationLimits {
+                max_live_children: Some(6),
+                max_execution_attempts: Some(2),
+                min_free_slots_after_launch: 1,
+                ..Default::default()
+            },
+            previous_request: Some("prev".into()),
         };
         let submission = crate::ResearchSubmission {
+            review: None,
+            coding: None,
             schema: 1,
             identity: identity.clone(),
             version: 1,
@@ -1520,7 +1553,7 @@ mod wire_snapshot {
                 "Prepare",
                 crate::DelegationRequest::Prepare {
                     auth: auth.clone(),
-                    contract,
+                    contract: contract.clone(),
                 },
             ),
             (
@@ -1528,6 +1561,7 @@ mod wire_snapshot {
                 crate::DelegationRequest::Launch {
                     auth: auth.clone(),
                     handle: "r".into(),
+                    identity: identity.clone(),
                 },
             ),
             (
@@ -1536,6 +1570,7 @@ mod wire_snapshot {
                     auth: auth.clone(),
                     handle: "r".into(),
                     identity: identity.clone(),
+                    expected_control_epoch: 1,
                 },
             ),
             (
@@ -1553,11 +1588,646 @@ mod wire_snapshot {
                 },
             ),
             (
+                "Reconcile",
+                crate::DelegationRequest::Reconcile {
+                    auth: auth.clone(),
+                    request: "r".into(),
+                },
+            ),
+            (
+                "Followup",
+                crate::DelegationRequest::Followup {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                    request: "f".into(),
+                    expected_identity: identity.clone(),
+                    expected_result_version: 1,
+                    expected_control_epoch: 1,
+                    text: "clarify".into(),
+                    revised_contract: Some(Box::new(contract)),
+                },
+            ),
+            (
+                "CollectVersion",
+                crate::DelegationRequest::CollectVersion {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                    version: 1,
+                },
+            ),
+            (
+                "RecordAcceptance",
+                crate::DelegationRequest::RecordAcceptance {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                    identity: identity.clone(),
+                    result_version: 1,
+                    target: crate::AcceptanceTarget::ChildSubmission {
+                        digest: "digest".into(),
+                    },
+                    expected_control_epoch: 1,
+                },
+            ),
+            (
                 "Publish",
                 crate::DelegationRequest::Publish {
-                    auth,
+                    auth: auth.clone(),
                     handle: "r".into(),
                     submission: submission.clone(),
+                },
+            ),
+            (
+                "Observe",
+                crate::DelegationRequest::Observe {
+                    auth: auth.clone(),
+                    handles: vec!["r".into()],
+                    after: Some(crate::ObservationCursor {
+                        server_epoch: "epoch".into(),
+                        sequence: 3,
+                    }),
+                    wait_ms: 1000,
+                },
+            ),
+            (
+                "MarkHandled",
+                crate::DelegationRequest::MarkHandled {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                    publication: crate::PublicationIdentity {
+                        assignment: identity.clone(),
+                        kind: crate::PublicationKind::Submission,
+                        version: 1,
+                        digest: "digest".into(),
+                    },
+                },
+            ),
+        ] {
+            all.push((
+                format!("Delegation::{name}"),
+                encode(&Request::Delegation(Box::new(request))),
+            ));
+        }
+        let evidence = crate::AssignmentControlEvidence {
+            server_lifetime: "l".into(),
+            identity: identity.clone(),
+            binding: crate::AgentBinding {
+                provider: crate::AgentProvider::Pi,
+                invocation: "inv".into(),
+                conversation: "conv".into(),
+                generation: 1,
+            },
+            result_version: 1,
+            activity_revision: 2,
+            input_revision: 3,
+            publication: None,
+            publication_issue: None,
+            human_input_revision: 4,
+        };
+        all.push((
+            "Request::AssignedHumanInput".into(),
+            encode(&Request::AssignedHumanInput {
+                session: SessionId(2),
+                run: SessionRunId(1),
+                control_epoch: 2,
+                view_revision: 3,
+                bytes: vec![7],
+            }),
+        ));
+        all.push((
+            "Request::AssignmentTakeover".into(),
+            encode(&Request::AssignmentControl(
+                crate::AssignmentControlRequest::Takeover {
+                    request: "take".into(),
+                    session: SessionId(2),
+                    run: SessionRunId(1),
+                    expected_epoch: 1,
+                    view_revision: 3,
+                },
+            )),
+        ));
+        all.push((
+            "Request::AssignmentReturn".into(),
+            encode(&Request::AssignmentControl(
+                crate::AssignmentControlRequest::Return {
+                    request: "return".into(),
+                    session: SessionId(2),
+                    run: SessionRunId(1),
+                    expected_epoch: 2,
+                    view_revision: 3,
+                    evidence: Box::new(evidence.clone()),
+                },
+            )),
+        ));
+        all.push((
+            "Delegation::ConfirmHumanReturn".into(),
+            encode(&Request::Delegation(Box::new(
+                crate::DelegationRequest::ConfirmHumanReturn {
+                    auth: crate::DelegationAuth {
+                        controller: None,
+                        source: None,
+                        session: SessionId(1),
+                        capability: "fixture".into(),
+                    },
+                    handle: "r".into(),
+                    request: "confirm".into(),
+                    returned_request: "return".into(),
+                    expected_control_epoch: 3,
+                    evidence: Box::new(evidence),
+                },
+            ))),
+        ));
+        all.push((
+            "Delegation::Capabilities".into(),
+            encode(&Request::Delegation(Box::new(
+                crate::DelegationRequest::Capabilities {
+                    auth,
+                    selection: crate::DelegationSelection {
+                        provider: Some(crate::DelegationHarness::Pi),
+                        model_provider: Some("test".into()),
+                        model: Some("m".into()),
+                        required_limits: crate::DelegationLimits::default(),
+                    },
+                },
+            ))),
+        ));
+        all.push((
+            "Response::DelegationCapabilities".into(),
+            encode(&Response::DelegationCapabilities(Box::new(
+                crate::DelegationCapabilities {
+                    choices: vec![crate::DelegationChoice {
+                        provider: crate::DelegationHarness::Pi,
+                        model_provider: "test".into(),
+                        model: "m".into(),
+                    }],
+                    resolved_choice: None,
+                    effective_limits: crate::DelegationLimits {
+                        max_live_children: Some(50),
+                        ..Default::default()
+                    },
+                    live_sessions: 3,
+                    live_children: 1,
+                    available_slots: 47,
+                    capabilities: vec!["read".into(), "result_file".into()],
+                    enforceable_limits: vec!["max_live_children".into()],
+                    native_helpers: false,
+                    native_descendant_usage: false,
+                    reason: None,
+                },
+            ))),
+        ));
+        all.push((
+            "Response::Delegation".into(),
+            encode(&Response::Delegation(Box::new(crate::AssignmentSnapshot {
+                coding_target: None,
+                dependency_gap: None,
+                review: None,
+                review_assignment: None,
+                review_scope: None,
+                questions: vec![],
+                collected_question: None,
+                obligation_revision: 1,
+                archive_receipts: vec![],
+                recoveries: vec![],
+                fallback_capture: None,
+                recovered: None,
+                accepted_recovery: None,
+                submission_issue: None,
+                selected_acceptance_ref: None,
+                selected_recoveries: vec![],
+                handle: "r".into(),
+                control: crate::AssignmentControl::default(),
+                control_evidence: None,
+                identity: identity.clone(),
+                dispatch: crate::DispatchStatus::Applied,
+                reason: None,
+                activity: AgentActivity::ResponseReady,
+                conversation: Some("conv".into()),
+                brief: "/brief".into(),
+                result_path: "/result".into(),
+                submission: Some(submission),
+                acceptance: "pending".into(),
+                result_version: 1,
+                publication: None,
+                acceptance_ref: None,
+                history: vec![],
+                selected_version: None,
+                historical_submission: None,
+                receipts: vec![],
+                resources: crate::AssignmentResources {
+                    coding: None,
+                    project: Some("p".into()),
+                    workspace: Some("ws".into()),
+                    workspace_present: true,
+                    current_session: None,
+                },
+                retryable_capacity_refusal: false,
+                successor_request: Some("next".into()),
+                execution_attempts: Some(1),
+            }))),
+        ));
+        all.push((
+            "Response::DelegationObservation".into(),
+            encode(&Response::DelegationObservation(Box::new(
+                crate::DelegationObservationBatch {
+                    cursor: crate::ObservationCursor {
+                        server_epoch: "epoch".into(),
+                        sequence: 3,
+                    },
+                    status: crate::ObservationStatus::ReconcileRequired,
+                    progress_deadline_ms: 300000,
+                    observations: vec![crate::DelegationObservation {
+                        control_receipt_digest: String::new(),
+                        native_control_revision: 0,
+                        workflow_cancelled: false,
+                        questions: vec![],
+                        native_question_gap: None,
+                        handle: "r".into(),
+                        identity: identity.clone(),
+                        binding: None,
+                        activity: None,
+                        activity_revision: 1,
+                        input_requests: vec![],
+                        input_revision: 2,
+                        health: Some(crate::ReporterHealth::Connected),
+                        current: true,
+                        publication: Some(crate::PublicationState {
+                            identity: crate::PublicationIdentity {
+                                assignment: identity.clone(),
+                                kind: crate::PublicationKind::Submission,
+                                version: 1,
+                                digest: "digest".into(),
+                            },
+                            handled: false,
+                        }),
+                        publication_issue: Some(crate::PublicationIssue::Invalid),
+                        last_progress_unix_ms: 100,
+                        stalled: false,
+                        progress_unresolved: true,
+                        control: crate::AssignmentControl::default(),
+                    }],
+                },
+            ))),
+        ));
+        let auth = crate::DelegationAuth {
+            session: SessionId(1),
+            capability: "fixture".into(),
+            controller: None,
+            source: None,
+        };
+        let authority = crate::WorkflowAuthority {
+            instance: "i".into(),
+            workflow: "w".into(),
+            controller: "c".into(),
+            epoch: 1,
+            parent: SessionId(1),
+            parent_run: crate::SessionRunId(1),
+            binding: crate::AgentBinding {
+                provider: crate::AgentProvider::Pi,
+                invocation: "inv".into(),
+                conversation: "conv".into(),
+                generation: 1,
+            },
+            producer: "producer".into(),
+            server_lifetime: "server".into(),
+        };
+        let index = crate::ContinuationIndex {
+            schema: 1,
+            objective: "objective.md".into(),
+            decisions: vec![],
+            unresolved_assignments: vec!["r".into()],
+            questions: vec![],
+            receipts: vec![],
+            accepted_evidence: vec![],
+            next_actions: vec![],
+        };
+        let transfer = crate::WorkflowTransfer {
+            request: "transfer".into(),
+            expected: authority.clone(),
+            parent: SessionId(3),
+            parent_run: crate::SessionRunId(2),
+            binding: authority.binding.clone(),
+            producer: "successor".into(),
+        };
+        for (name, request) in [
+            (
+                "SetDependencies",
+                crate::WorkflowRequest::SetDependencies {
+                    auth: auth.clone(),
+                    workflow: "w".into(),
+                    expected_version: 0,
+                    controller: "c".into(),
+                    graph: crate::DependencyGraph {
+                        tasks: vec![crate::DependencyTask {
+                            task: "t".into(),
+                            canonical_task: "task.md".into(),
+                            request: "r".into(),
+                            project: "p".into(),
+                            workspace: "ws".into(),
+                            revision: 1,
+                            integrate_snapshots: false,
+                        }],
+                        edges: vec![],
+                    },
+                },
+            ),
+            (
+                "Parents",
+                crate::WorkflowRequest::Parents { auth: auth.clone() },
+            ),
+            (
+                "Recover",
+                crate::WorkflowRequest::Recover {
+                    auth: auth.clone(),
+                    workflow: Some("w".into()),
+                },
+            ),
+            (
+                "Save",
+                crate::WorkflowRequest::Save {
+                    auth: auth.clone(),
+                    workflow: "w".into(),
+                    expected_version: 0,
+                    index: index.clone(),
+                },
+            ),
+            (
+                "Transfer",
+                crate::WorkflowRequest::Transfer {
+                    auth,
+                    transfer: transfer.clone(),
+                },
+            ),
+        ] {
+            all.push((
+                format!("Workflow::{name}"),
+                encode(&Request::Workflow(Box::new(request))),
+            ));
+        }
+        all.push((
+            "Request::DashboardWorkflowCandidates".into(),
+            encode(&Request::DashboardWorkflow(
+                crate::DashboardWorkflowRequest::Candidates {
+                    parent: SessionId(1),
+                    run: crate::SessionRunId(1),
+                },
+            )),
+        ));
+        all.push((
+            "Request::DashboardWorkflowTransfer".into(),
+            encode(&Request::DashboardWorkflow(
+                crate::DashboardWorkflowRequest::Transfer(Box::new(transfer.clone())),
+            )),
+        ));
+        let snapshot = crate::WorkflowSnapshot {
+            dependencies: None,
+            deliveries: vec![],
+            cancellation: None,
+            authority: authority.clone(),
+            active: true,
+            handles: vec!["r".into()],
+            pointer: Some(crate::ContinuationPointer {
+                schema: 1,
+                instance: "i".into(),
+                workflow: "w".into(),
+                version: 1,
+                digest: "digest".into(),
+            }),
+            continuation: Some(index),
+            gaps: vec![],
+            receipt: None,
+        };
+        let gaps = vec![
+            crate::WorkflowRecoveryGap {
+                workflow: Some("w".into()),
+                handle: Some("r".into()),
+                identity: Some(identity),
+                brief: Some("/brief".into()),
+                result_path: Some("/result".into()),
+                reason: "missing authority".into(),
+            },
+            crate::WorkflowRecoveryGap {
+                workflow: None,
+                handle: None,
+                identity: None,
+                brief: None,
+                result_path: None,
+                reason: "unverifiable retained record".into(),
+            },
+        ];
+        for (name, response) in [
+            ("Workflows", Response::Workflows(vec![snapshot.clone()])),
+            (
+                "WorkflowParents",
+                Response::WorkflowParents(vec![crate::WorkflowParent {
+                    session: authority.parent,
+                    run: authority.parent_run,
+                    binding: authority.binding.clone(),
+                    producer: authority.producer.clone(),
+                }]),
+            ),
+            (
+                "WorkflowRecovery",
+                Response::WorkflowRecovery(Box::new(crate::WorkflowRecovery {
+                    workflows: vec![snapshot],
+                    gaps: gaps.clone(),
+                })),
+            ),
+            (
+                "WorkflowCandidates",
+                Response::WorkflowCandidates(Box::new(crate::WorkflowCandidates {
+                    candidates: vec![transfer],
+                    gaps,
+                })),
+            ),
+        ] {
+            all.push((format!("Response::{name}"), encode(&response)));
+        }
+        cancellation_cases(&mut all);
+        question_cases(&mut all);
+        delivery_cases(&mut all);
+        fallback_cases(&mut all);
+        review_cases(&mut all);
+        all
+    }
+
+    fn fallback_cases(all: &mut Vec<(String, String)>) {
+        let identity = crate::AssignmentIdentity {
+            instance: "i".into(),
+            workflow: "w".into(),
+            controller: "c".into(),
+            controller_epoch: 1,
+            task: "t".into(),
+            attempt: 1,
+            contract: 1,
+            request: "r".into(),
+            session: Some(crate::SessionId(2)),
+            run: Some(crate::SessionRunId(3)),
+        };
+        let auth = crate::DelegationAuth {
+            session: crate::SessionId(1),
+            capability: "fixture".into(),
+            controller: None,
+            source: None,
+        };
+        let binding = crate::AgentBinding {
+            provider: crate::AgentProvider::Pi,
+            invocation: "child".into(),
+            conversation: "child-conv".into(),
+            generation: 1,
+        };
+        let control = crate::AssignmentControl {
+            epoch: 1,
+            owner: crate::ControlOwner::Controller,
+            barrier: None,
+            human_input_revision: 0,
+            attribution_invalidated: false,
+        };
+        let authority = crate::WorkflowAuthority {
+            instance: "i".into(),
+            workflow: "w".into(),
+            controller: "c".into(),
+            epoch: 1,
+            parent: crate::SessionId(1),
+            parent_run: crate::SessionRunId(1),
+            binding: crate::AgentBinding {
+                provider: crate::AgentProvider::Pi,
+                invocation: "parent".into(),
+                conversation: "parent-conv".into(),
+                generation: 1,
+            },
+            producer: "producer".into(),
+            server_lifetime: "server".into(),
+        };
+        let original = crate::FallbackOriginalCondition::Invalid {
+            digest: "a".repeat(64),
+        };
+        let artifact = crate::FallbackFileReference {
+            name: "artifact.json".into(),
+            digest: "b".repeat(64),
+        };
+        let evidence_file = crate::FallbackFileReference {
+            name: "independent.txt".into(),
+            digest: "d".repeat(64),
+        };
+        let evidence = crate::FallbackEvidence {
+            requirement: "Complete README".into(),
+            file: evidence_file.clone(),
+            excerpt: "README".into(),
+            assessment: "Independent parent review".into(),
+        };
+        let capture = crate::FallbackCapture {
+            schema: 1,
+            id: "capture".into(),
+            server_lifetime: "server".into(),
+            authority: authority.clone(),
+            context: crate::FallbackContext {
+                identity: identity.clone(),
+                result_version: 3,
+                contract_digest: "c".repeat(64),
+                brief_digest: "f".repeat(64),
+                freshness_nonce: "nonce".into(),
+                binding: binding.clone(),
+                control: control.clone(),
+            },
+            evidence: crate::AssignmentControlEvidence {
+                server_lifetime: "server".into(),
+                identity: identity.clone(),
+                binding,
+                result_version: 3,
+                activity_revision: 7,
+                input_revision: 0,
+                publication: None,
+                publication_issue: Some(crate::ControlPublicationIssue::Invalid),
+                human_input_revision: 0,
+            },
+            captured_unix_ms: 1,
+            size: TerminalSize { rows: 24, cols: 80 },
+            screen: format!("OVRCR_FALLBACK:{}", "b".repeat(64)),
+            truncated: false,
+            original: original.clone(),
+            original_bytes: Some(b"{".to_vec()),
+        };
+        // Literal wire values pin shape; they do not claim filesystem content proof.
+        let recovery = crate::FallbackRecovery {
+            schema: 1,
+            version: 2,
+            author: authority,
+            capture: capture.clone(),
+            artifact: crate::FrozenFallbackFile {
+                reference: artifact.clone(),
+                bytes: b"artifact".to_vec(),
+            },
+            contract: crate::FrozenFallbackFile {
+                reference: crate::FallbackFileReference {
+                    name: "contract-v1.json".into(),
+                    digest: "c".repeat(64),
+                },
+                bytes: b"contract".to_vec(),
+            },
+            brief: crate::FrozenFallbackFile {
+                reference: crate::FallbackFileReference {
+                    name: "brief-v3.json".into(),
+                    digest: "f".repeat(64),
+                },
+                bytes: b"brief".to_vec(),
+            },
+            evidence: vec![evidence.clone()],
+            evidence_files: vec![crate::FrozenFallbackFile {
+                reference: evidence_file,
+                bytes: b"README".to_vec(),
+            }],
+        };
+        let accepted = crate::AcceptanceReference {
+            identity: identity.clone(),
+            result_version: 3,
+            target: crate::AcceptanceTarget::ParentRecovery {
+                recovery_version: 2,
+                digest: "e".repeat(64),
+            },
+            path: "/acceptance-v3.json".into(),
+            digest: "f".repeat(64),
+        };
+        let reference = crate::RecoveryReference {
+            version: 2,
+            digest: "e".repeat(64),
+        };
+        for (name, request) in [
+            (
+                "CaptureFallback",
+                crate::DelegationRequest::CaptureFallback {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                    expected_identity: identity.clone(),
+                    expected_result_version: 3,
+                    expected_control_epoch: 1,
+                },
+            ),
+            (
+                "RecoverFallback",
+                crate::DelegationRequest::RecoverFallback {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                    draft: Box::new(crate::FallbackRecoveryDraft {
+                        capture_id: "capture".into(),
+                        version: 2,
+                        artifact,
+                        original,
+                        evidence: vec![evidence],
+                    }),
+                },
+            ),
+            (
+                "RecordRecoveryAcceptance",
+                crate::DelegationRequest::RecordAcceptance {
+                    auth,
+                    handle: "r".into(),
+                    identity: identity.clone(),
+                    result_version: 3,
+                    target: crate::AcceptanceTarget::ParentRecovery {
+                        recovery_version: 2,
+                        digest: "e".repeat(64),
+                    },
+                    expected_control_epoch: 1,
                 },
             ),
         ] {
@@ -1567,21 +2237,729 @@ mod wire_snapshot {
             ));
         }
         all.push((
-            "Response::Delegation".into(),
+            "Response::FallbackRecovery".into(),
             encode(&Response::Delegation(Box::new(crate::AssignmentSnapshot {
+                coding_target: None,
+                dependency_gap: None,
                 handle: "r".into(),
                 identity,
                 dispatch: crate::DispatchStatus::Applied,
                 reason: None,
                 activity: AgentActivity::ResponseReady,
-                conversation: Some("conv".into()),
-                brief: "/brief".into(),
-                result_path: "/result".into(),
-                submission: Some(submission),
-                acceptance: "pending".into(),
+                conversation: Some("child-conv".into()),
+                brief: "/brief-v3.json".into(),
+                result_path: "/submission-v3.json".into(),
+                submission: None,
+                acceptance: "accepted".into(),
+                result_version: 3,
+                publication: None,
+                acceptance_ref: Some(accepted.clone()),
+                history: vec![],
+                selected_version: Some(3),
+                historical_submission: None,
+                receipts: vec![],
+                resources: crate::AssignmentResources {
+                    project: Some("p".into()),
+                    workspace: Some("ws".into()),
+                    workspace_present: true,
+                    current_session: None,
+                    coding: None,
+                },
+                control,
+                control_evidence: Some(capture.evidence.clone()),
+                retryable_capacity_refusal: false,
+                successor_request: None,
+                execution_attempts: Some(1),
+                questions: vec![],
+                collected_question: None,
+                obligation_revision: 4,
+                archive_receipts: vec![],
+                recoveries: vec![reference.clone()],
+                fallback_capture: Some(capture),
+                recovered: Some(crate::RecoveryPublication {
+                    path: "/parent-fallback-r3-v2.json".into(),
+                    digest: "e".repeat(64),
+                    recovery: recovery.clone(),
+                }),
+                accepted_recovery: Some(recovery),
+                submission_issue: Some("invalid child submission".into()),
+                selected_acceptance_ref: Some(accepted),
+                selected_recoveries: vec![reference],
+                review: None,
+                review_assignment: None,
+                review_scope: None,
             }))),
         ));
-        all
+    }
+
+    fn delivery_cases(all: &mut Vec<(String, String)>) {
+        let identity = crate::AssignmentIdentity {
+            instance: "i".into(),
+            workflow: "w".into(),
+            controller: "c".into(),
+            controller_epoch: 1,
+            task: "t".into(),
+            attempt: 1,
+            contract: 1,
+            request: "r".into(),
+            session: Some(SessionId(2)),
+            run: Some(crate::SessionRunId(1)),
+        };
+        let authority = crate::WorkflowAuthority {
+            instance: "i".into(),
+            workflow: "w".into(),
+            controller: "c".into(),
+            parent: SessionId(1),
+            parent_run: crate::SessionRunId(1),
+            binding: crate::AgentBinding {
+                provider: crate::AgentProvider::Pi,
+                invocation: "inv".into(),
+                conversation: "conv".into(),
+                generation: 1,
+            },
+            producer: "producer".into(),
+            epoch: 1,
+            server_lifetime: "server".into(),
+        };
+        let auth = crate::DelegationAuth {
+            session: SessionId(1),
+            capability: "fixture".into(),
+            controller: None,
+            source: None,
+        };
+        let declaration = crate::DeliveryDeclaration {
+            request: "delivered".into(),
+            workflow: "w".into(),
+            scope: "README".into(),
+            provenance: "parent decision".into(),
+            resources: vec![crate::DeliveryResource {
+                handle: "r".into(),
+                identity: identity.clone(),
+                result_version: 3,
+                obligation_revision: 4,
+                publication: None,
+                acceptance: None,
+                evidence: vec![crate::DeliveryEvidence {
+                    kind: crate::DeliveryEvidenceKind::Review,
+                    reference: "review-index".into(),
+                    digest: "a".repeat(64),
+                }],
+                completed_obligations: vec!["review".into()],
+                retention: crate::RetentionChoice::ArchiveEligible,
+                previous: None,
+            }],
+        };
+        declaration.validate().unwrap();
+        let reference = crate::DeliveryRef {
+            request: "delivered".into(),
+            digest: "b".repeat(64),
+        };
+        all.push((
+            "Request::WorkflowDeclareDelivery".into(),
+            encode(&Request::Workflow(Box::new(
+                crate::WorkflowRequest::DeclareDelivery {
+                    auth: auth.clone(),
+                    declaration: declaration.clone(),
+                },
+            ))),
+        ));
+        all.push((
+            "RecordedDelivery".into(),
+            encode(&crate::RecordedDelivery {
+                reference: reference.clone(),
+                authority: authority.clone(),
+                declaration,
+            }),
+        ));
+        let request = crate::ArchiveRequest {
+            request: "archive".into(),
+            handle: "r".into(),
+            expected_identity: identity,
+            expected_result_version: 3,
+            expected_obligation_revision: 4,
+            expected_control_epoch: 2,
+            delivery: reference,
+            continuation_of: Some("original".into()),
+        };
+        request.validate().unwrap();
+        all.push((
+            "Delegation::Archive".into(),
+            encode(&Request::Delegation(Box::new(
+                crate::DelegationRequest::Archive {
+                    auth,
+                    archive: request.clone(),
+                },
+            ))),
+        ));
+        all.push((
+            "ControlBarrier::Archive".into(),
+            encode(&crate::ControlBarrier::Archive {
+                request: "archive".into(),
+            }),
+        ));
+        for outcome in [
+            crate::ArchiveOutcome::StopUnknown,
+            crate::ArchiveOutcome::StoppedArchivePending,
+            crate::ArchiveOutcome::Archived {
+                previous_run: crate::SessionRunId(1),
+                archived_run: crate::SessionRunId(2),
+            },
+        ] {
+            let label = format!("ArchiveReceipt::{outcome:?}");
+            all.push((
+                label,
+                encode(&crate::ArchiveReceipt {
+                    intent: crate::ArchiveIntent {
+                        request: request.clone(),
+                        digest: "c".repeat(64),
+                        authority: authority.clone(),
+                        control_epoch_admitted: Some(2),
+                        child_binding: Some(authority.binding.clone()),
+                    },
+                    outcome,
+                }),
+            ));
+        }
+        for reason in [
+            crate::ArchiveRefusal::RequiredRetention,
+            crate::ArchiveRefusal::DeliverySuperseded,
+            crate::ArchiveRefusal::ObligationChanged,
+            crate::ArchiveRefusal::StaleTarget,
+            crate::ArchiveRefusal::HumanOwned,
+            crate::ArchiveRefusal::OwnershipUncertain,
+            crate::ArchiveRefusal::UnresolvedControl,
+            crate::ArchiveRefusal::AttributionChanged,
+            crate::ArchiveRefusal::Busy,
+            crate::ArchiveRefusal::NoOwnedSession,
+            crate::ArchiveRefusal::Capacity,
+        ] {
+            all.push((
+                format!("ArchiveRefusal::{reason:?}"),
+                encode(&crate::ArchiveOutcome::Refused { reason }),
+            ));
+        }
+        all.push((
+            "RetentionChoice::Keep".into(),
+            encode(&crate::RetentionChoice::Keep {
+                reason: "review pending".into(),
+            }),
+        ));
+        for kind in [
+            crate::DeliveryEvidenceKind::Recovery,
+            crate::DeliveryEvidenceKind::Review,
+            crate::DeliveryEvidenceKind::Check,
+            crate::DeliveryEvidenceKind::Continuation,
+            crate::DeliveryEvidenceKind::OtherAuthorizedEvidence,
+        ] {
+            all.push((format!("DeliveryEvidenceKind::{kind:?}"), encode(&kind)));
+        }
+    }
+
+    fn question_cases(all: &mut Vec<(String, String)>) {
+        let identity = crate::AssignmentIdentity {
+            instance: "i".into(),
+            workflow: "w".into(),
+            controller: "c".into(),
+            controller_epoch: 1,
+            task: "t".into(),
+            attempt: 1,
+            contract: 1,
+            request: "r".into(),
+            session: Some(SessionId(2)),
+            run: Some(crate::SessionRunId(1)),
+        };
+        let previous = crate::QuestionReference {
+            assignment: identity.clone(),
+            result_version: 3,
+            question_id: "section".into(),
+            question_version: 1,
+            digest: "a".repeat(64),
+        };
+        let reference = crate::QuestionReference {
+            question_version: 2,
+            digest: "b".repeat(64),
+            ..previous.clone()
+        };
+        let question = crate::AssignmentQuestion {
+            schema: 1,
+            identity: identity.clone(),
+            result_version: 3,
+            question_id: "section".into(),
+            question_version: 2,
+            supersedes: Some(previous.clone()),
+            kind: crate::QuestionKind::Clarification,
+            question: "Which section?".into(),
+            context: "Read-only scope".into(),
+            choices: vec!["Introduction".into(), "Installation".into()],
+        };
+        question.validate(&identity, 3, Some(&previous)).unwrap();
+        let answer = crate::QuestionAnswer {
+            schema: 1,
+            request: "answer".into(),
+            question: reference.clone(),
+            control_epoch: 7,
+            basis: crate::AnswerBasis::ExistingAuthority,
+            scope: "README only".into(),
+            answer: "Introduction".into(),
+        };
+        answer.validate(&reference, 7).unwrap();
+        let auth = crate::DelegationAuth {
+            session: SessionId(1),
+            capability: "fixture".into(),
+            source: None,
+            controller: Some(crate::ControllerFence {
+                workflow: "w".into(),
+                epoch: 5,
+                producer: "producer".into(),
+            }),
+        };
+        for (name, fields) in [
+            (
+                "PublishQuestion",
+                crate::DelegationRequest::PublishQuestion {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                    question: question.clone(),
+                },
+            ),
+            (
+                "CollectQuestion",
+                crate::DelegationRequest::CollectQuestion {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                    reference: reference.clone(),
+                },
+            ),
+            (
+                "AnswerQuestion",
+                crate::DelegationRequest::AnswerQuestion {
+                    auth,
+                    handle: "r".into(),
+                    answer,
+                    expected_parent_epoch: 5,
+                },
+            ),
+        ] {
+            let request = Request::Delegation(Box::new(fields));
+            let bytes =
+                bincode::serde::encode_to_vec(&request, bincode::config::standard()).unwrap();
+            let (decoded, used): (Request, usize) =
+                bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+            assert_eq!(decoded, request);
+            assert_eq!(used, bytes.len());
+            all.push((format!("Delegation::{name}"), encode(&request)));
+        }
+        let receipt = crate::DispatchReceipt {
+            request: "answer".into(),
+            operation: crate::DispatchOperation::AnswerQuestion,
+            identity: identity.clone(),
+            result_version: 3,
+            outcome: crate::DispatchOutcome::Partial,
+            input: Some(crate::InputDelivery {
+                written_bytes: 3,
+                total_bytes: 10,
+                submit_written: false,
+            }),
+            reason: Some("prefix delivered".into()),
+        };
+        let state = crate::QuestionPublicationState {
+            reference: reference.clone(),
+            handled: false,
+            current: true,
+            issue: None,
+            answer: Some(receipt.clone()),
+        };
+        let snapshot = crate::AssignmentSnapshot {
+            coding_target: None,
+            dependency_gap: None,
+            review: None,
+            review_assignment: None,
+            review_scope: None,
+            obligation_revision: 1,
+            archive_receipts: vec![],
+            handle: "r".into(),
+            identity: identity.clone(),
+            dispatch: crate::DispatchStatus::Applied,
+            reason: None,
+            activity: AgentActivity::Busy,
+            conversation: Some("conv".into()),
+            brief: "/brief".into(),
+            result_path: "/result".into(),
+            submission: None,
+            acceptance: "pending".into(),
+            result_version: 3,
+            publication: None,
+            acceptance_ref: None,
+            history: vec![],
+            selected_version: None,
+            historical_submission: None,
+            receipts: vec![receipt],
+            resources: crate::AssignmentResources {
+                coding: None,
+                project: Some("p".into()),
+                workspace: Some("ws".into()),
+                workspace_present: true,
+                current_session: None,
+            },
+            retryable_capacity_refusal: false,
+            successor_request: None,
+            execution_attempts: Some(1),
+            control: crate::AssignmentControl::default(),
+            control_evidence: None,
+            questions: vec![state.clone()],
+            collected_question: Some(question),
+            recoveries: vec![],
+            fallback_capture: None,
+            recovered: None,
+            accepted_recovery: None,
+            submission_issue: None,
+            selected_acceptance_ref: None,
+            selected_recoveries: vec![],
+        };
+        let observation = crate::DelegationObservationBatch {
+            cursor: crate::ObservationCursor {
+                server_epoch: "epoch".into(),
+                sequence: 4,
+            },
+            status: crate::ObservationStatus::Changed,
+            progress_deadline_ms: 300000,
+            observations: vec![crate::DelegationObservation {
+                handle: "r".into(),
+                identity,
+                binding: None,
+                activity: None,
+                activity_revision: 1,
+                input_requests: vec![],
+                input_revision: 2,
+                health: Some(crate::ReporterHealth::Connected),
+                current: true,
+                publication: None,
+                publication_issue: None,
+                last_progress_unix_ms: 100,
+                stalled: false,
+                progress_unresolved: true,
+                control: crate::AssignmentControl::default(),
+                control_receipt_digest: String::new(),
+                native_control_revision: 0,
+                workflow_cancelled: false,
+                questions: vec![state],
+                native_question_gap: Some(crate::NativeQuestionGap::IncompletePromptObservation),
+            }],
+        };
+        for (name, response) in [
+            (
+                "QuestionCollection",
+                Response::Delegation(Box::new(snapshot)),
+            ),
+            (
+                "QuestionObservation",
+                Response::DelegationObservation(Box::new(observation)),
+            ),
+        ] {
+            let bytes =
+                bincode::serde::encode_to_vec(&response, bincode::config::standard()).unwrap();
+            let (decoded, used): (Response, usize) =
+                bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+            assert_eq!(decoded, response);
+            assert_eq!(used, bytes.len());
+            all.push((format!("Response::{name}"), encode(&response)));
+        }
+        all.push((
+            "PublicationIdentity::Question".into(),
+            encode(&reference.publication()),
+        ));
+        for gap in [
+            crate::NativeQuestionGap::IncompletePromptObservation,
+            crate::NativeQuestionGap::NoPromptObservation,
+            crate::NativeQuestionGap::CredentialInput,
+            crate::NativeQuestionGap::IncompleteScreen,
+            crate::NativeQuestionGap::AttributionChanged,
+            crate::NativeQuestionGap::UnavailableBinding,
+            crate::NativeQuestionGap::UnsupportedAdapter,
+        ] {
+            all.push((format!("NativeQuestionGap::{gap:?}"), encode(&gap)));
+        }
+    }
+
+    fn cancellation_cases(all: &mut Vec<(String, String)>) {
+        let auth = crate::DelegationAuth {
+            session: SessionId(1),
+            capability: "fixture".into(),
+            controller: None,
+            source: None,
+        };
+        let identity = crate::AssignmentIdentity {
+            instance: "i".into(),
+            workflow: "w".into(),
+            controller: "c".into(),
+            controller_epoch: 1,
+            task: "t".into(),
+            attempt: 1,
+            contract: 1,
+            request: "r".into(),
+            session: Some(SessionId(2)),
+            run: Some(crate::SessionRunId(1)),
+        };
+        let binding = crate::AgentBinding {
+            provider: crate::AgentProvider::Pi,
+            invocation: "inv".into(),
+            conversation: "conv".into(),
+            generation: 1,
+        };
+        let evidence = crate::AssignmentControlEvidence {
+            server_lifetime: "server".into(),
+            identity: identity.clone(),
+            binding: binding.clone(),
+            result_version: 1,
+            activity_revision: 3,
+            input_revision: 0,
+            publication: None,
+            publication_issue: None,
+            human_input_revision: 0,
+        };
+        for (name, request) in [
+            (
+                "Delegation::Interrupt",
+                Request::Delegation(Box::new(crate::DelegationRequest::Interrupt {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                    request: "interrupt".into(),
+                    expected_identity: identity.clone(),
+                    expected_result_version: 1,
+                    expected_control_epoch: 1,
+                })),
+            ),
+            (
+                "Delegation::ConfirmInterrupt",
+                Request::Delegation(Box::new(crate::DelegationRequest::ConfirmInterrupt {
+                    auth: auth.clone(),
+                    handle: "r".into(),
+                    request: "confirm".into(),
+                    interrupted_request: "interrupt".into(),
+                    expected_control_epoch: 2,
+                    evidence: Box::new(evidence),
+                })),
+            ),
+            (
+                "Workflow::Cancel",
+                Request::Workflow(Box::new(crate::WorkflowRequest::Cancel {
+                    auth,
+                    workflow: "w".into(),
+                    request: "cancel".into(),
+                })),
+            ),
+        ] {
+            let bytes =
+                bincode::serde::encode_to_vec(&request, bincode::config::standard()).unwrap();
+            let (decoded, used): (Request, usize) =
+                bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+            assert_eq!(used, bytes.len());
+            assert_eq!(decoded, request);
+            all.push((name.into(), encode(&request)));
+        }
+        let report = crate::ProviderReport {
+            binding: binding.clone(),
+            revision: 4,
+            observation: crate::AgentObservation::NativeControl(Some(crate::NativeControlSample {
+                turn: "turn".into(),
+                interrupt: crate::NativeInterruptCapability::Escape,
+                settled: false,
+            })),
+        };
+        report.validate().unwrap();
+        all.push(("ProviderReport::NativeControl".into(), encode(&report)));
+        let cancelled = crate::WorkflowSnapshot {
+            dependencies: None,
+            deliveries: vec![],
+            authority: crate::WorkflowAuthority {
+                instance: "i".into(),
+                workflow: "w".into(),
+                controller: "c".into(),
+                epoch: 1,
+                parent: SessionId(1),
+                parent_run: crate::SessionRunId(1),
+                binding,
+                producer: "producer".into(),
+                server_lifetime: "server".into(),
+            },
+            active: true,
+            handles: vec!["r".into()],
+            pointer: None,
+            continuation: None,
+            gaps: vec![],
+            receipt: None,
+            cancellation: None,
+        };
+        let mut cancelled = cancelled;
+        cancelled.cancellation = Some(crate::WorkflowCancellationView {
+            request: "cancel".into(),
+            captured_authority: cancelled.authority.clone(),
+            dispatch_closure: crate::DispatchOutcome::Applied,
+            target_outcome: crate::DispatchOutcome::Unknown,
+            targets: vec![crate::WorkflowCancellationTarget {
+                handle: "r".into(),
+                identity,
+                result_version: 1,
+                control_epoch: 1,
+                interrupt_request: "interrupt".into(),
+                outcome: crate::DispatchOutcome::Unknown,
+                reason: None,
+            }],
+            gaps: vec!["unverifiable member".into()],
+            unverifiable_members: 1,
+        });
+        let response = Response::Workflows(vec![cancelled]);
+        let bytes = bincode::serde::encode_to_vec(&response, bincode::config::standard()).unwrap();
+        let (decoded, used): (Response, usize) =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+        assert_eq!(used, bytes.len());
+        assert_eq!(decoded, response);
+        all.push(("Response::CancelledWorkflow".into(), encode(&response)));
+        all.push((
+            "ControlBarrier::Interrupt".into(),
+            encode(&crate::ControlBarrier::Interrupt {
+                request: "interrupt".into(),
+            }),
+        ));
+    }
+
+    fn review_cases(all: &mut Vec<(String, String)>) {
+        let auth = crate::DelegationAuth {
+            session: SessionId(1),
+            capability: "fixture".into(),
+            controller: None,
+            source: None,
+        };
+        let identity = crate::AssignmentIdentity {
+            instance: "i".into(),
+            workflow: "w".into(),
+            controller: "c".into(),
+            controller_epoch: 1,
+            task: "t".into(),
+            attempt: 1,
+            contract: 1,
+            request: "implementation".into(),
+            session: Some(SessionId(2)),
+            run: Some(crate::SessionRunId(1)),
+        };
+        let publication = crate::PublicationIdentity {
+            assignment: identity.clone(),
+            kind: crate::PublicationKind::Submission,
+            version: 1,
+            digest: "a".repeat(64),
+        };
+        let coding = crate::CodingTargetReference {
+            assignment: identity.clone(),
+            publication: publication.clone(),
+            candidate: crate::CandidateReference {
+                input_baseline: None,
+                path: "/private/candidate.json".into(),
+                digest: "b".repeat(64),
+                workspace: "coding".into(),
+                base: "c".repeat(40),
+                git_identity: "generation".into(),
+                changed_artifacts: vec!["untracked.cjs".into()],
+            },
+            source_contract_digest: "d".repeat(64),
+        };
+        let source = crate::ReviewSource {
+            source: crate::ReviewSourceReference {
+                kind: crate::ReviewSourceKind::Spec,
+                reference: "spec.md".into(),
+                digest: "e".repeat(64),
+            },
+            content: "The actual originating specification.".into(),
+        };
+        let declaration = crate::ReviewDeclaration {
+            request: "review".into(),
+            target: coding.clone(),
+            requirements: vec![crate::ReviewRequirement {
+                axis: crate::ReviewAxis::Spec,
+                sources: vec![source.source.clone()],
+            }],
+            sources: vec![source.clone()],
+            repair_limit: None,
+        };
+        let assignment = crate::ReviewAssignment {
+            implementation: "implementation".into(),
+            axis: crate::ReviewAxis::Spec,
+            target: crate::ReviewTarget {
+                coding: coding.clone(),
+                sources: vec![source.source.clone()],
+            },
+            source_documents: vec![source],
+        };
+        let report = crate::ReviewReport {
+            target: assignment.target.clone(),
+            axis: crate::ReviewAxis::Spec,
+            outcome: crate::ReviewOutcome::Passed,
+            findings: vec![],
+        };
+        let status = crate::ReviewStatus {
+            target: coding,
+            requirements: declaration.requirements.clone(),
+            evidence: vec![],
+            limit: crate::RepairLimit::default(),
+            consumed_rounds: 1,
+            pending_repair: Some("repair".into()),
+            stopped: Some(crate::ReviewStop::MissingDecision),
+            independent_review_satisfied: false,
+        };
+        let snapshot:crate::AssignmentSnapshot=serde_json::from_value(serde_json::json!({
+            "coding_target":null,"dependency_gap":null,"handle":"implementation","identity":identity,"dispatch":"Applied","reason":null,"activity":"ResponseReady","conversation":"conversation","brief":"/brief","result_path":"/result","submission":{"schema":1,"identity":publication.assignment,"version":1,"outcome":"success","summary":"Independent review completed.","evidence":[],"unresolved":[],"review":report},"acceptance":"pending","result_version":1,"publication":null,"acceptance_ref":null,"history":[],"selected_version":null,"historical_submission":null,"receipts":[],"resources":{"project":"p","workspace":"ws","workspace_present":true,"current_session":null,"coding":null},"control":crate::AssignmentControl::default(),"control_evidence":null,"retryable_capacity_refusal":false,"successor_request":null,"execution_attempts":1,"questions":[],"collected_question":null,"obligation_revision":2,"archive_receipts":[],"review":status,"review_assignment":assignment,"review_scope":"Independent axis context"
+        })).unwrap();
+        let response = Response::Delegation(Box::new(snapshot));
+        let bytes = bincode::serde::encode_to_vec(&response, bincode::config::standard()).unwrap();
+        let (decoded, used): (Response, usize) =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+        assert_eq!(used, bytes.len());
+        assert_eq!(decoded, response);
+        all.push(("Response::IndependentReview".into(), encode(&response)));
+        for (name, operation) in [
+            (
+                "Declare",
+                crate::ReviewOperation::Declare(Box::new(declaration)),
+            ),
+            (
+                "Assignment",
+                crate::ReviewOperation::Assignment {
+                    axis: crate::ReviewAxis::Spec,
+                },
+            ),
+            (
+                "Collect",
+                crate::ReviewOperation::Collect {
+                    axis: crate::ReviewAxis::Standards,
+                    reviewer: "reviewer".into(),
+                },
+            ),
+            (
+                "Repair",
+                crate::ReviewOperation::Repair {
+                    request: "repair".into(),
+                    expected_control_epoch: 1,
+                },
+            ),
+            (
+                "Stop",
+                crate::ReviewOperation::Stop {
+                    reason: crate::ReviewStop::MissingDecision,
+                },
+            ),
+        ] {
+            let request = Request::Delegation(Box::new(crate::DelegationRequest::Review {
+                auth: auth.clone(),
+                handle: "implementation".into(),
+                operation,
+            }));
+            let bytes =
+                bincode::serde::encode_to_vec(&request, bincode::config::standard()).unwrap();
+            let (decoded, used): (Request, usize) =
+                bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+            assert_eq!(used, bytes.len());
+            assert_eq!(decoded, request);
+            all.push((format!("Request::Review::{name}"), encode(&request)));
+        }
     }
 
     // Regenerate with `cargo test -p ovrcr-protocol wire_snapshot -- --nocapture`
@@ -1641,13 +3019,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a042b017301630168016c0104",
+            "2a0439017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f042b017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0439017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -1658,13 +3036,13 @@ mod wire_snapshot {
         ("Response::Hierarchy", "0100"),
         (
             "Response::CreatedSession",
-            "020100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e020100000001040105060000",
+            "020100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e02010000000104010506000000",
         ),
         ("Response::Screen", "0301040301020107"),
         ("Response::Error", "0401016d"),
         (
             "Response::Inventory",
-            "0500010100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e020100000001040105060000",
+            "0500010100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e02010000000104010506000000",
         ),
         ("Response::TerminalText", "060101020174"),
         ("Response::Task", "070601"),
@@ -1678,25 +3056,25 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d042b0000"),
+        ("Response::NotificationNavigation", "0d04390000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e042b017301630168016c0104",
+            "0e01016e0439017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f010708090101690101042b017301630168016c0164",
+            "0f0107080901016901010439017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "10042b010708090101690101042b017301630168016c0164",
+            "1004390107080901016901010439017301630168016c0164",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
         ("ServerEvent::ScreenDirty", "02010403"),
         (
             "ServerEvent::SessionChanged",
-            "030100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e020100000001040105060000",
+            "030100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e02010000000104010506000000",
         ),
         (
             "ServerEvent::QuotaChanged",
@@ -1704,7 +3082,7 @@ mod wire_snapshot {
         ),
         (
             "ServerEvent::SettingsChanged",
-            "05072f642e746f6d6c0500000100000002010470692f6d08666561747572652f01022f63010161010162020170010161017100000005636f64657801022f680467726f6b00000000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
+            "05072f642e746f6d6c0500000100000002010470692f6d08666561747572652f01022f63010161010162020170010161017100000005636f64657801022f680467726f6b000000fce0930400010103000300320000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
         ),
         (
             "ServerEvent::Recorded",
@@ -1713,7 +3091,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e042b017301630168016c0104",
+            "08016e0439017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -1748,7 +3126,7 @@ mod wire_snapshot {
         ("TaskRequest::Clean", "0f0101"),
         (
             "AgentRequest::0",
-            "1a01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a507726573657276650003696e7600",
+            "1a01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a50772657365727665000003696e7600",
         ),
         (
             "AgentRequest::1",
@@ -1760,27 +3138,27 @@ mod wire_snapshot {
         ),
         (
             "AgentRequest::3",
-            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70000004636f6e76",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70020004636f6e76",
         ),
         (
             "AgentRequest::4",
-            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70010003696e7604636f6e76010300010a01640007666978747572650000010a01050103010201010766697874757265010001010766697874757265",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70030003696e7604636f6e76010300010a01640007666978747572650000010a01050103010201010766697874757265010001010766697874757265",
         ),
         (
             "AgentRequest::5",
-            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f7002010003696e7604636f6e7601",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f7004010003696e7604636f6e7601",
         ),
         (
             "AgentRequest::6",
-            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70030003696e7604636f6e7601010201010e636f6c6c6563746f725f6c6f7374",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70050003696e7604636f6e7601010201010e636f6c6c6563746f725f6c6f7374",
         ),
         (
             "AgentRequest::7",
-            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70040003696e7604636f6e76010004636f6e760b2f62696e2f636c61756465132f686973746f72792f636f6e762e6a736f6e6c0e2f636f6e6669672f636c6175646500",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70060003696e7604636f6e76010004636f6e760b2f62696e2f636c61756465132f686973746f72792f636f6e762e6a736f6e6c0e2f636f6e6669672f636c6175646500",
         ),
         (
             "AgentRequest::8",
-            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f7005",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f7007",
         ),
         (
             "AgentRequest::9",
@@ -1804,13 +3182,13 @@ mod wire_snapshot {
         ),
         (
             "AgentResponse::0",
-            "0a0001a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+            "0a0101a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
         ),
-        ("AgentResponse::1", "0a010003696e7604636f6e7601"),
-        ("AgentResponse::2", "0a02"),
-        ("AgentResponse::3", "0a03"),
-        ("AgentResponse::4", "0a04"),
-        ("AgentResponse::5", "0a05"),
+        ("AgentResponse::1", "0a020003696e7604636f6e7601"),
+        ("AgentResponse::2", "0a03"),
+        ("AgentResponse::3", "0a04"),
+        ("AgentResponse::4", "0a05"),
+        ("AgentResponse::5", "0a06"),
         ("AgentActivity::Unknown", "00"),
         ("AgentActivity::Idle", "01"),
         ("AgentActivity::Busy", "02"),
@@ -1859,22 +3237,237 @@ mod wire_snapshot {
         ),
         (
             "Delegation::Prepare",
-            "3200010766697874757265010177016301740172017002777304726561640104726561640270690474657374016d010463697465010472656164",
+            "32000107666978747572650000010177016301740172017002777304726561640104726561640270690474657374016d01046369746501047265616401060102010000000104707265760000",
         ),
-        ("Delegation::Launch", "32010107666978747572650172"),
+        (
+            "Delegation::Launch",
+            "3201010766697874757265000001720169017701630101740101017201020101",
+        ),
         (
             "Delegation::SendInitial",
-            "320201076669787475726501720169017701630101740101017201020101",
+            "320201076669787475726500000172016901770163010174010101720102010101",
         ),
-        ("Delegation::Inspect", "32030107666978747572650172"),
-        ("Delegation::Collect", "32040107666978747572650172"),
+        ("Delegation::Inspect", "320301076669787475726500000172"),
+        ("Delegation::Collect", "320501076669787475726500000172"),
+        ("Delegation::Reconcile", "320401076669787475726500000172"),
+        (
+            "Delegation::Followup",
+            "32060107666978747572650000017201660169017701630101740101017201020101010107636c617269667901010177016301740172017002777304726561640104726561640270690474657374016d01046369746501047265616401060102010000000104707265760000",
+        ),
+        (
+            "Delegation::CollectVersion",
+            "32070107666978747572650000017201",
+        ),
+        (
+            "Delegation::RecordAcceptance",
+            "320801076669787475726500000172016901770163010174010101720102010101000664696765737401",
+        ),
         (
             "Delegation::Publish",
-            "3205010766697874757265017201016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e00",
+            "320a0107666978747572650000017201016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e000000",
+        ),
+        (
+            "Delegation::Observe",
+            "320b0107666978747572650000010172010565706f636803fbe803",
+        ),
+        (
+            "Delegation::MarkHandled",
+            "320c010766697874757265000001720169017701630101740101017201020101000106646967657374",
+        ),
+        ("Request::AssignedHumanInput", "36020102030107"),
+        ("Request::AssignmentTakeover", "35000474616b6502010103"),
+        (
+            "Request::AssignmentReturn",
+            "35010672657475726e02010203016c01690177016301017401010172010201010303696e7604636f6e7601010203000004",
+        ),
+        (
+            "Delegation::ConfirmHumanReturn",
+            "32090107666978747572650000017207636f6e6669726d0672657475726e03016c01690177016301017401010172010201010303696e7604636f6e7601010203000004",
+        ),
+        (
+            "Delegation::Capabilities",
+            "320d0107666978747572650000010301047465737401016d000000000000",
+        ),
+        (
+            "Response::DelegationCapabilities",
+            "1501030474657374016d000132000000000003012f0204726561640b726573756c745f66696c6501116d61785f6c6976655f6368696c6472656e000000",
         ),
         (
             "Response::Delegation",
-            "11017201690177016301017401010172010201010400050104636f6e76062f6272696566072f726573756c740101016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e000770656e64696e67",
+            "110000017201690177016301017401010172010201010400050104636f6e76062f6272696566072f726573756c740101016901770163010174010101720102010101077375636365737304646f6e6501086369746174696f6e0000000770656e64696e6701000000000000010170010277730100000100000000000001046e65787401010000010000000000000000000000",
+        ),
+        (
+            "Response::DelegationObservation",
+            "140565706f63680302fce09304000101720169017701630101740101017201020101000001000201000101016901770163010174010101720102010100010664696765737400010264000101000000000000000000",
+        ),
+        (
+            "Workflow::SetDependencies",
+            "330001076669787475726500000177000163010174077461736b2e6d6401720170027773010000",
+        ),
+        ("Workflow::Parents", "33010107666978747572650000"),
+        ("Workflow::Recover", "33020107666978747572650000010177"),
+        (
+            "Workflow::Save",
+            "33030107666978747572650000017700010c6f626a6563746976652e6d640001017200000000",
+        ),
+        (
+            "Workflow::Transfer",
+            "33040107666978747572650000087472616e736665720169017701630101010303696e7604636f6e76010870726f64756365720673657276657203020303696e7604636f6e760109737563636573736f72",
+        ),
+        ("Request::DashboardWorkflowCandidates", "34000101"),
+        (
+            "Request::DashboardWorkflowTransfer",
+            "3401087472616e736665720169017701630101010303696e7604636f6e76010870726f64756365720673657276657203020303696e7604636f6e760109737563636573736f72",
+        ),
+        (
+            "Response::Workflows",
+            "1201000169017701630101010303696e7604636f6e76010870726f64756365720673657276657201010172010101690177010664696765737401010c6f626a6563746976652e6d64000101720000000000000000",
+        ),
+        (
+            "Response::WorkflowParents",
+            "160101010303696e7604636f6e76010870726f6475636572",
+        ),
+        (
+            "Response::WorkflowRecovery",
+            "1701000169017701630101010303696e7604636f6e76010870726f64756365720673657276657201010172010101690177010664696765737401010c6f626a6563746976652e6d640001017200000000000000000201017701017201016901770163010174010101720102010101062f627269656601072f726573756c74116d697373696e6720617574686f7269747900000000001c756e76657269666961626c652072657461696e6564207265636f7264",
+        ),
+        (
+            "Response::WorkflowCandidates",
+            "1301087472616e736665720169017701630101010303696e7604636f6e76010870726f64756365720673657276657203020303696e7604636f6e760109737563636573736f720201017701017201016901770163010174010101720102010101062f627269656601072f726573756c74116d697373696e6720617574686f7269747900000000001c756e76657269666961626c652072657461696e6564207265636f7264",
+        ),
+        (
+            "Delegation::Interrupt",
+            "320e0107666978747572650000017209696e7465727275707401690177016301017401010172010201010101",
+        ),
+        (
+            "Delegation::ConfirmInterrupt",
+            "320f0107666978747572650000017207636f6e6669726d09696e74657272757074020673657276657201690177016301017401010172010201010303696e7604636f6e7601010300000000",
+        ),
+        (
+            "Workflow::Cancel",
+            "3305010766697874757265000001770663616e63656c",
+        ),
+        (
+            "ProviderReport::NativeControl",
+            "0303696e7604636f6e7601040501047475726e0000",
+        ),
+        (
+            "Response::CancelledWorkflow",
+            "1201000169017701630101010303696e7604636f6e76010870726f6475636572067365727665720101017200000000010663616e63656c0169017701630101010303696e7604636f6e76010870726f64756365720673657276657201040101720169017701630101740101017201020101010109696e7465727275707404000113756e76657269666961626c65206d656d6265720100",
+        ),
+        ("ControlBarrier::Interrupt", "0209696e74657272757074"),
+        (
+            "Delegation::PublishQuestion",
+            "3210010766697874757265010177050870726f6475636572000172010169017701630101740101017201020101030773656374696f6e02010169017701630101740101017201020101030773656374696f6e014061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161000e57686963682073656374696f6e3f0f526561642d6f6e6c792073636f7065020c496e74726f64756374696f6e0c496e7374616c6c6174696f6e",
+        ),
+        (
+            "Delegation::CollectQuestion",
+            "3211010766697874757265010177050870726f64756365720001720169017701630101740101017201020101030773656374696f6e024062626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262",
+        ),
+        (
+            "Delegation::AnswerQuestion",
+            "3212010766697874757265010177050870726f64756365720001720106616e737765720169017701630101740101017201020101030773656374696f6e02406262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626207000b524541444d45206f6e6c790c496e74726f64756374696f6e05",
+        ),
+        (
+            "Response::QuestionCollection",
+            "110000017201690177016301017401010172010201010400020104636f6e76062f6272696566072f726573756c74000770656e64696e670300000000000106616e73776572090301690177016301017401010172010201010301030a0001107072656669782064656c6976657265640101700102777301000001000000000000000101010169017701630101740101017201020101030773656374696f6e0240626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262620001000106616e73776572090301690177016301017401010172010201010301030a0001107072656669782064656c69766572656401010169017701630101740101017201020101030773656374696f6e02010169017701630101740101017201020101030773656374696f6e014061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161000e57686963682073656374696f6e3f0f526561642d6f6e6c792073636f7065020c496e74726f64756374696f6e0c496e7374616c6c6174696f6e010000000000000000000000",
+        ),
+        (
+            "Response::QuestionObservation",
+            "140565706f63680400fce09304000101720169017701630101740101017201020101000001000201000100006400010100000000000000010169017701630101740101017201020101030773656374696f6e0240626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262620001000106616e73776572090301690177016301017401010172010201010301030a0001107072656669782064656c6976657265640100",
+        ),
+        (
+            "PublicationIdentity::Question",
+            "016901770163010174010101720102010101030773656374696f6e024062626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262",
+        ),
+        ("NativeQuestionGap::IncompletePromptObservation", "00"),
+        ("NativeQuestionGap::NoPromptObservation", "01"),
+        ("NativeQuestionGap::CredentialInput", "02"),
+        ("NativeQuestionGap::IncompleteScreen", "03"),
+        ("NativeQuestionGap::AttributionChanged", "04"),
+        ("NativeQuestionGap::UnavailableBinding", "05"),
+        ("NativeQuestionGap::UnsupportedAdapter", "06"),
+        (
+            "Request::WorkflowDeclareDelivery",
+            "330601076669787475726500000964656c697665726564017706524541444d450f706172656e74206465636973696f6e01017201690177016301017401010172010201010304000001010c7265766965772d696e646578406161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616101067265766965770100",
+        ),
+        (
+            "RecordedDelivery",
+            "0964656c69766572656440626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262620169017701630101010303696e7604636f6e76010870726f6475636572067365727665720964656c697665726564017706524541444d450f706172656e74206465636973696f6e01017201690177016301017401010172010201010304000001010c7265766965772d696e646578406161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616101067265766965770100",
+        ),
+        (
+            "Delegation::Archive",
+            "321301076669787475726500000761726368697665017201690177016301017401010172010201010304020964656c697665726564406262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626201086f726967696e616c",
+        ),
+        ("ControlBarrier::Archive", "030761726368697665"),
+        (
+            "ArchiveReceipt::StopUnknown",
+            "0761726368697665017201690177016301017401010172010201010304020964656c697665726564406262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626201086f726967696e616c40636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363630169017701630101010303696e7604636f6e76010870726f6475636572067365727665720102010303696e7604636f6e760101",
+        ),
+        (
+            "ArchiveReceipt::StoppedArchivePending",
+            "0761726368697665017201690177016301017401010172010201010304020964656c697665726564406262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626201086f726967696e616c40636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363630169017701630101010303696e7604636f6e76010870726f6475636572067365727665720102010303696e7604636f6e760102",
+        ),
+        (
+            "ArchiveReceipt::Archived { previous_run: SessionRunId(1), archived_run: SessionRunId(2) }",
+            "0761726368697665017201690177016301017401010172010201010304020964656c697665726564406262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626201086f726967696e616c40636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363630169017701630101010303696e7604636f6e76010870726f6475636572067365727665720102010303696e7604636f6e7601030102",
+        ),
+        ("ArchiveRefusal::RequiredRetention", "0000"),
+        ("ArchiveRefusal::DeliverySuperseded", "0001"),
+        ("ArchiveRefusal::ObligationChanged", "0002"),
+        ("ArchiveRefusal::StaleTarget", "0003"),
+        ("ArchiveRefusal::HumanOwned", "0004"),
+        ("ArchiveRefusal::OwnershipUncertain", "0005"),
+        ("ArchiveRefusal::UnresolvedControl", "0006"),
+        ("ArchiveRefusal::AttributionChanged", "0007"),
+        ("ArchiveRefusal::Busy", "0008"),
+        ("ArchiveRefusal::NoOwnedSession", "0009"),
+        ("ArchiveRefusal::Capacity", "000a"),
+        ("RetentionChoice::Keep", "000e7265766965772070656e64696e67"),
+        ("DeliveryEvidenceKind::Recovery", "00"),
+        ("DeliveryEvidenceKind::Review", "01"),
+        ("DeliveryEvidenceKind::Check", "02"),
+        ("DeliveryEvidenceKind::Continuation", "03"),
+        ("DeliveryEvidenceKind::OtherAuthorizedEvidence", "04"),
+        (
+            "Delegation::CaptureFallback",
+            "32140107666978747572650000017201690177016301017401010172010201030301",
+        ),
+        (
+            "Delegation::RecoverFallback",
+            "3215010766697874757265000001720763617074757265020d61727469666163742e6a736f6e4062626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262014061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161010f436f6d706c65746520524541444d450f696e646570656e64656e742e747874406464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646406524541444d4519496e646570656e64656e7420706172656e7420726576696577",
+        ),
+        (
+            "Delegation::RecordRecoveryAcceptance",
+            "3208010766697874757265000001720169017701630101740101017201020103030102406565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656501",
+        ),
+        (
+            "Response::FallbackRecovery",
+            "11000001720169017701630101740101017201020103040005010a6368696c642d636f6e760e2f62726965662d76332e6a736f6e132f7375626d697373696f6e2d76332e6a736f6e0008616363657074656403000101690177016301017401010172010201030301024065656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565132f616363657074616e63652d76332e6a736f6e406666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666600010300000101700102777301000001000000000106736572766572016901770163010174010101720102010303056368696c640a6368696c642d636f6e76010307000001010000000101000004000102406565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656501010763617074757265067365727665720169017701630101010306706172656e740b706172656e742d636f6e76010870726f64756365720673657276657201690177016301017401010172010201030340636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363634066666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666056e6f6e636503056368696c640a6368696c642d636f6e7601010000000006736572766572016901770163010174010101720102010303056368696c640a6368696c642d636f6e7601030700000101000118504f4f565243525f46414c4c4241434b3a626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262620001406161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616101017b011b2f706172656e742d66616c6c6261636b2d72332d76322e6a736f6e406565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656501020169017701630101010306706172656e740b706172656e742d636f6e76010870726f647563657206736572766572010763617074757265067365727665720169017701630101010306706172656e740b706172656e742d636f6e76010870726f64756365720673657276657201690177016301017401010172010201030340636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363634066666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666056e6f6e636503056368696c640a6368696c642d636f6e7601010000000006736572766572016901770163010174010101720102010303056368696c640a6368696c642d636f6e7601030700000101000118504f4f565243525f46414c4c4241434b3a626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262620001406161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616101017b0d61727469666163742e6a736f6e406262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626208617274696661637410636f6e74726163742d76312e6a736f6e406363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636308636f6e74726163740d62726965662d76332e6a736f6e4066666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666056272696566010f436f6d706c65746520524541444d450f696e646570656e64656e742e747874406464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646406524541444d4519496e646570656e64656e7420706172656e7420726576696577010f696e646570656e64656e742e747874406464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646406524541444d450101020169017701630101010306706172656e740b706172656e742d636f6e76010870726f647563657206736572766572010763617074757265067365727665720169017701630101010306706172656e740b706172656e742d636f6e76010870726f64756365720673657276657201690177016301017401010172010201030340636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363634066666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666056e6f6e636503056368696c640a6368696c642d636f6e7601010000000006736572766572016901770163010174010101720102010303056368696c640a6368696c642d636f6e7601030700000101000118504f4f565243525f46414c4c4241434b3a626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262620001406161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616101017b0d61727469666163742e6a736f6e406262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626208617274696661637410636f6e74726163742d76312e6a736f6e406363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636308636f6e74726163740d62726965662d76332e6a736f6e4066666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666056272696566010f436f6d706c65746520524541444d450f696e646570656e64656e742e747874406464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646406524541444d4519496e646570656e64656e7420706172656e7420726576696577010f696e646570656e64656e742e747874406464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646406524541444d450118696e76616c6964206368696c64207375626d697373696f6e0101690177016301017401010172010201030301024065656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565132f616363657074616e63652d76332e6a736f6e406666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666601024065656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565000000",
+        ),
+        (
+            "Response::IndependentReview",
+            "1100000e696d706c656d656e746174696f6e01690177016301017401010e696d706c656d656e746174696f6e01020101040005010c636f6e766572736174696f6e062f6272696566072f726573756c74010101690177016301017401010e696d706c656d656e746174696f6e010201010107737563636573731d496e646570656e64656e742072657669657720636f6d706c657465642e0000000101690177016301017401010e696d706c656d656e746174696f6e0102010101690177016301017401010e696d706c656d656e746174696f6e010201010001406161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616100172f707269766174652f63616e6469646174652e6a736f6e406262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626206636f64696e6728636363636363636363636363636363636363636363636363636363636363636363636363636363630a67656e65726174696f6e010d756e747261636b65642e636a734064646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464010107737065632e6d6440656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565650100000770656e64696e6701000000000000010170010277730100000100000000000000010100000200000000000000000101690177016301017401010e696d706c656d656e746174696f6e0102010101690177016301017401010e696d706c656d656e746174696f6e010201010001406161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616100172f707269766174652f63616e6469646174652e6a736f6e406262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626206636f64696e6728636363636363636363636363636363636363636363636363636363636363636363636363636363630a67656e65726174696f6e010d756e747261636b65642e636a7340646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464640101010107737065632e6d6440656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565650003023f636f6f7264696e61746f722064656661756c743a20746872656520636f727265637469766520726f756e64733b206e6f74207573657220617070726f76616c010106726570616972010300010e696d706c656d656e746174696f6e0101690177016301017401010e696d706c656d656e746174696f6e0102010101690177016301017401010e696d706c656d656e746174696f6e010201010001406161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616100172f707269766174652f63616e6469646174652e6a736f6e406262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626206636f64696e6728636363636363636363636363636363636363636363636363636363636363636363636363636363630a67656e65726174696f6e010d756e747261636b65642e636a734064646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464010107737065632e6d644065656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565010107737065632e6d644065656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565255468652061637475616c206f726967696e6174696e672073706563696669636174696f6e2e0118496e646570656e64656e74206178697320636f6e74657874",
+        ),
+        (
+            "Request::Review::Declare",
+            "321601076669787475726500000e696d706c656d656e746174696f6e000672657669657701690177016301017401010e696d706c656d656e746174696f6e0102010101690177016301017401010e696d706c656d656e746174696f6e010201010001406161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616100172f707269766174652f63616e6469646174652e6a736f6e406262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626206636f64696e6728636363636363636363636363636363636363636363636363636363636363636363636363636363630a67656e65726174696f6e010d756e747261636b65642e636a7340646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464640101010107737065632e6d644065656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565010107737065632e6d644065656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565255468652061637475616c206f726967696e6174696e672073706563696669636174696f6e2e00",
+        ),
+        (
+            "Request::Review::Assignment",
+            "321601076669787475726500000e696d706c656d656e746174696f6e0101",
+        ),
+        (
+            "Request::Review::Collect",
+            "321601076669787475726500000e696d706c656d656e746174696f6e0200087265766965776572",
+        ),
+        (
+            "Request::Review::Repair",
+            "321601076669787475726500000e696d706c656d656e746174696f6e030672657061697201",
+        ),
+        (
+            "Request::Review::Stop",
+            "321601076669787475726500000e696d706c656d656e746174696f6e0403",
         ),
     ];
 

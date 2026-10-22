@@ -899,7 +899,7 @@ impl Dashboard {
                     .iter()
                     .all(|(id, _, _)| self.handshake.is_ready(*id))
         });
-        if ready && !intent.defer_until_input_boundary {
+        if ready && !intent.defer_until_input_boundary && self.input_is_allowed() {
             self.agent_typing = None;
             self.mode = InputMode::Terminal;
         }
@@ -2791,8 +2791,16 @@ impl Dashboard {
         match mouse.kind {
             MouseEventKind::Down(button) => {
                 if let Some(session) = session {
+                    let Some(run) = self.input_run(session) else {
+                        return DashboardAction::None;
+                    };
                     self.mouse.held[held_index(button)] = Some(super::HeldMouse {
                         session,
+                        run,
+                        control_epoch: find_session(self, session)
+                            .and_then(|summary| summary.assignment_control.as_ref())
+                            .map(|view| view.control.epoch),
+                        view_revision: self.view_revision(),
                         event: relative,
                         mode,
                         encoding,
@@ -2828,8 +2836,22 @@ impl Dashboard {
             ..held.event
         };
         self.mouse.last_motion = None;
-        encode_mouse(release, held.mode, held.encoding)
-            .map_or(DashboardAction::None, DashboardAction::PtyBytes)
+        let Some(bytes) = encode_mouse(release, held.mode, held.encoding) else {
+            return DashboardAction::None;
+        };
+        match held.control_epoch {
+            Some(control_epoch) => DashboardAction::Request(ClientMessage {
+                request_id: self.next_request_id(),
+                request: Request::AssignedHumanInput {
+                    session: held.session,
+                    run: held.run,
+                    control_epoch,
+                    view_revision: held.view_revision,
+                    bytes,
+                },
+            }),
+            None => DashboardAction::PtyBytes(bytes),
+        }
     }
 
     fn pane_wheel_history(&mut self, mouse: MouseEvent, area: Rect) -> Option<DashboardAction> {
@@ -3058,12 +3080,21 @@ impl Dashboard {
 
     fn queue_held_releases(&mut self) {
         let mut bytes = Vec::new();
-        let mut session = None;
+        let mut target = None;
         for held in self.mouse.held.iter_mut() {
             let Some(gesture) = held.take() else {
                 continue;
             };
-            session = Some(gesture.session);
+            let captured = (
+                gesture.session,
+                gesture.run,
+                gesture.control_epoch,
+                gesture.view_revision,
+            );
+            if target.is_some_and(|target| target != captured) {
+                continue;
+            }
+            target = Some(captured);
             let button = match gesture.event.kind {
                 MouseEventKind::Down(button)
                 | MouseEventKind::Up(button)
@@ -3082,20 +3113,27 @@ impl Dashboard {
         if bytes.is_empty() {
             return;
         }
-        let Some(session) = session else {
+        let Some((session, run, control_epoch, view_revision)) = target else {
             return;
         };
         let request_id = self.next_request_id();
-        let Some(run) = self.input_run(session) else {
-            return;
-        };
-        self.push_request(ClientMessage {
-            request_id,
-            request: Request::Input {
+        let request = match control_epoch {
+            Some(control_epoch) => Request::AssignedHumanInput {
+                session,
+                run,
+                control_epoch,
+                view_revision,
+                bytes,
+            },
+            None => Request::Input {
                 session,
                 run,
                 bytes,
             },
+        };
+        self.push_request(ClientMessage {
+            request_id,
+            request,
         });
     }
 
@@ -3312,7 +3350,14 @@ impl Dashboard {
                 }
                 // A snapshot this popup did not ask for. The one it did ask
                 // for was claimed above.
-                Response::Events(_) | Response::Delegation(_) => {}
+                Response::Events(_)
+                | Response::Workflows(_)
+                | Response::WorkflowCandidates(_)
+                | Response::WorkflowParents(_)
+                | Response::WorkflowRecovery(_)
+                | Response::Delegation(_)
+                | Response::DelegationObservation(_)
+                | Response::DelegationCapabilities(_) => {}
                 Response::HistoryOpened(opened) => {
                     self.accept_history_opened(request_id, opened);
                 }
@@ -3514,11 +3559,14 @@ impl Dashboard {
                     branch,
                 } => self.queue_wip_prompt(project, workspace, branch),
                 ServerEvent::SessionChanged(summary) => {
-                    if find_session(self, summary.id)
-                        .is_some_and(|current| current.run.0 > summary.run.0)
-                    {
+                    if find_session(self, summary.id).is_some_and(|current| {
+                        current.run.0 > summary.run.0
+                            || (current.run == summary.run
+                                && super::assignment_control::older_control(&summary, current))
+                    }) {
                         return self.drain_outbox();
                     }
+                    self.assignment_control_changed(&summary);
                     self.observe_desktop_update(&summary);
                     let summary = *summary;
                     let previous_live =
@@ -3688,10 +3736,25 @@ impl Dashboard {
             .flat_map(|workspace| workspace.sessions.iter_mut())
         {
             if let Some(previous) = previous_summaries.get(&incoming.id)
-                && previous.run.0 > incoming.run.0
+                && (previous.run.0 > incoming.run.0
+                    || (previous.run == incoming.run
+                        && super::assignment_control::older_control(incoming, previous)))
             {
                 *incoming = (**previous).clone();
             }
+        }
+        let control_target = focused_before
+            .and_then(|id| {
+                hierarchy
+                    .projects
+                    .iter()
+                    .flat_map(|project| project.workspaces.iter())
+                    .flat_map(|workspace| workspace.sessions.iter())
+                    .find(|summary| summary.id == id)
+            })
+            .cloned();
+        if let Some(summary) = control_target {
+            self.assignment_control_changed(&summary);
         }
         self.observe_desktop_responses(&hierarchy);
         self.hierarchy = hierarchy;
@@ -3807,12 +3870,30 @@ impl Dashboard {
         self.error_owning_requests.insert(request_id);
         Some(ClientMessage {
             request_id,
-            request: Request::Input {
+            request: self.terminal_input_request(session, run, bytes),
+        })
+    }
+
+    fn terminal_input_request(
+        &self,
+        session: SessionId,
+        run: SessionRunId,
+        bytes: Vec<u8>,
+    ) -> Request {
+        match find_session(self, session).and_then(|summary| summary.assignment_control.as_ref()) {
+            Some(view) => Request::AssignedHumanInput {
+                session,
+                run,
+                control_epoch: view.control.epoch,
+                view_revision: self.view_revision(),
+                bytes,
+            },
+            None => Request::Input {
                 session,
                 run,
                 bytes,
             },
-        })
+        }
     }
 
     fn input_run(&self, session: SessionId) -> Option<SessionRunId> {
@@ -3901,6 +3982,9 @@ impl Dashboard {
             return false;
         };
         matches!(self.selected_phase(), Some(SessionPhase::Running))
+            && find_session(self, session)
+                .and_then(super::assignment_control::session_input_denial)
+                .is_none()
             && self.handshake.is_ready(session)
             && self
                 .handshake
@@ -3922,7 +4006,16 @@ impl Dashboard {
             {
                 "Pane is loading; retry input".into()
             }
-            Some(SessionPhase::Running) => return DashboardAction::None,
+            Some(SessionPhase::Running) => {
+                let denial = self
+                    .action_session()
+                    .and_then(|id| find_session(self, id))
+                    .and_then(super::assignment_control::session_input_denial);
+                match denial {
+                    Some(reason) => reason.into(),
+                    None => return DashboardAction::None,
+                }
+            }
         };
         self.set_error(refusal);
         DashboardAction::Redraw
@@ -4146,6 +4239,7 @@ mod tests {
                         name: format!("root-{id}"),
                         title: None,
                         manual_title: None,
+                        assignment_control: None,
                         label: "shell".into(),
                         pid: None,
                         started_unix_ms: Some(0),

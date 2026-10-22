@@ -3,7 +3,7 @@ mod live;
 
 use live::{Live, git};
 use ovrcr::protocol::{
-    BranchRequest, CreateSessionRequest, Request, Response, SessionId, SessionKind,
+    BranchRequest, CreateSessionRequest, ErrorCode, Request, Response, SessionId, SessionKind,
     WorkspaceSummary,
 };
 use std::time::{Duration, Instant};
@@ -254,7 +254,14 @@ fn root_drift_blocks_new_processes_but_preserves_the_existing_shell() {
             .as_deref()
             .is_some_and(|warning| warning.contains("main"))
     );
-    assert!(matches!(launch(&fixture, &root.id), Response::Error { .. }));
+    let Response::Error { code, message } = launch(&fixture, &root.id) else {
+        panic!("root drift must reject ordinary launch");
+    };
+    assert_eq!(code, ErrorCode::Conflict);
+    assert!(
+        message.contains(drifted.warning.as_deref().unwrap()),
+        "{message}"
+    );
     let stopped = drifted
         .sessions
         .iter()

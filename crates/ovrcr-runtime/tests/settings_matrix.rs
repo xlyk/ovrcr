@@ -19,6 +19,7 @@ use std::path::Path;
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Kind {
     Bool,
+    Integer,
     Str,
     Array,
     Table,
@@ -26,6 +27,8 @@ enum Kind {
 
 /// Settings whose default is unset have no value text to read a type from.
 const UNSET_KINDS: &[(&str, Kind)] = &[
+    ("delegation.default_model", Kind::Str),
+    ("delegation.max_execution_attempts", Kind::Integer),
     ("title_model", Kind::Str),
     ("quota.codex.home", Kind::Str),
     ("quota.grok.home", Kind::Str),
@@ -35,6 +38,11 @@ const UNSET_KINDS: &[(&str, Kind)] = &[
 /// Enum settings: how one spelling sits in the document, and the documented
 /// spellings. Near misses of each spelling are the unknown-spelling cases.
 const ENUMS: &[(&str, &str, &[&str])] = &[
+    (
+        "delegation.default_harness",
+        "\"{}\"",
+        &["claude", "codex", "grok", "pi"],
+    ),
     (
         "ready_sound_choice",
         "\"{}\"",
@@ -72,6 +80,9 @@ const ENUMS: &[(&str, &str, &[&str])] = &[
 /// A valid non-default value where the default's text cannot suggest one: an
 /// empty or home-dependent collection, or a string with its own format.
 const SAMPLES: &[(&str, &str)] = &[
+    ("delegation.allowed_harnesses", "[\"pi\", \"codex\"]"),
+    ("delegation.allowed_models", "[\"test/model\"]"),
+    ("delegation.default_model", "\"test/model\""),
     ("title_model", "\"pi/matrix\""),
     ("picker_roots", "[\"/tmp/ovrcr-matrix\"]"),
     ("agents", "[{ name = \"matrix\", argv = [\"matrix\"] }]"),
@@ -95,6 +106,7 @@ impl Setting {
         let kind = match &default.value {
             Some(text) => match toml_value(text) {
                 Some(toml::Value::Boolean(_)) => Kind::Bool,
+                Some(toml::Value::Integer(_)) => Kind::Integer,
                 Some(toml::Value::Array(_)) => Kind::Array,
                 Some(toml::Value::Table(_)) => Kind::Table,
                 _ => Kind::Str,
@@ -131,6 +143,10 @@ impl Setting {
         }
         match self.kind {
             Kind::Bool => (current != Some("true")).to_string(),
+            Kind::Integer => current
+                .and_then(|v| v.parse::<u64>().ok())
+                .map_or(2, |v| v.saturating_sub(1).max(1))
+                .to_string(),
             Kind::Str => {
                 let text = match current {
                     Some(text) => format!("{text}-matrix"),
@@ -146,7 +162,7 @@ impl Setting {
 
     fn wrong_type(&self) -> &'static str {
         match self.kind {
-            Kind::Bool => "\"matrix\"",
+            Kind::Bool | Kind::Integer => "\"matrix\"",
             Kind::Str | Kind::Array | Kind::Table => "7",
         }
     }
@@ -371,6 +387,14 @@ fn matrix_covers_every_declared_setting() {
             "quota.cursor.state_db",
             "agents",
             "launch_choices",
+            "delegation.progress_deadline_ms",
+            "delegation.enabled",
+            "delegation.allowed_harnesses",
+            "delegation.allowed_models",
+            "delegation.default_harness",
+            "delegation.default_model",
+            "delegation.max_live_children",
+            "delegation.max_execution_attempts",
         ]
     );
     let kinds: Vec<_> = settings.iter().map(|setting| setting.kind).collect();
@@ -379,7 +403,7 @@ fn matrix_covers_every_declared_setting() {
         kinds,
         [
             Bool, Bool, Str, Bool, Str, Str, Bool, Str, Array, Str, Bool, Bool, Str, Str, Str, Str,
-            Bool, Str, Array, Table,
+            Bool, Str, Array, Table, Integer, Bool, Array, Array, Str, Str, Integer, Integer,
         ]
     );
     // Every test-side table names a declared setting, so none goes stale.
@@ -814,4 +838,56 @@ fn read_only_document_is_still_read() {
     let report = settings::load_document(&config, &document);
     assert_eq!(report.findings, vec![]);
     assert_eq!(report.rows, read(&full).rows);
+}
+
+#[test]
+fn delegation_policy_uses_catalog_writer_and_rejects_invalid_limits_without_changes() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("dashboard.toml");
+    std::fs::write(&path, "# retained\nbranch_prefix = \"kept/\"\n").unwrap();
+    for (key, value) in [
+        ("delegation.enabled", "false"),
+        ("delegation.allowed_harnesses", "[\"pi\", \"codex\"]"),
+        ("delegation.allowed_models", "[\"test/model\"]"),
+        ("delegation.default_harness", "pi"),
+        ("delegation.default_model", "test/model"),
+        ("delegation.max_live_children", "6"),
+        ("delegation.max_execution_attempts", "2"),
+    ] {
+        settings::set(&path, key, Some(value)).unwrap();
+    }
+    let report = settings::load_document(root.path(), &path);
+    assert!(report.findings.is_empty(), "{:?}", report.findings);
+    assert_eq!(report.settings.delegation.max_live_children, 6);
+    assert_eq!(report.settings.delegation.max_execution_attempts, Some(2));
+    assert_eq!(
+        report.settings.delegation.default_model.as_deref(),
+        Some("test/model")
+    );
+    assert_eq!(report.settings.branch_prefix, "kept/");
+    let before = std::fs::read_to_string(&path).unwrap();
+    assert!(before.contains("# retained"));
+    for (key, value) in [
+        ("delegation.max_live_children", "0"),
+        ("delegation.max_live_children", "51"),
+        ("delegation.max_execution_attempts", "0"),
+        ("delegation.max_execution_attempts", "-1"),
+        ("delegation.allowed_harnesses", "[\"unknown\"]"),
+        ("delegation.allowed_models", "[\"missing-backend\"]"),
+        ("delegation.default_model", "missing-backend"),
+    ] {
+        assert!(
+            settings::set(&path, key, Some(value)).is_err(),
+            "{key}={value}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+    }
+    settings::set(&path, "delegation.max_execution_attempts", None).unwrap();
+    assert_eq!(
+        settings::load_document(root.path(), &path)
+            .settings
+            .delegation
+            .max_execution_attempts,
+        None
+    );
 }

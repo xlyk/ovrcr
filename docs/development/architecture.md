@@ -27,6 +27,32 @@ conversation subjects keyed by session and conversation id, with topic,
 dismissal, accepted-count and attempt-count fields; offline readers accept it
 read-only. Schema version 8 adds the instance identity and non-payload delegation
 receipts, owned by the same SessionStore connection and migration transaction.
+Schema version 9 protects versioned assignment metadata from older writers; its
+upgrade preserves existing receipt identities and private evidence. Schema version
+10 protects per-child control owner/epoch, human-input revision and bounded control
+receipts from older writers; it preserves prior immutable intent digests. Missing
+legacy input epochs never acquire current write authority.
+Schema version 11 adds one bounded workflow-authority row in the same connection.
+It records current parent Session/run/full binding, source identity, Server lifetime
+and complete immutable transition history separately from assignment provenance.
+Source credentials stay in memory. Existing records without certified workflow
+authority remain visible read-only gaps; migration never invents ownership.
+Schema version 14 protects immutable delivery declarations, obligation revisions
+and archive receipts with reserved continuation capacity from older writers.
+Schema version 15 protects coding workspace creation/process proofs and original
+candidate provenance from older writers. Default new wire fields do not change
+existing authenticated research document bytes.
+Schema version 16 protects bounded trusted fallback capture/recovery references
+and typed acceptance in the same assignment/version rows. It adds no table or
+state owner. Task payloads stay in confined private files; frozen historical
+evidence is not current source authentication. See [terminal fallback](../pi-terminal-fallback.md).
+Schema version 17 protects bounded workflow dependency graphs, per-assignment input
+witnesses and authenticated review contracts from older writers. Complete inherited
+bytes and actual review source documents remain private task publications.
+Schema version 18 protects bounded independent review references, applicable finite
+corrective policy and original repair intents from older writers. Actual source
+prose, findings and corrective text remain immutable private task files. Human-readable
+absent review fields preserve old authenticated bytes; binary framing carries the option.
 Immutable task contracts, briefs and submissions remain private files outside
 child checkouts; see [Pi research assignments](../pi-research-assignments.md).
 SQLite owns identity, path, and root-setup metadata. The stored

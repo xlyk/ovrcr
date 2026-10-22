@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 18;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -342,9 +342,50 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
         crate::retained::create_conversation_subject_schema(&transaction)?;
         transaction.pragma_update(None, "user_version", 7)?;
     }
-    if schema_identity(&transaction)?.1 < SCHEMA_VERSION {
+    if schema_identity(&transaction)?.1 < 8 {
         crate::retained::create_delegation_schema(&transaction)?;
-        transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        transaction.pragma_update(None, "user_version", 8)?;
+    }
+    if schema_identity(&transaction)?.1 < 9 {
+        // Older writers would discard versioned receipt/result/acceptance metadata.
+        // The JSON records and private evidence remain untouched by this upgrade.
+        transaction.pragma_update(None, "user_version", 9)?;
+    }
+    if schema_identity(&transaction)?.1 < 10 {
+        // Schema9 writers would drop durable per-child authority and control receipts.
+        transaction.pragma_update(None, "user_version", 10)?;
+    }
+    if schema_identity(&transaction)?.1 < 11 {
+        transaction.execute_batch("CREATE TABLE IF NOT EXISTS delegation_workflows (workflow TEXT PRIMARY KEY, metadata TEXT NOT NULL);")?;
+        transaction.pragma_update(None, "user_version", 11)?;
+    }
+    if schema_identity(&transaction)?.1 < 12 {
+        // Older writers discard workflow cancellation and native interrupt journals.
+        transaction.pragma_update(None, "user_version", 12)?;
+    }
+    if schema_identity(&transaction)?.1 < 13 {
+        // Older writers would discard authenticated question and answer obligations.
+        transaction.pragma_update(None, "user_version", 13)?;
+    }
+    if schema_identity(&transaction)?.1 < 14 {
+        // Older writers discard immutable delivery and protected archive journals.
+        transaction.pragma_update(None, "user_version", 14)?;
+    }
+    if schema_identity(&transaction)?.1 < 15 {
+        // Older writers discard coding workspace effects and immutable candidate attribution.
+        transaction.pragma_update(None, "user_version", 15)?;
+    }
+    if schema_identity(&transaction)?.1 < 16 {
+        // Older writers discard trusted fallback evidence and typed acceptance.
+        transaction.pragma_update(None, "user_version", 16)?;
+    }
+    if schema_identity(&transaction)?.1 < 17 {
+        // Older writers discard bounded dependency input witnesses and review contracts.
+        transaction.pragma_update(None, "user_version", 17)?;
+    }
+    if schema_identity(&transaction)?.1 < 18 {
+        // Older writers discard independent review policy and finite corrective receipts.
+        transaction.pragma_update(None, "user_version", 18)?;
     }
     transaction.commit().context("commit registry migration")?;
     Ok(connection)
@@ -372,7 +413,26 @@ fn is_uninitialized(connection: &Connection) -> Result<bool> {
 pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
     let (application, version) = schema_identity(connection)?;
     if application != APPLICATION_ID
-        || !matches!(version, 1 | 2 | 3 | 4 | 5 | 6 | 7 | SCHEMA_VERSION)
+        || !matches!(
+            version,
+            1 | 2
+                | 3
+                | 4
+                | 5
+                | 6
+                | 7
+                | 8
+                | 9
+                | 10
+                | 11
+                | 12
+                | 13
+                | 14
+                | 15
+                | 16
+                | 17
+                | SCHEMA_VERSION
+        )
     {
         bail!(
             "incompatible registry database (application {application}, schema {version}); \
@@ -756,6 +816,344 @@ mod tests {
         assert_eq!(version, 5, "offline load must not migrate");
         assert!(
             table_has_column(&Connection::open(&database).unwrap(), "workspaces", "name").unwrap()
+        );
+    }
+
+    #[test]
+    fn schema_eight_upgrade_preserves_delegation_authority_and_evidence() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("instance");
+        initialize_registry(&config).unwrap();
+        let database = database_path(&config);
+        let connection = Connection::open(&database).unwrap();
+        connection.pragma_update(None, "user_version", 8).unwrap();
+        let instance: String = connection
+            .query_row("SELECT id FROM delegation_instance", [], |row| row.get(0))
+            .unwrap();
+        // An upgrade must preserve raw legacy metadata, including unknown outcomes.
+        let metadata = r#"{"handle":"original","identity":{"instance":"i","workflow":"wf","controller":"parent","controller_epoch":1,"task":"t","attempt":1,"contract":1,"request":"original","session":42,"run":7},"receipts":[{"request":"original","operation":"InitialInput","outcome":"Unknown","input":{"written_bytes":7,"total_bytes":100,"submit_written":false}}],"contract_digest":"original-contract","result_digest":"original-result"}"#;
+        connection.execute("INSERT INTO delegations(handle,workflow,session,metadata) VALUES('original','wf',42,?1)", [metadata]).unwrap();
+        let evidence = config.join("workflows/original");
+        std::fs::create_dir_all(&evidence).unwrap();
+        for name in ["contract-v1.json", "brief-v1.json", "submission-v1.json"] {
+            std::fs::write(evidence.join(name), format!("immutable {name}")).unwrap();
+        }
+        drop(connection);
+        load_registry(&config).unwrap();
+        assert_eq!(
+            schema_version(&database),
+            8,
+            "offline reads must not migrate"
+        );
+        initialize_registry(&config).unwrap();
+        assert_eq!(schema_version(&database), SCHEMA_VERSION);
+        let connection = Connection::open(&database).unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT id FROM delegation_instance", [], |row| row
+                    .get::<_, String>(0))
+                .unwrap(),
+            instance
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT metadata FROM delegations WHERE handle='original' AND session=42",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            metadata
+        );
+        for name in ["contract-v1.json", "brief-v1.json", "submission-v1.json"] {
+            assert_eq!(
+                std::fs::read_to_string(evidence.join(name)).unwrap(),
+                format!("immutable {name}")
+            );
+        }
+        initialize_registry(&config).unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM delegations", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1,
+            "reopening must not recreate delegation tables"
+        );
+    }
+
+    #[test]
+    fn schema_eleven_upgrade_keeps_question_intents_and_unknown_answer_receipts_exact() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("instance");
+        initialize_registry(&config).unwrap();
+        let database = database_path(&config);
+        let connection = Connection::open(&database).unwrap();
+        connection.pragma_update(None, "user_version", 11).unwrap();
+        // Migration preserves bytes, including incomplete obligations it cannot
+        // interpret; only the owning delegation validator can grant authority.
+        let metadata = r#"{"handle":"original","questions":[{"reference":{"question_id":"choice","digest":"original-question"},"handled":false}],"answers":[{"request":"answer-original","expected_parent_epoch":3,"control_epoch":7,"digest":"original-answer"}],"receipts":[{"request":"answer-original","operation":"AnswerQuestion","outcome":"Unknown"}]}"#;
+        connection.execute("INSERT INTO delegations(handle,workflow,metadata) VALUES('original','workflow',?1)", [metadata]).unwrap();
+        drop(connection);
+        load_registry(&config).unwrap();
+        assert_eq!(schema_version(&database), 11, "offline read never migrates");
+        initialize_registry(&config).unwrap();
+        assert_eq!(schema_version(&database), SCHEMA_VERSION);
+        let stored: String = Connection::open(&database)
+            .unwrap()
+            .query_row(
+                "SELECT metadata FROM delegations WHERE handle='original'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            stored, metadata,
+            "migration must not drop unknown/partial answer obligations"
+        );
+    }
+
+    #[test]
+    fn schema_fifteen_upgrade_preserves_coding_delivery_and_uncertain_receipts() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("instance");
+        initialize_registry(&config).unwrap();
+        let database = database_path(&config);
+        let connection = Connection::open(&database).unwrap();
+        connection.pragma_update(None, "user_version", 15).unwrap();
+        // Migration preserves opaque metadata; only the owning validators grant authority.
+        let assignment = r#"{"coding":{"base":"original-base","git_identity":"original-generation"},"obligation_revision":7,"acceptance":{"result_digest":"original-child-digest"},"archive_receipts":[{"outcome":"StopUnknown"}]}"#;
+        let workflow = r#"{"deliveries":[{"reference":{"request":"original-delivery","digest":"original-declaration-digest"}}],"cancellation":null}"#;
+        connection.execute("INSERT INTO delegations(handle,workflow,metadata) VALUES('original','workflow',?1)", [assignment]).unwrap();
+        connection
+            .execute(
+                "INSERT INTO delegation_workflows(workflow,metadata) VALUES('workflow',?1)",
+                [workflow],
+            )
+            .unwrap();
+        let evidence = config.join("workflows/original");
+        std::fs::create_dir_all(&evidence).unwrap();
+        for name in [
+            "contract-v1.json",
+            "brief-v1.json",
+            "submission-v1.json",
+            "candidate-v1.json",
+            "acceptance-v1.json",
+        ] {
+            std::fs::write(evidence.join(name), format!("immutable original {name}")).unwrap();
+        }
+        drop(connection);
+        load_registry(&config).unwrap();
+        assert_eq!(
+            schema_version(&database),
+            15,
+            "offline reads do not migrate the accepted coding schema"
+        );
+        initialize_registry(&config).unwrap();
+        assert_eq!(schema_version(&database), SCHEMA_VERSION);
+        let connection = Connection::open(&database).unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT metadata FROM delegations WHERE handle='original'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            assignment
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT metadata FROM delegation_workflows WHERE workflow='workflow'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            workflow
+        );
+        for name in [
+            "contract-v1.json",
+            "brief-v1.json",
+            "submission-v1.json",
+            "candidate-v1.json",
+            "acceptance-v1.json",
+        ] {
+            assert_eq!(
+                std::fs::read_to_string(evidence.join(name)).unwrap(),
+                format!("immutable original {name}")
+            );
+        }
+    }
+
+    #[test]
+    fn schema_sixteen_upgrade_preserves_typed_fallback_and_immutable_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("instance");
+        initialize_registry(&home).unwrap();
+        let database = database_path(&home);
+        let connection = Connection::open(&database).unwrap();
+        connection.pragma_update(None, "user_version", 16).unwrap();
+        let assignment = r#"{"captures":[{"id":"old-capture"}],"recoveries":[{"digest":"old-recovery"}],"acceptance":{"target":{"ParentRecovery":{"recovery_version":2,"digest":"old-recovery"}}},"previous_versions":[{"result_version":1,"acceptance":{"result_digest":"old-child"}}],"obligation_revision":9}"#;
+        connection.execute("INSERT INTO delegations(handle,workflow,metadata) VALUES('original','workflow',?1)", [assignment]).unwrap();
+        let evidence = home.join("workflows/original");
+        std::fs::create_dir_all(&evidence).unwrap();
+        let originals = [
+            ("acceptance-v1.json", "immutable legacy child decision"),
+            ("acceptance-v2.json", "immutable typed recovery decision"),
+            ("parent-fallback-r2-v2.json", "immutable parent recovery"),
+        ];
+        for (name, bytes) in originals {
+            std::fs::write(evidence.join(name), bytes).unwrap();
+        }
+        drop(connection);
+        load_registry(&home).unwrap();
+        assert_eq!(
+            schema_version(&database),
+            16,
+            "offline reader must preserve accepted331 schema"
+        );
+        initialize_registry(&home).unwrap();
+        assert_eq!(schema_version(&database), SCHEMA_VERSION);
+        let connection = Connection::open(&database).unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT metadata FROM delegations WHERE handle='original'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            assignment
+        );
+        for (name, bytes) in originals {
+            assert_eq!(
+                std::fs::read(evidence.join(name)).unwrap(),
+                bytes.as_bytes()
+            );
+        }
+    }
+
+    #[test]
+    fn schema_seventeen_upgrade_preserves_dependency_witnesses_and_review_publications() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("instance");
+        initialize_registry(&home).unwrap();
+        let database = database_path(&home);
+        let connection = Connection::open(&database).unwrap();
+        connection.pragma_update(None, "user_version", 17).unwrap();
+        // Opaque accepted metadata must survive migration; owning validators grant authority.
+        let assignment = r#"{"dependencies":{"version":4,"lineage":["accepted-input"]},"acceptance":{"result_digest":"accepted-result"},"obligation_revision":9}"#;
+        let workflow = r#"{"dependencies":{"version":4,"tasks":["predecessor","successor"],"edges":["accepted-edge"]}}"#;
+        connection.execute("INSERT INTO delegations(handle,workflow,metadata) VALUES('original','workflow',?1)", [assignment]).unwrap();
+        connection
+            .execute(
+                "INSERT INTO delegation_workflows(workflow,metadata) VALUES('workflow',?1)",
+                [workflow],
+            )
+            .unwrap();
+        let evidence = home.join("workflows/original");
+        std::fs::create_dir_all(&evidence).unwrap();
+        let originals = [
+            ("input-baseline-v1.json", "immutable inherited input bytes"),
+            (
+                "submission-v1.json",
+                "immutable typed review with coding:null",
+            ),
+            (
+                "acceptance-v1.json",
+                "immutable accepted dependency decision",
+            ),
+        ];
+        for (name, bytes) in originals {
+            std::fs::write(evidence.join(name), bytes).unwrap();
+        }
+        drop(connection);
+        load_registry(&home).unwrap();
+        assert_eq!(
+            schema_version(&database),
+            17,
+            "offline read never migrates accepted332 storage"
+        );
+        initialize_registry(&home).unwrap();
+        assert_eq!(schema_version(&database), SCHEMA_VERSION);
+        let connection = Connection::open(&database).unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT metadata FROM delegations WHERE handle='original'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            assignment
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT metadata FROM delegation_workflows WHERE workflow='workflow'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            workflow
+        );
+        for (name, bytes) in originals {
+            assert_eq!(
+                std::fs::read(evidence.join(name)).unwrap(),
+                bytes.as_bytes()
+            );
+        }
+    }
+
+    #[test]
+    fn newer_schema_refusal_preserves_delegation_metadata_and_private_evidence() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("instance");
+        initialize_registry(&config).unwrap();
+        let database = database_path(&config);
+        let connection = Connection::open(&database).unwrap();
+        let newer = SCHEMA_VERSION + 1;
+        connection
+            .pragma_update(None, "user_version", newer)
+            .unwrap();
+        let metadata = "newer version authority must survive";
+        connection
+            .execute(
+                "INSERT INTO delegations(handle,workflow,metadata) VALUES('newer','wf',?1)",
+                [metadata],
+            )
+            .unwrap();
+        let evidence = config.join("evidence.json");
+        std::fs::write(&evidence, "immutable evidence").unwrap();
+        drop(connection);
+        assert!(
+            load_registry(&config)
+                .unwrap_err()
+                .to_string()
+                .contains("incompatible registry database")
+        );
+        assert!(
+            initialize_registry(&config)
+                .unwrap_err()
+                .to_string()
+                .contains("incompatible registry database")
+        );
+        assert_eq!(schema_version(&database), newer);
+        let connection = Connection::open(&database).unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT metadata FROM delegations WHERE handle='newer'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            metadata
+        );
+        assert_eq!(
+            std::fs::read_to_string(evidence).unwrap(),
+            "immutable evidence"
         );
     }
 

@@ -2585,6 +2585,45 @@ fn lifecycle_response_preserves_error_chain_and_code() {
             message: "spawn session: missing executable".into(),
         }
     );
+    let marked = crate::session::NoProcessStarted::context(
+        lifecycle_error(ErrorCode::NotFound, "missing executable").context("spawn session"),
+    );
+    assert_eq!(marked.to_string(), "spawn session");
+    assert!(marked.is::<crate::session::NoProcessStarted>());
+    assert_eq!(
+        marked.downcast_ref::<LifecycleFailure>().unwrap().code,
+        ErrorCode::NotFound
+    );
+    let Response::Error { code, message } = error_for_lifecycle(marked) else {
+        panic!("lifecycle error")
+    };
+    assert_eq!(code, ErrorCode::NotFound);
+    assert!(message.contains("missing executable"));
+}
+
+#[test]
+fn no_process_evidence_preserves_preparation_diagnostic_and_code() {
+    let error =
+        lifecycle_error(ErrorCode::NotFound, "missing executable").context("prepare session");
+    let error = crate::session::NoProcessStarted::context(error);
+    assert_eq!(error.to_string(), "prepare session");
+    assert!(error.is::<crate::session::NoProcessStarted>());
+    assert_eq!(
+        error.downcast_ref::<LifecycleFailure>().unwrap().code,
+        ErrorCode::NotFound
+    );
+    assert!(
+        error
+            .chain()
+            .any(|cause| cause.to_string() == "missing executable")
+    );
+    assert_eq!(
+        error_for_lifecycle(error),
+        Response::Error {
+            code: ErrorCode::NotFound,
+            message: "prepare session: missing executable".into(),
+        }
+    );
 }
 
 pub(super) fn test_state(
@@ -2603,6 +2642,7 @@ fn test_state_with_dispatch(
     let (state, receiver) = (
         Arc::new(ServerState {
             server_lifetime: super::navigation::new_identity().unwrap(),
+            delegation_observations: delegation_observation::Observations::default(),
             callback_executable_sha256: Some("0".repeat(64)),
             tasks: None,
             socket: PathBuf::from("/tmp/ovrcr-test.sock"),
@@ -2653,6 +2693,7 @@ fn test_state_with_socket(
     (
         Arc::new(ServerState {
             server_lifetime: super::navigation::new_identity().unwrap(),
+            delegation_observations: delegation_observation::Observations::default(),
             callback_executable_sha256: Some("0".repeat(64)),
             tasks: None,
             socket,
@@ -5301,6 +5342,7 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
     let _socket_guard = UnixListener::bind(&socket_path).unwrap();
     let state = Arc::new(ServerState {
         server_lifetime: super::navigation::new_identity().unwrap(),
+        delegation_observations: delegation_observation::Observations::default(),
         callback_executable_sha256: Some("0".repeat(64)),
         tasks: None,
         quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
@@ -5521,6 +5563,7 @@ fn session_output_flows_while_another_session_spawns() {
     .unwrap();
     let state = Arc::new(ServerState {
         server_lifetime: super::navigation::new_identity().unwrap(),
+        delegation_observations: delegation_observation::Observations::default(),
         callback_executable_sha256: Some("0".repeat(64)),
         tasks: None,
         quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
@@ -6379,6 +6422,7 @@ mod agent_reporting {
         }
         fn reserve(&self, epoch: u64, operation: &str) -> Request {
             Request::ReserveAgent(ReserveAgent {
+                pi_resume: None,
                 session: SessionId(900),
                 capability: AgentSecret([7; 32]),
                 operation: operation.into(),
@@ -7063,6 +7107,181 @@ mod agent_reporting {
     }
 
     #[test]
+    fn agent_report_replaced_supervisor_does_not_enter_full_dispatch_queue() {
+        let f = Fixture::new();
+        let auth = f.acquire();
+        let binding = f.bind(&auth, None, "A", "bind");
+        assert_eq!(
+            f.report(&binding, 1, activity(AgentActivity::Busy)),
+            Response::Ok
+        );
+        let (old, old_handler) = supervisor_connection(&f, &auth);
+        // Same lease, different private connection Arc. The old one cannot be
+        // made current again after its synchronous request loop has ended.
+        let (current, current_handler) = supervisor_connection(&f, &auth);
+        let before = f.session.summary();
+
+        let drain_dispatch = || {
+            let (completion, completed) = mpsc::sync_channel(1);
+            f.state
+                .dispatch
+                .send(DispatchMessage::AgentCommand {
+                    request: Request::AgentStatus {
+                        auth: auth.clone(),
+                        operation: "bind".into(),
+                    },
+                    owner: None,
+                    completion,
+                })
+                .unwrap();
+            completed.recv_timeout(Duration::from_secs(2)).unwrap()
+        };
+        // Complete a FIFO barrier outside retained before the next full batch.
+        let hold_full_dispatch = || {
+            assert_eq!(
+                drain_dispatch(),
+                Response::AgentOperation(AgentOperationResult::Bound(binding.clone()))
+            );
+            let retained = f.state.retained.lock();
+            let (completion, _) = mpsc::sync_channel(1);
+            f.state
+                .dispatch
+                .try_send(DispatchMessage::AgentCommand {
+                    request: Request::AgentStatus {
+                        auth: auth.clone(),
+                        operation: "bind".into(),
+                    },
+                    owner: None,
+                    completion,
+                })
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while f.state.dispatch.snapshot().pending_items != 0 && Instant::now() < deadline {
+                thread::yield_now();
+            }
+            assert_eq!(f.state.dispatch.snapshot().pending_items, 0);
+            // That known command was popped and cannot pass the retained guard.
+            // Only now fill all64 slots; there is no later first-pop race.
+            for _ in 0..RAW_DISPATCH_QUEUE_CAPACITY {
+                let (completion, _) = mpsc::sync_channel(1);
+                match f.state.dispatch.try_send(DispatchMessage::AgentCommand {
+                    request: Request::AgentStatus {
+                        auth: auth.clone(),
+                        operation: "bind".into(),
+                    },
+                    owner: None,
+                    completion,
+                }) {
+                    Ok(()) => {}
+                    Err(_) => panic!("dispatcher must hold all64 queued commands"),
+                }
+            }
+            assert_eq!(
+                f.state.dispatch.snapshot().pending_items,
+                RAW_DISPATCH_QUEUE_CAPACITY
+            );
+            retained
+        };
+        let retained = hold_full_dispatch();
+        drop(old);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !old_handler.is_finished() && Instant::now() < deadline {
+            thread::yield_now();
+        }
+        let obsolete_handler_finished = old_handler.is_finished();
+        let pending_while_full = f.state.dispatch.snapshot().pending_items;
+        // Release before any assertion on the regression: the original bug
+        // blocks its handler here, and must still be able to drain and clean up.
+        let (drain_returned_while_full, drained) = thread::scope(|scope| {
+            let (completion, completed) = mpsc::sync_channel(1);
+            let (started, starting) = mpsc::sync_channel(1);
+            scope.spawn(move || {
+                started.send(()).unwrap();
+                completion.send(drain_dispatch()).unwrap();
+            });
+            starting.recv_timeout(Duration::from_secs(2)).unwrap();
+            let early = completed.recv_timeout(Duration::from_millis(100));
+            drop(retained);
+            match early {
+                Ok(response) => (true, response),
+                Err(mpsc::RecvTimeoutError::Timeout) => (
+                    false,
+                    completed.recv_timeout(Duration::from_secs(2)).unwrap(),
+                ),
+                Err(error) => panic!("drain worker failed: {error}"),
+            }
+        });
+        assert!(join_test_thread_bounded(
+            old_handler,
+            Duration::from_secs(2)
+        ));
+        assert!(
+            !drain_returned_while_full,
+            "FIFO completion barrier must not return while all64 commands are held"
+        );
+        assert_eq!(
+            drained,
+            Response::AgentOperation(AgentOperationResult::Bound(binding.clone()))
+        );
+        let after_old = f.session.summary();
+
+        // Preserve the consumer's Arc fence if a replacement happens after a
+        // producer checked current ownership but before dispatch. This is the
+        // genuine original reservation owner, not a fabricated lease or Arc.
+        f.state
+            .dispatch
+            .send(DispatchMessage::AgentDisconnected {
+                session: SessionId(900),
+                owner: f.owner.clone(),
+            })
+            .unwrap();
+        assert_eq!(
+            drain_dispatch(),
+            Response::AgentOperation(AgentOperationResult::Bound(binding.clone()))
+        );
+        let after_queued_old = f.session.summary();
+        let retained = hold_full_dispatch();
+        drop(current);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !current_handler.is_finished() && Instant::now() < deadline {
+            thread::yield_now();
+        }
+        let current_finished_while_full = current_handler.is_finished();
+        let pending_with_current = f.state.dispatch.snapshot().pending_items;
+        drop(retained);
+        assert!(join_test_thread_bounded(
+            current_handler,
+            Duration::from_secs(2)
+        ));
+        assert_eq!(
+            drain_dispatch(),
+            Response::AgentOperation(AgentOperationResult::Bound(binding.clone()))
+        );
+        let lost = f.session.summary().agent.unwrap();
+
+        assert!(
+            obsolete_handler_finished,
+            "replaced supervisor must close without enqueueing into the full dispatcher"
+        );
+        assert_eq!(pending_while_full, RAW_DISPATCH_QUEUE_CAPACITY);
+        assert!(
+            !current_finished_while_full,
+            "current disconnect must wait for queue capacity"
+        );
+        assert_eq!(pending_with_current, RAW_DISPATCH_QUEUE_CAPACITY);
+        assert_eq!(after_old, before);
+        assert_eq!(
+            after_queued_old, before,
+            "consumer must still fence a queued stale owner"
+        );
+        assert_eq!(lost.health.state, ReporterHealth::Unavailable);
+        assert_eq!(
+            lost.health.reason.as_deref(),
+            Some("supervisor_disconnected")
+        );
+    }
+
+    #[test]
     fn agent_report_supervisor_connection_loss_and_late_cleanup() {
         let f = Fixture::new();
         let auth = f.acquire();
@@ -7673,6 +7892,7 @@ fn failed_root_shell_keeps_setup_pending_and_does_not_duplicate_launch() {
     let (dispatch, _dispatch_receiver) = dispatch_channel(None);
     let state = Arc::new(ServerState {
         server_lifetime: super::navigation::new_identity().unwrap(),
+        delegation_observations: delegation_observation::Observations::default(),
         callback_executable_sha256: Some("0".repeat(64)),
         tasks: None,
         socket: dir.path().join("socket"),
@@ -8094,6 +8314,7 @@ fn automatic_local_terminals_default_branch_only_skips_feature_workspaces() {
     let (dispatch, dispatch_receiver) = dispatch_channel(None);
     let state = Arc::new(ServerState {
         server_lifetime: super::navigation::new_identity().unwrap(),
+        delegation_observations: delegation_observation::Observations::default(),
         callback_executable_sha256: Some("0".repeat(64)),
         tasks: None,
         quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
@@ -8192,6 +8413,7 @@ fn automatic_local_terminals_on_and_off_cover_root_and_feature() {
         let (dispatch, dispatch_receiver) = dispatch_channel(None);
         let state = Arc::new(ServerState {
             server_lifetime: super::navigation::new_identity().unwrap(),
+            delegation_observations: delegation_observation::Observations::default(),
             callback_executable_sha256: Some("0".repeat(64)),
             tasks: None,
             quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
@@ -8295,6 +8517,7 @@ fn changing_automatic_local_policy_leaves_existing_terminals() {
     let (dispatch, dispatch_receiver) = dispatch_channel(None);
     let state = Arc::new(ServerState {
         server_lifetime: super::navigation::new_identity().unwrap(),
+        delegation_observations: delegation_observation::Observations::default(),
         callback_executable_sha256: Some("0".repeat(64)),
         tasks: None,
         quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),

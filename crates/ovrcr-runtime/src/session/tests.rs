@@ -1509,6 +1509,7 @@ fn delegation_rechecks_a_to_b_to_a_binding_at_the_pty_write_boundary() {
         let Response::AgentOperation(AgentOperationResult::Reserved(reservation)) = session
             .agent_command(
                 &Request::ReserveAgent(ReserveAgent {
+                    pi_resume: None,
                     session: session.id(),
                     capability: AgentSecret([0x37; 32]),
                     operation: "reserve".into(),
@@ -1578,9 +1579,15 @@ fn delegation_rechecks_a_to_b_to_a_binding_at_the_pty_write_boundary() {
     let parent_binding = bind(&parent, &parent_auth, &parent_owner, None, "A", "parent-A");
     let child_binding = bind(&child, &child_auth, &child_owner, None, "A", "child-A");
     let ready = dir.path().join("ready");
-    assert!(
+    assert!(matches!(
         child
             .send_delegated_text(DelegatedInput {
+                parent_producer: None,
+                parent_source: None,
+                control: &ovrcr_protocol::AssignmentControl::default(),
+                control_epoch: 1,
+                authority: DelegatedAuthority::Controller,
+                request: "fixture",
                 parent: &parent,
                 parent_binding: &parent_binding,
                 capability: &crate::agent_runner::delegation_capability(&capability_hex(
@@ -1590,8 +1597,9 @@ fn delegation_rechecks_a_to_b_to_a_binding_at_the_pty_write_boundary() {
                 model: "fixture-model",
                 text: &format!("printf ready > '{}'", ready.display())
             })
-            .unwrap()
-    );
+            .unwrap(),
+        DelegatedDelivery::Applied(_)
+    ));
     let deadline = Instant::now() + Duration::from_secs(2);
     while !ready.exists() {
         assert!(Instant::now() < deadline);
@@ -1617,6 +1625,12 @@ fn delegation_rechecks_a_to_b_to_a_binding_at_the_pty_write_boundary() {
         thread::spawn(move || {
             child
                 .send_delegated_text(DelegatedInput {
+                    parent_producer: None,
+                    parent_source: None,
+                    control: &ovrcr_protocol::AssignmentControl::default(),
+                    control_epoch: 1,
+                    authority: DelegatedAuthority::Controller,
+                    request: "fixture",
                     parent: &parent,
                     parent_binding: &parent_binding,
                     capability: &crate::agent_runner::delegation_capability(&capability_hex(
@@ -1649,8 +1663,73 @@ fn delegation_rechecks_a_to_b_to_a_binding_at_the_pty_write_boundary() {
     assert_ne!(child_binding.generation, a.generation);
     release.wait();
     assert!(
-        !sent.join().unwrap(),
+        matches!(sent.join().unwrap(), DelegatedDelivery::Rejected(_)),
         "stale A generation must never reach the PTY"
+    );
+    *child.before_delegated_input.lock().unwrap() = None;
+    let acceptance = dir.path().join("must-not-accept");
+    let capability = crate::agent_runner::delegation_capability(&capability_hex(&[0x37; 32]));
+    let stale_context = DelegatedInput {
+        parent_producer: None,
+        parent_source: None,
+        control: &ovrcr_protocol::AssignmentControl::default(),
+        control_epoch: 1,
+        authority: DelegatedAuthority::Controller,
+        request: "acceptance",
+        parent: &parent,
+        parent_binding: &parent_binding,
+        capability: &capability,
+        child_binding: &child_binding,
+        model: "fixture-model",
+        text: "",
+    };
+    assert!(
+        child
+            .with_delegated_context(&stale_context, |_| {
+                std::fs::write(&acceptance, "stale acceptance")?;
+                Ok(())
+            })
+            .unwrap()
+            .is_none()
+    );
+    let parent_b = bind(
+        &parent,
+        &parent_auth,
+        &parent_owner,
+        Some(parent_binding.clone()),
+        "B",
+        "parent-B",
+    );
+    let parent_a = bind(
+        &parent,
+        &parent_auth,
+        &parent_owner,
+        Some(parent_b),
+        "A",
+        "parent-A-again",
+    );
+    assert_ne!(parent_a.generation, parent_binding.generation);
+    let stale_parent = DelegatedInput {
+        parent_producer: None,
+        parent_source: None,
+        control: &ovrcr_protocol::AssignmentControl::default(),
+        control_epoch: 1,
+        authority: DelegatedAuthority::Controller,
+        child_binding: &a,
+        ..stale_context
+    };
+    assert!(
+        child
+            .with_delegated_context(&stale_parent, |_| {
+                std::fs::write(&acceptance, "stale parent acceptance")?;
+                Ok(())
+            })
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        !acceptance.exists(),
+        "a stale child or parent cannot publish acceptance"
     );
     let fence = dir.path().join("after-write-fence");
     child
@@ -1669,4 +1748,45 @@ fn delegation_rechecks_a_to_b_to_a_binding_at_the_pty_write_boundary() {
     drop(parent_cleanup);
     child_dispatch.join().unwrap();
     parent_dispatch.join().unwrap();
+}
+#[test]
+fn delegated_counted_writes_preserve_zero_partial_and_uncertain_effects() {
+    let mut bytes = Vec::new();
+    assert!(matches!(
+        write_delegated(&mut bytes, b"hello", Some(0)),
+        DelegatedDelivery::Rejected(_)
+    ));
+    assert!(bytes.is_empty());
+    let DelegatedDelivery::Partial(receipt) = write_delegated(&mut bytes, b"hello", Some(2)) else {
+        panic!("partial")
+    };
+    assert_eq!(bytes, b"he");
+    assert_eq!(receipt.written_bytes, 2);
+    assert_eq!(receipt.total_bytes, 6);
+    assert!(!receipt.submit_written);
+    bytes.clear();
+    let DelegatedDelivery::Unknown(receipt) = write_delegated(&mut bytes, b"hello", Some(6)) else {
+        panic!("unknown")
+    };
+    assert_eq!(bytes, b"hello\r");
+    assert!(receipt.submit_written);
+    bytes.clear();
+    assert!(matches!(
+        write_delegated(&mut bytes, b"hello", None),
+        DelegatedDelivery::Applied(_)
+    ));
+    assert_eq!(bytes, b"hello\r");
+}
+
+#[test]
+fn no_process_marker_preserves_diagnostic_and_typed_cause() {
+    let error = std::io::Error::new(std::io::ErrorKind::NotFound, "preflight diagnostic");
+    let marked = NoProcessStarted::context(anyhow::Error::new(error).context("session preflight"));
+    assert_eq!(marked.to_string(), "session preflight");
+    assert!(marked.is::<NoProcessStarted>());
+    assert_eq!(
+        marked.downcast_ref::<std::io::Error>().unwrap().kind(),
+        std::io::ErrorKind::NotFound
+    );
+    assert!(format!("{marked:#}").contains("preflight diagnostic"));
 }

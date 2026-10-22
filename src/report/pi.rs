@@ -16,7 +16,7 @@ pub static HARNESS: Harness = Harness {
     name: "pi",
     display: "Pi",
     origin: "pi-extension",
-    extension_file: "ovrcr-pi-reporting.mjs",
+    extension_file: "ovrcr-pi-reporting.ts",
     extension_source: EXTENSION_SOURCE,
     eligible_argv,
     settled_quality: SampleQuality::Confirmed,
@@ -73,4 +73,13 @@ pub fn extension_source(binary: &Path) -> Option<String> {
 
 pub fn receiver(lease: Option<InvocationLease>, argv: &mut Vec<OsString>) -> HookHandler {
     super::extension::receiver(&HARNESS, lease, argv)
+}
+
+/// Finalize invocation-local package selection only after materialization succeeds.
+pub fn receiver_with_environment(
+    lease: Option<InvocationLease>,
+    argv: &mut Vec<OsString>,
+    environment: &mut Vec<(OsString, OsString)>,
+) -> HookHandler {
+    super::extension::receiver_with_environment(&HARNESS, lease, argv, environment)
 }

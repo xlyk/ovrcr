@@ -198,6 +198,23 @@ pub enum AgentObservation {
     Input(Vec<InputRequest>),
     /// Native Claude account allowance, independently revised from session metrics.
     Quota(Box<crate::QuotaReport>),
+    /// Pi's public keybinding API and explicit agent_settled boundary. Content-free.
+    NativeControl(Option<NativeControlSample>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NativeInterruptCapability {
+    Escape,
+    Unsupported,
+    Unavailable,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NativeControlSample {
+    pub turn: String,
+    pub interrupt: NativeInterruptCapability,
+    /// Only Pi agent_settled may set this; agent_end is not settlement.
+    pub settled: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderReport {
@@ -253,6 +270,8 @@ pub struct AgentSnapshot {
     /// Open Input requests, oldest first (CONTEXT.md: Input request).
     pub input_requests: Vec<InputRequest>,
     pub input_revision: u64,
+    pub native_control: Option<NativeControlSample>,
+    pub native_control_revision: u64,
 }
 
 impl AgentSnapshot {
@@ -282,6 +301,8 @@ pub struct ReserveAgent {
     pub capability: AgentSecret,
     pub operation: String,
     pub expected_epoch: u64,
+    #[serde(default)]
+    pub pi_resume: Option<Box<ExtensionConversation>>,
     pub invocation: String,
     pub provider: AgentProvider,
 }
@@ -297,6 +318,19 @@ pub struct SupervisorAuth {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AgentCommand {
+    /// Sent by the native-root-authenticated Reporter, never a task tool.
+    WorkflowSource {
+        binding: Box<AgentBinding>,
+        producer: String,
+        reason: String,
+        source: AgentSecret,
+    },
+    WorkflowDeparture {
+        binding: AgentBinding,
+        producer: String,
+        reaped: bool,
+    },
+
     Bind {
         expected_binding: Option<AgentBinding>,
         conversation: String,
@@ -324,6 +358,7 @@ pub struct SupervisorRequest {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AgentOperationResult {
+    WorkflowUpdated,
     Reserved(AgentReservation),
     Bound(AgentBinding),
     Released,
@@ -493,6 +528,16 @@ impl ProviderReport {
                 }
                 quota.validate()
             }
+            AgentObservation::NativeControl(sample) => {
+                if self.binding.provider != AgentProvider::Pi {
+                    bail!("native control requires a Pi source");
+                }
+                sample
+                    .as_ref()
+                    .map(|s| validate_agent_id(&s.turn))
+                    .transpose()?;
+                Ok(())
+            }
         }
     }
 }
@@ -619,6 +664,8 @@ pub(crate) mod tests {
                 },
             ],
             input_revision: 4,
+            native_control: None,
+            native_control_revision: 0,
         };
         assert_eq!(snapshot.effective_activity(), AgentActivity::WaitingInput);
         snapshot.input_requests.remove(0);
@@ -851,6 +898,7 @@ pub(crate) mod tests {
         };
         let mut requests = vec![
             Request::ReserveAgent(ReserveAgent {
+                pi_resume: None,
                 session: SessionId(1),
                 capability: AgentSecret([165; 32]),
                 operation: "reserve".into(),

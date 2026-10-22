@@ -224,7 +224,7 @@ struct State {
     binding: Option<AgentBinding>,
     generation: u64,
     /// Activity, metrics, health, input, and quota have independent revision watermarks.
-    revisions: [u64; 5],
+    revisions: [u64; 6],
     /// The one retained operation receipt, as the runtime's `latest` is.
     latest: Option<(String, Response)>,
     released: bool,
@@ -243,7 +243,7 @@ fn serve(
         provider,
         binding: None,
         generation: 0,
-        revisions: [0; 5],
+        revisions: [0; 6],
         latest: None,
         released: false,
         observed: Vec::new(),
@@ -304,6 +304,7 @@ fn kind(observation: &ovrcr_protocol::AgentObservation) -> usize {
         Health(_) => 2,
         Input(_) => 3,
         Quota(_) => 4,
+        NativeControl(_) => 5,
     }
 }
 
@@ -366,6 +367,25 @@ fn respond(request: Request, answer: Answer, state: &mut State) -> Response {
         }
         Request::Supervisor(supervisor) => {
             let receipt = match supervisor.command {
+                AgentCommand::WorkflowSource { binding, .. } => {
+                    if answer == Answer::Refuse {
+                        refusal()
+                    } else if state.released || state.binding.as_ref() != Some(binding.as_ref()) {
+                        reject("agent binding changed")
+                    } else {
+                        Response::AgentOperation(AgentOperationResult::WorkflowUpdated)
+                    }
+                }
+                AgentCommand::WorkflowDeparture { binding, .. } => {
+                    if answer == Answer::Refuse {
+                        refusal()
+                    } else if state.released || state.binding.as_ref() != Some(&binding) {
+                        reject("agent binding changed")
+                    } else {
+                        Response::AgentOperation(AgentOperationResult::WorkflowUpdated)
+                    }
+                }
+
                 AgentCommand::RetainConversation { binding, reference } => {
                     state.observed.push(Observed::Retain {
                         binding: binding.clone(),
@@ -407,7 +427,7 @@ fn respond(request: Request, answer: Answer, state: &mut State) -> Response {
                             generation: state.generation,
                         };
                         state.binding = Some(binding.clone());
-                        state.revisions = [0; 5];
+                        state.revisions = [0; 6];
                         Response::AgentOperation(AgentOperationResult::Bound(binding))
                     }
                 }

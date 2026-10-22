@@ -4,6 +4,8 @@ use ovrcr_protocol::*;
 #[derive(Default)]
 pub(super) struct ReportingState {
     pub epoch: u64,
+    pub(super) producer: Option<String>,
+    pub(super) source: Option<AgentSecret>,
     generation: u64,
     lease: Option<AgentSecret>,
     reservation: Option<(ReserveAgent, AgentReservation)>,
@@ -73,6 +75,7 @@ impl ReportingState {
             // A reporter that is gone cannot vouch for a visible dialog; the request is
             // unknown until a fresh authoritative event.
             snapshot.input_requests.clear();
+            snapshot.native_control = None;
         }
     }
     pub fn lost(&mut self, reason: &str) {
@@ -115,6 +118,12 @@ impl ReportingState {
                         false,
                     ));
                 }
+                // A new cycle cannot inherit a previous native binding or settlement.
+                if snapshot.activity.as_ref().and_then(|a| a.turn.as_ref())
+                    != activity.turn.as_ref()
+                {
+                    snapshot.native_control = None;
+                }
                 snapshot.activity = Some(activity.clone());
                 snapshot.activity_revision = report.revision;
             }
@@ -143,6 +152,7 @@ impl ReportingState {
                 // A reporter that is gone cannot vouch for a visible dialog.
                 if health.state == ReporterHealth::Unavailable {
                     snapshot.input_requests.clear();
+                    snapshot.native_control = None;
                 }
             }
             AgentObservation::Input(requests) => {
@@ -152,6 +162,20 @@ impl ReportingState {
                 // The set is published whole: the snapshot is replaced, never merged.
                 snapshot.input_requests = requests.clone();
                 snapshot.input_revision = report.revision;
+            }
+            AgentObservation::NativeControl(sample) => {
+                if report.revision <= snapshot.native_control_revision {
+                    bail!("stale native control revision");
+                }
+                if let Some(sample) = sample
+                    && (snapshot.health.state != ReporterHealth::Connected
+                        || snapshot.activity.as_ref().and_then(|a| a.turn.as_ref())
+                            != Some(&sample.turn))
+                {
+                    bail!("native control does not match current reporting turn");
+                }
+                snapshot.native_control = sample.clone();
+                snapshot.native_control_revision = report.revision;
             }
             AgentObservation::Quota(incoming) => {
                 if self.quota.as_ref().is_some_and(|(binding, _, revision)| {
@@ -237,7 +261,81 @@ impl MeasurementWatermarks {
     }
 }
 
+pub(crate) enum AgentPersistence<'a> {
+    Reservation(&'a ReserveAgent),
+    Command(&'a AgentCommand),
+}
+
 impl Session {
+    /// Caller holds retained workflow ownership. Pin the current authenticated
+    /// source through its durable closure commit; source retirement uses this lock.
+    pub(crate) fn with_workflow_context<T>(
+        &self,
+        auth: &DelegationAuth,
+        authority: &ovrcr_protocol::WorkflowAuthority,
+        action: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        let state = self.state.lock().unwrap();
+        let reporting = &state.reporting;
+        if auth.session != self.id()
+            || authority.parent != self.id()
+            || authority.parent_run != self.run()
+            || state.phase != SessionPhase::Running
+            || !reporting.active()
+            || auth.source.is_none()
+            || reporting.source.as_ref() != auth.source.as_ref()
+            || reporting.producer.as_deref() != Some(authority.producer.as_str())
+            || !state.hook_capability.as_ref().is_some_and(|token| {
+                crate::agent_runner::delegation_capability(&capability_hex(token))
+                    == auth.capability
+            })
+            || reporting.snapshot.as_ref().is_none_or(|snapshot| {
+                snapshot.binding != authority.binding
+                    || snapshot.health.state != ReporterHealth::Connected
+            })
+        {
+            bail!("workflow source changed before durable cancellation closure");
+        }
+        action()
+    }
+    /// Authenticate secret and capture public source identity under the same state lock.
+    pub(crate) fn authenticated_workflow_source(
+        &self,
+        auth: &DelegationAuth,
+    ) -> Option<(AgentBinding, String)> {
+        let state = self.state.lock().unwrap();
+        let reporting = &state.reporting;
+        if auth.session != self.id()
+            || !state.phase.is_live()
+            || !reporting.active()
+            || auth.source.is_none()
+            || reporting.source.as_ref() != auth.source.as_ref()
+            || !state.hook_capability.as_ref().is_some_and(|token| {
+                crate::agent_runner::delegation_capability(&capability_hex(token))
+                    == auth.capability
+            })
+            || reporting.snapshot.as_ref()?.health.state != ReporterHealth::Connected
+        {
+            return None;
+        }
+        Some((reporting.binding()?.clone(), reporting.producer.clone()?))
+    }
+    pub(crate) fn authorizes_workflow_source(&self, source: Option<&AgentSecret>) -> bool {
+        let state = self.state.lock().unwrap();
+        state.reporting.active() && source.is_some() && state.reporting.source.as_ref() == source
+    }
+    pub(crate) fn workflow_source(&self) -> Option<(AgentBinding, String)> {
+        let state = self.state.lock().unwrap();
+        let reporting = &state.reporting;
+        if !state.phase.is_live()
+            || !reporting.active()
+            || reporting.snapshot.as_ref()?.health.state != ReporterHealth::Connected
+        {
+            return None;
+        }
+        Some((reporting.binding()?.clone(), reporting.producer.clone()?))
+    }
+
     pub(crate) fn quota_snapshot(&self) -> Option<ProviderQuota> {
         let state = self.state.lock().unwrap();
         let snapshot = state.reporting.snapshot.as_ref()?;
@@ -261,7 +359,7 @@ impl Session {
         &self,
         request: &Request,
         owner: Option<&Arc<()>>,
-        persist: impl FnOnce(&AgentCommand) -> Result<()>,
+        persist: impl FnOnce(AgentPersistence<'_>) -> Result<()>,
     ) -> Result<Response> {
         let mut state = self.state.lock().unwrap();
         if let Request::MarkReviewed { expected, .. } = request {
@@ -314,6 +412,9 @@ impl Session {
                 epoch,
                 lease: AgentSecret(secret),
             };
+            persist(AgentPersistence::Reservation(reserve))?;
+            reporting.producer = None;
+            reporting.source = None;
             reporting.epoch = epoch;
             reporting.lease = Some(receipt.lease.clone());
             reporting.reservation = Some((reserve.clone(), receipt.clone()));
@@ -363,6 +464,43 @@ impl Session {
             bail!("operation receipt is unavailable or stale");
         };
         let result = match &r.command {
+            AgentCommand::WorkflowSource {
+                binding,
+                producer,
+                source,
+                ..
+            } => {
+                reporting.expected(Some(binding))?;
+                if binding.provider != AgentProvider::Pi {
+                    bail!("workflow source requires Pi");
+                }
+                validate_agent_id(producer)?;
+                if reporting.producer.as_ref() == Some(producer)
+                    && reporting
+                        .source
+                        .as_ref()
+                        .is_some_and(|current| current != source)
+                {
+                    bail!("current Producer source capability cannot be replaced");
+                }
+                persist(AgentPersistence::Command(&r.command))?;
+                reporting.producer = Some(producer.clone());
+                reporting.source = Some(source.clone());
+                AgentOperationResult::WorkflowUpdated
+            }
+            AgentCommand::WorkflowDeparture {
+                binding, producer, ..
+            } => {
+                reporting.expected(Some(binding))?;
+                if binding.provider != AgentProvider::Pi
+                    || reporting.producer.as_ref() != Some(producer)
+                {
+                    bail!("workflow departure source changed");
+                }
+                persist(AgentPersistence::Command(&r.command))?;
+                AgentOperationResult::WorkflowUpdated
+            }
+
             AgentCommand::InvalidateConversation => {
                 // Invalidation concerns the entire authenticated invocation, even
                 // when a successful Bind receipt was lost before this callback.
@@ -373,7 +511,7 @@ impl Session {
                 {
                     bail!("managed invocation does not support conversation recovery");
                 }
-                persist(&r.command)?;
+                persist(AgentPersistence::Command(&r.command))?;
                 AgentOperationResult::ConversationInvalidated
             }
             AgentCommand::RetainConversation { binding, reference } => {
@@ -382,7 +520,7 @@ impl Session {
                     bail!("Recovery must match the certified provider binding");
                 }
                 crate::recovery::validate(reference)?;
-                persist(&r.command)?;
+                persist(AgentPersistence::Command(&r.command))?;
                 AgentOperationResult::ConversationRetained
             }
             AgentCommand::Bind {
@@ -406,6 +544,8 @@ impl Session {
                     conversation: conversation.clone(),
                     generation,
                 };
+                reporting.producer = None;
+                reporting.source = None;
                 reporting.generation = generation;
                 reporting.measurements = MeasurementWatermarks::default();
                 reporting.snapshot = Some(AgentSnapshot {
@@ -421,6 +561,8 @@ impl Session {
                     health_revision: 0,
                     input_requests: Vec::new(),
                     input_revision: 0,
+                    native_control: None,
+                    native_control_revision: 0,
                 });
                 AgentOperationResult::Bound(binding)
             }
@@ -466,6 +608,18 @@ impl Session {
         };
         reporting.latest = Some((r.clone(), result.clone()));
         Ok(Response::AgentOperation(result))
+    }
+
+    /// A watched connection's private identity is never reused after it closes.
+    /// Callers must release the Server session-map lock before taking this lock.
+    pub(crate) fn agent_supervisor_is_current(&self, owner: &Arc<()>) -> bool {
+        self.state
+            .lock()
+            .unwrap()
+            .reporting
+            .owner
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, owner))
     }
 
     pub(crate) fn agent_supervisor_disconnected(&self, owner: &Arc<()>) -> bool {
@@ -588,6 +742,8 @@ mod tests {
                     health_revision: 0,
                     input_requests: Vec::new(),
                     input_revision: 0,
+                    native_control: None,
+                    native_control_revision: 0,
                 }),
                 ..Default::default()
             };
@@ -635,10 +791,95 @@ mod tests {
                 health_revision: 0,
                 input_requests: Vec::new(),
                 input_revision: 0,
+                native_control: None,
+                native_control_revision: 0,
             }),
             ..Default::default()
         };
         (reporting, binding)
+    }
+    #[test]
+    fn native_capability_is_current_turn_only_and_does_not_survive_reporting_gap() {
+        let (mut reporting, binding) = pi_state();
+        reporting
+            .apply(
+                &activity(&binding, 1, AgentActivity::Busy, SampleQuality::Observed),
+                false,
+            )
+            .unwrap();
+        let native = |turn: &str, revision| ProviderReport {
+            binding: binding.clone(),
+            revision,
+            observation: AgentObservation::NativeControl(Some(NativeControlSample {
+                turn: turn.into(),
+                interrupt: NativeInterruptCapability::Escape,
+                settled: false,
+            })),
+        };
+        assert!(reporting.apply(&native("another-turn", 2), false).is_err());
+        reporting.apply(&native("one", 2), false).unwrap();
+        assert!(
+            reporting
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .native_control
+                .is_some()
+        );
+        assert!(
+            reporting.apply(&native("one", 2), false).is_err(),
+            "stale capability revision is never freshness"
+        );
+        reporting.unavailable("source_gap");
+        assert!(
+            reporting
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .native_control
+                .is_none()
+        );
+        assert!(
+            reporting.apply(&native("one", 3), false).is_err(),
+            "unavailable reporting cannot certify a native capability"
+        );
+        reporting
+            .apply(
+                &ProviderReport {
+                    binding: binding.clone(),
+                    revision: 4,
+                    observation: AgentObservation::Health(HealthSample {
+                        state: ReporterHealth::Connected,
+                        reason: None,
+                    }),
+                },
+                true,
+            )
+            .unwrap();
+        assert!(
+            reporting
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .native_control
+                .is_none(),
+            "reconnect cannot resurrect an old manager sample"
+        );
+        reporting.apply(&native("one", 5), false).unwrap();
+        let mut next = activity(&binding, 6, AgentActivity::Busy, SampleQuality::Observed);
+        let AgentObservation::Activity(sample) = &mut next.observation else {
+            unreachable!()
+        };
+        sample.turn = Some("two".into());
+        reporting.apply(&next, false).unwrap();
+        assert!(
+            reporting
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .native_control
+                .is_none()
+        );
     }
     fn activity(
         binding: &AgentBinding,

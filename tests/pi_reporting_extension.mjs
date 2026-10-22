@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync, chmodSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { spawn } from "node:child_process";
 import { createHost, assistant } from "./fixtures/pi/pi_host.mjs";
 
 const SOURCE = resolve("src/pi-reporting-extension.mjs");
@@ -13,16 +14,18 @@ after(() => {
   for (const dir of materialized) rmSync(dir, { recursive: true, force: true });
 });
 
-function materialize({ hang = false } = {}) {
+function materialize({ hang = false, interruptAfterBody = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "ovrcr-pi-ext-"));
   materialized.push(dir);
   const record = join(dir, "record.jsonl");
   const helper = join(dir, "fake-ovrcr");
+  const checkpoint = join(dir, "body-written");
+  const interrupt = interruptAfterBody ? `printf ready > "${checkpoint}"; kill -STOP $$; ` : "";
   // `hang: "queued"` is a helper that only answers the final drain frame: an ordinary
   // frame stalls before it records anything, exactly as a lost helper does.
   const body = hang === "queued"
-    ? `body=$(cat)\ncase "$body" in *session_shutdown*) ;; *) sleep 5;; esac\nprintf '%s\\n' "$body" >> "${record}"\n`
-    : `cat >> "${record}"; printf '\\n' >> "${record}"\n${hang ? "sleep 5\n" : ""}`;
+    ? `IFS= read -r body\ncase "$body" in *session_shutdown*) ;; *) sleep 5;; esac\nprintf '%s\\n' "$body" >> "${record}"\n`
+    : `IFS= read -r body\nprintf '%s\\n' "$body" >> "${record}"\n${interrupt}${hang ? "sleep 5\n" : ""}`;
   writeFileSync(
     helper,
     `#!/bin/sh\n[ "$1" = report ] && [ "$2" = pi ] && [ "$3" = --stdin ] || exit 9\n${body}`,
@@ -30,9 +33,13 @@ function materialize({ hang = false } = {}) {
   chmodSync(helper, 0o700);
   // The receiver materializes the shared transport beside the extension that imports it.
   writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(TRANSPORT, "utf8"));
-  const extension = join(dir, "ovrcr-pi-reporting.mjs");
+  writeFileSync(join(dir, "ovrcr-delegation-observer.mjs"), readFileSync(new URL("../src/ovrcr-delegation-observer.mjs", import.meta.url)));
+  writeFileSync(join(dir, "ovrcr-delegation-continuation.mjs"), readFileSync(new URL("../src/ovrcr-delegation-continuation.mjs", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-pi-runtime.ts"), readFileSync(new URL("../src/ovrcr-pi-runtime.ts", import.meta.url)));
+    writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.ts", import.meta.url)));
+  const extension = join(dir, "ovrcr-pi-reporting.ts");
   writeFileSync(extension, readFileSync(SOURCE, "utf8").replace("__OVRCR_BINARY__", JSON.stringify(helper)));
-  return { extension, record };
+  return { extension, record, helper, checkpoint };
 }
 
 function frames(record) {
@@ -69,12 +76,28 @@ test("inert outside a managed invocation: registers nothing", async () => {
   assert.deepEqual(host.registered(), []);
 });
 
+test("an unavailable optional Pi API preserves ordinary reporting", async () => {
+  managed();
+  const { extension, record } = materialize();
+  writeFileSync(join(resolve(extension, ".."), "ovrcr-pi-interrupt.ts"),
+    "export async function loadPiKeybindings(){return undefined}\nexport function inspectPiInterruptBinding(){return 'Unavailable'}\n");
+  const host = await createHost(extension);
+  await host.emit({ type: "session_start", reason: "startup" });
+  await host.emit({ type: "agent_start" });
+  await host.emit({ type: "agent_end", messages: [assistant("stop")] });
+  await host.emit({ type: "agent_settled" });
+  const sent = frames(record);
+  assert.deepEqual(sent.map(frame => frame.event), ["session_start", "agent_start", "agent_end", "agent_settled"]);
+  assert.equal(sent[1].interrupt, "Unavailable");
+  assert.equal(sent.at(-1).outcome, "ok");
+});
+
 test("one response cycle: start, end, settled carry run, outcome and ordered sequence", async () => {
   managed();
   const { extension, record } = materialize();
   const host = await createHost(extension, { session: "sess-a" });
-  assert.deepEqual(host.registered(), ["agent_end", "agent_settled", "agent_start", "model_select", "session_shutdown", "session_start", "session_tree", "ui_prompt_end", "ui_prompt_start"]);
-  assert.deepEqual(host.commands(), ["ovrcr-reattach"]);
+  assert.deepEqual(host.registered(), ["agent_end", "agent_settled", "agent_start", "before_agent_start", "model_select", "session_before_compact", "session_compact", "session_compact_failed", "session_shutdown", "session_start", "session_tree", "ui_prompt_end", "ui_prompt_start"]);
+  assert.deepEqual(host.commands(), ["ovrcr-observe-reconnect", "ovrcr-reattach"]);
   await host.emit({ type: "session_start", reason: "startup" });
   await host.emit({ type: "agent_start" });
   await host.emit({ type: "agent_end", messages: [{ role: "user", content: "secret prompt" }, assistant("stop")] });
@@ -227,7 +250,7 @@ test("an outer prompt span opens and closes one Input request; the title never l
   const { extension, record } = materialize();
   const host = await createHost(extension, { session: "sess-a" });
   await host.emit({ type: "agent_start" });
-  await host.emit({ type: "ui_prompt_start", reason: "ui_prompt", kind: "select", title: "PROMPT_TITLE_SECRET" });
+  await host.emit({ type: "ui_prompt_start", reason: "ui_prompt", kind: "select", title: "PROMPT_TITLE_SECRET", question: "QUESTION_BODY_SECRET", context: "QUESTION_CONTEXT_SECRET", choices: ["QUESTION_OPTION_SECRET"], scope: "ANSWER_SCOPE_SECRET", answer: "ANSWER_BODY_SECRET" });
   await host.emit({ type: "ui_prompt_end", reason: "ui_prompt", kind: "select", title: "PROMPT_TITLE_SECRET" });
   await host.emit({ type: "ui_prompt_start", reason: "ui_prompt", kind: "editor" });
   await host.emit({ type: "ui_prompt_end", reason: "ui_prompt", kind: "editor" });
@@ -239,6 +262,7 @@ test("an outer prompt span opens and closes one Input request; the title never l
   assert.notEqual(sent[1].request_id, sent[3].request_id);
   assert.match(sent[1].request_id, /^[0-9a-f]{32}:p1$/);
   assert.ok(!readFileSync(record, "utf8").includes("PROMPT_TITLE_SECRET"));
+  for (const secret of ["QUESTION_BODY_SECRET", "QUESTION_CONTEXT_SECRET", "QUESTION_OPTION_SECRET", "ANSWER_SCOPE_SECRET", "ANSWER_BODY_SECRET"]) assert.ok(!readFileSync(record, "utf8").includes(secret), "unknown prompt fields must never enter Reporter frames");
   assert.ok(!("title" in sent[1]));
 });
 
@@ -372,3 +396,19 @@ test("omits model until the session reports one", async () => {
   assert.equal(sent[0].model, undefined);
 });
 
+
+test("reporting fixture publishes one complete EOF-terminated Unicode frame before interruption", async () => {
+  const { helper, record, checkpoint } = materialize({ interruptAfterBody: true });
+  const payload = { event: "fixture", path: "literal\\path", unicode: "π 雪", escaped: "line\nvalue" };
+  const child = spawn(helper,["report","pi","--stdin"],{stdio:["pipe","ignore","pipe"]});
+  const closed = new Promise(resolve=>child.once("close",resolve));
+  child.stdin.end(JSON.stringify(payload));
+  try {
+    const deadline=Date.now()+5000;
+    while(!existsSync(checkpoint)){assert.ok(Date.now()<deadline,"fixture reached owned interruption point");await new Promise(r=>setTimeout(r,5));}
+    child.kill("SIGKILL");await closed;
+    const bytes=readFileSync(record,"utf8");
+    assert.ok(bytes.endsWith("\n"),"a killed helper must not leave an unterminated frame for the next JSON body");
+    assert.deepEqual(bytes.split("\n").filter(Boolean).map(JSON.parse),[payload]);
+  } finally { child.kill("SIGKILL");await closed; }
+});
