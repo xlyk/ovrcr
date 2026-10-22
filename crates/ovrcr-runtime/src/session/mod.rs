@@ -1042,8 +1042,10 @@ impl Session {
         };
         Ok(self
             .with_delegated_context(&input, |agent| {
-                if agent.binding.provider == ovrcr_protocol::AgentProvider::Claude
-                    && !agent.input_requests.is_empty()
+                if matches!(
+                    agent.binding.provider,
+                    ovrcr_protocol::AgentProvider::Claude | ovrcr_protocol::AgentProvider::Codex
+                ) && !agent.input_requests.is_empty()
                 {
                     return Ok(rejected());
                 }

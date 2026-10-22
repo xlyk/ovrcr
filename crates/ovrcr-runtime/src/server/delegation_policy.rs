@@ -48,14 +48,11 @@ pub(super) fn resolve(
         ))
     });
     choices.dedup();
-    let mut response = DelegationCapabilities {
-        choices,
-        resolved_choice: None,
-        effective_limits,
-        live_sessions,
-        live_children,
-        available_slots: 0,
-        capabilities: [
+    let harness = selection.provider.unwrap_or(policy.default_harness);
+    let capabilities = if harness == ovrcr_protocol::DelegationHarness::Codex {
+        vec!["read", "result_file"]
+    } else {
+        vec![
             "read",
             "result_file",
             "isolated_workspace",
@@ -64,9 +61,15 @@ pub(super) fn resolve(
             "edit",
             "check",
         ]
-        .into_iter()
-        .map(str::to_owned)
-        .collect(),
+    };
+    let mut response = DelegationCapabilities {
+        choices,
+        resolved_choice: None,
+        effective_limits,
+        live_sessions,
+        live_children,
+        available_slots: 0,
+        capabilities: capabilities.into_iter().map(str::to_owned).collect(),
         enforceable_limits: vec![
             "max_live_children".into(),
             "max_execution_attempts".into(),
@@ -328,5 +331,57 @@ mod tests {
         );
         assert!(report.resolved_choice.is_none());
         assert_eq!(report.available_slots, 0);
+    }
+
+    #[test]
+    fn codex_advertises_only_read_only_effects_while_pi_keeps_coding_capabilities() {
+        let policy = DelegationSettings {
+            allowed_harnesses: vec![DelegationHarness::Pi, DelegationHarness::Codex],
+            ..Default::default()
+        };
+        for provider in [DelegationHarness::Pi, DelegationHarness::Codex] {
+            let selection = DelegationSelection {
+                provider: Some(provider),
+                model_provider: Some("openai".into()),
+                model: Some("exact-model".into()),
+                ..Default::default()
+            };
+            let native = DelegationChoice {
+                provider,
+                model_provider: "openai".into(),
+                model: "exact-model".into(),
+            };
+            for unavailable in [false, true] {
+                let report = resolve(
+                    &policy,
+                    &selection,
+                    if unavailable {
+                        vec![]
+                    } else {
+                        vec![native.clone()]
+                    },
+                    1,
+                    0,
+                    unavailable.then(|| "unavailable native policy".into()),
+                );
+                if provider == DelegationHarness::Codex {
+                    assert_eq!(report.capabilities, ["read", "result_file"]);
+                } else {
+                    for capability in [
+                        "read",
+                        "result_file",
+                        "isolated_workspace",
+                        "immutable_candidate",
+                        "write",
+                        "edit",
+                        "check",
+                    ] {
+                        assert!(report.capabilities.iter().any(|value| value == capability));
+                    }
+                }
+                assert!(!report.native_helpers && !report.native_descendant_usage);
+                assert_eq!(report.resolved_choice.is_none(), unavailable);
+            }
+        }
     }
 }

@@ -1,6 +1,8 @@
 //! Public Pi tools -> control CLI -> isolated binary Server -> real managed child PTY.
 #[path = "pi_delegation/control.rs"]
 mod assignment_control;
+#[path = "pi_delegation/codex.rs"]
+mod codex;
 #[path = "pi_delegation/coding.rs"]
 mod coding;
 #[path = "pi_delegation/delivery.rs"]

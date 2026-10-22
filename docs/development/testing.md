@@ -64,6 +64,21 @@ job. `FLAKY` lines in the job log are the list of tests to harden; retries hide
 the red, not the defect. Locally, `cargo nextest run --profile ci` reproduces
 the CI behavior once nextest is installed.
 
+### Linux and headless agents
+
+Linux agents (Cursor Cloud, CI runners) are headless. The GUI feature has no
+Linux windowing backend, so match the `linux` job in `.github/workflows/ci.yml`
+and omit `--all-features`.
+
+- Rust stable, at least the workspace `rust-version` (1.95), plus rustfmt and
+  clippy. A default cloud image may be older.
+- `zsh` is required. Shell integration tests invoke `/bin/zsh`.
+- Node 22 runs `node --test tests/pi_reporting_extension.mjs
+  tests/omp_reporting_extension.mjs tests/pi_delegation_extension.mjs`.
+- `cargo nextest` uses the `ci` profile in `.config/nextest.toml`.
+- Nothing starts on boot. Drive the CLI with an isolated `OVRCR_HOME` and
+  `OVRCR_SOCKET`.
+
 ## Commands and isolated acceptance
 
 For Rust changes, choose the owning package and add a focused test filter as appropriate:

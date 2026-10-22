@@ -1323,8 +1323,47 @@ fn startup_read_only_commands_do_not_start_a_missing_server() {
     assert!(!fixture.socket.exists());
 }
 
+// The existing startup test's cleanup tail also runs after its first failure.
+// Every wait belongs to its original Child; this helper owns no process group.
+fn finish_startup_workers(workers: &mut [Child]) -> Vec<std::process::ExitStatus> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if workers
+            .iter_mut()
+            .all(|worker| worker.try_wait().ok().flatten().is_some())
+        {
+            break;
+        }
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    let mut statuses = Vec::new();
+    let mut errors = Vec::new();
+    for worker in workers {
+        let pid = worker.id();
+        match worker.try_wait() {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                if let Err(error) = worker.kill() {
+                    errors.push(format!("worker {pid} kill: {error}"));
+                }
+            }
+            Err(error) => errors.push(format!("worker {pid} poll: {error}")),
+        }
+        match worker.wait() {
+            Ok(status) => {
+                eprintln!("STARTUP_ORIGINAL_WAIT pid={pid} status={status}");
+                statuses.push(status);
+            }
+            Err(error) => errors.push(format!("worker {pid} original wait: {error}")),
+        }
+    }
+    assert!(errors.is_empty(), "startup worker cleanup: {errors:?}");
+    statuses
+}
+
 #[test]
 fn startup_stale_concurrent_attempts_leave_one_surviving_server() {
+    use std::os::unix::fs::MetadataExt;
     let fixture = Live::idle();
     let registry = fixture.root.path().join("config.toml");
     save_registry_atomic(&Registry::default(), &registry).unwrap();
@@ -1332,71 +1371,140 @@ fn startup_stale_concurrent_attempts_leave_one_surviving_server() {
     let stale = UnixListener::bind(&fixture.socket).unwrap();
     drop(stale);
     let executable = env!("CARGO_BIN_EXE_ovrcr");
+    let began = Instant::now();
     let mut workers: Vec<Child> = Vec::new();
-    for _ in 0..2 {
-        workers.push(
-            Command::new(executable)
-                .arg("server")
-                .env("OVRCR_SOCKET", &fixture.socket)
-                .env("OVRCR_HOME", &registry)
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-                .unwrap(),
+    let mut logs = Vec::new();
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        for index in 0..2 {
+            let log = fixture
+                .root
+                .path()
+                .join(format!("startup-worker-{index}.stderr"));
+            let stderr = std::fs::File::create(&log).unwrap();
+            stderr
+                .set_permissions(std::fs::Permissions::from_mode(0o600))
+                .unwrap();
+            workers.push(
+                fixture
+                    .command()
+                    .arg("server")
+                    .env("OVRCR_HOME", &registry)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(stderr)
+                    .spawn()
+                    .unwrap(),
+            );
+            logs.push(log);
+            eprintln!(
+                "STARTUP_WORKER index={index} pid={} pgid={} spawned_elapsed={:?} root={} socket={} executable_bytes={}",
+                workers[index].id(),
+                unsafe { libc::getpgid(workers[index].id() as i32) },
+                began.elapsed(),
+                fixture.root.path().display(),
+                fixture.socket.display(),
+                std::fs::metadata(executable).unwrap().len()
+            );
+        }
+        assert_ne!(workers[0].id(), workers[1].id());
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut exited = 0;
+        let mut observed = [None, None];
+        while Instant::now() < deadline {
+            exited = 0;
+            for (index, worker) in workers.iter_mut().enumerate() {
+                observed[index] = worker.try_wait().unwrap();
+                if observed[index].is_some() {
+                    exited += 1;
+                }
+            }
+            if exited == 1 {
+                break;
+            }
+            thread::park_timeout(Duration::from_millis(5));
+        }
+        // Freeze the same observation before diagnostic I/O or cleanup can change it.
+        eprintln!(
+            "STARTUP_OBSERVATION elapsed={:?} exited={exited} original_statuses={observed:?}",
+            began.elapsed()
         );
-    }
-    assert_ne!(workers[0].id(), workers[1].id());
-    let deadline = Instant::now() + Duration::from_secs(2);
-    let mut exited = 0;
-    while Instant::now() < deadline {
-        exited = 0;
-        for worker in &mut workers {
-            if worker.try_wait().unwrap().is_some() {
-                exited += 1;
+        for (index, worker) in workers.iter().enumerate() {
+            let log = std::fs::File::open(&logs[index]).and_then(|file| {
+                let mut text = String::new();
+                file.take(4097).read_to_string(&mut text)?;
+                Ok(text)
+            });
+            eprintln!(
+                "STARTUP_STDERR index={index} pid={} bytes={:?} text={log:?}",
+                worker.id(),
+                std::fs::metadata(&logs[index]).map(|meta| meta.len())
+            );
+            #[cfg(target_os = "linux")]
+            for leaf in ["stat", "wchan"] {
+                let path = format!("/proc/{}/{leaf}", worker.id());
+                eprintln!(
+                    "STARTUP_PROC pid={} leaf={leaf} value={:?}",
+                    worker.id(),
+                    std::fs::read_to_string(path)
+                        .map(|text| text.chars().take(1024).collect::<String>())
+                );
             }
         }
-        if exited == 1 {
-            break;
+        let mut build = fixture.socket.as_os_str().to_os_string();
+        build.push(".build.json");
+        for path in [fixture.socket.clone(), PathBuf::from(build)] {
+            eprintln!(
+                "STARTUP_PUBLIC_PATH path={} metadata={:?}",
+                path.display(),
+                std::fs::symlink_metadata(&path).map(|meta| (
+                    meta.dev(),
+                    meta.ino(),
+                    meta.len(),
+                    meta.mode()
+                ))
+            );
         }
-        thread::park_timeout(Duration::from_millis(5));
+        assert_eq!(
+            exited, 1,
+            "exactly one detached server owner must survive startup"
+        );
+        let mut first = connect_server(&fixture.socket).unwrap();
+        write_frame(
+            &mut first,
+            &ClientMessage {
+                request_id: 3,
+                request: Request::Shutdown { kill: false },
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            read_frame::<ServerMessage>(&mut first).unwrap(),
+            ServerMessage::Response {
+                response: Response::Ok,
+                ..
+            }
+        ));
+        drop(first);
+    }));
+    if result.is_err() {
+        eprintln!(
+            "STARTUP_FAILURE_SHUTDOWN response={:?}",
+            request_with_timeout(
+                &fixture.socket,
+                4,
+                Request::Shutdown { kill: false },
+                Duration::from_secs(2)
+            )
+        );
     }
-    assert_eq!(
-        exited, 1,
-        "exactly one detached server owner must survive startup"
-    );
-    let mut first = connect_server(&fixture.socket).unwrap();
-    write_frame(
-        &mut first,
-        &ClientMessage {
-            request_id: 3,
-            request: Request::Shutdown { kill: false },
-        },
-    )
-    .unwrap();
-    assert!(matches!(
-        read_frame::<ServerMessage>(&mut first).unwrap(),
-        ServerMessage::Response {
-            response: Response::Ok,
-            ..
+    let cleanup = catch_unwind(AssertUnwindSafe(|| finish_startup_workers(&mut workers)));
+    if let Err(error) = result {
+        if cleanup.is_err() {
+            eprintln!("STARTUP_CLEANUP_FAILED_AFTER_ORIGINAL_FAILURE");
         }
-    ));
-    drop(first);
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < deadline {
-        if workers
-            .iter_mut()
-            .all(|worker| worker.try_wait().unwrap().is_some())
-        {
-            break;
-        }
-        thread::park_timeout(Duration::from_millis(5));
+        std::panic::resume_unwind(error);
     }
-    for worker in &mut workers {
-        if worker.try_wait().unwrap().is_none() {
-            worker.kill().unwrap();
-            worker.wait().unwrap();
-        }
-    }
+    let statuses = cleanup.unwrap();
+    assert_eq!(statuses.len(), 2);
     assert!(
         workers
             .iter_mut()
@@ -1406,6 +1514,48 @@ fn startup_stale_concurrent_attempts_leave_one_surviving_server() {
         !fixture.socket.exists(),
         "shutdown must stop the sole server"
     );
+}
+
+#[test]
+fn startup_worker_failure_still_reaps_both_original_children() {
+    let mut workers = Vec::new();
+    let failure = catch_unwind(AssertUnwindSafe(|| {
+        for index in 0..2 {
+            workers.push(
+                Command::new("/bin/sh")
+                    .args(["-c", "exec sleep 30"])
+                    .spawn()
+                    .unwrap(),
+            );
+            let pid = workers[index].id();
+            eprintln!(
+                "STARTUP_WORKER index={index} pid={pid} pgid={} synthetic=true",
+                unsafe { libc::getpgid(pid as i32) }
+            );
+        }
+        panic!("forced startup evidence failure");
+    }));
+    let ids: Vec<_> = workers.iter().map(Child::id).collect();
+    let cleanup = catch_unwind(AssertUnwindSafe(|| finish_startup_workers(&mut workers)));
+    let error = failure.expect_err("forced failure must remain visible");
+    assert_eq!(
+        error.downcast_ref::<&str>(),
+        Some(&"forced startup evidence failure")
+    );
+    let statuses = cleanup.unwrap();
+    assert_eq!(statuses.len(), 2);
+    for pid in ids {
+        let mut status = 0;
+        assert_eq!(
+            unsafe { libc::waitpid(pid as i32, &mut status, libc::WNOHANG) },
+            -1,
+            "original child must already have been reaped"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ECHILD)
+        );
+    }
 }
 
 #[test]

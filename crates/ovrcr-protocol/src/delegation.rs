@@ -185,6 +185,18 @@ impl ResearchContract {
         }
         match self.provider.as_str() {
             "pi" => {}
+            "codex" => {
+                if self.model_provider != "openai" {
+                    return Err(
+                        "Codex delegation supports only the native OpenAI backend; custom backends are unavailable",
+                    );
+                }
+                if self.coding.is_some() {
+                    return Err(
+                        "Codex delegation supports read-only research; coding permissions are unavailable",
+                    );
+                }
+            }
             "claude" => {
                 if self.model_provider != "native" {
                     return Err(
@@ -1106,6 +1118,10 @@ mod tests {
             native.validate(),
             Err("Claude coding delegation is not supported")
         );
+        c.provider = "codex".into();
+        assert!(c.validate().is_err());
+        c.model_provider = "openai".into();
+        assert!(c.validate().is_ok());
         c.permitted_actions.push("write".into());
         assert!(c.validate().is_err());
         c.permitted_actions.pop();
@@ -1115,6 +1131,7 @@ mod tests {
         c.request = "../escape".into();
         assert!(c.validate().is_err());
     }
+
     #[test]
     fn publication_bytes_preserve_legacy_research_and_exact_coding_payload() {
         let legacy = br#"{"schema":1,"identity":{"instance":"instance","workflow":"workflow","controller":"parent","controller_epoch":1,"task":"task","attempt":1,"contract":1,"request":"request","session":2,"run":1},"version":1,"outcome":"success","summary":"Original research.","evidence":["README:1"],"unresolved":[]}"#;
@@ -1136,5 +1153,29 @@ mod tests {
             serde_json::to_vec(&submission).unwrap(),
             "coding candidate/check bytes keep the accepted typed representation"
         );
+    }
+
+    #[test]
+    fn codex_coding_is_refused_without_weakening_pi_coding_or_codex_research() {
+        let mut contract: ResearchContract = serde_json::from_value(serde_json::json!({
+            "schema":1,"workflow":"workflow","controller":"parent","task":"task","request":"request",
+            "project":"project","workspace":"coding-one","scope":"Bounded coding.",
+            "provider":"pi","model_provider":"openai","model":"exact-model",
+            "permitted_actions":["read","write","edit","check"],"acceptance_evidence":["candidate"],
+            "mandatory_capabilities":["isolated_workspace","immutable_candidate","write","edit","check"],
+            "coding":{"requested_base":"main","branch":"coding/one","authorized_paths":["change.txt"],"required_checks":["unit"]}
+        })).unwrap();
+        assert!(contract.validate().is_ok());
+        contract.provider = "codex".into();
+        assert_eq!(
+            contract.validate(),
+            Err("Codex delegation supports read-only research; coding permissions are unavailable")
+        );
+        contract.coding = None;
+        contract.permitted_actions = vec!["read".into()];
+        contract.mandatory_capabilities = vec!["read".into(), "result_file".into()];
+        assert!(contract.validate().is_ok());
+        contract.permitted_actions.push("write".into());
+        assert!(contract.validate().is_err());
     }
 }

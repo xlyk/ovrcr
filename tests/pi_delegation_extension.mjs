@@ -26,7 +26,8 @@ test("managed Pi exposes research assignment and explicit collection tools", asy
     assert.deepEqual(host.tools(), ["ovrcr_accept", "ovrcr_answer_question", "ovrcr_archive", "ovrcr_cancel_workflow", "ovrcr_capabilities", "ovrcr_capture_fallback", "ovrcr_checkpoint", "ovrcr_collect", "ovrcr_collect_question", "ovrcr_confirm_interrupt", "ovrcr_confirm_return", "ovrcr_deliver", "ovrcr_dependencies", "ovrcr_followup", "ovrcr_inspect", "ovrcr_interrupt", "ovrcr_mark_handled", "ovrcr_parents", "ovrcr_publish", "ovrcr_publish_question", "ovrcr_recover", "ovrcr_recover_fallback", "ovrcr_retry", "ovrcr_review", "ovrcr_start", "ovrcr_transfer", "ovrcr_wait"]);
     assert.deepEqual(host.toolDefinition("ovrcr_publish").parameters.required, ["handle", "submission"]);
     assert.deepEqual(host.toolDefinition("ovrcr_collect").parameters.required, ["handle"]);
-    assert.deepEqual(host.toolDefinition("ovrcr_start").parameters.anyOf, [{ required: ["handle"], maxProperties: 1 }, { required: ["project", "workspace", "scope", "acceptance_evidence"], not: { required: ["handle"] } }]);
+    assert.deepEqual(host.toolDefinition("ovrcr_start").parameters.anyOf, [{ required: ["handle"], maxProperties: 2, properties: { handle: { type: "string" }, prepare_only: { type: "boolean" } }, additionalProperties: false }, { required: ["project", "workspace", "scope", "acceptance_evidence"], not: { required: ["handle"] } }]);
+    assert.equal(host.toolDefinition("ovrcr_start").parameters.properties.prepare_only.type, "boolean");
     const coding = host.toolDefinition("ovrcr_start").parameters.properties.coding;
     assert.deepEqual(coding.required,["requested_base","branch","authorized_paths","required_checks"]);
     assert.equal(coding.additionalProperties,false);
@@ -35,6 +36,12 @@ test("managed Pi exposes research assignment and explicit collection tools", asy
     assert.equal(graph.properties.edges.maxItems,256);
     assert.equal(graph.additionalProperties,false);
     assert.equal(host.toolDefinition("ovrcr_start").parameters.properties.review.additionalProperties,false);
+    const reviewSchema = host.toolDefinition("ovrcr_start").parameters.properties.review;
+    assert.equal(reviewSchema.properties.context_paths.maxItems,32);
+    assert.equal(reviewSchema.properties.context_paths.uniqueItems,true);
+    assert.ok(!reviewSchema.required.includes("context_paths"),"legacy direct review remains valid");
+    assert.ok(!reviewSchema.properties.target.required.includes("view"),"Server Prepare enriches direct review");
+    assert.equal(reviewSchema.properties.target.properties.view.anyOf[0].properties.round.pattern,"^[A-Za-z0-9_-]+$");
     assert.equal(coding.properties.authorized_paths.minItems,1);
     assert.equal(coding.properties.required_checks.uniqueItems,true);
     assert.deepEqual(host.toolDefinition("ovrcr_followup").parameters.anyOf, [{required:["handle","request"]},{required:["handle","expected_identity","expected_result_version","expected_control_epoch","text"]}]);
@@ -166,6 +173,12 @@ test("registered start rejects invalid action authority before intent or transpo
       assert.equal(response.details.handle, null);
       assert.equal(response.details.receipts, undefined);
       assert.equal(existsSync(join(dir, "parent-intents")), false, "invalid actions must not persist an original intent");
+    }
+    for (const extra of [{ request: "replacement" }, { scope: "changed" }, { unknown: true }]) {
+      const refused = await callback("direct-host", { handle: "original", prepare_only: true, ...extra }, undefined, undefined, {});
+      assert.equal(refused.details.dispatch, "Refused");
+      assert.equal(launches, 0, "prepare-only handle replay must reject every extra key before transport");
+      assert.equal(existsSync(join(dir, "parent-intents")), false);
     }
     const mixed = await callback("direct-host", { ...research, handle: "original" }, undefined, undefined, {});
     assert.equal(mixed.details.dispatch, "Refused");
@@ -580,4 +593,104 @@ console.log(JSON.stringify(wire.Archive ? {handle:fields.handle,archive_receipts
       assert.equal(readFileSync(calls,"utf8").trim().split("\n").length,4);
     }
   } finally {await host?.emit({type:"session_shutdown",reason:"quit"});process.env=before;rmSync(dir,{recursive:true,force:true});}
+});
+
+// Registered production tool callbacks with deterministic control transport only.
+async function withPrepareOnlyHost(loss, run) {
+  const dir = mkdtempSync(join(tmpdir(), "ovrcr-prepare-only-"));
+  const before = { ...process.env };
+  let host;
+  try {
+    const binary = join(dir, "control.mjs"), state = join(dir, "state.json"), calls = join(dir, "calls"), lost = join(dir, "lost");
+    writeFileSync(binary, `#!/usr/bin/env node
+import {readFileSync,writeFileSync,appendFileSync,existsSync} from 'node:fs';
+let input='';for await(const bytes of process.stdin)input+=bytes;
+const request=JSON.parse(input),operation=Object.keys(request)[0];
+appendFileSync(${JSON.stringify(calls)},JSON.stringify(request)+'\\n');
+let value=existsSync(${JSON.stringify(state)})?JSON.parse(readFileSync(${JSON.stringify(state)})):null;
+if(operation==='Capabilities'){console.log(JSON.stringify({resolved_choice:{provider:'codex',model_provider:'openai',model:'fixture-model'},effective_limits:{max_live_children:1},capabilities:['read','result_file']}));process.exit(0);}
+if(operation==='Prepare'){
+ const contract=request.Prepare.contract;
+ value??={handle:contract.request,identity:{instance:'i',workflow:contract.workflow,controller:contract.controller,controller_epoch:1,task:contract.task,attempt:1,contract:1,request:contract.request,session:null,run:null},dispatch:'Prepared',result_version:1,control:{epoch:1},receipts:[{operation:'Prepare',outcome:'Applied'}]};
+ if(${JSON.stringify(loss)}!=='none'&&!existsSync(${JSON.stringify(lost)})){
+  writeFileSync(${JSON.stringify(lost)},'lost');
+  if(${JSON.stringify(loss)}==='after')writeFileSync(${JSON.stringify(state)},JSON.stringify(value));
+  process.exit(1);
+ }
+}else if(!value){console.error(JSON.stringify({error:{code:'NotFound',message:'not found'}}));process.exit(1);}
+if(operation==='Launch'){value.identity.session=41;value.identity.run=1;value.dispatch='Launched';value.receipts.push({operation:'Launch',outcome:'Applied'});}
+if(operation==='SendInitial'){value.dispatch='Applied';value.receipts.push({operation:'InitialInput',outcome:'Applied'});}
+writeFileSync(${JSON.stringify(state)},JSON.stringify(value));console.log(JSON.stringify(value));
+`);
+    chmodSync(binary, 0o700);
+    Object.assign(process.env, {OVRCR_AGENT_SOCKET:"/fixture/reporting",OVRCR_AGENT_TOKEN:"fixture-reporting",OVRCR_DELEGATION_SESSION:"1",OVRCR_DELEGATION_TOKEN:"fixture-delegation",OVRCR_DELEGATION_SOCKET:"/fixture/control",OVRCR_DELEGATION_HOME:dir});
+    writeFileSync(join(dir,"reporting.ts"),readFileSync(process.env.OVRCR_TEST_EXTENSION_SOURCE??new URL("../src/pi-reporting-extension.mjs",import.meta.url),"utf8").replace("__OVRCR_BINARY__",JSON.stringify(binary)));
+    for(const name of ["ovrcr-reporting-transport.mjs","ovrcr-delegation-observer.mjs","ovrcr-delegation-continuation.mjs","ovrcr-pi-runtime.ts"])writeFileSync(join(dir,name),readFileSync(new URL(`../src/${name}`,import.meta.url)));
+    writeFileSync(join(dir,"ovrcr-pi-interrupt.ts"),"export async function loadPiKeybindings(){return undefined}\nexport function inspectPiInterruptBinding(){return 'Unavailable'}\n");
+    host=await createHost(join(dir,"reporting.ts"));
+    const requests=()=>readFileSync(calls,"utf8").trim().split("\n").filter(Boolean).map(line=>JSON.parse(line));
+    await run({host,dir,requests,args:{project:"p",workspace:"w",scope:"Reserved native login only; no task input.",provider:"codex",model_provider:"openai",model:"fixture-model",acceptance_evidence:["Reserved exact home; no child launch"],prepare_only:true}});
+  } finally {await host?.emit({type:"session_shutdown",reason:"quit"});process.env=before;rmSync(dir,{recursive:true,force:true});}
+}
+
+for(const loss of ["none","before","after"])test(`prepare-only registered start reserves without effects and recovers ${loss} Prepare loss`,async()=>{
+  await withPrepareOnlyHost(loss,async({host,dir,requests,args})=>{
+    const first=(await host.tool("ovrcr_start",args)).details;
+    if(loss!=="none"){
+      assert.equal(first.dispatch,"Unknown");
+      assert.deepEqual(first.recovery_arguments,{handle:first.handle,prepare_only:true},"prepare-only unknown must preserve non-advancing recovery arguments");
+      assert.match(first.recovery,/Prepare only/);
+    }
+    assert.equal(requests().filter(row=>row.Launch||row.SendInitial).length,0,"prepare_only must never call Launch or SendInitial");
+    const recovered=(await host.tool("ovrcr_start",{handle:first.handle,prepare_only:true})).details;
+    const duplicate=(await host.tool("ovrcr_start",{handle:first.handle,prepare_only:true})).details;
+    assert.equal(recovered.dispatch,"Prepared");
+    assert.equal(recovered.identity.session,null);
+    assert.equal(recovered.identity.run,null);
+    assert.deepEqual(duplicate,recovered);
+    assert.equal(requests().filter(row=>row.Launch||row.SendInitial).length,0,"duplicate Prepare must retain zero launched children and zero input");
+    assert.ok(requests().every(row => row.Capabilities || row.Prepare), "Prepare-only must not even Reconcile or invoke another operation");
+    const prepares=requests().filter(row=>row.Prepare).map(row=>row.Prepare);
+    assert.equal(prepares.length, 3, "each Prepare-only call makes exactly one Prepare attempt");
+    for(const value of prepares){assert.deepEqual(value.contract,prepares[0].contract);assert.deepEqual(value.auth,prepares[0].auth);}
+    const intent=JSON.parse(readFileSync(join(dir,"parent-intents",`${first.handle}.json`)));
+    assert.equal(intent.prepare_only,undefined,"transport mode must not change the canonical contract");
+    const resumed=(await host.tool("ovrcr_start",{handle:first.handle,prepare_only:false})).details;
+    assert.equal(resumed.dispatch,"Applied");
+    assert.equal(resumed.handle,first.handle);
+    assert.equal(resumed.identity.request,intent.request);
+    assert.equal(requests().filter(row=>row.Launch).length,1,"explicit later resume launches once");
+    assert.equal(requests().filter(row=>row.SendInitial).length,1,"explicit later resume delivers once");
+  });
+});
+
+test("prepare-only invalid flags refuse before control or private intent effects",async()=>{
+  await withPrepareOnlyHost("none",async({host,dir,args})=>{
+    for(const value of [null,0,1,"true",{},[]]){
+      const reply=(await host.tool("ovrcr_start",{...args,prepare_only:value})).details;
+      assert.equal(reply.dispatch,"Refused");
+      assert.equal(reply.transport,"NotSent");
+      assert.throws(()=>readFileSync(join(dir,"calls")),{code:"ENOENT"},"invalid prepare_only must not call any control operation");
+      assert.throws(()=>readFileSync(join(dir,"parent-intents")),{code:"ENOENT"},"invalid flag must not create private intents");
+    }
+    const invalidHandle=(await host.tool("ovrcr_start",{handle:"reserved",prepare_only:"true"})).details;
+    assert.equal(invalidHandle.transport,"NotSent");
+    assert.throws(()=>readFileSync(join(dir,"calls")),{code:"ENOENT"});
+  });
+});
+
+test("Codex coding and resolved-default review refuse before intent or Prepare", async () => {
+  await withPrepareOnlyHost("none", async ({host, dir, requests, args}) => {
+    const coding = (await host.tool("ovrcr_start", {...args, coding: {requested_base:"main",branch:"work",authorized_paths:["."],required_checks:["check"]}})).details;
+    assert.equal(coding.dispatch, "Refused");
+    assert.match(coding.reason, /does not support coding permissions/);
+    const {provider, ...defaults} = args;
+    const review = (await host.tool("ovrcr_start", {...defaults, review: {}})).details;
+    assert.equal(review.dispatch, "Refused");
+    assert.equal(review.transport, "NotSent");
+    assert.match(review.reason, /typed independent-review/);
+    assert.equal(requests().length, 2);
+    assert.ok(requests().every(row => row.Capabilities), "pre-effect capability refusals cannot Prepare");
+    assert.equal(existsSync(join(dir, "parent-intents")), false);
+  });
 });

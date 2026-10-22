@@ -3,6 +3,7 @@ mod agent_setup;
 mod args;
 mod bridge;
 mod claude_delegation;
+mod codex_delegation;
 mod codex_setup;
 mod cursor;
 mod delegation;

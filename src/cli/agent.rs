@@ -64,6 +64,9 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
     };
     let mut argv = argv;
     let assigned_claude = name == "claude" && super::claude_delegation::prepare(&argv)?;
+    if name == "codex" {
+        super::codex_delegation::prepare(&argv)?;
+    }
     ovrcr::protocol::apply_default_auto_trust(&name, &mut argv);
     let pi_resume = if name == "pi" && ovrcr::report::pi::eligible_argv(&argv) {
         ovrcr_runtime::extension_recovery::explicit_pi_resume(&argv)
@@ -91,7 +94,10 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
             })?
     };
     let mut delegation_environment = Vec::new();
-    if (name == "pi" || assigned_claude)
+    if (name == "pi"
+        || assigned_claude
+        || (name == "codex"
+            && std::env::var_os(ovrcr_runtime::codex_delegation::ARTIFACT_ENV).is_some()))
         && let (Ok(session), Ok(token), Ok(socket)) = (
             std::env::var("OVRCR_SESSION_ID"),
             std::env::var("OVRCR_HOOK_TOKEN"),

@@ -445,7 +445,7 @@ fn fifty_session_reporting_capacity() {
             admission_failure(index, "Hello", &response);
         }
         s = connect(&fixture.socket);
-        let response = send(
+        let binding = match send(
             &mut s,
             Request::Supervisor(SupervisorRequest {
                 auth: auth.clone(),
@@ -455,8 +455,7 @@ fn fifty_session_reporting_capacity() {
                     conversation: format!("root-{index}"),
                 },
             }),
-        );
-        let binding = match response {
+        ) {
             Response::AgentOperation(AgentOperationResult::Bound(binding)) => binding,
             Response::Error { code, message } => {
                 let reason = match message.as_str() {

@@ -20,7 +20,7 @@ mod interrupt_effects;
 #[path = "delegation_questions.rs"]
 mod questions;
 #[path = "delegation_review.rs"]
-mod review;
+pub(super) mod review;
 use questions::{AnswerIntent, QuestionPublicationIntent};
 #[path = "delegation_dependencies.rs"]
 mod dependencies;
@@ -139,7 +139,8 @@ impl Record {
         // Recognize that journaled state without repairing unknown history.
         self.execution_attempts.is_some_and(|count| count > 0)
             && self.binding.as_ref().is_some_and(|binding| {
-                (binding.provider == AgentProvider::Pi && self.native_model.is_none()
+                (matches!(binding.provider, AgentProvider::Pi | AgentProvider::Codex)
+                    && self.native_model.is_none()
                     || binding.provider == AgentProvider::Claude && self.native_model.is_some())
                     && binding.generation == 1
             })
@@ -805,17 +806,32 @@ impl ServerState {
         self.reject_assigned_input(auth.session)?;
         let (settings, invalid) = self.policy_snapshot();
         let harness = selection.provider.unwrap_or(settings.default_harness);
-        let discovered = if harness == DelegationHarness::Claude {
-            if selection
-                .model_provider
-                .as_deref()
-                .is_some_and(|backend| backend != "native")
+        let discovered = match harness {
+            DelegationHarness::Pi => available_models(),
+            DelegationHarness::Codex
+                if selection
+                    .model_provider
+                    .as_deref()
+                    .is_none_or(|p| p == "openai") =>
             {
-                Err(anyhow::anyhow!(
-                    "Claude requires the explicit native backend; no substitute selected"
-                ))
-            } else {
-                crate::claude_delegation::discover(selection.model.as_deref().unwrap_or("default"))
+                crate::codex_delegation::models()
+            }
+            DelegationHarness::Codex => bail!(
+                "Codex delegation supports only the native OpenAI backend; no substitute selected"
+            ),
+            DelegationHarness::Claude => {
+                if selection
+                    .model_provider
+                    .as_deref()
+                    .is_some_and(|backend| backend != "native")
+                {
+                    Err(anyhow::anyhow!(
+                        "Claude requires the explicit native backend; no substitute selected"
+                    ))
+                } else {
+                    crate::claude_delegation::discover(
+                        selection.model.as_deref().unwrap_or("default"),
+                    )
                     .map(|(models, _)| {
                         models
                             .into_iter()
@@ -826,17 +842,32 @@ impl ServerState {
                             })
                             .collect()
                     })
+                }
             }
-        } else {
-            available_models()
+            _ => bail!("requested delegation harness is unavailable; no substitute selected"),
         };
         let (inventory, unavailable) = match discovered {
             Ok(inventory) => (inventory, invalid),
-            Err(_) => (Vec::new(), Some(if harness == DelegationHarness::Claude {
-                if selection.model_provider.as_deref().is_some_and(|backend| backend != "native") {
-                    "Claude requires the explicit native backend; no substitute selected"
-                } else { "native Claude model/policy preflight is unavailable; no substitute selected" }
-            } else { "Pi model inventory is unavailable; no substitute selected" }.into())),
+            Err(_) => (
+                Vec::new(),
+                Some(if harness == DelegationHarness::Claude {
+                    if selection
+                        .model_provider
+                        .as_deref()
+                        .is_some_and(|backend| backend != "native")
+                    {
+                        "Claude requires the explicit native backend; no substitute selected".into()
+                    } else {
+                        "native Claude model/policy preflight is unavailable; no substitute selected"
+                            .into()
+                    }
+                } else {
+                    format!(
+                        "{} model inventory or required native policy is unavailable; no substitute selected",
+                        harness.name()
+                    )
+                }),
+            ),
         };
         let (live, children) = self.delegation_live_counts()?;
         Ok(policy::resolve(
@@ -980,7 +1011,7 @@ impl ServerState {
                     "capabilities require the discovery response path",
                 ));
             }
-            DelegationRequest::Prepare { auth, contract } => {
+            DelegationRequest::Prepare { auth, mut contract } => {
                 contract
                     .validate()
                     .map_err(|reason| lifecycle_error(ErrorCode::InvalidRequest, reason))?;
@@ -998,6 +1029,7 @@ impl ServerState {
                         lifecycle_error(ErrorCode::Conflict, "parent Pi conversation is not bound")
                     })?;
                 self.require_dispatch_open(&self.retained.lock(), &contract.workflow)?;
+                self.materialize_direct_review(&auth, &mut contract)?;
                 self.validate_review_assignment(&auth, &contract)?;
                 let handle = contract.request.clone();
                 let previous = self.retained.lock().assignment(&handle)?;
@@ -1435,6 +1467,11 @@ impl ServerState {
                         // Resolve the executable before charging: lookup cannot create
                         // a process, and an error here must leave Prepared unspent.
                         let executable = std::env::current_exe()?;
+                        let codex_executable = if contract.provider == "codex" {
+                            Some(crate::codex_delegation::executable()?)
+                        } else {
+                            None
+                        };
                         record.execution_attempts = Some(
                             spent
                                 .checked_add(1)
@@ -1483,6 +1520,36 @@ impl ServerState {
                                 &record.root,
                             ));
                             argv
+                        } else if contract.provider == "codex" {
+                            let home = std::fs::canonicalize(&self.registry_path)?
+                                .join("codex-children")
+                                .join(&handle);
+                            vec![
+                                "/usr/bin/env".into(),
+                                format!("CODEX_HOME={}", home.display()).into(),
+                                format!(
+                                    "{}={}",
+                                    crate::codex_delegation::ARTIFACT_ENV,
+                                    record.root.display()
+                                )
+                                .into(),
+                                executable.into_os_string(),
+                                "agent".into(),
+                                "run".into(),
+                                "codex".into(),
+                                "--".into(),
+                                codex_executable
+                                    .context("Codex executable was not resolved")?
+                                    .into_os_string(),
+                                "--model".into(),
+                                contract.model.clone().into(),
+                                "--profile".into(),
+                                crate::codex_delegation::PROFILE.into(),
+                                "--ask-for-approval".into(),
+                                "never".into(),
+                                "--no-daemon".into(),
+                                "--strict-config".into(),
+                            ]
                         } else {
                             vec![
                                 executable.into_os_string(),
@@ -1539,7 +1606,7 @@ impl ServerState {
                                     label: Some(format!("{} research", contract.provider)),
                                     argv,
                                     kind: SessionKind::Agent {
-                                        name: contract.provider,
+                                        name: contract.provider.clone(),
                                     },
                                 },
                                 None,
@@ -1684,11 +1751,9 @@ impl ServerState {
                         }
                     };
                     let summary = session.summary();
-                    let selected_provider =
-                        AgentProvider::from_name(&read_contract(&record)?.provider)
-                            .context("unsupported assigned provider")?;
+                    let contract = read_contract(&record)?;
                     let Some(agent) = summary.agent.as_ref().filter(|agent| {
-                        agent.binding.provider == selected_provider
+                        agent.binding.provider.name() == contract.provider
                             && agent.health.state == ReporterHealth::Connected
                     }) else {
                         return self.assignment_snapshot(record);
@@ -1705,7 +1770,6 @@ impl ServerState {
                             return self.reconciliation_snapshot(record);
                         }
                     }
-                    let contract = read_contract(&record)?;
                     let native_model = if contract.provider == "claude" {
                         let proof = record
                             .native_model
@@ -1716,13 +1780,23 @@ impl ServerState {
                     } else {
                         expected_native_model(&record)?
                     };
-                    if agent
+                    let Some(model) = agent
                         .metrics
                         .as_ref()
                         .and_then(|m| m.sample.model.as_deref())
-                        != Some(native_model.as_str())
-                    {
+                    else {
                         return self.assignment_snapshot(record);
+                    };
+                    if model != native_model.as_str() {
+                        // A native Claude child that reports another model keeps
+                        // waiting for inspection; Pi and Codex refuse before input.
+                        if contract.provider == "claude" {
+                            return self.assignment_snapshot(record);
+                        }
+                        return self.reject_initial(
+                            record,
+                            "native model differs from requested model; no bytes written; inspect the original child without replay",
+                        );
                     }
                     if contract.provider == "claude" {
                         let policy = match read_native_policy(&record) {
@@ -2307,8 +2381,12 @@ impl ServerState {
         } else {
             "Call ovrcr_publish. Only this child can publish; it cannot accept the result. Research tools are read-only."
         };
+        let publication = publication.replace(
+            "ovrcr_publish",
+            &child_tool(&contract.provider, "ovrcr_publish"),
+        );
         let mut value = serde_json::json!({"schema":1,"handle":handle,"identity":record.identity,"contract":contract_document(&contract)?,
-            "result_version":1,"output":record.root.join("submission-v1.json"),"publication":publication,"questions":questions::QUESTION_INSTRUCTIONS});
+            "result_version":1,"output":record.root.join("submission-v1.json"),"publication":publication,"questions":child_questions(&contract.provider)});
         if let Some(resource) = &record.coding {
             value["coding_workspace"] = serde_json::to_value(resource)?;
         }
@@ -2507,6 +2585,23 @@ impl ServerState {
     }
 }
 
+fn child_tool(provider: &str, tool: &str) -> String {
+    if provider == "codex" {
+        format!(
+            "the {} MCP server's {tool} tool",
+            crate::codex_delegation::MCP_SERVER
+        )
+    } else {
+        tool.to_owned()
+    }
+}
+fn child_questions(provider: &str) -> String {
+    questions::QUESTION_INSTRUCTIONS.replace(
+        "ovrcr_publish_question",
+        &child_tool(provider, "ovrcr_publish_question"),
+    )
+}
+
 fn publication_error(issue: PublicationIssue) -> anyhow::Error {
     anyhow::anyhow!(match issue {
         PublicationIssue::Invalid => "submission publication changed or is partial",
@@ -2552,8 +2647,9 @@ fn assignment_prompt(
         ""
     };
     format!(
-        "Perform the {mode} assignment in {}. Read that immutable brief with your read tool; {purpose}publish the exact requested result_version with ovrcr_publish using handle {handle} and the identity in that brief. Do not modify task or parent records. A terminal success line is not a submission.",
-        brief.display()
+        "Perform the {mode} assignment in {}. Read that immutable brief with your read tool; {purpose}publish the exact requested result_version with {} using handle {handle} and the identity in that brief. Do not modify task or parent records. A terminal success line is not a submission.",
+        brief.display(),
+        child_tool(&contract.provider, "ovrcr_publish")
     )
 }
 
@@ -2747,8 +2843,15 @@ fn available_model(
         contract.validate().map_err(anyhow::Error::msg)?;
         return crate::claude_delegation::discover(&contract.model).map(|(_, proof)| Some(proof));
     }
-    if !available_models()?.iter().any(|choice| {
-        choice.model_provider == contract.model_provider && choice.model == contract.model
+    let inventory = match contract.provider.as_str() {
+        "pi" => available_models()?,
+        "codex" if contract.model_provider == "openai" => crate::codex_delegation::models()?,
+        _ => bail!("requested harness/backend is unsupported; no substitute selected"),
+    };
+    if !inventory.iter().any(|choice| {
+        choice.provider.name() == contract.provider
+            && choice.model_provider == contract.model_provider
+            && choice.model == contract.model
     }) {
         bail!("requested exact model is unavailable");
     }
@@ -3006,8 +3109,14 @@ mod tests {
             DispatchOperation::InitialInput,
             DispatchOutcome::Accepted,
         );
-        for count in [1, 3] {
+        for (provider, count) in [
+            (AgentProvider::Pi, 1),
+            (AgentProvider::Pi, 3),
+            (AgentProvider::Codex, 1),
+            (AgentProvider::Codex, 3),
+        ] {
             let mut valid = pending.clone();
+            valid.binding.as_mut().unwrap().provider = provider;
             valid.execution_attempts = Some(count);
             valid.identity.attempt = 2;
             valid.previous_request = Some("prior-request".into());
@@ -3092,7 +3201,7 @@ mod tests {
                         .unwrap()
                         .result_version = 2
                 }
-                "foreign provider" => bad.binding.as_mut().unwrap().provider = AgentProvider::Codex,
+                "foreign provider" => bad.binding.as_mut().unwrap().provider = AgentProvider::Grok,
                 "replacement generation" => bad.binding.as_mut().unwrap().generation = 2,
                 "zero generation" => bad.binding.as_mut().unwrap().generation = 0,
                 "zero count" => bad.execution_attempts = Some(0),

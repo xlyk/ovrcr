@@ -655,7 +655,19 @@ impl ServerState {
         hold_before_effect("fallback-before-acceptance", &handle)?;
         let initial = self.owned_assignment(&auth, &handle)?;
         self.require_dependency_fresh(&initial)?;
-        self.require_review_acceptance(&auth, &initial)?;
+        let exact_replay = initial.identity == identity
+            && initial.result_version == result_version
+            && !initial.control.attribution_invalidated
+            && control::require_controller(&initial.control, expected_control_epoch).is_ok()
+            && initial.acceptance.as_ref().is_some_and(|receipt| {
+                receipt.identity == identity
+                    && receipt.result_version == result_version
+                    && receipt.target == target
+            });
+        // Existing receipt verification below still requires every current authority fence.
+        if !exact_replay {
+            self.require_review_acceptance(&auth, &initial)?;
+        }
         #[cfg(feature = "acceptance-diagnostics")]
         hold_before_effect("review-final-auth", &handle)?;
         let parent = self.session_for_control(auth.session)?;
@@ -673,6 +685,7 @@ impl ServerState {
             || record.binding != initial.binding
             || record.review != initial.review
             || record.obligation_revision != initial.obligation_revision
+            || (exact_replay && record.acceptance != initial.acceptance)
         {
             return Err(lifecycle_error(
                 ErrorCode::Conflict,
@@ -711,7 +724,6 @@ impl ServerState {
                     text: "",
                 },
                 |agent| {
-                    self.require_review_acceptance_at_commit(&store, &record)?;
                     if let Some(previous) = &record.acceptance {
                         if previous.target != target {
                             return Err(lifecycle_error(
@@ -721,6 +733,7 @@ impl ServerState {
                         }
                         return verify_acceptance(&record, &record.version());
                     }
+                    self.require_review_acceptance_at_commit(&store, &record)?;
                     match &target {
                         AcceptanceTarget::ChildSubmission { digest: expected } => {
                             if record.result_digest.as_ref() != Some(expected) {
@@ -850,8 +863,12 @@ fn followup_brief(
     } else {
         "Call ovrcr_publish with the exact identity and result_version as submission.version. Only this child can publish; it cannot accept the result. Research tools remain read-only."
     };
+    let publication = publication.replace(
+        "ovrcr_publish",
+        &child_tool(&contract.provider, "ovrcr_publish"),
+    );
     let mut value = serde_json::json!({"schema":1,"handle":record.handle,"identity":identity,"contract":contract_document(contract)?,
-        "request":request,"followup":text,"result_version":version,"output":record.root.join(format!("submission-v{version}.json")),"publication":publication,"questions":questions::QUESTION_INSTRUCTIONS});
+        "request":request,"followup":text,"result_version":version,"output":record.root.join(format!("submission-v{version}.json")),"publication":publication,"questions":child_questions(&contract.provider)});
     if let Some(resource) = &record.coding {
         value["coding_workspace"] = serde_json::to_value(resource)?;
     }

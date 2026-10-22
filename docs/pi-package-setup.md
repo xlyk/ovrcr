@@ -46,6 +46,17 @@ ordinary authenticated child candidate/checks; parent fallback cannot accept it.
 Required independent review remains a requirement when its procedure is unavailable.
 No task record grants commit, publication, push or merge permission.
 
+For a requested full workflow, the packaged
+[stage coordinator](../pi/skills/ovrcr-orchestrator/references/workflow.md) reads the
+installed procedures at each phase. An existing spec or approved ticket set enters
+at its actual stage. It preserves confirmed understanding, test seams and ticket
+breakdown decisions, including grilling answer sheets, across compaction. Missing
+stage procedures are diagnosed without assuming Pi has a native Skill tool;
+supported direct work remains available. Tracker publication follows the requested
+scope and configured tracker, reconciling uncertain creates before retry. Approved
+dependencies use actual accepted predecessor inputs and common version invalidation.
+Final delivery requires checks on the actual integrated revision.
+
 ## Resolve an unavailable capability
 
 If package discovery fails, check the configured local path still exists and the

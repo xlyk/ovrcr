@@ -414,23 +414,6 @@ fn native_publisher_cli_auth_catalog_malformed_and_oversized_input_have_no_serve
 #[test]
 fn native_publisher_cli_foreign_handle_stale_version_and_retired_run_cannot_publish() {
     let (f, first, auth) = fixture();
-    let before = f.reconcile(&first.handle);
-    let mut foreign_identity = submission(&first);
-    foreign_identity["identity"]["contract"] = json!(first.identity.contract + 1);
-    assert_publish_refusal(
-        &f,
-        &auth,
-        &first.handle,
-        &foreign_identity,
-        ErrorCode::Conflict,
-        "foreign or stale submission identity",
-    );
-    let unchanged = f.reconcile(&first.handle);
-    assert_eq!(unchanged.identity, before.identity);
-    assert_eq!(unchanged.receipts, before.receipts);
-    assert!(unchanged.submission.is_none());
-    assert!(unchanged.publication.is_none());
-    assert!(!first.result_path.exists());
     assert_publish_refusal(
         &f,
         &auth,
@@ -452,6 +435,46 @@ fn native_publisher_cli_foreign_handle_stale_version_and_retired_run_cannot_publ
     assert_eq!(result(&foreign)["status"], "refused");
     assert_eq!(result(&foreign)["code"], "NotFound");
     assert!(!first.result_path.exists());
+    let before = f.reconcile(&first.handle);
+    let mut wrong_identity = submission(&first);
+    wrong_identity["identity"]["contract"] = (first.identity.contract + 1).into();
+    let direct = f
+        .live
+        .request(Request::Delegation(Box::new(DelegationRequest::Publish {
+            auth: auth.clone(),
+            handle: first.handle.clone(),
+            submission: serde_json::from_value(wrong_identity.clone()).unwrap(),
+        })));
+    let native = run(
+        &f,
+        Some(&auth),
+        vec![tool_call("ovrcr_publish", &first.handle, wrong_identity)],
+    );
+    let after = f.reconcile(&first.handle);
+    assert_eq!(after.identity, before.identity);
+    assert_eq!(after.receipts, before.receipts);
+    assert_eq!(after.control, before.control);
+    assert_eq!(after.result_version, before.result_version);
+    assert!(after.publication.is_none());
+    assert!(after.submission.is_none());
+    assert!(after.historical_submission.is_none());
+    assert!(after.acceptance_ref.is_none());
+    assert_eq!(after.acceptance, "pending");
+    assert!(!first.result_path.exists());
+    let Response::Error { code, message } = direct else {
+        panic!("stale identity must have no publication effect: {direct:?}");
+    };
+    assert_eq!(message, "foreign or stale submission identity");
+    assert_eq!(
+        (
+            code,
+            result(&native)["status"].clone(),
+            result(&native)["code"].clone()
+        ),
+        (ErrorCode::Conflict, json!("refused"), json!("Conflict")),
+        "known stale identity must be definite Server/MCP refusal, never Unknown"
+    );
+    assert_eq!(native.last().unwrap()["result"]["isError"], true);
     let published = run(
         &f,
         Some(&auth),

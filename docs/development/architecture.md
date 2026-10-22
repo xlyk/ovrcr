@@ -60,6 +60,10 @@ Reporter model/binding and every existing effect fence remain authoritative; pre
 is not installed TUI enforcement proof.
 Immutable task contracts, briefs and submissions remain private files outside
 child checkouts; see [Pi research assignments](../pi-research-assignments.md).
+Schema version 19 protects Server-authenticated readable review-view references in
+the existing review rounds. Upgrading preserves old retained rows and immutable
+contracts/publications; absent legacy view metadata remains a visible continuation
+gap. Complete readable images/context stay in private assignment files.
 SQLite owns identity, path, and root-setup metadata. The stored
 `branch` is captured metadata: the protected root's setup default (used when
 default-branch detection is only a HEAD fallback or fails), and a feature

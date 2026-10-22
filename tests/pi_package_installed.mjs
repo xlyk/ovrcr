@@ -120,6 +120,12 @@ test("installed package plus real injected entry keeps one runtime registration 
           git_identity: "fixture", changed_artifacts: ["README.md"] }, source_contract_digest: digest }, sources: [source] },
       source_documents: [{ source, content }] } };
     assert.deepEqual(validate(review), review, "accepted typed independent reviews keep their public schema");
+    const context = ["src/caller.rs"];
+    const enriched = {...review,review:{...review.review,context_paths:context,target:{...review.review.target,view:{path:"/fixture/review-view.json",digest,round:"review-round",context_paths:context}}}};
+    assert.deepEqual(validate(enriched),enriched,"installed SDK accepts the Server-bound readable target and optional direct context");
+    for (const context_paths of [Array.from({length:33},(_,i)=>`file-${i}`),["same","same"]]) {
+      assert.throws(()=>validate({...enriched,review:{...enriched.review,context_paths}}),/Validation failed for tool/);
+    }
     for (const invalid of [{ ...research, handle: "original" }, { handle: "original", request: "new" },
       { ...research, permitted_actions: ["read", "result_file"] }]) {
       assert.throws(() => validate(invalid), /Validation failed for tool/);
