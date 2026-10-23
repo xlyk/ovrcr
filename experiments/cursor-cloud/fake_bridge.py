@@ -58,6 +58,8 @@ def wait_record(predicate):
         if any(predicate(row) for row in journal_rows()):
             return
         time.sleep(0.002)
+    if scenario == "discard_after_send":
+        receipt(journal_gate_timeout=True)
     raise RuntimeError("synthetic deterministic journal gate was not reached")
 
 
@@ -302,6 +304,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/connect+json")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
+            if method == "Send" and scenario == "discard_after_send":
+                # Close after dispatch, before init can move this late-receipt case into observation.
+                before = ahead and not any(row["event"] == "closure" for row in journal_rows())
+                close_admission("discard")
+                receipt(discard_gate={"send_received_before_closure": before,
+                                      "closure_before_init": any(row["event"] == "closure" and row["kind"] == "discard" for row in journal_rows())})
             if method == "ObserveRun" and "afterOffset" not in body and not scenario.startswith("snapshot_") and scenario not in {"complete_before_drop", "complete_during_attach", "no_observe_offset", "partial_frame_trickle", "cancel_known", "cancel_unconfirmed", "cancel_stall", "bad_flags", "bad_json"}:
                 prefix = b"".join(struct.pack(">BI", 0, len(payload)) + payload for payload in [json.dumps(x).encode() for x in messages[:4]])
                 self.wfile.write(prefix)
@@ -328,23 +336,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     dropped = False
                 receipt(original_send_closed=dropped, completed_before_drop=scenario == "complete_before_drop")
                 return
-            if (method == "ObserveRun" and scenario == "partial_frame_trickle") or (method == "Send" and scenario in {"discard_after_send", "partial_frame_no_id"}):
+            if (method == "ObserveRun" and scenario == "partial_frame_trickle") or (method == "Send" and scenario == "partial_frame_no_id"):
                 if scenario != "partial_frame_no_id":
                     prefix = b"".join(struct.pack(">BI", 0, len(payload)) + payload for payload in [json.dumps(x).encode() for x in messages[:3]])
                     self.wfile.write(prefix)
                     self.wfile.flush()
                     wait_record(lambda row: row["event"] == "receipt" and row.get("method") == "Send")
-                if scenario == "discard_after_send":
-                    close_admission("discard")
-                    rest = messages[3:]
-                    data = b"".join(struct.pack(">BI", 0, len(payload)) + payload for payload in [json.dumps(x).encode() for x in rest]) + struct.pack(">BI", 2, 2) + b"{}"
-                else:
-                    receipt(stall=scenario)
-                    for byte in struct.pack(">BI", 0, 2000) + b" " * 2000:
-                        self.wfile.write(bytes([byte]))
-                        self.wfile.flush()
-                        time.sleep(0.02)
-                    return
+                receipt(stall=scenario)
+                for byte in struct.pack(">BI", 0, 2000) + b" " * 2000:
+                    self.wfile.write(bytes([byte]))
+                    self.wfile.flush()
+                    time.sleep(0.02)
+                return
             for offset in range(0, len(data), 3):
                 self.wfile.write(data[offset:offset + 3])
                 self.wfile.flush()

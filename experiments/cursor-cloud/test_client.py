@@ -227,6 +227,26 @@ publication_line = next(i for i, line in enumerate(Path(sys.argv[1]).read_text()
 def fault_at_boundary(frame, event, arg):
     global fault_fired
     if frame.f_code.co_filename == sys.argv[1] and not fault_fired:
+        if scenario == "discard_after_send" and event == "call" and frame.f_code.co_name == "sync_directory" and frame.f_back.f_code.co_name == "receipt" and frame.f_back.f_locals.get("method") == "Send":
+            fault_fired = True
+            gate = {"boundary": "Send receipt before directory sync", "signal_blocked": signal.SIGUSR2 in signal.pthread_sigmask(signal.SIG_BLOCK, set())}
+            until = time.monotonic() + 2.5
+            while time.monotonic() < until:
+                rows = [json.loads(line) for line in (journal_path / "events.jsonl").read_text().splitlines()]
+                if any(row["event"] == "closure" for row in rows):
+                    gate["outcome"] = "closure durable"
+                    break
+                try:
+                    audit = [json.loads(line) for line in (journal_path.parent / "audit.jsonl").read_text().splitlines()]
+                except ValueError:
+                    audit = []
+                if any(row.get("journal_gate_timeout") for row in audit):
+                    gate["outcome"] = "peer closure gate timed out"
+                    break
+                time.sleep(0.002)
+            else:
+                gate["outcome"] = "control gate unavailable"
+            (journal_path.parent / "fault-gate.json").write_text(json.dumps(gate))
         if scenario == "capacity_at_cleanup" and event == "call" and frame.f_code.co_name == "cleanup":
             fault_fired = True
             (journal_path / "capacity").write_bytes(b"x" * (256 * 1024))
@@ -241,7 +261,7 @@ def fault_at_boundary(frame, event, arg):
             (journal_path.parent / "fault-gate.json").write_text(json.dumps({"boundary": "coding_run return", "coding": frame.f_locals["report"]["coding"], "signal": "SIGALRM", "total_budget_remaining": frame.f_locals["deadlines"].total - time.monotonic()}))
             os.kill(os.getpid(), signal.SIGALRM)
     return fault_at_boundary
-if scenario in {"capacity_at_cleanup", "discard_at_verification", "alarm_after_coding_pass"}:
+if scenario in {"discard_after_send", "capacity_at_cleanup", "discard_at_verification", "alarm_after_coding_pass"}:
     sys.settrace(fault_at_boundary)
 try:
     result = module["main"](sys.argv[4:])
@@ -718,6 +738,15 @@ sys.exit(result)
                     self.assertTrue(any(row["event"] == "receipt" and row["late"] for row in rows[closure + 1:]))
                 if scenario == "discard_after_send":
                     self.assertTrue(any(row["event"] == "result" and row["late"] for row in rows[closure + 1:]))
+                    identity = next(row for row in rows[closure + 1:] if row["event"] == "receipt" and row.get("method") == "Send")
+                    self.assertTrue(identity["late"])
+                    self.assertEqual(identity["receipt"], {"agentId": "bc-fixture", "runId": "run-fixture", "model": {"id": "fixture-model"}})
+                    self.assertTrue(next(e["write_ahead"] for e in events if e.get("method") == "Send"))
+                    self.assertTrue(any(e.get("discard_gate") == {"send_received_before_closure": True, "closure_before_init": True} for e in events))
+                    self.assertFalse(set(methods) & {"GetRun", "ObserveRun"})
+                    gate = json.loads((self.case_root / "fault-gate.json").read_text())
+                    self.assertEqual(gate, {"boundary": "Send receipt before directory sync", "signal_blocked": True, "outcome": "closure durable"})
+                    self.assertFalse(any(e.get("journal_gate_timeout") for e in events))
 
     def test_only_exact_known_active_run_can_be_cancelled_and_ack_is_not_terminal(self):
         for scenario, outcome in [("cancel_known", "RUN_LIFECYCLE_STATUS_CANCELLED"), ("cancel_unconfirmed", "UNRESOLVED"), ("cancel_stall", "UNRESOLVED")]:

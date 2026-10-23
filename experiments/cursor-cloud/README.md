@@ -282,6 +282,15 @@ returns its report; fixture cleanup never qualifies client exit or token removal
 Tests remove only their own roots after recording
 client-reported uncertainty. CI runs this full feature suite on macOS and Linux.
 
+The discard-after-Send peer receives the real claimed request, records durable
+discard through the existing signal/journal gate, then emits the early identity and
+terminal result. Both must be retained as late, with no observation or new work.
+The runner controls the signal-masked Send receipt directory-sync boundary: the
+old peer waited for closure while that signal was masked and could time out before
+sending the late result. The corrected peer has already established closure before
+that boundary. The original hosted scheduling delay remains unmeasured; this is a
+controlled ordering proof, with no product-clock change or widened sleep.
+
 | Acceptance | Entry-point assertion |
 | --- | --- |
 | Required explicit inputs / no ambient fallback | `test_missing_inputs*`, `test_missing_or_bad_manifest*`, `test_selected_key*` |
