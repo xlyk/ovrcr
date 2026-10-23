@@ -124,6 +124,12 @@ ready = {"schemaVersion": 1, "serverVersion": "1.0.0", "pid": os.getpid(),
          "transport": "tcp", "protocol": "connect", "host": "127.0.0.1",
          "port": server.server_port, "url": "http://127.0.0.1:" + str(server.server_port),
          "authTokenFile": str(token_file), "workspaceRef": workspace, "stateRoot": state}
+if scenario == "ready_array":
+    ready = []
+if scenario == "ready_null":
+    ready = None
+if scenario == "ready_scalar":
+    ready = 7
 if scenario == "foreign_token":
     ready["authTokenFile"] = CONFIG["unrelated"]
 sys.stderr.write("diagnostic " + KEY + TOKEN + "\n")

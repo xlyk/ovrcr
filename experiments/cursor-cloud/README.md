@@ -116,6 +116,7 @@ client-reported uncertainty. CI runs this full feature suite on macOS and Linux.
 | Ready handshake, sdk.v1, explicit selected key/model/repository | `test_success*`, `test_runtime_auth_model_and_repository_mismatch*` |
 | Startup / partial headers / body / error / trickle bounds | `test_stalls_and_trickle*` |
 | Original total deadline applies to cleanup | `test_cleanup_is_truncated*` |
+| Non-object discovery produces a redacted failure report | `test_malformed_discovery*` |
 | Interrupted launch without a handle retains uncertainty | `test_interrupted_launch*` |
 | Stalled shutdown reserves forced exit and token cleanup | `test_stalled_shutdown*` |
 | Exact private token removal / changed or foreign identity retained | `test_success*`, `test_unknown_or_nonprivate_token*`, `test_replaced_token*` |

@@ -4,6 +4,7 @@ import io
 import json
 import os
 import platform
+import shutil
 import tarfile
 import tempfile
 import time
@@ -87,19 +88,21 @@ class PreflightEntryPointTests(unittest.TestCase):
                               digest, "--manifest", str(manifest_path), "--archive", str(archive)],
                              env=env, text=True, capture_output=True, timeout=3)
         elapsed = time.monotonic() - start
+        events = [json.loads(line) for line in audit.read_text().splitlines()] if audit.exists() else []
+        for event in events:
+            if "root" in event:
+                self.addCleanup(shutil.rmtree, event["root"], True)
         self.assertLess(elapsed, 2.5)
         self.assertEqual(run.stderr, "")
         self.assertNotIn("API-SECRET-SENTINEL-363", run.stdout)
         self.assertNotIn("BRIDGE-SECRET-SENTINEL-363", run.stdout)
         report = json.loads(run.stdout)
         self.assertEqual(report["attempts"], {"CreateAgent": 0, "Send": 0})
-        events = [json.loads(line) for line in audit.read_text().splitlines()] if audit.exists() else []
         methods = [e["method"] for e in events if "method" in e]
         self.assertFalse(set(methods) & {"CreateAgent", "Send"})
         self.assertEqual(unrelated.read_text(), "UNRELATED-SECRET")
         # Only the test owns this private root; preserve the report before fixture cleanup.
         if report["resources"].get("private_root"):
-            import shutil
             self.addCleanup(shutil.rmtree, report["resources"]["private_root"], True)
         return run, report, events
 
@@ -225,6 +228,18 @@ class PreflightEntryPointTests(unittest.TestCase):
         self.assertTrue(Path(report["resources"]["private_root"]).exists())
         if events:
             self.assertTrue(Path(events[0]["token_file"]).exists())
+
+    def test_malformed_discovery_shape_returns_redacted_failure_and_cleanup(self):
+        for scenario in ["ready_array", "ready_null", "ready_scalar"]:
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario)
+                self.assertEqual(run.returncode, 1)
+                self.assertEqual(report["preflight"], "FAIL")
+                self.assertEqual(report["stages"][-1]["stage"], "startup")
+                self.assertEqual(report["stages"][-1]["reason"], "bridge discovery must be a JSON object")
+                self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
+                self.assertEqual(report["resources"]["token_cleanup"], "UNRESOLVED")
+                self.assertTrue(Path(events[0]["token_file"]).exists())
 
     def test_missing_inputs_fail_closed_with_redacted_report(self):
         run = subprocess.run([sys.executable, str(CLIENT)], capture_output=True, text=True, timeout=3)

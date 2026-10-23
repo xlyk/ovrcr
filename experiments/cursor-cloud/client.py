@@ -172,7 +172,10 @@ def ready_line(process, deadlines):
             data = bytearray(tail)
             prefix = b"cursor-sdk-bridge ready "
             if line.startswith(prefix):
-                return json.loads(line[len(prefix):])
+                ready = json.loads(line[len(prefix):])
+                if not isinstance(ready, dict):
+                    raise Failure("bridge discovery must be a JSON object")
+                return ready
             # Diagnostics and discovery are never captured: both may contain credentials.
 
 

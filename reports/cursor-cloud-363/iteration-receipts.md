@@ -19,6 +19,8 @@ Final committed-revision checks have separate raw log files.
 
 | 09 | same interrupted-launch filter | 1 / ERROR (1) | Test assumed the peer had emitted its receipt before an interrupted launch; assert retained client-owned root independently of peer readiness |
 
+| 10 | `python3 -I -m unittest discover -s experiments/cursor-cloud -p test_client.py -k malformed_discovery -v` | 1 / FAIL (3 subcases) | Both independent review axes found non-object discovery caused raw AttributeError/empty stdout; array, null and scalar reproduce before object validation |
+
 No official bridge executable, real credential, real account, cloud agent,
 repository publication or paid operation was used. One official darwin-arm64
 release archive was downloaded for checksum/manifest inspection only; the digest
