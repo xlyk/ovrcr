@@ -1,10 +1,12 @@
-# Cursor cloud preflight and one coding run (#363–#364)
+# Cursor cloud coding, observation and follow-up (#363–#365)
 
 This standalone Python 3.11+ client runs preflight and, with an explicit fresh
-journal, one cloud creation and one coding Send for
+journal, one cloud creation and two sequential Sends for
 [#362](https://github.com/xlyk/ovrcr/issues/362). `--preflight-only` retains the
-catalog-only path. It changes no OVRCR provider. Observation, follow-up, cancellation
-proof, fresh-bridge recovery and live acceptance remain NOT RUN (#365–#367).
+catalog-only path. Run 1 exercises exact-run observation recovery, then Run 2 asks
+for the earlier public token and fix in the same conversation. It changes no OVRCR
+provider. Cancellation proof, fresh-bridge recovery and live acceptance remain NOT RUN
+(#366–#367).
 Error cleanup can request cancellation of an exact known active run; that does not
 count as the later cancellation proof. The official Cursor SDK Bridge is separate
 from OVRCR's macOS Bridge.
@@ -65,8 +67,8 @@ are **not** a remote spending cap or evidence of zero cost.
 
 The configured future experiment ceiling is exactly one CreateAgent attempt and
 three Send attempts, with no retries. Allowed effects are restricted to the fixture
-change, result branch, exact-run cancellation and owned local shutdown. This slice uses at most one creation and one Send, with separately generated
-original keys. It never retries either operation or starts a replacement conversation.
+change, result branch, exact-run cancellation and owned local shutdown. This slice uses at most one creation and two Sends, with separately generated
+original keys. Run 2 is admitted only after Run 1 independently qualifies. It never retries either operation or starts a replacement conversation.
 
 ## Fixture and authorized publication recipe
 
@@ -133,6 +135,28 @@ checks the final diff and every intervening commit for only `addition.py`, and
 runs the unchanged three tests in an isolated checkout with explicit `-I -B`
 (isolated imports/environment and no stale bytecode). A failed test is a failure.
 
+After Run 1's early exact identity is durable, an exact GetRun snapshot must show
+RUNNING or a terminal status. The client closes the original Send, then calls
+ObserveRun with only that runId, from the beginning. Previously processed events
+are labelled replay and de-duplicated. Each qualifying event still matches the
+exact agent/run. The client records offsets only from ObserveRun, then, when an
+active snapshot and a durable offset are available, closes that observer and
+makes one ObserveRun call with that exclusive afterOffset. A repeated cursor is
+rejected. Missing or unexercised offsets remain NOT RUN; a terminal snapshot before
+the original interruption qualifies only completed-result recovery. No CreateAgent,
+Send or CancelRun is dispatched as part of observation. Failure closes admission;
+only the existing exact-run error cleanup may cancel a known active run.
+
+Run 2 uses the same agent, journal and global counters, a new original operation
+key and a distinct durable run ID. Its prompt never restates the public token and
+asks for the token and completed fix without file, branch or PR changes. Success
+requires exact terminal model/identity and stream end, the exact recalled token/fix,
+unchanged result repository/branch/PR metadata, and identical independently fetched
+remote head refs including the verified Run 1 commit. It does not re-edit or rerun
+the fixture: the previously tested commit must remain unchanged. Unknown result
+shapes cannot qualify. A lost Run 2 receipt retains its original request and never
+cancels Run 1 or dispatches a replacement.
+
 On the running client PID, SIGUSR1 records Cancel closure; SIGUSR2 records Discard
 closure and removes retained request payloads. Both share the same local authority
 as attempt claims. Closure before a claim blocks dispatch; a prior claim may have
@@ -169,7 +193,12 @@ Requests use JSON unary POSTs at `/sdk.v1.SdkBridgeControlService/*` and
 Ping with a bad bearer must return HTTP 401 / `unauthenticated`.
 Primary contracts: [protocol/handshake](https://github.com/cursor/sdk-bridge/blob/1ba4fe546ea597c2f14b571b0ebe59ab1d20b70e/docs/protocol.md),
 [control RPCs](https://github.com/cursor/sdk-bridge/blob/1ba4fe546ea597c2f14b571b0ebe59ab1d20b70e/proto/sdk/v1/sdk_bridge_control_service.proto),
-[catalog RPCs](https://github.com/cursor/sdk-bridge/blob/1ba4fe546ea597c2f14b571b0ebe59ab1d20b70e/proto/sdk/v1/sdk_cursor_service.proto).
+[catalog RPCs](https://github.com/cursor/sdk-bridge/blob/1ba4fe546ea597c2f14b571b0ebe59ab1d20b70e/proto/sdk/v1/sdk_cursor_service.proto),
+[agent RPCs](https://github.com/cursor/sdk-bridge/blob/1ba4fe546ea597c2f14b571b0ebe59ab1d20b70e/proto/sdk/v1/sdk_agent_service.proto),
+[result/snapshot shapes](https://github.com/cursor/sdk-bridge/blob/1ba4fe546ea597c2f14b571b0ebe59ab1d20b70e/proto/sdk/v1/sdk_messages.proto),
+and [stream/cursor semantics](https://github.com/cursor/sdk-bridge/blob/1ba4fe546ea597c2f14b571b0ebe59ab1d20b70e/docs/streaming.md).
+The newly used contracts were read at this same pin on 2026-10-23; this is source
+evidence, not official-runtime compatibility evidence.
 
 ## Bounds and resource receipts
 
@@ -270,9 +299,26 @@ The #364 acceptance cases map to these additional entry-point assertions:
 | Property-name/value secret exclusion | `test_json_property_names*` and common stdout/journal sentinel checks |
 | 10: actual entry/storage/Git/process path and failure matrix | the full `test_client.py` suite; runtime criterion 10 stays NOT RUN because one invocation cannot attest the suite |
 
+The #365 entry-point assertions add:
+
+| #365 criterion | Assertion |
+| --- | --- |
+| 1–2: active Send drop, beginning replay, durable ObserveRun-only exclusive resume | `test_recovery_and_follow_up*`; peer confirms both real socket closes and checks the saved cursor before dispatch |
+| 3: completion races and unexercised offset remain separate | `test_completion_race*`; inherited source/diff/tests/framing rejection cases still run through recovery |
+| 4: same-agent distinct Run 2, separate original key, recall and unchanged Git state | `test_recovery_and_follow_up*`, `test_follow_up_rejects*` |
+| 5: no replacement on error, retained Run 2 uncertainty, exact Run 2 cleanup | `test_observation_errors*`, `test_follow_up_uncertain*` and inherited closure/lost-receipt cases |
+| 6–7: separate receipts/reasons, actual wire/private records and global bounds | `recovery_criteria` plus every new case's method counts, peer request-shape/write-ahead and journal assertions |
+
+Inherited success expectations intentionally advance from one Send to two, include
+GetRun/ObserveRun traffic and three original keys. Rejection assertions still forbid
+replacement work; source/framing cases now fail on the observation path where
+applicable. Discard after Run 1 verification prevents Run 2, so a qualified coding
+result can coexist with overall failure. Existing production clocks are unchanged.
+
 The JSON report includes stage errors, criterion-specific receipts, original keys,
 identities, source/result checks, deadline configuration, verification-process waits
-and resource disposition. Later proof stages and missing cost remain explicitly
+and resource disposition. `recovery_criteria` separately records active observation, completed-result recovery,
+offset resume and follow-up. Later proof stages and missing cost remain explicitly
 NOT RUN or unavailable.
 
 These tests prove offline client behavior, not official-bridge runtime compatibility,

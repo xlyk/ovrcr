@@ -110,8 +110,9 @@ if delay:
             time.sleep(delay)
         with open(""" + repr(str(root / "process-latency.jsonl")) + r""", 'a') as audit:
             audit.write(json.dumps({'phase': phase, 'command': command, 'pid': os.getpid(), 'delay_seconds': delay, 'time': time.monotonic()}) + '\n')
-if 'fetch' in args:
-    options = args[:args.index('fetch')]
+if 'fetch' in args or 'ls-remote' in args:
+    operation = 'fetch' if 'fetch' in args else 'ls-remote'
+    options = args[:args.index(operation)]
     auth = subprocess.run(['/usr/bin/git', *options, 'credential', 'fill'], input='protocol=https\nhost=github.com\npath=fixture/disposable\n\n', text=True, capture_output=True)
     supplied = auth.returncode == 0 and 'password=GITHUB-SECRET-SENTINEL-364' in auth.stdout
     other = subprocess.run(['/usr/bin/git', *options, 'credential', 'fill'], input='protocol=https\nhost=github.com\npath=unrelated/other\n\n', text=True, capture_output=True)
@@ -127,7 +128,7 @@ os.execv('/usr/bin/git', ['git', '-c', """ + repr("url." + str(repo) + ".instead
                 shim.write_text("#!" + sys.executable + "\n" + program)
             shim.chmod(0o700)
             git_override = "g['GIT']=" + repr(str(shim)) + "; g['GH']=" + repr(str(gh_peer)) + "; "
-            config.update(source_sha=selected)
+            config.update(source_sha=selected, repo=str(repo))
             if scenario == "unpublished_source":
                 manifest["source_sha"] = "f" * 40
             if scenario == "same_default_source":
@@ -275,22 +276,125 @@ sys.exit(result)
                     output.write(data)
         return run, report, events
 
+    def test_recovery_and_follow_up_use_exact_run_and_private_original_keys(self):
+        run, report, events = self.run_fixture(coding=True, budgets=(6, 8, 1.5, 0.75))
+        self.assertEqual(run.returncode, 0, report)
+        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 2})
+        for name in ("active_observation", "offset_resume", "follow_up"):
+            self.assertEqual(report["recovery_criteria"][name]["verdict"], "PASS", report)
+        self.assertEqual(report["recovery_criteria"]["completed_result"]["verdict"], "NOT RUN")
+        self.assertEqual(report["follow_up"]["runId"], "run-follow-up")
+        self.assertEqual(report["follow_up"]["agentId"], report["run"]["agentId"])
+        methods = [e["method"] for e in events if "method" in e]
+        self.assertEqual(methods.count("ObserveRun"), 2)
+        self.assertNotIn("CancelRun", methods)
+        self.assertTrue(any(e.get("original_send_closed") for e in events))
+        self.assertTrue(any(e.get("original_observer_closed") for e in events))
+        self.assertEqual([e["observation_request"] for e in events if e.get("method") == "ObserveRun"], [{"runId": "run-fixture"}, {"runId": "run-fixture", "afterOffset": "observe-3"}])
+        self.assertTrue(all(e["request_shape"] for e in events if e.get("method") in {"ObserveRun", "GetRun", "Send"}))
+        self.assertTrue(all(e["write_ahead"] for e in events if e.get("method") in {"CreateAgent", "Send"}))
+        rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+        claims = [row for row in rows if row["event"] == "claim"]
+        self.assertEqual(len({row["operation_key"] for row in claims}), 3)
+        offsets = [row for row in rows if row["event"] == "observe_offset"]
+        self.assertTrue(offsets)
+        self.assertTrue(all(row["origin"] == "ObserveRun" and row["runId"] == "run-fixture" for row in offsets))
+        self.assertTrue(any(row["event"] == "observe_event" and row["replay"] for row in rows))
+        self.assertEqual(report["follow_up"]["tests"], "NO NEW FILES; original verified commit unchanged")
+
+    def test_completion_race_and_missing_cursor_do_not_pass_unexercised_criteria(self):
+        for scenario in ("complete_before_drop", "complete_during_attach", "no_observe_offset"):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True, budgets=(6, 8, 1.5, 0.75))
+                self.assertEqual(run.returncode, 0, report)
+                criteria = report["recovery_criteria"]
+                self.assertEqual(criteria["offset_resume"]["verdict"], "NOT RUN")
+                self.assertEqual(criteria["follow_up"]["verdict"], "PASS")
+                self.assertEqual(criteria["completed_result"]["verdict"], "NOT RUN" if scenario == "no_observe_offset" else "PASS")
+                self.assertEqual(criteria["active_observation"]["verdict"], {"complete_before_drop": "NOT RUN", "complete_during_attach": "BLOCKED", "no_observe_offset": "PASS"}[scenario])
+                self.assertEqual(sum(e.get("method") == "ObserveRun" for e in events), 1)
+                self.assertTrue(any(e.get("original_send_closed") for e in events))
+
+    def test_observation_errors_close_admission_without_replacement_work(self):
+        for scenario, reason in (("wrong_offset", "exclusive ObserveRun offset"),
+                                 ("observer_wrong_agent", "observation stream agent/run"),
+                                 ("observer_wrong_run", "observation stream agent/run"),
+                                 ("snapshot_wrong_id", "observation snapshot agent/run"),
+                                 ("observer_error", "Connect end-stream error"),
+                                 ("invalid_offset", "exclusive ObserveRun offset")):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True, budgets=(6, 8, 1.5, 0.75))
+                self.assertEqual(run.returncode, 1, report)
+                self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1})
+                self.assertIn(reason, report["stages"][-1]["reason"], report)
+                self.assertNotEqual(report["recovery_criteria"]["active_observation"]["verdict"], "PASS")
+                self.assertNotEqual(report["recovery_criteria"]["offset_resume"]["verdict"], "PASS")
+                methods = [e["method"] for e in events if "method" in e]
+                self.assertEqual(methods.count("CreateAgent"), 1)
+                self.assertEqual(methods.count("Send"), 1)
+                self.assertNotIn("ListRuns", methods)
+                self.assertNotIn("ResumeAgent", methods)
+                self.assertEqual(report["resources"]["admission"], "CLOSED; durable closure")
+
+    def test_follow_up_rejects_wrong_recall_identity_result_and_remote_effects(self):
+        for scenario, reason in (("follow_up_wrong_token", "recalled token/fix"),
+                                 ("follow_up_failed", "run result/model"),
+                                 ("follow_up_same_run", "reused the original run"),
+                                 ("follow_up_wrong_agent", "early original-stream"),
+                                 ("follow_up_branch", "repository/branch/PR"),
+                                 ("follow_up_pr", "repository/branch/PR"),
+                                 ("follow_up_extra_file", "branch/file state"),
+                                 ("follow_up_extra_ref", "branch/file state")):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True, budgets=(6, 8, 1.5, 0.75))
+                self.assertEqual(run.returncode, 1, report)
+                self.assertEqual(report["coding"], "PASS", report)
+                self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 2})
+                self.assertNotEqual(report["recovery_criteria"]["follow_up"]["verdict"], "PASS")
+                self.assertIn(reason, report["stages"][-1]["reason"], report)
+                methods = [e["method"] for e in events if "method" in e]
+                self.assertEqual(methods.count("Send"), 2)
+                self.assertEqual(methods.count("CreateAgent"), 1)
+                self.assertNotIn("ListRuns", methods)
+                self.assertNotIn("ResumeAgent", methods)
+                self.assertEqual(report["resources"]["admission"], "CLOSED; durable closure")
+
+    def test_follow_up_uncertain_receipt_and_exact_second_run_cleanup(self):
+        for scenario in ("follow_up_lost", "follow_up_partial"):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True, budgets=(6, 8, 1.5, 0.75))
+                self.assertEqual(run.returncode, 1, report)
+                self.assertEqual(report["coding"], "PASS")
+                self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 2})
+                methods = [e["method"] for e in events if "method" in e]
+                self.assertEqual(methods.count("Send"), 2)
+                journal = self.case_root / "journal"
+                if scenario == "follow_up_lost":
+                    self.assertTrue((journal / "Send.request.json").exists())
+                    self.assertNotIn("CancelRun", methods)
+                    self.assertIn("without exact durable identity", report["resources"]["remote_outcome"])
+                else:
+                    self.assertEqual(methods.count("CancelRun"), 1)
+                    self.assertTrue(next(e["exact_cancel"] for e in events if e.get("method") == "CancelRun"))
+                    self.assertEqual(report["resources"]["remote_outcome"], "RUN_LIFECYCLE_STATUS_CANCELLED")
+                self.assertNotEqual(report["recovery_criteria"]["follow_up"]["verdict"], "PASS")
+
     def test_coding_verifies_patch_and_exact_write_ahead_order(self):
         run, report, events = self.run_fixture(coding=True)
         self.assertEqual(run.returncode, 0, report)
         self.assertEqual(report["coding"], "PASS")
-        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1})
+        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 2})
         methods = [event["method"] for event in events if "method" in event]
-        self.assertEqual(methods, ["Ping", "GetVersion", "Ping", "Me", "ListModels", "ListRepositories", "CreateAgent", "GetAgent", "Send", "Shutdown"])
+        self.assertEqual(methods, ["Ping", "GetVersion", "Ping", "Me", "ListModels", "ListRepositories", "CreateAgent", "GetAgent", "Send", "GetRun", "ObserveRun", "GetRun", "ObserveRun", "Send", "Shutdown"])
         self.assertTrue(all(event["write_ahead"] for event in events if event.get("method") in {"CreateAgent", "Send"}))
         self.assertEqual(report["result"]["tests"], "PASS; 3 tests")
         self.assertEqual(report["control_recovery"], "NOT RUN")
         journal = self.case_root / "journal"
         rows = [json.loads(line) for line in (journal / "events.jsonl").read_text().splitlines()]
         claims = [row for row in rows if row["event"] == "claim"]
-        self.assertEqual(len({row["operation_key"] for row in claims}), 2)
+        self.assertEqual(len({row["operation_key"] for row in claims}), 3)
         self.assertFalse(list(journal.glob("*.request.json")))
-        self.assertEqual([row["method"] for row in rows if row["event"] == "receipt"], ["CreateAgent", "Send"])
+        self.assertEqual([row["method"] for row in rows if row["event"] == "receipt"], ["CreateAgent", "Send", "Send"])
 
     def test_slow_external_processes_progress_under_normal_budget_and_obey_short_deadline(self):
         for name, budgets in [("short", (2, 2.6, 0.4, 0.15)), ("normal", None)]:
@@ -358,10 +462,10 @@ sys.exit(result)
             "get_agent_wrong_id": "GetAgent cloud identity", "get_agent_local": "GetAgent cloud identity", "get_agent_wrong_repo": "GetAgent cloud identity",
             "early_no_id": "early original-stream", "early_wrong_agent": "early original-stream", "early_wrong_model": "early original-stream",
             "terminal_wrong_run": "terminal agent/run", "terminal_wrong_model": "run result/model", "missing_result": "done identity/order",
-            "missing_done": "coding lacks", "wrong_done": "done identity/order", "end_error": "Connect end-stream error",
+            "missing_done": "coding lacks", "wrong_done": "observation stream agent/run", "end_error": "Connect end-stream error",
             "missing_end": "Connect stream ended", "bad_flags": "invalid/oversized Connect frame", "bad_json": "invalid input",
             "duplicate_result": "duplicate terminal result", "after_done": "message after done", "result_bad_git": "result repository/branch",
-            "result_bad_branch": "result repository/branch", "sdk_bad_payload": "SDK envelope payload", "probe_bool_exit": "initial source probe differs",
+            "result_bad_branch": "result repository/branch", "sdk_bad_payload": "observation stream agent/run", "probe_bool_exit": "initial source probe differs",
             "wrong_ancestry": "independent Git/fixture command failed",
         }
         for scenario in cases:
@@ -373,7 +477,7 @@ sys.exit(result)
                 methods = [e["method"] for e in events if "method" in e]
                 self.assertEqual(methods.count("CreateAgent"), 1)
                 self.assertLessEqual(methods.count("Send"), 1)
-                self.assertFalse(set(methods) & {"ListRuns", "ObserveRun", "ResumeAgent"})
+                self.assertFalse(set(methods) & {"ListRuns", "ResumeAgent"})
                 self.assertTrue((self.case_root / "journal" / "events.jsonl").exists())
 
     def test_selected_github_helper_authenticates_private_fetch_and_refuses_bad_auth(self):
@@ -429,7 +533,9 @@ sys.exit(result)
         self.assertEqual(rows[closure]["kind"], "discard")
         self.assertFalse(any(row["event"] == "verified" for row in rows[closure + 1:]), rows)
         if report["coding"] == "PASS":
-            self.assertEqual(run.returncode, 0, report)
+            self.assertEqual(run.returncode, 1, report)
+            self.assertEqual(report["attempts"]["Send"], 1)
+            self.assertNotEqual(report["recovery_criteria"]["follow_up"]["verdict"], "PASS")
             self.assertTrue(gate["signal_blocked"])
             self.assertTrue(any(row["event"] == "verified" for row in rows[:closure]))
         else:
@@ -533,7 +639,7 @@ sys.exit(result)
                 self.assertEqual(run.returncode, 1, report)
                 self.assertLess(report["elapsed_seconds"], 8.1)
                 self.assertIn("deadline", report["stages"][-1]["reason"])
-                expected = {"partial_frame_trickle": "Send", "partial_frame_no_id": "Send", "git_stall": "source_fixture", "test_stall": "result_tests"}
+                expected = {"partial_frame_trickle": "observation", "partial_frame_no_id": "Send", "git_stall": "source_fixture", "test_stall": "result_tests"}
                 self.assertEqual(report["stages"][-1]["stage"], expected[scenario], report)
                 if scenario.startswith("partial_frame"):
                     self.assertTrue(any(e.get("stall") == scenario for e in events), events)
