@@ -647,7 +647,11 @@ impl Hooks {
     }
     fn start_collector(&mut self, reporter: &mut Reporter, deadline: Instant) {
         let Some(path) = self.transcript_path.as_ref() else {
-            self.source_health(reporter, Some("source_unavailable"), deadline);
+            // Transcript reporting is optional for hook/statusline-only sessions.
+            // Without an announced source, never publish the held startup model.
+            self.startup_model = None;
+            self.startup_source_pending = false;
+            self.startup_read_pending = false;
             return;
         };
         let Some(conversation) = self.expected.clone() else {
@@ -1135,10 +1139,9 @@ mod tests {
             reporter::ACCEPTED
         );
         assert!(receiver.startup_model.is_none() && receiver.metrics.is_none());
-        assert_eq!(
-            Supervisor::health(&supervisor.observed()).last(),
-            Some(&(ReporterHealth::Unavailable, "source_unavailable".into()))
-        );
+        assert!(!receiver.startup_source_pending && !receiver.startup_read_pending);
+        assert!(receiver.collector.is_none());
+        assert!(Supervisor::health(&supervisor.observed()).is_empty());
     }
 
     #[test]

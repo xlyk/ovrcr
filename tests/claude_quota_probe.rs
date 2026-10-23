@@ -681,7 +681,7 @@ fn claude_probe_managed_helper() {
                 }
             })
         } else if line == "root" {
-            serde_json::json!({"hook_event_name":"SessionStart","source":"startup","session_id":expected,"agent_type":"fixture-root"})
+            serde_json::json!({"hook_event_name":"SessionStart","source":"startup","session_id":expected,"agent_type":"fixture-root","model":"quota-fixture-startup-model"})
         } else if line == "exit" {
             break;
         } else {
@@ -769,6 +769,30 @@ fn a_live_managed_claude_session_suppresses_the_probe() {
         Response::Ok
     );
     wait_terminal(&run.fixture, session, "ADMISSION_CALLBACK=0");
+    let Response::Inventory { sessions, .. } = run.fixture.request(Request::Inspect) else {
+        panic!("inventory");
+    };
+    let agent = sessions
+        .iter()
+        .find(|row| row.id == session)
+        .unwrap()
+        .agent
+        .as_ref()
+        .unwrap();
+    assert_eq!(agent.binding.provider, AgentProvider::Claude);
+    assert!(
+        !agent.binding.conversation.is_empty(),
+        "actual managed root must be bound"
+    );
+    assert_eq!(agent.health.state, ReporterHealth::Connected);
+    assert!(
+        agent
+            .metrics
+            .as_ref()
+            .and_then(|metrics| metrics.sample.model.as_ref())
+            .is_none(),
+        "an unannounced optional transcript cannot publish the held startup model"
+    );
     assert_eq!(
         run.fixture.request(Request::SendTerminal {
             session,

@@ -443,6 +443,11 @@ may be sent. No transcript EOF, Ready, settled completion or zero usage is infer
 The allowance ends permanently on the first attributable prompt, source open,
 conversation transition or native completion. A missing resumed/established source,
 other I/O error, absent model or incompatible actual model retains the existing refusal.
+An omitted optional transcript path preserves existing hook/statusline-only
+reporting, including actual session quota. It does not publish the held startup
+model, create a collector, or grant the pending-source bootstrap. Errors for an
+announced source remain strict as described above.
+
 SessionStart.model is optional in the [native hook contract](https://code.claude.com/docs/en/hooks#sessionstart-input); installations without that observation remain unverified.
 
 A single already-requested pre-Prompt `source_not_created` response is not evidence
