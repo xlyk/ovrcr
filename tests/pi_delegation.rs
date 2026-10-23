@@ -1656,7 +1656,7 @@ impl RecoveryFixture {
             fs::write(&model_gate, "initially ready").unwrap();
             environment.push(("OVRCR_TEST_DELEGATION_MODEL_GATE", model_gate.as_os_str()));
         }
-        live.start_binary_env(&environment);
+        live.start_binary_logged(&environment, &live.root.path().join("server.log"));
         live.ready("recovery");
         let workspace = cli_json(
             &live,

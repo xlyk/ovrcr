@@ -505,6 +505,23 @@ fn public_claude_source_created_only_after_prompt_keeps_attribution_fenced() {
     assert_eq!(suspended.acceptance, "suspended");
     assert_eq!(f.input_count(&suspended), 1);
     assert_eq!(suspended.identity, pending.identity);
+    let prefix = format!(
+        "Assignment attribution suspended: session={} expected_run=1 current_run=1 control_epoch=2 cause=HealthUnavailable reason=SourceUnavailable health_revision=",
+        suspended.identity.session.unwrap().0
+    );
+    loop {
+        let log = fs::read_to_string(f.live.root.path().join("server.log")).unwrap();
+        if let Some(line) = log.lines().find(|line| line.starts_with(&prefix)) {
+            assert!(line[prefix.len()..].parse::<u64>().unwrap() > 0);
+            assert!(!line.contains(f.profile.to_str().unwrap()));
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "actual suspension diagnostic missing"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
     fs::write(f.profile.join("bootstrap-create-source"), "create now").unwrap();
     wait_file(&suspended.brief.with_extension("json.source-created"));
     loop {
@@ -535,6 +552,11 @@ fn public_claude_source_created_only_after_prompt_keeps_attribution_fenced() {
     assert!(current.control.attribution_invalidated);
     assert_eq!(current.acceptance, "suspended");
     assert!(current.submission.is_none());
+    let log = fs::read_to_string(f.live.root.path().join("server.log")).unwrap();
+    assert_eq!(
+        log.lines().filter(|line| line.starts_with(&prefix)).count(),
+        1
+    );
 }
 
 #[test]

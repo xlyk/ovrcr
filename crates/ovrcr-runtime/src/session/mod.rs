@@ -34,6 +34,80 @@ impl std::fmt::Display for NoProcessStarted {
 
 impl std::error::Error for NoProcessStarted {}
 
+/// Fixed diagnostic for the existing attribution predicate, captured under its lock.
+#[derive(Debug, PartialEq, Eq)]
+enum AttributionFailureCause {
+    BindingMissing,
+    RunChanged,
+    PhaseUnavailable,
+    HookUnavailable,
+    BindingChanged,
+    HealthUnavailable { revision: u64, reason: &'static str },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct AssignmentAttributionFailure {
+    pub(crate) current_run: SessionRunId,
+    cause: AttributionFailureCause,
+}
+
+impl AssignmentAttributionFailure {
+    pub(crate) fn diagnostic_fields(&self) -> (&'static str, &'static str, u64) {
+        use AttributionFailureCause::*;
+        match &self.cause {
+            BindingMissing => ("BindingMissing", "None", 0),
+            RunChanged => ("RunChanged", "None", 0),
+            PhaseUnavailable => ("PhaseUnavailable", "None", 0),
+            HookUnavailable => ("HookUnavailable", "None", 0),
+            BindingChanged => ("BindingChanged", "None", 0),
+            HealthUnavailable { revision, reason } => ("HealthUnavailable", reason, *revision),
+        }
+    }
+}
+
+impl std::fmt::Display for AssignmentAttributionFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("assigned attribution binding is unavailable or changed")
+    }
+}
+
+impl std::error::Error for AssignmentAttributionFailure {}
+
+fn assignment_attribution_failure(
+    current_run: SessionRunId,
+    expected_run: SessionRunId,
+    phase: &SessionPhase,
+    has_hook: bool,
+    snapshot: Option<&ovrcr_protocol::AgentSnapshot>,
+    binding: &ovrcr_protocol::AgentBinding,
+) -> Option<AssignmentAttributionFailure> {
+    use AttributionFailureCause::*;
+    // First failed predicate only; this preserves the original snapshot-first guard.
+    let cause = match snapshot {
+        None => BindingMissing,
+        Some(_) if current_run != expected_run => RunChanged,
+        Some(_) if !matches!(phase, SessionPhase::Running | SessionPhase::Paused) => {
+            PhaseUnavailable
+        }
+        Some(_) if !has_hook => HookUnavailable,
+        Some(snapshot) if &snapshot.binding != binding => BindingChanged,
+        Some(snapshot) if snapshot.health.state != ovrcr_protocol::ReporterHealth::Connected => {
+            let reason = match snapshot.health.reason.as_deref() {
+                None => "None",
+                Some("source_unavailable") => "SourceUnavailable",
+                Some("collector_unavailable") => "CollectorUnavailable",
+                Some(_) => "Other",
+            };
+            HealthUnavailable {
+                revision: snapshot.health_revision,
+                reason,
+            }
+        }
+        Some(_) => return None,
+    };
+    Some(AssignmentAttributionFailure { current_run, cause })
+}
+
 /// The session's owned process had already exited before terminate ran.
 #[derive(Debug)]
 pub(crate) struct AlreadyExited;
@@ -1207,18 +1281,18 @@ impl Session {
         action: impl FnOnce(&ovrcr_protocol::AgentSnapshot) -> Result<T>,
     ) -> Result<T> {
         let state = self.state.lock().unwrap();
-        let snapshot = state
-            .reporting
-            .snapshot
-            .as_ref()
-            .filter(|snapshot| {
-                self.run() == run
-                    && matches!(state.phase, SessionPhase::Running | SessionPhase::Paused)
-                    && state.hook_capability.is_some()
-                    && &snapshot.binding == binding
-                    && snapshot.health.state == ovrcr_protocol::ReporterHealth::Connected
-            })
-            .context("assigned attribution binding is unavailable or changed")?;
+        let snapshot = state.reporting.snapshot.as_ref();
+        if let Some(failure) = assignment_attribution_failure(
+            self.run(),
+            run,
+            &state.phase,
+            state.hook_capability.is_some(),
+            snapshot,
+            binding,
+        ) {
+            return Err(failure.into());
+        }
+        let snapshot = snapshot.expect("attribution predicate checked snapshot");
         action(snapshot)
     }
 

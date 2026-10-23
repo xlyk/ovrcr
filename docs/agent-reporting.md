@@ -76,6 +76,14 @@ and OS code, whether this collector previously opened the source, and the
 conversation identity. Repeated identical failures are not printed again until
 a successful read. Paths, error messages and transcript bodies are excluded.
 This adds diagnostics only; source health and delegation input gates are unchanged.
+
+When an assigned binding loses attribution, the Server emits one fixed-field
+`Assignment attribution suspended` diagnostic after saving the suspension. It
+records the first failed existing predicate under the same Session lock, run and
+control identifiers, and a bounded health-reason category/revision. The disposable
+GUI writes Server stderr to its owned `server.log`; this is separate from GUI
+launcher output. Diagnostic writes are best effort and never alter the fence.
+No source path, native text, arbitrary error message or account data is included.
 Reporting transport can be connected while usage or cost is unknown. Supported in-process conversation replacements (`/clear`, in-process resume, and
 foreground `/branch` when native leave + `SessionStart(source=fork)` evidence is
 present) rebind the same managed invocation to the new foreground identity and

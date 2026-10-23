@@ -1790,3 +1790,107 @@ fn no_process_marker_preserves_diagnostic_and_typed_cause() {
     );
     assert!(format!("{marked:#}").contains("preflight diagnostic"));
 }
+
+#[test]
+fn assignment_attribution_diagnostic_classifies_the_existing_guard_without_private_text() {
+    use ovrcr_protocol::{
+        AgentBinding, AgentProvider, AgentSnapshot, HealthSample, ReporterHealth,
+    };
+    let binding = AgentBinding {
+        provider: AgentProvider::Claude,
+        invocation: "PRIVATE_INVOCATION".into(),
+        conversation: "PRIVATE_CONVERSATION".into(),
+        generation: 1,
+    };
+    let mut snapshot = AgentSnapshot {
+        binding: binding.clone(),
+        activity: None,
+        metrics: None,
+        health: HealthSample {
+            state: ReporterHealth::Connected,
+            reason: Some("PRIVATE_REASON".into()),
+        },
+        activity_revision: 0,
+        metrics_revision: 0,
+        health_revision: 7,
+        input_requests: vec![],
+        input_revision: 0,
+        native_control: None,
+        native_control_revision: 0,
+    };
+    fn failure(
+        run: u64,
+        phase: &SessionPhase,
+        hook: bool,
+        snapshot: Option<&AgentSnapshot>,
+        expected: &AgentBinding,
+    ) -> Option<AssignmentAttributionFailure> {
+        assignment_attribution_failure(
+            SessionRunId(run),
+            SessionRunId(1),
+            phase,
+            hook,
+            snapshot,
+            expected,
+        )
+    }
+    assert_eq!(
+        failure(1, &SessionPhase::Running, true, Some(&snapshot), &binding),
+        None
+    );
+    assert_eq!(
+        failure(1, &SessionPhase::Paused, true, Some(&snapshot), &binding),
+        None
+    );
+    assert_eq!(
+        failure(2, &SessionPhase::Stopped, false, None, &binding).map(|failure| failure.cause),
+        Some(AttributionFailureCause::BindingMissing)
+    );
+    assert_eq!(
+        failure(2, &SessionPhase::Running, true, Some(&snapshot), &binding)
+            .map(|failure| failure.cause),
+        Some(AttributionFailureCause::RunChanged)
+    );
+    assert_eq!(
+        failure(1, &SessionPhase::Stopped, true, Some(&snapshot), &binding)
+            .map(|failure| failure.cause),
+        Some(AttributionFailureCause::PhaseUnavailable)
+    );
+    assert_eq!(
+        failure(1, &SessionPhase::Running, false, Some(&snapshot), &binding)
+            .map(|failure| failure.cause),
+        Some(AttributionFailureCause::HookUnavailable)
+    );
+    let mut other = binding.clone();
+    other.generation = 2;
+    assert_eq!(
+        failure(1, &SessionPhase::Running, true, Some(&snapshot), &other)
+            .map(|failure| failure.cause),
+        Some(AttributionFailureCause::BindingChanged)
+    );
+    snapshot.health.state = ReporterHealth::Unavailable;
+    for (raw, expected) in [
+        (None, "None"),
+        (Some("source_unavailable"), "SourceUnavailable"),
+        (Some("collector_unavailable"), "CollectorUnavailable"),
+        (Some("PRIVATE_REASON"), "Other"),
+    ] {
+        snapshot.health.reason = raw.map(str::to_owned);
+        let error = failure(1, &SessionPhase::Running, true, Some(&snapshot), &binding).unwrap();
+        assert_eq!(
+            error.diagnostic_fields(),
+            ("HealthUnavailable", expected, 7)
+        );
+        assert_eq!(
+            error.to_string(),
+            "assigned attribution binding is unavailable or changed"
+        );
+        let text = format!("{error:?}");
+        assert!(!text.contains("PRIVATE_"));
+        assert!(
+            anyhow::Error::new(error)
+                .downcast_ref::<AssignmentAttributionFailure>()
+                .is_some()
+        );
+    }
+}

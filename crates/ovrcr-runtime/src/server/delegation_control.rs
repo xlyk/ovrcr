@@ -307,18 +307,29 @@ impl ServerState {
                     )
                 })
         });
-        if !filed_archive
-            && record.control.owner != ControlOwner::Uncertain
-            && session
-                .with_assignment_attribution(
-                    record.identity.run.context("assigned run missing")?,
-                    &binding,
-                    |_| Ok(()),
-                )
-                .is_err()
-        {
-            suspend(&mut record.control)?;
-            store.save_assignment(&record)?;
+        if !filed_archive && record.control.owner != ControlOwner::Uncertain {
+            let expected_run = record.identity.run.context("assigned run missing")?;
+            if let Err(error) =
+                session.with_assignment_attribution(expected_run, &binding, |_| Ok(()))
+            {
+                suspend(&mut record.control)?;
+                store.save_assignment(&record)?;
+                if let Some(failure) =
+                    error.downcast_ref::<crate::session::AssignmentAttributionFailure>()
+                {
+                    let (cause, reason, revision) = failure.diagnostic_fields();
+                    // Best effort after durable suspension; logging cannot reverse the fence.
+                    use std::io::Write;
+                    let _ = writeln!(
+                        std::io::stderr(),
+                        "Assignment attribution suspended: session={} expected_run={} current_run={} control_epoch={} cause={cause} reason={reason} health_revision={revision}",
+                        id.0,
+                        expected_run.0,
+                        failure.current_run.0,
+                        record.control.epoch
+                    );
+                }
+            }
         }
         drop(store);
         #[cfg(feature = "acceptance-diagnostics")]
