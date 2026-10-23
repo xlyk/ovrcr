@@ -205,13 +205,21 @@ rtk proxy python3 -I -m py_compile experiments/cursor-cloud/client.py experiment
 ```
 
 `test_client.py` invokes normal `main` in a fresh isolated Python process. The external release-pin authority and deadline durations are replaced with
-synthetic archive digests and bounded test budgets before entry. Normal synthetic
-startup has a 3-second work / 5-second total budget; stall peers record that the
-intended phase was reached and trickle beyond the absolute deadline. Expired-entry
+synthetic archive digests and bounded test budgets before entry. Preflight keeps
+its 3-second work / 5-second total budget. Normal coding uses 15/20 seconds because
+its source/default/result fetches, credential-helper checks and independent tests
+run sequential external processes against one work clock. These budgets let semantic cases reach their
+asserted admission/result boundary. A controlled latency regression
+adds an observed 250 ms wait inside each real Git peer process: normal coding must
+finish all three fetches and both fixture test results, while an explicit 2-second
+work clock must still stop before creation. No clock is renewed. Stall peers record
+that the intended phase was reached and trickle beyond the absolute deadline. Expired-entry
 and exhausted-cleanup cases keep separate zero/late budget checks. New coding
 stall cases use 6-second work / 8-second total limits and require an actual peer or
 process phase receipt plus the exact failure stage. Production limits stay 840/900
-seconds. Coding cases substitute
+seconds. Cancellation cleanup retains its explicit 0.4-second budget and 0.15-second
+shutdown reserve. Source-admission failures must match their expected reason, so a
+deadline in the same stage cannot qualify that guard. Coding cases substitute
 the external Git executable with an owned URL-rewriting peer; Git itself and all
 repositories, files, processes and sockets are real. Narrow test-runner tracing
 forces real signal/storage faults at final verification and cleanup boundaries;
@@ -258,7 +266,7 @@ The #364 acceptance cases map to these additional entry-point assertions:
 | 6: source, ancestry, allowed history/diff, independent tests | success and wrong-source/ancestry/diff/failed-tests cases in `test_coding_rejects*` |
 | 7: uncertain receipt retention; no replacement/retry/guessed run | `test_lost_receipts*`, storage/identity cases and common method-count assertions |
 | 8: closure ordering, late receipts, exact cleanup cancel | `test_closure_orders*`, `test_final_verified*`, `test_failed_required_closure*`, `test_only_exact_known_active_run*` |
-| 9: absolute partial-frame/Git/test/cancel deadlines, honest report | `test_partial_frames*`, `test_caught_deadline_after_coding_pass*`, exact-cancel stalled case and inherited preflight/cleanup deadline tests |
+| 9: absolute partial-frame/Git/test/cancel deadlines, honest report | `test_partial_frames*`, `test_slow_external_processes*`, `test_caught_deadline_after_coding_pass*`, exact-cancel stalled case and inherited preflight/cleanup deadline tests |
 | Property-name/value secret exclusion | `test_json_property_names*` and common stdout/journal sentinel checks |
 | 10: actual entry/storage/Git/process path and failure matrix | the full `test_client.py` suite; runtime criterion 10 stays NOT RUN because one invocation cannot attest the suite |
 

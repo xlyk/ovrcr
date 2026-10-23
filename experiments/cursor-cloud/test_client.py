@@ -16,10 +16,14 @@ import unittest
 from pathlib import Path
 
 CLIENT = Path(__file__).with_name("client.py")
+PREFLIGHT_BUDGETS = (3, 5, 1.5, 0.75)
+CODING_BUDGETS = (15, 20, 1.5, 0.75)
 
 
 class PreflightEntryPointTests(unittest.TestCase):
-    def run_fixture(self, scenario="success", mutate=None, pin_change=None, env_change=None, budgets=(3, 5, 1.5, 0.75), coding=False):
+    def run_fixture(self, scenario="success", mutate=None, pin_change=None, env_change=None, budgets=None, coding=False, process_delay=0):
+        if budgets is None:
+            budgets = CODING_BUDGETS if coding else PREFLIGHT_BUDGETS
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         root = Path(temp.name)
@@ -93,8 +97,19 @@ else:
 """)
             gh_peer.chmod(0o700)
             shim = root / "git-peer"
-            shim.write_text("#!" + sys.executable + "\n" + r"""import json,os,subprocess,sys
+            shim.write_text("#!" + sys.executable + "\n" + r"""import json,os,subprocess,sys,time
 args = sys.argv[1:]
+delay = """ + repr(process_delay) + r"""
+if delay:
+    position = 0
+    while args[position] == '-c':
+        position += 2
+    command = args[position]
+    for phase in ('waiting', 'progressed'):
+        if phase == 'progressed':
+            time.sleep(delay)
+        with open(""" + repr(str(root / "process-latency.jsonl")) + r""", 'a') as audit:
+            audit.write(json.dumps({'phase': phase, 'command': command, 'pid': os.getpid(), 'delay_seconds': delay, 'time': time.monotonic()}) + '\n')
 if 'fetch' in args:
     options = args[:args.index('fetch')]
     auth = subprocess.run(['/usr/bin/git', *options, 'credential', 'fill'], input='protocol=https\nhost=github.com\npath=fixture/disposable\n\n', text=True, capture_output=True)
@@ -251,7 +266,7 @@ sys.exit(result)
             items = {"report.json": run.stdout.encode(), "wire.json": json.dumps(events, sort_keys=True).encode()}
             if journal.exists():
                 items.update({"journal-" + path.name: path.read_bytes() for path in journal.iterdir() if path.is_file()})
-            for name in ("verification-stall.json", "fault-gate.json", "github-audit.jsonl", "git-auth-audit.jsonl"):
+            for name in ("verification-stall.json", "fault-gate.json", "github-audit.jsonl", "git-auth-audit.jsonl", "process-latency.jsonl"):
                 if (root / name).exists():
                     items[name] = (root / name).read_bytes()
             for name, data in items.items():
@@ -261,7 +276,7 @@ sys.exit(result)
         return run, report, events
 
     def test_coding_verifies_patch_and_exact_write_ahead_order(self):
-        run, report, events = self.run_fixture(coding=True, budgets=(2, 2.6, 0.4, 0.15))
+        run, report, events = self.run_fixture(coding=True)
         self.assertEqual(run.returncode, 0, report)
         self.assertEqual(report["coding"], "PASS")
         self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1})
@@ -277,11 +292,45 @@ sys.exit(result)
         self.assertFalse(list(journal.glob("*.request.json")))
         self.assertEqual([row["method"] for row in rows if row["event"] == "receipt"], ["CreateAgent", "Send"])
 
+    def test_slow_external_processes_progress_under_normal_budget_and_obey_short_deadline(self):
+        for name, budgets in [("short", (2, 2.6, 0.4, 0.15)), ("normal", None)]:
+            with self.subTest(budget=name):
+                kwargs = {"budgets": budgets} if budgets is not None else {}
+                run, report, events = self.run_fixture(coding=True, process_delay=0.25, **kwargs)
+                latency = [json.loads(line) for line in (self.case_root / "process-latency.jsonl").read_text().splitlines()]
+                progressed = [row for row in latency if row["phase"] == "progressed"]
+                process_ids = {row["pid"] for row in report["resources"]["verification_processes"]}
+                self.assertTrue(progressed)
+                self.assertTrue(all(row["pid"] in process_ids for row in latency))
+                self.assertTrue(all(row["delay_seconds"] == 0.25 for row in latency))
+                waits = {row["pid"]: row["time"] for row in latency if row["phase"] == "waiting"}
+                self.assertTrue(all(row["time"] - waits[row["pid"]] >= 0.25 for row in progressed))
+                self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
+                self.assertTrue(all(row["exit"] != "UNRESOLVED" for row in report["resources"]["verification_processes"]))
+                if name == "short":
+                    self.assertEqual(run.returncode, 1, report)
+                    self.assertEqual(report["attempts"], {"CreateAgent": 0, "Send": 0})
+                    self.assertEqual(report["stages"][-1]["stage"], "source_fixture")
+                    self.assertIn("deadline", report["stages"][-1]["reason"])
+                    self.assertLess(report["elapsed_seconds"], 2.7)
+                    self.assertFalse(set(e.get("method") for e in events) & {"CreateAgent", "Send"})
+                else:
+                    self.assertEqual(run.returncode, 0, report)
+                    self.assertEqual(report["coding"], "PASS")
+                    self.assertEqual(report["deadlines"]["work_seconds"], CODING_BUDGETS[0])
+                    self.assertEqual(report["deadlines"]["total_seconds"], CODING_BUDGETS[1])
+                    self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1})
+                    self.assertEqual(report["source"]["baseline_tests"], "FAIL; 3 tests, 2 failures")
+                    self.assertEqual(report["result"]["tests"], "PASS; 3 tests")
+                    self.assertEqual(sum(row["command"] == "fetch" for row in progressed), 3)
+                    self.assertGreater(sum(row["delay_seconds"] for row in progressed), 3)
+                    self.assertEqual(report["resources"]["token_cleanup"], "REMOVED")
+
     def test_lost_receipts_close_admission_and_retain_exact_original_request(self):
         for scenario, expected, retained in [("creation_lost", {"CreateAgent": 1, "Send": 0}, "CreateAgent"),
                                                ("send_lost", {"CreateAgent": 1, "Send": 1}, "Send")]:
             with self.subTest(scenario=scenario):
-                run, report, events = self.run_fixture(scenario, coding=True, budgets=(2, 2.6, 0.4, 0.15))
+                run, report, events = self.run_fixture(scenario, coding=True)
                 self.assertEqual(run.returncode, 1, report)
                 self.assertEqual(report["attempts"], expected)
                 self.assertEqual(report["resources"]["remote_outcome"], "UNRESOLVED; an effect may have escaped without exact durable identity")
@@ -317,7 +366,7 @@ sys.exit(result)
         }
         for scenario in cases:
             with self.subTest(scenario=scenario):
-                run, report, events = self.run_fixture(scenario, coding=True, budgets=(2.2, 2.8, 0.4, 0.15))
+                run, report, events = self.run_fixture(scenario, coding=True)
                 self.assertEqual(run.returncode, 1, report)
                 self.assertNotEqual(report["coding"], "PASS")
                 self.assertIn(reasons[scenario], report["stages"][-1]["reason"], report)
@@ -330,7 +379,7 @@ sys.exit(result)
     def test_selected_github_helper_authenticates_private_fetch_and_refuses_bad_auth(self):
         for scenario in ("success", "github_wrong_login", "github_auth_bad", "github_helper_refused"):
             with self.subTest(scenario=scenario):
-                run, report, events = self.run_fixture(scenario, coding=True, budgets=(3, 3.6, 0.4, 0.15),
+                run, report, events = self.run_fixture(scenario, coding=True,
                                                        env_change=lambda env: env.update(GH_TOKEN="AMBIENT_GH_MUST_NOT_WIN", GITHUB_TOKEN="AMBIENT_GITHUB_MUST_NOT_WIN"))
                 self.assertEqual(run.returncode, 0 if scenario == "success" else 1, report)
                 gh_rows = [json.loads(line) for line in (self.case_root / "github-audit.jsonl").read_text().splitlines()]
@@ -348,7 +397,7 @@ sys.exit(result)
     def test_json_property_names_cannot_leak_credentials_into_receipts_or_report(self):
         for scenario in ("secret_response_key", "secret_nested_key", "bridge_token_key"):
             with self.subTest(scenario=scenario):
-                run, report, events = self.run_fixture(scenario, coding=True, budgets=(4, 6, 1, 0.5))
+                run, report, events = self.run_fixture(scenario, coding=True)
                 self.assertEqual(run.returncode, 1, report)
                 self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 0})
                 self.assertEqual(report["stages"][-1]["stage"], "CreateAgent")
@@ -413,18 +462,22 @@ sys.exit(result)
         self.assertEqual(report["outcome"], "FAIL")
 
     def test_independent_fixture_source_admission_precedes_any_creation(self):
+        reasons = {"unpublished_source": "independent Git/fixture command failed",
+                   "same_default_source": "default-tip marker is not the distinct",
+                   "wrong_baseline": "selected fixture differs from reviewed"}
         for scenario in ("unpublished_source", "same_default_source", "wrong_baseline"):
             with self.subTest(scenario=scenario):
-                run, report, events = self.run_fixture(scenario, coding=True, budgets=(2.2, 2.8, 0.4, 0.15))
+                run, report, events = self.run_fixture(scenario, coding=True)
                 self.assertEqual(run.returncode, 1, report)
                 self.assertEqual(report["attempts"], {"CreateAgent": 0, "Send": 0})
                 self.assertEqual(report["stages"][-1]["stage"], "source_fixture")
+                self.assertIn(reasons[scenario], report["stages"][-1]["reason"])
                 self.assertFalse(set(e.get("method") for e in events) & {"CreateAgent", "Send"})
 
     def test_private_owner_storage_and_capacity_fail_before_new_effect(self):
         for scenario, creates in [("competing_owner", 0), ("retained_journal", 0), ("request_conflict", 0), ("capacity_before_create", 0), ("receipt_capacity", 1)]:
             with self.subTest(scenario=scenario):
-                run, report, events = self.run_fixture(scenario, coding=True, budgets=(2.2, 2.8, 0.4, 0.15))
+                run, report, events = self.run_fixture(scenario, coding=True)
                 self.assertEqual(run.returncode, 1, report)
                 self.assertEqual(report["attempts"], {"CreateAgent": creates, "Send": 0})
                 journal = self.case_root / "journal"
@@ -438,7 +491,7 @@ sys.exit(result)
     def test_closure_orders_before_claim_and_late_receipts_never_reopen_delivery(self):
         for scenario, creates, sends in [("close_before_create", 0, 0), ("cancel_after_create", 1, 0), ("discard_after_create", 1, 0), ("close_before_send", 1, 0), ("discard_after_send", 1, 1)]:
             with self.subTest(scenario=scenario):
-                run, report, events = self.run_fixture(scenario, coding=True, budgets=(2.2, 2.8, 0.4, 0.15))
+                run, report, events = self.run_fixture(scenario, coding=True)
                 self.assertEqual(run.returncode, 1, report)
                 self.assertEqual(report["attempts"], {"CreateAgent": creates, "Send": sends})
                 methods = [e["method"] for e in events if "method" in e]
@@ -456,7 +509,7 @@ sys.exit(result)
     def test_only_exact_known_active_run_can_be_cancelled_and_ack_is_not_terminal(self):
         for scenario, outcome in [("cancel_known", "RUN_LIFECYCLE_STATUS_CANCELLED"), ("cancel_unconfirmed", "UNRESOLVED"), ("cancel_stall", "UNRESOLVED")]:
             with self.subTest(scenario=scenario):
-                run, report, events = self.run_fixture(scenario, coding=True, budgets=(2.2, 2.8, 0.4, 0.15))
+                run, report, events = self.run_fixture(scenario, coding=True, budgets=(*CODING_BUDGETS[:2], 0.4, 0.15))
                 self.assertEqual(run.returncode, 1, report)
                 self.assertEqual(report["resources"]["remote_outcome"], outcome)
                 methods = [e["method"] for e in events if "method" in e]
