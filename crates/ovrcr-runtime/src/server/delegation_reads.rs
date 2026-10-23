@@ -60,7 +60,7 @@ impl ServerState {
             if workspace.git_identity.is_none() {
                 bail!("read workspace has no recorded generation");
             }
-            crate::git::inspect_worktree(&project, &workspace)?;
+            crate::git::verify_read_checkout(&project, &workspace)?;
             Some((project, workspace))
         } else {
             None
@@ -120,7 +120,7 @@ impl ServerState {
         };
         let result = AssignedReadResult::from_bytes(read, &bytes).map_err(anyhow::Error::msg)?;
         if let Some((project, workspace)) = &workspace {
-            crate::git::inspect_worktree(project, workspace)?;
+            crate::git::verify_read_checkout(project, workspace)?;
             let registry = self.registry.lock().unwrap();
             let current = registry.workspace(&record.project, &record.workspace)?;
             if current.path != workspace.path

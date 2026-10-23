@@ -1024,6 +1024,60 @@ fn public_claude_mcp_read_confines_actual_workspace_and_authority() {
 }
 
 #[test]
+fn public_claude_mcp_read_supports_registered_repository_root_without_expanding_scope() {
+    use std::os::unix::fs::symlink;
+    let f = ClaudeFixture::new("no-stop");
+    let root = cli_json(
+        &f.live,
+        &["workspace", "get", "--project", PROJECT, "--branch", "main"],
+    );
+    assert_eq!(root["path"], f.live.repo.to_str().unwrap());
+    fs::write(f.live.repo.join("README.md"), "CLAUDE_REGISTERED_ROOT_READ").unwrap();
+    let outside = f.live.root.path().join("root-read-outside");
+    fs::write(&outside, "NEVER_RETURN_ROOT_READ_OUTSIDE").unwrap();
+    symlink(&outside, f.live.repo.join("root-escape")).unwrap();
+    let cases = serde_json::json!([
+        {"target":{"Workspace":{"path":"../root-read-outside"}}},
+        {"target":{"Workspace":{"path":"root-escape"}}},
+        {"target":{"Workspace":{"path":outside}}},
+        {"result_version":999}, {"control_epoch":999},
+        {"identity":{"instance":"foreign"}}
+    ]);
+    fs::write(
+        f.profile.join("delegation-read-cases.json"),
+        serde_json::to_vec(&cases).unwrap(),
+    )
+    .unwrap();
+    let reply = f.tool("ovrcr_start", serde_json::json!({
+        "project":PROJECT,"workspace":root["id"],"provider":"claude","model_provider":"native","model":"fixture-model",
+        "scope":"Read README in the registered repository root without edits.","acceptance_evidence":["README citation"]
+    }));
+    assert_eq!(reply["dispatch"], "Applied", "{reply}");
+    let started: AssignmentSnapshot = serde_json::from_value(reply).unwrap();
+    wait_file(&started.brief.with_extension("json.started"));
+    let positive: serde_json::Value =
+        serde_json::from_slice(&fs::read(started.brief.with_extension("json.read")).unwrap())
+            .unwrap();
+    assert_eq!(positive["status"], "read", "{positive}");
+    assert_eq!(positive["read"]["text"], "CLAUDE_REGISTERED_ROOT_READ");
+    assert_eq!(
+        positive["read"]["identity"],
+        serde_json::to_value(&started.identity).unwrap()
+    );
+    let denied: Vec<serde_json::Value> =
+        serde_json::from_slice(&fs::read(started.brief.with_extension("json.read-cases")).unwrap())
+            .unwrap();
+    assert_eq!(denied.len(), cases.as_array().unwrap().len());
+    for reply in denied {
+        assert_eq!(reply["status"], "refused", "{reply}");
+        assert!(!reply.to_string().contains("NEVER_RETURN_ROOT_READ_OUTSIDE"));
+    }
+    let completed = complete(&f, &started);
+    assert!(!completed.control.attribution_invalidated);
+    assert_eq!(completed.control.epoch, 1);
+}
+
+#[test]
 fn public_claude_explicit_foreign_backend_refuses_before_native_discovery_or_allocation() {
     let f = ClaudeFixture::new("result");
     for backend in ["anthropic", "custom"] {
