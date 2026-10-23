@@ -171,6 +171,14 @@ async function finish(path, brief) {
   process.stdout.write("CLAUDE_CHILD_RESULT_PUBLISHED\n");
 }
 
+if (mode() === "source-not-created") {
+  // Pin the diagnostic test's uncaptured-input ordering, not a wall-clock race.
+  const deadline = performance.now() + 60000;
+  while (!existsSync(config("startup-source-release"))) {
+    if (performance.now() > deadline) throw new Error("owned startup source gate timed out");
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+}
 hook("SessionStart", { source: "startup", ...(mode().startsWith("startup-bootstrap") ? { model: mode() === "startup-bootstrap-wrong-model" ? "different-model" : `${option("--model")}-resolved` } : {}) });
 if (mode() === "pre-input-prompt") {
   hook("UserPromptSubmit", { prompt_id: "native-startup" });

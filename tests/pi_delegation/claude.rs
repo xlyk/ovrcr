@@ -580,6 +580,21 @@ fn public_claude_missing_startup_source_reports_cause_without_releasing_input() 
     assert_eq!(reply["dispatch"], "Launched", "{reply}");
     let pending: AssignmentSnapshot = serde_json::from_value(reply).unwrap();
     let session = pending.identity.session.unwrap();
+    let retained_binding = || {
+        let db = rusqlite::Connection::open(f.live.config.join("registry.sqlite3")).unwrap();
+        let raw: String = db
+            .query_row(
+                "SELECT metadata FROM delegations WHERE handle=?1",
+                [&pending.handle],
+                |row| row.get(0),
+            )
+            .unwrap();
+        serde_json::from_str::<serde_json::Value>(&raw).unwrap()["binding"].clone()
+    };
+    // No SessionStart can arrive during the first Start's bounded SendInitial loop.
+    // Once Unavailable is observed below, later SendInitial cannot capture a binding.
+    assert!(retained_binding().is_null());
+    fs::write(f.profile.join("startup-source-release"), "release").unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let Response::TerminalText { text, .. } = f.live.request(Request::ReadTerminal {
@@ -620,6 +635,10 @@ fn public_claude_missing_startup_source_reports_cause_without_releasing_input() 
     };
     let child = sessions.iter().find(|child| child.id == session).unwrap();
     let agent = child.agent.as_ref().unwrap();
+    assert!(
+        retained_binding().is_null(),
+        "unavailable source never grants capture authority"
+    );
     assert_eq!(agent.health.reason.as_deref(), Some("source_unavailable"));
     assert_eq!(
         agent.health.state,
