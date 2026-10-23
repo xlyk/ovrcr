@@ -264,7 +264,7 @@ def tracked_spawn(*args, **kwargs):
                 gate.write(json.dumps({"event": "wait_confirmed", "pid": process.pid, "time": time.monotonic(), "exit": result}) + "\\n")
             return result
         process.wait = delayed_wait
-    if scenario == "launch_uncertain" or (scenario == "verification_launch_uncertain" and args[0][0] == g["GH"]):
+    if scenario == "launch_uncertain" or (scenario == "verification_launch_uncertain" and args[0][0] == g["GH"]) or (scenario == "fresh_launch_uncertain" and Path(args[0][0]).name == "bridge" and sum(Path(p.args[0]).name == "bridge" for p in owned) == 2):
         time.sleep(0.2)
         raise TimeoutError("synthetic interrupted process operation")
     return process
@@ -361,7 +361,7 @@ sys.exit(result)
         if coding:
             self.assertEqual(report["attempts"], {name: methods.count(name) for name in ("CreateAgent", "Send")})
             self.assertLessEqual(methods.count("CreateAgent"), 1)
-            self.assertLessEqual(methods.count("Send"), 2)
+            self.assertLessEqual(methods.count("Send"), 3)
             self.assertTrue(all(e["request_shape"] for e in events if e.get("method") in {"CreateAgent", "GetAgent", "Send"}))
         self.assertEqual(unrelated.read_text(), "UNRELATED-SECRET")
         if journal.exists():
@@ -389,10 +389,147 @@ sys.exit(result)
                     output.write(data)
         return run, report, events
 
+    def test_third_send_cancels_exact_active_run_then_reads_completed_run_on_fresh_bridge(self):
+        run, report, events = self.run_fixture("third_delayed_cancel", coding=True)
+        self.assertEqual(run.returncode, 0, report)
+        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
+        self.assertEqual(report["cancellation"]["verdict"], "PASS", report)
+        self.assertEqual(report["cancellation"]["terminal"], "RUN_LIFECYCLE_STATUS_CANCELLED")
+        self.assertEqual(report["fresh_bridge"]["verdict"], "PASS", report)
+        self.assertEqual(report["fresh_bridge"]["runId"], "run-fixture")
+        self.assertEqual([row["terminal"] for row in report["runs"]], ["RUN_LIFECYCLE_STATUS_FINISHED", "RUN_LIFECYCLE_STATUS_FINISHED", "RUN_LIFECYCLE_STATUS_CANCELLED"])
+        methods = [row["method"] for row in events if "method" in row]
+        self.assertEqual(methods.count("CreateAgent"), 1)
+        self.assertEqual(methods.count("Send"), 3)
+        self.assertEqual(methods.count("CancelRun"), 1)
+        self.assertNotIn("ResumeAgent", methods)
+        self.assertNotIn("ListRuns", methods)
+        self.assertTrue(all(row["request_shape"] for row in events if row.get("method") in {"GetRun", "Send"}))
+        self.assertTrue(next(row["cancel_gate"] for row in events if row.get("method") == "CancelRun"))
+        self.assertTrue(next(row["exact_cancel"] for row in events if row.get("method") == "CancelRun"))
+        self.assertEqual(methods.count("ObserveRun"), 3)
+        self.assertEqual(len([row for row in events if "pid" in row and "token_file" in row]), 2)
+        self.assertEqual(report["resources"]["previous_bridge"]["process_exit"], "CONFIRMED")
+        self.assertEqual(report["resources"]["previous_bridge"]["token_cleanup"], "REMOVED")
+        self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
+        self.assertEqual(report["resources"]["token_cleanup"], "REMOVED")
+        rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+        self.assertEqual(len({row["operation_key"] for row in rows if row["event"] == "claim"}), 4)
+        self.assertEqual([row["kind"] for row in rows if row["event"] == "closure"], ["cancel"])
+        self.assertTrue(any(row["event"] == "cancellation_result" and row["late"] for row in rows))
+        self.assertFalse(list((self.case_root / "journal").glob("*.request.json")))
+
+    def test_third_cancellation_ack_race_unknown_ids_and_late_receipts_never_add_work(self):
+        for scenario in ("third_ack_only", "third_completion_race", "third_no_id", "third_wrong_agent", "third_reused_id", "third_no_activity", "third_snapshot_wrong_id", "third_observer_wrong_id", "third_observer_bad_status", "third_observer_error", "third_late_discard"):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True)
+                methods = [row["method"] for row in events if "method" in row]
+                self.assertEqual(methods.count("Send"), 3)
+                self.assertEqual(methods.count("CreateAgent"), 1)
+                self.assertNotIn("ListRuns", methods)
+                self.assertNotIn("ResumeAgent", methods)
+                self.assertNotEqual(report["cancellation"]["verdict"], "PASS")
+                self.assertEqual(report["follow_up"]["result"], "FINISHED")
+                if scenario == "third_completion_race":
+                    self.assertEqual(run.returncode, 0, report)
+                    self.assertEqual(report["cancellation"]["terminal"], "RUN_LIFECYCLE_STATUS_FINISHED")
+                    self.assertIn("inconclusive", report["cancellation"]["reason"])
+                    self.assertEqual(report["fresh_bridge"]["verdict"], "PASS")
+                else:
+                    self.assertEqual(run.returncode, 1, report)
+                    self.assertEqual(len([row for row in events if "token_file" in row]), 1)
+                if scenario in {"third_no_id", "third_wrong_agent", "third_reused_id", "third_late_discard"}:
+                    self.assertNotIn("CancelRun", methods)
+                if scenario in {"third_no_id", "third_wrong_agent", "third_reused_id"}:
+                    self.assertTrue((self.case_root / "journal" / "Send.request.json").exists())
+                    self.assertIsNone(report["runs"][-1]["runId"])
+                    self.assertEqual(report["runs"][-1]["terminal"], "UNRESOLVED")
+                if scenario == "third_ack_only":
+                    self.assertEqual(report["cancellation"]["request"], "ACKNOWLEDGED; not terminal proof")
+                    self.assertEqual(report["runs"][-1]["terminal"], "UNRESOLVED")
+                    self.assertEqual(methods.count("CancelRun"), 1)
+                if scenario == "third_late_discard":
+                    rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+                    self.assertTrue(any(row["event"] == "receipt" and row.get("method") == "Send" and row.get("late") and row["receipt"].get("runId") == "run-cancel" for row in rows))
+                    self.assertFalse((self.case_root / "journal" / "Send.request.json").exists())
+
+    def test_third_stalled_control_and_observation_keep_original_shutdown_reserve(self):
+        for scenario, phase in (("third_cancel_stall", "third_cancel"), ("third_observer_stall", "third_observer")):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True, budgets=(6, 8, 1.5, 0.75))
+                self.assertEqual(run.returncode, 1, report)
+                self.assertTrue(any(row.get("stall") == phase for row in events))
+                self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
+                self.assertEqual(sum(row.get("method") == "CancelRun" for row in events), 1)
+                self.assertNotEqual(report["cancellation"]["verdict"], "PASS")
+                self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
+                self.assertEqual(report["resources"]["token_cleanup"], "REMOVED")
+                self.assertLess(report["elapsed_seconds"], 8)
+                self.assertEqual(len([row for row in events if "token_file" in row]), 1)
+
+    def test_fresh_read_only_probe_refuses_resume_updates_and_retains_original_clock(self):
+        for scenario in ("fresh_unavailable", "fresh_requires_resume", "fresh_wrong_id", "fresh_stall"):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True)
+                self.assertEqual(run.returncode, 0, report)
+                self.assertEqual(report["fresh_bridge"]["verdict"], "BLOCKED")
+                self.assertEqual(report["resume_options"]["verdict"], "NOT RUN")
+                self.assertIn("preservation unverified", report["resume_options"]["reason"])
+                methods = [row["method"] for row in events if "method" in row]
+                self.assertNotIn("ResumeAgent", methods)
+                self.assertEqual(methods.count("CreateAgent"), 1)
+                self.assertEqual(methods.count("Send"), 3)
+                fresh = [row for row in events if row.get("bridge_index") == 2]
+                self.assertEqual([row["method"] for row in fresh], ["GetRun", "Shutdown"] if scenario != "fresh_stall" else ["GetRun"])
+                self.assertTrue(all(row["request_shape"] for row in fresh))
+                if scenario == "fresh_stall":
+                    self.assertTrue(any(row.get("stall") == "fresh_get_run" for row in events))
+                clock = report["deadlines"]
+                self.assertEqual(clock["work_deadline"], clock["started_monotonic"] + CODING_BUDGETS[0])
+                self.assertEqual(clock["total_deadline"], clock["started_monotonic"] + CODING_BUDGETS[1])
+                self.assertLess(report["elapsed_seconds"], CODING_BUDGETS[0])
+                self.assertLess(clock["cleanup_deadline"], clock["total_deadline"])
+                self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
+                self.assertEqual(report["resources"]["token_cleanup"], "REMOVED")
+
+    def test_restart_waits_for_owned_exit_and_token_disposition_and_unknown_launch_stays_unknown(self):
+        for scenario in ("first_token_leftover", "second_token_leftover", "fresh_launch_uncertain"):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True)
+                self.assertEqual(run.returncode, 1, report)
+                started = [row for row in events if "token_file" in row]
+                self.assertEqual(len(started), 1 if scenario == "first_token_leftover" else 2)
+                if scenario == "first_token_leftover":
+                    self.assertEqual(report["fresh_bridge"]["verdict"], "BLOCKED")
+                    self.assertEqual(report["resources"]["previous_bridge"]["token_cleanup"], "UNRESOLVED")
+                if scenario == "fresh_launch_uncertain":
+                    self.assertEqual(report["resources"]["process_exit"], "UNRESOLVED")
+                    self.assertEqual(report["resources"]["token_cleanup"], "UNRESOLVED")
+                else:
+                    self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
+                    self.assertEqual(report["resources"]["token_cleanup"], "UNRESOLVED")
+                self.assertIn("RETAINED", report["resources"]["private_root_cleanup"])
+
+    def test_usage_cost_keeps_float_cents_and_missing_cost_unavailable(self):
+        for scenario in ("success", "usage_cost"):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True)
+                self.assertEqual(run.returncode, 0, report)
+                self.assertEqual(sum(row.get("method") == "GetUsage" for row in events), 1)
+                self.assertEqual(report["usage"]["observed"]["usage"]["totalTokens"], "24")
+                if scenario == "usage_cost":
+                    self.assertEqual(report["usage"]["observed"]["cost"], {"rawCostCents": 2.0, "chargedCents": 1.5})
+                else:
+                    self.assertNotIn("cost", report["usage"]["observed"])
+                    self.assertIn("UNAVAILABLE", report["usage"]["cost"])
+                self.assertEqual(report["native_gates"]["active_process_death"], "NOT RUN")
+                self.assertIn("BLOCKED", report["native_gates"]["terminal_response"])
+                self.assertIn("BLOCKED", report["native_gates"]["uncertain_retry"])
+
     def test_recovery_and_follow_up_use_exact_run_and_private_original_keys(self):
         run, report, events = self.run_fixture(coding=True)
         self.assertEqual(run.returncode, 0, report)
-        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 2})
+        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
         for name in ("active_observation", "offset_resume", "follow_up"):
             self.assertEqual(report["recovery_criteria"][name]["verdict"], "PASS", report)
         self.assertEqual(report["recovery_criteria"]["completed_result"]["verdict"], "NOT RUN")
@@ -400,7 +537,7 @@ sys.exit(result)
         self.assertEqual(report["follow_up"]["agentId"], report["run"]["agentId"])
         methods = [e["method"] for e in events if "method" in e]
         self.assertEqual(methods.count("ObserveRun"), 2)
-        self.assertNotIn("CancelRun", methods)
+        self.assertEqual(methods.count("CancelRun"), 1)
         self.assertTrue(any(e.get("original_send_closed") for e in events))
         self.assertTrue(any(e.get("original_observer_closed") for e in events))
         self.assertEqual([e["observation_request"] for e in events if e.get("method") == "ObserveRun"], [{"runId": "run-fixture"}, {"runId": "run-fixture", "afterOffset": "observe-3"}])
@@ -408,7 +545,7 @@ sys.exit(result)
         self.assertTrue(all(e["write_ahead"] for e in events if e.get("method") in {"CreateAgent", "Send"}))
         rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
         claims = [row for row in rows if row["event"] == "claim"]
-        self.assertEqual(len({row["operation_key"] for row in claims}), 3)
+        self.assertEqual(len({row["operation_key"] for row in claims}), 4)
         offsets = [row for row in rows if row["event"] == "observe_offset"]
         self.assertTrue(offsets)
         self.assertTrue(all(row["origin"] == "ObserveRun" and row["runId"] == "run-fixture" for row in offsets))
@@ -568,18 +705,18 @@ sys.exit(result)
         run, report, events = self.run_fixture(coding=True)
         self.assertEqual(run.returncode, 0, report)
         self.assertEqual(report["coding"], "PASS")
-        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 2})
+        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
         methods = [event["method"] for event in events if "method" in event]
-        self.assertEqual(methods, ["Ping", "GetVersion", "Ping", "Me", "ListModels", "ListRepositories", "CreateAgent", "GetAgent", "Send", "GetRun", "ObserveRun", "GetRun", "ObserveRun", "Send", "Shutdown"])
+        self.assertEqual(methods, ["Ping", "GetVersion", "Ping", "Me", "ListModels", "ListRepositories", "CreateAgent", "GetAgent", "Send", "GetRun", "ObserveRun", "GetRun", "ObserveRun", "Send", "Send", "CancelRun", "GetRun", "GetUsage", "Shutdown", "GetRun", "Shutdown"])
         self.assertTrue(all(event["write_ahead"] for event in events if event.get("method") in {"CreateAgent", "Send"}))
         self.assertEqual(report["result"]["tests"], "PASS; 3 tests")
-        self.assertEqual(report["control_recovery"], "NOT RUN")
+        self.assertEqual(report["control_recovery"], "PASS")
         journal = self.case_root / "journal"
         rows = [json.loads(line) for line in (journal / "events.jsonl").read_text().splitlines()]
         claims = [row for row in rows if row["event"] == "claim"]
-        self.assertEqual(len({row["operation_key"] for row in claims}), 3)
+        self.assertEqual(len({row["operation_key"] for row in claims}), 4)
         self.assertFalse(list(journal.glob("*.request.json")))
-        self.assertEqual([row["method"] for row in rows if row["event"] == "receipt"], ["CreateAgent", "Send", "Send"])
+        self.assertEqual([row["method"] for row in rows if row["event"] == "receipt"], ["CreateAgent", "Send", "Send", "Send"])
 
     def test_slow_external_processes_progress_under_normal_budget_and_obey_short_deadline(self):
         for name, budgets in [("short", (2, 2.6, 0.4, 0.15)), ("normal", None)]:
@@ -608,7 +745,7 @@ sys.exit(result)
                     self.assertEqual(report["coding"], "PASS")
                     self.assertEqual(report["deadlines"]["work_seconds"], CODING_BUDGETS[0])
                     self.assertEqual(report["deadlines"]["total_seconds"], CODING_BUDGETS[1])
-                    self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 2})
+                    self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
                     self.assertEqual(report["source"]["baseline_tests"], "FAIL; 3 tests, 2 failures")
                     self.assertEqual(report["result"]["tests"], "PASS; 3 tests")
                     self.assertEqual(sum(row["command"] == "fetch" for row in progressed), 3)

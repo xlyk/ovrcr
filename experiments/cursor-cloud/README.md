@@ -1,14 +1,14 @@
-# Cursor cloud coding, observation and follow-up (#363–#365)
+# Cursor cloud three-run proof (#363–#366)
 
 This standalone Python 3.11+ client runs preflight and, with an explicit fresh
-journal, one cloud creation and two sequential Sends for
+journal, one cloud creation and three sequential Sends for
 [#362](https://github.com/xlyk/ovrcr/issues/362). `--preflight-only` retains the
 catalog-only path. Run 1 exercises exact-run observation recovery, then Run 2 asks
-for the earlier public token and fix in the same conversation. It changes no OVRCR
-provider. Cancellation proof, fresh-bridge recovery and live acceptance remain NOT RUN
-(#366–#367).
-Error cleanup can request cancellation of an exact known active run; that does not
-count as the later cancellation proof. The official Cursor SDK Bridge is separate
+for the earlier public token and fix in the same conversation. Run 3 requests a
+harmless wait of at most 90 seconds and proves exact-run cancellation. Once all
+three runs are terminal, an optional owned bridge restart retrieves the exact
+completed Run 1 read-only. It changes no OVRCR provider. Live acceptance remains
+NOT RUN (#367). Error cleanup of an earlier run is separate from Run 3's proof. The official Cursor SDK Bridge is separate
 from OVRCR's macOS Bridge.
 
 ## Invocation
@@ -65,10 +65,11 @@ Me is recorded as selected-key credential context, not stable billing identity.
 The report records the requested USD ceiling; a local timer and unavailable usage
 are **not** a remote spending cap or evidence of zero cost.
 
-The configured future experiment ceiling is exactly one CreateAgent attempt and
-three Send attempts, with no retries. Allowed effects are restricted to the fixture
-change, result branch, exact-run cancellation and owned local shutdown. This slice uses at most one creation and two Sends, with separately generated
-original keys. Run 2 is admitted only after Run 1 independently qualifies. It never retries either operation or starts a replacement conversation.
+The experiment ceiling is exactly one CreateAgent attempt and three Send attempts,
+with no retries. Allowed effects are restricted to the fixture change, result branch,
+exact-run cancellation and owned local shutdown. Every Send uses a separately
+generated original key. Run 2 follows independently qualified Run 1; Run 3 follows
+qualified Run 2. Uncertain receipts never buy another Send or conversation.
 
 ## Fixture and authorized publication recipe
 
@@ -160,6 +161,35 @@ the fixture: the previously tested commit must remain unchanged. Unknown result
 shapes cannot qualify. A lost Run 2 receipt retains its original request and never
 cancels Run 1 or dispatches a replacement.
 
+Run 3 asks only for `sleep 90`, forbidding edits, branch publication and PRs. Its
+early original-stream identity must be distinct from both earlier runs and durable
+before a running tool/status event qualifies activity. The client then closes
+admission durably, records exact cancellation intent, and calls CancelRun once for
+that agent/run. Empty acknowledgement is only requested. An exact terminal GetRun
+snapshot or correlated terminal ObserveRun result must prove CANCELLED. FINISHED
+winning the race is BLOCKED/inconclusive and never triggers a fourth Send. Missing,
+wrong or reused identities retain uncertainty without discovery Send/ListRuns.
+Late receipts cannot reopen admission, and an already attempted CancelRun is not
+reissued during cleanup.
+
+After all three known runs are terminal, the client uses the same cleanup routine
+to stop its original bridge and account for the exact token. A replacement bridge
+is admitted only after both process exit and token removal are confirmed. The
+cached cleanup deadline is retained; the probe runs before its shutdown reserve
+and before the original work deadline. Fresh GetRun supplies the exact completed
+Run 1 ID and explicit cloud/agent/key routing options. Those are read options, not
+remote AgentOptions updates. Unavailable/invalid retrieval stays BLOCKED with no
+new work. The pinned ResumeAgent method explicitly applies updated options, so it
+is never called: option-preserving ResumeAgent and active continuation after
+process death remain unverified. Completed-run retrieval proves neither capability.
+
+One bounded GetUsage read may record available usage on the original known bridge
+before shutdown, independently of fresh-bridge retrieval. Costs retain
+the official float-cent fields: `chargedCents` is charged cost, `rawCostCents` is
+undiscounted cost. Optional absent cost remains UNAVAILABLE, and eventually
+consistent billing is no remote spending-cap proof. Usage errors never trigger
+polling, an attachment or new work.
+
 Independent PR checks use `gh pr list` for the exact disposable repository with
 `--state all` and the explicitly selected gh configuration. Each snapshot rechecks
 the selected active login; ambient tokens are excluded. Compare PR identity/URL,
@@ -183,7 +213,8 @@ persistence or closure fails, even when independent coding-result evidence passe
 Cleanup
 requests cancellation only for an exact known active run, with durable intent;
 an empty acknowledgement alone leaves the remote outcome unresolved. One bounded
-GetRun reads its terminal state, without selecting or listing another run.
+GetRun reads its terminal state, without selecting or listing another run. Each
+attempt's report record retains its actual terminal outcome or unresolved identity.
 
 ## Pin and wire contract
 
@@ -343,8 +374,9 @@ The #365 entry-point assertions add:
 | 5: no replacement on error, retained Run 2 uncertainty, exact Run 2 cleanup | `test_observation_errors*`, `test_follow_up_uncertain*` and inherited closure/lost-receipt cases |
 | 6–7: separate receipts/reasons, actual wire/private records and global bounds | `recovery_criteria` plus every new case's method counts, peer request-shape/write-ahead and journal assertions |
 
-Inherited success expectations intentionally advance from one Send to two, include
-GetRun/ObserveRun traffic and three original keys. Selected-helper calls intentionally
+Inherited success expectations intentionally advance to three Sends, include
+GetRun/ObserveRun/CancelRun and read-only restart traffic, and four original keys
+(one creation plus three Sends). Selected-helper calls intentionally
 increase from three to exactly five: source SHA, default HEAD, result branch, and
 both Run 2 all-ref snapshots. PR API reads recheck the selected gh account separately. Rejection assertions still forbid
 replacement work; source/framing cases now fail on the observation path where
@@ -352,11 +384,27 @@ applicable. Discard after Run 1 verification prevents Run 2, so a qualified codi
 result can coexist with overall failure. Failed-terminal snapshot cases cover ERROR/CANCELLED/EXPIRED before drop and
 during attachment via `test_failed_terminal_snapshots*`. Existing production clocks are unchanged.
 
+The #366 entry-point assertions add:
+
+| #366 criterion | Assertion |
+| --- | --- |
+| 1–2: final separately keyed Send, exact activity/intent/cancel and terminal proof | `test_third_send_cancels*`; peer verifies durable activity and closure before exact CancelRun |
+| 3: acknowledgement, completion race, unknown/reused IDs and late receipts | `test_third_cancellation_ack*`; no fourth Send or discovery target |
+| 4–5: owned fresh read-only GetRun, unsupported option-preserving ResumeAgent | `test_fresh_read_only_probe*`; no ResumeAgent/options mutation or new work |
+| 6: original deadlines/reserve, both bridge lifecycles and token leftovers | `test_third_stalled_control*`, `test_restart_waits*`, `test_fresh_read_only_probe*` and inherited cleanup cases |
+| 7–8: per-run identities/outcomes, usage availability and native capability gaps | `test_third_send_cancels*`, `test_usage_cost*`, fault reports and common ownership assertions |
+| 9: actual main/external process/Git/storage boundaries | full suite, peer method order and exact shapes, private journal and original wait receipts |
+
 The JSON report includes stage errors, criterion-specific receipts, original keys,
 identities, source/result checks, deadline configuration, verification-process waits
 and resource disposition. `recovery_criteria` separately records active observation, completed-result recovery,
-offset resume and follow-up. Later proof stages and missing cost remain explicitly
-NOT RUN or unavailable.
+offset resume and follow-up. `cancellation` and `fresh_bridge` retain separate
+verdicts/reasons; `runs` accounts for every Send. `resources.previous_bridge`
+records the original owned exit/token disposition separately from the final bridge.
+The original work/total/cached cleanup deadline values remain in `deadlines`.
+`remaining_remote` retains the conversation/result branch, without remote deletion.
+Terminal-response, uncertain-retry, ResumeAgent preservation and active process-death
+continuation stay explicitly unresolved; missing cost remains unavailable.
 
 These tests prove offline client behavior, not official-bridge runtime compatibility,
 account permissions, cloud source selection, coding/control behavior, remote cost,
