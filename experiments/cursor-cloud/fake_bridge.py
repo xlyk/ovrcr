@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 import signal
+import socket
+import socketserver
 import sys
 import tempfile
 import threading
@@ -127,7 +129,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 if scenario == "shutdown_stall":
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
-server = http.server.ThreadingHTTPServer((args["--host"], int(args["--port"])), Handler)
+class LoopbackHTTPServer(http.server.ThreadingHTTPServer):
+    def server_bind(self):
+        # The synthetic loopback peer needs its bound port, not reverse DNS.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+# Controlled resolver faults reproduce work that HTTPServer performs before ready.
+if scenario in ("dns_stall", "dns_error"):
+    def failed_resolution(host):
+        receipt(dns_lookup=host)
+        if scenario == "dns_stall":
+            time.sleep(30)
+        raise OSError("synthetic reverse DNS unavailable")
+    socket.getfqdn = failed_resolution
+server = LoopbackHTTPServer((args["--host"], int(args["--port"])), Handler)
 ready = {"schemaVersion": 1, "serverVersion": "1.0.0", "pid": os.getpid(),
          "transport": "tcp", "protocol": "connect", "host": "127.0.0.1",
          "port": server.server_port, "url": "http://127.0.0.1:" + str(server.server_port),

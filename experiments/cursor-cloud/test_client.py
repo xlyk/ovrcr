@@ -122,6 +122,16 @@ sys.exit(result)
         self.assertEqual(methods, ["Ping", "GetVersion", "Ping", "Me", "ListModels", "ListRepositories", "Shutdown"])
         self.assertTrue(all(e["key_matches"] for e in events if e.get("method") in ("Me", "ListModels", "ListRepositories")))
 
+    def test_loopback_peer_startup_does_not_depend_on_reverse_dns(self):
+        for scenario in ("dns_stall", "dns_error"):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario)
+                self.assertEqual(run.returncode, 0, {"report": report, "events": events})
+                self.assertEqual(report["preflight"], "PASS")
+                self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
+                self.assertEqual(report["resources"]["token_cleanup"], "REMOVED")
+                self.assertFalse(any("dns_lookup" in event for event in events), events)
+
     def test_missing_or_bad_manifest_never_starts_bridge(self):
         cases = [
             *[lambda m, field=field: m.pop(field) for field in [

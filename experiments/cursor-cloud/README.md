@@ -110,7 +110,9 @@ budget checks. There is no test-mode CLI flag,
 endpoint attachment, alternate client constructor or production pin bypass.
 `fake_bridge.py` is solely a synthetic external executable packaged by the test;
 it runs real loopback HTTP and private token files and records method names and
-boolean secret checks, never credential bodies. Synthetic sentinels are excluded
+boolean secret checks, never credential bodies. Its loopback server binds directly
+without reverse DNS; controlled stalled/failed resolver cases prove startup has no
+external name-resolution dependency. Synthetic sentinels are excluded
 from all client output. Every fixture asserts zero CreateAgent/Send traffic and a
 bounded return. The fixture records real spawned child handles and stops any survivor only after
 normal main returns its resource report; that fixture cleanup never counts as client
@@ -123,6 +125,7 @@ client-reported uncertainty. CI runs this full feature suite on macOS and Linux.
 | Pinned checksum / architecture / archive manifest | `test_checksum_mismatch*`, `test_archive_manifest_mismatch*`, success receipt |
 | Ready handshake, sdk.v1, explicit selected key/model/repository | `test_success*`, `test_runtime_auth_model_and_repository_mismatch*` |
 | Startup / partial headers / body / error / trickle bounds | `test_stalls_and_trickle*` |
+| Synthetic loopback startup independent of stalled/failed reverse DNS | `test_loopback_peer_startup*` |
 | Expired entry still reports; exhausted cleanup retains uncertainty | `test_expired_entry*`, `test_expired_cleanup*` |
 | Original total deadline applies to cleanup | `test_cleanup_is_truncated*` |
 | Non-object discovery produces a redacted failure report | `test_malformed_discovery*` |
