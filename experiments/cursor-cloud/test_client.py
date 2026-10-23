@@ -309,7 +309,7 @@ sys.exit(result)
         return run, report, events
 
     def test_recovery_and_follow_up_use_exact_run_and_private_original_keys(self):
-        run, report, events = self.run_fixture(coding=True, budgets=(6, 8, 1.5, 0.75))
+        run, report, events = self.run_fixture(coding=True)
         self.assertEqual(run.returncode, 0, report)
         self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 2})
         for name in ("active_observation", "offset_resume", "follow_up"):
@@ -347,7 +347,7 @@ sys.exit(result)
     def test_completion_race_and_missing_cursor_do_not_pass_unexercised_criteria(self):
         for scenario in ("complete_before_drop", "complete_during_attach", "no_observe_offset"):
             with self.subTest(scenario=scenario):
-                run, report, events = self.run_fixture(scenario, coding=True, budgets=(6, 8, 1.5, 0.75))
+                run, report, events = self.run_fixture(scenario, coding=True)
                 self.assertEqual(run.returncode, 0, report)
                 criteria = report["recovery_criteria"]
                 self.assertEqual(criteria["offset_resume"]["verdict"], "NOT RUN")
@@ -365,7 +365,7 @@ sys.exit(result)
                                  ("observer_error", "Connect end-stream error"),
                                  ("invalid_offset", "exclusive ObserveRun offset")):
             with self.subTest(scenario=scenario):
-                run, report, events = self.run_fixture(scenario, coding=True, budgets=(6, 8, 1.5, 0.75))
+                run, report, events = self.run_fixture(scenario, coding=True)
                 self.assertEqual(run.returncode, 1, report)
                 self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1})
                 self.assertIn(reason, report["stages"][-1]["reason"], report)
@@ -388,7 +388,7 @@ sys.exit(result)
                                  ("follow_up_extra_file", "branch/file state"),
                                  ("follow_up_extra_ref", "branch/file state")):
             with self.subTest(scenario=scenario):
-                run, report, events = self.run_fixture(scenario, coding=True, budgets=(6, 8, 1.5, 0.75))
+                run, report, events = self.run_fixture(scenario, coding=True)
                 self.assertEqual(run.returncode, 1, report)
                 self.assertEqual(report["coding"], "PASS", report)
                 self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 2})
@@ -404,7 +404,7 @@ sys.exit(result)
     def test_follow_up_uncertain_receipt_and_exact_second_run_cleanup(self):
         for scenario in ("follow_up_lost", "follow_up_partial"):
             with self.subTest(scenario=scenario):
-                run, report, events = self.run_fixture(scenario, coding=True, budgets=(6, 8, 1.5, 0.75))
+                run, report, events = self.run_fixture(scenario, coding=True)
                 self.assertEqual(run.returncode, 1, report)
                 self.assertEqual(report["coding"], "PASS")
                 self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 2})
@@ -426,7 +426,7 @@ sys.exit(result)
             for terminal in ("ERROR", "CANCELLED", "EXPIRED"):
                 scenario = "snapshot_" + terminal.lower() + "_" + timing
                 with self.subTest(scenario=scenario):
-                    run, report, events = self.run_fixture(scenario, coding=True, budgets=(6, 8, 1.5, 0.75))
+                    run, report, events = self.run_fixture(scenario, coding=True)
                     self.assertEqual(run.returncode, 1, report)
                     self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1})
                     self.assertNotEqual(report["coding"], "PASS")
@@ -443,7 +443,7 @@ sys.exit(result)
     def test_independent_follow_up_ref_and_pr_effects_cannot_hide_in_result_metadata(self):
         for scenario in ("follow_up_extra_tag", "follow_up_external_pr", "follow_up_pr_edited"):
             with self.subTest(scenario=scenario):
-                run, report, events = self.run_fixture(scenario, coding=True, budgets=(6, 8, 1.5, 0.75))
+                run, report, events = self.run_fixture(scenario, coding=True)
                 self.assertEqual(run.returncode, 1, report)
                 self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 2})
                 self.assertEqual(report["coding"], "PASS")
@@ -465,12 +465,12 @@ sys.exit(result)
             for fault in ("unavailable", "malformed", "bad_record", "incomplete"):
                 scenario = "pr_" + fault + "_" + phase
                 with self.subTest(scenario=scenario):
-                    run, report, events = self.run_fixture(scenario, coding=True, budgets=(6, 8, 1.5, 0.75))
+                    run, report, events = self.run_fixture(scenario, coding=True)
                     self.assertEqual(run.returncode, 1, report)
                     self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1 if phase == "before" else 2})
                     self.assertNotEqual(report["recovery_criteria"]["follow_up"]["verdict"], "PASS")
                     self.assertEqual(report["stages"][-1]["stage"], "follow_up")
-        run, report, events = self.run_fixture("pr_account_after", coding=True, budgets=(6, 8, 1.5, 0.75))
+        run, report, events = self.run_fixture("pr_account_after", coding=True)
         self.assertEqual(run.returncode, 1, report)
         self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 2})
         self.assertIn("selected GitHub login", report["stages"][-1]["reason"])
@@ -527,10 +527,13 @@ sys.exit(result)
                     self.assertEqual(report["coding"], "PASS")
                     self.assertEqual(report["deadlines"]["work_seconds"], CODING_BUDGETS[0])
                     self.assertEqual(report["deadlines"]["total_seconds"], CODING_BUDGETS[1])
-                    self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1})
+                    self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 2})
                     self.assertEqual(report["source"]["baseline_tests"], "FAIL; 3 tests, 2 failures")
                     self.assertEqual(report["result"]["tests"], "PASS; 3 tests")
                     self.assertEqual(sum(row["command"] == "fetch" for row in progressed), 3)
+                    self.assertEqual(sum(row["command"] == "ls-remote" for row in progressed), 2)
+                    for criterion in ("active_observation", "offset_resume", "follow_up"):
+                        self.assertEqual(report["recovery_criteria"][criterion]["verdict"], "PASS")
                     self.assertGreater(sum(row["delay_seconds"] for row in progressed), 3)
                     self.assertEqual(report["resources"]["token_cleanup"], "REMOVED")
 

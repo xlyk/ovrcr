@@ -253,7 +253,8 @@ its source/default/result fetches, credential-helper checks and independent test
 run sequential external processes against one work clock. These budgets let semantic cases reach their
 asserted admission/result boundary. A controlled latency regression
 adds an observed 250 ms wait inside each real Git peer process: normal coding must
-finish all three fetches and both fixture test results, while an explicit 2-second
+finish all three fetches, both fixture test results and both Run 2 all-ref reads,
+plus independent PR verification, while an explicit 2-second
 work clock must still stop before creation. No clock is renewed. Stall peers record
 that the intended phase was reached and trickle beyond the absolute deadline. Expired-entry
 and exhausted-cleanup cases keep separate zero/late budget checks. New coding
