@@ -121,6 +121,26 @@ impl ClaudeFixture {
             args[args.iter().position(|arg| arg == "--tools").unwrap() + 1],
             if helpers { "Agent" } else { "" }
         );
+        let grants: Vec<_> = args
+            .windows(2)
+            .filter(|pair| pair[0] == "--allowedTools")
+            .collect();
+        if helpers {
+            assert!(
+                grants.is_empty(),
+                "helper-v1 must not gain native approvals"
+            );
+        } else {
+            assert_eq!(
+                grants.len(),
+                1,
+                "default Research requires the exact v2 grant recipe"
+            );
+            assert_eq!(
+                grants[0][1],
+                "mcp__ovrcr_child__ovrcr_read,mcp__ovrcr_child__ovrcr_publish,mcp__ovrcr_child__ovrcr_publish_question"
+            );
+        }
         assert!(args.iter().any(|arg| arg == "--strict-mcp-config"));
         let mcp: serde_json::Value = serde_json::from_slice(
             &fs::read(
@@ -286,6 +306,18 @@ fn public_claude_native_helper_opt_in_seals_read_only_recipe_and_preserves_recov
         "{refused}"
     );
     assert_eq!(f.input_count(&result), before);
+}
+
+#[test]
+fn public_claude_default_research_preapproves_only_scoped_mcp_tools() {
+    let f = ClaudeFixture::new("no-stop");
+    let started = f.started();
+    let result = complete(&f, &started);
+    assert_eq!(result.identity, started.identity);
+    assert_eq!(result.conversation, started.conversation);
+    assert_eq!(result.submission.as_ref().unwrap().version, 1);
+    assert_eq!(result.acceptance, "pending");
+    assert_eq!(f.input_count(&result), 1);
 }
 
 #[test]

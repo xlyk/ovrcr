@@ -46,7 +46,7 @@ pub fn config_dir() -> Result<PathBuf> {
 /// Strip the original task prompt and reject configuration that cannot be saved
 /// as non-secret references. Inline settings and system prompts are not persisted.
 pub fn launch_options(argv: &[OsString]) -> Result<Vec<String>> {
-    let mut options = Vec::new();
+    let mut options: Vec<String> = Vec::new();
     let mut index = 1;
     let mut prompt = false;
     while index < argv.len() {
@@ -62,6 +62,10 @@ pub fn launch_options(argv: &[OsString]) -> Result<Vec<String>> {
             continue;
         }
         if !arg.starts_with('-') {
+            // Native --allowedTools is variadic: a later bare word is another grant.
+            if options.iter().any(|value| value == "--allowedTools") {
+                bail!("generated Claude permissions require an explicit -- before a task prompt");
+            }
             if prompt {
                 bail!("multiple Claude task prompts");
             }
@@ -99,6 +103,17 @@ pub fn launch_options(argv: &[OsString]) -> Result<Vec<String>> {
                     options.extend([name.into(), value.into()]);
                 }
             }
+            "--allowedTools" if inline.is_none() => {
+                index += 1;
+                let value = argv
+                    .get(index)
+                    .and_then(|value| value.to_str())
+                    .context("missing generated Claude permission recipe")?;
+                if value != crate::claude_delegation::SCOPED_MCP_APPROVALS {
+                    bail!("foreign Claude permission recipe");
+                }
+                options.extend([name.into(), value.into()]);
+            }
             "--agents" => {
                 let value = if let Some(value) = inline {
                     value
@@ -122,6 +137,28 @@ pub fn launch_options(argv: &[OsString]) -> Result<Vec<String>> {
             _ => bail!("Claude launch configuration cannot be retained as non-secret references"),
         }
         index += 1;
+    }
+    if options.iter().any(|value| value == "--allowedTools") {
+        let value = |name: &str| {
+            options
+                .windows(2)
+                .find(|pair| pair[0] == name)
+                .map(|pair| pair[1].as_str())
+                .context("incomplete generated Claude permission policy")
+        };
+        let model = value("--model")?;
+        let artifacts = Path::new(value("--mcp-config")?)
+            .parent()
+            .context("generated Claude policy directory unavailable")?;
+        let canonical =
+            crate::claude_delegation::launch_argv(Path::new("claude"), model, artifacts, None);
+        if canonical[1..]
+            .iter()
+            .map(|value| value.to_str())
+            .ne(options.iter().map(|value| Some(value.as_str())))
+        {
+            bail!("Claude permission policy differs from the generated Research recipe");
+        }
     }
     Ok(options)
 }
@@ -232,6 +269,77 @@ mod tests {
     }
 
     #[test]
+    fn research_permissions_retain_only_the_exact_generated_recipe() {
+        let root = tempfile::tempdir().unwrap();
+        for name in ["claude-mcp.json", "claude-settings.json"] {
+            std::fs::write(root.path().join(name), "{}").unwrap();
+        }
+        let generated = crate::claude_delegation::launch_argv(
+            Path::new("/bin/claude"),
+            "sonnet",
+            &root.path().canonicalize().unwrap(),
+            None,
+        );
+        let retained = launch_options(&generated).unwrap();
+        let mut prompted = generated.clone();
+        prompted.extend(["--".into(), "private task".into()]);
+        assert_eq!(launch_options(&prompted).unwrap(), retained);
+        for extra in ["Bash", "mcp__foreign__tool"] {
+            let mut changed = generated.clone();
+            changed.push(extra.into());
+            assert!(launch_options(&changed).is_err(), "{extra}");
+        }
+        assert_eq!(
+            retained,
+            generated[1..]
+                .iter()
+                .map(|value| value.to_str().unwrap().to_owned())
+                .collect::<Vec<_>>()
+        );
+        let mut old = generated.clone();
+        old.truncate(old.len() - 2);
+        assert!(
+            !launch_options(&old)
+                .unwrap()
+                .iter()
+                .any(|value| value == "--allowedTools")
+        );
+        for value in [
+            "mcp__ovrcr_child__*",
+            "mcp__ovrcr_child__ovrcr_read",
+            "Bash",
+            "mcp__ovrcr_child__ovrcr_read,mcp__ovrcr_child__ovrcr_publish_question,mcp__ovrcr_child__ovrcr_publish",
+        ] {
+            let mut changed = generated.clone();
+            *changed.last_mut().unwrap() = value.into();
+            assert!(launch_options(&changed).is_err(), "{value}");
+        }
+        for extras in [
+            vec![
+                "--allowedTools",
+                crate::claude_delegation::SCOPED_MCP_APPROVALS,
+            ],
+            vec!["--agent", "other"],
+            vec!["--dangerously-skip-permissions"],
+        ] {
+            let mut changed = generated.clone();
+            changed.extend(extras.into_iter().map(OsString::from));
+            assert!(launch_options(&changed).is_err());
+        }
+        let mut changed = generated.clone();
+        changed[4] = "bypassPermissions".into();
+        assert!(launch_options(&changed).is_err());
+        let reference = ClaudeConversation {
+            conversation: "00000000-0000-4000-8000-000000000001".into(),
+            executable: "/bin/claude".into(),
+            history: "/private/history.jsonl".into(),
+            config_dir: "/private/profile".into(),
+            options: retained,
+        };
+        validate(&reference).unwrap();
+    }
+
+    #[test]
     fn generated_native_helper_recipe_is_retained_but_changed_inline_policy_is_refused() {
         let generated = crate::claude_delegation::helper_agents("claude-exact-1");
         let options = launch_options(&[
@@ -282,6 +390,30 @@ mod tests {
             return;
         };
         let root = PathBuf::from(root);
+        for name in ["claude-mcp.json", "claude-settings.json"] {
+            std::fs::write(root.join(name), "{}").unwrap();
+        }
+        let research = crate::claude_delegation::launch_argv(
+            Path::new("/bin/sh"),
+            "sonnet",
+            &root.canonicalize().unwrap(),
+            None,
+        );
+        let mut research_reference = ClaudeConversation {
+            conversation: "00000000-0000-4000-8000-000000000001".into(),
+            executable: "/bin/sh".into(),
+            history: root.join("history.jsonl"),
+            config_dir: root.clone(),
+            options: launch_options(&research).unwrap(),
+        };
+        let resumed = resume_argv(&research_reference).unwrap();
+        assert_eq!(resumed[8..], research[1..]);
+        research_reference
+            .options
+            .truncate(research_reference.options.len() - 2);
+        let legacy = resume_argv(&research_reference).unwrap();
+        assert!(!legacy.iter().any(|value| value == "--allowedTools"));
+        assert_eq!(legacy[8..], research[1..research.len() - 2]);
         let generated = crate::claude_delegation::helper_agents("claude-exact-1");
         let mut reference = ClaudeConversation {
             conversation: "00000000-0000-4000-8000-000000000001".into(),

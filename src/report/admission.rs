@@ -100,7 +100,16 @@ fn eligible_launch(argv: &[OsString]) -> Option<EligibleLaunch> {
     if argv.first().and_then(|arg| Path::new(arg).file_name()) != Some(OsStr::new("claude")) {
         return None;
     }
+    // Assigned permissions are eligible only as the complete generated v2 recipe.
+    if argv.iter().any(|arg| {
+        arg.to_str()
+            .is_some_and(|value| value.split('=').next() == Some("--allowedTools"))
+    }) && ovrcr_runtime::claude_recovery::launch_options(argv).is_err()
+    {
+        return None;
+    }
     let values = [
+        "--allowedTools",
         "--model",
         "--permission-mode",
         "--agent",
@@ -1036,6 +1045,59 @@ mod tests {
     }
     fn drive(hooks: &mut Hooks, reporter: &mut Reporter, input: &[u8]) -> Vec<u8> {
         hooks.frame(reporter, input, true, deadline())
+    }
+
+    #[test]
+    fn generated_research_permission_recipe_is_eligible_without_admitting_arbitrary_grants() {
+        let root = tempfile::tempdir().unwrap();
+        let artifacts = root.path().canonicalize().unwrap();
+        for name in ["claude-settings.json", "claude-mcp.json"] {
+            std::fs::write(artifacts.join(name), "{}").unwrap();
+        }
+        let argv = ovrcr_runtime::claude_delegation::launch_argv(
+            Path::new("/bin/claude"),
+            "sonnet",
+            &artifacts,
+            None,
+        );
+        assert_eq!(eligible_launch(&argv), Some(EligibleLaunch::Fresh));
+        let mut resume = argv.clone();
+        resume.splice(
+            1..1,
+            [
+                "--resume".into(),
+                "00000000-0000-4000-8000-000000000001".into(),
+            ],
+        );
+        assert_eq!(
+            eligible_launch(&resume),
+            Some(EligibleLaunch::Resume(
+                "00000000-0000-4000-8000-000000000001".into()
+            ))
+        );
+        for value in [
+            "mcp__ovrcr_child__*",
+            "Bash",
+            "mcp__ovrcr_child__ovrcr_read",
+        ] {
+            let mut changed = argv.clone();
+            *changed.last_mut().unwrap() = value.into();
+            assert_eq!(eligible_launch(&changed), None);
+        }
+        let mut prompted = argv.clone();
+        prompted.extend(["--".into(), "private task".into()]);
+        assert_eq!(eligible_launch(&prompted), Some(EligibleLaunch::Fresh));
+        for extra in ["Bash", "mcp__foreign__tool"] {
+            let mut changed = argv.clone();
+            changed.push(extra.into());
+            assert_eq!(eligible_launch(&changed), None);
+        }
+        let mut changed = argv.clone();
+        changed[4] = "bypassPermissions".into();
+        assert_eq!(eligible_launch(&changed), None);
+        let mut legacy = argv;
+        legacy.truncate(legacy.len() - 2);
+        assert_eq!(eligible_launch(&legacy), Some(EligibleLaunch::Fresh));
     }
 
     #[test]

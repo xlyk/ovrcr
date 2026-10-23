@@ -17,7 +17,9 @@ use std::{
 };
 
 pub const ARTIFACT_ENV: &str = "OVRCR_CLAUDE_ARTIFACTS";
-pub const POLICY: &str = "ovrcr-claude-research-v1";
+pub const POLICY: &str = "ovrcr-claude-research-v2";
+/// Invocation-only permissions for the existing authenticated assignment server.
+pub const SCOPED_MCP_APPROVALS: &str = "mcp__ovrcr_child__ovrcr_read,mcp__ovrcr_child__ovrcr_publish,mcp__ovrcr_child__ovrcr_publish_question";
 const HELPER_POLICY: &str = "ovrcr-claude-research-helpers-v1";
 const COORDINATOR: &str = "ovrcr-assigned-coordinator";
 const HELPER: &str = "ovrcr-assigned-research";
@@ -93,8 +95,8 @@ pub(crate) struct ModelProof {
     profile_inode: u64,
     pub native_version: String,
     policy: String,
-    // This identifies only model/backend-affecting policy, not complete launch
-    // topology. Discovery excludes the assignment publisher and Reporter transport.
+    // Seals model/backend policy and intended assigned permissions, not complete
+    // discovery topology: discovery omits the publisher and Reporter transport.
     policy_digest: String,
 }
 
@@ -123,6 +125,8 @@ pub(crate) struct PolicyManifest {
     mcp: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     agents: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    approved_tools: Option<String>,
 }
 pub struct PolicyFiles {
     pub settings: Vec<u8>,
@@ -158,6 +162,7 @@ pub fn policy_files(
         mcp: format!("{:x}", Sha256::digest(&mcp)),
         agents: helper_model
             .map(|model| format!("{:x}", Sha256::digest(helper_agents(model).as_bytes()))),
+        approved_tools: helper_model.is_none().then(|| SCOPED_MCP_APPROVALS.into()),
     };
     Ok(PolicyFiles {
         settings,
@@ -197,6 +202,8 @@ pub fn launch_argv(
             "--agents".into(),
             helper_agents(model).into(),
         ]);
+    } else {
+        argv.extend(["--allowedTools".into(), SCOPED_MCP_APPROVALS.into()]);
     }
     argv
 }
@@ -222,6 +229,8 @@ fn policy_digest(model: &str, profile: &Path, helpers: bool) -> Result<String> {
         policy["policy"] = HELPER_POLICY.into();
         policy["tools"] = "Agent".into();
         policy["native_helpers"] = serde_json::json!({"agents":helper_agents(model),"settings":helper_settings(Some(model))});
+    } else {
+        policy["approved_tools"] = SCOPED_MCP_APPROVALS.into();
     }
     Ok(format!(
         "{:x}",
@@ -613,7 +622,7 @@ pub(crate) fn discover(
 mod tests {
     use super::*;
     #[test]
-    fn helper_recipe_confines_tools_model_and_recovery_without_changing_default_policy() {
+    fn helper_recipe_confines_tools_model_and_recovery_preserving_helper_v1() {
         let model = "claude-exact-1";
         let agents = helper_agents(model);
         assert!(agents.len() <= 4096);
@@ -638,16 +647,103 @@ mod tests {
         );
         assert_eq!(helper_settings(None), serde_json::json!({}));
         let path = Path::new("/opaque/native/profile");
-        let old = serde_json::json!({"policy":POLICY,"model":model,"model_provider":"native","profile":path,
-            "permission_mode":"default","tools":"","strict_mcp_config":true,"setting_sources":"","model_settings":{}});
+        let old_helper = serde_json::json!({"policy":"ovrcr-claude-research-helpers-v1","model":model,"model_provider":"native","profile":path,
+            "permission_mode":"default","tools":"Agent","strict_mcp_config":true,"setting_sources":"","model_settings":{},
+            "native_helpers":{"agents":helper_agents(model),"settings":helper_settings(Some(model))}});
         assert_eq!(
-            policy_digest(model, path, false).unwrap(),
-            format!("{:x}", Sha256::digest(serde_json::to_vec(&old).unwrap()))
+            policy_digest(model, path, true).unwrap(),
+            format!(
+                "{:x}",
+                Sha256::digest(serde_json::to_vec(&old_helper).unwrap())
+            )
         );
         assert_ne!(
             policy_digest(model, path, false).unwrap(),
             policy_digest(model, path, true).unwrap()
         );
+    }
+
+    #[test]
+    fn default_research_seals_exact_invocation_permissions_without_changing_helpers() {
+        let argv = launch_argv(
+            Path::new("/bin/claude"),
+            "sonnet",
+            Path::new("/private/assignment"),
+            None,
+        );
+        assert_eq!(
+            argv[argv.len() - 2..],
+            ["--allowedTools", SCOPED_MCP_APPROVALS].map(std::ffi::OsString::from)
+        );
+        assert_eq!(
+            SCOPED_MCP_APPROVALS,
+            "mcp__ovrcr_child__ovrcr_read,mcp__ovrcr_child__ovrcr_publish,mcp__ovrcr_child__ovrcr_publish_question"
+        );
+        let helper = launch_argv(
+            Path::new("/bin/claude"),
+            "sonnet",
+            Path::new("/private/assignment"),
+            Some("claude-exact-1"),
+        );
+        assert!(!helper.iter().any(|value| value == "--allowedTools"));
+        let files = policy_files(Path::new("/bin/sh"), "request", None).unwrap();
+        let manifest: serde_json::Value = serde_json::from_slice(&files.manifest).unwrap();
+        assert_eq!(manifest["recipe"], "ovrcr-claude-research-v2");
+        assert_eq!(manifest["approved_tools"], SCOPED_MCP_APPROVALS);
+        let helper_files =
+            policy_files(Path::new("/bin/sh"), "request", Some("claude-exact-1")).unwrap();
+        let old_helper_manifest = serde_json::json!({"recipe":"ovrcr-claude-research-helpers-v1", "helper": Path::new("/bin/sh").canonicalize().unwrap(),
+            "settings":format!("{:x}",Sha256::digest(&helper_files.settings)),"mcp":format!("{:x}",Sha256::digest(&helper_files.mcp)),
+            "agents":format!("{:x}",Sha256::digest(helper_agents("claude-exact-1").as_bytes()))});
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&helper_files.manifest).unwrap(),
+            old_helper_manifest
+        );
+        #[derive(Serialize)]
+        struct LegacyManifest {
+            recipe: String,
+            helper: PathBuf,
+            settings: String,
+            mcp: String,
+            agents: String,
+        }
+        let old_bytes = serde_json::to_vec(&LegacyManifest {
+            recipe: "ovrcr-claude-research-helpers-v1".into(),
+            helper: Path::new("/bin/sh").canonicalize().unwrap(),
+            settings: format!("{:x}", Sha256::digest(&helper_files.settings)),
+            mcp: format!("{:x}", Sha256::digest(&helper_files.mcp)),
+            agents: format!(
+                "{:x}",
+                Sha256::digest(helper_agents("claude-exact-1").as_bytes())
+            ),
+        })
+        .unwrap();
+        assert_eq!(helper_files.manifest, old_bytes);
+        let path = Path::new("/opaque/profile");
+        let sealed = serde_json::json!({"policy":"ovrcr-claude-research-v2","model":"sonnet","model_provider":"native","profile":path,
+            "permission_mode":"default","tools":"","strict_mcp_config":true,"setting_sources":"","model_settings":{},"approved_tools":SCOPED_MCP_APPROVALS});
+        assert_eq!(
+            policy_digest("sonnet", path, false).unwrap(),
+            format!("{:x}", Sha256::digest(serde_json::to_vec(&sealed).unwrap()))
+        );
+    }
+
+    #[test]
+    fn old_research_proof_is_not_upgraded_to_native_approval_authority() {
+        let contract: ResearchContract = serde_json::from_value(serde_json::json!({
+            "schema":1,"workflow":"workflow","controller":"controller","task":"task","request":"request","project":"project","workspace":"workspace",
+            "scope":"read","permitted_actions":["read"],"provider":"claude","model_provider":"native","model":"sonnet","acceptance_evidence":[],"mandatory_capabilities":["read","result_file"]
+        })).unwrap();
+        let proof: ModelProof = serde_json::from_value(serde_json::json!({
+            "requested":"sonnet","resolved":"claude-exact-1","executable":"/bin/claude","target":"/bin/claude","binary_digest":"a".repeat(64),
+            "file":{"device":0,"inode":0,"size":0,"modified":0,"modified_ns":0},"profile":"/opaque/profile","profile_entry":"/opaque/profile",
+            "profile_device":0,"profile_inode":0,"native_version":"2.1.309","policy":"ovrcr-claude-research-v1","policy_digest":"old"
+        })).unwrap();
+        assert_eq!(
+            proof.validate(&contract).unwrap_err().to_string(),
+            "native model proof does not match the immutable contract"
+        );
+        assert_eq!(proof.policy, "ovrcr-claude-research-v1");
     }
 
     #[test]
