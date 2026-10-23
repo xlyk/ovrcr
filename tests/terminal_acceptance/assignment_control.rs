@@ -122,6 +122,44 @@ fn fixture() -> Result<(AcceptanceFixture, AssignmentSnapshot, SessionId)> {
         "start.json",
     )?)?;
     wait_file(&assignment.brief.with_extension("json.published"))?;
+    // Publication precedes the native agent_settled event. Capture the baseline
+    // only after that same child and turn have finished reporting activity.
+    loop {
+        let child = fixture
+            .list()?
+            .projects
+            .into_iter()
+            .flat_map(|project| project.workspaces)
+            .flat_map(|workspace| workspace.sessions)
+            .find(|session| Some(session.id) == assignment.identity.session)
+            .context("assigned child settlement")?;
+        if Some(child.run) == assignment.identity.run
+            && child.agent.as_ref().is_some_and(|agent| {
+                Some(agent.binding.conversation.as_str()) == assignment.conversation.as_deref()
+                    && agent.native_control.as_ref().is_some_and(|native| {
+                        native.settled
+                            && agent.activity.as_ref().is_some_and(|activity| {
+                                activity.state == AgentActivity::ResponseReady
+                                    && activity.turn.as_deref() == Some(native.turn.as_str())
+                            })
+                    })
+            })
+        {
+            let agent = child.agent.as_ref().unwrap();
+            eprintln!(
+                "ASSIGNMENT_BASELINE_SETTLED session={} run={} activity_revision={} turn={}",
+                child.id.0,
+                child.run.0,
+                agent.activity_revision,
+                agent.native_control.as_ref().unwrap().turn
+            );
+            break;
+        }
+        if Instant::now() >= deadline {
+            bail!("assigned child did not reach its same-turn settled baseline");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
     fixture.managed_pgids = fixture.session_pgids()?;
     Ok((fixture, assignment, parent.id))
 }

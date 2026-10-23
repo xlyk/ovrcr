@@ -272,10 +272,11 @@ fn collector_missing_file_retries_same_path_and_truncation_preserves_watermark()
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("root.jsonl");
     let mut controller = launch(&path);
-    assert_eq!(
-        next(&mut controller).diagnostic.as_deref(),
-        Some("source_unavailable")
-    );
+    let pending = next(&mut controller);
+    assert_eq!(pending.diagnostic.as_deref(), Some("source_not_created"));
+    assert!(!pending.caught_up);
+    assert_eq!(pending.usage.input_tokens, None);
+    assert_eq!(pending.usage.coverage, UsageCoverage::Partial);
     fs::write(&path, row("first", 10)).unwrap();
     assert_eq!(caught_up(&mut controller).usage.input_tokens, Some(10));
     fs::write(&path, "").unwrap();
@@ -290,6 +291,20 @@ fn collector_missing_file_retries_same_path_and_truncation_preserves_watermark()
     let sample = caught_up(&mut controller);
     assert_eq!(sample.usage.input_tokens, Some(30));
     assert_eq!(sample.diagnostic, None);
+}
+
+#[test]
+fn collector_removed_after_open_is_unavailable_and_preserves_observed_usage() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("root.jsonl");
+    fs::write(&path, row("first", 10)).unwrap();
+    let mut controller = launch(&path);
+    assert_eq!(caught_up(&mut controller).usage.input_tokens, Some(10));
+    fs::remove_file(&path).unwrap();
+    let lost = next(&mut controller);
+    assert_eq!(lost.diagnostic.as_deref(), Some("source_unavailable"));
+    assert!(!lost.caught_up);
+    assert_eq!(lost.usage.input_tokens, Some(10));
 }
 
 #[test]
