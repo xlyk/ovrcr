@@ -400,10 +400,12 @@ def command(argv, cwd, root, deadlines, resources, expected=0, extra_env=None):
     env.update(extra_env or {})
     receipt = {"pid": None, "exit": "UNRESOLVED", "launch_attempted": True}
     resources.setdefault("verification_processes", []).append(receipt)
+    deadline = deadlines.current
     process = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
     receipt["pid"] = process.pid
     data = bytearray()
+    termination_attempted = False
     try:
         os.set_blocking(process.stdout.fileno(), False)
         while True:
@@ -421,23 +423,37 @@ def command(argv, cwd, root, deadlines, resources, expected=0, extra_env=None):
             raise Failure("independent Git/fixture command failed; diagnostics suppressed")
         return data.decode("utf-8")
     finally:
-        process.stdout.close()
-        if process.poll() is None or receipt["exit"] == "UNRESOLVED":
-            end = deadlines.cleanup_end()
-            reserve = min(SHUTDOWN_RESERVE, max(0, end - time.monotonic()))
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            # Exact-child reaping shares cleanup's anchored end and bridge reserve.
-            deadline = deadlines.current
-            try:
-                deadlines.arm(end - reserve)
-                process.wait(timeout=deadlines.remaining())
-                receipt["exit"] = process.returncode
-            except (Failure, subprocess.TimeoutExpired):
-                pass
-            finally:
+        try:
+            while True:
+                try:
+                    if receipt["exit"] == "UNRESOLVED":
+                        end = deadlines.cleanup_end()
+                    process.stdout.close()
+                    if receipt["exit"] != "UNRESOLVED":
+                        break
+                    if not termination_attempted:
+                        previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGALRM})
+                        try:
+                            termination_attempted = True
+                            if process.poll() is None:
+                                try:
+                                    os.killpg(process.pid, signal.SIGKILL)
+                                except OSError:
+                                    pass  # A failed signal is not exit confirmation.
+                        finally:
+                            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+                    # Retry only this owned child's cleanup, under one fixed end.
+                    deadlines.arm(end - SHUTDOWN_RESERVE)
+                    process.wait(timeout=deadlines.remaining())
+                    receipt["exit"] = process.returncode
+                    break
+                except (Failure, subprocess.TimeoutExpired):
+                    if receipt["exit"] != "UNRESOLVED":
+                        raise
+                    if time.monotonic() >= deadlines.cleanup_end() - SHUTDOWN_RESERVE:
+                        break
+        finally:
+            if deadlines.cleanup_deadline is not None:
                 if deadline > time.monotonic():
                     deadlines.arm(deadline)
                 else:

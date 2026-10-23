@@ -122,7 +122,7 @@ if 'fetch' in args:
         sys.exit(1)
 os.execv('/usr/bin/git', ['git', '-c', """ + repr("url." + str(repo) + ".insteadOf=https://github.com/fixture/disposable") + r""", *args])
 """)
-            if scenario in {"git_stall", "verification_reap_delayed", "verification_reap_exhausted"}:
+            if scenario in {"git_stall", "verification_reap_delayed", "verification_reap_exhausted", "verification_reap_interrupted", "verification_reap_transition", "verification_reap_termination"}:
                 program = "import json, os, sys, time\nif 'fetch' in sys.argv:\n with open(" + repr(str(root / "verification-stall.json")) + ", 'w') as receipt: json.dump({'phase': 'git_fetch_stall', 'pid': os.getpid()}, receipt)\n time.sleep(30)\nos.execv('/usr/bin/git', ['git', *sys.argv[1:]])\n"
                 shim.write_text("#!" + sys.executable + "\n" + program)
             shim.chmod(0o700)
@@ -181,22 +181,54 @@ g.update(PINS={sys.argv[2]:sys.argv[3]}, WORK_SECONDS=%r, TOTAL_SECONDS=%r,
          CLEANUP_SECONDS=%r, SHUTDOWN_RESERVE=%r)
 %s
 original_spawn = g["subprocess"].Popen
+original_killpg = g["os"].killpg
 owned = []
 scenario = %r
 def tracked_spawn(*args, **kwargs):
     process = original_spawn(*args, **kwargs)
     owned.append(process)
-    if scenario in {"verification_reap_delayed", "verification_reap_exhausted"} and args[0][0] == g["GIT"] and "fetch" in args[0]:
+    if scenario in {"verification_reap_delayed", "verification_reap_exhausted", "verification_reap_interrupted", "verification_reap_transition", "verification_reap_termination"} and args[0][0] == g["GIT"] and "fetch" in args[0]:
         original_wait = process.wait
         group = os.getpgid(process.pid)
+        interrupted = False
+        def tracked_killpg(pgid, sig):
+            nonlocal interrupted
+            if scenario == "verification_reap_termination" and not interrupted:
+                interrupted = True
+                blocked = signal.SIGALRM in signal.pthread_sigmask(signal.SIG_BLOCK, set())
+                with (journal_path.parent / "verification-reaping.jsonl").open("a") as gate:
+                    gate.write(json.dumps({"event": "stale_alarm", "boundary": "killpg", "pid": process.pid, "pgid": pgid, "time": time.monotonic(), "signal_blocked": blocked}) + chr(10))
+                os.kill(os.getpid(), signal.SIGALRM)
+            with (journal_path.parent / "verification-reaping.jsonl").open("a") as gate:
+                gate.write(json.dumps({"event": "termination_attempt", "pid": process.pid, "pgid": pgid, "signal": sig, "time": time.monotonic()}) + chr(10))
+            return original_killpg(pgid, sig)
+        g["os"].killpg = tracked_killpg
+        original_close = process.stdout.close
+        def interrupted_close():
+            nonlocal interrupted
+            if scenario == "verification_reap_transition" and not interrupted:
+                interrupted = True
+                with (journal_path.parent / "verification-reaping.jsonl").open("a") as gate:
+                    gate.write(json.dumps({"event": "stale_alarm", "boundary": "stdout.close", "pid": process.pid, "pgid": group, "time": time.monotonic(), "cleanup_end": sys._getframe(1).f_locals["deadlines"].cleanup_deadline}) + chr(10))
+                os.kill(os.getpid(), signal.SIGALRM)
+            return original_close()
+        process.stdout.close = interrupted_close
         def delayed_wait(timeout=None):
+            nonlocal interrupted
             caller = sys._getframe(1)
             if caller.f_code.co_name != "command":
                 return original_wait(timeout=timeout)
             started = time.monotonic()
             with (journal_path.parent / "verification-reaping.jsonl").open("a") as gate:
-                gate.write(json.dumps({"event": "wait_started", "pid": process.pid, "pgid": group, "time": started, "timeout": timeout, "total_deadline": caller.f_locals["deadlines"].total}) + "\\n")
-            time.sleep(0.4)
+                gate.write(json.dumps({"event": "wait_started", "pid": process.pid, "pgid": group, "time": started, "timeout": timeout, "total_deadline": caller.f_locals["deadlines"].total, "cleanup_end": caller.f_locals.get("end")}) + "\\n")
+            if scenario in {"verification_reap_interrupted", "verification_reap_transition", "verification_reap_termination"}:
+                if not interrupted:
+                    interrupted = True
+                    with (journal_path.parent / "verification-reaping.jsonl").open("a") as gate:
+                        gate.write(json.dumps({"event": "stale_alarm", "pid": process.pid, "time": time.monotonic()}) + chr(10))
+                    os.kill(os.getpid(), signal.SIGALRM)
+            else:
+                time.sleep(0.4)
             result = original_wait(timeout=timeout)
             with (journal_path.parent / "verification-reaping.jsonl").open("a") as gate:
                 gate.write(json.dumps({"event": "wait_confirmed", "pid": process.pid, "time": time.monotonic(), "exit": result}) + "\\n")
@@ -208,11 +240,10 @@ def tracked_spawn(*args, **kwargs):
     return process
 g["subprocess"].Popen = tracked_spawn
 fault_fired = False
-reap_cleanup_recorded = False
 journal_path = Path(sys.argv[sys.argv.index("--journal") + 1]) if "--journal" in sys.argv else None
 publication_line = next(i for i, line in enumerate(Path(sys.argv[1]).read_text().splitlines(), 1) if 'report["result"] = {"branch": branch' in line)
 def fault_at_boundary(frame, event, arg):
-    global fault_fired, reap_cleanup_recorded
+    global fault_fired
     if frame.f_code.co_filename == sys.argv[1] and not fault_fired:
         if scenario == "capacity_at_cleanup" and event == "call" and frame.f_code.co_name == "cleanup":
             fault_fired = True
@@ -227,13 +258,22 @@ def fault_at_boundary(frame, event, arg):
             fault_fired = True
             (journal_path.parent / "fault-gate.json").write_text(json.dumps({"boundary": "coding_run return", "coding": frame.f_locals["report"]["coding"], "signal": "SIGALRM", "total_budget_remaining": frame.f_locals["deadlines"].total - time.monotonic()}))
             os.kill(os.getpid(), signal.SIGALRM)
-        if scenario in {"verification_reap_delayed", "verification_reap_exhausted"} and not reap_cleanup_recorded and event == "line" and frame.f_code.co_name == "cleanup" and "reserve" in frame.f_locals:
-            reap_cleanup_recorded = True
-            with (journal_path.parent / "verification-reaping.jsonl").open("a") as gate:
-                gate.write(json.dumps({"event": "cleanup_bound", "time": time.monotonic(), "end": frame.f_locals["end"], "reserve": frame.f_locals["reserve"]}) + "\\n")
     return fault_at_boundary
-if scenario in {"capacity_at_cleanup", "discard_at_verification", "alarm_after_coding_pass", "verification_reap_delayed", "verification_reap_exhausted"}:
+if scenario in {"capacity_at_cleanup", "discard_at_verification", "alarm_after_coding_pass"}:
     sys.settrace(fault_at_boundary)
+if scenario in {"verification_reap_delayed", "verification_reap_exhausted", "verification_reap_interrupted", "verification_reap_transition", "verification_reap_termination"}:
+    original_cleanup = g["cleanup"]
+    def observed_cleanup(*args, **kwargs):
+        deadlines = args[5]
+        entered = time.monotonic()
+        end = deadlines.cleanup_deadline
+        reserve = min(g["SHUTDOWN_RESERVE"], max(0, end - entered))
+        try:
+            return original_cleanup(*args, **kwargs)
+        finally:
+            with (journal_path.parent / "verification-reaping.jsonl").open("a") as gate:
+                gate.write(json.dumps({"event": "cleanup_bound", "time": entered, "end": end, "reserve": reserve, "returned_end": deadlines.cleanup_deadline}) + chr(10))
+    g["cleanup"] = observed_cleanup
 try:
     result = module["main"](sys.argv[4:])
 finally:
@@ -586,12 +626,65 @@ sys.exit(result)
                 self.assertLessEqual(cleanup["end"], expected_end + 0.05)
                 self.assertLessEqual(waiting["timeout"], expected_end - budgets[3] - waiting["time"] + 0.05)
 
+    def test_stale_alarm_retries_exact_child_cleanup_transition_and_wait_within_shared_end(self):
+        for scenario in ["verification_reap_interrupted", "verification_reap_transition", "verification_reap_termination"]:
+            with self.subTest(scenario=scenario):
+                self.check_stale_alarm_cleanup(scenario)
+
+    def check_stale_alarm_cleanup(self, scenario):
+        run, report, events = self.run_fixture(scenario, coding=True, budgets=(3, 5, 1.5, 0.5))
+        phase = json.loads((self.case_root / "verification-stall.json").read_text())
+        self.assertEqual(phase["phase"], "git_fetch_stall")
+        receipt = next(row for row in report["resources"]["verification_processes"] if row["pid"] == phase["pid"])
+        gates = [json.loads(line) for line in (self.case_root / "verification-reaping.jsonl").read_text().splitlines()]
+        waits = [row for row in gates if row["event"] == "wait_started"]
+        self.assertEqual(sum(row["event"] == "stale_alarm" for row in gates), 1)
+        self.assertTrue(waits)
+        self.assertTrue(all(row["pid"] == phase["pid"] and row["pgid"] == phase["pid"] for row in waits))
+        termination = [row for row in gates if row["event"] == "termination_attempt"]
+        self.assertEqual(len(termination), 1)
+        self.assertEqual((termination[0]["pid"], termination[0]["pgid"], termination[0]["signal"]), (phase["pid"], phase["pid"], 9))
+        self.assertEqual(run.returncode, 1, report)
+        self.assertEqual(report["outcome"], "FAIL")
+        self.assertEqual(report["stages"][-1]["stage"], "source_fixture")
+        self.assertIn("deadline", report["stages"][-1]["reason"])
+        self.assertEqual(report["attempts"], {"CreateAgent": 0, "Send": 0})
+        self.assertFalse(set(e.get("method") for e in events) & {"CreateAgent", "Send"})
+        self.assertEqual(receipt["exit"], -9, report)
+        self.assertGreaterEqual(len(waits), 2 if scenario == "verification_reap_interrupted" else 1)
+        if scenario == "verification_reap_transition":
+            alarm = next(row for row in gates if row["event"] == "stale_alarm")
+            self.assertEqual(alarm["boundary"], "stdout.close")
+            self.assertEqual(alarm["pgid"], phase["pid"])
+            self.assertLess(alarm["time"], waits[0]["time"])
+        if scenario == "verification_reap_termination":
+            alarm = next(row for row in gates if row["event"] == "stale_alarm")
+            self.assertEqual(alarm["boundary"], "killpg")
+            self.assertTrue(alarm["signal_blocked"])
+            self.assertEqual(alarm["pgid"], phase["pid"])
+        confirmed = next(row for row in gates if row["event"] == "wait_confirmed")
+        self.assertEqual(confirmed["pid"], phase["pid"])
+        self.assertEqual(confirmed["exit"], receipt["exit"])
+        cleanup = next(row for row in gates if row["event"] == "cleanup_bound")
+        self.assertEqual(cleanup["returned_end"], cleanup["end"])
+        self.assertTrue(all(row["cleanup_end"] == cleanup["end"] for row in waits))
+        if scenario == "verification_reap_transition":
+            self.assertEqual(alarm["cleanup_end"], cleanup["end"])
+        self.assertTrue(all(0 < row["timeout"] <= cleanup["end"] - 0.5 - row["time"] + 0.05 for row in waits))
+        self.assertLessEqual(cleanup["end"], waits[0]["time"] + 1.55)
+        self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
+        self.assertEqual(report["resources"]["verification_cleanup"], "REMOVED")
+        self.assertEqual(report["resources"]["private_root_cleanup"], "REMOVED")
+        self.assertLess(report["elapsed_seconds"], 5.1)
+
     def test_partial_frames_git_tests_and_cancel_obey_original_deadline(self):
         for scenario in ["partial_frame_trickle", "partial_frame_no_id", "git_stall", "test_stall"]:
             with self.subTest(scenario=scenario):
-                run, report, events = self.run_fixture(scenario, coding=True, budgets=(6, 8, 1.5, 0.75))
+                # Each fault must reach its real phase after coding preparation.
+                budgets = (*CODING_BUDGETS[:2], 1.5, 0.75)
+                run, report, events = self.run_fixture(scenario, coding=True, budgets=budgets)
                 self.assertEqual(run.returncode, 1, report)
-                self.assertLess(report["elapsed_seconds"], 8.1)
+                self.assertLess(report["elapsed_seconds"], budgets[1] + 0.1)
                 self.assertIn("deadline", report["stages"][-1]["reason"])
                 expected = {"partial_frame_trickle": "Send", "partial_frame_no_id": "Send", "git_stall": "source_fixture", "test_stall": "result_tests"}
                 self.assertEqual(report["stages"][-1]["stage"], expected[scenario], report)
