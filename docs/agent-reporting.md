@@ -70,6 +70,12 @@ minutes or its session exits; a fresh component carries no label.
 
 Inspect the complete observation with `ovrcr session usage SESSION_ID` or terminal
 inventory. Both retain the raw binding, activity, metrics, and source health.
+If the managed Claude transcript cannot be attached or read, its PTY includes a
+content-free `Claude transcript source` diagnostic: operation stage, error kind
+and OS code, whether this collector previously opened the source, and the
+conversation identity. Repeated identical failures are not printed again until
+a successful read. Paths, error messages and transcript bodies are excluded.
+This adds diagnostics only; source health and delegation input gates are unchanged.
 Reporting transport can be connected while usage or cost is unknown. Supported in-process conversation replacements (`/clear`, in-process resume, and
 foreground `/branch` when native leave + `SessionStart(source=fork)` evidence is
 present) rebind the same managed invocation to the new foreground identity and

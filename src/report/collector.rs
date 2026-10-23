@@ -68,7 +68,7 @@ impl CollectorController {
             .env_clear()
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .process_group(0)
             .spawn()
             .map_err(|_| anyhow::anyhow!("collector spawn unavailable"))?;
@@ -393,6 +393,7 @@ struct TranscriptReader {
     accumulator: ClaudeUsageAccumulator,
     frozen: Option<&'static str>,
     rebuilding: bool,
+    source_failure: Option<(&'static str, io::ErrorKind, Option<i32>, bool)>,
 }
 
 impl TranscriptReader {
@@ -406,13 +407,34 @@ impl TranscriptReader {
             accumulator: ClaudeUsageAccumulator::default(),
             frozen: None,
             rebuilding: false,
+            source_failure: None,
+        }
+    }
+
+    fn report_source_failure(&mut self, stage: &'static str, error: &io::Error) {
+        let failure = (
+            stage,
+            error.kind(),
+            error.raw_os_error(),
+            self.file.is_some(),
+        );
+        if self.source_failure != Some(failure) {
+            // Fixed metadata only: never format the error, path or transcript body.
+            eprintln!(
+                "Claude transcript source: stage={stage} kind={:?} os_code={:?} previously_opened={} conversation={}",
+                failure.1, failure.2, failure.3, self.source.conversation
+            );
+            self.source_failure = Some(failure);
         }
     }
 
     fn refresh(&mut self) -> io::Result<bool> {
-        let metadata = std::fs::metadata(&self.source.path)?;
+        let metadata = std::fs::metadata(&self.source.path)
+            .inspect_err(|error| self.report_source_failure("metadata", error))?;
         if !metadata.is_file() {
-            return Err(io::Error::other("nonregular source"));
+            let error = io::Error::other("nonregular source");
+            self.report_source_failure("not_regular", &error);
+            return Err(error);
         }
         let replace = self.metadata.as_ref().is_none_or(|old| {
             old.dev() != metadata.dev()
@@ -428,11 +450,16 @@ impl TranscriptReader {
             let file = OpenOptions::new()
                 .read(true)
                 .custom_flags(libc::O_NONBLOCK)
-                .open(&self.source.path)?;
-            let opened = file.metadata()?;
+                .open(&self.source.path)
+                .inspect_err(|error| self.report_source_failure("open", error))?;
+            let opened = file
+                .metadata()
+                .inspect_err(|error| self.report_source_failure("opened_metadata", error))?;
             if !opened.is_file() || opened.dev() != metadata.dev() || opened.ino() != metadata.ino()
             {
-                return Err(io::Error::other("source changed during open"));
+                let error = io::Error::other("source changed during open");
+                self.report_source_failure("identity", &error);
+                return Err(error);
             }
             self.rebuilding = self.metadata.is_some();
             self.file = Some(file);
@@ -455,8 +482,14 @@ impl TranscriptReader {
         }
         let mut bytes = vec![0u8; READ_LIMIT];
         let read = match self.file.as_mut().unwrap().read(&mut bytes) {
-            Ok(read) => read,
-            Err(_) => return self.snapshot(false, Some("read_unavailable")),
+            Ok(read) => {
+                self.source_failure = None;
+                read
+            }
+            Err(error) => {
+                self.report_source_failure("read", &error);
+                return self.snapshot(false, Some("read_unavailable"));
+            }
         };
         self.offset += read as u64;
         for part in bytes[..read].split_inclusive(|&byte| byte == b'\n') {

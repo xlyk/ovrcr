@@ -70,7 +70,7 @@ if (mode() === "policy-before-bind") writeFileSync(option("--mcp-config"), JSON.
 let conversation = option("--session-id");
 const transcript = join(profile, "projects", "fixture", `${conversation}.jsonl`);
 mkdirSync(dirname(transcript), { recursive: true });
-writeFileSync(transcript, "", { mode: 0o600 });
+if (mode() !== "source-not-created") writeFileSync(transcript, "", { mode: 0o600 });
 let turn = 0;
 let active;
 let questionReference;
@@ -84,7 +84,7 @@ function hook(event, extra = {}) {
 }
 
 function statusline() {
-  if (mode() === "missing-model") return;
+  if (["missing-model", "source-not-created"].includes(mode())) return;
   const model = mode() === "wrong-model" ? "different-model" : `${option("--model")}-resolved`;
   const command = settings.statusLine?.command;
   if (!command?.includes("report claude-statusline --stdin-json")) throw new Error("missing production statusline command");

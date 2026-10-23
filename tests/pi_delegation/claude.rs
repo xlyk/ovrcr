@@ -426,6 +426,73 @@ fn public_claude_missing_or_wrong_native_model_never_receives_initial_input() {
 }
 
 #[test]
+fn public_claude_missing_startup_source_reports_cause_without_releasing_input() {
+    let f = ClaudeFixture::new("source-not-created");
+    let reply = f.start_claude();
+    assert_eq!(reply["dispatch"], "Launched", "{reply}");
+    let pending: AssignmentSnapshot = serde_json::from_value(reply).unwrap();
+    let session = pending.identity.session.unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let Response::TerminalText { text, .. } = f.live.request(Request::ReadTerminal {
+            session,
+            max_lines: Some(100),
+        }) else {
+            panic!("native startup output");
+        };
+        let Response::Inventory { sessions, .. } = f.live.request(Request::Inspect) else {
+            panic!("inventory");
+        };
+        let source_unavailable = sessions
+            .iter()
+            .find(|child| child.id == session)
+            .and_then(|child| child.agent.as_ref())
+            .is_some_and(|agent| {
+                agent.health.reason.as_deref() == Some("source_unavailable")
+                    && agent.health.state == ovrcr_protocol::ReporterHealth::Unavailable
+            });
+        if source_unavailable
+            && text.contains("Claude transcript source: stage=metadata kind=NotFound")
+        {
+            assert!(text.contains("previously_opened=false"), "{text}");
+            assert!(
+                !text.contains("projects/fixture"),
+                "diagnostic exposed source path"
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "source diagnostic missing: {text}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let Response::Inventory { sessions, .. } = f.live.request(Request::Inspect) else {
+        panic!("inventory");
+    };
+    let child = sessions.iter().find(|child| child.id == session).unwrap();
+    let agent = child.agent.as_ref().unwrap();
+    assert_eq!(agent.health.reason.as_deref(), Some("source_unavailable"));
+    assert_eq!(
+        agent.health.state,
+        ovrcr_protocol::ReporterHealth::Unavailable
+    );
+    let current = f.reconcile(&pending.handle);
+    assert_eq!(current.identity, pending.identity);
+    assert_eq!(current.dispatch, DispatchStatus::Launched);
+    let initial = current
+        .receipts
+        .iter()
+        .find(|receipt| receipt.operation == DispatchOperation::InitialInput)
+        .unwrap();
+    assert_eq!(initial.outcome, DispatchOutcome::Accepted);
+    assert_eq!(f.input_count(&current), 0);
+    assert_eq!(f.byte_count(&current), 0);
+    assert!(current.submission.is_none());
+    assert_eq!(current.acceptance, "pending");
+}
+
+#[test]
 fn public_claude_native_permission_prompt_has_gap_and_no_question_or_result() {
     let f = ClaudeFixture::new("native-prompt");
     let started = f.started();
