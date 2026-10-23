@@ -278,6 +278,7 @@ class Journal:
         self.path = Path(path)
         self.secrets = secret_values
         self.closed = False
+        self.closure_durable = False
         self.close_kind = None
         self.failed = False
         self.lock = None
@@ -373,6 +374,7 @@ class Journal:
             self.close_kind = kind
             self.append({"event": "closure", "kind": kind, "time": time.time(),
                          "remote_cancellation": "NOT CONFIRMED"})
+            self.closure_durable = True
             if kind == "discard":
                 for method in ("CreateAgent", "Send"):
                     (self.path / (method + ".request.json")).unlink(missing_ok=True)
@@ -687,11 +689,12 @@ def coding_run(manifest, key, token, port, journal, root, deadlines, report, sta
     output = command([sys.executable, "-I", "-B", "-m", "unittest", "discover", "-s", str(checkout), "-p", "test_addition.py"], checkout, root, deadlines, report["resources"])
     if "Ran 3 tests" not in output or "\nOK\n" not in output:
         raise Failure("independent fixture test completion is unverified")
-    journal.ensure_open()
-    report["result"] = {"branch": branch, "commit": tip, "ancestry": "PASS", "allowed_diff": diff, "tests": "PASS; 3 tests"}
-    journal.append({"event": "verified", "receipt": report["result"]})
-    report["stages"].append({"stage": "coding", "verdict": "PASS", "receipt": report["result"]})
-    report["coding"] = "PASS"
+    with authority():
+        journal.ensure_open()
+        report["result"] = {"branch": branch, "commit": tip, "ancestry": "PASS", "allowed_diff": diff, "tests": "PASS; 3 tests"}
+        journal.append({"event": "verified", "receipt": report["result"]})
+        report["stages"].append({"stage": "coding", "verdict": "PASS", "receipt": report["result"]})
+        report["coding"] = "PASS"
 
 
 def cleanup(process, root, token_identity, port, token, deadlines, resources, journal=None, state=None, key=""):
@@ -709,8 +712,7 @@ def cleanup(process, root, token_identity, port, token, deadlines, resources, jo
             if journal is not None:
                 try:
                     journal.close("cleanup")
-                    resources["admission"] = "CLOSED; durable closure"
-                    if state.get("active") and state.get("runId") and journal.close_kind != "discard":
+                    if journal.closure_durable and not journal.failed and state.get("active") and state.get("runId") and journal.close_kind != "discard":
                         journal.append({"event": "cancel_intent", "agentId": state["agentId"], "runId": state["runId"]})
                         resources["cancel_request"] = "UNCONFIRMED"
                         checked_rpc(port, token, "SdkAgentService", "CancelRun", {"agentId": state["agentId"], "runId": state["runId"]}, deadlines)
@@ -787,7 +789,7 @@ def cleanup(process, root, token_identity, port, token, deadlines, resources, jo
 
 def redact(value, secrets):
     if isinstance(value, dict):
-        return {k: redact(v, secrets) for k, v in value.items()}
+        return {redact(k, secrets): redact(v, secrets) for k, v in value.items()}
     if isinstance(value, list):
         return [redact(v, secrets) for v in value]
     if isinstance(value, str):
@@ -910,6 +912,10 @@ def main(argv=None):
         for sig, handler in old_controls.items():
             signal.signal(sig, handler)
         if journal is not None:
+            report["resources"]["admission"] = ("CLOSED; durable closure" if journal.closure_durable else
+                                                 "CLOSED LOCALLY; durable closure UNCONFIRMED" if journal.closed else
+                                                 "UNCONFIRMED; durable closure not recorded")
+            report["resources"]["journal_health"] = "FAILED; no further dispatch" if journal.failed else "DURABLE"
             journal.release()
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
@@ -931,10 +937,17 @@ def main(argv=None):
                           for number, (qualified, receipt) in receipts.items()}
     report["criteria"]["10"] = {"verdict": "NOT RUN", "receipt": "offline entry-point suite is separate acceptance evidence; this invocation does not attest that suite"}
     report["elapsed_seconds"] = round(time.monotonic() - deadlines.started, 3)
+    clean = report["resources"].get("process_exit") in {"NOT STARTED", "CONFIRMED"} and report["resources"].get("token_cleanup") in {"NOT CREATED", "REMOVED"}
+    journal_ok = journal is None or (journal.closure_durable and not journal.failed)
+    if not journal_ok:
+        report["resources"]["journal_qualification"] = "FAIL; required persistence or durable closure is unconfirmed"
+        if not any(item["verdict"] == "FAIL" for item in report["stages"]):
+            report["stages"].append({"stage": "journal_cleanup", "verdict": "FAIL", "reason": "required journal persistence or durable closure is unconfirmed"})
+    passed = report["preflight"] == "PASS" and report["coding"] in {"NOT RUN", "PASS"} and clean and journal_ok
+    report["outcome"] = "PASS" if passed else "FAIL"
     report = redact(report, [key, token])
     print(json.dumps(report, sort_keys=True))
-    clean = report["resources"].get("process_exit") in {"NOT STARTED", "CONFIRMED"} and report["resources"].get("token_cleanup") in {"NOT CREATED", "REMOVED"}
-    return 0 if report["preflight"] == "PASS" and report["coding"] in {"NOT RUN", "PASS"} and clean else 1
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":

@@ -58,7 +58,8 @@ class PreflightEntryPointTests(unittest.TestCase):
             if scenario == "wrong_diff":
                 (repo / "test_addition.py").write_text("raise RuntimeError('outside allowed module')\n")
             if scenario == "test_stall":
-                (repo / "addition.py").write_text("import time\ntime.sleep(30)\ndef add(a,b): return a+b\n")
+                program = "import json, os, time\nwith open(" + repr(str(root / "verification-stall.json")) + ", 'w') as receipt: json.dump({'phase': 'unittest_stall', 'pid': os.getpid()}, receipt)\ntime.sleep(30)\ndef add(a,b): return a+b\n"
+                (repo / "addition.py").write_text(program)
             if scenario == "failed_tests":
                 (repo / "addition.py").write_text("def add(a, b):\n    return a - b + 1\n")
             git("commit", "-am", "fix addition")
@@ -107,7 +108,8 @@ if 'fetch' in args:
 os.execv('/usr/bin/git', ['git', '-c', """ + repr("url." + str(repo) + ".insteadOf=https://github.com/fixture/disposable") + r""", *args])
 """)
             if scenario == "git_stall":
-                shim.write_text("#!" + sys.executable + "\nimport time\ntime.sleep(30)\n")
+                program = "import json, os, sys, time\nif 'fetch' in sys.argv:\n with open(" + repr(str(root / "verification-stall.json")) + ", 'w') as receipt: json.dump({'phase': 'git_fetch_stall', 'pid': os.getpid()}, receipt)\n time.sleep(30)\nos.execv('/usr/bin/git', ['git', *sys.argv[1:]])\n"
+                shim.write_text("#!" + sys.executable + "\n" + program)
             shim.chmod(0o700)
             git_override = "g['GIT']=" + repr(str(shim)) + "; g['GH']=" + repr(str(gh_peer)) + "; "
             config.update(source_sha=selected)
@@ -156,7 +158,8 @@ os.execv('/usr/bin/git', ['git', '-c', """ + repr("url." + str(repo) + ".instead
         if scenario == "checksum_mismatch":
             digest = "0" * 64
         runner = """
-import runpy, sys, time
+import runpy, sys, time, os, signal, json
+from pathlib import Path
 module = runpy.run_path(sys.argv[1])
 g = module["main"].__globals__
 g.update(PINS={sys.argv[2]:sys.argv[3]}, WORK_SECONDS=%r, TOTAL_SECONDS=%r,
@@ -173,9 +176,28 @@ def tracked_spawn(*args, **kwargs):
         raise TimeoutError("synthetic interrupted process operation")
     return process
 g["subprocess"].Popen = tracked_spawn
+fault_fired = False
+journal_path = Path(sys.argv[sys.argv.index("--journal") + 1]) if "--journal" in sys.argv else None
+publication_line = next(i for i, line in enumerate(Path(sys.argv[1]).read_text().splitlines(), 1) if 'report["result"] = {"branch": branch' in line)
+def fault_at_boundary(frame, event, arg):
+    global fault_fired
+    if frame.f_code.co_filename == sys.argv[1] and not fault_fired:
+        if scenario == "capacity_at_cleanup" and event == "call" and frame.f_code.co_name == "cleanup":
+            fault_fired = True
+            (journal_path / "capacity").write_bytes(b"x" * (256 * 1024))
+            (journal_path.parent / "fault-gate.json").write_text(json.dumps({"boundary": "cleanup", "capacity_written": True}))
+        if scenario == "discard_at_verification" and event == "line" and frame.f_lineno == publication_line:
+            fault_fired = True
+            blocked = signal.SIGUSR2 in signal.pthread_sigmask(signal.SIG_BLOCK, set())
+            (journal_path.parent / "fault-gate.json").write_text(json.dumps({"boundary": "verification", "signal_requested": True, "signal_blocked": blocked}))
+            os.kill(os.getpid(), signal.SIGUSR2)
+    return fault_at_boundary
+if scenario in {"capacity_at_cleanup", "discard_at_verification"}:
+    sys.settrace(fault_at_boundary)
 try:
     result = module["main"](sys.argv[4:])
 finally:
+    sys.settrace(None)
     for process in owned:
         if process.poll() is None:
             process.kill()
@@ -225,6 +247,9 @@ sys.exit(result)
             items = {"report.json": run.stdout.encode(), "wire.json": json.dumps(events, sort_keys=True).encode()}
             if journal.exists():
                 items.update({"journal-" + path.name: path.read_bytes() for path in journal.iterdir() if path.is_file()})
+            for name in ("verification-stall.json", "fault-gate.json", "github-audit.jsonl", "git-auth-audit.jsonl"):
+                if (root / name).exists():
+                    items[name] = (root / name).read_bytes()
             for name, data in items.items():
                 fd = os.open(target / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 with os.fdopen(fd, "wb") as output:
@@ -316,6 +341,48 @@ sys.exit(result)
                     self.assertEqual(report["stages"][-1]["stage"], "source_fixture" if scenario == "github_helper_refused" else "github_auth")
                 self.assertEqual((self.case_root / "github-config" / "owned-marker").read_text(), "preserve selected config")
 
+    def test_json_property_names_cannot_leak_credentials_into_receipts_or_report(self):
+        for scenario in ("secret_response_key", "secret_nested_key", "bridge_token_key"):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True, budgets=(4, 6, 1, 0.5))
+                self.assertEqual(run.returncode, 1, report)
+                self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 0})
+                self.assertEqual(report["stages"][-1]["stage"], "CreateAgent")
+                self.assertIn("secret found", report["stages"][-1]["reason"])
+                self.assertTrue((self.case_root / "journal" / "CreateAgent.request.json").exists())
+
+    def test_failed_required_closure_is_not_durable_or_an_overall_success(self):
+        for scenario in ("discard_storage_failure", "capacity_at_cleanup"):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True, budgets=(6, 8, 1.5, 0.75))
+                self.assertEqual(run.returncode, 1, report)
+                self.assertEqual(report["resources"]["journal_health"], "FAILED; no further dispatch")
+                self.assertNotEqual(report["criteria"]["8"]["verdict"], "PASS")
+                self.assertNotEqual(report["resources"].get("admission"), "CLOSED; durable closure")
+                rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+                self.assertFalse(any(row["event"] == "closure" for row in rows))
+                if scenario == "discard_storage_failure":
+                    self.assertEqual(report["attempts"], {"CreateAgent": 0, "Send": 0})
+                else:
+                    self.assertEqual(report["criteria"]["6"]["verdict"], "PASS")
+                    self.assertEqual(json.loads((self.case_root / "fault-gate.json").read_text())["boundary"], "cleanup")
+
+    def test_final_verified_publication_and_discard_share_one_authority(self):
+        run, report, events = self.run_fixture("discard_at_verification", coding=True, budgets=(6, 8, 1.5, 0.75))
+        gate = json.loads((self.case_root / "fault-gate.json").read_text())
+        self.assertTrue(gate["signal_requested"])
+        rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+        closure = next(i for i, row in enumerate(rows) if row["event"] == "closure")
+        self.assertEqual(rows[closure]["kind"], "discard")
+        self.assertFalse(any(row["event"] == "verified" for row in rows[closure + 1:]), rows)
+        if report["coding"] == "PASS":
+            self.assertEqual(run.returncode, 0, report)
+            self.assertTrue(gate["signal_blocked"])
+            self.assertTrue(any(row["event"] == "verified" for row in rows[:closure]))
+        else:
+            self.assertEqual(run.returncode, 1, report)
+        self.assertFalse(list((self.case_root / "journal").glob("*.request.json")))
+
     def test_independent_fixture_source_admission_precedes_any_creation(self):
         for scenario in ("unpublished_source", "same_default_source", "wrong_baseline"):
             with self.subTest(scenario=scenario):
@@ -380,10 +447,18 @@ sys.exit(result)
     def test_partial_frames_git_tests_and_cancel_obey_original_deadline(self):
         for scenario in ["partial_frame_trickle", "partial_frame_no_id", "git_stall", "test_stall"]:
             with self.subTest(scenario=scenario):
-                run, report, events = self.run_fixture(scenario, coding=True, budgets=(1.6, 2.1, 0.4, 0.15))
+                run, report, events = self.run_fixture(scenario, coding=True, budgets=(6, 8, 1.5, 0.75))
                 self.assertEqual(run.returncode, 1, report)
-                self.assertLess(report["elapsed_seconds"], 2.2)
+                self.assertLess(report["elapsed_seconds"], 8.1)
                 self.assertIn("deadline", report["stages"][-1]["reason"])
+                expected = {"partial_frame_trickle": "Send", "partial_frame_no_id": "Send", "git_stall": "source_fixture", "test_stall": "result_tests"}
+                self.assertEqual(report["stages"][-1]["stage"], expected[scenario], report)
+                if scenario.startswith("partial_frame"):
+                    self.assertTrue(any(e.get("stall") == scenario for e in events), events)
+                else:
+                    phase = json.loads((self.case_root / "verification-stall.json").read_text())
+                    self.assertEqual(phase["phase"], "unittest_stall" if scenario == "test_stall" else "git_fetch_stall")
+                    self.assertIn(phase["pid"], [p["pid"] for p in report["resources"]["verification_processes"]])
                 self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
                 self.assertTrue(all(p["exit"] != "UNRESOLVED" for p in report["resources"].get("verification_processes", [])))
                 if scenario == "partial_frame_no_id":

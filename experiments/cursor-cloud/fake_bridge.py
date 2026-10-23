@@ -125,6 +125,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 close_admission("cancel" if scenario == "cancel_after_create" else "discard")
             if scenario == "receipt_capacity":
                 (Path(CONFIG["journal"]) / "capacity").write_bytes(b"x" * (256 * 1024))
+            if scenario == "secret_response_key":
+                response[KEY] = "unexpected property"
+            if scenario == "secret_nested_key":
+                response["extra"] = [{KEY: "unexpected nested property"}]
+            if scenario == "bridge_token_key":
+                response[TOKEN] = "unexpected property"
             if scenario == "creation_no_id":
                 response.pop("agentId")
             if scenario == "creation_wrong_model":
@@ -228,6 +234,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     rest = messages[3:]
                     data = b"".join(struct.pack(">BI", 0, len(payload)) + payload for payload in [json.dumps(x).encode() for x in rest]) + struct.pack(">BI", 2, 2) + b"{}"
                 else:
+                    receipt(stall=scenario)
                     for byte in struct.pack(">BI", 0, 2000) + b" " * 2000:
                         self.wfile.write(bytes([byte]))
                         self.wfile.flush()
@@ -252,6 +259,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if method == "ListRepositories":
             if scenario == "close_before_create":
                 close_admission("discard")
+            if scenario == "discard_storage_failure":
+                (Path(CONFIG["journal"]) / "capacity").write_bytes(b"x" * (256 * 1024))
+                os.kill(os.getppid(), signal.SIGUSR2)
             if scenario == "capacity_before_create":
                 (Path(CONFIG["journal"]) / "capacity").write_bytes(b"x" * (256 * 1024))
             if scenario == "request_conflict":

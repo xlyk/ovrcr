@@ -104,6 +104,7 @@ Before each effect, `<method>.request.json` contains the exact nonsecret request
 and original operation key. The client fsyncs the request and directory, then
 fsyncs its attempt claim in `events.jsonl`, before dispatch. Credentials enter only
 the in-memory outgoing request. Claims retain the original key and request digest.
+Secrets in JSON property names and nested values are rejected before publication.
 Creation identity/model must be durably saved before GetAgent and the separately
 keyed Send. GetAgent must match the exact conversation, cloud runtime and repository.
 The early Send init supplies the exact run/agent/model receipt. Only after its
@@ -136,7 +137,12 @@ closure and removes retained request payloads. Both share the same local authori
 as attempt claims. Closure before a claim blocks dispatch; a prior claim may have
 escaped and remains uncertain until its exact receipt is durable. Discard is no
 remote cancellation or secure-erasure claim. Late receipts are retained as late
-and cannot recreate payloads, reopen admission or deliver a coding pass. Cleanup
+and cannot recreate payloads, reopen admission or deliver a coding pass. The final
+admission check, fsynced verified receipt and coding PASS decision share this same
+authority. A local fence is separate from confirmed durable closure: failed closure
+publication reports UNCONFIRMED. The overall invocation fails if required journal
+persistence or closure fails, even when independent coding-result evidence passed.
+Cleanup
 requests cancellation only for an exact known active run, with durable intent;
 an empty acknowledgement alone leaves the remote outcome unresolved. One bounded
 GetRun reads its terminal state, without selecting or listing another run.
@@ -201,9 +207,15 @@ rtk proxy python3 -I -m py_compile experiments/cursor-cloud/client.py experiment
 synthetic archive digests and bounded test budgets before entry. Normal synthetic
 startup has a 3-second work / 5-second total budget; stall peers record that the
 intended phase was reached and trickle beyond the absolute deadline. Expired-entry
-and exhausted-cleanup cases keep separate zero/late budget checks. Coding cases substitute
+and exhausted-cleanup cases keep separate zero/late budget checks. New coding
+stall cases use 6-second work / 8-second total limits and require an actual peer or
+process phase receipt plus the exact failure stage. Production limits stay 840/900
+seconds. Coding cases substitute
 the external Git executable with an owned URL-rewriting peer; Git itself and all
-repositories, files, processes and sockets are real. There is no test-mode CLI flag,
+repositories, files, processes and sockets are real. Narrow test-runner tracing
+forces real signal/storage faults at final verification and cleanup boundaries;
+it does not replace the client's authority, constructors or persistence. There is
+no test-mode CLI flag,
 endpoint attachment, alternate client constructor or production pin bypass.
 `fake_bridge.py` is solely a synthetic external executable packaged by the test;
 it runs real loopback HTTP and private token files and records method names and
@@ -244,8 +256,9 @@ The #364 acceptance cases map to these additional entry-point assertions:
 | 5: exact early run, source probe, framing/result/end | `test_coding_rejects*`; success includes split frames, keepalives and unknown envelopes |
 | 6: source, ancestry, allowed history/diff, independent tests | success and wrong-source/ancestry/diff/failed-tests cases in `test_coding_rejects*` |
 | 7: uncertain receipt retention; no replacement/retry/guessed run | `test_lost_receipts*`, storage/identity cases and common method-count assertions |
-| 8: closure ordering, late receipts, exact cleanup cancel | `test_closure_orders*`, `test_only_exact_known_active_run*` |
+| 8: closure ordering, late receipts, exact cleanup cancel | `test_closure_orders*`, `test_final_verified*`, `test_failed_required_closure*`, `test_only_exact_known_active_run*` |
 | 9: absolute partial-frame/Git/test/cancel deadlines, honest report | `test_partial_frames*`, exact-cancel stalled case and inherited preflight/cleanup deadline tests |
+| Property-name/value secret exclusion | `test_json_property_names*` and common stdout/journal sentinel checks |
 | 10: actual entry/storage/Git/process path and failure matrix | the full `test_client.py` suite; runtime criterion 10 stays NOT RUN because one invocation cannot attest the suite |
 
 The JSON report includes stage errors, criterion-specific receipts, original keys,
