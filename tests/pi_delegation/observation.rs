@@ -12,6 +12,9 @@ pub(super) struct Fixture {
 }
 impl Fixture {
     pub(super) fn new(deadline: u64) -> Self {
+        Self::with_prompt_delay(deadline, 0)
+    }
+    fn with_prompt_delay(deadline: u64, prompt_delay_ms: u64) -> Self {
         let live = Live::idle();
         fs::write(
             live.config.join("dashboard.toml"),
@@ -27,7 +30,9 @@ impl Fixture {
         let pi = live.claude.command.parent().unwrap().join("pi");
         fs::write(&pi, include_bytes!("../fixtures/pi/research_pi.sh")).unwrap();
         fs::set_permissions(&pi, fs::Permissions::from_mode(0o700)).unwrap();
+        let prompt_delay = prompt_delay_ms.to_string();
         live.start_binary_env(&[
+            ("OVRCR_TEST_PI_PROMPT_DELAY_MS", prompt_delay.as_ref()),
             ("OVRCR_TEST_DELEGATION", "1".as_ref()),
             ("OVRCR_TEST_PI_INTERRUPT_BINDING", "Escape".as_ref()),
             ("OVRCR_TEST_DELEGATION_FAULT", fault.as_os_str()),
@@ -107,11 +112,19 @@ impl Fixture {
         );
     }
     pub(super) fn tool(&self, name: &str, args: serde_json::Value) -> serde_json::Value {
-        let path = self.live.root.path().join(format!(
-            "tool-{}.json",
-            TOOL_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
-        tool(&self.live, self.parent, name, args, &path)
+        let id = TOOL_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = self.live.root.path().join(format!("tool-{id}.json"));
+        let began = Instant::now();
+        println!(
+            "OBSERVATION_TOOL_BEGIN id={id} name={name} wait_ms={:?}",
+            args.get("wait_ms").and_then(serde_json::Value::as_u64)
+        );
+        let result = tool(&self.live, self.parent, name, args, &path);
+        println!(
+            "OBSERVATION_TOOL_END id={id} elapsed_ms={}",
+            began.elapsed().as_millis()
+        );
+        result
     }
     pub(super) fn start(&self, scope: &str) -> AssignmentSnapshot {
         let started: AssignmentSnapshot = serde_json::from_value(self.tool("ovrcr_start", serde_json::json!({"project": PROJECT, "workspace": self.workspace, "scope": scope, "model_provider": "test", "model": "fixture-model", "acceptance_evidence": ["README citation"]}))).unwrap();
@@ -483,9 +496,17 @@ fn production_observer_collects_simultaneous_file_only_results_and_preserves_das
 
 #[test]
 fn production_observer_deadline_reconnect_overflow_and_wait_abort_leave_child_running() {
-    let f = Fixture::new(150);
+    for prompt_delay_ms in [0, 100] {
+        println!("OBSERVATION_PROMPT_DELAY_MS={prompt_delay_ms}");
+        observer_deadline_reconnect_overflow_and_wait_abort(prompt_delay_ms);
+    }
+}
+
+fn observer_deadline_reconnect_overflow_and_wait_abort(prompt_delay_ms: u64) {
+    let f = Fixture::with_prompt_delay(150, prompt_delay_ms);
     let _dashboard = f.dashboard();
     let child = f.start("NO_READY silent until explicitly released");
+    println!("OBSERVATION_STAGE initial");
     let initial = f.observe(&[&child.handle], None, 0);
     let mut last = initial.clone();
     let stalled_deadline = Instant::now() + Duration::from_secs(10);
@@ -494,10 +515,12 @@ fn production_observer_deadline_reconnect_overflow_and_wait_abort_leave_child_ru
             Instant::now() < stalled_deadline,
             "silent child did not reach observation deadline"
         );
+        println!("OBSERVATION_STAGE stalled");
         last = f.observe(&[&child.handle], Some(&last.cursor), 300);
     }
     let progress = last.observations[0].last_progress_unix_ms;
     f.send("run_command:ovrcr-observe-reconnect");
+    println!("OBSERVATION_STAGE reconnect");
     let reconnect = f.observe(&[&child.handle], None, 0);
     assert!(reconnect.observations[0].stalled);
     assert_eq!(reconnect.observations[0].last_progress_unix_ms, progress);
@@ -507,15 +530,39 @@ fn production_observer_deadline_reconnect_overflow_and_wait_abort_leave_child_ru
         serde_json::from_slice(&fs::read(&checkpoint_path).unwrap()).unwrap();
     checkpoint["progress_unix_ms"] = serde_json::json!(u64::MAX);
     fs::write(&checkpoint_path, serde_json::to_vec(&checkpoint).unwrap()).unwrap();
+    println!("OBSERVATION_STAGE future");
     let future = f.observe(&[&child.handle], None, 0);
     assert!(
         future.observations[0].stalled && future.observations[0].progress_unresolved,
         "future persisted clocks cannot postpone observation deadlines"
     );
-    f.send(&"ui_prompt_start:input\nui_prompt_end:input\n".repeat(140));
+    let parent = f.summary(f.parent).agent.unwrap();
+    // Input revisions share the reporter's sequence with its other observations.
+    let initial_revision = [
+        parent.activity_revision,
+        parent.metrics_revision,
+        parent.health_revision,
+        parent.input_revision,
+        parent.native_control_revision,
+    ]
+    .into_iter()
+    .max()
+    .unwrap();
+    for batch in 1..=14 {
+        // The fixture awaits each report; do not queue a tool behind 280 slow helpers.
+        f.send(&"ui_prompt_start:input\nui_prompt_end:input\n".repeat(10));
+        f.until(|| {
+            f.summary(f.parent).agent.is_some_and(|agent| {
+                agent.input_revision == initial_revision + batch * 20
+                    && agent.input_requests.is_empty()
+            })
+        });
+    }
+    println!("OBSERVATION_STAGE overflow");
     let overflow = f.observe(&[&child.handle], Some(&initial.cursor), 0);
     assert_eq!(overflow.status, ObservationStatus::ReconcileRequired);
     let output = f.live.root.path().join("cancelled-wait.json");
+    println!("OBSERVATION_STAGE stable");
     let stable = f.observe(&[&child.handle], Some(&overflow.cursor), 0);
     f.send(&format!("tool:{}", serde_json::json!({"name":"ovrcr_wait","args":{"handles":[child.handle],"after":stable.cursor,"wait_ms":20000},"output":output,"background":true})));
     f.send(&format!("abort_tool:{}", output.display()));
