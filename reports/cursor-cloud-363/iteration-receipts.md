@@ -25,3 +25,11 @@ No official bridge executable, real credential, real account, cloud agent,
 repository publication or paid operation was used. One official darwin-arm64
 release archive was downloaded for checksum/manifest inspection only; the digest
 matched `56f7f68a43ce73daa8d93c60b35b5301feb6a351e1dabfefe9873d80d56931cb`.
+
+## CI deadline correction
+
+- Hosted run `40014086107`, exact `fe8f2063`: Rust nextest **2146 passed / 29 skipped**, **1 flaky** in 1446.129s. `terminal_acceptance::assignment_control::assigned_child_is_view_only_until_explicit_dashboard_takeover_and_return` failed attempt 1 and passed attempt 2 of a maximum 3. Offline Python: **14 tests / 18 failing subcases**, 23.347s, mostly 0.7-second work budget exhausted during synthetic startup. The error report in `repo_mismatch` also contained a truncated raw traceback. Subsequent extension/installed-Pi steps skipped; evidence upload failed after no files were produced.
+- Exact original `fe8f2063` under deterministic normal-entry expired-budget regressions: **2 tests, 1 failure** (expired entry leaked a raw traceback); exhausted cleanup already retained uncertainty. Corrected client: **2 passed**. Raw red/green logs bind each client SHA-256.
+- Correction: each timer is scoped to its blocking phase and disarmed before the outer error/report boundary; already-expired arms fail synchronously. Production 840/900-second deadlines are unchanged. Synthetic startup uses a realistic bounded 3/5-second budget; stalled peers prove the intended phase was reached and trickle beyond that same absolute deadline. Exhausted-entry/cleanup coverage remains separate. No assertion was removed.
+- Corrected full feature suite: **16 passed**, 37.569s (37.620s wrapper); syntax **3 files passed**; diff whitespace passed. Both applicable CI jobs run the independent offline step before Rust Test, retaining every existing check/condition. New candidate awaits independent review before push.
+- The separate serial all-feature Rust diagnostic remains tied to its original `fe8f2063` launcher, not the Python-only correction; all original parallel failures/resources remain retained.

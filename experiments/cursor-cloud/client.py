@@ -17,6 +17,7 @@ import tarfile
 import tempfile
 import time
 from decimal import Decimal, InvalidOperation
+from contextlib import contextmanager
 
 WORK_SECONDS = 840
 TOTAL_SECONDS = 900
@@ -53,7 +54,15 @@ class Deadlines:
 
     def arm(self, deadline):
         self.current = deadline
-        signal.setitimer(signal.ITIMER_REAL, max(0.000001, deadline - time.monotonic()))
+        signal.setitimer(signal.ITIMER_REAL, self.remaining())
+
+    @contextmanager
+    def limit(self, deadline):
+        try:
+            self.arm(deadline)
+            yield
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
 
     def remaining(self):
         remaining = self.current - time.monotonic()
@@ -242,64 +251,62 @@ def checked_rpc(port, token, service, method, body, deadlines):
 def cleanup(process, root, token_identity, port, token, deadlines, resources):
     end = min(time.monotonic() + CLEANUP_SECONDS, deadlines.total)
     reserve = min(SHUTDOWN_RESERVE, max(0, end - time.monotonic()))
-    deadlines.arm(end - reserve)
     not_started = process is None and not resources.get("launch_attempted")
     resources["process_exit"] = "NOT STARTED" if not_started else "UNRESOLVED"
     resources["token_cleanup"] = "NOT CREATED" if not_started else "UNRESOLVED"
     try:
-        if process is not None and process.poll() is None and port is not None:
-            checked_rpc(port, token, "SdkBridgeControlService", "Shutdown", {"graceSeconds": 0}, deadlines)
+        with deadlines.limit(end - reserve):
+            if process is not None and process.poll() is None and port is not None:
+                checked_rpc(port, token, "SdkBridgeControlService", "Shutdown", {"graceSeconds": 0}, deadlines)
     except (Failure, OSError, ValueError, http.client.HTTPException):
         resources["shutdown_rpc"] = "UNCONFIRMED"
-    finally:
-        # Reserve the final interval even if Shutdown never returns or trickles forever.
-        deadlines.arm(end)
-    if process is not None:
-        try:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=min(5, deadlines.remaining() / 2))
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    resources["forced_shutdown"] = True
-                    process.wait(timeout=deadlines.remaining())
-            resources["process_exit"] = "CONFIRMED"
-            resources["exit_status"] = process.returncode
-        except (Failure, OSError, subprocess.TimeoutExpired):
-            resources["process_exit"] = "UNRESOLVED"
-        finally:
-            process.stderr.close()
-    if resources["process_exit"] == "UNRESOLVED":
-        resources["private_root_cleanup"] = "RETAINED; process exit unconfirmed"
-        return
-    if token_identity is not None:
-        path, dev, ino, parent_dev, parent_ino = token_identity
-        try:
-            deadlines.remaining()
-            current = path.lstat()
-            parent = path.parent.lstat()
-            if (current.st_dev, current.st_ino, parent.st_dev, parent.st_ino) != (dev, ino, parent_dev, parent_ino):
-                raise Failure("token-file identity changed")
-            path.unlink()
-            path.parent.rmdir()
-            resources["token_cleanup"] = "REMOVED"
-        except (Failure, OSError):
-            resources["token_cleanup"] = "UNRESOLVED"
-    if root is not None:
-        try:
-            deadlines.remaining()
-            # Empty-directory removal preserves unexpected bridge state and unknown token files.
-            for name in ("bridge", "workspace", "state", "home", "tmp"):
-                path = root / name
-                if name == "bridge":
-                    path.unlink(missing_ok=True)
-                else:
-                    path.rmdir()
-            root.rmdir()
-            resources["private_root_cleanup"] = "REMOVED"
-        except (Failure, OSError):
-            resources["private_root_cleanup"] = "RETAINED; inspect exact owned root"
+    with deadlines.limit(end):
+        if process is not None:
+            try:
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=min(5, deadlines.remaining() / 2))
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        resources["forced_shutdown"] = True
+                        process.wait(timeout=deadlines.remaining())
+                resources["process_exit"] = "CONFIRMED"
+                resources["exit_status"] = process.returncode
+            except (Failure, OSError, subprocess.TimeoutExpired):
+                resources["process_exit"] = "UNRESOLVED"
+            finally:
+                process.stderr.close()
+        if resources["process_exit"] == "UNRESOLVED":
+            resources["private_root_cleanup"] = "RETAINED; process exit unconfirmed"
+            return
+        if token_identity is not None:
+            path, dev, ino, parent_dev, parent_ino = token_identity
+            try:
+                deadlines.remaining()
+                current = path.lstat()
+                parent = path.parent.lstat()
+                if (current.st_dev, current.st_ino, parent.st_dev, parent.st_ino) != (dev, ino, parent_dev, parent_ino):
+                    raise Failure("token-file identity changed")
+                path.unlink()
+                path.parent.rmdir()
+                resources["token_cleanup"] = "REMOVED"
+            except (Failure, OSError):
+                resources["token_cleanup"] = "UNRESOLVED"
+        if root is not None:
+            try:
+                deadlines.remaining()
+                # Empty-directory removal preserves unexpected bridge state and unknown token files.
+                for name in ("bridge", "workspace", "state", "home", "tmp"):
+                    path = root / name
+                    if name == "bridge":
+                        path.unlink(missing_ok=True)
+                    else:
+                        path.rmdir()
+                root.rmdir()
+                resources["private_root_cleanup"] = "REMOVED"
+            except (Failure, OSError):
+                resources["private_root_cleanup"] = "RETAINED; inspect exact owned root"
 
 
 def redact(value, secrets):
@@ -317,7 +324,6 @@ def redact(value, secrets):
 def main(argv=None):
     deadlines = Deadlines()
     previous = signal.signal(signal.SIGALRM, expired)
-    deadlines.arm(deadlines.work)
     report = {"preflight": "FAIL", "stages": [], "attempts": {"CreateAgent": 0, "Send": 0},
               "coding": "NOT RUN", "control_recovery": "NOT RUN", "native_provider": "NOT RUN",
               "usage": "UNAVAILABLE; no zero-cost or hard remote spend-cap claim", "resources": {}}
@@ -328,68 +334,69 @@ def main(argv=None):
     parser.add_argument("--manifest", required=True, help="explicit approved nonsecret JSON manifest")
     parser.add_argument("--archive", required=True, help="reviewed v1.0.40 standalone archive; no downloads/fallback")
     try:
-        args = parser.parse_args(argv)
-        manifest = read_json(args.manifest)
-        validate_manifest(manifest)
-        key = os.environ.get(manifest["credential_ref"][4:], "")
-        if not key or len(key) > 4096 or any(c.isspace() for c in key):
-            raise Failure("selected credential is missing or invalid; no ambient fallback")
-        report["requested"] = manifest
-        report["stages"].append({"stage": stage, "verdict": "PASS"})
-        stage = "pin"
-        root = Path(tempfile.mkdtemp(prefix="ovrcr-cursor-poc-")).resolve()
-        report["resources"]["private_root"] = str(root)
-        for name in ("workspace", "state", "home", "tmp"):
-            (root / name).mkdir(mode=0o700)
-        binary, report["pin"] = unpack_archive(args.archive, root, deadlines)
-        report["stages"].append({"stage": stage, "verdict": "PASS", "receipt": report["pin"]})
-        stage = "startup"
-        env = {"PATH": os.defpath, "HOME": str(root / "home"), "TMPDIR": str(root / "tmp"),
-               "TMP": str(root / "tmp"), "TEMP": str(root / "tmp"), "CURSOR_API_KEY": key,
-               "CURSOR_SDK_CLIENT_LANGUAGE": "python"}
-        report["resources"]["launch_attempted"] = True
-        process = subprocess.Popen([str(binary), "--host", "127.0.0.1", "--port", "0",
-                                   "--workspace", str(root / "workspace"), "--state-root", str(root / "state")],
-                                   cwd=root / "workspace", env=env, stdin=subprocess.DEVNULL,
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        report["resources"]["pid"] = process.pid
-        ready = ready_line(process, deadlines)
-        port = endpoint(ready, process, root)
-        token, token_identity = identify_token(ready, root)
-        report["resources"]["token_file"] = str(token_identity[0])
-        report["stages"].append({"stage": stage, "verdict": "PASS", "receipt": {"pid": process.pid, "port": port}})
-        stage = "Ping"
-        ping = checked_rpc(port, token, "SdkBridgeControlService", stage, {}, deadlines)
-        if not isinstance(ping.get("message"), str) or not ping["message"]:
-            raise Failure("Ping did not return a liveness message")
-        report["stages"].append({"stage": stage, "verdict": "PASS"})
-        stage = "GetVersion"
-        version = checked_rpc(port, token, "SdkBridgeControlService", stage, {}, deadlines)
-        if version.get("bridgeVersion") != VERSION or version.get("protocolVersion") != "sdk.v1":
-            raise Failure("runtime bridge/protocol version mismatch")
-        report["stages"].append({"stage": stage, "verdict": "PASS", "receipt": {"bridgeVersion": VERSION, "protocolVersion": "sdk.v1"}})
-        stage = "bad_bearer"
-        status, bad = rpc(port, "invalid-" + token, "SdkBridgeControlService", "Ping", {}, deadlines)
-        if status != 401 or bad.get("code") != "unauthenticated":
-            raise Failure("bad bridge bearer was not rejected as unauthenticated")
-        report["stages"].append({"stage": stage, "verdict": "PASS", "receipt": "HTTP 401 / unauthenticated"})
-        options = {"options": {"apiKey": key}}
-        stage = "Me"
-        user = checked_rpc(port, token, "SdkCursorService", stage, options, deadlines).get("user")
-        if not isinstance(user, dict) or not str(user.get("userId", "")).isdigit():
-            raise Failure("Me did not return credential context")
-        report["stages"].append({"stage": stage, "verdict": "PASS", "receipt": "selected-key credential context received; not stable billing-principal proof"})
-        stage = "ListModels"
-        models = checked_rpc(port, token, "SdkCursorService", stage, options, deadlines).get("items", [])
-        if not isinstance(models, list) or not any(isinstance(x, dict) and x.get("id") == manifest["model"] for x in models):
-            raise Failure("exact requested model is unavailable")
-        report["stages"].append({"stage": stage, "verdict": "PASS", "receipt": {"model": manifest["model"]}})
-        stage = "ListRepositories"
-        repos = checked_rpc(port, token, "SdkCursorService", stage, options, deadlines).get("items", [])
-        if not isinstance(repos, list) or not any(isinstance(x, dict) and x.get("url") == manifest["repository"] for x in repos):
-            raise Failure("exact permitted repository is unavailable")
-        report["stages"].append({"stage": stage, "verdict": "PASS", "receipt": {"repository": manifest["repository"]}})
-        report["preflight"] = "PASS"
+        with deadlines.limit(deadlines.work):
+            args = parser.parse_args(argv)
+            manifest = read_json(args.manifest)
+            validate_manifest(manifest)
+            key = os.environ.get(manifest["credential_ref"][4:], "")
+            if not key or len(key) > 4096 or any(c.isspace() for c in key):
+                raise Failure("selected credential is missing or invalid; no ambient fallback")
+            report["requested"] = manifest
+            report["stages"].append({"stage": stage, "verdict": "PASS"})
+            stage = "pin"
+            root = Path(tempfile.mkdtemp(prefix="ovrcr-cursor-poc-")).resolve()
+            report["resources"]["private_root"] = str(root)
+            for name in ("workspace", "state", "home", "tmp"):
+                (root / name).mkdir(mode=0o700)
+            binary, report["pin"] = unpack_archive(args.archive, root, deadlines)
+            report["stages"].append({"stage": stage, "verdict": "PASS", "receipt": report["pin"]})
+            stage = "startup"
+            env = {"PATH": os.defpath, "HOME": str(root / "home"), "TMPDIR": str(root / "tmp"),
+                   "TMP": str(root / "tmp"), "TEMP": str(root / "tmp"), "CURSOR_API_KEY": key,
+                   "CURSOR_SDK_CLIENT_LANGUAGE": "python"}
+            report["resources"]["launch_attempted"] = True
+            process = subprocess.Popen([str(binary), "--host", "127.0.0.1", "--port", "0",
+                                       "--workspace", str(root / "workspace"), "--state-root", str(root / "state")],
+                                       cwd=root / "workspace", env=env, stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            report["resources"]["pid"] = process.pid
+            ready = ready_line(process, deadlines)
+            port = endpoint(ready, process, root)
+            token, token_identity = identify_token(ready, root)
+            report["resources"]["token_file"] = str(token_identity[0])
+            report["stages"].append({"stage": stage, "verdict": "PASS", "receipt": {"pid": process.pid, "port": port}})
+            stage = "Ping"
+            ping = checked_rpc(port, token, "SdkBridgeControlService", stage, {}, deadlines)
+            if not isinstance(ping.get("message"), str) or not ping["message"]:
+                raise Failure("Ping did not return a liveness message")
+            report["stages"].append({"stage": stage, "verdict": "PASS"})
+            stage = "GetVersion"
+            version = checked_rpc(port, token, "SdkBridgeControlService", stage, {}, deadlines)
+            if version.get("bridgeVersion") != VERSION or version.get("protocolVersion") != "sdk.v1":
+                raise Failure("runtime bridge/protocol version mismatch")
+            report["stages"].append({"stage": stage, "verdict": "PASS", "receipt": {"bridgeVersion": VERSION, "protocolVersion": "sdk.v1"}})
+            stage = "bad_bearer"
+            status, bad = rpc(port, "invalid-" + token, "SdkBridgeControlService", "Ping", {}, deadlines)
+            if status != 401 or bad.get("code") != "unauthenticated":
+                raise Failure("bad bridge bearer was not rejected as unauthenticated")
+            report["stages"].append({"stage": stage, "verdict": "PASS", "receipt": "HTTP 401 / unauthenticated"})
+            options = {"options": {"apiKey": key}}
+            stage = "Me"
+            user = checked_rpc(port, token, "SdkCursorService", stage, options, deadlines).get("user")
+            if not isinstance(user, dict) or not str(user.get("userId", "")).isdigit():
+                raise Failure("Me did not return credential context")
+            report["stages"].append({"stage": stage, "verdict": "PASS", "receipt": "selected-key credential context received; not stable billing-principal proof"})
+            stage = "ListModels"
+            models = checked_rpc(port, token, "SdkCursorService", stage, options, deadlines).get("items", [])
+            if not isinstance(models, list) or not any(isinstance(x, dict) and x.get("id") == manifest["model"] for x in models):
+                raise Failure("exact requested model is unavailable")
+            report["stages"].append({"stage": stage, "verdict": "PASS", "receipt": {"model": manifest["model"]}})
+            stage = "ListRepositories"
+            repos = checked_rpc(port, token, "SdkCursorService", stage, options, deadlines).get("items", [])
+            if not isinstance(repos, list) or not any(isinstance(x, dict) and x.get("url") == manifest["repository"] for x in repos):
+                raise Failure("exact permitted repository is unavailable")
+            report["stages"].append({"stage": stage, "verdict": "PASS", "receipt": {"repository": manifest["repository"]}})
+            report["preflight"] = "PASS"
     except Failure as error:
         report["stages"].append({"stage": stage, "verdict": "FAIL", "reason": str(error)})
     except (OSError, ValueError, KeyError, TypeError, tarfile.TarError, http.client.HTTPException):

@@ -22,8 +22,10 @@ workspace = args["--workspace"]
 state = args["--state-root"]
 scenario = CONFIG.get("scenario", "success")
 if scenario == "startup_stall":
+    receipt(stall=scenario)
     time.sleep(30)
 if scenario == "startup_trickle":
+    receipt(stall=scenario)
     while True:
         sys.stderr.write("diagnostic " + KEY + " " + TOKEN + "\n")
         sys.stderr.flush()
@@ -80,6 +82,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             response = {"items": [{"url": "https://github.com/fixture/disposable" if scenario != "repo_mismatch" else "https://github.com/other/repo"}]}
         else:
             response = {"error": "unexpected method"}
+        if method == "Me" and scenario == "body_trickle":
+            response["user"]["userEmail"] += "a" * 4000
         data = json.dumps(response).encode()
         if method == "ListRepositories" and scenario == "token_replaced":
             token_file.unlink()
@@ -89,6 +93,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", "2000")
             self.end_headers()
+            receipt(stall=scenario)
             for byte in b'{"code":"unauthenticated","message":"' + KEY.encode() + b'a' * 2000:
                 self.wfile.write(bytes([byte]))
                 self.wfile.flush()
@@ -97,9 +102,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if method == "Me" and scenario == "headers_stall":
             self.wfile.write(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n")
             self.wfile.flush()
+            receipt(stall=scenario)
             time.sleep(30)
             return
         if method == "Me" and scenario == "headers_trickle":
+            receipt(stall=scenario)
             for byte in b"HTTP/1.1 200 OK\r\nX-Long: " + b"a" * 2000:
                 self.wfile.write(bytes([byte]))
                 self.wfile.flush()
@@ -110,6 +117,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         if method == "Me" and scenario in ("body_stall", "body_trickle"):
+            receipt(stall=scenario)
             for byte in data:
                 self.wfile.write(bytes([byte]))
                 self.wfile.flush()

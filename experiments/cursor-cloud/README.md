@@ -72,7 +72,9 @@ Primary contracts: [protocol/handshake](https://github.com/cursor/sdk-bridge/blo
 Absolute monotonic deadlines start on entry: work ends at 14 minutes and total
 cleanup at 15 minutes. Unix `setitimer` also interrupts blocking process startup,
 connect/write, HTTP headers, body and error reads; socket timeouts use the same
-remaining budget. Bytes/keepalives do not renew it. The CLI must run on the main
+remaining budget. Bytes/keepalives do not renew it. Each blocking phase disarms its timer before
+exception handling/report construction, and an already-expired phase fails
+synchronously. The CLI must run on the main
 thread of its standalone process; supported hosts are macOS/Linux arm64/x64.
 
 Normal and error paths share one cleanup routine ending at
@@ -100,13 +102,19 @@ rtk proxy python3 -I -m py_compile experiments/cursor-cloud/client.py experiment
 
 `test_client.py` invokes normal `main` in a fresh isolated Python process. Only the
 external release-pin authority and deadline durations are replaced with synthetic
-archive digests and short budgets before entry. There is no test-mode CLI flag,
+archive digests and bounded test budgets before entry. Normal synthetic startup
+has a 3-second work / 5-second total budget; stall peers explicitly record that
+the intended phase was reached, and their trickles outlast that same absolute
+deadline. Expired-entry and exhausted-cleanup cases retain separate zero/late
+budget checks. There is no test-mode CLI flag,
 endpoint attachment, alternate client constructor or production pin bypass.
 `fake_bridge.py` is solely a synthetic external executable packaged by the test;
 it runs real loopback HTTP and private token files and records method names and
 boolean secret checks, never credential bodies. Synthetic sentinels are excluded
 from all client output. Every fixture asserts zero CreateAgent/Send traffic and a
-bounded return. Tests remove only their own fixture roots after recording any
+bounded return. The fixture records real spawned child handles and stops any survivor only after
+normal main returns its resource report; that fixture cleanup never counts as client
+exit or token-removal evidence. Tests remove only their own roots after recording
 client-reported uncertainty. CI runs this full feature suite on macOS and Linux.
 
 | Acceptance | Entry-point assertion |
@@ -115,6 +123,7 @@ client-reported uncertainty. CI runs this full feature suite on macOS and Linux.
 | Pinned checksum / architecture / archive manifest | `test_checksum_mismatch*`, `test_archive_manifest_mismatch*`, success receipt |
 | Ready handshake, sdk.v1, explicit selected key/model/repository | `test_success*`, `test_runtime_auth_model_and_repository_mismatch*` |
 | Startup / partial headers / body / error / trickle bounds | `test_stalls_and_trickle*` |
+| Expired entry still reports; exhausted cleanup retains uncertainty | `test_expired_entry*`, `test_expired_cleanup*` |
 | Original total deadline applies to cleanup | `test_cleanup_is_truncated*` |
 | Non-object discovery produces a redacted failure report | `test_malformed_discovery*` |
 | Interrupted launch without a handle retains uncertainty | `test_interrupted_launch*` |

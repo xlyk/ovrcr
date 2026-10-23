@@ -17,7 +17,7 @@ CLIENT = Path(__file__).with_name("client.py")
 
 
 class PreflightEntryPointTests(unittest.TestCase):
-    def run_fixture(self, scenario="success", mutate=None, pin_change=None, env_change=None, budgets=(0.7, 1.3, 0.4, 0.15)):
+    def run_fixture(self, scenario="success", mutate=None, pin_change=None, env_change=None, budgets=(3, 5, 1.5, 0.75)):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         root = Path(temp.name)
@@ -56,43 +56,44 @@ class PreflightEntryPointTests(unittest.TestCase):
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
         if scenario == "checksum_mismatch":
             digest = "0" * 64
-        runner = (
-            "import runpy,sys; m=runpy.run_path(sys.argv[1]); "
-            "g=m['main'].__globals__; "
-            "g.update(PINS={sys.argv[2]:sys.argv[3]}, "
-            + "WORK_SECONDS=%r, TOTAL_SECONDS=%r, CLEANUP_SECONDS=%r, SHUTDOWN_RESERVE=%r); " % budgets +
-            "sys.exit(m['main'](sys.argv[4:]))"
-        )
-        if scenario == "launch_uncertain":
-            runner = runner.replace("sys.exit(m['main'](sys.argv[4:]))", "") + "\n" + (
-                "import subprocess,time,os\n"
-                "real_spawn=subprocess.Popen; owned=[]\n"
-                "def uncertain_spawn(*a,**kw):\n"
-                " p=real_spawn(*a,**kw); owned.append(p)\n"
-                " time.sleep(0.2)\n"
-                " raise TimeoutError('synthetic interrupted process operation')\n"
-                "g['subprocess'].Popen=uncertain_spawn\n"
-                "try:\n"
-                " result=m['main'](sys.argv[4:])\n"
-                "finally:\n"
-                " for p in owned:\n"
-                "  if p.poll() is None: p.kill()\n"
-                "  p.wait(timeout=1)\n"
-                "sys.exit(result)\n"
-            )
+        runner = """
+import runpy, sys, time
+module = runpy.run_path(sys.argv[1])
+globals_ = module["main"].__globals__
+globals_.update(PINS={sys.argv[2]:sys.argv[3]}, WORK_SECONDS=%r, TOTAL_SECONDS=%r,
+                CLEANUP_SECONDS=%r, SHUTDOWN_RESERVE=%r)
+original_spawn = globals_["subprocess"].Popen
+owned = []
+def tracked_spawn(*args, **kwargs):
+    process = original_spawn(*args, **kwargs)
+    owned.append(process)
+    if %r == "launch_uncertain":
+        time.sleep(0.2)
+        raise TimeoutError("synthetic interrupted process operation")
+    return process
+globals_["subprocess"].Popen = tracked_spawn
+try:
+    result = module["main"](sys.argv[4:])
+finally:
+    for process in owned:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=1)
+sys.exit(result)
+""" % (*budgets, scenario)
         env = dict(os.environ, EXPLICIT_FIXTURE_KEY="API-SECRET-SENTINEL-363", CURSOR_API_KEY="AMBIENT-MUST-NOT-WIN")
         if env_change:
             env_change(env)
         start = time.monotonic()
         run = subprocess.run([sys.executable, "-I", "-c", runner, str(CLIENT), host + "-" + arch,
                               digest, "--manifest", str(manifest_path), "--archive", str(archive)],
-                             env=env, text=True, capture_output=True, timeout=3)
+                             env=env, text=True, capture_output=True, timeout=budgets[1] + 2)
         elapsed = time.monotonic() - start
         events = [json.loads(line) for line in audit.read_text().splitlines()] if audit.exists() else []
         for event in events:
             if "root" in event:
                 self.addCleanup(shutil.rmtree, event["root"], True)
-        self.assertLess(elapsed, 2.5)
+        self.assertLess(elapsed, budgets[1] + 1.5)
         self.assertEqual(run.stderr, "")
         self.assertNotIn("API-SECRET-SENTINEL-363", run.stdout)
         self.assertNotIn("BRIDGE-SECRET-SENTINEL-363", run.stdout)
@@ -184,7 +185,8 @@ class PreflightEntryPointTests(unittest.TestCase):
                 self.assertEqual(report["stages"][-1]["stage"], stage)
                 self.assertIn("deadline", report["stages"][-1]["reason"])
                 self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
-                self.assertLess(report["elapsed_seconds"], 1.4)
+                self.assertLess(report["elapsed_seconds"], 4.7)
+                self.assertTrue(any(event.get("stall") == scenario for event in events), events)
 
     def test_stalled_shutdown_reserves_time_to_force_owned_process(self):
         run, report, events = self.run_fixture("shutdown_stall")
@@ -202,6 +204,7 @@ class PreflightEntryPointTests(unittest.TestCase):
                 self.assertEqual(report["preflight"], "FAIL")
                 self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
                 self.assertEqual(report["resources"]["token_cleanup"], "UNRESOLVED")
+                self.assertNotIn("deadline", report["stages"][-1]["reason"])
                 self.assertTrue(Path(events[0]["token_file"]).exists())
                 self.assertTrue(Path(events[0]["root"]).exists())
 
@@ -214,9 +217,10 @@ class PreflightEntryPointTests(unittest.TestCase):
         self.assertTrue(Path(events[0]["token_file"]).is_symlink())
 
     def test_cleanup_is_truncated_by_original_total_deadline(self):
-        run, report, events = self.run_fixture("body_trickle", budgets=(0.5, 0.8, 60, 0.1))
+        run, report, events = self.run_fixture("body_trickle", budgets=(3, 3.8, 60, 0.5))
         self.assertEqual(run.returncode, 1)
-        self.assertLess(report["elapsed_seconds"], 0.9)
+        self.assertLess(report["elapsed_seconds"], 3.9)
+        self.assertTrue(any(event.get("stall") == "body_trickle" for event in events))
         self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
         self.assertEqual(report["resources"]["token_cleanup"], "REMOVED")
 
@@ -239,7 +243,24 @@ class PreflightEntryPointTests(unittest.TestCase):
                 self.assertEqual(report["stages"][-1]["reason"], "bridge discovery must be a JSON object")
                 self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
                 self.assertEqual(report["resources"]["token_cleanup"], "UNRESOLVED")
+                self.assertNotIn("deadline", report["stages"][-1]["reason"])
                 self.assertTrue(Path(events[0]["token_file"]).exists())
+
+    def test_expired_entry_deadline_still_returns_a_redacted_failure_report(self):
+        run, report, events = self.run_fixture(budgets=(0, 0, 60, 10))
+        self.assertEqual(run.returncode, 1)
+        self.assertEqual(report["preflight"], "FAIL")
+        self.assertEqual(report["resources"]["process_exit"], "NOT STARTED")
+        self.assertEqual(events, [])
+
+    def test_expired_cleanup_budget_retains_process_and_token_uncertainty(self):
+        run, report, events = self.run_fixture("body_trickle", budgets=(3, 3, 60, 10))
+        self.assertEqual(run.returncode, 1)
+        self.assertEqual(report["stages"][-1]["stage"], "Me")
+        self.assertEqual(report["resources"]["process_exit"], "UNRESOLVED")
+        self.assertEqual(report["resources"]["token_cleanup"], "UNRESOLVED")
+        self.assertTrue(Path(report["resources"]["token_file"]).exists())
+        self.assertLess(report["elapsed_seconds"], 3.2)
 
     def test_missing_inputs_fail_closed_with_redacted_report(self):
         run = subprocess.run([sys.executable, str(CLIENT)], capture_output=True, text=True, timeout=3)
