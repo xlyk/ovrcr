@@ -398,7 +398,7 @@ async function main() {
       catch (error) { result = { error: String(error) }; }
       const childAcceptance = await host.tool("ovrcr_accept", {handle:brief.handle, identity:brief.identity, result_version:brief.result_version ?? 1, result_digest:"child-cannot-accept", expected_control_epoch:1});
       writeFileSync(`${path}.child-acceptance`, JSON.stringify(childAcceptance));
-      writeFileSync(`${path}.published`, JSON.stringify(result));
+      toolOutput(`${path}.published`, result);
       process.stdout.write("CHILD_RESULT_PUBLISHED\n");
       if (brief.contract.scope.includes("REBIND_AFTER_RESULT")) {
         while (!existsSync(`${path}.rebind`)) await new Promise(resolve => setTimeout(resolve, 10));
