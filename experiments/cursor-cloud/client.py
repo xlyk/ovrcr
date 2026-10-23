@@ -943,7 +943,8 @@ def main(argv=None):
         report["resources"]["journal_qualification"] = "FAIL; required persistence or durable closure is unconfirmed"
         if not any(item["verdict"] == "FAIL" for item in report["stages"]):
             report["stages"].append({"stage": "journal_cleanup", "verdict": "FAIL", "reason": "required journal persistence or durable closure is unconfirmed"})
-    passed = report["preflight"] == "PASS" and report["coding"] in {"NOT RUN", "PASS"} and clean and journal_ok
+    stages_ok = not any(item["verdict"] == "FAIL" for item in report["stages"])
+    passed = report["preflight"] == "PASS" and report["coding"] in {"NOT RUN", "PASS"} and clean and journal_ok and stages_ok
     report["outcome"] = "PASS" if passed else "FAIL"
     report = redact(report, [key, token])
     print(json.dumps(report, sort_keys=True))

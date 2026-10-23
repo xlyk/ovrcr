@@ -191,8 +191,12 @@ def fault_at_boundary(frame, event, arg):
             blocked = signal.SIGUSR2 in signal.pthread_sigmask(signal.SIG_BLOCK, set())
             (journal_path.parent / "fault-gate.json").write_text(json.dumps({"boundary": "verification", "signal_requested": True, "signal_blocked": blocked}))
             os.kill(os.getpid(), signal.SIGUSR2)
+        if scenario == "alarm_after_coding_pass" and event == "return" and frame.f_code.co_name == "coding_run" and frame.f_locals["report"]["coding"] == "PASS":
+            fault_fired = True
+            (journal_path.parent / "fault-gate.json").write_text(json.dumps({"boundary": "coding_run return", "coding": frame.f_locals["report"]["coding"], "signal": "SIGALRM", "total_budget_remaining": frame.f_locals["deadlines"].total - time.monotonic()}))
+            os.kill(os.getpid(), signal.SIGALRM)
     return fault_at_boundary
-if scenario in {"capacity_at_cleanup", "discard_at_verification"}:
+if scenario in {"capacity_at_cleanup", "discard_at_verification", "alarm_after_coding_pass"}:
     sys.settrace(fault_at_boundary)
 try:
     result = module["main"](sys.argv[4:])
@@ -382,6 +386,31 @@ sys.exit(result)
         else:
             self.assertEqual(run.returncode, 1, report)
         self.assertFalse(list((self.case_root / "journal").glob("*.request.json")))
+
+    def test_caught_deadline_after_coding_pass_fails_the_overall_invocation(self):
+        run, report, events = self.run_fixture("alarm_after_coding_pass", coding=True, budgets=(6, 8, 1.5, 0.75))
+        gate = json.loads((self.case_root / "fault-gate.json").read_text())
+        self.assertEqual(gate["boundary"], "coding_run return")
+        self.assertEqual(gate["coding"], "PASS")
+        self.assertEqual(gate["signal"], "SIGALRM")
+        self.assertGreater(gate["total_budget_remaining"], 0)
+        self.assertEqual(report["coding"], "PASS")
+        self.assertEqual(report["criteria"]["6"]["verdict"], "PASS")
+        self.assertEqual(report["result"]["tests"], "PASS; 3 tests")
+        self.assertEqual(report["stages"][-1], {"stage": "result_tests", "verdict": "FAIL", "reason": "absolute deadline exceeded"})
+        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1})
+        methods = [e["method"] for e in events if "method" in e]
+        self.assertEqual(methods.count("CreateAgent"), 1)
+        self.assertEqual(methods.count("Send"), 1)
+        self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
+        self.assertEqual(report["resources"]["token_cleanup"], "REMOVED")
+        self.assertEqual(report["resources"]["journal_health"], "DURABLE")
+        self.assertEqual(report["resources"]["admission"], "CLOSED; durable closure")
+        rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+        self.assertEqual(sum(row["event"] == "verified" for row in rows), 1)
+        self.assertEqual(sum(row["event"] == "closure" for row in rows), 1)
+        self.assertEqual(run.returncode, 1, report)
+        self.assertEqual(report["outcome"], "FAIL")
 
     def test_independent_fixture_source_admission_precedes_any_creation(self):
         for scenario in ("unpublished_source", "same_default_source", "wrong_baseline"):

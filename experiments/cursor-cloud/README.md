@@ -56,8 +56,9 @@ never uploads local source.
 
 JSON is emitted on stdout, with no raw stderr/discovery/HTTP captures. Save it only
 to the approved evidence destination. Exit 0 requires successful preflight, the requested coding path (unless
-preflight-only), and confirmed owned-process/token cleanup. Exit 1 retains the
-failing stage and unresolved outcomes.
+preflight-only), confirmed owned-process/token cleanup, and no recorded failed
+required stage. Exit 1 retains the failing stage and unresolved outcomes, including
+failures caught after independently qualified coding-result evidence.
 Me is recorded as selected-key credential context, not stable billing identity.
 The report records the requested USD ceiling; a local timer and unavailable usage
 are **not** a remote spending cap or evidence of zero cost.
@@ -257,7 +258,7 @@ The #364 acceptance cases map to these additional entry-point assertions:
 | 6: source, ancestry, allowed history/diff, independent tests | success and wrong-source/ancestry/diff/failed-tests cases in `test_coding_rejects*` |
 | 7: uncertain receipt retention; no replacement/retry/guessed run | `test_lost_receipts*`, storage/identity cases and common method-count assertions |
 | 8: closure ordering, late receipts, exact cleanup cancel | `test_closure_orders*`, `test_final_verified*`, `test_failed_required_closure*`, `test_only_exact_known_active_run*` |
-| 9: absolute partial-frame/Git/test/cancel deadlines, honest report | `test_partial_frames*`, exact-cancel stalled case and inherited preflight/cleanup deadline tests |
+| 9: absolute partial-frame/Git/test/cancel deadlines, honest report | `test_partial_frames*`, `test_caught_deadline_after_coding_pass*`, exact-cancel stalled case and inherited preflight/cleanup deadline tests |
 | Property-name/value secret exclusion | `test_json_property_names*` and common stdout/journal sentinel checks |
 | 10: actual entry/storage/Git/process path and failure matrix | the full `test_client.py` suite; runtime criterion 10 stays NOT RUN because one invocation cannot attest the suite |
 
