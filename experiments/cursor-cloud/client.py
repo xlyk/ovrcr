@@ -65,6 +65,12 @@ class Deadlines:
         self.work = self.started + WORK_SECONDS
         self.total = self.started + TOTAL_SECONDS
         self.current = self.work
+        self.cleanup_deadline = None
+
+    def cleanup_end(self):
+        if self.cleanup_deadline is None:
+            self.cleanup_deadline = min(time.monotonic() + CLEANUP_SECONDS, self.total)
+        return self.cleanup_deadline
 
     def arm(self, deadline):
         self.current = deadline
@@ -417,14 +423,16 @@ def command(argv, cwd, root, deadlines, resources, expected=0, extra_env=None):
     finally:
         process.stdout.close()
         if process.poll() is None or receipt["exit"] == "UNRESOLVED":
+            end = deadlines.cleanup_end()
+            reserve = min(SHUTDOWN_RESERVE, max(0, end - time.monotonic()))
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-            # Reaping is cleanup, bounded by the original total clock.
+            # Exact-child reaping shares cleanup's anchored end and bridge reserve.
             deadline = deadlines.current
-            deadlines.arm(min(deadlines.total, time.monotonic() + 0.2))
             try:
+                deadlines.arm(end - reserve)
                 process.wait(timeout=deadlines.remaining())
                 receipt["exit"] = process.returncode
             except (Failure, subprocess.TimeoutExpired):
@@ -698,7 +706,7 @@ def coding_run(manifest, key, token, port, journal, root, deadlines, report, sta
 
 
 def cleanup(process, root, token_identity, port, token, deadlines, resources, journal=None, state=None, key=""):
-    end = min(time.monotonic() + CLEANUP_SECONDS, deadlines.total)
+    end = deadlines.cleanup_end()
     reserve = min(SHUTDOWN_RESERVE, max(0, end - time.monotonic()))
     not_started = process is None and not resources.get("launch_attempted")
     resources["process_exit"] = "NOT STARTED" if not_started else "UNRESOLVED"

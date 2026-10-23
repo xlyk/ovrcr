@@ -182,10 +182,16 @@ must run on the main
 thread of its standalone process; supported hosts are macOS/Linux arm64/x64.
 
 Normal and error paths share one cleanup routine ending at
-`min(cleanup entry + 60 seconds, original total deadline)`. Its final available
-10 seconds are reserved for bounded TERM/wait/KILL/wait of the owned bridge PID.
-A stalled Shutdown cannot consume that interval. Unconfirmed exit, including an interrupted launch before a process handle is returned,
-remains UNRESOLVED and prevents private-root/token-file removal.
+`min(first cleanup entry + 60 seconds, original total deadline)`. A failing
+verification command anchors that same end while it still owns the exact child
+handle and waits for actual exit confirmation within the pre-shutdown interval.
+Main cleanup reuses the end; it cannot start another 60-second window. Its final
+available 10 seconds are reserved for bounded TERM/wait/KILL/wait of the owned
+bridge PID. A stalled child wait or Shutdown cannot consume that interval.
+Unconfirmed bridge exit, including a launch interrupted before a handle returns,
+remains UNRESOLVED and prevents private-root/token-file removal. An unconfirmed
+verification child retains its receipt and private verification root even when
+bridge exit and token removal are separately confirmed.
 
 Each invocation creates a private root containing HOME, workspace, state and TMP.
 The official token must be a mode-0600 regular, singly linked file named
@@ -266,7 +272,7 @@ The #364 acceptance cases map to these additional entry-point assertions:
 | 6: source, ancestry, allowed history/diff, independent tests | success and wrong-source/ancestry/diff/failed-tests cases in `test_coding_rejects*` |
 | 7: uncertain receipt retention; no replacement/retry/guessed run | `test_lost_receipts*`, storage/identity cases and common method-count assertions |
 | 8: closure ordering, late receipts, exact cleanup cancel | `test_closure_orders*`, `test_final_verified*`, `test_failed_required_closure*`, `test_only_exact_known_active_run*` |
-| 9: absolute partial-frame/Git/test/cancel deadlines, honest report | `test_partial_frames*`, `test_slow_external_processes*`, `test_caught_deadline_after_coding_pass*`, exact-cancel stalled case and inherited preflight/cleanup deadline tests |
+| 9: absolute partial-frame/Git/test/cancel deadlines, honest report | `test_partial_frames*`, `test_known_verification_child_reaping*`, `test_slow_external_processes*`, `test_caught_deadline_after_coding_pass*`, exact-cancel stalled case and inherited preflight/cleanup deadline tests |
 | Property-name/value secret exclusion | `test_json_property_names*` and common stdout/journal sentinel checks |
 | 10: actual entry/storage/Git/process path and failure matrix | the full `test_client.py` suite; runtime criterion 10 stays NOT RUN because one invocation cannot attest the suite |
 

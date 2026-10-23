@@ -122,7 +122,7 @@ if 'fetch' in args:
         sys.exit(1)
 os.execv('/usr/bin/git', ['git', '-c', """ + repr("url." + str(repo) + ".insteadOf=https://github.com/fixture/disposable") + r""", *args])
 """)
-            if scenario == "git_stall":
+            if scenario in {"git_stall", "verification_reap_delayed", "verification_reap_exhausted"}:
                 program = "import json, os, sys, time\nif 'fetch' in sys.argv:\n with open(" + repr(str(root / "verification-stall.json")) + ", 'w') as receipt: json.dump({'phase': 'git_fetch_stall', 'pid': os.getpid()}, receipt)\n time.sleep(30)\nos.execv('/usr/bin/git', ['git', *sys.argv[1:]])\n"
                 shim.write_text("#!" + sys.executable + "\n" + program)
             shim.chmod(0o700)
@@ -186,16 +186,33 @@ scenario = %r
 def tracked_spawn(*args, **kwargs):
     process = original_spawn(*args, **kwargs)
     owned.append(process)
+    if scenario in {"verification_reap_delayed", "verification_reap_exhausted"} and args[0][0] == g["GIT"] and "fetch" in args[0]:
+        original_wait = process.wait
+        group = os.getpgid(process.pid)
+        def delayed_wait(timeout=None):
+            caller = sys._getframe(1)
+            if caller.f_code.co_name != "command":
+                return original_wait(timeout=timeout)
+            started = time.monotonic()
+            with (journal_path.parent / "verification-reaping.jsonl").open("a") as gate:
+                gate.write(json.dumps({"event": "wait_started", "pid": process.pid, "pgid": group, "time": started, "timeout": timeout, "total_deadline": caller.f_locals["deadlines"].total}) + "\\n")
+            time.sleep(0.4)
+            result = original_wait(timeout=timeout)
+            with (journal_path.parent / "verification-reaping.jsonl").open("a") as gate:
+                gate.write(json.dumps({"event": "wait_confirmed", "pid": process.pid, "time": time.monotonic(), "exit": result}) + "\\n")
+            return result
+        process.wait = delayed_wait
     if scenario == "launch_uncertain" or (scenario == "verification_launch_uncertain" and args[0][0] == g["GH"]):
         time.sleep(0.2)
         raise TimeoutError("synthetic interrupted process operation")
     return process
 g["subprocess"].Popen = tracked_spawn
 fault_fired = False
+reap_cleanup_recorded = False
 journal_path = Path(sys.argv[sys.argv.index("--journal") + 1]) if "--journal" in sys.argv else None
 publication_line = next(i for i, line in enumerate(Path(sys.argv[1]).read_text().splitlines(), 1) if 'report["result"] = {"branch": branch' in line)
 def fault_at_boundary(frame, event, arg):
-    global fault_fired
+    global fault_fired, reap_cleanup_recorded
     if frame.f_code.co_filename == sys.argv[1] and not fault_fired:
         if scenario == "capacity_at_cleanup" and event == "call" and frame.f_code.co_name == "cleanup":
             fault_fired = True
@@ -210,8 +227,12 @@ def fault_at_boundary(frame, event, arg):
             fault_fired = True
             (journal_path.parent / "fault-gate.json").write_text(json.dumps({"boundary": "coding_run return", "coding": frame.f_locals["report"]["coding"], "signal": "SIGALRM", "total_budget_remaining": frame.f_locals["deadlines"].total - time.monotonic()}))
             os.kill(os.getpid(), signal.SIGALRM)
+        if scenario in {"verification_reap_delayed", "verification_reap_exhausted"} and not reap_cleanup_recorded and event == "line" and frame.f_code.co_name == "cleanup" and "reserve" in frame.f_locals:
+            reap_cleanup_recorded = True
+            with (journal_path.parent / "verification-reaping.jsonl").open("a") as gate:
+                gate.write(json.dumps({"event": "cleanup_bound", "time": time.monotonic(), "end": frame.f_locals["end"], "reserve": frame.f_locals["reserve"]}) + "\\n")
     return fault_at_boundary
-if scenario in {"capacity_at_cleanup", "discard_at_verification", "alarm_after_coding_pass"}:
+if scenario in {"capacity_at_cleanup", "discard_at_verification", "alarm_after_coding_pass", "verification_reap_delayed", "verification_reap_exhausted"}:
     sys.settrace(fault_at_boundary)
 try:
     result = module["main"](sys.argv[4:])
@@ -266,7 +287,7 @@ sys.exit(result)
             items = {"report.json": run.stdout.encode(), "wire.json": json.dumps(events, sort_keys=True).encode()}
             if journal.exists():
                 items.update({"journal-" + path.name: path.read_bytes() for path in journal.iterdir() if path.is_file()})
-            for name in ("verification-stall.json", "fault-gate.json", "github-audit.jsonl", "git-auth-audit.jsonl", "process-latency.jsonl"):
+            for name in ("verification-stall.json", "fault-gate.json", "github-audit.jsonl", "git-auth-audit.jsonl", "process-latency.jsonl", "verification-reaping.jsonl"):
                 if (root / name).exists():
                     items[name] = (root / name).read_bytes()
             for name, data in items.items():
@@ -525,6 +546,45 @@ sys.exit(result)
         self.assertEqual(report["resources"]["verification_processes"][0]["exit"], "UNRESOLVED")
         self.assertIn("verification process exit unconfirmed", report["resources"]["private_root_cleanup"])
         self.assertTrue(Path(report["resources"]["private_root"]).exists())
+
+    def test_known_verification_child_reaping_shares_cleanup_budget_and_preserves_uncertainty(self):
+        cases = [("verification_reap_delayed", (3, 5, 1.5, 0.5)),
+                 ("verification_reap_exhausted", (3, 3.4, 1.5, 0.3))]
+        for scenario, budgets in cases:
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True, budgets=budgets)
+                phase = json.loads((self.case_root / "verification-stall.json").read_text())
+                self.assertEqual(phase["phase"], "git_fetch_stall")
+                receipt = next(row for row in report["resources"]["verification_processes"] if row["pid"] == phase["pid"])
+                gates = [json.loads(line) for line in (self.case_root / "verification-reaping.jsonl").read_text().splitlines()]
+                waiting = next(row for row in gates if row["event"] == "wait_started")
+                cleanup = next(row for row in gates if row["event"] == "cleanup_bound")
+                self.assertEqual(waiting["pid"], phase["pid"])
+                self.assertEqual(waiting["pgid"], phase["pid"])
+                self.assertEqual(run.returncode, 1, report)
+                self.assertEqual(report["outcome"], "FAIL")
+                self.assertEqual(report["stages"][-1]["stage"], "source_fixture")
+                self.assertIn("deadline", report["stages"][-1]["reason"])
+                self.assertEqual(report["attempts"], {"CreateAgent": 0, "Send": 0})
+                self.assertFalse(set(e.get("method") for e in events) & {"CreateAgent", "Send"})
+                self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
+                self.assertLess(report["elapsed_seconds"], budgets[1] + 0.1)
+                if scenario == "verification_reap_delayed":
+                    self.assertEqual(receipt["exit"], -9, report)
+                    confirmed = next(row for row in gates if row["event"] == "wait_confirmed")
+                    self.assertEqual(confirmed["pid"], phase["pid"])
+                    self.assertEqual(confirmed["exit"], receipt["exit"])
+                    self.assertGreaterEqual(confirmed["time"] - waiting["time"], 0.4)
+                    self.assertEqual(report["resources"]["verification_cleanup"], "REMOVED")
+                    self.assertEqual(report["resources"]["private_root_cleanup"], "REMOVED")
+                else:
+                    self.assertEqual(receipt["exit"], "UNRESOLVED")
+                    self.assertFalse(any(row["event"] == "wait_confirmed" for row in gates))
+                    self.assertIn("verification process exit unconfirmed", report["resources"]["private_root_cleanup"])
+                    self.assertTrue(Path(report["resources"]["private_root"]).exists())
+                expected_end = min(waiting["time"] + budgets[2], waiting["total_deadline"])
+                self.assertLessEqual(cleanup["end"], expected_end + 0.05)
+                self.assertLessEqual(waiting["timeout"], expected_end - budgets[3] - waiting["time"] + 0.05)
 
     def test_partial_frames_git_tests_and_cancel_obey_original_deadline(self):
         for scenario in ["partial_frame_trickle", "partial_frame_no_id", "git_stall", "test_stall"]:
