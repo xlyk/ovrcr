@@ -15,6 +15,10 @@ Final committed-revision checks have separate raw log files.
 | 06 | `python3 -I -m py_compile experiments/cursor-cloud/client.py experiments/cursor-cloud/test_client.py experiments/cursor-cloud/fake_bridge.py` | 3 files / exit 0 | Syntax check; no static type-checker configured |
 | 07 | unittest discovery above | 12 / OK, 11.484 seconds | TimeoutError classified as deadline; error-body trickle, total deadline and replaced-token cases also passed |
 
+| 08 | `python3 -I -m unittest discover -s experiments/cursor-cloud -p test_client.py -k interrupted_launch -v` | 1 / FAIL (1) | Behavioral red: interrupted external launch reported NOT STARTED rather than UNRESOLVED; corrected with explicit launch-attempt receipt and root retention |
+
+| 09 | same interrupted-launch filter | 1 / ERROR (1) | Test assumed the peer had emitted its receipt before an interrupted launch; assert retained client-owned root independently of peer readiness |
+
 No official bridge executable, real credential, real account, cloud agent,
 repository publication or paid operation was used. One official darwin-arm64
 release archive was downloaded for checksum/manifest inspection only; the digest

@@ -62,6 +62,23 @@ class PreflightEntryPointTests(unittest.TestCase):
             + "WORK_SECONDS=%r, TOTAL_SECONDS=%r, CLEANUP_SECONDS=%r, SHUTDOWN_RESERVE=%r); " % budgets +
             "sys.exit(m['main'](sys.argv[4:]))"
         )
+        if scenario == "launch_uncertain":
+            runner = runner.replace("sys.exit(m['main'](sys.argv[4:]))", "") + "\n" + (
+                "import subprocess,time,os\n"
+                "real_spawn=subprocess.Popen; owned=[]\n"
+                "def uncertain_spawn(*a,**kw):\n"
+                " p=real_spawn(*a,**kw); owned.append(p)\n"
+                " time.sleep(0.2)\n"
+                " raise TimeoutError('synthetic interrupted process operation')\n"
+                "g['subprocess'].Popen=uncertain_spawn\n"
+                "try:\n"
+                " result=m['main'](sys.argv[4:])\n"
+                "finally:\n"
+                " for p in owned:\n"
+                "  if p.poll() is None: p.kill()\n"
+                "  p.wait(timeout=1)\n"
+                "sys.exit(result)\n"
+            )
         env = dict(os.environ, EXPLICIT_FIXTURE_KEY="API-SECRET-SENTINEL-363", CURSOR_API_KEY="AMBIENT-MUST-NOT-WIN")
         if env_change:
             env_change(env)
@@ -80,11 +97,10 @@ class PreflightEntryPointTests(unittest.TestCase):
         methods = [e["method"] for e in events if "method" in e]
         self.assertFalse(set(methods) & {"CreateAgent", "Send"})
         self.assertEqual(unrelated.read_text(), "UNRELATED-SECRET")
-        # Only the test owns these private fixture roots; retain client uncertainty in the report first.
-        for event in events:
-            if "root" in event:
-                import shutil
-                self.addCleanup(shutil.rmtree, event["root"], True)
+        # Only the test owns this private root; preserve the report before fixture cleanup.
+        if report["resources"].get("private_root"):
+            import shutil
+            self.addCleanup(shutil.rmtree, report["resources"]["private_root"], True)
         return run, report, events
 
     def test_success_qualifies_exact_inputs_and_removes_owned_token(self):
@@ -200,6 +216,15 @@ class PreflightEntryPointTests(unittest.TestCase):
         self.assertLess(report["elapsed_seconds"], 0.9)
         self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
         self.assertEqual(report["resources"]["token_cleanup"], "REMOVED")
+
+    def test_interrupted_launch_without_handle_retains_uncertain_resources(self):
+        run, report, events = self.run_fixture("launch_uncertain")
+        self.assertEqual(run.returncode, 1)
+        self.assertEqual(report["resources"]["process_exit"], "UNRESOLVED")
+        self.assertEqual(report["resources"]["token_cleanup"], "UNRESOLVED")
+        self.assertTrue(Path(report["resources"]["private_root"]).exists())
+        if events:
+            self.assertTrue(Path(events[0]["token_file"]).exists())
 
     def test_missing_inputs_fail_closed_with_redacted_report(self):
         run = subprocess.run([sys.executable, str(CLIENT)], capture_output=True, text=True, timeout=3)

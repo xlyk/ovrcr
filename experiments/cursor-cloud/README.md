@@ -78,8 +78,8 @@ thread of its standalone process; supported hosts are macOS/Linux arm64/x64.
 Normal and error paths share one cleanup routine ending at
 `min(cleanup entry + 60 seconds, original total deadline)`. Its final available
 10 seconds are reserved for bounded TERM/wait/KILL/wait of the owned bridge PID.
-A stalled Shutdown cannot consume that interval. Unconfirmed exit remains
-UNRESOLVED and prevents token-file removal.
+A stalled Shutdown cannot consume that interval. Unconfirmed exit, including an interrupted launch before a process handle is returned,
+remains UNRESOLVED and prevents private-root/token-file removal.
 
 Each invocation creates a private root containing HOME, workspace, state and TMP.
 The official token must be a mode-0600 regular, singly linked file named
@@ -116,6 +116,7 @@ client-reported uncertainty. CI runs this full feature suite on macOS and Linux.
 | Ready handshake, sdk.v1, explicit selected key/model/repository | `test_success*`, `test_runtime_auth_model_and_repository_mismatch*` |
 | Startup / partial headers / body / error / trickle bounds | `test_stalls_and_trickle*` |
 | Original total deadline applies to cleanup | `test_cleanup_is_truncated*` |
+| Interrupted launch without a handle retains uncertainty | `test_interrupted_launch*` |
 | Stalled shutdown reserves forced exit and token cleanup | `test_stalled_shutdown*` |
 | Exact private token removal / changed or foreign identity retained | `test_success*`, `test_unknown_or_nonprivate_token*`, `test_replaced_token*` |
 | Secret exclusion, unrelated-file preservation, zero cloud effects | common assertions in every fixture; success also checks argv and explicit environment |

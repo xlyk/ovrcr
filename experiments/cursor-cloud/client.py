@@ -240,8 +240,9 @@ def cleanup(process, root, token_identity, port, token, deadlines, resources):
     end = min(time.monotonic() + CLEANUP_SECONDS, deadlines.total)
     reserve = min(SHUTDOWN_RESERVE, max(0, end - time.monotonic()))
     deadlines.arm(end - reserve)
-    resources["process_exit"] = "NOT STARTED" if process is None else "UNRESOLVED"
-    resources["token_cleanup"] = "NOT CREATED" if process is None else "UNRESOLVED"
+    not_started = process is None and not resources.get("launch_attempted")
+    resources["process_exit"] = "NOT STARTED" if not_started else "UNRESOLVED"
+    resources["token_cleanup"] = "NOT CREATED" if not_started else "UNRESOLVED"
     try:
         if process is not None and process.poll() is None and port is not None:
             checked_rpc(port, token, "SdkBridgeControlService", "Shutdown", {"graceSeconds": 0}, deadlines)
@@ -266,7 +267,8 @@ def cleanup(process, root, token_identity, port, token, deadlines, resources):
             resources["process_exit"] = "UNRESOLVED"
         finally:
             process.stderr.close()
-    if process is not None and resources["process_exit"] != "CONFIRMED":
+    if resources["process_exit"] == "UNRESOLVED":
+        resources["private_root_cleanup"] = "RETAINED; process exit unconfirmed"
         return
     if token_identity is not None:
         path, dev, ino, parent_dev, parent_ino = token_identity
@@ -342,6 +344,7 @@ def main(argv=None):
         env = {"PATH": os.defpath, "HOME": str(root / "home"), "TMPDIR": str(root / "tmp"),
                "TMP": str(root / "tmp"), "TEMP": str(root / "tmp"), "CURSOR_API_KEY": key,
                "CURSOR_SDK_CLIENT_LANGUAGE": "python"}
+        report["resources"]["launch_attempted"] = True
         process = subprocess.Popen([str(binary), "--host", "127.0.0.1", "--port", "0",
                                    "--workspace", str(root / "workspace"), "--state-root", str(root / "state")],
                                    cwd=root / "workspace", env=env, stdin=subprocess.DEVNULL,
