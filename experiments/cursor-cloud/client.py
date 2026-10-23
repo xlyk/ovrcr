@@ -455,6 +455,34 @@ def github_auth(config, login, repository, root, deadlines, resources):
             "credential_route": "selected gh config and git-credential; token never captured"}
 
 
+def pull_requests(repository, root, deadlines, resources, journal):
+    github_auth(resources["github_config"], resources["github_login"], repository, root, deadlines, resources)
+    fields = "number,url,title,body,state,isDraft,headRefName,headRefOid,baseRefName,baseRefOid,updatedAt,labels,assignees,reviewRequests,milestone,autoMergeRequest,maintainerCanModify"
+    env = {"GH_CONFIG_DIR": resources["github_config"], "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
+    output = command([GH, "pr", "list", "--repo", repository, "--state", "all", "--limit", "100", "--json", fields],
+                     root, root, deadlines, resources, extra_env=env)
+    snapshot = json.loads(output)
+    if not isinstance(snapshot, list) or len(snapshot) >= 100:
+        raise Failure("independent PR snapshot unavailable or incomplete")
+    numbers = set()
+    for row in snapshot:
+        if not isinstance(row, dict) or set(row) != set(fields.split(",")) or type(row.get("number")) is not int or row["number"] <= 0 or row["number"] in numbers:
+            raise Failure("independent PR snapshot malformed")
+        numbers.add(row["number"])
+        if (any(not isinstance(row[name], str) for name in ("url", "title", "body", "state", "headRefName", "headRefOid", "baseRefName", "baseRefOid", "updatedAt")) or
+                row["url"] != repository + "/pull/" + str(row["number"]) or row["state"] not in {"OPEN", "CLOSED", "MERGED"} or
+                any(type(row[name]) is not bool for name in ("isDraft", "maintainerCanModify")) or
+                any(not re.fullmatch(r"[0-9a-f]{40}", row[name]) for name in ("headRefOid", "baseRefOid")) or
+                any(not row[name] for name in ("headRefName", "baseRefName", "updatedAt")) or
+                any(not isinstance(row[name], list) for name in ("labels", "assignees", "reviewRequests")) or
+                any(row[name] is not None and not isinstance(row[name], dict) for name in ("milestone", "autoMergeRequest"))):
+            raise Failure("independent PR snapshot malformed")
+    canonical = json.dumps(sorted(snapshot, key=lambda row: row["number"]), sort_keys=True)
+    journal.append({"event": "github_pr_snapshot", "repository": repository, "count": len(snapshot),
+                    "numbers": sorted(numbers), "sha256": hashlib.sha256(canonical.encode()).hexdigest()})
+    return canonical
+
+
 def git(argv, checkout, root, deadlines, resources):
     options = [GIT, "-c", "core.hooksPath=" + os.devnull]
     env = None
@@ -559,6 +587,8 @@ def exact_snapshot(port, token, key, state, deadlines, journal):
     state["active"] = status not in TERMINAL
     if not state["active"]:
         state["terminal_status"] = status
+        if status != "RUN_LIFECYCLE_STATUS_FINISHED":
+            raise Failure("unsuccessful terminal snapshot forbids qualification and follow-up")
     return status
 
 
@@ -822,7 +852,8 @@ def follow_up_run(manifest, key, token, port, journal, root, deadlines, report, 
     report["recovery_criteria"]["follow_up"] = {"verdict": "BLOCKED", "reason": "follow-up not yet qualified"}
     journal.ensure_open()
     checkout = root / "verification"
-    heads = git(["ls-remote", "--heads", manifest["repository"]], checkout, root, deadlines, report["resources"])
+    refs = git(["ls-remote", manifest["repository"]], checkout, root, deadlines, report["resources"])
+    prs = pull_requests(manifest["repository"], root, deadlines, report["resources"], journal)
     submission = {"agentId": state["agentId"], "idempotencyKey": secrets.token_hex(16),
                   "message": {"text": "Recall the harmless public continuity token from the earlier turn and the completed fix. "
                               "Do not change files, branches or PRs. Reply exactly on two lines: TOKEN=<earlier token> then "
@@ -834,13 +865,15 @@ def follow_up_run(manifest, key, token, port, journal, root, deadlines, report, 
     expected_git = {"branches": [{"repoUrl": manifest["repository"], "branch": report["result"]["branch"]}]}
     if result.get("git") != expected_git:
         raise Failure("follow-up changed repository/branch/PR metadata")
-    after = git(["ls-remote", "--heads", manifest["repository"]], checkout, root, deadlines, report["resources"])
-    if after != heads or (report["result"]["commit"] + "\trefs/heads/" + report["result"]["branch"]) not in heads.splitlines():
+    after = git(["ls-remote", manifest["repository"]], checkout, root, deadlines, report["resources"])
+    if after != refs or (report["result"]["commit"] + "\trefs/heads/" + report["result"]["branch"]) not in refs.splitlines():
         raise Failure("follow-up changed independently verified branch/file state")
+    if pull_requests(manifest["repository"], root, deadlines, report["resources"], journal) != prs:
+        raise Failure("follow-up changed independently verified PR state")
     with authority():
         journal.ensure_open()
         report["follow_up"] = {**report["follow_up_run"], "token": "CORRECT", "fix": "CORRECT", "result": "FINISHED",
-                               "tests": "NO NEW FILES; original verified commit unchanged"}
+                               "tests": "NO NEW FILES; original verified commit unchanged", "git_refs": "UNCHANGED; all advertised refs", "pull_requests": "UNCHANGED; independent all-state snapshot"}
         journal.append({"event": "follow_up_verified", "receipt": report["follow_up"]})
         report["recovery_criteria"]["follow_up"] = {"verdict": "PASS", "receipt": report["follow_up"]}
         report["stages"].append({"stage": "follow_up", "verdict": "PASS"})

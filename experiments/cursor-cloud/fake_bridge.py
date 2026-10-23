@@ -172,6 +172,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             CONFIG["snapshots"] = CONFIG.get("snapshots", 0) + 1
             if scenario == "complete_before_drop" or (scenario == "complete_during_attach" and CONFIG["snapshots"] > 1):
                 status = "RUN_LIFECYCLE_STATUS_FINISHED"
+            if scenario.startswith("snapshot_") and (scenario.endswith("before_drop") or CONFIG["snapshots"] > 1):
+                status = "RUN_LIFECYCLE_STATUS_" + scenario.split("_")[1].upper()
             response = {"run": {"agentId": "bc-fixture", "runId": known_run, "status": status}}
             if scenario == "snapshot_wrong_id" and not CONFIG.get("cancelled"):
                 response["run"]["agentId"] = "wrong-agent"
@@ -228,6 +230,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if scenario == "send_lost":
                 messages = [{}, {"futureEnvelope": {"opaque": True}}]
             if follow_up:
+                Path(CONFIG["journal"]).parent.joinpath("pr-effects.json").write_text("second turn admitted")
                 identity["run_id"] = "run-follow-up"
                 result["runId"] = "run-follow-up"
                 earlier = next(row["token"] for row in journal_rows() if row["event"] == "continuity_token")
@@ -249,11 +252,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     result["git"]["branches"][0]["branch"] = "cursor/extra"
                 if scenario == "follow_up_pr":
                     result["git"]["branches"][0]["prUrl"] = "https://github.com/fixture/disposable/pull/1"
-                if scenario in {"follow_up_extra_file", "follow_up_extra_ref"}:
+                if scenario in {"follow_up_extra_file", "follow_up_extra_ref", "follow_up_extra_tag"}:
                     import subprocess
                     def git(*args):
                         subprocess.run(["/usr/bin/git", "-c", "user.name=Offline Fixture", "-c", "user.email=fixture@example.invalid", *args], cwd=CONFIG["repo"], check=True, capture_output=True)
-                    if scenario == "follow_up_extra_ref":
+                    if scenario == "follow_up_extra_tag":
+                        git("tag", "cursor-extra", "cursor/result")
+                    elif scenario == "follow_up_extra_ref":
                         git("branch", "cursor/extra", "cursor/result")
                     else:
                         git("switch", "cursor/result")
@@ -297,7 +302,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/connect+json")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
-            if method == "ObserveRun" and "afterOffset" not in body and scenario not in {"complete_before_drop", "complete_during_attach", "no_observe_offset", "partial_frame_trickle", "cancel_known", "cancel_unconfirmed", "cancel_stall", "bad_flags", "bad_json"}:
+            if method == "ObserveRun" and "afterOffset" not in body and not scenario.startswith("snapshot_") and scenario not in {"complete_before_drop", "complete_during_attach", "no_observe_offset", "partial_frame_trickle", "cancel_known", "cancel_unconfirmed", "cancel_stall", "bad_flags", "bad_json"}:
                 prefix = b"".join(struct.pack(">BI", 0, len(payload)) + payload for payload in [json.dumps(x).encode() for x in messages[:4]])
                 self.wfile.write(prefix)
                 self.wfile.flush()

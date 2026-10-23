@@ -136,7 +136,9 @@ runs the unchanged three tests in an isolated checkout with explicit `-I -B`
 (isolated imports/environment and no stale bytecode). A failed test is a failure.
 
 After Run 1's early exact identity is durable, an exact GetRun snapshot must show
-RUNNING or a terminal status. The client closes the original Send, then calls
+RUNNING or successful FINISHED status. ERROR, CANCELLED and EXPIRED snapshots are
+durably retained and immediately stop qualification and follow-up, including during
+attachment; a later contradictory FINISHED stream cannot override them. The client closes the original Send, then calls
 ObserveRun with only that runId, from the beginning. Previously processed events
 are labelled replay and de-duplicated. Each qualifying event still matches the
 exact agent/run. The client records offsets only from ObserveRun, then, when an
@@ -151,11 +153,22 @@ Run 2 uses the same agent, journal and global counters, a new original operation
 key and a distinct durable run ID. Its prompt never restates the public token and
 asks for the token and completed fix without file, branch or PR changes. Success
 requires exact terminal model/identity and stream end, the exact recalled token/fix,
-unchanged result repository/branch/PR metadata, and identical independently fetched
-remote head refs including the verified Run 1 commit. It does not re-edit or rerun
+unchanged result repository/branch/PR metadata, identical independently read
+advertised Git refs (including tags and the verified Run 1 commit), and identical
+independent GitHub PR snapshots. It does not re-edit or rerun
 the fixture: the previously tested commit must remain unchanged. Unknown result
 shapes cannot qualify. A lost Run 2 receipt retains its original request and never
 cancels Run 1 or dispatches a replacement.
+
+Independent PR checks use `gh pr list` for the exact disposable repository with
+`--state all` and the explicitly selected gh configuration. Each snapshot rechecks
+the selected active login; ambient tokens are excluded. Compare PR identity/URL,
+title/body, state/draft, head/base names and OIDs, update time, labels, assignees,
+review requests, milestone, auto-merge and maintainer-change permission. The
+snapshot is bounded to 100 PRs; reaching that limit fails closed as incomplete.
+Unavailable, malformed, oversized or stalled reads cannot qualify follow-up.
+Private journal receipts contain count, PR numbers and a canonical digest, without
+copying PR bodies. Reads use the original absolute command/cleanup deadlines.
 
 On the running client PID, SIGUSR1 records Cancel closure; SIGUSR2 records Discard
 closure and removes retained request payloads. Both share the same local authority
@@ -305,15 +318,18 @@ The #365 entry-point assertions add:
 | --- | --- |
 | 1–2: active Send drop, beginning replay, durable ObserveRun-only exclusive resume | `test_recovery_and_follow_up*`; peer confirms both real socket closes and checks the saved cursor before dispatch |
 | 3: completion races and unexercised offset remain separate | `test_completion_race*`; inherited source/diff/tests/framing rejection cases still run through recovery |
-| 4: same-agent distinct Run 2, separate original key, recall and unchanged Git state | `test_recovery_and_follow_up*`, `test_follow_up_rejects*` |
+| 4: same-agent distinct Run 2, separate original key, recall and unchanged Git state | `test_recovery_and_follow_up*`, `test_follow_up_rejects*`, `test_independent_follow_up_ref_and_pr*`, `test_pr_verification*` |
 | 5: no replacement on error, retained Run 2 uncertainty, exact Run 2 cleanup | `test_observation_errors*`, `test_follow_up_uncertain*` and inherited closure/lost-receipt cases |
 | 6–7: separate receipts/reasons, actual wire/private records and global bounds | `recovery_criteria` plus every new case's method counts, peer request-shape/write-ahead and journal assertions |
 
 Inherited success expectations intentionally advance from one Send to two, include
-GetRun/ObserveRun traffic and three original keys. Rejection assertions still forbid
+GetRun/ObserveRun traffic and three original keys. Selected-helper calls intentionally
+increase from three to exactly five: source SHA, default HEAD, result branch, and
+both Run 2 all-ref snapshots. PR API reads recheck the selected gh account separately. Rejection assertions still forbid
 replacement work; source/framing cases now fail on the observation path where
 applicable. Discard after Run 1 verification prevents Run 2, so a qualified coding
-result can coexist with overall failure. Existing production clocks are unchanged.
+result can coexist with overall failure. Failed-terminal snapshot cases cover ERROR/CANCELLED/EXPIRED before drop and
+during attachment via `test_failed_terminal_snapshots*`. Existing production clocks are unchanged.
 
 The JSON report includes stage errors, criterion-specific receipts, original keys,
 identities, source/result checks, deadline configuration, verification-process waits
