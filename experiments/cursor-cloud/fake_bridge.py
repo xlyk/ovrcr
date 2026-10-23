@@ -124,7 +124,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if third:
             shape = shape and 'sleep 90' in body["message"]["text"]
             ahead = ahead and any(row["event"] == "follow_up_verified" for row in journal_rows())
-        receipt(method=method, bridge_index=bridge_index, cancel_gate=cancel_gate, request_shape=shape, key_matches=body.get("options", {}).get("apiKey") == KEY, write_ahead=ahead,
+        receipt(method=method, bridge_index=bridge_index, cancel_gate=cancel_gate, request_shape=shape,
+                run_id=body.get("runId") if method in {"GetRun", "CancelRun"} else None, key_matches=body.get("options", {}).get("apiKey") == KEY, write_ahead=ahead,
                 exact_cancel=body == {"agentId": "bc-fixture", "runId": known_run} if method == "CancelRun" else None,
                 observation_request=body if method == "ObserveRun" else None)
         good_auth = self.headers.get("Authorization") == "Bearer " + TOKEN
@@ -187,6 +188,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             status = "RUN_LIFECYCLE_STATUS_CANCELLED" if CONFIG.get("cancelled") else "RUN_LIFECYCLE_STATUS_RUNNING"
             if scenario == "cancel_unconfirmed" or (sends == 3 and scenario in {"third_ack_only", "third_observer_stall", "third_delayed_cancel", "third_observer_wrong_id", "third_observer_bad_status", "third_observer_error"}):
                 status = "RUN_LIFECYCLE_STATUS_RUNNING"
+            if sends == 3 and scenario == "third_early_finished_stale":
+                status = "RUN_LIFECYCLE_STATUS_RUNNING"
+            if sends == 3 and bridge_index == 1 and scenario == "third_early_finished_unavailable":
+                self.send_response(404)
+                self.end_headers()
+                return
             if sends == 3 and scenario == "third_completion_race":
                 status = "RUN_LIFECYCLE_STATUS_FINISHED"
             if bridge_index == 2:
@@ -305,6 +312,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 result["status"] = "RUN_LIFECYCLE_STATUS_CANCELLED"
                 messages = [sdk("system", subtype="init", model={"id": "fixture-model"}),
                             sdk("tool_call", call_id="wait", name="shell", args={"command": "sleep 90"}, status="running")]
+                if third and scenario in {"third_early_finished_stale", "third_early_finished_unavailable"}:
+                    result["status"] = "RUN_LIFECYCLE_STATUS_FINISHED"
+                    messages = messages[:1] + [{"result": {"agentId": "bc-fixture", "runId": "run-cancel", "status": result["status"], "result": result}},
+                                               {"done": {"agentId": "bc-fixture", "runId": "run-cancel"}}]
                 if third and scenario == "third_no_id":
                     messages = [{}]
                 if third and scenario == "third_wrong_agent":

@@ -165,9 +165,13 @@ Run 3 asks only for `sleep 90`, forbidding edits, branch publication and PRs. It
 early original-stream identity must be distinct from both earlier runs and durable
 before a running tool/status event qualifies activity. The client then closes
 admission durably, records exact cancellation intent, and calls CancelRun once for
-that agent/run. Empty acknowledgement is only requested. An exact terminal GetRun
+that agent/run. Selection of the first cancel closure and its attempt claim share
+the existing signal authority. A durable discard winning before this claim permits
+no CancelRun; an already claimed cancellation may still arrive. Empty acknowledgement is only requested. An exact terminal GetRun
 snapshot or correlated terminal ObserveRun result must prove CANCELLED. FINISHED
-winning the race is BLOCKED/inconclusive and never triggers a fourth Send. Missing,
+winning the race is BLOCKED/inconclusive and never triggers a fourth Send. An exact
+original terminal result arriving before activity is durably retained immediately;
+no later snapshot or cleanup can replace it with uncertainty or recancel it. Missing,
 wrong or reused identities retain uncertainty without discovery Send/ListRuns.
 Late receipts cannot reopen admission, and an already attempted CancelRun is not
 reissued during cleanup.
@@ -307,7 +311,9 @@ shutdown reserve. Source-admission failures must match their expected reason, so
 deadline in the same stage cannot qualify that guard. Coding cases substitute
 the external Git executable with an owned URL-rewriting peer; Git itself and all
 repositories, files, processes and sockets are real. Narrow test-runner tracing
-forces real signal/storage faults at final verification and cleanup boundaries;
+forces real signal/storage faults at final verification and closure boundaries.
+The capacity fault targets the first actual Journal.close, including Run 3 cancel
+closure, so an earlier successful closure cannot make the persistence test vacuous;
 it does not replace the client's authority, constructors or persistence. There is
 no test-mode CLI flag,
 endpoint attachment, alternate client constructor or production pin bypass.
@@ -389,7 +395,7 @@ The #366 entry-point assertions add:
 | #366 criterion | Assertion |
 | --- | --- |
 | 1–2: final separately keyed Send, exact activity/intent/cancel and terminal proof | `test_third_send_cancels*`; peer verifies durable activity and closure before exact CancelRun |
-| 3: acknowledgement, completion race, unknown/reused IDs and late receipts | `test_third_cancellation_ack*`; no fourth Send or discovery target |
+| 3: acknowledgement, completion race, unknown/reused IDs and late receipts | `test_third_cancellation_ack*`, `test_third_terminal_before_activity*`, `test_third_discard_winning*`; no fourth Send or discovery target |
 | 4–5: owned fresh read-only GetRun, unsupported option-preserving ResumeAgent | `test_fresh_read_only_probe*`; no ResumeAgent/options mutation or new work |
 | 6: original deadlines/reserve, both bridge lifecycles and token leftovers | `test_third_stalled_control*`, `test_restart_waits*`, `test_fresh_read_only_probe*` and inherited cleanup cases |
 | 7–8: per-run identities/outcomes, usage availability and native capability gaps | `test_third_send_cancels*`, `test_usage_cost*`, fault reports and common ownership assertions |

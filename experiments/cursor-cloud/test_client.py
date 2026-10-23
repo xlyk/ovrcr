@@ -295,10 +295,15 @@ def fault_at_boundary(frame, event, arg):
             else:
                 gate["outcome"] = "control gate unavailable"
             (journal_path.parent / "fault-gate.json").write_text(json.dumps(gate))
-        if scenario == "capacity_at_cleanup" and event == "call" and frame.f_code.co_name == "cleanup":
+        if scenario == "third_discard_before_cancel_claim" and event == "return" and frame.f_code.co_name == "append" and frame.f_locals.get("value", {}).get("event") == "cancellation_activity":
+            fault_fired = True
+            blocked = signal.SIGUSR2 in signal.pthread_sigmask(signal.SIG_BLOCK, set())
+            (journal_path.parent / "fault-gate.json").write_text(json.dumps({"boundary": "durable activity before cancel claim", "signal_blocked": blocked}))
+            os.kill(os.getpid(), signal.SIGUSR2)
+        if scenario == "capacity_at_cleanup" and event == "call" and frame.f_code.co_name == "close":
             fault_fired = True
             (journal_path / "capacity").write_bytes(b"x" * (256 * 1024))
-            (journal_path.parent / "fault-gate.json").write_text(json.dumps({"boundary": "cleanup", "capacity_written": True}))
+            (journal_path.parent / "fault-gate.json").write_text(json.dumps({"boundary": "first Journal.close", "capacity_written": True}))
         if scenario == "discard_at_verification" and event == "line" and frame.f_lineno == publication_line:
             fault_fired = True
             blocked = signal.SIGUSR2 in signal.pthread_sigmask(signal.SIG_BLOCK, set())
@@ -309,7 +314,7 @@ def fault_at_boundary(frame, event, arg):
             (journal_path.parent / "fault-gate.json").write_text(json.dumps({"boundary": "coding_run return", "coding": frame.f_locals["report"]["coding"], "signal": "SIGALRM", "total_budget_remaining": frame.f_locals["deadlines"].total - time.monotonic()}))
             os.kill(os.getpid(), signal.SIGALRM)
     return fault_at_boundary
-if scenario in {"discard_after_send", "capacity_at_cleanup", "discard_at_verification", "alarm_after_coding_pass"}:
+if scenario in {"discard_after_send", "capacity_at_cleanup", "discard_at_verification", "alarm_after_coding_pass", "third_discard_before_cancel_claim"}:
     sys.settrace(fault_at_boundary)
 if scenario in {"verification_reap_delayed", "verification_reap_exhausted", "verification_reap_interrupted", "verification_reap_transition", "verification_reap_termination"}:
     original_cleanup = g["cleanup"]
@@ -452,6 +457,47 @@ sys.exit(result)
                     rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
                     self.assertTrue(any(row["event"] == "receipt" and row.get("method") == "Send" and row.get("late") and row["receipt"].get("runId") == "run-cancel" for row in rows))
                     self.assertFalse((self.case_root / "journal" / "Send.request.json").exists())
+
+    def test_third_discard_winning_after_activity_forbids_cancel_dispatch(self):
+        run, report, events = self.run_fixture("third_discard_before_cancel_claim", coding=True)
+        self.assertEqual(run.returncode, 1, report)
+        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
+        self.assertFalse(any(row.get("method") == "CancelRun" for row in events))
+        self.assertEqual(report["runs"][-1]["runId"], "run-cancel")
+        self.assertEqual(report["runs"][-1]["terminal"], "UNRESOLVED")
+        self.assertNotEqual(report["cancellation"]["verdict"], "PASS")
+        self.assertEqual(len([row for row in events if "token_file" in row]), 1)
+        gate = json.loads((self.case_root / "fault-gate.json").read_text())
+        self.assertEqual(gate["boundary"], "durable activity before cancel claim")
+        self.assertFalse(gate["signal_blocked"])
+        rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+        activity = next(i for i,row in enumerate(rows) if row["event"] == "cancellation_activity")
+        closure = next(i for i,row in enumerate(rows) if row["event"] == "closure")
+        self.assertLess(activity, closure)
+        self.assertEqual(rows[closure]["kind"], "discard")
+        self.assertFalse(any(row["event"] == "cancel_intent" for row in rows))
+        self.assertFalse(list((self.case_root / "journal").glob("*.request.json")))
+
+    def test_third_terminal_before_activity_survives_stale_or_unavailable_snapshots(self):
+        for scenario in ("third_early_finished_stale", "third_early_finished_unavailable"):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True)
+                self.assertEqual(run.returncode, 0, report)
+                self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
+                self.assertEqual(report["cancellation"]["verdict"], "BLOCKED")
+                self.assertIn("inconclusive", report["cancellation"]["reason"])
+                self.assertEqual(report["cancellation"]["terminal"], "RUN_LIFECYCLE_STATUS_FINISHED")
+                self.assertEqual(report["runs"][-1]["terminal"], "RUN_LIFECYCLE_STATUS_FINISHED")
+                self.assertEqual(report["resources"]["remote_outcome"], "RUN_LIFECYCLE_STATUS_FINISHED")
+                self.assertEqual(report["fresh_bridge"]["verdict"], "PASS")
+                self.assertFalse(any(row.get("method") == "CancelRun" for row in events))
+                self.assertFalse(any(row.get("method") == "GetRun" and row.get("run_id") == "run-cancel" for row in events))
+                rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+                terminal = next(i for i,row in enumerate(rows) if row["event"] == "cancellation_result")
+                closure = next(i for i,row in enumerate(rows) if row["event"] == "closure")
+                self.assertLess(terminal, closure)
+                self.assertFalse(rows[terminal]["late"])
+                self.assertEqual(rows[terminal]["receipt"]["status"], "RUN_LIFECYCLE_STATUS_FINISHED")
 
     def test_third_stalled_control_and_observation_keep_original_shutdown_reserve(self):
         for scenario, phase in (("third_cancel_stall", "third_cancel"), ("third_observer_stall", "third_observer")):
@@ -847,7 +893,7 @@ sys.exit(result)
                     self.assertEqual(report["attempts"], {"CreateAgent": 0, "Send": 0})
                 else:
                     self.assertEqual(report["criteria"]["6"]["verdict"], "PASS")
-                    self.assertEqual(json.loads((self.case_root / "fault-gate.json").read_text())["boundary"], "cleanup")
+                    self.assertEqual(json.loads((self.case_root / "fault-gate.json").read_text())["boundary"], "first Journal.close")
 
     def test_final_verified_publication_and_discard_share_one_authority(self):
         run, report, events = self.run_fixture("discard_at_verification", coding=True, budgets=(6, 8, 1.5, 0.75))

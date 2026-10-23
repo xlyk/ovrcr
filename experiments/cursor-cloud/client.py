@@ -916,6 +916,15 @@ def retain_run(report, state):
             runs.append(record)
 
 
+def record_cancellation_result(envelope, manifest, state, journal):
+    terminal = envelope["result"]
+    result = terminal.get("result")
+    if not isinstance(result, dict) or result.get("agentId") != state["agentId"] or result.get("runId") != state["runId"] or result.get("status") not in TERMINAL or result["status"] != terminal.get("status") or result.get("model") != {"id": manifest["model"]}:
+        raise Failure("cancellation terminal identity/status/model mismatch")
+    journal.append({"event": "cancellation_result", "receipt": terminal, "late": journal.closed})
+    state.update(active=False, terminal_status=result["status"])
+
+
 def cancellation_run(manifest, key, token, port, journal, deadlines, report, state):
     report["active_stage"] = "cancellation_proof"
     report["cancellation"] = {"verdict": "BLOCKED", "reason": "exact active run and terminal cancellation not yet proven"}
@@ -961,32 +970,32 @@ def cancellation_run(manifest, key, token, port, journal, deadlines, report, sta
                     journal.append({"event": "cancellation_activity", "agentId": state["agentId"], "runId": state["runId"]})
                     activity = True
                     break
-            if "result" in envelope or "done" in envelope:
+            if "result" in envelope:
+                record_cancellation_result(envelope, manifest, state, journal)
+                break
+            if "done" in envelope:
                 break
     finally:
         original.close()
     if not state.get("runId"):
         raise Failure("third Send has no exact durable run identity; no discovery or retry")
     if activity:
-        journal.close("cancel")
-        journal.append({"event": "cancel_intent", "agentId": state["agentId"], "runId": state["runId"]})
-        state["cancel_attempted"] = True
+        with authority():
+            journal.ensure_open()
+            journal.close("cancel")
+            journal.append({"event": "cancel_intent", "agentId": state["agentId"], "runId": state["runId"]})
+            state["cancel_attempted"] = True
         report["cancellation"]["request"] = "UNCONFIRMED"
         checked_rpc(port, token, "SdkAgentService", "CancelRun", {"agentId": state["agentId"], "runId": state["runId"]}, deadlines)
         report["cancellation"]["request"] = "ACKNOWLEDGED; not terminal proof"
-    status = exact_snapshot(port, token, key, state, deadlines, journal, require_success=False)
+    status = state.get("terminal_status") or exact_snapshot(port, token, key, state, deadlines, journal, require_success=False)
     if status not in TERMINAL and activity:
         for envelope in send_stream(port, token, {"runId": state["runId"]}, deadlines, "ObserveRun"):
             if sum(field in envelope for field in ("sdkMessage", "result", "done", "interactionUpdate", "step")) > 1:
                 raise Failure("multiple Connect envelope cases are invalid")
             stream_identity(envelope, state)
             if "result" in envelope:
-                terminal = envelope["result"]
-                result = terminal.get("result")
-                if not isinstance(result, dict) or result.get("agentId") != state["agentId"] or result.get("runId") != state["runId"] or result.get("status") not in TERMINAL or result["status"] != terminal.get("status") or result.get("model") != {"id": manifest["model"]}:
-                    raise Failure("cancellation terminal identity/status/model mismatch")
-                journal.append({"event": "cancellation_result", "receipt": terminal, "late": journal.closed})
-                state.update(active=False, terminal_status=result["status"])
+                record_cancellation_result(envelope, manifest, state, journal)
     status = state.get("terminal_status", "UNRESOLVED")
     report["cancellation"].update(terminal=status, runId=state["runId"], activity=activity,
                                  verdict="PASS" if activity and status == "RUN_LIFECYCLE_STATUS_CANCELLED" else "BLOCKED",
