@@ -1871,6 +1871,7 @@ fn assignment_attribution_diagnostic_classifies_the_existing_guard_without_priva
     snapshot.health.state = ReporterHealth::Unavailable;
     for (raw, expected) in [
         (None, "None"),
+        (Some("source_not_created"), "SourceNotCreated"),
         (Some("source_unavailable"), "SourceUnavailable"),
         (Some("collector_unavailable"), "CollectorUnavailable"),
         (Some("PRIVATE_REASON"), "Other"),

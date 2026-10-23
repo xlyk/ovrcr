@@ -643,7 +643,7 @@ impl Hooks {
             if self.startup_source_pending {
                 None
             } else {
-                Some("source_unavailable")
+                reason
             }
         } else {
             self.startup_model = None;
@@ -1141,7 +1141,7 @@ mod tests {
             assert_eq!(health.len(), if permitted { 1 } else { 3 });
             assert_eq!(
                 health.last().unwrap(),
-                &(ReporterHealth::Unavailable, "source_unavailable".into())
+                &(ReporterHealth::Unavailable, "source_not_created".into())
             );
         }
     }
@@ -1297,14 +1297,7 @@ mod tests {
                 .filter(|(state, _)| *state == ReporterHealth::Unavailable)
                 .collect();
             assert_eq!(unavailable.len(), 1, "{diagnostic}: {observed:?}");
-            assert_eq!(
-                unavailable[0].1,
-                if diagnostic == "source_not_created" {
-                    "source_unavailable"
-                } else {
-                    diagnostic
-                }
-            );
+            assert_eq!(unavailable[0].1, diagnostic);
             assert_eq!(
                 Supervisor::models(&observed).len(),
                 1,

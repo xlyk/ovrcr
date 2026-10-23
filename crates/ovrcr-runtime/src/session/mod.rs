@@ -94,6 +94,7 @@ fn assignment_attribution_failure(
         Some(snapshot) if snapshot.health.state != ovrcr_protocol::ReporterHealth::Connected => {
             let reason = match snapshot.health.reason.as_deref() {
                 None => "None",
+                Some("source_not_created") => "SourceNotCreated",
                 Some("source_unavailable") => "SourceUnavailable",
                 Some("collector_unavailable") => "CollectorUnavailable",
                 Some(_) => "Other",

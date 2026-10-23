@@ -538,7 +538,7 @@ fn public_claude_source_created_only_after_prompt_keeps_attribution_fenced() {
     assert_eq!(f.input_count(&suspended), 1);
     assert_eq!(suspended.identity, pending.identity);
     let prefix = format!(
-        "Assignment attribution suspended: session={} expected_run=1 current_run=1 control_epoch=2 cause=HealthUnavailable reason=SourceUnavailable health_revision=",
+        "Assignment attribution suspended: session={} expected_run=1 current_run=1 control_epoch=2 cause=HealthUnavailable reason=SourceNotCreated health_revision=",
         suspended.identity.session.unwrap().0
     );
     loop {
@@ -665,7 +665,7 @@ fn public_claude_missing_startup_source_reports_cause_without_releasing_input() 
             .find(|child| child.id == session)
             .and_then(|child| child.agent.as_ref())
             .is_some_and(|agent| {
-                agent.health.reason.as_deref() == Some("source_unavailable")
+                agent.health.reason.as_deref() == Some("source_not_created")
                     && agent.health.state == ovrcr_protocol::ReporterHealth::Unavailable
             });
         if source_unavailable
@@ -693,7 +693,7 @@ fn public_claude_missing_startup_source_reports_cause_without_releasing_input() 
         retained_binding().is_null(),
         "unavailable source never grants capture authority"
     );
-    assert_eq!(agent.health.reason.as_deref(), Some("source_unavailable"));
+    assert_eq!(agent.health.reason.as_deref(), Some("source_not_created"));
     assert_eq!(
         agent.health.state,
         ovrcr_protocol::ReporterHealth::Unavailable

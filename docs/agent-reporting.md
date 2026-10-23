@@ -464,3 +464,10 @@ without publishing metrics or health, then requests a new scan. Other errors are
 applied immediately. A genuinely fresh post-Prompt missing-source result remains
 unavailable and fences attribution, even if a source subsequently appears. Native
 Claude file-creation timing must be verified separately from the deterministic fixtures.
+
+When a fresh missing-source observation is unavailable, its health reason retains
+`source_not_created` for the collector's exact metadata-NotFound/never-opened
+case. Other refresh failures retain `source_unavailable`. Both remain Unavailable
+and fence attribution; a later source recovery does not clear that fence. Doctor
+and the fixed suspension diagnostic expose only these known reason categories,
+never source paths or native bodies.
