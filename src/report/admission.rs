@@ -481,9 +481,7 @@ impl Hooks {
         }
         let session_end = matches!(&event.kind, ClaudeEventKind::SessionEnd { .. });
         if transition || session_end {
-            self.startup_model = None;
-            self.startup_source_pending = false;
-            self.startup_read_pending = false;
+            self.retire_startup_source();
         }
         if (transition || session_end)
             && self.initial_accepted
@@ -515,14 +513,16 @@ impl Hooks {
             // Supported synchronous UserPromptSubmit hooks establish observed turn identity.
             // Opaque prompt IDs and transport revisions are not certified source ordering.
             if matches!(event.kind, ClaudeEventKind::Prompt) {
-                if self.startup_source_pending {
-                    self.startup_read_pending = self
-                        .collector
-                        .as_ref()
-                        .is_some_and(|collector| collector.has_pending_read());
+                if self
+                    .prompt
+                    .as_ref()
+                    .is_some_and(|current| current != &prompt)
+                {
+                    self.retire_startup_source();
                 }
+                // The first prompt can precede first-file creation; a duplicate of that
+                // same root turn does not rearm or retire the initial allowance.
                 self.startup_model = None;
-                self.startup_source_pending = false;
                 // A new root turn retires any approval still open for a prior prompt_id.
                 if let Some(closed) = self.close_approvals_except(reporter, None, deadline) {
                     self.stop_collector(deadline);
@@ -531,6 +531,12 @@ impl Hooks {
                 self.prompt = Some(prompt.clone());
             } else if self.prompt.as_ref() != Some(&prompt) {
                 return reporter::IGNORED.to_vec();
+            }
+            if matches!(
+                event.kind,
+                ClaudeEventKind::Stop | ClaudeEventKind::ApiFailure { .. }
+            ) {
+                self.retire_startup_source();
             }
             // Verified approval open: Notification(permission_prompt) with the current root
             // prompt_id. PermissionRequest, bare tools and child events never open a request.
@@ -626,6 +632,18 @@ impl Hooks {
                 "claude_root_transcript",
             ),
         }
+    }
+    /// Retire the initial allowance, retaining only a read already requested before
+    /// this boundary. A repeated boundary must not discard that one stale-frame marker.
+    fn retire_startup_source(&mut self) {
+        if self.startup_source_pending {
+            self.startup_read_pending = self
+                .collector
+                .as_ref()
+                .is_some_and(|collector| collector.has_pending_read());
+        }
+        self.startup_model = None;
+        self.startup_source_pending = false;
     }
     fn stop_collector(&mut self, deadline: Instant) {
         self.startup_model = None;
@@ -756,7 +774,7 @@ impl Hooks {
         snapshot: super::collector::CollectorSnapshot,
         deadline: Instant,
     ) {
-        // A request issued before Prompt cannot certify missing post-Prompt source.
+        // A request issued before allowance retirement cannot certify a later missing source.
         let before_prompt = std::mem::take(&mut self.startup_read_pending);
         if before_prompt && snapshot.diagnostic.as_deref() == Some("source_not_created") {
             return;
@@ -777,9 +795,7 @@ impl Hooks {
     }
 
     fn native_completed(&mut self, reporter: &mut Reporter, deadline: Instant) {
-        self.startup_model = None;
-        self.startup_source_pending = false;
-        self.startup_read_pending = false;
+        self.retire_startup_source();
         // Reserve 700ms for atomic finalization and original-operation receipt recovery.
         let drain_deadline = deadline
             .checked_sub(Duration::from_millis(700))
@@ -1207,8 +1223,41 @@ mod tests {
     }
 
     #[test]
-    fn startup_source_pending_retires_on_prompt_transition_and_completion() {
-        for boundary in ["prompt", "transition", "completion"] {
+    fn first_source_pending_survives_first_prompt_and_duplicate_only() {
+        let (mut reporter, supervisor) = Supervisor::reporter(AgentProvider::Claude);
+        let mut receiver = hooks(InitialSource::Startup);
+        drive(
+            &mut receiver,
+            &mut reporter,
+            &envelope(
+                serde_json::json!({"hook_event_name":"SessionStart","source":"startup","session_id":EXPECTED,"model":"native-model","transcript_path":"/exact/root.jsonl"}),
+            ),
+        );
+        for prompt in ["first", "first"] {
+            drive(
+                &mut receiver,
+                &mut reporter,
+                &activity("UserPromptSubmit", prompt, EXPECTED),
+            );
+            assert!(receiver.startup_source_pending);
+            receiver.source_health(&mut reporter, Some("source_not_created"), deadline());
+        }
+        drive(
+            &mut receiver,
+            &mut reporter,
+            &activity("UserPromptSubmit", "next", EXPECTED),
+        );
+        assert!(!receiver.startup_source_pending);
+        receiver.source_health(&mut reporter, Some("source_not_created"), deadline());
+        assert_eq!(
+            Supervisor::health(&supervisor.observed()),
+            vec![(ReporterHealth::Unavailable, "source_not_created".into())]
+        );
+    }
+
+    #[test]
+    fn startup_source_pending_retires_on_next_turn_stop_failure_transition_and_completion() {
+        for boundary in ["prompt", "stop", "failure", "transition", "completion"] {
             let (mut reporter, _supervisor) = Supervisor::reporter(AgentProvider::Claude);
             let mut receiver = hooks(InitialSource::Startup);
             let payload = envelope(
@@ -1219,12 +1268,33 @@ mod tests {
                 reporter::ACCEPTED
             );
             assert!(receiver.startup_source_pending);
+            drive(
+                &mut receiver,
+                &mut reporter,
+                &activity("UserPromptSubmit", "first", EXPECTED),
+            );
             match boundary {
                 "prompt" => {
                     drive(
                         &mut receiver,
                         &mut reporter,
                         &activity("UserPromptSubmit", "turn", EXPECTED),
+                    );
+                }
+                "stop" => {
+                    drive(
+                        &mut receiver,
+                        &mut reporter,
+                        &activity("Stop", "first", EXPECTED),
+                    );
+                }
+                "failure" => {
+                    drive(
+                        &mut receiver,
+                        &mut reporter,
+                        &envelope(
+                            serde_json::json!({"hook_event_name":"StopFailure","prompt_id":"first","session_id":EXPECTED,"error":"fixture-failure"}),
+                        ),
                     );
                 }
                 "transition" => {
@@ -1242,67 +1312,95 @@ mod tests {
     }
 
     #[test]
-    fn startup_prompt_suppresses_only_one_already_pending_missing_source_response() {
-        for diagnostic in [
-            "source_not_created",
-            "source_unavailable",
-            "read_unavailable",
-            "foreign_usage_record",
-        ] {
-            let (mut reporter, supervisor) = Supervisor::reporter(AgentProvider::Claude);
-            let mut receiver = hooks(InitialSource::Startup);
-            let payload = envelope(
-                serde_json::json!({"hook_event_name":"SessionStart","source":"startup","session_id":EXPECTED,"model":"native-model","transcript_path":"/exact/root.jsonl"}),
-            );
-            assert_eq!(
-                drive(&mut receiver, &mut reporter, &payload),
-                reporter::ACCEPTED
-            );
-            let pending = super::super::collector::CollectorSnapshot {
-                usage: Hooks::empty_metrics().usage.value,
-                source_revision: None,
-                diagnostic: Some("source_not_created".into()),
-                caught_up: false,
-                rebuilding: false,
-                retained_identities: 0,
-                retained_bytes: 0,
-            };
-            receiver.apply_collector_snapshot(&mut reporter, pending, deadline());
-            assert!(receiver.collector.as_ref().unwrap().has_pending_read());
-            drive(
-                &mut receiver,
-                &mut reporter,
-                &activity("UserPromptSubmit", "turn", EXPECTED),
-            );
-            assert!(!receiver.startup_source_pending && receiver.startup_read_pending);
-            let snapshot = |reason: &str| super::super::collector::CollectorSnapshot {
-                usage: Hooks::empty_metrics().usage.value,
-                source_revision: None,
-                diagnostic: Some(reason.into()),
-                caught_up: false,
-                rebuilding: false,
-                retained_identities: 0,
-                retained_bytes: 0,
-            };
-            receiver.apply_collector_snapshot(&mut reporter, snapshot(diagnostic), deadline());
-            assert!(!receiver.startup_read_pending);
-            if diagnostic == "source_not_created" {
-                // The next response was requested after Prompt and must fail strictly.
+    fn startup_retirement_suppresses_only_one_already_pending_missing_source_response() {
+        for boundary in ["prompt", "stop", "failure", "end", "completion"] {
+            for diagnostic in [
+                "source_not_created",
+                "source_unavailable",
+                "read_unavailable",
+                "foreign_usage_record",
+            ] {
+                let (mut reporter, supervisor) = Supervisor::reporter(AgentProvider::Claude);
+                let mut receiver = hooks(InitialSource::Startup);
+                let payload = envelope(
+                    serde_json::json!({"hook_event_name":"SessionStart","source":"startup","session_id":EXPECTED,"model":"native-model","transcript_path":"/exact/root.jsonl"}),
+                );
+                assert_eq!(
+                    drive(&mut receiver, &mut reporter, &payload),
+                    reporter::ACCEPTED
+                );
+                let pending = super::super::collector::CollectorSnapshot {
+                    usage: Hooks::empty_metrics().usage.value,
+                    source_revision: None,
+                    diagnostic: Some("source_not_created".into()),
+                    caught_up: false,
+                    rebuilding: false,
+                    retained_identities: 0,
+                    retained_bytes: 0,
+                };
+                receiver.apply_collector_snapshot(&mut reporter, pending, deadline());
+                assert!(receiver.collector.as_ref().unwrap().has_pending_read());
+                drive(
+                    &mut receiver,
+                    &mut reporter,
+                    &activity("UserPromptSubmit", "first", EXPECTED),
+                );
+                assert!(receiver.startup_source_pending);
+                let event = match boundary {
+                    "prompt" => activity("UserPromptSubmit", "next", EXPECTED),
+                    "stop" => activity("Stop", "first", EXPECTED),
+                    "failure" => envelope(
+                        serde_json::json!({"hook_event_name":"StopFailure","prompt_id":"first","session_id":EXPECTED,"error":"fixture-failure"}),
+                    ),
+                    "end" => session_end("other", EXPECTED),
+                    _ => Vec::new(),
+                };
+                for _ in 0..2 {
+                    if boundary == "completion" {
+                        receiver.retire_startup_source();
+                    } else {
+                        drive(&mut receiver, &mut reporter, &event);
+                    }
+                }
+
+                assert!(!receiver.startup_source_pending && receiver.startup_read_pending);
+                let snapshot = |reason: &str| super::super::collector::CollectorSnapshot {
+                    usage: Hooks::empty_metrics().usage.value,
+                    source_revision: None,
+                    diagnostic: Some(reason.into()),
+                    caught_up: false,
+                    rebuilding: false,
+                    retained_identities: 0,
+                    retained_bytes: 0,
+                };
                 receiver.apply_collector_snapshot(&mut reporter, snapshot(diagnostic), deadline());
+                assert!(!receiver.startup_read_pending);
+                if diagnostic == "source_not_created" {
+                    // The next response was requested after the new turn and must fail strictly.
+                    receiver.apply_collector_snapshot(
+                        &mut reporter,
+                        snapshot(diagnostic),
+                        deadline(),
+                    );
+                }
+                let observed = supervisor.observed();
+                let health = Supervisor::health(&observed);
+                let unavailable: Vec<_> = health
+                    .iter()
+                    .filter(|(state, _)| *state == ReporterHealth::Unavailable)
+                    .collect();
+                assert_eq!(
+                    unavailable.len(),
+                    1,
+                    "{boundary}/{diagnostic}: {observed:?}"
+                );
+                assert_eq!(unavailable[0].1, diagnostic);
+                assert_eq!(
+                    Supervisor::models(&observed).len(),
+                    1,
+                    "unchanged startup metrics must not be republished"
+                );
             }
-            let observed = supervisor.observed();
-            let health = Supervisor::health(&observed);
-            let unavailable: Vec<_> = health
-                .iter()
-                .filter(|(state, _)| *state == ReporterHealth::Unavailable)
-                .collect();
-            assert_eq!(unavailable.len(), 1, "{diagnostic}: {observed:?}");
-            assert_eq!(unavailable[0].1, diagnostic);
-            assert_eq!(
-                Supervisor::models(&observed).len(),
-                1,
-                "unchanged startup metrics must not be republished"
-            );
         }
     }
 
@@ -1822,101 +1920,119 @@ mod tests {
     #[test]
     fn native_completion_drains_past_pending_pre_exit_eof() {
         use std::os::unix::fs::PermissionsExt;
-        let root = tempfile::tempdir().unwrap();
-        let (mut reporter, supervisor) = Supervisor::reporter(AgentProvider::Claude);
-        let mut receiver = hooks(InitialSource::Startup);
-        assert_eq!(
-            drive(&mut receiver, &mut reporter, &start("startup")),
-            reporter::ACCEPTED
-        );
-        let source = super::super::collector::CollectorSource {
-            path: root.path().join("transcript"),
-            conversation: EXPECTED.into(),
-        };
-        let begin = serde_json::to_vec(&serde_json::json!({ "Start": &source })).unwrap();
-        for (name, tokens) in [("a", 10), ("b", 30)] {
-            let mut usage = Hooks::empty_metrics().usage.value;
-            usage.input_tokens = Some(tokens);
-            let snapshot = super::super::collector::CollectorSnapshot {
-                usage,
-                source_revision: None,
-                diagnostic: None,
-                caught_up: true,
-                rebuilding: false,
-                retained_identities: 1,
-                retained_bytes: 100,
+        for initially_missing in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let (mut reporter, supervisor) = Supervisor::reporter(AgentProvider::Claude);
+            let mut receiver = hooks(InitialSource::Startup);
+            assert_eq!(
+                drive(
+                    &mut receiver,
+                    &mut reporter,
+                    &envelope(
+                        serde_json::json!({"hook_event_name":"SessionStart","source":"startup","session_id":EXPECTED,"model":"native-model","transcript_path":"/exact/root.jsonl"})
+                    )
+                ),
+                reporter::ACCEPTED
+            );
+            let source = super::super::collector::CollectorSource {
+                path: root.path().join("transcript"),
+                conversation: EXPECTED.into(),
             };
-            let payload = serde_json::to_vec(&snapshot).unwrap();
-            let mut frame = (payload.len() as u32).to_be_bytes().to_vec();
-            frame.extend(payload);
-            std::fs::write(root.path().join(name), frame).unwrap();
-        }
-        let executable = root.path().join("helper");
-        // The marker is written only after A is flushed to the real helper pipe.
-        // The helper cannot send B until the controller issues its next Read.
-        std::fs::write(&executable, format!(
+            let begin = serde_json::to_vec(&serde_json::json!({ "Start": &source })).unwrap();
+            for (name, tokens) in [("a", 10), ("b", 30)] {
+                let mut usage = Hooks::empty_metrics().usage.value;
+                usage.input_tokens = Some(tokens);
+                let missing = initially_missing && name == "a";
+                let snapshot = super::super::collector::CollectorSnapshot {
+                    usage: if missing {
+                        Hooks::empty_metrics().usage.value
+                    } else {
+                        usage
+                    },
+                    source_revision: None,
+                    diagnostic: missing.then(|| "source_not_created".into()),
+                    caught_up: !missing,
+                    rebuilding: false,
+                    retained_identities: 1,
+                    retained_bytes: 100,
+                };
+                let payload = serde_json::to_vec(&snapshot).unwrap();
+                let mut frame = (payload.len() as u32).to_be_bytes().to_vec();
+                frame.extend(payload);
+                std::fs::write(root.path().join(name), frame).unwrap();
+            }
+            let executable = root.path().join("helper");
+            // The marker is written only after A is flushed to the real helper pipe.
+            // The helper cannot send B until the controller issues its next Read.
+            std::fs::write(&executable, format!(
             "#!/bin/sh\ncd '{}'\n/bin/dd bs=1 count={} 2>/dev/null >/dev/null\n/bin/cat a\n/usr/bin/touch ready\n/bin/dd bs=1 count=1 2>/dev/null >/dev/null\n/bin/cat transcript\n/bin/sleep 60\n",
             root.path().display(), begin.len() + 4,
         )).unwrap();
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
-        std::fs::copy(root.path().join("a"), &source.path).unwrap();
-        let collector =
-            super::super::collector::CollectorController::spawn(&executable, source).unwrap();
-        let ready_deadline = Instant::now() + Duration::from_secs(2);
-        while !root.path().join("ready").exists() && Instant::now() < ready_deadline {
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        assert!(
-            root.path().join("ready").exists(),
-            "pre-exit EOF was not queued"
-        );
-        receiver.collector = Some(collector);
-        let argv = args(&[
-            "/bin/sh",
-            "-c",
-            &format!(
-                "/bin/cp '{0}/b' '{0}/transcript'; printf 'POST_EXIT_DRAIN_NATIVE_OUTPUT\\n'; exit 17",
-                root.path().display(),
-            ),
-        ]);
-        let started = Instant::now();
-        let status = ovrcr_runtime::agent_runner::run_native(&argv, move |ready, _| {
-            assert!(ready);
-            Some(Box::new(move |event| {
-                // Keep the deliberately queued pre-exit response pending until the real
-                // native-completion callback, reproducing the disputed ordering exactly.
-                if let ovrcr_runtime::agent_runner::HookEvent::NativeCompleted {
-                    deadline, ..
-                } = event
-                {
-                    receiver.finish(&mut reporter, deadline);
-                }
-                Vec::new()
-            }))
-        })
-        .unwrap();
-        assert_eq!(status.code(), Some(17));
-        assert!(started.elapsed() < Duration::from_millis(2500));
-        let observed = supervisor.observed();
-        let final_metrics = observed
-            .iter()
-            .find_map(|entry| match entry {
-                Observed::Finalize(report) => match &report.observation {
-                    ovrcr_protocol::AgentObservation::Metrics(metrics) => Some(metrics.clone()),
-                    _ => None,
-                },
-                _ => None,
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+            std::fs::copy(root.path().join("a"), &source.path).unwrap();
+            let collector =
+                super::super::collector::CollectorController::spawn(&executable, source).unwrap();
+            let ready_deadline = Instant::now() + Duration::from_secs(2);
+            while !root.path().join("ready").exists() && Instant::now() < ready_deadline {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            assert!(
+                root.path().join("ready").exists(),
+                "pre-exit EOF was not queued"
+            );
+            receiver.collector = Some(collector);
+            let argv = args(&[
+                "/bin/sh",
+                "-c",
+                &format!(
+                    "/bin/cp '{0}/b' '{0}/transcript'; printf 'POST_EXIT_DRAIN_NATIVE_OUTPUT\\n'; exit 17",
+                    root.path().display(),
+                ),
+            ]);
+            let started = Instant::now();
+            let status = ovrcr_runtime::agent_runner::run_native(&argv, move |ready, _| {
+                assert!(ready);
+                Some(Box::new(move |event| {
+                    // Keep the deliberately queued pre-exit response pending until the real
+                    // native-completion callback, reproducing the disputed ordering exactly.
+                    if let ovrcr_runtime::agent_runner::HookEvent::NativeCompleted {
+                        deadline,
+                        ..
+                    } = event
+                    {
+                        receiver.finish(&mut reporter, deadline);
+                    }
+                    Vec::new()
+                }))
             })
-            .expect("a bound invocation finalizes its accounting");
-        assert_eq!(
-            final_metrics.usage.value.input_tokens,
-            Some(30),
-            "finalization consumed only the queued pre-exit EOF"
-        );
-        assert_eq!(
-            final_metrics.usage.value.coverage,
-            ovrcr_protocol::UsageCoverage::Partial
-        );
+            .unwrap();
+            assert_eq!(status.code(), Some(17));
+            assert!(started.elapsed() < Duration::from_millis(2500));
+            let observed = supervisor.observed();
+            let final_metrics = observed
+                .iter()
+                .find_map(|entry| match entry {
+                    Observed::Finalize(report) => match &report.observation {
+                        ovrcr_protocol::AgentObservation::Metrics(metrics) => Some(metrics.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .expect("a bound invocation finalizes its accounting");
+            assert_eq!(
+                final_metrics.usage.value.input_tokens,
+                Some(30),
+                "finalization consumed only the queued pre-exit EOF"
+            );
+            assert_eq!(
+                final_metrics.usage.value.coverage,
+                ovrcr_protocol::UsageCoverage::Partial
+            );
+            assert!(
+                Supervisor::health(&observed).is_empty(),
+                "stale initial source frame must not suspend completion"
+            );
+        }
     }
 
     fn args(values: &[&str]) -> Vec<OsString> {

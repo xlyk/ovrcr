@@ -519,48 +519,28 @@ fn public_claude_startup_model_bootstraps_source_created_by_first_input() {
 }
 
 #[test]
-fn public_claude_source_created_only_after_prompt_keeps_attribution_fenced() {
+fn public_claude_first_source_can_be_created_after_prompt_but_established_loss_fences() {
     let f = ClaudeFixture::new("startup-bootstrap-after-prompt");
     let pending: AssignmentSnapshot = serde_json::from_value(f.start_claude()).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let suspended = loop {
-        let current = f.reconcile(&pending.handle);
-        if current.control.attribution_invalidated {
-            break current;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "fresh missing source did not fence attribution"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    };
-    assert_eq!(suspended.acceptance, "suspended");
-    assert_eq!(f.input_count(&suspended), 1);
-    assert_eq!(suspended.identity, pending.identity);
-    let prefix = format!(
-        "Assignment attribution suspended: session={} expected_run=1 current_run=1 control_epoch=2 cause=HealthUnavailable reason=SourceNotCreated health_revision=",
-        suspended.identity.session.unwrap().0
-    );
-    loop {
-        let log = fs::read_to_string(f.live.root.path().join("server.log")).unwrap();
-        if let Some(line) = log.lines().find(|line| line.starts_with(&prefix)) {
-            assert!(line[prefix.len()..].parse::<u64>().unwrap() > 0);
-            assert!(!line.contains(f.profile.to_str().unwrap()));
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "actual suspension diagnostic missing"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    wait_file(&pending.brief.with_extension("json.prompt-submitted"));
+    let before = f.reconcile(&pending.handle);
+    assert_eq!(f.input_count(&before), 1);
+    assert_eq!(before.identity, pending.identity);
+    assert_eq!(before.acceptance, "pending");
+    assert!(!before.control.attribution_invalidated);
     fs::write(f.profile.join("bootstrap-create-source"), "create now").unwrap();
-    wait_file(&suspended.brief.with_extension("json.source-created"));
-    loop {
+    wait_file(&pending.brief.with_extension("json.source-created"));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let current = loop {
+        let current = f.reconcile(&pending.handle);
+        assert!(
+            !current.control.attribution_invalidated,
+            "initial source creation fenced: {current:?}"
+        );
         let Response::Inventory { sessions, .. } = f.live.request(Request::Inspect) else {
             panic!("inventory")
         };
-        let recovered = sessions
+        if sessions
             .iter()
             .find(|child| Some(child.id) == pending.identity.session)
             .and_then(|child| child.agent.as_ref())
@@ -570,25 +550,63 @@ fn public_claude_source_created_only_after_prompt_keeps_attribution_fenced() {
                         .metrics
                         .as_ref()
                         .is_some_and(|metrics| metrics.sample.usage.value.input_tokens == Some(7))
-            });
-        if recovered {
+            })
+        {
+            break current;
+        }
+        assert!(Instant::now() < deadline, "created source was not ingested");
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(current.dispatch, DispatchStatus::Applied);
+    assert_eq!(current.acceptance, "pending");
+    assert_eq!(f.input_count(&current), 1);
+    assert_eq!(current.identity, pending.identity);
+    assert!(current.submission.is_none());
+
+    // After an authentic source was opened/ingested, removal is still a strict error.
+    let conversation = current.conversation.as_ref().unwrap().as_str();
+    fs::remove_file(
+        f.profile
+            .join("projects/fixture")
+            .join(format!("{conversation}.jsonl")),
+    )
+    .unwrap();
+    loop {
+        let fenced = f.reconcile(&pending.handle);
+        if fenced.control.attribution_invalidated {
+            assert_eq!(fenced.acceptance, "suspended");
+            assert_eq!(f.input_count(&fenced), 1);
+            assert_eq!(fenced.identity, pending.identity);
+            assert!(fenced.submission.is_none());
             break;
         }
         assert!(
             Instant::now() < deadline,
-            "created source was not actually ingested"
+            "established source loss did not fence attribution"
         );
         std::thread::sleep(Duration::from_millis(10));
     }
-    let current = f.reconcile(&pending.handle);
-    assert!(current.control.attribution_invalidated);
-    assert_eq!(current.acceptance, "suspended");
-    assert!(current.submission.is_none());
-    let log = fs::read_to_string(f.live.root.path().join("server.log")).unwrap();
-    assert_eq!(
-        log.lines().filter(|line| line.starts_with(&prefix)).count(),
-        1
+    let prefix = format!(
+        "Assignment attribution suspended: session={} expected_run=1 current_run=1 control_epoch=2 cause=HealthUnavailable reason=SourceUnavailable health_revision=",
+        pending.identity.session.unwrap().0
     );
+    loop {
+        let log = fs::read_to_string(f.live.root.path().join("server.log")).unwrap();
+        if let Some(line) = log.lines().find(|line| line.starts_with(&prefix)) {
+            assert!(line[prefix.len()..].parse::<u64>().unwrap() > 0);
+            assert!(!line.contains(f.profile.to_str().unwrap()));
+            assert_eq!(
+                log.lines().filter(|line| line.starts_with(&prefix)).count(),
+                1
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "strict source-loss diagnostic missing"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[test]

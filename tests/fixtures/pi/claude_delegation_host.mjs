@@ -220,6 +220,7 @@ for await (const line of createInterface({ input: process.stdin })) {
     if (mode() === "startup-bootstrap") createSource();
     hook("UserPromptSubmit", { prompt_id: `turn-${turn}` });
     if (mode() === "startup-bootstrap-after-prompt") {
+      atomic(`${briefPath}.prompt-submitted`, { conversation, turn });
       const deadline = performance.now() + 10000;
       while (!existsSync(config("bootstrap-create-source"))) {
         if (performance.now() > deadline) throw new Error("source creation gate timed out");

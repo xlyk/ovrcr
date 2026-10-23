@@ -448,9 +448,14 @@ or this specific initial NotFound result; a missing path or strict source error
 does not expose the new model proof. Requested aliases and discovery results do not supply it.
 The existing exact-model and assignment input checks still decide whether input
 may be sent. No transcript EOF, Ready, settled completion or zero usage is inferred: usage remains unknown/Partial.
-The allowance ends permanently on the first attributable prompt, source open,
-conversation transition or native completion. A missing resumed/established source,
-other I/O error, absent model or incompatible actual model retains the existing refusal.
+The allowance spans the first attributable root prompt because that hook is not
+a filesystem creation barrier for the initial transcript. Repeated delivery of the same
+prompt ID neither rearms nor retires it. It ends permanently on the first successful
+source check, a different root prompt ID, matching Stop/StopFailure, conversation
+transition, SessionEnd or native completion. Only the exact never-opened metadata
+NotFound is pending; established-source loss and all other errors remain strict.
+A missing resumed source, absent model or incompatible actual model retains the
+existing refusal. No timer, attribution repair or new readiness claim is added.
 An omitted optional transcript path preserves existing hook/statusline-only
 reporting, including actual session quota. It does not publish the held startup
 model, create a collector, or grant the pending-source bootstrap. Errors for an
@@ -458,12 +463,13 @@ announced source remain strict as described above.
 
 SessionStart.model is optional in the [native hook contract](https://code.claude.com/docs/en/hooks#sessionstart-input); installations without that observation remain unverified.
 
-A single already-requested pre-Prompt `source_not_created` response is not evidence
-of a missing post-Prompt source. The receiver consumes that one stale pending frame
-without publishing metrics or health, then requests a new scan. Other errors are
-applied immediately. A genuinely fresh post-Prompt missing-source result remains
-unavailable and fences attribution, even if a source subsequently appears. Native
-Claude file-creation timing must be verified separately from the deterministic fixtures.
+A single already-requested `source_not_created` response from before the boundary
+that retires the allowance is not evidence of a missing source after that boundary.
+The receiver consumes that one stale pending frame without publishing metrics or
+health, then requests a new scan. Other errors apply immediately. A fresh missing
+source after retirement remains unavailable and fences attribution, even if it
+subsequently appears. Source observations and hook delivery do not certify exact
+filesystem-versus-hook timestamps.
 
 When a fresh missing-source observation is unavailable, its health reason retains
 `source_not_created` for the collector's exact metadata-NotFound/never-opened
