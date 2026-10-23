@@ -17,7 +17,7 @@ use std::{
 };
 
 pub const ARTIFACT_ENV: &str = "OVRCR_CLAUDE_ARTIFACTS";
-pub const POLICY: &str = "ovrcr-claude-research-v2";
+pub const POLICY: &str = "ovrcr-claude-research-v3";
 /// Invocation-only permissions for the existing authenticated assignment server.
 pub const SCOPED_MCP_APPROVALS: &str = "mcp__ovrcr_child__ovrcr_read,mcp__ovrcr_child__ovrcr_publish,mcp__ovrcr_child__ovrcr_publish_question";
 const HELPER_POLICY: &str = "ovrcr-claude-research-helpers-v1";
@@ -147,9 +147,13 @@ pub fn policy_files(
         .unwrap()
         .extend(helper_settings(helper_model).as_object().unwrap().clone());
     let settings = format!("{}\n", serde_json::to_string_pretty(&value)?).into_bytes();
-    let mcp = serde_json::to_vec(&serde_json::json!({"mcpServers":{"ovrcr_child":{
+    let mut mcp = serde_json::json!({"mcpServers":{"ovrcr_child":{
         "type":"stdio","command":helper,"args":["delegation-publisher","--read-handle",handle]
-    }}}))?;
+    }}});
+    if helper_model.is_none() {
+        mcp["mcpServers"]["ovrcr_child"]["alwaysLoad"] = true.into();
+    }
+    let mcp = serde_json::to_vec(&mcp)?;
     let manifest = PolicyManifest {
         recipe: if helper_model.is_some() {
             HELPER_POLICY
@@ -231,6 +235,7 @@ fn policy_digest(model: &str, profile: &Path, helpers: bool) -> Result<String> {
         policy["native_helpers"] = serde_json::json!({"agents":helper_agents(model),"settings":helper_settings(Some(model))});
     } else {
         policy["approved_tools"] = SCOPED_MCP_APPROVALS.into();
+        policy["mcp_always_load"] = true.into();
     }
     Ok(format!(
         "{:x}",
@@ -688,10 +693,20 @@ mod tests {
         assert!(!helper.iter().any(|value| value == "--allowedTools"));
         let files = policy_files(Path::new("/bin/sh"), "request", None).unwrap();
         let manifest: serde_json::Value = serde_json::from_slice(&files.manifest).unwrap();
-        assert_eq!(manifest["recipe"], "ovrcr-claude-research-v2");
+        assert_eq!(manifest["recipe"], "ovrcr-claude-research-v3");
+        let mcp: serde_json::Value = serde_json::from_slice(&files.mcp).unwrap();
+        assert_eq!(mcp["mcpServers"]["ovrcr_child"]["alwaysLoad"], true);
         assert_eq!(manifest["approved_tools"], SCOPED_MCP_APPROVALS);
         let helper_files =
             policy_files(Path::new("/bin/sh"), "request", Some("claude-exact-1")).unwrap();
+        let old_helper_mcp = serde_json::json!({"mcpServers":{"ovrcr_child":{
+            "type":"stdio", "command":Path::new("/bin/sh").canonicalize().unwrap(),
+            "args":["delegation-publisher", "--read-handle", "request"]
+        }}});
+        assert_eq!(
+            helper_files.mcp,
+            serde_json::to_vec(&old_helper_mcp).unwrap()
+        );
         let old_helper_manifest = serde_json::json!({"recipe":"ovrcr-claude-research-helpers-v1", "helper": Path::new("/bin/sh").canonicalize().unwrap(),
             "settings":format!("{:x}",Sha256::digest(&helper_files.settings)),"mcp":format!("{:x}",Sha256::digest(&helper_files.mcp)),
             "agents":format!("{:x}",Sha256::digest(helper_agents("claude-exact-1").as_bytes()))});
@@ -720,8 +735,8 @@ mod tests {
         .unwrap();
         assert_eq!(helper_files.manifest, old_bytes);
         let path = Path::new("/opaque/profile");
-        let sealed = serde_json::json!({"policy":"ovrcr-claude-research-v2","model":"sonnet","model_provider":"native","profile":path,
-            "permission_mode":"default","tools":"","strict_mcp_config":true,"setting_sources":"","model_settings":{},"approved_tools":SCOPED_MCP_APPROVALS});
+        let sealed = serde_json::json!({"policy":"ovrcr-claude-research-v3","model":"sonnet","model_provider":"native","profile":path,
+            "permission_mode":"default","tools":"","strict_mcp_config":true,"setting_sources":"","model_settings":{},"approved_tools":SCOPED_MCP_APPROVALS,"mcp_always_load":true});
         assert_eq!(
             policy_digest("sonnet", path, false).unwrap(),
             format!("{:x}", Sha256::digest(serde_json::to_vec(&sealed).unwrap()))
@@ -739,11 +754,15 @@ mod tests {
             "file":{"device":0,"inode":0,"size":0,"modified":0,"modified_ns":0},"profile":"/opaque/profile","profile_entry":"/opaque/profile",
             "profile_device":0,"profile_inode":0,"native_version":"2.1.309","policy":"ovrcr-claude-research-v1","policy_digest":"old"
         })).unwrap();
-        assert_eq!(
-            proof.validate(&contract).unwrap_err().to_string(),
-            "native model proof does not match the immutable contract"
-        );
-        assert_eq!(proof.policy, "ovrcr-claude-research-v1");
+        for policy in ["ovrcr-claude-research-v1", "ovrcr-claude-research-v2"] {
+            let mut old = proof.clone();
+            old.policy = policy.into();
+            assert_eq!(
+                old.validate(&contract).unwrap_err().to_string(),
+                "native model proof does not match the immutable contract"
+            );
+            assert_eq!(old.policy, policy);
+        }
     }
 
     #[test]

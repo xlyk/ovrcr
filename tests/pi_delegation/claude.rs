@@ -134,7 +134,7 @@ impl ClaudeFixture {
             assert_eq!(
                 grants.len(),
                 1,
-                "default Research requires the exact v2 grant recipe"
+                "default Research requires the exact scoped grant recipe"
             );
             assert_eq!(
                 grants[0][1],
@@ -153,6 +153,15 @@ impl ClaudeFixture {
         .unwrap();
         assert_eq!(mcp["mcpServers"].as_object().unwrap().len(), 1);
         assert!(mcp["mcpServers"].get("ovrcr_child").is_some());
+        assert_eq!(
+            mcp["mcpServers"]["ovrcr_child"]["alwaysLoad"],
+            if helpers {
+                serde_json::Value::Null
+            } else {
+                serde_json::json!(true)
+            },
+            "default assigned MCP tools must be required before the first query; helper-v1 stays unchanged"
+        );
         assert!(!args.iter().any(|arg| {
             [
                 "--dangerously-skip-permissions",
