@@ -426,6 +426,154 @@ fn public_claude_missing_or_wrong_native_model_never_receives_initial_input() {
 }
 
 #[test]
+fn public_claude_startup_model_bootstraps_source_created_by_first_input() {
+    let f = ClaudeFixture::new("startup-bootstrap");
+    let reply = f.start_claude();
+    let pending: AssignmentSnapshot = serde_json::from_value(reply).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let current = loop {
+        let current = f.reconcile(&pending.handle);
+        let Response::Inventory { sessions, .. } = f.live.request(Request::Inspect) else {
+            panic!("inventory")
+        };
+        let source_observed = sessions
+            .iter()
+            .find(|child| Some(child.id) == current.identity.session)
+            .and_then(|child| child.agent.as_ref())
+            .is_some_and(|agent| {
+                agent.health.state == ovrcr_protocol::ReporterHealth::Connected
+                    && agent.metrics.as_ref().is_some_and(|metrics| {
+                        metrics.sample.usage.value.input_tokens == Some(7)
+                            && metrics.sample.usage.value.coverage
+                                == ovrcr_protocol::UsageCoverage::Partial
+                    })
+            });
+        if f.input_count(&current) == 1
+            && current.brief.with_extension("json.source-created").exists()
+            && source_observed
+        {
+            break current;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "initial input remained queued without a startup source: {current:?}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(current.identity, pending.identity);
+    assert_eq!(current.dispatch, DispatchStatus::Applied);
+    assert_eq!(f.input_count(&current), 1);
+    assert!(f.byte_count(&current) > 0);
+    assert!(current.submission.is_none());
+    assert_eq!(current.acceptance, "pending");
+    let Response::Inventory { sessions, .. } = f.live.request(Request::Inspect) else {
+        panic!("inventory")
+    };
+    let child = sessions
+        .iter()
+        .find(|s| Some(s.id) == current.identity.session)
+        .unwrap();
+    let agent = child.agent.as_ref().unwrap();
+    assert_eq!(agent.binding.provider, AgentProvider::Claude);
+    assert_eq!(child.run, current.identity.run.unwrap());
+    assert_eq!(
+        agent.metrics.as_ref().unwrap().sample.model.as_deref(),
+        Some("fixture-model-resolved")
+    );
+    assert!(
+        agent.native_control.is_none(),
+        "Claude does not certify settled completion"
+    );
+}
+
+#[test]
+fn public_claude_source_created_only_after_prompt_keeps_attribution_fenced() {
+    let f = ClaudeFixture::new("startup-bootstrap-after-prompt");
+    let pending: AssignmentSnapshot = serde_json::from_value(f.start_claude()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let suspended = loop {
+        let current = f.reconcile(&pending.handle);
+        if current.control.attribution_invalidated {
+            break current;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "fresh missing source did not fence attribution"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(suspended.acceptance, "suspended");
+    assert_eq!(f.input_count(&suspended), 1);
+    assert_eq!(suspended.identity, pending.identity);
+    fs::write(f.profile.join("bootstrap-create-source"), "create now").unwrap();
+    wait_file(&suspended.brief.with_extension("json.source-created"));
+    loop {
+        let Response::Inventory { sessions, .. } = f.live.request(Request::Inspect) else {
+            panic!("inventory")
+        };
+        let recovered = sessions
+            .iter()
+            .find(|child| Some(child.id) == pending.identity.session)
+            .and_then(|child| child.agent.as_ref())
+            .is_some_and(|agent| {
+                agent.health.state == ovrcr_protocol::ReporterHealth::Connected
+                    && agent
+                        .metrics
+                        .as_ref()
+                        .is_some_and(|metrics| metrics.sample.usage.value.input_tokens == Some(7))
+            });
+        if recovered {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "created source was not actually ingested"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let current = f.reconcile(&pending.handle);
+    assert!(current.control.attribution_invalidated);
+    assert_eq!(current.acceptance, "suspended");
+    assert!(current.submission.is_none());
+}
+
+#[test]
+fn public_claude_wrong_startup_model_cannot_bootstrap_initial_input() {
+    let f = ClaudeFixture::new("startup-bootstrap-wrong-model");
+    let reply = f.start_claude();
+    let pending: AssignmentSnapshot = serde_json::from_value(reply).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let Response::Inventory { sessions, .. } = f.live.request(Request::Inspect) else {
+            panic!("inventory")
+        };
+        let wrong_observed = sessions
+            .iter()
+            .find(|child| Some(child.id) == pending.identity.session)
+            .and_then(|child| child.agent.as_ref())
+            .is_some_and(|agent| {
+                agent.metrics.as_ref().is_some_and(|metrics| {
+                    metrics.sample.model.as_deref() == Some("different-model")
+                })
+            });
+        if wrong_observed {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "actual wrong startup model was not reported"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let current = f.reconcile(&pending.handle);
+    assert_eq!(current.identity, pending.identity);
+    assert_eq!(current.dispatch, DispatchStatus::Launched);
+    assert_eq!(f.input_count(&current), 0);
+    assert_eq!(f.byte_count(&current), 0);
+    assert!(current.submission.is_none());
+}
+
+#[test]
 fn public_claude_missing_startup_source_reports_cause_without_releasing_input() {
     let f = ClaudeFixture::new("source-not-created");
     let reply = f.start_claude();

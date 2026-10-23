@@ -74,6 +74,9 @@ pub fn receiver(
         initial_source: launch.map(|(_, source)| source),
         announced: false,
         initial_accepted: false,
+        startup_model: None,
+        startup_source_pending: false,
+        startup_read_pending: false,
         pending_leave: None,
         prompt: None,
         open_requests: Vec::new(),
@@ -366,6 +369,11 @@ struct Hooks {
     /// Whether the certified announcement this invocation waits for has already arrived.
     announced: bool,
     initial_accepted: bool,
+    /// Actual startup model is published only after the first eligible source check.
+    startup_model: Option<String>,
+    /// A fresh certified startup can precede creation of its first transcript.
+    startup_source_pending: bool,
+    startup_read_pending: bool,
     /// Leave of the current foreground conversation awaiting a matching SessionStart.
     pending_leave: Option<PendingLeave>,
     prompt: Option<String>,
@@ -463,6 +471,11 @@ impl Hooks {
             return reporter::IGNORED.to_vec();
         }
         let session_end = matches!(&event.kind, ClaudeEventKind::SessionEnd { .. });
+        if transition || session_end {
+            self.startup_model = None;
+            self.startup_source_pending = false;
+            self.startup_read_pending = false;
+        }
         if (transition || session_end)
             && self.initial_accepted
             && self.bound(reporter)
@@ -493,6 +506,14 @@ impl Hooks {
             // Supported synchronous UserPromptSubmit hooks establish observed turn identity.
             // Opaque prompt IDs and transport revisions are not certified source ordering.
             if matches!(event.kind, ClaudeEventKind::Prompt) {
+                if self.startup_source_pending {
+                    self.startup_read_pending = self
+                        .collector
+                        .as_ref()
+                        .is_some_and(|collector| collector.has_pending_read());
+                }
+                self.startup_model = None;
+                self.startup_source_pending = false;
                 // A new root turn retires any approval still open for a prior prompt_id.
                 if let Some(closed) = self.close_approvals_except(reporter, None, deadline) {
                     self.stop_collector(deadline);
@@ -544,6 +565,11 @@ impl Hooks {
         if !reporter.bind(&expected, deadline, false) {
             return reporter::UNAVAILABLE.to_vec();
         }
+        self.startup_model = (self.initial_source == Some(InitialSource::Startup))
+            .then(|| event.model.clone())
+            .flatten();
+        self.startup_source_pending =
+            self.startup_model.is_some() && self.transcript_path.is_some() && self.prompt.is_none();
         self.start_collector(reporter, deadline);
         if let Some(reference) = self.recovery.as_mut()
             && let Some(history) = self.transcript_path.as_ref()
@@ -593,6 +619,9 @@ impl Hooks {
         }
     }
     fn stop_collector(&mut self, deadline: Instant) {
+        self.startup_model = None;
+        self.startup_source_pending = false;
+        self.startup_read_pending = false;
         if let Some(mut collector) = self.collector.take() {
             let _ = collector.cancel(deadline);
         }
@@ -601,12 +630,24 @@ impl Hooks {
         if !self.bound(reporter) {
             return;
         }
+        let reason = if reason == Some("source_not_created") {
+            if self.startup_source_pending {
+                None
+            } else {
+                Some("source_unavailable")
+            }
+        } else {
+            self.startup_model = None;
+            self.startup_source_pending = false;
+            reason
+        };
         if !reporter.health(reason, deadline) {
             self.stop_collector(deadline);
         }
     }
     fn start_collector(&mut self, reporter: &mut Reporter, deadline: Instant) {
         let Some(path) = self.transcript_path.as_ref() else {
+            self.source_health(reporter, Some("source_unavailable"), deadline);
             return;
         };
         let Some(conversation) = self.expected.clone() else {
@@ -685,11 +726,7 @@ impl Hooks {
         let result = collector.advance();
         match result {
             Ok(Some(snapshot)) => {
-                self.collector_caught_up = snapshot.caught_up;
-                let mut next = self.metrics.clone().unwrap_or_else(Self::empty_metrics);
-                next.usage.value = snapshot.usage;
-                self.publish_metrics(reporter, next, deadline);
-                self.source_health(reporter, snapshot.diagnostic.as_deref(), deadline);
+                self.apply_collector_snapshot(reporter, snapshot, deadline);
                 true
             }
             Ok(None) => false,
@@ -700,7 +737,36 @@ impl Hooks {
             }
         }
     }
+    fn apply_collector_snapshot(
+        &mut self,
+        reporter: &mut Reporter,
+        snapshot: super::collector::CollectorSnapshot,
+        deadline: Instant,
+    ) {
+        // A request issued before Prompt cannot certify missing post-Prompt source.
+        let before_prompt = std::mem::take(&mut self.startup_read_pending);
+        if before_prompt && snapshot.diagnostic.as_deref() == Some("source_not_created") {
+            return;
+        }
+        self.collector_caught_up = snapshot.caught_up;
+        let mut next = self.metrics.clone().unwrap_or_else(Self::empty_metrics);
+        next.usage.value = snapshot.usage;
+        if (snapshot.diagnostic.is_none()
+            || (snapshot.diagnostic.as_deref() == Some("source_not_created")
+                && self.startup_source_pending))
+            && let Some(model) = self.startup_model.take()
+            && next.model.is_none()
+        {
+            next.model = Some(model);
+        }
+        self.publish_metrics(reporter, next, deadline);
+        self.source_health(reporter, snapshot.diagnostic.as_deref(), deadline);
+    }
+
     fn native_completed(&mut self, reporter: &mut Reporter, deadline: Instant) {
+        self.startup_model = None;
+        self.startup_source_pending = false;
+        self.startup_read_pending = false;
         // Reserve 700ms for atomic finalization and original-operation receipt recovery.
         let drain_deadline = deadline
             .checked_sub(Duration::from_millis(700))
@@ -735,6 +801,9 @@ impl Hooks {
     /// Retire obsolete turn and request state for the conversation being left. Does not
     /// change the binding; a later supported SessionStart establishes the replacement.
     fn retire_turn_state(&mut self, reporter: &mut Reporter, deadline: Instant) -> Option<Vec<u8>> {
+        self.startup_model = None;
+        self.startup_source_pending = false;
+        self.startup_read_pending = false;
         self.stop_collector(deadline);
         self.prompt = None;
         self.metrics = None;
@@ -849,6 +918,9 @@ impl Hooks {
     /// An unsupported or ambiguous transition ends this invocation's reporting: the
     /// binding it certified is no longer trustworthy, and nothing replaces it here.
     fn freeze(&mut self, reporter: &mut Reporter, deadline: Instant) -> bool {
+        self.startup_model = None;
+        self.startup_source_pending = false;
+        self.startup_read_pending = false;
         self.pending_leave = None;
         self.stop_collector(deadline);
         let _ = self.close_approvals_except(reporter, None, deadline);
@@ -926,6 +998,9 @@ mod tests {
             initial_source: Some(initial_source),
             announced: false,
             initial_accepted: false,
+            startup_model: None,
+            startup_source_pending: false,
+            startup_read_pending: false,
             pending_leave: None,
             prompt: None,
             open_requests: Vec::new(),
@@ -957,6 +1032,220 @@ mod tests {
     }
     fn drive(hooks: &mut Hooks, reporter: &mut Reporter, input: &[u8]) -> Vec<u8> {
         hooks.frame(reporter, input, true, deadline())
+    }
+
+    #[test]
+    fn startup_source_pending_requires_observed_model_and_never_reopens() {
+        for (initial_source, source, model, permitted) in [
+            (
+                InitialSource::Startup,
+                "startup",
+                Some("native-model"),
+                true,
+            ),
+            (InitialSource::Startup, "startup", None, false),
+            (InitialSource::Resume, "resume", Some("native-model"), false),
+        ] {
+            let (mut reporter, supervisor) = Supervisor::reporter(AgentProvider::Claude);
+            let mut receiver = hooks(initial_source);
+            let mut payload = serde_json::json!({"hook_event_name":"SessionStart","source":source,"session_id":EXPECTED,"transcript_path":"/exact/root.jsonl"});
+            if let Some(model) = model {
+                payload["model"] = model.into();
+            }
+            assert_eq!(
+                drive(&mut receiver, &mut reporter, &envelope(payload)),
+                reporter::ACCEPTED
+            );
+            assert_eq!(receiver.startup_source_pending, permitted);
+            assert_eq!(
+                receiver.startup_model.as_deref(),
+                if initial_source == InitialSource::Startup {
+                    model
+                } else {
+                    None
+                }
+            );
+            receiver.source_health(&mut reporter, Some("source_not_created"), deadline());
+
+            // An actual source observation permanently retires this bootstrap allowance.
+            receiver.source_health(&mut reporter, None, deadline());
+            assert!(!receiver.startup_source_pending);
+            receiver.source_health(&mut reporter, Some("source_not_created"), deadline());
+            let health = Supervisor::health(&supervisor.observed());
+            assert_eq!(health.len(), if permitted { 1 } else { 3 });
+            assert_eq!(
+                health.last().unwrap(),
+                &(ReporterHealth::Unavailable, "source_unavailable".into())
+            );
+        }
+    }
+
+    #[test]
+    fn startup_model_is_published_only_after_eligible_source_classification() {
+        for diagnostic in [
+            None,
+            Some("source_not_created"),
+            Some("source_unavailable"),
+            Some("read_unavailable"),
+        ] {
+            let (mut reporter, supervisor) = Supervisor::reporter(AgentProvider::Claude);
+            let mut receiver = hooks(InitialSource::Startup);
+            let payload = envelope(
+                serde_json::json!({"hook_event_name":"SessionStart","source":"startup","session_id":EXPECTED,"model":"native-model","transcript_path":"/exact/root.jsonl"}),
+            );
+            assert_eq!(
+                drive(&mut receiver, &mut reporter, &payload),
+                reporter::ACCEPTED
+            );
+            assert!(
+                receiver.metrics.is_none(),
+                "no model proof before source classification"
+            );
+            receiver.apply_collector_snapshot(
+                &mut reporter,
+                super::super::collector::CollectorSnapshot {
+                    usage: Hooks::empty_metrics().usage.value,
+                    source_revision: None,
+                    diagnostic: diagnostic.map(str::to_owned),
+                    caught_up: false,
+                    rebuilding: false,
+                    retained_identities: 0,
+                    retained_bytes: 0,
+                },
+                deadline(),
+            );
+            let permitted = diagnostic.is_none() || diagnostic == Some("source_not_created");
+            assert_eq!(
+                receiver.metrics.as_ref().and_then(|m| m.model.as_deref()),
+                permitted.then_some("native-model")
+            );
+            assert!(receiver.startup_model.is_none());
+            assert_eq!(
+                Supervisor::models(&supervisor.observed()),
+                vec![permitted.then(|| "native-model".into())]
+            );
+        }
+        let (mut reporter, supervisor) = Supervisor::reporter(AgentProvider::Claude);
+        let mut receiver = hooks(InitialSource::Startup);
+        let payload = envelope(
+            serde_json::json!({"hook_event_name":"SessionStart","source":"startup","session_id":EXPECTED,"model":"native-model"}),
+        );
+        assert_eq!(
+            drive(&mut receiver, &mut reporter, &payload),
+            reporter::ACCEPTED
+        );
+        assert!(receiver.startup_model.is_none() && receiver.metrics.is_none());
+        assert_eq!(
+            Supervisor::health(&supervisor.observed()).last(),
+            Some(&(ReporterHealth::Unavailable, "source_unavailable".into()))
+        );
+    }
+
+    #[test]
+    fn startup_source_pending_retires_on_prompt_transition_and_completion() {
+        for boundary in ["prompt", "transition", "completion"] {
+            let (mut reporter, _supervisor) = Supervisor::reporter(AgentProvider::Claude);
+            let mut receiver = hooks(InitialSource::Startup);
+            let payload = envelope(
+                serde_json::json!({"hook_event_name":"SessionStart","source":"startup","session_id":EXPECTED,"model":"native-model","transcript_path":"/exact/root.jsonl"}),
+            );
+            assert_eq!(
+                drive(&mut receiver, &mut reporter, &payload),
+                reporter::ACCEPTED
+            );
+            assert!(receiver.startup_source_pending);
+            match boundary {
+                "prompt" => {
+                    drive(
+                        &mut receiver,
+                        &mut reporter,
+                        &activity("UserPromptSubmit", "turn", EXPECTED),
+                    );
+                }
+                "transition" => {
+                    drive(
+                        &mut receiver,
+                        &mut reporter,
+                        &session_end("clear", EXPECTED),
+                    );
+                }
+                _ => receiver
+                    .native_completed(&mut reporter, Instant::now() + Duration::from_secs(1)),
+            }
+            assert!(!receiver.startup_source_pending, "{boundary}");
+        }
+    }
+
+    #[test]
+    fn startup_prompt_suppresses_only_one_already_pending_missing_source_response() {
+        for diagnostic in [
+            "source_not_created",
+            "source_unavailable",
+            "read_unavailable",
+            "foreign_usage_record",
+        ] {
+            let (mut reporter, supervisor) = Supervisor::reporter(AgentProvider::Claude);
+            let mut receiver = hooks(InitialSource::Startup);
+            let payload = envelope(
+                serde_json::json!({"hook_event_name":"SessionStart","source":"startup","session_id":EXPECTED,"model":"native-model","transcript_path":"/exact/root.jsonl"}),
+            );
+            assert_eq!(
+                drive(&mut receiver, &mut reporter, &payload),
+                reporter::ACCEPTED
+            );
+            let pending = super::super::collector::CollectorSnapshot {
+                usage: Hooks::empty_metrics().usage.value,
+                source_revision: None,
+                diagnostic: Some("source_not_created".into()),
+                caught_up: false,
+                rebuilding: false,
+                retained_identities: 0,
+                retained_bytes: 0,
+            };
+            receiver.apply_collector_snapshot(&mut reporter, pending, deadline());
+            assert!(receiver.collector.as_ref().unwrap().has_pending_read());
+            drive(
+                &mut receiver,
+                &mut reporter,
+                &activity("UserPromptSubmit", "turn", EXPECTED),
+            );
+            assert!(!receiver.startup_source_pending && receiver.startup_read_pending);
+            let snapshot = |reason: &str| super::super::collector::CollectorSnapshot {
+                usage: Hooks::empty_metrics().usage.value,
+                source_revision: None,
+                diagnostic: Some(reason.into()),
+                caught_up: false,
+                rebuilding: false,
+                retained_identities: 0,
+                retained_bytes: 0,
+            };
+            receiver.apply_collector_snapshot(&mut reporter, snapshot(diagnostic), deadline());
+            assert!(!receiver.startup_read_pending);
+            if diagnostic == "source_not_created" {
+                // The next response was requested after Prompt and must fail strictly.
+                receiver.apply_collector_snapshot(&mut reporter, snapshot(diagnostic), deadline());
+            }
+            let observed = supervisor.observed();
+            let health = Supervisor::health(&observed);
+            let unavailable: Vec<_> = health
+                .iter()
+                .filter(|(state, _)| *state == ReporterHealth::Unavailable)
+                .collect();
+            assert_eq!(unavailable.len(), 1, "{diagnostic}: {observed:?}");
+            assert_eq!(
+                unavailable[0].1,
+                if diagnostic == "source_not_created" {
+                    "source_unavailable"
+                } else {
+                    diagnostic
+                }
+            );
+            assert_eq!(
+                Supervisor::models(&observed).len(),
+                1,
+                "unchanged startup metrics must not be republished"
+            );
+        }
     }
 
     #[test]

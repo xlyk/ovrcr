@@ -101,6 +101,10 @@ impl CollectorController {
         Ok(controller)
     }
 
+    pub fn has_pending_read(&self) -> bool {
+        self.in_flight
+    }
+
     /// One nonblocking request/response step. A returned EOF observation is never
     /// proof of provider completion. Calling again requests another bounded scan.
     pub fn advance(&mut self) -> Result<Option<CollectorSnapshot>> {
@@ -183,7 +187,7 @@ impl CollectorController {
         });
         let unavailable = matches!(
             snapshot.diagnostic.as_deref(),
-            Some("source_unavailable" | "read_unavailable")
+            Some("source_not_created" | "source_unavailable" | "read_unavailable")
         );
         if snapshot.rebuilding || regressed || unavailable {
             if let Some(previous) = &self.last_usage {
@@ -475,7 +479,22 @@ impl TranscriptReader {
     fn step(&mut self) -> CollectorSnapshot {
         let rebuilding_started = match self.refresh() {
             Ok(started) => started,
-            Err(_) => return self.snapshot(false, Some("source_unavailable")),
+            Err(error) => {
+                let pending = error.kind() == io::ErrorKind::NotFound
+                    && self.file.is_none()
+                    && self.metadata.is_none()
+                    && self
+                        .source_failure
+                        .is_some_and(|failure| failure.0 == "metadata");
+                return self.snapshot(
+                    false,
+                    Some(if pending {
+                        "source_not_created"
+                    } else {
+                        "source_unavailable"
+                    }),
+                );
+            }
         };
         if self.frozen.is_some() {
             return self.snapshot(false, self.frozen);

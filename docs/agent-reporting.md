@@ -429,3 +429,25 @@ uses `context_window.current_usage.input_tokens`,
 present, and sums those counters as `used_tokens`. It does not use output tokens, a
 provider percentage, a model-name capacity fallback, or `total_input_tokens` as a
 cumulative billing counter.
+
+### Claude before its first transcript record
+
+A certified fresh Claude startup may announce a transcript before creating it.
+Only an initial metadata NotFound before the collector has ever opened that source
+can remain pending, and only when the same admitted root SessionStart supplied a
+valid observed model. That model is published only after a successful source check
+or this specific initial NotFound result; a missing path or strict source error
+does not expose the new model proof. Requested aliases and discovery results do not supply it.
+The existing exact-model and assignment input checks still decide whether input
+may be sent. No transcript EOF, Ready, settled completion or zero usage is inferred: usage remains unknown/Partial.
+The allowance ends permanently on the first attributable prompt, source open,
+conversation transition or native completion. A missing resumed/established source,
+other I/O error, absent model or incompatible actual model retains the existing refusal.
+SessionStart.model is optional in the [native hook contract](https://code.claude.com/docs/en/hooks#sessionstart-input); installations without that observation remain unverified.
+
+A single already-requested pre-Prompt `source_not_created` response is not evidence
+of a missing post-Prompt source. The receiver consumes that one stale pending frame
+without publishing metrics or health, then requests a new scan. Other errors are
+applied immediately. A genuinely fresh post-Prompt missing-source result remains
+unavailable and fences attribution, even if a source subsequently appears. Native
+Claude file-creation timing must be verified separately from the deterministic fixtures.
