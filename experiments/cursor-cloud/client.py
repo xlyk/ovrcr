@@ -66,6 +66,12 @@ class Deadlines:
         self.work = self.started + WORK_SECONDS
         self.total = self.started + TOTAL_SECONDS
         self.current = self.work
+        self.cleanup_deadline = None
+
+    def cleanup_end(self):
+        if self.cleanup_deadline is None:
+            self.cleanup_deadline = min(time.monotonic() + CLEANUP_SECONDS, self.total)
+        return self.cleanup_deadline
 
     def arm(self, deadline):
         self.current = deadline
@@ -395,10 +401,12 @@ def command(argv, cwd, root, deadlines, resources, expected=0, extra_env=None):
     env.update(extra_env or {})
     receipt = {"pid": None, "exit": "UNRESOLVED", "launch_attempted": True}
     resources.setdefault("verification_processes", []).append(receipt)
+    deadline = deadlines.current
     process = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
     receipt["pid"] = process.pid
     data = bytearray()
+    termination_attempted = False
     try:
         os.set_blocking(process.stdout.fileno(), False)
         while True:
@@ -416,21 +424,37 @@ def command(argv, cwd, root, deadlines, resources, expected=0, extra_env=None):
             raise Failure("independent Git/fixture command failed; diagnostics suppressed")
         return data.decode("utf-8")
     finally:
-        process.stdout.close()
-        if process.poll() is None or receipt["exit"] == "UNRESOLVED":
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            # Reaping is cleanup, bounded by the original total clock.
-            deadline = deadlines.current
-            deadlines.arm(min(deadlines.total, time.monotonic() + 0.2))
-            try:
-                process.wait(timeout=deadlines.remaining())
-                receipt["exit"] = process.returncode
-            except (Failure, subprocess.TimeoutExpired):
-                pass
-            finally:
+        try:
+            while True:
+                try:
+                    if receipt["exit"] == "UNRESOLVED":
+                        end = deadlines.cleanup_end()
+                    process.stdout.close()
+                    if receipt["exit"] != "UNRESOLVED":
+                        break
+                    if not termination_attempted:
+                        previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGALRM})
+                        try:
+                            termination_attempted = True
+                            if process.poll() is None:
+                                try:
+                                    os.killpg(process.pid, signal.SIGKILL)
+                                except OSError:
+                                    pass  # A failed signal is not exit confirmation.
+                        finally:
+                            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+                    # Retry only this owned child's cleanup, under one fixed end.
+                    deadlines.arm(end - SHUTDOWN_RESERVE)
+                    process.wait(timeout=deadlines.remaining())
+                    receipt["exit"] = process.returncode
+                    break
+                except (Failure, subprocess.TimeoutExpired):
+                    if receipt["exit"] != "UNRESOLVED":
+                        raise
+                    if time.monotonic() >= deadlines.cleanup_end() - SHUTDOWN_RESERVE:
+                        break
+        finally:
+            if deadlines.cleanup_deadline is not None:
                 if deadline > time.monotonic():
                     deadlines.arm(deadline)
                 else:
@@ -880,7 +904,7 @@ def follow_up_run(manifest, key, token, port, journal, root, deadlines, report, 
 
 
 def cleanup(process, root, token_identity, port, token, deadlines, resources, journal=None, state=None, key=""):
-    end = min(time.monotonic() + CLEANUP_SECONDS, deadlines.total)
+    end = deadlines.cleanup_end()
     reserve = min(SHUTDOWN_RESERVE, max(0, end - time.monotonic()))
     not_started = process is None and not resources.get("launch_attempted")
     resources["process_exit"] = "NOT STARTED" if not_started else "UNRESOLVED"

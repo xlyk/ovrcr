@@ -224,10 +224,19 @@ must run on the main
 thread of its standalone process; supported hosts are macOS/Linux arm64/x64.
 
 Normal and error paths share one cleanup routine ending at
-`min(cleanup entry + 60 seconds, original total deadline)`. Its final available
-10 seconds are reserved for bounded TERM/wait/KILL/wait of the owned bridge PID.
-A stalled Shutdown cannot consume that interval. Unconfirmed exit, including an interrupted launch before a process handle is returned,
-remains UNRESOLVED and prevents private-root/token-file removal.
+`min(first cleanup entry + 60 seconds, original total deadline)`. A failing
+verification command anchors that same end while it still owns the exact child
+handle and waits for actual exit confirmation within the pre-shutdown interval.
+An interrupted close, owned-child termination, or exit observation can repeat
+only while that same bound has time; it neither relaunches work nor renews the
+clock. The short owned-child poll/signal transition defers SIGALRM so its one
+termination attempt cannot be skipped between recording intent and signaling. Main cleanup reuses the end; it cannot start another 60-second window. Its final
+available 10 seconds are reserved for bounded TERM/wait/KILL/wait of the owned
+bridge PID. A stalled child wait or Shutdown cannot consume that interval.
+Unconfirmed bridge exit, including a launch interrupted before a handle returns,
+remains UNRESOLVED and prevents private-root/token-file removal. An unconfirmed
+verification child retains its receipt and private verification root even when
+bridge exit and token removal are separately confirmed.
 
 Each invocation creates a private root containing HOME, workspace, state and TMP.
 The official token must be a mode-0600 regular, singly linked file named
@@ -258,9 +267,11 @@ plus independent PR verification, while an explicit 2-second
 work clock must still stop before creation. No clock is renewed. Stall peers record
 that the intended phase was reached and trickle beyond the absolute deadline. Expired-entry
 and exhausted-cleanup cases keep separate zero/late budget checks. New coding
-stall cases use 6-second work / 8-second total limits and require an actual peer or
-process phase receipt plus the exact failure stage. Production limits stay 840/900
-seconds. Cancellation cleanup retains its explicit 0.4-second budget and 0.15-second
+stall cases use the named normal coding work/total allowance so preparation can
+reach each fault. They still require an actual peer or process phase receipt,
+the exact failure stage, the absolute deadline and observed child exit. Their
+1.5-second cleanup limit and 0.75-second shutdown reserve remain explicit; other
+fault methods retain their own short clocks. Production limits stay 840/900 seconds. Cancellation cleanup retains its explicit 0.4-second budget and 0.15-second
 shutdown reserve. Source-admission failures must match their expected reason, so a
 deadline in the same stage cannot qualify that guard. Coding cases substitute
 the external Git executable with an owned URL-rewriting peer; Git itself and all
@@ -318,7 +329,7 @@ The #364 acceptance cases map to these additional entry-point assertions:
 | 6: source, ancestry, allowed history/diff, independent tests | success and wrong-source/ancestry/diff/failed-tests cases in `test_coding_rejects*` |
 | 7: uncertain receipt retention; no replacement/retry/guessed run | `test_lost_receipts*`, storage/identity cases and common method-count assertions |
 | 8: closure ordering, late receipts, exact cleanup cancel | `test_closure_orders*`, `test_final_verified*`, `test_failed_required_closure*`, `test_only_exact_known_active_run*` |
-| 9: absolute partial-frame/Git/test/cancel deadlines, honest report | `test_partial_frames*`, `test_slow_external_processes*`, `test_caught_deadline_after_coding_pass*`, exact-cancel stalled case and inherited preflight/cleanup deadline tests |
+| 9: absolute partial-frame/Git/test/cancel deadlines, honest report | `test_partial_frames*`, `test_known_verification_child_reaping*`, `test_stale_alarm_retries*`, `test_slow_external_processes*`, `test_caught_deadline_after_coding_pass*`, exact-cancel stalled case and inherited preflight/cleanup deadline tests |
 | Property-name/value secret exclusion | `test_json_property_names*` and common stdout/journal sentinel checks |
 | 10: actual entry/storage/Git/process path and failure matrix | the full `test_client.py` suite; runtime criterion 10 stays NOT RUN because one invocation cannot attest the suite |
 
