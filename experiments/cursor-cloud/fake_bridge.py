@@ -273,8 +273,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     completed["call_id"] = "different-call"
                 if scenario == "source_sdk_wrong_command":
                     completed["args"] = {"command": "echo " + KEY}
-            if scenario == "source_capture":
+            if "source_events" in CONFIG:
                 messages[3:5] = [{"sdkMessage": {"type": "tool_call", "message": message}} for message in CONFIG["source_events"]]
+            if scenario.startswith("result_missing_branch"):
+                # Captured proof-3 RunResult.git: scheme-less repo, no branch field.
+                result["git"] = {"branches": [{"repoUrl": "github.com/fixture/disposable"}]}
+                if method == "Send" and not follow_up and not third and scenario != "result_missing_branch_none":
+                    import subprocess
+                    subprocess.run(["/usr/bin/git", "update-ref", "refs/heads/cursor/result", CONFIG["result_commit"]], cwd=CONFIG["repo"], check=True, capture_output=True)
+                    if scenario == "result_missing_branch_ambiguous":
+                        subprocess.run(["/usr/bin/git", "update-ref", "refs/heads/cursor/other", CONFIG["result_commit"]], cwd=CONFIG["repo"], check=True, capture_output=True)
             if scenario == "result_bad_git":
                 result["git"] = []
             if scenario == "result_bad_branch":

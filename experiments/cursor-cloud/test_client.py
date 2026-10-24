@@ -77,6 +77,9 @@ class PreflightEntryPointTests(unittest.TestCase):
                 git("commit", "-m", "unrelated source")
                 git("branch", "-f", "cursor/result", "HEAD")
             git("switch", "main")
+            if scenario.startswith("result_missing_branch"):
+                config["result_commit"] = git("rev-parse", "cursor/result")
+                git("branch", "-D", "cursor/result")
             gh_config = root / "github-config"
             gh_config.mkdir(mode=0o700)
             (gh_config / "owned-marker").write_text("preserve selected config")
@@ -797,6 +800,28 @@ sys.exit(result)
                     self.assertNotIn("source_probe", report)
                     self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1})
 
+    def test_missing_cloud_branch_uses_only_unique_new_git_ref(self):
+        for suffix in ("", "_none", "_ambiguous"):
+            with self.subTest(suffix=suffix):
+                capture = json.loads(Path(__file__).with_name("source-tool-capture.json").read_text())
+                run, report, events = self.run_fixture("result_missing_branch" + suffix, coding=True, source_events=capture)
+                self.assertEqual(run.returncode, 1 if suffix else 0, report)
+                if suffix:
+                    self.assertIn("unique new published branch", report["stages"][-1]["reason"])
+                    self.assertNotIn("result", report)
+                    self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1})
+                else:
+                    self.assertEqual(report["source_probe"]["verdict"], "PASS")
+                    self.assertEqual(report["result"]["branch"], "cursor/result")
+                    self.assertEqual(report["result"]["tests"], "PASS; 3 tests")
+                    self.assertEqual(report["follow_up"]["git_refs"], "UNCHANGED; all advertised refs")
+                    self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
+                    rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+                    discovery = next(row for row in rows if row["event"] == "result_branch_ref")
+                    self.assertEqual(discovery["branch"], "cursor/result")
+                    self.assertEqual(discovery["commit"], report["result"]["commit"])
+                    self.assertEqual(discovery["origin"], "unique new Git head after exact completed run")
+
     def test_source_probe_replays_redacted_cloud_capture(self):
         capture = Path(__file__).with_name("source-tool-capture.json")
         for fault in (None, "source", "command", "run", "call"):
@@ -944,7 +969,7 @@ sys.exit(result)
                     self.assertEqual(report["source"]["baseline_tests"], "FAIL; 3 tests, 2 failures")
                     self.assertEqual(report["result"]["tests"], "PASS; 3 tests")
                     self.assertEqual(sum(row["command"] == "fetch" for row in progressed), 3)
-                    self.assertEqual(sum(row["command"] == "ls-remote" for row in progressed), 2)
+                    self.assertEqual(sum(row["command"] == "ls-remote" for row in progressed), 3)
                     for criterion in ("active_observation", "offset_resume", "follow_up"):
                         self.assertEqual(report["recovery_criteria"][criterion]["verdict"], "PASS")
                     self.assertGreater(sum(row["delay_seconds"] for row in progressed), 3)

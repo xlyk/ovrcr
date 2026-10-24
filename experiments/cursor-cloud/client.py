@@ -851,6 +851,8 @@ def coding_run(manifest, key, token, port, journal, root, deadlines, report, sta
     source = fixture_source(manifest, root, deadlines, report["resources"], github_key)
     report["source"] = source
     journal.append({"event": "source", "receipt": source})
+    before_heads = set(git(["ls-remote", "--heads", manifest["repository"]], root / "verification", root, deadlines, report["resources"], github_key).splitlines())
+    journal.append({"event": "source_heads", "refs": sorted(before_heads)})
     creation = {"idempotencyKey": secrets.token_hex(16), "options": {
         "model": {"id": manifest["model"]}, "cloud": {
             "repos": [{"url": manifest["repository"], "startingRef": manifest["source_sha"]}],
@@ -886,14 +888,30 @@ def coding_run(manifest, key, token, port, journal, root, deadlines, report, sta
     if not isinstance(metadata, dict):
         raise Failure("result repository/branch/PR metadata is invalid")
     branches = metadata.get("branches", [])
-    if not isinstance(branches, list) or len(branches) != 1 or not isinstance(branches[0], dict) or branches[0].get("repoUrl") != manifest["repository"] or branches[0].get("prUrl"):
+    if not isinstance(branches, list) or len(branches) != 1 or not isinstance(branches[0], dict) or branches[0].get("repoUrl") not in (manifest["repository"], manifest["repository"].removeprefix("https://")) or branches[0].get("prUrl"):
         raise Failure("result repository/branch/PR metadata is invalid")
     branch = branches[0].get("branch")
+    published_tip = None
+    if branch in (None, ""):
+        # Cloud results can omit branch. Require one new independently published
+        # head, with every pre-run head unchanged; never select an old/guessed ref.
+        after_heads = set(git(["ls-remote", "--heads", manifest["repository"]], root / "verification", root, deadlines, report["resources"], github_key).splitlines())
+        added = after_heads - before_heads
+        if not before_heads <= after_heads or len(added) != 1:
+            raise Failure("result has no unique new published branch")
+        published_tip, branch = next(iter(added)).split("\trefs/heads/", 1)
+        if not re.fullmatch(r"[0-9a-f]{40}", published_tip):
+            raise Failure("result has no unique new published branch")
     if not isinstance(branch, str) or not re.fullmatch(r"[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*", branch):
         raise Failure("result branch is missing or unsafe")
     checkout = root / "verification"
     git(["fetch", "--quiet", "--no-tags", manifest["repository"], "refs/heads/" + branch], checkout, root, deadlines, report["resources"], github_key)
     tip = git(["rev-parse", "FETCH_HEAD"], checkout, root, deadlines, report["resources"])
+    if published_tip is not None:
+        if tip != published_tip:
+            raise Failure("published result branch changed before verification")
+        journal.append({"event": "result_branch_ref", "branch": branch, "commit": tip,
+                        "origin": "unique new Git head after exact completed run"})
     git(["merge-base", "--is-ancestor", manifest["source_sha"], tip], checkout, root, deadlines, report["resources"])
     report["active_stage"] = "result_diff"
     diff = git(["diff", "--name-status", manifest["source_sha"], tip], checkout, root, deadlines, report["resources"])
@@ -928,8 +946,12 @@ def follow_up_run(manifest, key, token, port, journal, root, deadlines, report, 
     report["active_stage"] = "follow_up"
     if result.get("result") != "TOKEN=" + report["continuity_token"] + "\nFIX=addition.py adds its two inputs.":
         raise Failure("follow-up recalled token/fix is incorrect or unverified")
-    expected_git = {"branches": [{"repoUrl": manifest["repository"], "branch": report["result"]["branch"]}]}
-    if result.get("git") != expected_git:
+    # Missing SDK branch metadata is not an attestation: the independent ref
+    # and PR comparisons below must still prove the verified result unchanged.
+    expected_git = [{"branches": [{"repoUrl": url, **branch}]} for url in
+                    (manifest["repository"], manifest["repository"].removeprefix("https://"))
+                    for branch in ({}, {"branch": ""}, {"branch": report["result"]["branch"]})]
+    if result.get("git") not in expected_git:
         raise Failure("follow-up changed repository/branch/PR metadata")
     after = git(["ls-remote", manifest["repository"]], checkout, root, deadlines, report["resources"], github_key)
     if after != refs or (report["result"]["commit"] + "\trefs/heads/" + report["result"]["branch"]) not in refs.splitlines():

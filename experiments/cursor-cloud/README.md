@@ -175,6 +175,16 @@ checks the final diff and every intervening commit for only `addition.py`, and
 runs the unchanged three tests in an isolated checkout with explicit `-I -B`
 (isolated imports/environment and no stale bytecode). A failed test is a failure.
 
+Captured cloud results use a scheme-less repository URL and can omit the SDK's
+`git.branches[].branch` field. Only the exact approved URL with or without its
+`https://` prefix is accepted. Before CreateAgent, the client records published
+Git heads. If the completed result lacks a branch name, it requires exactly one
+new head and every earlier head unchanged, fetches that exact ref and checks its
+observed commit before the same ancestry/diff/tests. Zero or multiple new heads
+remain unverified. Assistant prose and branch-name guesses are not used.
+Follow-up may likewise omit branch metadata, but the independent all-ref and PR
+snapshots must still be unchanged and contain the already verified result commit.
+
 After Run 1's early exact identity is durable, an exact GetRun snapshot must show
 RUNNING or successful FINISHED status. ERROR, CANCELLED and EXPIRED snapshots are
 durably retained and immediately stop qualification and follow-up, including during
