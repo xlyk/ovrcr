@@ -1,5 +1,6 @@
 {
   "credential_ref": "env:CURSOR_POC_EXPLICIT_KEY",
+  "github_credential_ref": "env:OVRCR_POC_GITHUB_PAT",
   "repository_policy": {
     "owner": "REPLACE_OWNER",
     "repository": "https://github.com/REPLACE_OWNER/REPLACE_DISPOSABLE_REPO"

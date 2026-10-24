@@ -25,6 +25,7 @@ args = dict(zip(sys.argv[1::2], sys.argv[2::2]))
 workspace = args["--workspace"]
 state = args["--state-root"]
 scenario = CONFIG.get("scenario", "success")
+bridge_index = 1 + sum("token_file" in row for row in [json.loads(line) for line in Path(CONFIG["audit"]).read_text().splitlines()]) if Path(CONFIG["audit"]).exists() else 1
 if scenario == "startup_stall":
     receipt(stall=scenario)
     time.sleep(30)
@@ -46,7 +47,8 @@ if scenario == "token_symlink":
     token_file.symlink_to(CONFIG["unrelated"])
 receipt(pid=os.getpid(), token_file=str(token_file), root=str(Path(workspace).parent),
         env_key_matches=os.environ.get("CURSOR_API_KEY") == KEY,
-        argv_excludes_secrets=KEY not in str(sys.argv) and TOKEN not in str(sys.argv))
+        github_pat_excluded="GITHUB-SECRET-SENTINEL-364" not in os.environ.values(),
+        argv_excludes_secrets=KEY not in str(sys.argv) and TOKEN not in str(sys.argv) and "GITHUB-SECRET-SENTINEL-364" not in str(sys.argv))
 
 def journal_rows():
     return [json.loads(line) for line in (Path(CONFIG["journal"]) / "events.jsonl").read_text().splitlines()]
@@ -78,6 +80,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         body = json.loads(raw[5:] if method in {"Send", "ObserveRun"} else raw)
         sends = sum(row.get("method") == "Send" for row in [json.loads(line) for line in Path(CONFIG["audit"]).read_text().splitlines()])
         follow_up = method == "Send" and sends == 1
+        third = method == "Send" and sends == 2
         ahead = None
         if method in {"CreateAgent", "Send"}:
             journal = Path(CONFIG["journal"])
@@ -100,11 +103,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             shape = body == {"agentId": "bc-fixture", "options": {"apiKey": KEY}}
         if method == "Send":
             shape = set(body) == {"agentId", "message", "options", "idempotencyKey"} and body["agentId"] == "bc-fixture" and body["options"] == {"model": {"id": "fixture-model"}}
-        known_run = "run-follow-up" if sends == 2 else "run-fixture"
+        known_run = "run-cancel" if sends == 3 else "run-follow-up" if sends == 2 else "run-fixture"
         if method == "GetRun":
-            shape = body == {"runId": known_run, "options": {"runtime": "RUNTIME_CLOUD", "agentId": "bc-fixture", "apiKey": KEY}}
+            shape = body == {"runId": "run-fixture" if bridge_index == 2 else known_run, "options": {"runtime": "RUNTIME_CLOUD", "agentId": "bc-fixture", "apiKey": KEY}}
         if method == "ObserveRun":
-            shape = body in ({"runId": "run-fixture"}, {"runId": "run-fixture", "afterOffset": "observe-3"})
+            shape = body in ({"runId": "run-fixture"}, {"runId": "run-fixture", "afterOffset": "observe-3"}, {"runId": "run-cancel"})
             if "afterOffset" in body:
                 saved_offsets = [row for row in journal_rows() if row["event"] == "observe_offset"]
                 shape = shape and bool(saved_offsets) and saved_offsets[-1] == {"event": "observe_offset", "origin": "ObserveRun", "agentId": "bc-fixture", "runId": "run-fixture", "offset": body["afterOffset"]}
@@ -112,11 +115,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
             earlier = next(row["token"] for row in journal_rows() if row["event"] == "continuity_token")
             shape = shape and earlier not in body["message"]["text"]
             ahead = ahead and any(row["event"] == "verified" for row in journal_rows())
-        receipt(method=method, request_shape=shape, key_matches=body.get("options", {}).get("apiKey") == KEY, write_ahead=ahead,
+        cancel_gate = None
+        if method == "CancelRun" and sends == 3:
+            rows = journal_rows()
+            cancelled = [(i,row) for i,row in enumerate(rows) if row["event"] == "cancel_intent"]
+            cancel_gate = bool(cancelled) and all(any(row["event"] == event and row.get("runId") == "run-cancel" for row in rows[:cancelled[-1][0]]) for event in ("cancellation_activity",)) and any(row["event"] == "closure" and row["kind"] == "cancel" for row in rows[:cancelled[-1][0]])
+        if method == "GetUsage":
+            shape = body == {"agentId": "bc-fixture"}
+        if third:
+            shape = shape and 'sleep 90' in body["message"]["text"]
+            ahead = ahead and any(row["event"] == "follow_up_verified" for row in journal_rows())
+        receipt(method=method, bridge_index=bridge_index, cancel_gate=cancel_gate, request_shape=shape,
+                run_id=body.get("runId") if method in {"GetRun", "CancelRun"} else None, key_matches=body.get("options", {}).get("apiKey") == KEY, write_ahead=ahead,
                 exact_cancel=body == {"agentId": "bc-fixture", "runId": known_run} if method == "CancelRun" else None,
                 observation_request=body if method == "ObserveRun" else None)
         good_auth = self.headers.get("Authorization") == "Bearer " + TOKEN
         if method == "Shutdown":
+            if (scenario == "first_token_leftover" and bridge_index == 1) or (scenario == "second_token_leftover" and bridge_index == 2):
+                token_file.unlink()
+                token_file.symlink_to(CONFIG["unrelated"])
             if scenario == "shutdown_stall":
                 time.sleep(30)
             response = {}
@@ -148,14 +165,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 response["extra"] = [{KEY: "unexpected nested property"}]
             if scenario == "bridge_token_key":
                 response[TOKEN] = "unexpected property"
+            if scenario == "github_pat_response_key":
+                response["GITHUB-SECRET-SENTINEL-364"] = "unexpected property"
+            if scenario == "github_pat_nested_key":
+                response["extra"] = [{"GITHUB-SECRET-SENTINEL-364": "unexpected nested property"}]
             if scenario == "creation_no_id":
                 response.pop("agentId")
             if scenario == "creation_wrong_model":
                 response["model"] = {"id": "wrong"}
         elif method == "GetAgent":
+            # SDK 1.0.40 allocates locally; the first Send creates the cloud agent.
+            if sends == 0 or scenario == "get_agent_unavailable":
+                receipt(cloud_metadata_uncreated=sends == 0)
+                self.send_response(404)
+                self.end_headers()
+                return
             response = {"agent": {"agentId": "bc-fixture", "cloud": {"repos": ["https://github.com/fixture/disposable"]}}}
-            if scenario == "close_before_send":
-                close_admission("discard")
             if scenario == "get_agent_wrong_id":
                 response["agent"]["agentId"] = "wrong-agent"
             if scenario == "get_agent_local":
@@ -164,34 +189,67 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 response["agent"]["cloud"]["repos"] = ["https://github.com/other/repo"]
         elif method == "CancelRun":
             CONFIG["cancelled"] = True
-            if scenario == "cancel_stall":
+            if scenario == "cancel_stall" or (sends == 3 and scenario == "third_cancel_stall"):
+                receipt(stall="third_cancel" if sends == 3 else scenario)
                 time.sleep(30)
             response = {}
         elif method == "GetRun":
             status = "RUN_LIFECYCLE_STATUS_CANCELLED" if CONFIG.get("cancelled") else "RUN_LIFECYCLE_STATUS_RUNNING"
-            if scenario == "cancel_unconfirmed":
+            if scenario == "cancel_unconfirmed" or (sends == 3 and scenario in {"third_ack_only", "third_observer_stall", "third_delayed_cancel", "third_observer_wrong_id", "third_observer_bad_status", "third_observer_error"}):
                 status = "RUN_LIFECYCLE_STATUS_RUNNING"
+            if sends == 3 and scenario == "third_early_finished_stale":
+                status = "RUN_LIFECYCLE_STATUS_RUNNING"
+            if sends == 3 and bridge_index == 1 and scenario == "third_early_finished_unavailable":
+                self.send_response(404)
+                self.end_headers()
+                return
+            if sends == 3 and scenario == "third_completion_race":
+                status = "RUN_LIFECYCLE_STATUS_FINISHED"
+            if bridge_index == 2:
+                status = "RUN_LIFECYCLE_STATUS_FINISHED"
             CONFIG["snapshots"] = CONFIG.get("snapshots", 0) + 1
             if scenario == "complete_before_drop" or (scenario == "complete_during_attach" and CONFIG["snapshots"] > 1):
                 status = "RUN_LIFECYCLE_STATUS_FINISHED"
             if scenario.startswith("snapshot_") and (scenario.endswith("before_drop") or CONFIG["snapshots"] > 1):
                 status = "RUN_LIFECYCLE_STATUS_" + scenario.split("_")[1].upper()
-            response = {"run": {"agentId": "bc-fixture", "runId": known_run, "status": status}}
+            response = {"run": {"agentId": "bc-fixture", "runId": body["runId"], "status": status}}
+            if sends == 3 and scenario == "third_snapshot_wrong_id":
+                response["run"]["runId"] = "wrong-run"
+            if bridge_index == 2 and scenario == "fresh_wrong_id":
+                response["run"]["runId"] = "wrong-run"
+            if bridge_index == 2 and scenario in {"fresh_unavailable", "fresh_requires_resume"}:
+                self.send_response(404)
+                self.end_headers()
+                return
+            if bridge_index == 2 and scenario == "fresh_stall":
+                receipt(stall="fresh_get_run")
+                time.sleep(30)
             if scenario == "snapshot_wrong_id" and not CONFIG.get("cancelled"):
                 response["run"]["agentId"] = "wrong-agent"
         elif method in {"Send", "ObserveRun"}:
             identity = {"agent_id": "bc-fixture", "run_id": "run-fixture"}
             def sdk(kind, **fields):
-                return {"sdkMessage": {"type": kind, "message": {**identity, **fields}}}
+                return {"sdkMessage": {"type": kind, "message": {"type": kind, **identity, **fields}}}
             probe = {"call_id": "source-probe", "name": "shell", "args": {"command": "git rev-parse HEAD && cat SOURCE_MARKER"}}
             result = {"agentId": "bc-fixture", "runId": "run-fixture", "model": {"id": "fixture-model"},
                       "status": "RUN_LIFECYCLE_STATUS_FINISHED", "git": {"branches": [{"repoUrl": "https://github.com/fixture/disposable", "branch": "cursor/result"}]}}
             messages = [{}, {"sdkMessage": {"type": "future", "message": {"opaque": True}}},
-                        sdk("system", subtype="init", model={"id": "fixture-model"}),
+                        sdk("thinking", text=""),
                         sdk("tool_call", **probe, status="running"),
                         sdk("tool_call", **probe, status="completed", result={"stdout": CONFIG["source_sha"] + "\nOVRCR_SELECTED_BASELINE_364\n", "stderr": "", "exitCode": 0}),
                         {"result": {"agentId": "bc-fixture", "runId": "run-fixture", "status": "RUN_LIFECYCLE_STATUS_FINISHED", "result": result}},
                         {"done": {"agentId": "bc-fixture", "runId": "run-fixture"}}]
+            # GetRun reconstructs a cloud handle without the original requested model.
+            if method == "ObserveRun":
+                result.pop("model")
+            if scenario == "cloud_status_first":
+                messages[2] = sdk("status", status="RUNNING")
+            if scenario in {"source_prefix", "source_prefix_wrong_sha", "source_prefix_wrong_marker"}:
+                probe["args"]["command"] = "cd /workspace && " + probe["args"]["command"]
+            if scenario == "source_prefix_wrong_sha":
+                messages[4]["sdkMessage"]["message"]["result"]["stdout"] = "b" * 40 + "\nOVRCR_SELECTED_BASELINE_364\n"
+            if scenario == "source_prefix_wrong_marker":
+                messages[4]["sdkMessage"]["message"]["result"]["stdout"] = CONFIG["source_sha"] + "\nOVRCR_DEFAULT_TIP_364\n"
             if scenario == "result_bad_git":
                 result["git"] = []
             if scenario == "result_bad_branch":
@@ -237,7 +295,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 result["runId"] = "run-follow-up"
                 earlier = next(row["token"] for row in journal_rows() if row["event"] == "continuity_token")
                 result["result"] = "TOKEN=" + earlier + "\nFIX=addition.py adds its two inputs."
-                messages = [sdk("system", subtype="init", model={"id": "fixture-model"}),
+                messages = [sdk("thinking", text=""),
                             {"result": {"agentId": "bc-fixture", "runId": "run-follow-up", "status": "RUN_LIFECYCLE_STATUS_FINISHED", "result": result}},
                             {"done": {"agentId": "bc-fixture", "runId": "run-follow-up"}}]
                 if scenario == "follow_up_lost":
@@ -268,6 +326,38 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         git("add", "extra.txt")
                         git("commit", "-m", "unintended follow-up file")
                         git("switch", "main")
+            if third or (method == "ObserveRun" and body.get("runId") == "run-cancel"):
+                identity["run_id"] = "run-cancel"
+                result["runId"] = "run-cancel"
+                result["status"] = "RUN_LIFECYCLE_STATUS_CANCELLED"
+                messages = [sdk("thinking", text=""),
+                            sdk("tool_call", call_id="wait", name="shell", args={"command": "sleep 90"}, status="running")]
+                if third and scenario in {"third_early_finished_stale", "third_early_finished_unavailable"}:
+                    result["status"] = "RUN_LIFECYCLE_STATUS_FINISHED"
+                    messages = messages[:1] + [{"result": {"agentId": "bc-fixture", "runId": "run-cancel", "status": result["status"], "result": result}},
+                                               {"done": {"agentId": "bc-fixture", "runId": "run-cancel"}}]
+                if third and scenario == "third_no_id":
+                    messages = [{}]
+                if third and scenario == "third_wrong_agent":
+                    messages[0]["sdkMessage"]["message"]["agent_id"] = "wrong-agent"
+                if third and scenario == "third_reused_id":
+                    messages[0]["sdkMessage"]["message"]["run_id"] = "run-follow-up"
+                if third and scenario == "third_no_activity":
+                    messages = messages[:1]
+                if method == "ObserveRun":
+                    messages = [{"result": {"agentId": "bc-fixture", "runId": "run-cancel", "status": result["status"], "result": result}},
+                                {"done": {"agentId": "bc-fixture", "runId": "run-cancel"}}]
+                    if scenario == "third_observer_wrong_id":
+                        messages[0]["result"]["runId"] = "wrong-run"
+                    if scenario == "third_observer_bad_status":
+                        messages[0]["result"]["status"] = "RUN_LIFECYCLE_STATUS_FINISHED"
+                    if scenario == "third_ack_only":
+                        messages = [{}]
+                    if scenario == "third_observer_stall":
+                        receipt(stall="third_observer")
+                        time.sleep(30)
+                if third and scenario == "third_late_discard":
+                    close_admission("discard")
             if follow_up and scenario == "follow_up_partial":
                 messages = messages[:1] + [{"sdkMessage": []}]
             for i, message in enumerate(messages):
@@ -291,7 +381,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if scenario in {"cancel_known", "cancel_unconfirmed", "cancel_stall"}:
                 first = json.dumps(messages[2]).encode()
                 data = struct.pack(">BI", 0, len(first)) + first + struct.pack(">BI", 0, 1) + b"["
-            if scenario == "end_error" or (method == "ObserveRun" and scenario == "observer_error"):
+            if scenario == "end_error" or (method == "ObserveRun" and (scenario == "observer_error" or (body.get("runId") == "run-cancel" and scenario == "third_observer_error"))):
                 end = json.dumps({"error": {"code": "internal", "message": KEY + TOKEN}}).encode()
                 data = data[:-7] + struct.pack(">BI", 2, len(end)) + end
             if scenario == "missing_end":
@@ -310,7 +400,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 close_admission("discard")
                 receipt(discard_gate={"send_received_before_closure": before,
                                       "closure_before_init": any(row["event"] == "closure" and row["kind"] == "discard" for row in journal_rows())})
-            if method == "ObserveRun" and "afterOffset" not in body and not scenario.startswith("snapshot_") and scenario not in {"complete_before_drop", "complete_during_attach", "no_observe_offset", "partial_frame_trickle", "cancel_known", "cancel_unconfirmed", "cancel_stall", "bad_flags", "bad_json"}:
+            if method == "ObserveRun" and body.get("runId") != "run-cancel" and "afterOffset" not in body and not scenario.startswith("snapshot_") and scenario not in {"complete_before_drop", "complete_during_attach", "no_observe_offset", "partial_frame_trickle", "cancel_known", "cancel_unconfirmed", "cancel_stall", "bad_flags", "bad_json"}:
                 prefix = b"".join(struct.pack(">BI", 0, len(payload)) + payload for payload in [json.dumps(x).encode() for x in messages[:4]])
                 self.wfile.write(prefix)
                 self.wfile.flush()
@@ -324,7 +414,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     dropped = False
                 receipt(original_observer_closed=dropped)
                 return
-            if method == "Send" and not follow_up and scenario not in {"send_lost", "bad_flags", "bad_json", "early_no_id", "early_wrong_agent", "early_wrong_model", "cancel_known", "cancel_unconfirmed", "cancel_stall", "partial_frame_no_id", "discard_after_send"}:
+            if method == "Send" and not follow_up and not third and scenario not in {"send_lost", "bad_flags", "bad_json", "early_no_id", "early_wrong_agent", "early_wrong_model", "cancel_known", "cancel_unconfirmed", "cancel_stall", "partial_frame_no_id", "discard_after_send"}:
                 prefix = b"".join(struct.pack(">BI", 0, len(payload)) + payload for payload in [json.dumps(x).encode() for x in messages[:3]])
                 self.wfile.write(prefix)
                 self.wfile.flush()
@@ -352,6 +442,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(data[offset:offset + 3])
                 self.wfile.flush()
             return
+        elif method == "GetUsage":
+            response = {"usage": {"usage": {"totalTokens": "24"}, "runs": []}}
+            if scenario == "usage_cost":
+                response["usage"]["cost"] = {"rawCostCents": 2.0, "chargedCents": 1.5}
         elif method == "Me":
             response = {"user": {"userId": "123", "userEmail": KEY, "apiKeyName": TOKEN}}
             if scenario == "key_rejected":
