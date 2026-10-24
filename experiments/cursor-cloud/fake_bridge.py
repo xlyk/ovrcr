@@ -47,7 +47,8 @@ if scenario == "token_symlink":
     token_file.symlink_to(CONFIG["unrelated"])
 receipt(pid=os.getpid(), token_file=str(token_file), root=str(Path(workspace).parent),
         env_key_matches=os.environ.get("CURSOR_API_KEY") == KEY,
-        argv_excludes_secrets=KEY not in str(sys.argv) and TOKEN not in str(sys.argv))
+        github_pat_excluded="GITHUB-SECRET-SENTINEL-364" not in os.environ.values(),
+        argv_excludes_secrets=KEY not in str(sys.argv) and TOKEN not in str(sys.argv) and "GITHUB-SECRET-SENTINEL-364" not in str(sys.argv))
 
 def journal_rows():
     return [json.loads(line) for line in (Path(CONFIG["journal"]) / "events.jsonl").read_text().splitlines()]
@@ -164,6 +165,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 response["extra"] = [{KEY: "unexpected nested property"}]
             if scenario == "bridge_token_key":
                 response[TOKEN] = "unexpected property"
+            if scenario == "github_pat_response_key":
+                response["GITHUB-SECRET-SENTINEL-364"] = "unexpected property"
+            if scenario == "github_pat_nested_key":
+                response["extra"] = [{"GITHUB-SECRET-SENTINEL-364": "unexpected nested property"}]
             if scenario == "creation_no_id":
                 response.pop("agentId")
             if scenario == "creation_wrong_model":

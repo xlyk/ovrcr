@@ -7,8 +7,8 @@ catalog-only path. Run 1 exercises exact-run observation recovery, then Run 2 as
 for the earlier public token and fix in the same conversation. Run 3 requests a
 harmless wait of at most 90 seconds and proves exact-run cancellation. Once all
 three runs are terminal, an optional owned bridge restart retrieves the exact
-completed Run 1 read-only. It changes no OVRCR provider. Live acceptance remains
-NOT RUN (#367). Error cleanup of an earlier run is separate from Run 3's proof. The official Cursor SDK Bridge is separate
+completed Run 1 read-only. It changes no OVRCR provider. Cloud lifecycle acceptance remains
+unverified (#367). Error cleanup of an earlier run is separate from Run 3's proof. The official Cursor SDK Bridge is separate
 from OVRCR's macOS Bridge.
 
 ## Invocation
@@ -26,10 +26,14 @@ real credential use, cloud calls, fixture publication or paid execution.
 2. Obtain the standalone archive for the host from the explicit
    [v1.0.40 release](https://github.com/cursor/sdk-bridge/releases/tag/v1.0.40).
    The client never downloads, selects latest, or uses an installed bridge.
-3. Supply the selected key in the environment variable explicitly named by
-   `credential_ref`. Resolve it with an approved secret manager at execution;
-   never put the key in the manifest, shell command arguments, source or logs.
-   An existing `CURSOR_API_KEY` or IDE login is never a fallback.
+3. Supply the selected Cursor key in the environment variable explicitly named
+   by `credential_ref`. Coding also requires `github_credential_ref` to name
+   `env:OVRCR_POC_GITHUB_PAT` (or another explicitly approved variable) containing
+   the selected GitHub PAT. Resolve both with the approved secret manager at
+   execution; never put values in the manifest, arguments, source, logs or configs.
+   Missing/empty/invalid PAT, aliased credential references or equal credential
+   values stop before bridge startup. Ambient
+   `GH_TOKEN`, `GITHUB_TOKEN`, a keyring login or `CURSOR_API_KEY` is no fallback.
 4. After that separate authorization, invoke:
 
    ```sh
@@ -37,24 +41,34 @@ real credential use, cloud calls, fixture publication or paid execution.
      --manifest /absolute/path/approved-manifest.json \
      --archive /absolute/path/cursor-sdk-bridge-standalone-darwin-arm64.tar.gz \
      --journal /absolute/path/new-private-experiment \
-     --github-config /absolute/path/existing-gh-config \
      --github-login APPROVED_GITHUB_LOGIN
    ```
 
 Add `--preflight-only` and omit `--journal` for catalog checks with zero
-CreateAgent/Send calls. `--help` describes these paths. Coding requires Git at `/usr/bin/git` and an installed `gh` on the initial PATH.
-The nonsecret GitHub login/config prerequisite is separate from the selected Cursor
-key. `gh auth status --active --hostname github.com` must identify the approved
-GitHub login in that config before execution. The client checks only projected
-login/active/state metadata (no `--show-token`). It clears ambient GH_TOKEN and
-GITHUB_TOKEN along with the rest of the inherited environment. Each fetch uses an
-isolated HOME, disables system/global Git configuration and hooks, refuses prompts,
-and supplies only a per-command `gh auth git-credential` helper scoped to the exact
-approved repository URL, with useHttpPath, selected GH_CONFIG_DIR and username.
-An unrelated repository on github.com receives no helper credential. The helper passes its credential directly to Git;
-the client captures no token, writes no auth config and changes no global Git
-settings. This supports an authorized private disposable repository. The client
-never uploads local source.
+CreateAgent/Send calls. That path does not resolve a GitHub PAT and may omit
+`github_credential_ref`. `--help` describes these paths. Coding requires Git at
+`/usr/bin/git`, an installed `gh` on the initial PATH and an exact
+`--github-login` matching the PAT. The selected GitHub identity is separate from
+the Cursor key.
+
+The client supplies only the explicitly selected PAT as `GH_TOKEN` to trusted
+`gh auth status`, PR queries and the Git remote process that invokes the scoped
+credential helper. A new private `GH_CONFIG_DIR` is created inside the owned
+runtime root; no user GitHub config or keyring supplies a fallback. Projected
+metadata must show the exact login, active status, success and
+`tokenSource=GH_TOKEN`. A successful command exit alone is insufficient.
+`--github-config` was intentionally removed: existing coding invocations must add
+`github_credential_ref`, select the PAT and keep `--github-login`.
+
+Each fetch retains isolated HOME, disabled system/global Git configuration and
+hooks, no prompts, and only a per-command `gh auth git-credential` helper scoped
+to the exact approved repository URL with useHttpPath and the selected username.
+An unrelated repository receives no helper credential. The helper passes its
+credential directly to Git; the client captures no token, writes no auth config
+and changes no global settings. The bridge receives only its Cursor key; local
+Git and fixture/test processes receive neither credential. Both selected secrets
+are rejected from private journal keys/values and redacted from final reports.
+The client never uploads local source.
 
 JSON is emitted on stdout, with no raw stderr/discovery/HTTP captures. Save it only
 to the approved evidence destination. Exit 0 requires successful preflight, the requested coding path (unless
@@ -281,7 +295,10 @@ bridge exit, cleanup checks the saved device/inode identities, removes only that
 file and its empty directory, and separately records actual removal. Foreign,
 replaced, nonprivate or unconfirmed token ownership is retained as UNRESOLVED.
 Only known files and empty private directories are removed; unexpected state is
-retained at the reported exact root. Never treat process exit as token deletion.
+retained at the reported exact root. This includes any nonempty private GitHub
+config or HOME metadata such as a gh device identifier; it is reported as retained
+for owned operator inspection rather than recursively deleted. Never treat
+process exit as token deletion.
 
 ## Offline checks
 
@@ -342,6 +359,9 @@ controlled ordering proof, with no product-clock change or widened sleep.
 | Acceptance | Entry-point assertion |
 | --- | --- |
 | Required explicit inputs / no ambient fallback | `test_missing_inputs*`, `test_missing_or_bad_manifest*`, `test_selected_key*` |
+| Explicit GitHub PAT, source and private config | `test_coding_requires_explicit_github_pat*`, `test_selected_github_helper*`, `test_catalog_preflight*` |
+| Credential process separation and redaction | `test_cursor_and_github_credentials*`, `test_selected_github_pat_reaches*`, `test_selected_github_pat_is_redacted*`; actual child environment and common stdout/journal assertions |
+| Unknown private GitHub metadata retained safely | `test_private_github_config_residue*` |
 | Pinned checksum / architecture / archive manifest | `test_checksum_mismatch*`, `test_archive_manifest_mismatch*`, success receipt |
 | Ready handshake, sdk.v1, explicit selected key/model/repository | `test_success*`, `test_runtime_auth_model_and_repository_mismatch*` |
 | Startup / partial headers / body / error / trickle bounds | `test_stalls_and_trickle*` |

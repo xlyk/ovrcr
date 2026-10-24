@@ -110,11 +110,12 @@ def read_json(path):
 def validate_manifest(manifest):
     required = {"credential_ref", "repository_policy", "repository", "disposable", "source_sha",
                 "model", "max_cost_usd", "allowed_effects", "limits"}
-    if set(manifest) != required:
+    if set(manifest) - {"github_credential_ref"} != required:
         raise Failure("manifest fields missing or unknown")
-    if not isinstance(manifest["credential_ref"], str) or not re.fullmatch(
-            r"env:[A-Z][A-Z0-9_]{0,127}", manifest["credential_ref"]):
-        raise Failure("credential_ref must explicitly name one environment variable")
+    for field in ("credential_ref", "github_credential_ref"):
+        if field in manifest and (not isinstance(manifest[field], str) or not re.fullmatch(
+                r"env:[A-Z][A-Z0-9_]{0,127}", manifest[field])):
+            raise Failure(field + " must explicitly name one environment variable")
     repo = manifest["repository"]
     if not isinstance(repo, str) or not re.fullmatch(r"https://github\.com/[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+", repo):
         raise Failure("exact GitHub repository URL required")
@@ -462,27 +463,30 @@ def command(argv, cwd, root, deadlines, resources, expected=0, extra_env=None):
                     deadlines.current = deadline
 
 
-def github_auth(config, login, repository, root, deadlines, resources):
-    if not GH or not config or not Path(config).is_absolute() or not Path(config).is_dir() or not login or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", login):
-        raise Failure("coding requires explicit --github-config, --github-login and installed gh")
-    env = {"GH_CONFIG_DIR": config, "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
+def github_auth(github_key, login, repository, root, deadlines, resources):
+    if not GH or not github_key or not login or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", login):
+        raise Failure("coding requires selected GitHub credential, --github-login and installed gh")
+    config = str(root / "github-config")
+    env = {"GH_CONFIG_DIR": config, "GH_TOKEN": github_key,
+           "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
     query = '.hosts["github.com"] | map({login,active,state,tokenSource})'
     output = command([GH, "auth", "status", "--active", "--hostname", "github.com", "--json", "hosts", "--jq", query],
                      root, root, deadlines, resources, extra_env=env)
     accounts = json.loads(output)
-    if not isinstance(accounts, list) or len(accounts) != 1 or not isinstance(accounts[0], dict) or accounts[0].get("login") != login or accounts[0].get("active") is not True or accounts[0].get("state") != "success":
+    if not isinstance(accounts, list) or len(accounts) != 1 or not isinstance(accounts[0], dict) or accounts[0].get("login") != login or accounts[0].get("active") is not True or accounts[0].get("state") != "success" or accounts[0].get("tokenSource") != "GH_TOKEN":
         raise Failure("selected GitHub login is not the active qualified gh account")
     resources["github_config"] = config
     resources["github_login"] = login
     resources["github_repository"] = repository
-    return {"host": "github.com", "login": login, "active": True,
-            "credential_route": "selected gh config and git-credential; token never captured"}
+    return {"host": "github.com", "login": login, "active": True, "token_source": "GH_TOKEN",
+            "credential_route": "explicit selected PAT and private gh config; token never captured"}
 
 
-def pull_requests(repository, root, deadlines, resources, journal):
-    github_auth(resources["github_config"], resources["github_login"], repository, root, deadlines, resources)
+def pull_requests(repository, root, deadlines, resources, journal, github_key):
+    github_auth(github_key, resources["github_login"], repository, root, deadlines, resources)
     fields = "number,url,title,body,state,isDraft,headRefName,headRefOid,baseRefName,baseRefOid,updatedAt,labels,assignees,reviewRequests,milestone,autoMergeRequest,maintainerCanModify"
-    env = {"GH_CONFIG_DIR": resources["github_config"], "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
+    env = {"GH_CONFIG_DIR": resources["github_config"], "GH_TOKEN": github_key,
+           "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
     output = command([GH, "pr", "list", "--repo", repository, "--state", "all", "--limit", "100", "--json", fields],
                      root, root, deadlines, resources, extra_env=env)
     snapshot = json.loads(output)
@@ -507,7 +511,7 @@ def pull_requests(repository, root, deadlines, resources, journal):
     return canonical
 
 
-def git(argv, checkout, root, deadlines, resources):
+def git(argv, checkout, root, deadlines, resources, github_key=""):
     options = [GIT, "-c", "core.hooksPath=" + os.devnull]
     env = None
     if argv[0] in {"fetch", "ls-remote"}:
@@ -517,21 +521,22 @@ def git(argv, checkout, root, deadlines, resources):
         scope = "credential." + resources["github_repository"]
         options += ["-c", "credential.helper=", "-c", "credential.useHttpPath=true", "-c", scope + ".helper=!" + shlex.quote(GH) + " auth git-credential",
                     "-c", scope + ".username=" + resources["github_login"]]
-        env = {"GH_CONFIG_DIR": resources["github_config"], "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
+        env = {"GH_CONFIG_DIR": resources["github_config"], "GH_TOKEN": github_key,
+               "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
     return command([*options, *argv], checkout, root, deadlines, resources, extra_env=env).strip()
 
 
-def fixture_source(manifest, root, deadlines, resources):
+def fixture_source(manifest, root, deadlines, resources, github_key):
     checkout = root / "verification"
     checkout.mkdir(mode=0o700)
     git(["init", "-q"], checkout, root, deadlines, resources)
     remote = manifest["repository"]
-    git(["fetch", "--quiet", "--no-tags", remote, manifest["source_sha"]], checkout, root, deadlines, resources)
+    git(["fetch", "--quiet", "--no-tags", remote, manifest["source_sha"]], checkout, root, deadlines, resources, github_key)
     selected = git(["rev-parse", "FETCH_HEAD"], checkout, root, deadlines, resources)
     if selected != manifest["source_sha"]:
         raise Failure("independent source fetch returned another revision")
     git(["update-ref", "refs/heads/selected", selected], checkout, root, deadlines, resources)
-    git(["fetch", "--quiet", "--no-tags", remote, "HEAD"], checkout, root, deadlines, resources)
+    git(["fetch", "--quiet", "--no-tags", remote, "HEAD"], checkout, root, deadlines, resources, github_key)
     default = git(["rev-parse", "FETCH_HEAD"], checkout, root, deadlines, resources)
     marker = git(["show", default + ":SOURCE_MARKER"], checkout, root, deadlines, resources)
     if default == selected or marker != DEFAULT_MARKER.strip():
@@ -794,11 +799,11 @@ def collect_run(manifest, key, token, port, submission, journal, deadlines, repo
     return result
 
 
-def coding_run(manifest, key, token, port, journal, root, deadlines, report, state):
+def coding_run(manifest, key, token, port, journal, root, deadlines, report, state, github_key):
     report["coding"] = "BLOCKED"
     report["active_stage"] = "source_fixture"
     journal.ensure_open()
-    source = fixture_source(manifest, root, deadlines, report["resources"])
+    source = fixture_source(manifest, root, deadlines, report["resources"], github_key)
     report["source"] = source
     journal.append({"event": "source", "receipt": source})
     creation = {"idempotencyKey": secrets.token_hex(16), "options": {
@@ -851,7 +856,7 @@ def coding_run(manifest, key, token, port, journal, root, deadlines, report, sta
     if not isinstance(branch, str) or not re.fullmatch(r"[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*", branch):
         raise Failure("result branch is missing or unsafe")
     checkout = root / "verification"
-    git(["fetch", "--quiet", "--no-tags", manifest["repository"], "refs/heads/" + branch], checkout, root, deadlines, report["resources"])
+    git(["fetch", "--quiet", "--no-tags", manifest["repository"], "refs/heads/" + branch], checkout, root, deadlines, report["resources"], github_key)
     tip = git(["rev-parse", "FETCH_HEAD"], checkout, root, deadlines, report["resources"])
     git(["merge-base", "--is-ancestor", manifest["source_sha"], tip], checkout, root, deadlines, report["resources"])
     report["active_stage"] = "result_diff"
@@ -872,13 +877,13 @@ def coding_run(manifest, key, token, port, journal, root, deadlines, report, sta
         report["coding"] = "PASS"
 
 
-def follow_up_run(manifest, key, token, port, journal, root, deadlines, report, state):
+def follow_up_run(manifest, key, token, port, journal, root, deadlines, report, state, github_key):
     report["active_stage"] = "follow_up"
     report["recovery_criteria"]["follow_up"] = {"verdict": "BLOCKED", "reason": "follow-up not yet qualified"}
     journal.ensure_open()
     checkout = root / "verification"
-    refs = git(["ls-remote", manifest["repository"]], checkout, root, deadlines, report["resources"])
-    prs = pull_requests(manifest["repository"], root, deadlines, report["resources"], journal)
+    refs = git(["ls-remote", manifest["repository"]], checkout, root, deadlines, report["resources"], github_key)
+    prs = pull_requests(manifest["repository"], root, deadlines, report["resources"], journal, github_key)
     submission = {"agentId": state["agentId"], "idempotencyKey": secrets.token_hex(16),
                   "message": {"text": "Recall the harmless public continuity token from the earlier turn and the completed fix. "
                               "Do not change files, branches or PRs. Reply exactly on two lines: TOKEN=<earlier token> then "
@@ -890,10 +895,10 @@ def follow_up_run(manifest, key, token, port, journal, root, deadlines, report, 
     expected_git = {"branches": [{"repoUrl": manifest["repository"], "branch": report["result"]["branch"]}]}
     if result.get("git") != expected_git:
         raise Failure("follow-up changed repository/branch/PR metadata")
-    after = git(["ls-remote", manifest["repository"]], checkout, root, deadlines, report["resources"])
+    after = git(["ls-remote", manifest["repository"]], checkout, root, deadlines, report["resources"], github_key)
     if after != refs or (report["result"]["commit"] + "\trefs/heads/" + report["result"]["branch"]) not in refs.splitlines():
         raise Failure("follow-up changed independently verified branch/file state")
-    if pull_requests(manifest["repository"], root, deadlines, report["resources"], journal) != prs:
+    if pull_requests(manifest["repository"], root, deadlines, report["resources"], journal, github_key) != prs:
         raise Failure("follow-up changed independently verified PR state")
     with authority():
         journal.ensure_open()
@@ -1086,7 +1091,7 @@ def cleanup(process, root, token_identity, port, token, deadlines, resources, jo
                 if (root / "verification").exists() and all(x["exit"] != "UNRESOLVED" for x in resources.get("verification_processes", [])):
                     shutil.rmtree(root / "verification")
                     resources["verification_cleanup"] = "REMOVED"
-                for name in ("bridge", "workspace", "state", "home", "tmp"):
+                for name in ("bridge", "workspace", "state", "home", "github-config", "tmp"):
                     path = root / name
                     if name == "bridge":
                         path.unlink(missing_ok=True)
@@ -1134,11 +1139,10 @@ def main(argv=None):
     root = process = token_identity = port = journal = None
     state = {}
     old_controls = {}
-    key = token = ""
+    key = github_key = token = ""
     stage = "inputs"
     parser = Arguments(description=__doc__)
-    parser.add_argument("--github-config", help="explicit existing gh config directory; read by selected credential helper only")
-    parser.add_argument("--github-login", help="exact active GitHub login for independent Git fetches; separate from Cursor key")
+    parser.add_argument("--github-login", help="exact GitHub login verified with the manifest-selected PAT; isolated config, no keyring fallback")
     parser.add_argument("--journal", help="absolute owner-only evidence directory; retained, never replayed")
     parser.add_argument("--preflight-only", action="store_true", help="catalog checks only; zero CreateAgent/Send")
     parser.add_argument("--manifest", required=True, help="explicit approved nonsecret JSON manifest")
@@ -1155,9 +1159,18 @@ def main(argv=None):
                 raise Failure("explicit --journal required for a coding run")
             if args.preflight_only and args.journal:
                 raise Failure("--journal belongs only to the coding path")
+            if not args.preflight_only:
+                reference = manifest.get("github_credential_ref")
+                if reference is None:
+                    raise Failure("coding requires explicit github_credential_ref")
+                github_key = os.environ.get(reference[4:], "")
+                if not github_key or len(github_key) > 4096 or any(c.isspace() for c in github_key):
+                    raise Failure("selected GitHub credential is missing or invalid; no ambient fallback")
+                if reference == manifest["credential_ref"] or github_key == key:
+                    raise Failure("Cursor and GitHub credentials must be distinct")
             if args.journal:
                 stage = "journal"
-                journal = Journal(args.journal, [key])
+                journal = Journal(args.journal, [key, github_key])
                 report["resources"]["journal"] = str(journal.path)
                 for sig, kind in ((signal.SIGUSR1, "cancel"), (signal.SIGUSR2, "discard")):
                     old_controls[sig] = signal.signal(sig, lambda signum, frame, kind=kind: journal.close(kind))
@@ -1166,7 +1179,7 @@ def main(argv=None):
             stage = "pin"
             root = Path(tempfile.mkdtemp(prefix="ovrcr-cursor-poc-")).resolve()
             report["resources"]["private_root"] = str(root)
-            for name in ("workspace", "state", "home", "tmp"):
+            for name in ("workspace", "state", "home", "tmp", "github-config"):
                 (root / name).mkdir(mode=0o700)
             binary, report["pin"] = unpack_archive(args.archive, root, deadlines)
             report["stages"].append({"stage": stage, "verdict": "PASS", "receipt": report["pin"]})
@@ -1214,11 +1227,11 @@ def main(argv=None):
             if not args.preflight_only:
                 report["coding"] = "BLOCKED"
                 stage = "github_auth"
-                report["github_auth"] = github_auth(args.github_config, args.github_login, manifest["repository"], root, deadlines, report["resources"])
+                report["github_auth"] = github_auth(github_key, args.github_login, manifest["repository"], root, deadlines, report["resources"])
                 journal.append({"event": "github_auth", "receipt": report["github_auth"]})
                 stage = "coding"
-                coding_run(manifest, key, token, port, journal, root, deadlines, report, state)
-                follow_up_run(manifest, key, token, port, journal, root, deadlines, report, state)
+                coding_run(manifest, key, token, port, journal, root, deadlines, report, state, github_key)
+                follow_up_run(manifest, key, token, port, journal, root, deadlines, report, state, github_key)
                 cancellation_run(manifest, key, token, port, journal, deadlines, report, state)
                 try:
                     usage = checked_rpc(port, token, "SdkAgentService", "GetUsage", {"agentId": state["agentId"]}, deadlines).get("usage")
@@ -1321,7 +1334,7 @@ def main(argv=None):
     stages_ok = not any(item["verdict"] == "FAIL" for item in report["stages"])
     passed = report["preflight"] == "PASS" and report["coding"] in {"NOT RUN", "PASS"} and clean and journal_ok and stages_ok
     report["outcome"] = "PASS" if passed else "FAIL"
-    report = redact(report, [key, token])
+    report = redact(report, [key, github_key, token])
     print(json.dumps(report, sort_keys=True))
     return 0 if passed else 1
 

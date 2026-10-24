@@ -43,6 +43,7 @@ class PreflightEntryPointTests(unittest.TestCase):
         config = {"audit": str(audit), "unrelated": str(unrelated), "scenario": scenario, "journal": str(journal)}
         git_override = ""
         if coding:
+            manifest["github_credential_ref"] = "env:OVRCR_POC_GITHUB_PAT"
             repo = root / "remote"
             repo.mkdir()
             def git(*args):
@@ -86,10 +87,18 @@ config = """ + repr(str(gh_config)) + r"""
 scenario = """ + repr(scenario) + r"""
 kind = 'pulls' if sys.argv[1:3] == ['pr', 'list'] else 'credential' if 'git-credential' in sys.argv else 'status'
 with open(""" + repr(str(root / "github-audit.jsonl")) + r""", 'a') as audit:
-    audit.write(json.dumps({'kind': kind, 'config_matches': os.environ.get('GH_CONFIG_DIR') == config, 'ambient_excluded': not (os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')), 'pr_argv': sys.argv[1:] if kind == 'pulls' else None}) + '\n')
+    audit.write(json.dumps({'kind': kind, 'config_matches': os.environ.get('GH_CONFIG_DIR') == str(Path(os.environ['HOME']).parent / 'github-config') and os.environ.get('GH_CONFIG_DIR') != config and (Path(os.environ['GH_CONFIG_DIR']).stat().st_mode & 0o777) == 0o700, 'selected_pat_matches': os.environ.get('GH_TOKEN') == 'GITHUB-SECRET-SENTINEL-364', 'ambient_excluded': not os.environ.get('GITHUB_TOKEN') and os.environ.get('GH_TOKEN') not in {'AMBIENT_GH_MUST_NOT_WIN', 'AMBIENT_GITHUB_MUST_NOT_WIN'}, 'pr_argv': sys.argv[1:] if kind == 'pulls' else None}) + '\n')
+if scenario == 'github_config_residue':
+    residue = Path(os.environ['GH_CONFIG_DIR']) / 'device-id'
+    fd = os.open(residue, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as output:
+        output.write('owned-nonsecret-device-id')
 if kind == 'status':
+    if scenario == 'github_pat_error':
+        print('GITHUB-SECRET-SENTINEL-364')
+        sys.exit(1)
     changed_account = scenario == 'pr_account_after' and Path(""" + repr(str(root / "pr-effects.json")) + r""").exists()
-    print(json.dumps([{'login': 'other' if scenario == 'github_wrong_login' or changed_account else 'fixture', 'active': True, 'state': 'error' if scenario == 'github_auth_bad' else 'success', 'tokenSource': 'keyring'}]))
+    print(json.dumps([{'login': 'other' if scenario == 'github_wrong_login' or changed_account else 'fixture', 'active': True, 'state': 'error' if scenario == 'github_auth_bad' else 'success', 'tokenSource': 'keyring' if scenario == 'github_wrong_token_source' else 'GH_TOKEN'}]))
 elif kind == 'pulls':
     request_shape = '--repo' in sys.argv and sys.argv[sys.argv.index('--repo') + 1] == 'https://github.com/fixture/disposable' and '--state' in sys.argv and sys.argv[sys.argv.index('--state') + 1] == 'all' and '--limit' in sys.argv and sys.argv[sys.argv.index('--limit') + 1] == '100'
     assert request_shape
@@ -122,7 +131,7 @@ else:
     request = sys.stdin.read()
     if scenario == 'github_helper_refused' or 'host=github.com' not in request:
         sys.exit(1)
-    print('username=fixture\npassword=GITHUB-SECRET-SENTINEL-364\n')
+    print('username=fixture\npassword=' + os.environ.get('GH_TOKEN', '') + '\n')
 """)
             gh_peer.chmod(0o700)
             shim = root / "git-peer"
@@ -215,6 +224,15 @@ original_killpg = g["os"].killpg
 owned = []
 scenario = %r
 def tracked_spawn(*args, **kwargs):
+    if journal_path is not None:
+        argv, env = args[0], kwargs.get("env", {})
+        kind = ("bridge" if Path(argv[0]).name == "bridge" else "gh" if argv[0] == g["GH"] else
+                "git_remote" if argv[0] == g["GIT"] and any(item in argv for item in ("fetch", "ls-remote")) else
+                "git_local" if argv[0] == g["GIT"] else "fixture_tests")
+        with (journal_path.parent / "process-env-audit.jsonl").open("a") as audit:
+            audit.write(json.dumps({"kind": kind, "pat_present": "GITHUB-SECRET-SENTINEL-364" in env.values(),
+                                   "cursor_key_present": "API-SECRET-SENTINEL-363" in env.values(),
+                                   "secret_in_argv": any(secret in str(argv) for secret in ("GITHUB-SECRET-SENTINEL-364", "API-SECRET-SENTINEL-363", "BRIDGE-SECRET-SENTINEL-363"))}) + chr(10))
     process = original_spawn(*args, **kwargs)
     owned.append(process)
     if scenario in {"verification_reap_delayed", "verification_reap_exhausted", "verification_reap_interrupted", "verification_reap_transition", "verification_reap_termination"} and args[0][0] == g["GIT"] and "fetch" in args[0]:
@@ -339,13 +357,15 @@ finally:
         process.wait(timeout=1)
 sys.exit(result)
 """ % (*budgets, git_override, scenario)
-        env = dict(os.environ, EXPLICIT_FIXTURE_KEY="API-SECRET-SENTINEL-363", CURSOR_API_KEY="AMBIENT-MUST-NOT-WIN")
+        env = dict(os.environ, EXPLICIT_FIXTURE_KEY="API-SECRET-SENTINEL-363", CURSOR_API_KEY="AMBIENT-MUST-NOT-WIN", OVRCR_POC_GITHUB_PAT="GITHUB-SECRET-SENTINEL-364")
+        if coding:
+            env["GH_CONFIG_DIR"] = str(gh_config)
         if env_change:
             env_change(env)
         start = time.monotonic()
         run = subprocess.run([sys.executable, "-I", "-c", runner, str(CLIENT), host + "-" + arch,
                               digest, "--manifest", str(manifest_path), "--archive", str(archive),
-                              *(["--journal", str(journal), "--github-config", str(gh_config), "--github-login", "fixture"] if coding else ["--preflight-only"])],
+                              *(["--journal", str(journal), "--github-login", "fixture"] if coding else ["--preflight-only"])],
                              env=env, text=True, capture_output=True, timeout=budgets[1] + 2)
         elapsed = time.monotonic() - start
         events = [json.loads(line) for line in audit.read_text().splitlines()] if audit.exists() else []
@@ -385,7 +405,7 @@ sys.exit(result)
             items = {"report.json": run.stdout.encode(), "wire.json": json.dumps(events, sort_keys=True).encode()}
             if journal.exists():
                 items.update({"journal-" + path.name: path.read_bytes() for path in journal.iterdir() if path.is_file()})
-            for name in ("verification-stall.json", "fault-gate.json", "github-audit.jsonl", "git-auth-audit.jsonl", "process-latency.jsonl", "verification-reaping.jsonl"):
+            for name in ("verification-stall.json", "fault-gate.json", "github-audit.jsonl", "git-auth-audit.jsonl", "process-env-audit.jsonl", "process-latency.jsonl", "verification-reaping.jsonl"):
                 if (root / name).exists():
                     items[name] = (root / name).read_bytes()
             for name, data in items.items():
@@ -719,7 +739,7 @@ sys.exit(result)
                 else:
                     gh_rows = [json.loads(line) for line in (self.case_root / "github-audit.jsonl").read_text().splitlines()]
                     self.assertEqual(sum(row["kind"] == "pulls" for row in gh_rows), 2)
-                    self.assertTrue(all(row["ambient_excluded"] and row["config_matches"] for row in gh_rows))
+                    self.assertTrue(all(row["ambient_excluded"] and row["config_matches"] and row["selected_pat_matches"] for row in gh_rows))
                     rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
                     results = [row["receipt"]["result"]["git"] for row in rows if row["event"] == "result"]
                     self.assertEqual(results[0], results[1])
@@ -851,14 +871,83 @@ sys.exit(result)
                 self.assertFalse(set(methods) & {"ListRuns", "ResumeAgent"})
                 self.assertTrue((self.case_root / "journal" / "events.jsonl").exists())
 
+    def test_coding_requires_explicit_github_pat_even_with_ambient_tokens(self):
+        cases = [
+            (lambda m: m.pop("github_credential_ref"), lambda e: None),
+            (lambda m: None, lambda e: e.pop("OVRCR_POC_GITHUB_PAT")),
+            (lambda m: None, lambda e: e.update(OVRCR_POC_GITHUB_PAT="")),
+            (lambda m: None, lambda e: e.update(OVRCR_POC_GITHUB_PAT="not a token")),
+            (lambda m: None, lambda e: e.update(OVRCR_POC_GITHUB_PAT="x" * 4097)),
+            (lambda m: m.update(github_credential_ref="ambient"), lambda e: None),
+        ]
+        for mutate, change in cases:
+            with self.subTest(case=cases.index((mutate, change))):
+                def environment(env):
+                    env.update(GH_TOKEN="AMBIENT_GH_MUST_NOT_WIN", GITHUB_TOKEN="AMBIENT_GITHUB_MUST_NOT_WIN")
+                    change(env)
+                run, report, events = self.run_fixture(coding=True, mutate=mutate, env_change=environment)
+                self.assertEqual(run.returncode, 1, report)
+                self.assertEqual(report["stages"][-1]["stage"], "inputs")
+                self.assertEqual(report["attempts"], {"CreateAgent": 0, "Send": 0})
+                self.assertFalse(events)
+                self.assertFalse((self.case_root / "github-audit.jsonl").exists())
+
+    def test_cursor_and_github_credentials_must_be_distinct_before_bridge_startup(self):
+        cases = [
+            (lambda m: m.update(github_credential_ref=m["credential_ref"]), lambda e: None),
+            (lambda m: None, lambda e: e.update(OVRCR_POC_GITHUB_PAT=e["EXPLICIT_FIXTURE_KEY"])),
+        ]
+        for mutate, change in cases:
+            with self.subTest(case=cases.index((mutate, change))):
+                run, report, events = self.run_fixture(coding=True, mutate=mutate, env_change=change)
+                self.assertEqual(run.returncode, 1, report)
+                self.assertEqual(report["stages"][-1]["stage"], "inputs")
+                self.assertIn("credentials must be distinct", report["stages"][-1]["reason"])
+                self.assertEqual(report["attempts"], {"CreateAgent": 0, "Send": 0})
+                self.assertFalse(events)
+
+    def test_selected_github_pat_reaches_only_trusted_authentication_processes(self):
+        run, report, events = self.run_fixture(coding=True, env_change=lambda env: env.update(
+            GH_TOKEN="AMBIENT_GH_MUST_NOT_WIN", GITHUB_TOKEN="AMBIENT_GITHUB_MUST_NOT_WIN"))
+        self.assertEqual(run.returncode, 0, report)
+        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
+        self.assertEqual(report["github_auth"]["token_source"], "GH_TOKEN")
+        self.assertTrue(all(row["github_pat_excluded"] for row in events if "token_file" in row))
+        children = [json.loads(row) for row in (self.case_root / "process-env-audit.jsonl").read_text().splitlines()]
+        self.assertEqual({row["kind"] for row in children}, {"bridge", "gh", "git_local", "git_remote", "fixture_tests"})
+        for child in children:
+            self.assertEqual(child["pat_present"], child["kind"] in {"gh", "git_remote"}, child)
+            self.assertEqual(child["cursor_key_present"], child["kind"] == "bridge", child)
+            self.assertFalse(child["secret_in_argv"], child)
+        gh_rows = [json.loads(row) for row in (self.case_root / "github-audit.jsonl").read_text().splitlines()]
+        self.assertTrue(all(row["selected_pat_matches"] and row["config_matches"] and row["ambient_excluded"] for row in gh_rows))
+
+    def test_private_github_config_residue_is_retained_with_confirmed_token_cleanup(self):
+        run, report, events = self.run_fixture("github_config_residue", coding=True)
+        self.assertEqual(run.returncode, 0, report)
+        self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
+        self.assertEqual(report["resources"]["token_cleanup"], "REMOVED")
+        self.assertEqual(report["resources"]["private_root_cleanup"], "RETAINED; inspect exact owned root")
+        residue = Path(report["resources"]["private_root"]) / "github-config" / "device-id"
+        self.assertEqual(residue.read_text(), "owned-nonsecret-device-id")
+        self.assertEqual(residue.stat().st_mode & 0o777, 0o600)
+
+    def test_selected_github_pat_is_redacted_from_receipts_reports_and_errors(self):
+        for scenario in ("github_pat_response_key", "github_pat_nested_key", "github_pat_error"):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True)
+                self.assertEqual(run.returncode, 1, report)
+                self.assertEqual(report["stages"][-1]["stage"], "github_auth" if scenario == "github_pat_error" else "CreateAgent")
+                self.assertEqual(report["attempts"], {"CreateAgent": 0 if scenario == "github_pat_error" else 1, "Send": 0})
+
     def test_selected_github_helper_authenticates_private_fetch_and_refuses_bad_auth(self):
-        for scenario in ("success", "github_wrong_login", "github_auth_bad", "github_helper_refused"):
+        for scenario in ("success", "github_wrong_login", "github_auth_bad", "github_wrong_token_source", "github_helper_refused"):
             with self.subTest(scenario=scenario):
                 run, report, events = self.run_fixture(scenario, coding=True,
                                                        env_change=lambda env: env.update(GH_TOKEN="AMBIENT_GH_MUST_NOT_WIN", GITHUB_TOKEN="AMBIENT_GITHUB_MUST_NOT_WIN"))
                 self.assertEqual(run.returncode, 0 if scenario == "success" else 1, report)
                 gh_rows = [json.loads(line) for line in (self.case_root / "github-audit.jsonl").read_text().splitlines()]
-                self.assertTrue(all(row["ambient_excluded"] and row["config_matches"] for row in gh_rows))
+                self.assertTrue(all(row["ambient_excluded"] and row["config_matches"] and row["selected_pat_matches"] for row in gh_rows))
                 if scenario == "success":
                     self.assertEqual(sum(row["kind"] == "credential" for row in gh_rows), 5)
                     git_rows = [json.loads(line) for line in (self.case_root / "git-auth-audit.jsonl").read_text().splitlines()]
@@ -1169,6 +1258,12 @@ sys.exit(result)
                 self.assertEqual(run.returncode, 1)
                 self.assertEqual(report["stages"][-1]["stage"], "inputs")
                 self.assertEqual(events, [])
+
+    def test_catalog_preflight_does_not_require_or_resolve_github_pat(self):
+        run, report, events = self.run_fixture(env_change=lambda env: env.pop("OVRCR_POC_GITHUB_PAT"))
+        self.assertEqual(run.returncode, 0, report)
+        self.assertEqual(report["preflight"], "PASS")
+        self.assertEqual(report["attempts"], {"CreateAgent": 0, "Send": 0})
 
     def test_selected_key_is_required_despite_ambient_login(self):
         run, report, events = self.run_fixture(env_change=lambda env: env.pop("EXPLICIT_FIXTURE_KEY"))
