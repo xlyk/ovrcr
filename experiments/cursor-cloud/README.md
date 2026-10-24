@@ -123,10 +123,16 @@ and original operation key. The client fsyncs the request and directory, then
 fsyncs its attempt claim in `events.jsonl`, before dispatch. Credentials enter only
 the in-memory outgoing request. Claims retain the original key and request digest.
 Secrets in JSON property names and nested values are rejected before publication.
-Creation identity/model must be durably saved before GetAgent and the separately
-keyed Send. GetAgent must match the exact conversation, cloud runtime and repository.
-The early Send init supplies the exact run/agent/model receipt. Only after its
-receipt is durable is the original request removed and that removal synced.
+The pinned SDK's CreateAgent allocates a local cloud handle; the first Send
+creates the backend agent and run together. The allocated agent ID/model must be
+durably saved before the separately keyed Send. Its early init supplies the exact
+run/agent/model receipt. Only after that receipt is durable is the original request
+removed and that removal synced. GetAgent then must match the exact conversation,
+cloud runtime and repository before observation or tool-event processing. A failed
+metadata check blocks coding/follow-up qualification and leaves the exact known run
+available for bounded error cleanup. Criterion 4 requires validated metadata, not
+merely a Send attempt. Closed admission still retains late Send/result receipts
+without dispatching a metadata lookup or new work.
 Missing receipts retain the original request and close admission. Journal capacity
 is 256 KiB with closure reserve; storage failure blocks new effects and never
 evicts an unresolved record. Owner-only plaintext remains accessible to same-user
@@ -347,6 +353,14 @@ returns its report; fixture cleanup never qualifies client exit or token removal
 Tests remove only their own roots after recording
 client-reported uncertainty. CI runs this full feature suite on macOS and Linux.
 
+The peer models lazy cloud creation: GetAgent returns 404 until the first Send.
+`test_cloud_metadata_waits_for_first_send_materialization` checks durable allocation,
+Send claim/init, metadata, source probe and verified result in order. Wrong cloud
+identity/runtime/repository or unavailable metadata after init must keep criterion 4
+BLOCKED, dispatch no follow-up, and clean up only the exact known run. The
+close-before-Send fixture injects discard immediately after the durable CreateAgent
+receipt, preserving its zero-Send boundary without a pre-Send metadata lookup.
+
 The discard-after-Send peer receives the real claimed request, records durable
 discard through the existing signal/journal gate, then emits the early identity and
 terminal result. Both must be retained as late, with no observation or new work.
@@ -381,7 +395,7 @@ The #364 acceptance cases map to these additional entry-point assertions:
 | 1: existing path, explicit cloud options/SHA/model, one creation/Send | `test_coding_verifies_patch_and_exact_write_ahead_order` plus peer exact request checks |
 | 2: falsifiable fixture, selected/default source distinction and private-fetch auth | `test_independent_fixture_source_admission_precedes_any_creation`, `test_selected_github_helper*` and success baseline/result test receipts |
 | 3: private lock, durable claims, bounded capacity | `test_private_owner_storage_and_capacity_fail_before_new_effect` and external write-ahead checks |
-| 4: durable exact creation before GetAgent/Send | success, `test_lost_receipts*`, creation/GetAgent identity/model cases in `test_coding_rejects*` |
+| 4: durable allocated identity before Send; exact backend metadata after durable init | `test_cloud_metadata_waits_for_first_send_materialization`, `test_lost_receipts*`, creation/GetAgent identity/model and metadata-failure cleanup cases in `test_coding_rejects*` |
 | 5: exact early run, source probe, framing/result/end | `test_coding_rejects*`; success includes split frames, keepalives and unknown envelopes |
 | 6: source, ancestry, allowed history/diff, independent tests | success and wrong-source/ancestry/diff/failed-tests cases in `test_coding_rejects*` |
 | 7: uncertain receipt retention; no replacement/retry/guessed run | `test_lost_receipts*`, storage/identity cases and common method-count assertions |

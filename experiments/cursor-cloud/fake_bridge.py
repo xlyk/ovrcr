@@ -174,9 +174,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if scenario == "creation_wrong_model":
                 response["model"] = {"id": "wrong"}
         elif method == "GetAgent":
+            # SDK 1.0.40 allocates locally; the first Send creates the cloud agent.
+            if sends == 0 or scenario == "get_agent_unavailable":
+                receipt(cloud_metadata_uncreated=sends == 0)
+                self.send_response(404)
+                self.end_headers()
+                return
             response = {"agent": {"agentId": "bc-fixture", "cloud": {"repos": ["https://github.com/fixture/disposable"]}}}
-            if scenario == "close_before_send":
-                close_admission("discard")
             if scenario == "get_agent_wrong_id":
                 response["agent"]["agentId"] = "wrong-agent"
             if scenario == "get_agent_local":

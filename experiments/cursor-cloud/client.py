@@ -736,6 +736,20 @@ def collect_run(manifest, key, token, port, submission, journal, deadlines, repo
                 journal.receipt("Send", identity)
                 state.update(identity, active=True)
                 report["run" if coding else "follow_up_run"] = identity
+                if coding and not journal.closed:
+                    # Cloud CreateAgent allocates locally; Send materializes metadata.
+                    journal.ensure_open()
+                    report["active_stage"] = "GetAgent"
+                    agent = checked_rpc(port, token, "SdkAgentService", "GetAgent",
+                                        {"agentId": state["agentId"], "options": {"apiKey": key}}, deadlines)
+                    journal.append({"event": "GetAgent", "receipt": agent})
+                    info = agent.get("agent")
+                    if not isinstance(info, dict) or not isinstance(info.get("cloud"), dict):
+                        raise Failure("GetAgent cloud identity/repository mismatch")
+                    if agent.get("agent", {}).get("agentId") != state["agentId"] or "local" in agent.get("agent", {}) or agent.get("agent", {}).get("cloud", {}).get("repos") != [manifest["repository"]]:
+                        raise Failure("GetAgent cloud identity/repository mismatch")
+                    report["cloud_identity"] = info
+                    report["active_stage"] = "Send"
             if message.get("agent_id") != state["agentId"] or message.get("run_id") != state["runId"]:
                 raise Failure("stream agent/run identity mismatch")
             if sdk["type"] == "tool_call" and not source_proven:
@@ -825,15 +839,6 @@ def coding_run(manifest, key, token, port, journal, root, deadlines, report, sta
     state["agentId"] = response["agentId"]
     report["agent"] = response
     journal.ensure_open()
-    report["active_stage"] = "GetAgent"
-    agent = checked_rpc(port, token, "SdkAgentService", "GetAgent",
-                        {"agentId": state["agentId"], "options": {"apiKey": key}}, deadlines)
-    journal.append({"event": "GetAgent", "receipt": agent})
-    info = agent.get("agent")
-    if not isinstance(info, dict) or not isinstance(info.get("cloud"), dict):
-        raise Failure("GetAgent cloud identity/repository mismatch")
-    if agent.get("agent", {}).get("agentId") != state["agentId"] or "local" in agent.get("agent", {}) or agent.get("agent", {}).get("cloud", {}).get("repos") != [manifest["repository"]]:
-        raise Failure("GetAgent cloud identity/repository mismatch")
     continuity = secrets.token_hex(16)
     journal.append({"event": "continuity_token", "token": continuity})
     report["continuity_token"] = continuity
@@ -1314,7 +1319,7 @@ def main(argv=None):
         "1": ("agent" in report, report.get("operation_keys", "no admitted request")),
         "2": ("source" in report, report.get("source", "fixture source unverified")),
         "3": (report["resources"].get("journal_health") == "DURABLE", report["resources"].get("journal", "no journal")),
-        "4": (report["attempts"]["Send"] in {1, 2, 3}, report.get("agent", "creation/GetAgent unverified")),
+        "4": ("cloud_identity" in report, {"allocation": report.get("agent"), "cloud_identity": report.get("cloud_identity")}),
         "5": ("stream" in report, {"run": report.get("run"), "stream": report.get("stream")}),
         "6": (report["coding"] == "PASS", report.get("result", "source/effect result unverified")),
         "7": ("UNRESOLVED" not in report["resources"].get("remote_outcome", "UNRESOLVED"), report["resources"].get("remote_outcome", "no remote identity receipt")),

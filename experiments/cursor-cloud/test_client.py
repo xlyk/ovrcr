@@ -322,6 +322,11 @@ def fault_at_boundary(frame, event, arg):
             else:
                 gate["outcome"] = "control gate unavailable"
             (journal_path.parent / "fault-gate.json").write_text(json.dumps(gate))
+        if scenario == "close_before_send" and event == "return" and frame.f_code.co_name == "receipt" and frame.f_locals.get("method") == "CreateAgent":
+            fault_fired = True
+            blocked = signal.SIGUSR2 in signal.pthread_sigmask(signal.SIG_BLOCK, set())
+            (journal_path.parent / "fault-gate.json").write_text(json.dumps({"boundary": "durable allocation before Send claim", "signal_blocked": blocked}))
+            os.kill(os.getpid(), signal.SIGUSR2)
         if scenario == "third_discard_before_cancel_claim" and event == "return" and frame.f_code.co_name == "append" and frame.f_locals.get("value", {}).get("event") == "cancellation_activity":
             fault_fired = True
             blocked = signal.SIGUSR2 in signal.pthread_sigmask(signal.SIG_BLOCK, set())
@@ -341,7 +346,7 @@ def fault_at_boundary(frame, event, arg):
             (journal_path.parent / "fault-gate.json").write_text(json.dumps({"boundary": "coding_run return", "coding": frame.f_locals["report"]["coding"], "signal": "SIGALRM", "total_budget_remaining": frame.f_locals["deadlines"].total - time.monotonic()}))
             os.kill(os.getpid(), signal.SIGALRM)
     return fault_at_boundary
-if competing_alarm or scenario in {"discard_after_send", "capacity_at_cleanup", "discard_at_verification", "alarm_after_coding_pass", "third_discard_before_cancel_claim"}:
+if competing_alarm or scenario in {"close_before_send", "discard_after_send", "capacity_at_cleanup", "discard_at_verification", "alarm_after_coding_pass", "third_discard_before_cancel_claim"}:
     sys.settrace(fault_at_boundary)
 if scenario in {"verification_reap_delayed", "verification_reap_exhausted", "verification_reap_interrupted", "verification_reap_transition", "verification_reap_termination"}:
     original_cleanup = g["cleanup"]
@@ -776,13 +781,38 @@ sys.exit(result)
         self.assertEqual(phase["phase"], "pr_inventory_stall")
         self.assertIn(phase["pid"], [row["pid"] for row in report["resources"]["verification_processes"]])
 
+    def test_cloud_metadata_waits_for_first_send_materialization(self):
+        run, report, events = self.run_fixture(coding=True)
+        self.assertEqual(run.returncode, 0, report)
+        self.assertEqual(report["coding"], "PASS")
+        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
+        methods = [row["method"] for row in events if "method" in row]
+        self.assertEqual(methods.count("GetAgent"), 1)
+        self.assertEqual(report["criteria"]["4"]["verdict"], "PASS")
+        self.assertLess(methods.index("CreateAgent"), methods.index("Send"))
+        self.assertLess(methods.index("Send"), methods.index("GetAgent"))
+        self.assertLess(methods.index("GetAgent"), methods.index("GetRun"))
+        self.assertFalse(any(row.get("cloud_metadata_uncreated") for row in events))
+        rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+        allocated = next(i for i, row in enumerate(rows) if row["event"] == "receipt" and row["method"] == "CreateAgent")
+        claimed = next(i for i, row in enumerate(rows) if row["event"] == "claim" and row["method"] == "Send")
+        materialized = next(i for i, row in enumerate(rows) if row["event"] == "receipt" and row["method"] == "Send")
+        metadata = next(i for i, row in enumerate(rows) if row["event"] == "GetAgent")
+        probe = next(i for i, row in enumerate(rows) if row["event"] == "source_probe")
+        verified = next(i for i, row in enumerate(rows) if row["event"] == "verified")
+        self.assertLess(allocated, claimed)
+        self.assertLess(claimed, materialized)
+        self.assertLess(materialized, metadata)
+        self.assertLess(metadata, probe)
+        self.assertLess(probe, verified)
+
     def test_coding_verifies_patch_and_exact_write_ahead_order(self):
         run, report, events = self.run_fixture(coding=True)
         self.assertEqual(run.returncode, 0, report)
         self.assertEqual(report["coding"], "PASS")
         self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
         methods = [event["method"] for event in events if "method" in event]
-        self.assertEqual(methods, ["Ping", "GetVersion", "Ping", "Me", "ListModels", "ListRepositories", "CreateAgent", "GetAgent", "Send", "GetRun", "ObserveRun", "GetRun", "ObserveRun", "Send", "Send", "CancelRun", "GetRun", "GetUsage", "Shutdown", "GetRun", "Shutdown"])
+        self.assertEqual(methods, ["Ping", "GetVersion", "Ping", "Me", "ListModels", "ListRepositories", "CreateAgent", "Send", "GetAgent", "GetRun", "ObserveRun", "GetRun", "ObserveRun", "Send", "Send", "CancelRun", "GetRun", "GetUsage", "Shutdown", "GetRun", "Shutdown"])
         self.assertTrue(all(event["write_ahead"] for event in events if event.get("method") in {"CreateAgent", "Send"}))
         self.assertEqual(report["result"]["tests"], "PASS; 3 tests")
         self.assertEqual(report["control_recovery"], "PASS")
@@ -852,13 +882,14 @@ sys.exit(result)
 
     def test_coding_rejects_unverified_source_identity_results_and_framing(self):
         cases = ["wrong_source", "assistant_source_only", "late_source_probe", "wrong_model", "wrong_diff", "failed_tests", "failed_run",
-                 "creation_no_id", "creation_wrong_model", "get_agent_wrong_id", "get_agent_local", "get_agent_wrong_repo",
+                 "creation_no_id", "creation_wrong_model", "get_agent_wrong_id", "get_agent_local", "get_agent_wrong_repo", "get_agent_unavailable",
                  "early_no_id", "early_wrong_agent", "early_wrong_model", "terminal_wrong_run", "terminal_wrong_model",
                  "missing_result", "missing_done", "wrong_done", "end_error", "missing_end", "bad_flags", "bad_json", "duplicate_result", "after_done", "result_bad_git", "result_bad_branch", "sdk_bad_payload", "probe_bool_exit", "wrong_ancestry"]
         reasons = {
             "wrong_source": "initial source probe differs", "assistant_source_only": "coding lacks", "late_source_probe": "initial source probe is missing",
             "wrong_model": "run result/model", "wrong_diff": "result changes files", "failed_tests": "independent Git/fixture command failed", "failed_run": "run result/model",
             "creation_no_id": "creation identity/model", "creation_wrong_model": "creation identity/model",
+            "get_agent_unavailable": "RPC rejected (HTTP 404)",
             "get_agent_wrong_id": "GetAgent cloud identity", "get_agent_local": "GetAgent cloud identity", "get_agent_wrong_repo": "GetAgent cloud identity",
             "early_no_id": "early original-stream", "early_wrong_agent": "early original-stream", "early_wrong_model": "early original-stream",
             "terminal_wrong_run": "terminal agent/run", "terminal_wrong_model": "run result/model", "missing_result": "done identity/order",
@@ -874,6 +905,19 @@ sys.exit(result)
                 self.assertEqual(run.returncode, 1, report)
                 self.assertNotEqual(report["coding"], "PASS")
                 self.assertIn(reasons[scenario], report["stages"][-1]["reason"], report)
+                if scenario.startswith("get_agent_"):
+                    self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1})
+                    self.assertEqual(report["stages"][-1]["stage"], "GetAgent")
+                    self.assertEqual(report["criteria"]["4"]["verdict"], "BLOCKED")
+                    self.assertEqual(report["resources"]["remote_outcome"], "RUN_LIFECYCLE_STATUS_CANCELLED")
+                    self.assertEqual(report["run"]["runId"], "run-fixture")
+                    self.assertNotIn("source_probe", report)
+                    self.assertNotIn("result", report)
+                    cancels = [e for e in events if e.get("method") == "CancelRun"]
+                    self.assertEqual(len(cancels), 1)
+                    self.assertTrue(cancels[0]["exact_cancel"])
+                    self.assertEqual(cancels[0]["run_id"], "run-fixture")
+                    self.assertNotIn("ObserveRun", [e.get("method") for e in events])
                 methods = [e["method"] for e in events if "method" in e]
                 self.assertEqual(methods.count("CreateAgent"), 1)
                 self.assertLessEqual(methods.count("Send"), 1)
@@ -1076,6 +1120,11 @@ sys.exit(result)
                 self.assertFalse(any(row["event"] == "claim" for row in rows[closure + 1:]))
                 self.assertFalse(any(row["event"] == "verified" for row in rows))
                 self.assertFalse(list((self.case_root / "journal").glob("*.request.json")))
+                if scenario == "close_before_send":
+                    gate = json.loads((self.case_root / "fault-gate.json").read_text())
+                    self.assertEqual(gate["boundary"], "durable allocation before Send claim")
+                    self.assertFalse(gate["signal_blocked"])
+                    self.assertTrue(any(row["event"] == "receipt" and row["method"] == "CreateAgent" and not row["late"] for row in rows[:closure]))
                 if "after_create" in scenario:
                     self.assertTrue(any(row["event"] == "receipt" and row["late"] for row in rows[closure + 1:]))
                 if scenario == "discard_after_send":
