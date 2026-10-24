@@ -21,7 +21,7 @@ CODING_BUDGETS = (15, 20, 1.5, 0.75)
 
 
 class PreflightEntryPointTests(unittest.TestCase):
-    def run_fixture(self, scenario="success", mutate=None, pin_change=None, env_change=None, budgets=None, coding=False, process_delay=0):
+    def run_fixture(self, scenario="success", mutate=None, pin_change=None, env_change=None, budgets=None, coding=False, process_delay=0, source_events=None):
         if budgets is None:
             budgets = CODING_BUDGETS if coding else PREFLIGHT_BUDGETS
         temp = tempfile.TemporaryDirectory()
@@ -187,6 +187,8 @@ os.execv('/usr/bin/git', ['git', '-c', """ + repr("url." + str(repo) + ".instead
                 fd = os.open(journal / "events.jsonl", os.O_WRONLY | os.O_CREAT, 0o600)
                 os.write(fd, b'{"event":"prior-unresolved-claim"}\n')
                 os.close(fd)
+        if source_events is not None:
+            config["source_events"] = json.loads(json.dumps(source_events).replace("SOURCE_SHA", manifest["source_sha"]))
         if mutate:
             mutate(manifest)
         manifest_path = root / "manifest.json"
@@ -792,6 +794,35 @@ sys.exit(result)
                 else:
                     self.assertEqual(run.returncode, 1, report)
                     self.assertIn("initial source probe differs", report["stages"][-1]["reason"])
+                    self.assertNotIn("source_probe", report)
+                    self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1})
+
+    def test_source_probe_replays_redacted_cloud_capture(self):
+        capture = Path(__file__).with_name("source-tool-capture.json")
+        for fault in (None, "source", "command", "run", "call"):
+            with self.subTest(fault=fault):
+                messages = json.loads(capture.read_text())
+                if fault == "source":
+                    messages[-1]["result"]["success"]["stdout"] = "wrong source\n"
+                if fault == "command":
+                    messages[1]["args"]["command"] = "echo wrong command"
+                if fault == "run":
+                    messages[1]["run_id"] = "wrong-run"
+                if fault == "call":
+                    messages[1]["call_id"] = "different-call"
+                run, report, events = self.run_fixture("source_capture", coding=True, source_events=messages)
+                self.assertEqual(run.returncode, 0 if fault is None else 1, report)
+                if fault is None:
+                    self.assertEqual(report["source_probe"]["verdict"], "PASS")
+                    self.assertEqual(report["result"]["tests"], "PASS; 3 tests")
+                    self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
+                    rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+                    captured = [row["receipt"] for row in rows if row["event"] == "source_tool_event"]
+                    self.assertEqual(len(captured), 3)
+                    self.assertNotIn("args", captured[0])
+                    self.assertEqual(captured[-1]["result"]["success"]["stdout"], report["source"]["source_sha"] + "\nOVRCR_SELECTED_BASELINE_364\n")
+                else:
+                    self.assertIn({"source": "differs", "command": "missing/unrecognized", "run": "identity mismatch", "call": "ordering/correlation"}[fault], report["stages"][-1]["reason"])
                     self.assertNotIn("source_probe", report)
                     self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1})
 

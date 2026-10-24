@@ -273,6 +273,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     completed["call_id"] = "different-call"
                 if scenario == "source_sdk_wrong_command":
                     completed["args"] = {"command": "echo " + KEY}
+            if scenario == "source_capture":
+                messages[3:5] = [{"sdkMessage": {"type": "tool_call", "message": message}} for message in CONFIG["source_events"]]
             if scenario == "result_bad_git":
                 result["git"] = []
             if scenario == "result_bad_branch":

@@ -141,14 +141,22 @@ programs and backups.
 The prompt requires the first tool to execute exactly
 `git rev-parse HEAD && cat SOURCE_MARKER`, then fix addition, run the fixture tests
 and remember a random harmless public continuity token. Source qualifies only from
-a correlated running/completed `shell` tool receipt, before any other tool. Its
-`args.command` must be the probe, optionally prefixed with `cd /workspace && ` as
-observed in Cursor; optional SDK execution metadata such as `workingDirectory`
-and `timeout` does not change that command check. The pinned SDK's successful
-shell `result` wraps its output in `{"status": "success", "value": ...}`. The client
-accepts that shape with an empty signal, as well as the original flat fixture
-shape. Output (`stdout`, `stderr`, integer `exitCode`) must still match the
-independently fetched selected SHA/marker exactly. Redacted source-tool events are
+a correlated running/completed `shell` or `run_terminal_cmd` tool receipt, before
+any other tool. Its `args.command` must be the probe, optionally prefixed with
+`cd /workspace && ` as observed in Cursor; execution metadata does not change that
+command check. Cloud `run_terminal_cmd` can first announce the call without args,
+then supply them in a second running update. All updates must retain the same
+agent/run/call/name; completion must supply the exact command. Its captured
+`result.success` must be foreground, with stdout and interleaved output both equal
+to the independently fetched SHA/marker. That cloud shape omits exitCode/stderr;
+any explicit nonzero exit, stderr or signal still fails. The `shell` form keeps
+its existing flat or `{"status": "success", "value": ...}` check, including empty
+stderr/signal and integer zero exitCode.
+
+`source-tool-capture.json` preserves the three proof-5 tool events with synthetic
+agent/run/call/request IDs and a source-SHA placeholder. The entry-point regression
+replays it through the existing fake bridge; no live calls or credentials are used.
+Redacted source-tool events are
 saved in the existing private bounded journal before validation, including rejected
 events; no raw credentials or discovery data are captured. Assistant prose and
 branch ancestry cannot qualify it. The

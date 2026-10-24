@@ -724,6 +724,7 @@ def collect_run(manifest, key, token, port, submission, journal, deadlines, repo
     done = False
     source_proven = not coding
     probe_call = None
+    probe_name = None
     for envelope in (recover_stream(port, token, submission, deadlines, journal, state, key, report) if coding else
                      send_stream(port, token, submission, deadlines)):
         if done:
@@ -763,23 +764,38 @@ def collect_run(manifest, key, token, port, submission, journal, deadlines, repo
             if sdk["type"] == "tool_call" and not source_proven:
                 journal.append({"event": "source_tool_event", "receipt": redact(message, journal.secrets)})
                 args = message.get("args")
-                if message.get("name") != "shell" or not isinstance(args, dict) or args.get("command") not in (SOURCE_PROBE, "cd /workspace && " + SOURCE_PROBE) or not valid_id(message.get("call_id")) or message.get("truncated"):
+                name, status = message.get("name"), message.get("status")
+                pending_args = name == "run_terminal_cmd" and status == "running" and "args" not in message
+                if name not in ("shell", "run_terminal_cmd") or not valid_id(message.get("call_id")) or message.get("truncated") or (not pending_args and (not isinstance(args, dict) or args.get("command") not in (SOURCE_PROBE, "cd /workspace && " + SOURCE_PROBE))):
                     raise Failure("initial source probe is missing/unrecognized; source unverified")
-                if message.get("status") == "running" and probe_call is None:
-                    probe_call = message["call_id"]
-                elif message.get("status") == "completed" and message["call_id"] == probe_call:
+                if probe_call is not None and (message["call_id"] != probe_call or name != probe_name):
+                    raise Failure("source probe tool ordering/correlation mismatch")
+                if status == "running" and (probe_call is None or name == "run_terminal_cmd"):
+                    probe_call, probe_name = message["call_id"], name
+                elif status == "completed" and message["call_id"] == probe_call:
                     expected = {"stdout": manifest["source_sha"] + "\n" + SELECTED_MARKER, "stderr": "", "exitCode": 0}
                     observed = message.get("result")
-                    # The pinned SDK wraps ShellSuccessSchema in status/value.
-                    if isinstance(observed, dict) and observed.get("status") == "success":
-                        value = observed.get("value")
-                        if isinstance(value, dict) and value.get("signal") == "":
-                            observed = {name: value.get(name) for name in expected}
-                    if observed != expected or type(observed.get("exitCode")) is not int:
+                    if name == "run_terminal_cmd":
+                        # Captured cloud success omits exitCode/stderr; interleaved output
+                        # must equal stdout, with no background or failure result.
+                        value = observed.get("success") if isinstance(observed, dict) else None
+                        matches = (isinstance(value, dict) and set(observed) == {"success", "isBackground"}
+                                   and observed["isBackground"] is False and value.get("command") == args["command"]
+                                   and value.get("stdout") == value.get("interleavedOutput") == expected["stdout"]
+                                   and value.get("stderr", "") == "" and value.get("signal", "") == ""
+                                   and type(value.get("exitCode", 0)) is int and value.get("exitCode", 0) == 0)
+                    else:
+                        # The pinned SDK wraps ShellSuccessSchema in status/value.
+                        if isinstance(observed, dict) and observed.get("status") == "success":
+                            value = observed.get("value")
+                            if isinstance(value, dict) and value.get("signal") == "":
+                                observed = {field: value.get(field) for field in expected}
+                        matches = observed == expected and type(observed.get("exitCode")) is int
+                    if not matches:
                         raise Failure("initial source probe differs from independently verified source")
                     journal.append({"event": "source_probe", "receipt": message})
                     source_proven = True
-                    report["source_probe"] = {"verdict": "PASS", "call_id": probe_call, "receipt": "first correlated shell tool; exact HEAD and marker"}
+                    report["source_probe"] = {"verdict": "PASS", "call_id": probe_call, "receipt": "first correlated " + name + " tool; exact HEAD and marker"}
                 else:
                     raise Failure("source probe tool ordering/correlation mismatch")
             if sdk["type"] == "status" and message.get("status") in {"ERROR", "CANCELLED", "EXPIRED"}:
