@@ -142,8 +142,9 @@ The prompt requires the first tool to execute exactly
 `git rev-parse HEAD && cat SOURCE_MARKER`, then fix addition, run the fixture tests
 and remember a random harmless public continuity token. Source qualifies only from
 a correlated running/completed `shell` tool receipt, before any other tool. Its
-`args.command` and `result` (`stdout`, `stderr`, integer `exitCode`) must match the
-probe and independently fetched selected SHA/marker exactly. Assistant prose and
+`args.command` must be the probe, optionally prefixed with `cd /workspace && ` as
+observed in Cursor. The `result` (`stdout`, `stderr`, integer `exitCode`) must still
+match the independently fetched selected SHA/marker exactly. Assistant prose and
 branch ancestry cannot qualify it. The
 [SDK tool payloads are unstable](https://cursor.com/docs/sdk/typescript#stream-events):
 unknown shapes remain unverified instead of being guessed.
@@ -356,6 +357,10 @@ records actual spawned process handles and stops survivors only after normal mai
 returns its report; fixture cleanup never qualifies client exit or token removal.
 Tests remove only their own roots after recording
 client-reported uncertainty. CI runs this full feature suite on macOS and Linux.
+
+`test_source_probe_accepts_workspace_prefix_and_checks_sha_and_marker` exercises
+the observed working-directory prefix through the normal entry point, accepting
+the correct output and separately rejecting a wrong SHA or marker.
 
 The stream fixture follows SDK 1.0.40's shipped `consumeSseStream` and
 `sdkMessageToRunStreamMessage`: the outer `sdkMessage.type` wraps the complete SDK

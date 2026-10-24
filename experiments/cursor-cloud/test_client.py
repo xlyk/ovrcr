@@ -781,6 +781,20 @@ sys.exit(result)
         self.assertEqual(phase["phase"], "pr_inventory_stall")
         self.assertIn(phase["pid"], [row["pid"] for row in report["resources"]["verification_processes"]])
 
+    def test_source_probe_accepts_workspace_prefix_and_checks_sha_and_marker(self):
+        for scenario in ("source_prefix", "source_prefix_wrong_sha", "source_prefix_wrong_marker"):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True)
+                if scenario == "source_prefix":
+                    self.assertEqual(run.returncode, 0, report)
+                    self.assertEqual(report["source_probe"]["verdict"], "PASS")
+                    self.assertEqual(report["coding"], "PASS")
+                else:
+                    self.assertEqual(run.returncode, 1, report)
+                    self.assertIn("initial source probe differs", report["stages"][-1]["reason"])
+                    self.assertNotIn("source_probe", report)
+                    self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1})
+
     def test_cloud_stream_without_init_or_observed_model_reads_result(self):
         run, report, events = self.run_fixture("cloud_status_first", coding=True)
         self.assertEqual(run.returncode, 0, report)

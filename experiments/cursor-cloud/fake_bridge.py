@@ -244,6 +244,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 result.pop("model")
             if scenario == "cloud_status_first":
                 messages[2] = sdk("status", status="RUNNING")
+            if scenario in {"source_prefix", "source_prefix_wrong_sha", "source_prefix_wrong_marker"}:
+                probe["args"]["command"] = "cd /workspace && " + probe["args"]["command"]
+            if scenario == "source_prefix_wrong_sha":
+                messages[4]["sdkMessage"]["message"]["result"]["stdout"] = "b" * 40 + "\nOVRCR_SELECTED_BASELINE_364\n"
+            if scenario == "source_prefix_wrong_marker":
+                messages[4]["sdkMessage"]["message"]["result"]["stdout"] = CONFIG["source_sha"] + "\nOVRCR_DEFAULT_TIP_364\n"
             if scenario == "result_bad_git":
                 result["git"] = []
             if scenario == "result_bad_branch":

@@ -761,7 +761,7 @@ def collect_run(manifest, key, token, port, submission, journal, deadlines, repo
             if message.get("agent_id") != state["agentId"] or message.get("run_id") != state["runId"]:
                 raise Failure("stream agent/run identity mismatch")
             if sdk["type"] == "tool_call" and not source_proven:
-                if message.get("name") != "shell" or message.get("args") != {"command": SOURCE_PROBE} or not valid_id(message.get("call_id")) or message.get("truncated"):
+                if message.get("name") != "shell" or message.get("args") not in ({"command": SOURCE_PROBE}, {"command": "cd /workspace && " + SOURCE_PROBE}) or not valid_id(message.get("call_id")) or message.get("truncated"):
                     raise Failure("initial source probe is missing/unrecognized; source unverified")
                 if message.get("status") == "running" and probe_call is None:
                     probe_call = message["call_id"]
