@@ -125,9 +125,9 @@ the in-memory outgoing request. Claims retain the original key and request diges
 Secrets in JSON property names and nested values are rejected before publication.
 The pinned SDK's CreateAgent allocates a local cloud handle; the first Send
 creates the backend agent and run together. The allocated agent ID/model must be
-durably saved before the separately keyed Send. Its early init supplies the exact
-run/agent/model receipt. Only after that receipt is durable is the original request
-removed and that removal synced. GetAgent then must match the exact conversation,
+durably saved before the separately keyed Send. The first recognized SDK message
+supplies the exact run/agent receipt; cloud streams do not emit `system/init`. Only
+after that receipt is durable is the original request removed and that removal synced. GetAgent then must match the exact conversation,
 cloud runtime and repository before observation or tool-event processing. A failed
 metadata check blocks coding/follow-up qualification and leaves the exact known run
 available for bounded error cleanup. Criterion 4 requires validated metadata, not
@@ -148,8 +148,12 @@ branch ancestry cannot qualify it. The
 [SDK tool payloads are unstable](https://cursor.com/docs/sdk/typescript#stream-events):
 unknown shapes remain unverified instead of being guessed.
 
-Coding success also requires exact agent/run/model, FINISHED result, matching done
-and a successful Connect end-stream frame. Keepalives and unknown envelope cases
+Coding success also requires exact agent/run identity, FINISHED result, matching
+done and a successful Connect end-stream frame. The selected model is explicit in
+CreateAgent and every Send. When the initial message or terminal result supplies a
+model, it must match; an omitted model is not an attestation. The pinned bridge
+reconstructs cloud handles on GetRun without their original requested model, so
+ObserveRun results may omit it. Keepalives and unknown envelope cases
 are ignored; malformed, compressed, oversized, duplicate or out-of-order frames
 fail. Git then independently fetches the returned result branch, checks ancestry,
 checks the final diff and every intervening commit for only `addition.py`, and
@@ -173,8 +177,8 @@ only the existing exact-run error cleanup may cancel a known active run.
 Run 2 uses the same agent, journal and global counters, a new original operation
 key and a distinct durable run ID. Its prompt never restates the public token and
 asks for the token and completed fix without file, branch or PR changes. Success
-requires exact terminal model/identity and stream end, the exact recalled token/fix,
-unchanged result repository/branch/PR metadata, identical independently read
+requires exact terminal identity and stream end (and matching model when supplied),
+the exact recalled token/fix, unchanged result repository/branch/PR metadata, identical independently read
 advertised Git refs (including tags and the verified Run 1 commit), and identical
 independent GitHub PR snapshots. It does not re-edit or rerun
 the fixture: the previously tested commit must remain unchanged. Unknown result
@@ -353,11 +357,18 @@ returns its report; fixture cleanup never qualifies client exit or token removal
 Tests remove only their own roots after recording
 client-reported uncertainty. CI runs this full feature suite on macOS and Linux.
 
+The stream fixture follows SDK 1.0.40's shipped `consumeSseStream` and
+`sdkMessageToRunStreamMessage`: the outer `sdkMessage.type` wraps the complete SDK
+message, including its own `type`, `agent_id` and `run_id`. It begins with thinking
+or status rather than a synthetic init and omits model from observed results.
+`test_cloud_stream_without_init_or_observed_model_reads_result` exercises coding,
+observation, follow-up and cancellation through the normal client entry point.
+
 The peer models lazy cloud creation: GetAgent returns 404 until the first Send.
 `test_cloud_metadata_waits_for_first_send_materialization` checks durable allocation,
-Send claim/init, metadata, source probe and verified result in order. Wrong cloud
-identity/runtime/repository or unavailable metadata after init must keep criterion 4
-BLOCKED, dispatch no follow-up, and clean up only the exact known run. The
+Send claim/identity, metadata, source probe and verified result in order. Wrong cloud
+identity/runtime/repository or unavailable metadata after the run receipt must keep
+criterion 4 BLOCKED, dispatch no follow-up, and clean up only the exact known run. The
 close-before-Send fixture injects discard immediately after the durable CreateAgent
 receipt, preserving its zero-Send boundary without a pre-Send metadata lookup.
 
@@ -395,7 +406,7 @@ The #364 acceptance cases map to these additional entry-point assertions:
 | 1: existing path, explicit cloud options/SHA/model, one creation/Send | `test_coding_verifies_patch_and_exact_write_ahead_order` plus peer exact request checks |
 | 2: falsifiable fixture, selected/default source distinction and private-fetch auth | `test_independent_fixture_source_admission_precedes_any_creation`, `test_selected_github_helper*` and success baseline/result test receipts |
 | 3: private lock, durable claims, bounded capacity | `test_private_owner_storage_and_capacity_fail_before_new_effect` and external write-ahead checks |
-| 4: durable allocated identity before Send; exact backend metadata after durable init | `test_cloud_metadata_waits_for_first_send_materialization`, `test_lost_receipts*`, creation/GetAgent identity/model and metadata-failure cleanup cases in `test_coding_rejects*` |
+| 4: durable allocated identity before Send; exact backend metadata after durable run identity | `test_cloud_metadata_waits_for_first_send_materialization`, `test_lost_receipts*`, creation/GetAgent identity/model and metadata-failure cleanup cases in `test_coding_rejects*` |
 | 5: exact early run, source probe, framing/result/end | `test_coding_rejects*`; success includes split frames, keepalives and unknown envelopes |
 | 6: source, ancestry, allowed history/diff, independent tests | success and wrong-source/ancestry/diff/failed-tests cases in `test_coding_rejects*` |
 | 7: uncertain receipt retention; no replacement/retry/guessed run | `test_lost_receipts*`, storage/identity cases and common method-count assertions |

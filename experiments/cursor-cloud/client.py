@@ -621,6 +621,16 @@ def exact_snapshot(port, token, key, state, deadlines, journal, require_success=
     return status
 
 
+def original_run_identity(message, agent_id, model):
+    # Cloud SDK messages carry identity directly; there is no system/init event.
+    if not isinstance(message, dict) or not valid_id(message.get("run_id")) or message.get("agent_id") != agent_id or ("model" in message and message["model"] != {"id": model}):
+        raise Failure("early original-stream run identity/model missing or mismatched; unresolved")
+    identity = {"agentId": agent_id, "runId": message["run_id"]}
+    if "model" in message:
+        identity["model"] = message["model"]
+    return identity
+
+
 def stream_identity(envelope, state):
     for name in ("sdkMessage", "result", "done"):
         if name not in envelope:
@@ -728,11 +738,9 @@ def collect_run(manifest, key, token, port, submission, journal, deadlines, repo
             if not isinstance(message, dict):
                 raise Failure("SDK message payload is invalid")
             if state.get("runId") is None:
-                if sdk["type"] != "system" or message.get("subtype") != "init" or not valid_id(message.get("run_id")) or message.get("agent_id") != state["agentId"] or message.get("model") != {"id": manifest["model"]}:
-                    raise Failure("early original-stream run identity/model missing or mismatched; unresolved")
+                identity = original_run_identity(message, state["agentId"], manifest["model"])
                 if not coding and message["run_id"] == report["run"]["runId"]:
                     raise Failure("follow-up reused the original run identity")
-                identity = {"agentId": message["agent_id"], "runId": message["run_id"], "model": message["model"]}
                 journal.receipt("Send", identity)
                 state.update(identity, active=True)
                 report["run" if coding else "follow_up_run"] = identity
@@ -780,7 +788,7 @@ def collect_run(manifest, key, token, port, submission, journal, deadlines, repo
                     for record in (terminal, result)):
                 raise Failure("terminal agent/run identity missing or mismatched")
             journal.append({"event": "result", "receipt": terminal, "late": journal.closed})
-            if terminal.get("status") != "RUN_LIFECYCLE_STATUS_FINISHED" or result.get("status") != terminal["status"] or result.get("model") != {"id": manifest["model"]} or terminal.get("errorCode") or result.get("errorCode"):
+            if terminal.get("status") != "RUN_LIFECYCLE_STATUS_FINISHED" or result.get("status") != terminal["status"] or ("model" in result and result["model"] != {"id": manifest["model"]}) or terminal.get("errorCode") or result.get("errorCode"):
                 status = result.get("status")
                 state["active"] = not isinstance(status, str) or status not in TERMINAL
                 if not state["active"]:
@@ -929,7 +937,7 @@ def retain_run(report, state):
 def record_cancellation_result(envelope, manifest, state, journal):
     terminal = envelope["result"]
     result = terminal.get("result")
-    if not isinstance(result, dict) or result.get("agentId") != state["agentId"] or result.get("runId") != state["runId"] or result.get("status") not in TERMINAL or result["status"] != terminal.get("status") or result.get("model") != {"id": manifest["model"]}:
+    if not isinstance(result, dict) or result.get("agentId") != state["agentId"] or result.get("runId") != state["runId"] or result.get("status") not in TERMINAL or result["status"] != terminal.get("status") or ("model" in result and result["model"] != {"id": manifest["model"]}):
         raise Failure("cancellation terminal identity/status/model mismatch")
     journal.append({"event": "cancellation_result", "receipt": terminal, "late": journal.closed})
     state.update(active=False, terminal_status=result["status"])
@@ -964,11 +972,9 @@ def cancellation_run(manifest, key, token, port, journal, deadlines, report, sta
                 if not isinstance(sdk, dict) or sdk.get("type") not in SDK_TYPES:
                     continue
                 message = sdk.get("message")
-                if not isinstance(message, dict) or sdk["type"] != "system" or message.get("subtype") != "init" or not valid_id(message.get("run_id")) or message.get("agent_id") != state["agentId"] or message.get("model") != {"id": manifest["model"]}:
-                    raise Failure("third original-stream run identity/model missing or mismatched; unresolved")
+                identity = original_run_identity(message, state["agentId"], manifest["model"])
                 if message["run_id"] in {row["runId"] for row in report["runs"]}:
                     raise Failure("third Send reused an earlier run identity")
-                identity = {"agentId": state["agentId"], "runId": message["run_id"], "model": message["model"]}
                 journal.receipt("Send", identity)
                 state.update(identity, active=True)
                 report["cancellation_run"] = identity

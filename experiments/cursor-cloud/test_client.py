@@ -781,6 +781,21 @@ sys.exit(result)
         self.assertEqual(phase["phase"], "pr_inventory_stall")
         self.assertIn(phase["pid"], [row["pid"] for row in report["resources"]["verification_processes"]])
 
+    def test_cloud_stream_without_init_or_observed_model_reads_result(self):
+        run, report, events = self.run_fixture("cloud_status_first", coding=True)
+        self.assertEqual(run.returncode, 0, report)
+        self.assertEqual(report["coding"], "PASS")
+        self.assertEqual(report["recovery_criteria"]["follow_up"]["verdict"], "PASS")
+        self.assertEqual(report["cancellation"]["verdict"], "PASS")
+        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
+        rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+        identities = [row["receipt"] for row in rows if row["event"] == "receipt" and row["method"] == "Send"]
+        self.assertEqual([row["runId"] for row in identities], ["run-fixture", "run-follow-up", "run-cancel"])
+        self.assertTrue(all("model" not in row for row in identities))
+        terminal = next(row["receipt"]["result"] for row in rows if row["event"] == "result")
+        self.assertNotIn("model", terminal)
+        self.assertEqual(terminal["status"], "RUN_LIFECYCLE_STATUS_FINISHED")
+
     def test_cloud_metadata_waits_for_first_send_materialization(self):
         run, report, events = self.run_fixture(coding=True)
         self.assertEqual(run.returncode, 0, report)
@@ -1131,7 +1146,7 @@ sys.exit(result)
                     self.assertTrue(any(row["event"] == "result" and row["late"] for row in rows[closure + 1:]))
                     identity = next(row for row in rows[closure + 1:] if row["event"] == "receipt" and row.get("method") == "Send")
                     self.assertTrue(identity["late"])
-                    self.assertEqual(identity["receipt"], {"agentId": "bc-fixture", "runId": "run-fixture", "model": {"id": "fixture-model"}})
+                    self.assertEqual(identity["receipt"], {"agentId": "bc-fixture", "runId": "run-fixture"})
                     self.assertTrue(next(e["write_ahead"] for e in events if e.get("method") == "Send"))
                     self.assertTrue(any(e.get("discard_gate") == {"send_received_before_closure": True, "closure_before_init": True} for e in events))
                     self.assertFalse(set(methods) & {"GetRun", "ObserveRun"})

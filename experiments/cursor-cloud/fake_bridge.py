@@ -229,16 +229,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif method in {"Send", "ObserveRun"}:
             identity = {"agent_id": "bc-fixture", "run_id": "run-fixture"}
             def sdk(kind, **fields):
-                return {"sdkMessage": {"type": kind, "message": {**identity, **fields}}}
+                return {"sdkMessage": {"type": kind, "message": {"type": kind, **identity, **fields}}}
             probe = {"call_id": "source-probe", "name": "shell", "args": {"command": "git rev-parse HEAD && cat SOURCE_MARKER"}}
             result = {"agentId": "bc-fixture", "runId": "run-fixture", "model": {"id": "fixture-model"},
                       "status": "RUN_LIFECYCLE_STATUS_FINISHED", "git": {"branches": [{"repoUrl": "https://github.com/fixture/disposable", "branch": "cursor/result"}]}}
             messages = [{}, {"sdkMessage": {"type": "future", "message": {"opaque": True}}},
-                        sdk("system", subtype="init", model={"id": "fixture-model"}),
+                        sdk("thinking", text=""),
                         sdk("tool_call", **probe, status="running"),
                         sdk("tool_call", **probe, status="completed", result={"stdout": CONFIG["source_sha"] + "\nOVRCR_SELECTED_BASELINE_364\n", "stderr": "", "exitCode": 0}),
                         {"result": {"agentId": "bc-fixture", "runId": "run-fixture", "status": "RUN_LIFECYCLE_STATUS_FINISHED", "result": result}},
                         {"done": {"agentId": "bc-fixture", "runId": "run-fixture"}}]
+            # GetRun reconstructs a cloud handle without the original requested model.
+            if method == "ObserveRun":
+                result.pop("model")
+            if scenario == "cloud_status_first":
+                messages[2] = sdk("status", status="RUNNING")
             if scenario == "result_bad_git":
                 result["git"] = []
             if scenario == "result_bad_branch":
@@ -284,7 +289,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 result["runId"] = "run-follow-up"
                 earlier = next(row["token"] for row in journal_rows() if row["event"] == "continuity_token")
                 result["result"] = "TOKEN=" + earlier + "\nFIX=addition.py adds its two inputs."
-                messages = [sdk("system", subtype="init", model={"id": "fixture-model"}),
+                messages = [sdk("thinking", text=""),
                             {"result": {"agentId": "bc-fixture", "runId": "run-follow-up", "status": "RUN_LIFECYCLE_STATUS_FINISHED", "result": result}},
                             {"done": {"agentId": "bc-fixture", "runId": "run-follow-up"}}]
                 if scenario == "follow_up_lost":
@@ -319,7 +324,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 identity["run_id"] = "run-cancel"
                 result["runId"] = "run-cancel"
                 result["status"] = "RUN_LIFECYCLE_STATUS_CANCELLED"
-                messages = [sdk("system", subtype="init", model={"id": "fixture-model"}),
+                messages = [sdk("thinking", text=""),
                             sdk("tool_call", call_id="wait", name="shell", args={"command": "sleep 90"}, status="running")]
                 if third and scenario in {"third_early_finished_stale", "third_early_finished_unavailable"}:
                     result["status"] = "RUN_LIFECYCLE_STATUS_FINISHED"
