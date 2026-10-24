@@ -761,13 +761,20 @@ def collect_run(manifest, key, token, port, submission, journal, deadlines, repo
             if message.get("agent_id") != state["agentId"] or message.get("run_id") != state["runId"]:
                 raise Failure("stream agent/run identity mismatch")
             if sdk["type"] == "tool_call" and not source_proven:
-                if message.get("name") != "shell" or message.get("args") not in ({"command": SOURCE_PROBE}, {"command": "cd /workspace && " + SOURCE_PROBE}) or not valid_id(message.get("call_id")) or message.get("truncated"):
+                journal.append({"event": "source_tool_event", "receipt": redact(message, journal.secrets)})
+                args = message.get("args")
+                if message.get("name") != "shell" or not isinstance(args, dict) or args.get("command") not in (SOURCE_PROBE, "cd /workspace && " + SOURCE_PROBE) or not valid_id(message.get("call_id")) or message.get("truncated"):
                     raise Failure("initial source probe is missing/unrecognized; source unverified")
                 if message.get("status") == "running" and probe_call is None:
                     probe_call = message["call_id"]
                 elif message.get("status") == "completed" and message["call_id"] == probe_call:
                     expected = {"stdout": manifest["source_sha"] + "\n" + SELECTED_MARKER, "stderr": "", "exitCode": 0}
                     observed = message.get("result")
+                    # The pinned SDK wraps ShellSuccessSchema in status/value.
+                    if isinstance(observed, dict) and observed.get("status") == "success":
+                        value = observed.get("value")
+                        if isinstance(value, dict) and value.get("signal") == "":
+                            observed = {name: value.get(name) for name in expected}
                     if observed != expected or type(observed.get("exitCode")) is not int:
                         raise Failure("initial source probe differs from independently verified source")
                     journal.append({"event": "source_probe", "receipt": message})

@@ -795,6 +795,36 @@ sys.exit(result)
                     self.assertNotIn("source_probe", report)
                     self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1})
 
+    def test_source_probe_accepts_pinned_sdk_shell_shape(self):
+        run, report, events = self.run_fixture("source_sdk", coding=True)
+        self.assertEqual(run.returncode, 0, report)
+        self.assertEqual(report["source_probe"]["verdict"], "PASS")
+        self.assertEqual(report["coding"], "PASS")
+        self.assertEqual(report["result"]["tests"], "PASS; 3 tests")
+        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
+
+    def test_pinned_sdk_source_failures_retain_redacted_tool_evidence(self):
+        for fault, reason in (("wrong_sha", "differs"), ("wrong_marker", "differs"),
+                              ("bool_exit", "differs"), ("signal", "differs"),
+                              ("error", "differs"), ("truncated", "missing/unrecognized"),
+                              ("wrong_call", "ordering/correlation"),
+                              ("wrong_command", "missing/unrecognized")):
+            with self.subTest(fault=fault):
+                run, report, events = self.run_fixture("source_sdk_" + fault, coding=True)
+                self.assertEqual(run.returncode, 1, report)
+                self.assertIn(reason, report["stages"][-1]["reason"])
+                self.assertNotIn("source_probe", report)
+                self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1})
+                rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+                source_events = [row["receipt"] for row in rows if row["event"] == "source_tool_event"]
+                self.assertEqual(len(source_events), 2)
+                rejected = source_events[-1]
+                self.assertEqual(rejected["status"], "completed")
+                if fault == "error":
+                    self.assertEqual(rejected["result"]["error"]["message"], "[REDACTED]")
+                if fault == "wrong_command":
+                    self.assertEqual(rejected["args"]["command"], "echo [REDACTED]")
+
     def test_cloud_stream_without_init_or_observed_model_reads_result(self):
         run, report, events = self.run_fixture("cloud_status_first", coding=True)
         self.assertEqual(run.returncode, 0, report)

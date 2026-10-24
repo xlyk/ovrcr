@@ -250,6 +250,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 messages[4]["sdkMessage"]["message"]["result"]["stdout"] = "b" * 40 + "\nOVRCR_SELECTED_BASELINE_364\n"
             if scenario == "source_prefix_wrong_marker":
                 messages[4]["sdkMessage"]["message"]["result"]["stdout"] = CONFIG["source_sha"] + "\nOVRCR_DEFAULT_TIP_364\n"
+            if scenario.startswith("source_sdk"):
+                # SDK 1.0.40 ShellArgsSchema and createResultSchema(ShellSuccessSchema).
+                probe["args"].update(command="cd /workspace && " + probe["args"]["command"],
+                                     workingDirectory="/workspace", timeout=10000)
+                completed = messages[4]["sdkMessage"]["message"]
+                value = {**completed["result"], "signal": "", "executionTime": 3}
+                completed["result"] = {"status": "success", "value": value}
+                if scenario == "source_sdk_wrong_sha":
+                    value["stdout"] = "b" * 40 + "\nOVRCR_SELECTED_BASELINE_364\n"
+                if scenario == "source_sdk_wrong_marker":
+                    value["stdout"] = CONFIG["source_sha"] + "\nOVRCR_DEFAULT_TIP_364\n"
+                if scenario == "source_sdk_bool_exit":
+                    value["exitCode"] = False
+                if scenario == "source_sdk_signal":
+                    value["signal"] = "SIGTERM"
+                if scenario == "source_sdk_error":
+                    completed["result"] = {"status": "error", "error": {"message": KEY}}
+                if scenario == "source_sdk_truncated":
+                    completed["truncated"] = True
+                if scenario == "source_sdk_wrong_call":
+                    completed["call_id"] = "different-call"
+                if scenario == "source_sdk_wrong_command":
+                    completed["args"] = {"command": "echo " + KEY}
             if scenario == "result_bad_git":
                 result["git"] = []
             if scenario == "result_bad_branch":

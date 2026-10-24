@@ -143,8 +143,14 @@ The prompt requires the first tool to execute exactly
 and remember a random harmless public continuity token. Source qualifies only from
 a correlated running/completed `shell` tool receipt, before any other tool. Its
 `args.command` must be the probe, optionally prefixed with `cd /workspace && ` as
-observed in Cursor. The `result` (`stdout`, `stderr`, integer `exitCode`) must still
-match the independently fetched selected SHA/marker exactly. Assistant prose and
+observed in Cursor; optional SDK execution metadata such as `workingDirectory`
+and `timeout` does not change that command check. The pinned SDK's successful
+shell `result` wraps its output in `{"status": "success", "value": ...}`. The client
+accepts that shape with an empty signal, as well as the original flat fixture
+shape. Output (`stdout`, `stderr`, integer `exitCode`) must still match the
+independently fetched selected SHA/marker exactly. Redacted source-tool events are
+saved in the existing private bounded journal before validation, including rejected
+events; no raw credentials or discovery data are captured. Assistant prose and
 branch ancestry cannot qualify it. The
 [SDK tool payloads are unstable](https://cursor.com/docs/sdk/typescript#stream-events):
 unknown shapes remain unverified instead of being guessed.
