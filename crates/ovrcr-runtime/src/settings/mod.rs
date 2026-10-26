@@ -883,7 +883,7 @@ branch_prefix = "kh/"
 picker_roots = ["/tmp/a", "~/b"]
 agents = [{ name = "claude", argv = ["claude", "--x"] }]
 ready_sound_choice = "chime"
-
+cursor_cloud_accounts = [{ name = "work", keychain_service = "ovrcr.cursor", keychain_account = "work", model = "composer-2.5", repositories = ["https://github.com/acme/app"], owners = [], bridge_archive = "/tmp/sdk.tar.gz" }]
 [launch_choices.ovrcr]
 kind = "Agent"
 preset = "claude"
