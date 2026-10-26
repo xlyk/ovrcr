@@ -387,6 +387,10 @@ pub enum Request {
         view_revision: u64,
         bytes: Vec<u8>,
     },
+    DiscardCloudCreation {
+        session: SessionId,
+        expected_run: SessionRunId,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -929,6 +933,13 @@ mod wire_snapshot {
                     session: SessionId(1),
                     expected_run: SessionRunId(4),
                     acknowledge_stopped: false,
+                },
+            ),
+            (
+                "DiscardCloudCreation",
+                Request::DiscardCloudCreation {
+                    session: SessionId(1),
+                    expected_run: SessionRunId(4),
                 },
             ),
             (
@@ -3091,6 +3102,7 @@ mod wire_snapshot {
         ("Request::SetSessionTitle", "200101057469746c65"),
         ("Request::ResetSessionTitle", "200100"),
         ("Request::ReopenSession", "21010400"),
+        ("Request::DiscardCloudCreation", "370104"),
         ("Request::UnarchiveSession", "230104"),
         ("Request::DeleteArchivedSession", "220104"),
         ("Request::RecoverSession", "250104"),
@@ -3105,13 +3117,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a043c017301630168016c0104",
+            "2a043d017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f043c017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f043d017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -3142,18 +3154,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d043c0000"),
+        ("Response::NotificationNavigation", "0d043d0000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e043c017301630168016c0104",
+            "0e01016e043d017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f010708090101690101043c017301630168016c0164",
+            "0f010708090101690101043d017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "10043c010708090101690101043c017301630168016c0164",
+            "10043d010708090101690101043d017301630168016c0164",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -3177,7 +3189,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e043c017301630168016c0104",
+            "08016e043d017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -3267,6 +3279,18 @@ mod wire_snapshot {
             "1501a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500020003696e7604636f6e7601010300",
         ),
         (
+            "AgentRequest::14",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e0800406161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616104776f726b06637572736f7204776f726b0c636f6d706f7365722d322e35011b68747470733a2f2f6769746875622e636f6d2f61636d652f617070000b2f73646b2e7461722e677a40626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262621b68747470733a2f2f6769746875622e636f6d2f61636d652f6170702863636363636363636363636363636363636363636363636363636363636363636363636363636363",
+        ),
+        (
+            "AgentRequest::15",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e08014061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161",
+        ),
+        (
+            "AgentRequest::16",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e08024061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161096167656e742d3337330c636f6d706f7365722d322e35",
+        ),
+        (
             "AgentResponse::0",
             "0a0101a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
         ),
@@ -3275,6 +3299,7 @@ mod wire_snapshot {
         ("AgentResponse::3", "0a04"),
         ("AgentResponse::4", "0a05"),
         ("AgentResponse::5", "0a06"),
+        ("AgentResponse::6", "0a07"),
         ("AgentActivity::Unknown", "00"),
         ("AgentActivity::Idle", "01"),
         ("AgentActivity::Busy", "02"),

@@ -6388,7 +6388,8 @@ mod agent_reporting {
                     capability: [7; 32],
                 }),
             );
-            let (state, commands) = test_state_with_dispatch(None, None);
+            let (mut state, commands) = test_state_with_dispatch(None, None);
+            Arc::get_mut(&mut state).unwrap().registry_path = cwd.path().to_path_buf();
             register_test_session(&state, SessionId(900), session.clone());
             let dispatch_state = state.clone();
             let dispatcher = thread::spawn(move || run_dispatcher(dispatch_state, commands));
@@ -6509,6 +6510,165 @@ mod agent_reporting {
             eprintln!("agent reporting fixture cleaned pgid={}", self.pgid);
         }
     }
+    fn cloud_auth(f: &Fixture, epoch: u64, operation: &str) -> SupervisorAuth {
+        let Request::ReserveAgent(mut reserve) = f.reserve(epoch, operation) else {
+            unreachable!()
+        };
+        reserve.provider = AgentProvider::CursorCloud;
+        let Response::AgentOperation(AgentOperationResult::Reserved(reservation)) =
+            f.request(Request::ReserveAgent(reserve))
+        else {
+            panic!("cloud reservation")
+        };
+        SupervisorAuth {
+            session: SessionId(900),
+            lease: reservation.lease,
+        }
+    }
+    fn cloud_intent() -> CloudCreationIntent {
+        CloudCreationIntent {
+            key: "a".repeat(64),
+            credential_generation: "b".repeat(64),
+            repository: "https://github.com/acme/app".into(),
+            source_sha: "c".repeat(40),
+            account: CursorCloudAccount {
+                name: "work".into(),
+                keychain_service: "fixture".into(),
+                keychain_account: "work".into(),
+                model: "composer-2.5".into(),
+                repositories: vec!["https://github.com/acme/app".into()],
+                owners: vec![],
+                bridge_archive: "/fixture-sdk.tar.gz".into(),
+            },
+        }
+    }
+    #[test]
+    fn cloud_creation_stale_lease_and_replacement_invocation_cannot_acknowledge_original() {
+        let f = Fixture::new();
+        let auth = cloud_auth(&f, 0, "cloud-reserve");
+        let intent = cloud_intent();
+        for (operation, command) in [
+            ("prepare", CloudCreationCommand::Prepare(intent.clone())),
+            (
+                "claim",
+                CloudCreationCommand::Claim {
+                    key: intent.key.clone(),
+                },
+            ),
+        ] {
+            assert_eq!(
+                f.command(
+                    &auth,
+                    operation,
+                    AgentCommand::CloudCreation(Box::new(command))
+                ),
+                Response::AgentOperation(AgentOperationResult::CloudCreationCommitted)
+            );
+        }
+        assert_eq!(
+            f.command(
+                &auth,
+                "release",
+                AgentCommand::Release {
+                    expected_binding: None
+                }
+            ),
+            Response::AgentOperation(AgentOperationResult::Released)
+        );
+        let replacement = cloud_auth(&f, 1, "cloud-reserve-2");
+        let receipt = CloudCreationCommand::Acknowledge {
+            key: intent.key,
+            receipt: CloudCreationReceipt {
+                agent_id: "agent-373".into(),
+                model: "composer-2.5".into(),
+            },
+        };
+        rejected(f.command(
+            &auth,
+            "stale-ack",
+            AgentCommand::CloudCreation(Box::new(receipt.clone())),
+        ));
+        rejected(f.command(
+            &replacement,
+            "replacement-ack",
+            AgentCommand::CloudCreation(Box::new(receipt)),
+        ));
+        assert!(
+            f.state
+                .session_summary(SessionId(900))
+                .unwrap()
+                .recovery
+                .unwrap()
+                .unavailable
+                .unwrap()
+                .contains("unresolved, possibly escaped")
+        );
+    }
+    #[test]
+    fn cloud_creation_late_receipt_enriches_closed_row_but_cannot_recreate_deleted_session() {
+        let f = Fixture::new();
+        let auth = cloud_auth(&f, 0, "cloud-reserve");
+        let intent = cloud_intent();
+        for (operation, command) in [
+            ("prepare", CloudCreationCommand::Prepare(intent.clone())),
+            (
+                "claim",
+                CloudCreationCommand::Claim {
+                    key: intent.key.clone(),
+                },
+            ),
+        ] {
+            assert_eq!(
+                f.command(
+                    &auth,
+                    operation,
+                    AgentCommand::CloudCreation(Box::new(command))
+                ),
+                Response::AgentOperation(AgentOperationResult::CloudCreationCommitted)
+            );
+        }
+        let run = f.session.run();
+        f.state.discard_cloud_creation(SessionId(900), run).unwrap();
+        let receipt = CloudCreationCommand::Acknowledge {
+            key: intent.key,
+            receipt: CloudCreationReceipt {
+                agent_id: "agent-373".into(),
+                model: "composer-2.5".into(),
+            },
+        };
+        assert_eq!(
+            f.command(
+                &auth,
+                "late-ack",
+                AgentCommand::CloudCreation(Box::new(receipt.clone()))
+            ),
+            Response::AgentOperation(AgentOperationResult::CloudCreationCommitted)
+        );
+        assert!(
+            f.state
+                .session_summary(SessionId(900))
+                .unwrap()
+                .recovery
+                .unwrap()
+                .unavailable
+                .unwrap()
+                .contains("discarded locally")
+        );
+        f.state
+            .close_terminal(SessionId(900), run, Duration::from_secs(2))
+            .unwrap();
+        let archived = f.state.session_summary(SessionId(900)).unwrap();
+        f.state
+            .delete_archived_session(SessionId(900), archived.run)
+            .unwrap();
+        rejected(f.command(
+            &auth,
+            "late-after-delete",
+            AgentCommand::CloudCreation(Box::new(receipt)),
+        ));
+        assert!(f.state.session_summary(SessionId(900)).is_none());
+    }
+
     fn activity(state: AgentActivity) -> AgentObservation {
         AgentObservation::Activity(ActivitySample {
             state,

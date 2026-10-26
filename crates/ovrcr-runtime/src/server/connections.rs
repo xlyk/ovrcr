@@ -468,6 +468,12 @@ pub(super) fn handle_request_with_id(
         } => state
             .keystroke(session, expected_run, &key)
             .map_or_else(error_for_lifecycle, |_| Response::Ok),
+        Request::DiscardCloudCreation {
+            session,
+            expected_run,
+        } => state
+            .discard_cloud_creation(session, expected_run)
+            .map_or_else(error_for_lifecycle, |_| Response::Ok),
         Request::DeleteArchivedSession {
             session,
             expected_run,

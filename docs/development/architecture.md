@@ -102,6 +102,11 @@ process-stop proof. Archive and unarchive invalidate the previous run identity,
 so delayed recovery requests and process callbacks cannot cross these transitions.
 Returned rows are stopped without launching; unresolved ownership still requires
 acknowledgement before reopening.
+Schema version 21 adds creation metadata and closure fences under the existing
+SessionStore connection. Private request files are subordinate publications, not
+a provider persistence owner. Exact local CreateAgent identity/receipt retires
+creation material; it neither proves backend existence nor substitutes for the
+later Send/run receipt boundary. See [Cursor cloud](../cursor-cloud.md).
 
 Cursor cloud profiles are typed `Settings.cursor_cloud_accounts` values in the
 same settings document. Ordinary Agent creation generates `cursor-cloud:ACCOUNT`

@@ -1,4 +1,4 @@
-//! Cursor SDK 1.0.40 preview. This module has no CreateAgent or Send operation.
+//! Cursor SDK 1.0.40 validation and durably admitted local handle allocation. No Send.
 use anyhow::{Context, Result, bail, ensure};
 use ovrcr_protocol::{CursorCloudAccount, canonical_cloud_repository};
 use serde_json::{Value, json};
@@ -27,7 +27,7 @@ impl std::fmt::Display for CloudLaunchPreview {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Cursor cloud validated preview\nAccount: {} (selected profile; billing identity not attested)\nRepository: {}\nPublished commit: {}\nModel: {}\nLocal edits are excluded; nothing is uploaded, committed or pushed.\nCreateAgent/Send: unavailable in this preview. Terminal responses, Retry and active reattachment remain blocked.\nPress Enter to close preview.",
+            "Cursor cloud validated preview\nAccount: {} (selected profile; billing identity not attested)\nRepository: {}\nPublished commit: {}\nModel: {}\nLocal edits are excluded; nothing is uploaded, committed or pushed.\nCreateAgent: explicit prepare required. Send: unavailable. Terminal responses, Retry and active reattachment remain blocked.\nType prepare then Enter to retain a cloud handle (no prompt or Send).\nPress Enter to close preview.",
             self.account, self.repository, self.source_sha, self.model
         )
     }
@@ -351,6 +351,7 @@ impl Catalog {
                 (service, method),
                 ("SdkBridgeControlService", "GetVersion" | "Ping")
                     | ("SdkCursorService", "Me" | "ListModels" | "ListRepositories")
+                    | ("SdkAgentService", "CreateAgent")
             ),
             "preview RPC unavailable"
         );
@@ -376,7 +377,35 @@ impl Catalog {
     }
 }
 
-pub fn preview(profile: &CursorCloudAccount, workspace: &Path) -> Result<()> {
+fn creation_boundary(fixture: Option<&Value>, boundary: &str) -> Result<()> {
+    if fixture.is_some_and(|value| value["creation_crash_at"] == boundary) {
+        std::process::exit(86);
+    }
+    if let Some(value) = fixture.filter(|value| value["creation_pause_at"] == boundary) {
+        let marker = PathBuf::from(
+            value["creation_checkpoint"]
+                .as_str()
+                .context("fixture checkpoint required")?,
+        );
+        ensure!(marker.is_absolute(), "fixture checkpoint must be absolute");
+        fs::write(&marker, boundary)?;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !marker.with_extension("release").exists() {
+            ensure!(
+                Instant::now() < deadline,
+                "fixture creation checkpoint deadline"
+            );
+            std::thread::park_timeout(Duration::from_millis(10));
+        }
+    }
+    Ok(())
+}
+
+pub fn preview(
+    profile: &CursorCloudAccount,
+    workspace: &Path,
+    mut admit: impl FnMut(&ovrcr_protocol::CloudCreationCommand) -> Result<()>,
+) -> Result<()> {
     let fixture = fixture()?;
     let budget = fixture
         .as_ref()
@@ -448,7 +477,7 @@ pub fn preview(profile: &CursorCloudAccount, workspace: &Path) -> Result<()> {
                 .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c)),
         "invalid bridge token"
     );
-    let catalog = Catalog {
+    let mut catalog = Catalog {
         agent: ureq::AgentBuilder::new()
             .try_proxy_from_env(false)
             .redirects(0)
@@ -485,8 +514,59 @@ pub fn preview(profile: &CursorCloudAccount, workspace: &Path) -> Result<()> {
         "selected key cannot access repository"
     );
     println!("{validated}");
-    let mut byte = [0];
-    while std::io::stdin().read(&mut byte)? != 0 && byte[0] != b'\n' {}
+    let mut input = String::new();
+    use std::io::BufRead;
+    std::io::stdin().lock().take(64).read_line(&mut input)?;
+    if input.trim() == "prepare" {
+        use ovrcr_protocol::{CloudCreationCommand, CloudCreationIntent, CloudCreationReceipt};
+        let intent = CloudCreationIntent {
+            key: crate::agent_runner::private_identifier()?,
+            account: profile.clone(),
+            credential_generation: format!("{:x}", Sha256::digest(key.as_bytes())),
+            repository: validated.repository,
+            source_sha: validated.source_sha,
+        };
+        intent.validate()?;
+        admit(&CloudCreationCommand::Prepare(intent.clone()))?;
+        creation_boundary(fixture.as_ref(), "before_dispatch")?;
+        admit(&CloudCreationCommand::Claim {
+            key: intent.key.clone(),
+        })?;
+        creation_boundary(fixture.as_ref(), "after_claim")?;
+        // The durable claim is the serialized dispatch boundary; closure after it is uncertain.
+        let mut request = intent.request();
+        request["options"]["apiKey"] = json!(key);
+        catalog.deadline = Instant::now() + Duration::from_secs(30);
+        let response = catalog.rpc("SdkAgentService", "CreateAgent", &request)?;
+        let receipt = CloudCreationReceipt {
+            agent_id: response["agentId"]
+                .as_str()
+                .context("creation agent identity missing")?
+                .into(),
+            model: response["model"]["id"]
+                .as_str()
+                .context("creation model receipt missing")?
+                .into(),
+        };
+        receipt.validate()?;
+        ensure!(
+            receipt.model == profile.model
+                && response == json!({"agentId":receipt.agent_id,"model":{"id":receipt.model}}),
+            "creation receipt differs from the exact supported model/identity shape"
+        );
+        creation_boundary(fixture.as_ref(), "after_reply")?;
+        admit(&CloudCreationCommand::Acknowledge {
+            key: intent.key,
+            receipt: receipt.clone(),
+        })?;
+        creation_boundary(fixture.as_ref(), "after_ack")?;
+        println!(
+            "Cloud handle durably retained: {}\nThis SDK acknowledgement allocates a local handle; backend existence is unverified. Send unavailable.\nAfter bridge exit, handle restoration unavailable. No automatic creation or Retry. Press Enter to detach.",
+            receipt.agent_id
+        );
+        input.clear();
+        std::io::stdin().lock().take(64).read_line(&mut input)?;
+    }
     drop(bridge);
     Ok(())
 }

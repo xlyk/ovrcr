@@ -1401,6 +1401,7 @@ while IFS= read -r line; do :; done
                 failure: None,
                 conversation: Some(reference),
                 identity_invalid: false,
+                cloud_creation: None,
                 subjects: HashMap::new(),
             };
             assert!(Candidate::from_record(&record).is_some(), "{name}");

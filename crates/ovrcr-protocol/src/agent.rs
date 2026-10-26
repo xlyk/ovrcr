@@ -353,6 +353,7 @@ pub enum AgentCommand {
         reference: Box<ConversationReference>,
     },
     InvalidateConversation,
+    CloudCreation(Box<crate::CloudCreationCommand>),
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SupervisorRequest {
@@ -369,6 +370,7 @@ pub enum AgentOperationResult {
     HealthUpdated,
     ConversationRetained,
     ConversationInvalidated,
+    CloudCreationCommitted,
 }
 
 /// Exact provider-owned history and non-secret launch configuration references.
@@ -975,6 +977,25 @@ pub(crate) mod tests {
                 }),
             }));
         }
+        for command in [
+            crate::CloudCreationCommand::Prepare(crate::cloud_creation::fixture_intent()),
+            crate::CloudCreationCommand::Claim {
+                key: "a".repeat(64),
+            },
+            crate::CloudCreationCommand::Acknowledge {
+                key: "a".repeat(64),
+                receipt: crate::CloudCreationReceipt {
+                    agent_id: "agent-373".into(),
+                    model: "composer-2.5".into(),
+                },
+            },
+        ] {
+            requests.push(Request::Supervisor(SupervisorRequest {
+                auth: auth.clone(),
+                operation: "creation".into(),
+                command: AgentCommand::CloudCreation(Box::new(command)),
+            }));
+        }
         requests
     }
     pub(crate) fn response_fixtures() -> Vec<Response> {
@@ -998,6 +1019,7 @@ pub(crate) mod tests {
             AgentOperationResult::HealthUpdated,
             AgentOperationResult::ConversationRetained,
             AgentOperationResult::ConversationInvalidated,
+            AgentOperationResult::CloudCreationCommitted,
         ]
         .into_iter()
         .map(Response::AgentOperation)

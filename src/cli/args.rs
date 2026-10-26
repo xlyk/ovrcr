@@ -270,6 +270,10 @@ pub(super) enum WorkspaceCommand {
 
 #[derive(Subcommand)]
 pub(super) enum TerminalCommand {
+    /// Discard retained cloud creation locally; remote effects may remain unknown.
+    CloudDiscard {
+        id: u64,
+    },
     /// Mark one observed agent response reviewed. Changes unread only.
     MarkReviewed {
         id: u64,
@@ -453,6 +457,8 @@ pub(super) enum AgentCommand {
     CloudPreview { account: String },
     #[command(hide = true)]
     CloudAdmission,
+    #[command(hide = true)]
+    CloudCreation,
     /// Print a reviewed settings composition; never modify provider settings.
     Setup {
         #[arg(value_parser = PROVIDERS)]

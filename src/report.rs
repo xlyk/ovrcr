@@ -591,6 +591,15 @@ fn send_payload(
     send_payload_accepted(input, provider, origin, deadline).map(|_| ())
 }
 
+pub fn send_cloud_creation(input: &[u8], deadline: Instant) -> Result<()> {
+    let _: ovrcr_protocol::CloudCreationCommand = serde_json::from_slice(input)?;
+    anyhow::ensure!(
+        send_payload_accepted(input, "cursor-cloud", "creation", deadline)?,
+        "durable cloud creation admission refused"
+    );
+    Ok(())
+}
+
 pub fn send_cloud_admission(deadline: Instant) -> Result<()> {
     anyhow::ensure!(
         send_payload_accepted(b"{}", "cursor-cloud", "preview-admission", deadline)?,

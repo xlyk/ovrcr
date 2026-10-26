@@ -367,6 +367,9 @@ fn respond(request: Request, answer: Answer, state: &mut State) -> Response {
         }
         Request::Supervisor(supervisor) => {
             let receipt = match supervisor.command {
+                AgentCommand::CloudCreation(_) => {
+                    panic!("unexpected cloud creation in reporting fixture")
+                }
                 AgentCommand::WorkflowSource { binding, .. } => {
                     if answer == Answer::Refuse {
                         refusal()

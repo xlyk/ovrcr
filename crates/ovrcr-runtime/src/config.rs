@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 20;
+const SCHEMA_VERSION: i64 = 21;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -395,6 +395,10 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
         // Older writers discard native resolved-model/profile/policy authority.
         transaction.pragma_update(None, "user_version", 20)?;
     }
+    if schema_identity(&transaction)?.1 < 21 {
+        crate::retained::cloud_creation::create_schema(&transaction)?;
+        transaction.pragma_update(None, "user_version", 21)?;
+    }
     transaction.commit().context("commit registry migration")?;
     Ok(connection)
 }
@@ -440,6 +444,8 @@ pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
                 | 16
                 | 17
                 | 18
+                | 19
+                | 20
                 | SCHEMA_VERSION
         )
     {

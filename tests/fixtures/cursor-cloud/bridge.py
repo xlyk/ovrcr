@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Local catalog fixture; any mutation RPC is logged and rejected."""
+"""Local pinned-bridge fixture. Never contacts Cursor; Send is always rejected."""
 import argparse
 import http.server
 import json
 import os
+import socket
 from pathlib import Path
 import sys
 import tempfile
@@ -49,10 +50,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
                   'Me': {'user': {'userId': '123'}},
                   'ListModels': {'items': [{'id': config.get('model', 'composer-2.5')}]},
                   'ListRepositories': {'items': [{'url': config.get('repository', 'https://github.com/acme/app')}]}}
+        if method == 'CreateAgent':
+            expected = {'idempotencyKey': body.get('idempotencyKey'), 'options': {
+                'apiKey': 'ovrcr-fixture-not-a-credential', 'model': {'id': 'composer-2.5'},
+                'cloud': {'repos': [{'url': 'https://github.com/acme/app', 'startingRef': body.get('options',{}).get('cloud',{}).get('repos',[{}])[0].get('startingRef')}],
+                'workOnCurrentBranch': False, 'autoCreatePr': False}}}
+            assert body == expected and len(body['idempotencyKey']) == 64
+            if config.get('drop_creation_reply'):
+                self.connection.shutdown(socket.SHUT_RDWR)
+                return
+            values[method] = {'agentId': 'fixture-agent-373', 'model': {'id': 'composer-2.5'}}
         if method not in values:
             self.send_error(405)
             return
-        if method != 'GetVersion' and body != {'options': {'apiKey': 'ovrcr-fixture-not-a-credential'}}:
+        if method not in ['GetVersion', 'CreateAgent'] and body != {'options': {'apiKey': 'ovrcr-fixture-not-a-credential'}}:
             self.send_error(401)
             return
         encoded = json.dumps(values[method]).encode()

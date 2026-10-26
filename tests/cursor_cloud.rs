@@ -175,7 +175,7 @@ fn ordinary_cloud_agent_validates_preview_and_cleans_owned_tree_on_exit_and_sign
             "Published commit:",
             "Model: composer-2.5",
             "Local edits are excluded",
-            "CreateAgent/Send: unavailable",
+            "CreateAgent: explicit prepare required. Send: unavailable.",
         ] {
             assert!(text.contains(expected), "missing {expected}: {text}");
         }
@@ -365,5 +365,527 @@ fn managed_preflight_helpers_and_descendants_are_cleaned_after_adapter_death_or_
             "adapter survived {mode}"
         );
         assert!(fixture.events().is_empty());
+    }
+}
+
+#[test]
+fn managed_creation_retains_exact_handle_without_sending() {
+    let fixture = Fixture::new("composer-2.5", true, true, false);
+    let session = fixture.launch();
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Press Enter to close preview.")
+    });
+    assert_eq!(
+        fixture.live.request(Request::SendTerminal {
+            session: session.id,
+            text: "prepare".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.until(|| {
+        let text = fixture.text(&session);
+        assert!(!text.contains("validation failed"), "{text}");
+        text.contains("Cloud handle durably retained: fixture-agent-373")
+    });
+    let methods = fixture
+        .events()
+        .iter()
+        .filter_map(|e| e["method"].as_str().map(str::to_owned))
+        .collect::<Vec<_>>();
+    assert_eq!(methods.iter().filter(|m| *m == "CreateAgent").count(), 1);
+    assert_eq!(methods.iter().filter(|m| *m == "Send").count(), 0);
+    let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect) else {
+        panic!("inventory")
+    };
+    let retained = sessions.iter().find(|s| s.id == session.id).unwrap();
+    assert!(
+        retained
+            .recovery
+            .as_ref()
+            .unwrap()
+            .unavailable
+            .as_ref()
+            .unwrap()
+            .contains("handle restoration unavailable")
+    );
+}
+
+#[test]
+fn managed_creation_crashes_retain_original_operation_and_require_explicit_discard() {
+    for (boundary, creations, description) in [
+        ("before_dispatch", 0, "prepared, never dispatched"),
+        ("after_create", 1, "unresolved, possibly escaped"),
+        ("after_reply", 1, "unresolved, possibly escaped"),
+        ("after_ack", 1, "handle acknowledged"),
+    ] {
+        let fixture = Fixture::new("composer-2.5", true, true, false);
+        let mut config: Value =
+            serde_json::from_slice(&fs::read(&fixture.config).unwrap()).unwrap();
+        config["creation_crash_at"] = json!(boundary);
+        if boundary == "after_create" {
+            let bridge_config = fixture.live.root.path().join("bridge.json");
+            let mut bridge: Value =
+                serde_json::from_slice(&fs::read(&bridge_config).unwrap()).unwrap();
+            bridge["drop_creation_reply"] = json!(true);
+            fs::write(bridge_config, bridge.to_string()).unwrap();
+        }
+        fs::write(&fixture.config, config.to_string()).unwrap();
+        let session = fixture.launch();
+        fixture.until(|| {
+            fixture
+                .text(&session)
+                .contains("Press Enter to close preview.")
+        });
+        assert_eq!(
+            fixture.live.request(Request::SendTerminal {
+                session: session.id,
+                text: "prepare".into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.until(|| {
+            let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect)
+            else {
+                panic!("inventory")
+            };
+            !sessions
+                .iter()
+                .find(|s| s.id == session.id)
+                .unwrap()
+                .phase
+                .is_live()
+        });
+        let offline =
+            ovrcr_runtime::retained::load_session_summaries(&fixture.live.config).unwrap();
+        let retained = offline.iter().find(|s| s.id == session.id).unwrap();
+        let recovery = retained.recovery.as_ref().unwrap();
+        assert!(
+            recovery.unavailable.as_ref().unwrap().contains(description),
+            "{boundary}: {retained:?}"
+        );
+        assert!(recovery.conversation.is_none());
+        assert!(!retained.can_auto_recover());
+        let events = fixture.events();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| e["method"] == "CreateAgent")
+                .count(),
+            creations,
+            "{boundary}"
+        );
+        assert_eq!(events.iter().filter(|e| e["method"] == "Send").count(), 0);
+        let payloads = fs::read_dir(fixture.live.config.join("cloud-creations"))
+            .unwrap()
+            .count();
+        assert_eq!(payloads, usize::from(boundary != "after_ack"));
+        assert_eq!(
+            fixture.live.request(Request::Shutdown { kill: true }),
+            Response::Ok
+        );
+        fixture.live.join();
+        fixture
+            .live
+            .start_binary_env(&[("OVRCR_CURSOR_CLOUD_FIXTURE", fixture.config.as_os_str())]);
+        let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect) else {
+            panic!("inventory")
+        };
+        let restored = sessions.iter().find(|s| s.id == session.id).unwrap();
+        assert!(
+            restored
+                .recovery
+                .as_ref()
+                .unwrap()
+                .unavailable
+                .as_ref()
+                .unwrap()
+                .contains(description)
+        );
+        assert!(!restored.can_auto_recover());
+        assert_eq!(
+            fixture.live.request(Request::CloseTerminal {
+                session: session.id,
+                expected_run: session.run
+            }),
+            Response::Ok
+        );
+        let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect) else {
+            panic!("inventory")
+        };
+        let archived = sessions.iter().find(|s| s.id == session.id).unwrap();
+        assert!(matches!(
+            fixture.live.request(Request::DiscardCloudCreation {
+                session: session.id,
+                expected_run: session.run
+            }),
+            Response::Error { .. }
+        ));
+        if boundary != "after_ack" {
+            assert!(matches!(
+                fixture.live.request(Request::DeleteArchivedSession {
+                    session: session.id,
+                    expected_run: archived.run
+                }),
+                Response::Error { .. }
+            ));
+        }
+        assert_eq!(
+            fixture.live.request(Request::DiscardCloudCreation {
+                session: session.id,
+                expected_run: archived.run
+            }),
+            Response::Ok
+        );
+        assert_eq!(
+            fs::read_dir(fixture.live.config.join("cloud-creations"))
+                .unwrap()
+                .count(),
+            0
+        );
+        assert_eq!(
+            fixture.live.request(Request::DeleteArchivedSession {
+                session: session.id,
+                expected_run: archived.run
+            }),
+            Response::Ok
+        );
+        // Restart reads the same store and does not recreate deleted cloud rows.
+        assert_eq!(
+            fixture.live.request(Request::Shutdown { kill: true }),
+            Response::Ok
+        );
+        fixture.live.join();
+        fixture
+            .live
+            .start_binary_env(&[("OVRCR_CURSOR_CLOUD_FIXTURE", fixture.config.as_os_str())]);
+        let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect) else {
+            panic!("inventory")
+        };
+        assert!(sessions.iter().all(|s| s.id != session.id));
+        assert_eq!(
+            fixture
+                .events()
+                .iter()
+                .filter(|e| e["method"] == "CreateAgent")
+                .count(),
+            creations
+        );
+    }
+}
+
+#[test]
+fn managed_creation_discard_serializes_against_dispatch_and_late_receipt() {
+    for (boundary, creations) in [("before_dispatch", 0), ("after_claim", 1)] {
+        let fixture = Fixture::new("composer-2.5", true, true, false);
+        let marker = fixture.live.root.path().join("creation-checkpoint");
+        let mut config: Value =
+            serde_json::from_slice(&fs::read(&fixture.config).unwrap()).unwrap();
+        config["creation_pause_at"] = json!(boundary);
+        config["creation_checkpoint"] = json!(marker);
+        fs::write(&fixture.config, config.to_string()).unwrap();
+        let session = fixture.launch();
+        fixture.until(|| {
+            fixture
+                .text(&session)
+                .contains("Press Enter to close preview.")
+        });
+        assert_eq!(
+            fixture.live.request(Request::SendTerminal {
+                session: session.id,
+                text: "prepare".into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.until(|| marker.exists());
+        assert_eq!(
+            fixture.live.request(Request::DiscardCloudCreation {
+                session: session.id,
+                expected_run: session.run
+            }),
+            Response::Ok
+        );
+        fs::write(marker.with_extension("release"), "release").unwrap();
+        fixture.until(|| {
+            let text = fixture.text(&session);
+            text.contains(if creations == 0 {
+                "durable creation admission unavailable"
+            } else {
+                "Cloud handle durably retained: fixture-agent-373"
+            })
+        });
+        let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect) else {
+            panic!("inventory")
+        };
+        let row = sessions.iter().find(|s| s.id == session.id).unwrap();
+        assert!(
+            row.recovery
+                .as_ref()
+                .unwrap()
+                .unavailable
+                .as_ref()
+                .unwrap()
+                .contains("discarded locally")
+        );
+        assert!(!row.can_auto_recover());
+        assert_eq!(
+            fixture
+                .events()
+                .iter()
+                .filter(|e| e["method"] == "CreateAgent")
+                .count(),
+            creations
+        );
+        assert_eq!(
+            fixture
+                .events()
+                .iter()
+                .filter(|e| e["method"] == "Send")
+                .count(),
+            0
+        );
+        assert_eq!(
+            fs::read_dir(fixture.live.config.join("cloud-creations"))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+}
+
+#[test]
+fn managed_creation_storage_failures_permit_only_durably_claimed_effects() {
+    for (mode, creations) in [
+        ("intent-commit", 0),
+        ("claim-commit", 0),
+        ("receipt-commit", 1),
+        ("corrupt-payload", 0),
+        ("private-root", 0),
+        ("closure-commit", 1),
+    ] {
+        let fixture = Fixture::new("composer-2.5", true, true, false);
+        let marker = fixture.live.root.path().join("storage-checkpoint");
+        if ["corrupt-payload", "closure-commit"].contains(&mode) {
+            let mut config: Value =
+                serde_json::from_slice(&fs::read(&fixture.config).unwrap()).unwrap();
+            config["creation_pause_at"] = json!("before_dispatch");
+            config["creation_checkpoint"] = json!(marker);
+            fs::write(&fixture.config, config.to_string()).unwrap();
+        }
+        let database =
+            rusqlite::Connection::open(fixture.live.config.join("registry.sqlite3")).unwrap();
+        let trigger = match mode {
+            "intent-commit" => Some(
+                "CREATE TRIGGER fail_creation BEFORE INSERT ON cloud_creations BEGIN SELECT RAISE(ABORT,'fixture full storage'); END",
+            ),
+            "claim-commit" => Some(
+                "CREATE TRIGGER fail_creation BEFORE UPDATE ON cloud_creations WHEN json_extract(NEW.metadata,'$.claimed')=1 BEGIN SELECT RAISE(ABORT,'fixture claim storage failure'); END",
+            ),
+            "receipt-commit" => Some(
+                "CREATE TRIGGER fail_creation BEFORE UPDATE ON cloud_creations WHEN json_type(NEW.metadata,'$.receipt')='object' BEGIN SELECT RAISE(ABORT,'fixture receipt storage failure'); END",
+            ),
+            "closure-commit" => Some(
+                "CREATE TRIGGER fail_closure BEFORE INSERT ON cloud_creation_fences BEGIN SELECT RAISE(ABORT,'fixture closure storage failure'); END",
+            ),
+            _ => None,
+        };
+        if let Some(sql) = trigger {
+            database.execute_batch(sql).unwrap();
+        }
+        if mode == "private-root" {
+            std::os::unix::fs::symlink(
+                fixture.live.root.path(),
+                fixture.live.config.join("cloud-creations"),
+            )
+            .unwrap();
+        }
+        let session = fixture.launch();
+        fixture.until(|| {
+            fixture
+                .text(&session)
+                .contains("Press Enter to close preview.")
+        });
+        assert_eq!(
+            fixture.live.request(Request::SendTerminal {
+                session: session.id,
+                text: "prepare".into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        if ["corrupt-payload", "closure-commit"].contains(&mode) {
+            fixture.until(|| marker.exists());
+            if mode == "corrupt-payload" {
+                let payload = fs::read_dir(fixture.live.config.join("cloud-creations"))
+                    .unwrap()
+                    .next()
+                    .unwrap()
+                    .unwrap()
+                    .path();
+                fs::write(payload, "corrupt original request").unwrap();
+            } else {
+                assert!(matches!(
+                    fixture.live.request(Request::DiscardCloudCreation {
+                        session: session.id,
+                        expected_run: session.run
+                    }),
+                    Response::Error { .. }
+                ));
+            }
+            fs::write(marker.with_extension("release"), "release").unwrap();
+        }
+        fixture.until(|| {
+            let text = fixture.text(&session);
+            text.contains(if mode == "closure-commit" {
+                "Cloud handle durably retained: fixture-agent-373"
+            } else {
+                "durable creation admission unavailable"
+            })
+        });
+        assert_eq!(
+            fixture
+                .events()
+                .iter()
+                .filter(|e| e["method"] == "CreateAgent")
+                .count(),
+            creations,
+            "{mode}"
+        );
+        assert_eq!(
+            fixture
+                .events()
+                .iter()
+                .filter(|e| e["method"] == "Send")
+                .count(),
+            0
+        );
+        let raw: String = database
+            .query_row(
+                "SELECT coalesce(group_concat(metadata),'') FROM cloud_creations",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!raw.contains("ovrcr-fixture-not-a-credential"));
+        assert!(!raw.contains("fixture_bridge_bearer"));
+        if mode == "receipt-commit" {
+            assert!(raw.contains("\"receipt\":null"));
+        }
+        if mode == "closure-commit" {
+            assert!(raw.contains("\"closed\":false"));
+        }
+        if let Some(sql) = trigger {
+            database
+                .execute_batch(if sql.contains("fail_closure") {
+                    "DROP TRIGGER fail_closure"
+                } else {
+                    "DROP TRIGGER fail_creation"
+                })
+                .unwrap();
+        }
+        if mode == "private-root" {
+            fs::remove_file(fixture.live.config.join("cloud-creations")).unwrap();
+        }
+    }
+}
+
+#[test]
+fn restart_cleans_owned_publication_aliases_and_durably_retired_creation_payloads() {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    for boundary in ["before_dispatch", "after_ack"] {
+        let fixture = Fixture::new("composer-2.5", true, true, false);
+        let mut config: Value =
+            serde_json::from_slice(&fs::read(&fixture.config).unwrap()).unwrap();
+        config["creation_crash_at"] = json!(boundary);
+        fs::write(&fixture.config, config.to_string()).unwrap();
+        let session = fixture.launch();
+        fixture.until(|| {
+            fixture
+                .text(&session)
+                .contains("Press Enter to close preview.")
+        });
+        assert_eq!(
+            fixture.live.request(Request::SendTerminal {
+                session: session.id,
+                text: "prepare".into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.until(|| {
+            let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect)
+            else {
+                panic!("inventory")
+            };
+            !sessions
+                .iter()
+                .find(|s| s.id == session.id)
+                .unwrap()
+                .phase
+                .is_live()
+        });
+        assert_eq!(
+            fixture.live.request(Request::Shutdown { kill: true }),
+            Response::Ok
+        );
+        fixture.live.join();
+        let database =
+            rusqlite::Connection::open(fixture.live.config.join("registry.sqlite3")).unwrap();
+        let raw: String = database
+            .query_row(
+                "SELECT metadata FROM cloud_creations WHERE session=?1",
+                [i64::try_from(session.id.0).unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let record: Value = serde_json::from_str(&raw).unwrap();
+        let intent: ovrcr::protocol::CloudCreationIntent =
+            serde_json::from_value(record["intent"].clone()).unwrap();
+        let root = fixture.live.config.join("cloud-creations");
+        let payload = root.join(&intent.key);
+        if boundary == "after_ack" {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&payload)
+                .unwrap();
+            file.write_all(&serde_json::to_vec(&intent.request()).unwrap())
+                .unwrap();
+        }
+        fs::hard_link(&payload, root.join(format!(".{}", "d".repeat(64)))).unwrap();
+        drop(database);
+        fixture
+            .live
+            .start_binary_env(&[("OVRCR_CURSOR_CLOUD_FIXTURE", fixture.config.as_os_str())]);
+        assert!(matches!(
+            fixture.live.request(Request::Inspect),
+            Response::Inventory { .. }
+        ));
+        assert_eq!(
+            fs::read_dir(&root).unwrap().count(),
+            usize::from(boundary == "before_dispatch")
+        );
+        assert_eq!(
+            fixture
+                .events()
+                .iter()
+                .filter(|e| e["method"] == "CreateAgent")
+                .count(),
+            usize::from(boundary == "after_ack")
+        );
+        assert_eq!(
+            fixture
+                .events()
+                .iter()
+                .filter(|e| e["method"] == "Send")
+                .count(),
+            0
+        );
     }
 }

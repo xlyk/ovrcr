@@ -96,3 +96,25 @@ reasoning. Native confirmation that Grok 1.0.40 creates the file for a supplied
 The common base includes archive prerequisite #115 from `c633103`. Use separate worktrees from the merged common base. Shared enum additions, adapter registration, protocol snapshots/version and capability documentation require a single integration owner: agree appended variant order and land each registration sequentially. Provider modules and their tests can proceed concurrently. Do not independently redesign the shared contract or persistence schema. #117 needs no changes to adapter registration.
 
 Native Claude continuity and macOS GUI input from #116 are verified on `8347563`; automated macOS/Linux, capacity and memory checks passed on that revision. See the [acceptance record](../../research/issue-116-claude-recovery/native-continuity-20260917/README.md) for the two-restart proof and platform boundaries. Native Linux GUI was not exercised. Downstream tickets require their own provider acceptance; this evidence does not authorize additional paid runs or a merge. The existing limitation for persistent storage failure followed by owner death before invalidation commits remains unchanged.
+
+## Cursor cloud creation
+
+Cursor cloud creation is retained under the same SessionStore, before a
+conversation reference exists. The original row shows prepared/never-dispatched,
+unresolved/possibly-escaped, exact handle acknowledgement, or explicit local
+Discard. Archive preserves unresolved request bytes; deleting that row requires
+`ovrcr terminal cloud-discard ID`. Stale run observations cannot discard another
+generation. Neither display, restart, Reopen nor Retry may create another handle,
+choose a new key, open a native resume picker or Send to discover identity.
+A bridge death between local handle acknowledgement and first Send fails closed:
+the pinned SDK has no verified same-handle restoration route in this slice.
+
+SQLite stores only nonsecret creation authority and receipt metadata. The
+accepted pending-submission exception permits immutable semantic request bytes
+in confined owner-only private plaintext files; same-user programs and backups
+can read them. Credentials are injected in memory at dispatch. Creation bytes
+retire after the exact agent ID/model receipt is durable; a future Send has a
+separate exact run-receipt boundary. Startup cleans owned temporary aliases and
+payloads whose durable receipt/Discard already permits retirement, without any
+remote effect. Corrupt/full storage refuses new effects and never evicts retained
+requests to make room. See [Cursor cloud controls](../cursor-cloud.md).
