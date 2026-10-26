@@ -2124,11 +2124,12 @@ fn managed_failed_cancel_commits_permit_zero_cancel_rpcs_and_do_not_claim_durabl
             text: "/cancel".into(),
             submit: true,
         });
+        // Keep the trigger until the claim itself fails, after the intent receipt.
         fixture.until(|| {
             fixture.text(&session).contains(if mode == "intent" {
                 "Cancellation not durably acknowledged"
             } else {
-                "Cancellation intent durably retained"
+                "Cancellation admission not durably acknowledged"
             })
         });
         assert_eq!(
