@@ -339,7 +339,7 @@ pub(super) fn send(
             .context("Send unresolved; original reply lost; do not retry")?;
         let result = result.context("terminal result missing")?;
         ensure!(done, "done receipt missing");
-        let streamed_status = terminal(&result["status"])?;
+        terminal(&result["status"])?;
         let snapshot = catalog.rpc(
             "SdkAgentService",
             "GetRun",
@@ -353,7 +353,6 @@ pub(super) fn send(
             "independent exact-run status mismatch"
         );
         let status = terminal(&snapshot["run"]["status"])?;
-        let _ = streamed_status;
         if status == CloudRunStatus::Finished {
             ensure!(source, "source tool proof missing; result unverified");
         }

@@ -319,7 +319,7 @@ fn managed_preflight_helpers_and_descendants_are_cleaned_after_adapter_death_or_
         let fixture = Fixture::new("composer-2.5", true, true, false);
         let helper = fixture.live.root.path().join("blocked-helper.py");
         let observed = helper.with_extension("json");
-        fs::write(&helper, format!("#!/usr/bin/env python3\nimport json,os,subprocess,sys,time\nfrom pathlib import Path\nchild=subprocess.Popen([sys.executable,'-c','import time; time.sleep(300)'])\nPath({:?}).write_text(json.dumps(dict(helper=os.getpid(),adapter=os.getppid(),grandchild=child.pid,root=os.environ['OVRCR_CURSOR_CLOUD_ROOT'])))\ntime.sleep(300)\n", observed)).unwrap();
+        fs::write(&helper, format!("#!/usr/bin/env python3\nimport json,os,subprocess,sys,time\nfrom pathlib import Path\nchild=subprocess.Popen([sys.executable,'-c','import time; time.sleep(300)'])\nobserved=Path({:?})\nobserved.with_suffix('.pending').write_text(json.dumps(dict(helper=os.getpid(),adapter=os.getppid(),grandchild=child.pid,root=os.environ['OVRCR_CURSOR_CLOUD_ROOT'])))\nobserved.with_suffix('.pending').replace(observed)\ntime.sleep(300)\n", observed)).unwrap();
         fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
         let mut config: Value =
             serde_json::from_slice(&fs::read(&fixture.config).unwrap()).unwrap();
