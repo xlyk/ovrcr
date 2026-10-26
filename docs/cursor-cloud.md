@@ -65,7 +65,15 @@ matching terminal result/done/end receipts and an independent exact GetRun.
 GetAgent must confirm the same conversation, cloud runtime and repository.
 A later idle prompt uses the same account/conversation with a new Send key and
 run. A failed run reports Error; a disconnected or unrecognized stream reports
-observation unknown, since remote work and charges may continue. Prose never
+observation unknown, since remote work and charges may continue. After a transport
+interruption with an exact durable run receipt, the original owned bridge may make
+at most two ObserveRun attempts. The first starts at the beginning and suppresses
+already-applied Send events; the second resumes after durably acknowledged exclusive
+ObserveRun progress. Send and ObserveRun offsets are stored separately under the
+original account/conversation/run and stream origin in shared SQLite. Replayed
+completion cannot create another Ready/Unread. Invalid identity, malformed evidence,
+missing/changed offsets or failed progress persistence stop observation. No Send is
+replayed, and no fresh bridge is started for this bounded recovery. Prose never
 creates an input/approval request. Terminal responses, uncertain CreateAgent/Send Retry and active
 reattachment remain blocked. Exact known-run recovery is described below.
 
@@ -93,7 +101,7 @@ protobuf generation step or generated client to claim verified. Managed launch
 rechecks the actual archive before private extraction and requires runtime bridge
 1.0.0/protocol sdk.v1, independently of passive doctor results. It preserves
 strict discovery identity and requires advertised `agent.create`, `agent.send`,
-`run.cancel`, `agent.management` and `cursor.catalog` before account/catalog
+`run.cancel`, `run.observe`, `agent.management` and `cursor.catalog` before account/catalog
 requests or agent operations. Missing/malformed capability lists refuse launch;
 unknown additional strings are forward compatible. Advertisements are protocol
 negotiation, not behavioral proof of terminal responses, retry or active recovery.
@@ -253,6 +261,11 @@ an absolute marker path and its `.release` sibling, `cancel_outcome` for the cac
 stream status, and `cancel_snapshot_outcome` for independent exact GetRun status.
 These simulate races only and do not attest real upstream behavior.
 
+Fixture controls `drop_send_after` and `drop_observe_after` interrupt after a bounded
+number of envelopes; `observe_pause_file` waits for its `.release` sibling.
+`observe_scenario` exercises wrong-run, changed/missing offsets, repeated transport
+loss and replayed completion. These are synthetic fault controls, not cloud proof.
+
 ## Exact-run recovery
 
 `ovrcr terminal reopen ID` reuses the retained Session and working directory.
@@ -309,7 +322,8 @@ readiness. #378 still requires current-head packaged Dashboard/provider acceptan
 separately approved concurrent two-account cloud proofs, required macOS/Linux CI
 and process cleanup receipts. Terminal correlated responses (#377), safe uncertain
 CreateAgent/Send Retry, and active option-preserving recovery remain blocked.
-#376 is partial: Observe progress/replay bookkeeping and deduplication remain open.
+#376 remains partial: same-owned-bridge Observe progress/replay is implemented;
+fresh-bridge active restoration and fresh-handle replay stability remain unproved.
 The full official upstream local-agent smoke includes credentialed account access
 and a model Send and needs separate concrete approval. Passive checks or the
 zero-model local control subset cannot count as that full smoke. Existing fixture

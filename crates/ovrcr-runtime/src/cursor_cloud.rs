@@ -574,6 +574,7 @@ pub fn preview(
                 "agent.create",
                 "agent.send",
                 "run.cancel",
+                "run.observe",
                 "agent.management",
                 "cursor.catalog"
             ]

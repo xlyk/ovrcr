@@ -6862,6 +6862,79 @@ mod agent_reporting {
                 run_id: "run-2".into(),
             },
         ));
+        let progress = |agent_id: &str, run_id: &str, origin: &str, observe, offset| {
+            CloudCreationCommand::ObservationProgress {
+                key: send.key.clone(),
+                agent_id: agent_id.into(),
+                run_id: run_id.into(),
+                origin: origin.into(),
+                observe,
+                offset,
+            }
+        };
+        let origin = "f".repeat(64);
+        for (operation, observe, offset) in [
+            ("send-progress", false, 100),
+            ("observe-progress", true, 1),
+            ("observe-next", true, 2),
+        ] {
+            assert_eq!(
+                submit(
+                    operation,
+                    progress(&send.agent_id, "run-1", &origin, observe, offset)
+                ),
+                Response::AgentOperation(AgentOperationResult::CloudCreationCommitted)
+            );
+        }
+        for (operation, agent, run, origin, offset) in [
+            (
+                "repeat-progress",
+                send.agent_id.as_str(),
+                "run-1",
+                origin.clone(),
+                2,
+            ),
+            (
+                "stale-progress",
+                send.agent_id.as_str(),
+                "run-1",
+                origin.clone(),
+                1,
+            ),
+            (
+                "foreign-progress",
+                "other-agent",
+                "run-1",
+                origin.clone(),
+                3,
+            ),
+            (
+                "foreign-run-progress",
+                send.agent_id.as_str(),
+                "run-2",
+                origin.clone(),
+                3,
+            ),
+            (
+                "foreign-origin",
+                send.agent_id.as_str(),
+                "run-1",
+                "e".repeat(64),
+                3,
+            ),
+            (
+                "invalid-origin",
+                send.agent_id.as_str(),
+                "run-1",
+                "bad".into(),
+                3,
+            ),
+        ] {
+            rejected(submit(
+                operation,
+                progress(agent, run, &origin, true, offset),
+            ));
+        }
         rejected(submit(
             "stale-complete",
             CloudCreationCommand::CompleteSend {

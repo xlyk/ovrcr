@@ -53,7 +53,9 @@ The pinned official Cursor process owned by one cloud attachment inside the Serv
 **Cloud reconciliation**:
 A read of the original retained cloud conversation/run through a freshly validated
 credential-bound bridge. A historical terminal outcome creates no new Ready or
-Unread. Active reattachment and uncertain CreateAgent/Send replay remain gated;
+Unread. The original live attachment may recover a transport interruption on its
+still-owned bridge using separate durable Observe progress; this does not authorize
+fresh-handle restoration. Active reattachment and uncertain CreateAgent/Send replay remain gated;
 explicit Retry Cancel is a separate durable exact-run action.
 
 **Published source**:

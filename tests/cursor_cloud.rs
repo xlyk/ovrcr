@@ -278,6 +278,7 @@ fn managed_cloud_refuses_incompatible_bridge_before_account_requests() {
         "agent.create",
         "agent.send",
         "run.cancel",
+        "run.observe",
         "agent.management",
         "cursor.catalog",
     ];
@@ -347,7 +348,7 @@ fn managed_cloud_accepts_unknown_additional_bridge_capabilities() {
     let path = fixture.live.root.path().join("bridge.json");
     let mut config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     config["version_response"] = json!({"bridgeVersion":"1.0.0", "protocolVersion":"sdk.v1",
-        "capabilities":["future.unrecognized", "cursor.catalog", "agent.management", "run.cancel", "agent.send", "agent.create"]});
+        "capabilities":["future.unrecognized", "cursor.catalog", "agent.management", "run.cancel", "run.observe", "agent.send", "agent.create"]});
     fs::write(path, config.to_string()).unwrap();
     let session = fixture.launch();
     fixture.until(|| {
@@ -2452,6 +2453,11 @@ fn managed_known_run_stream_failure_preserves_exact_live_cancel_target() {
 #[test]
 fn managed_recovery_reconciles_exact_completed_run_without_replay_or_ready() {
     let fixture = Fixture::new("composer-2.5", true, true, false);
+    let bridge_path = fixture.live.root.path().join("bridge.json");
+    let mut initial: Value = serde_json::from_slice(&fs::read(&bridge_path).unwrap()).unwrap();
+    initial["drop_send_after"] = json!(4);
+    initial["drop_observe_after"] = json!(4);
+    fs::write(&bridge_path, initial.to_string()).unwrap();
     let session = fixture.launch();
     fixture.until(|| {
         fixture
@@ -2577,7 +2583,7 @@ fn managed_recovery_reconciles_exact_completed_run_without_replay_or_ready() {
         ("Send", 1),
         ("GetRun", 2),
         ("CancelRun", 0),
-        ("ObserveRun", 0),
+        ("ObserveRun", 2),
         ("ResumeAgent", 0),
     ] {
         assert_eq!(
@@ -2966,4 +2972,235 @@ fn managed_recovery_discard_wins_before_explicit_cancel_claim() {
 #[test]
 fn managed_recovery_failed_cancel_claim_permits_zero_cancel_rpc() {
     recovered_active_cancel("storage");
+}
+
+#[test]
+fn managed_same_bridge_observe_recovers_transport_loss_with_exclusive_progress() {
+    let fixture = Fixture::new("composer-2.5", true, true, false);
+    let path = fixture.live.root.path().join("bridge.json");
+    let mut config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    config["drop_send_after"] = json!(4);
+    config["drop_observe_after"] = json!(4);
+    config["observe_scenario"] = json!("replayed_completion");
+    fs::write(&path, config.to_string()).unwrap();
+    let session = fixture.launch();
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Press Enter to close preview.")
+    });
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "prepare".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Cloud handle durably retained:")
+    });
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "Inspect source".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Ready: exact run fixture-run-1")
+    });
+    let database =
+        rusqlite::Connection::open(fixture.live.config.join("registry.sqlite3")).unwrap();
+    let raw: String = database
+        .query_row(
+            "SELECT metadata FROM cloud_creations WHERE session=?1",
+            [session.id.0 as i64],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let saved: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(saved["sends"][0]["progress"]["send"], 103);
+    assert_eq!(saved["sends"][0]["progress"]["observe"], 6);
+    assert!(
+        !raw.contains("Inspect source")
+            && !raw.contains("Inspecting selected source.")
+            && !raw.contains("ovrcr-fixture-not-a-credential")
+    );
+    let text = fixture.text(&session);
+    assert_eq!(
+        text.matches("Inspecting selected source.").count(),
+        1,
+        "{text}"
+    );
+    assert_eq!(text.matches("Ready: exact run").count(), 1, "{text}");
+    let requests: Vec<_> = fixture
+        .events()
+        .into_iter()
+        .filter(|e| e["event"] == "observe_request")
+        .collect();
+    assert_eq!(
+        requests
+            .iter()
+            .map(|e| e["after"].as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        vec![0, 4]
+    );
+    assert_eq!(
+        fixture
+            .events()
+            .iter()
+            .filter(|e| e["method"] == "Send")
+            .count(),
+        1
+    );
+    assert_eq!(
+        fixture
+            .events()
+            .iter()
+            .filter(|e| e["method"] == "CreateAgent")
+            .count(),
+        1
+    );
+    assert!(
+        !fixture
+            .events()
+            .iter()
+            .any(|e| e["method"] == "ResumeAgent")
+    );
+}
+
+#[test]
+fn managed_same_bridge_observe_rejects_foreign_changed_missing_and_failed_progress() {
+    for scenario in [
+        "wrong_run",
+        "changed_offset",
+        "missing_offset",
+        "missing_run",
+        "gap",
+        "disconnect_forever",
+        "storage",
+    ] {
+        let fixture = Fixture::new("composer-2.5", true, true, false);
+        let path = fixture.live.root.path().join("bridge.json");
+        let mut config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        config["drop_send_after"] = json!(1);
+        config["observe_scenario"] = json!(scenario);
+        if scenario == "disconnect_forever" {
+            config["drop_observe_after"] = json!(1);
+        }
+        fs::write(&path, config.to_string()).unwrap();
+        let session = fixture.launch();
+        fixture.until(|| {
+            fixture
+                .text(&session)
+                .contains("Press Enter to close preview.")
+        });
+        fixture.live.request(Request::SendTerminal {
+            session: session.id,
+            text: "prepare".into(),
+            submit: true,
+        });
+        fixture.until(|| {
+            fixture
+                .text(&session)
+                .contains("Cloud handle durably retained:")
+        });
+        if scenario == "storage" {
+            let database =
+                rusqlite::Connection::open(fixture.live.config.join("registry.sqlite3")).unwrap();
+            database.execute_batch("CREATE TRIGGER fail_progress BEFORE UPDATE ON cloud_creations WHEN json_extract(NEW.metadata,'$.sends[0].progress.observe')>0 BEGIN SELECT RAISE(ABORT,'fixture progress fault'); END;").unwrap();
+        }
+        fixture.live.request(Request::SendTerminal {
+            session: session.id,
+            text: "Inspect source".into(),
+            submit: true,
+        });
+        fixture.until(|| {
+            fixture
+                .text(&session)
+                .contains("Observation unknown/unverified:")
+        });
+        let text = fixture.text(&session);
+        assert!(!text.contains("Ready: exact run"), "{scenario}: {text}");
+        let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect) else {
+            panic!("inventory")
+        };
+        let row = sessions.iter().find(|s| s.id == session.id).unwrap();
+        assert!(row.unread.is_none(), "{scenario}: no replay creates Unread");
+        assert!(
+            row.agent
+                .as_ref()
+                .is_none_or(|a| a.input_requests.is_empty()
+                    && a.effective_activity() != ovrcr::protocol::AgentActivity::ResponseReady)
+        );
+        let events = fixture.events();
+        assert_eq!(events.iter().filter(|e| e["method"] == "Send").count(), 1);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| e["method"] == "ObserveRun")
+                .count(),
+            if scenario == "disconnect_forever" {
+                2
+            } else {
+                1
+            },
+            "{scenario}"
+        );
+        assert!(!events.iter().any(|e| e["method"] == "ResumeAgent"
+            || e["method"] == "ListRuns"
+            || e["method"] == "CancelRun"));
+    }
+}
+
+#[test]
+fn managed_same_bridge_observe_preserves_distinct_equal_content_events() {
+    let fixture = Fixture::new("composer-2.5", true, true, false);
+    let path = fixture.live.root.path().join("bridge.json");
+    let mut config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    config["drop_send_after"] = json!(5);
+    config["equal_content_events"] = json!(true);
+    config["observe_scenario"] = json!("replayed_completion");
+    fs::write(&path, config.to_string()).unwrap();
+    let session = fixture.launch();
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Press Enter to close preview.")
+    });
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "prepare".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Cloud handle durably retained:")
+    });
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "Inspect source".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Ready: exact run fixture-run-1")
+    });
+    let text = fixture.text(&session);
+    assert_eq!(
+        text.matches("Inspecting selected source.").count(),
+        2,
+        "{text}"
+    );
+    assert_eq!(text.matches("Ready: exact run").count(), 1, "{text}");
+    assert_eq!(
+        fixture
+            .events()
+            .iter()
+            .filter(|e| e["method"] == "Send")
+            .count(),
+        1
+    );
 }

@@ -12,6 +12,14 @@ pub(crate) struct SendRecord {
     pub claimed: bool,
     pub run_id: Option<String>,
     pub terminal: Option<ovrcr_protocol::CloudRunStatus>,
+    #[serde(default)]
+    progress: Option<Progress>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct Progress {
+    origin: String,
+    send: u64,
+    observe: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Record {
@@ -67,6 +75,15 @@ impl Record {
                                 .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c))
                     })
                     || (send.terminal.is_some() && send.run_id.is_none())
+                    || send.progress.as_ref().is_some_and(|p| {
+                        send.run_id.is_none()
+                            || p.origin.len() != 64
+                            || !p
+                                .origin
+                                .bytes()
+                                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+                            || (p.send == 0 && p.observe == 0)
+                    })
             })
         {
             bail!("invalid retained Send authority");
@@ -310,6 +327,7 @@ impl SessionStore {
                     | CloudCreationCommand::ObserveSend { .. }
                     | CloudCreationCommand::ObservationLost { .. }
                     | CloudCreationCommand::CompleteSend { .. }
+                    | CloudCreationCommand::ObservationProgress { .. }
             )
         {
             bail!("cloud creation delivery is closed");
@@ -431,6 +449,7 @@ impl SessionStore {
                     claimed: false,
                     run_id: None,
                     terminal: None,
+                    progress: None,
                 });
                 self.save_creation(id, record)?;
                 directory.publish(&intent.key, &bytes)?;
@@ -439,7 +458,8 @@ impl SessionStore {
             | CloudCreationCommand::AcknowledgeSend { key, .. }
             | CloudCreationCommand::CompleteSend { key, .. }
             | CloudCreationCommand::ObservationLost { key, .. }
-            | CloudCreationCommand::ObserveSend { key, .. } => {
+            | CloudCreationCommand::ObserveSend { key, .. }
+            | CloudCreationCommand::ObservationProgress { key, .. } => {
                 let mut record = existing.context("original Send unavailable")?;
                 if record.run != run
                     || record.invocation != invocation
@@ -511,6 +531,45 @@ impl SessionStore {
                         {
                             bail!("observation identity mismatch or closed");
                         }
+                    }
+                    CloudCreationCommand::ObservationProgress {
+                        agent_id,
+                        run_id,
+                        origin,
+                        observe,
+                        offset,
+                        ..
+                    } => {
+                        if (record.closed && (!record.cancel_requested || record.discarded))
+                            || agent_id != agent
+                            || record.sends[index].run_id.as_ref() != Some(run_id)
+                            || record.sends[index].terminal.is_some()
+                            || *offset == 0
+                        {
+                            bail!("observation progress identity mismatch or closed");
+                        }
+                        let progress =
+                            record.sends[index]
+                                .progress
+                                .get_or_insert_with(|| Progress {
+                                    origin: origin.clone(),
+                                    send: 0,
+                                    observe: 0,
+                                });
+                        if &progress.origin != origin {
+                            bail!("observation stream origin changed");
+                        }
+                        let previous = if *observe {
+                            &mut progress.observe
+                        } else {
+                            &mut progress.send
+                        };
+                        if *offset <= *previous || (*observe && *offset != *previous + 1) {
+                            bail!(
+                                "observation progress must advance exclusively without Observe gaps"
+                            );
+                        }
+                        *previous = *offset;
                     }
                     CloudCreationCommand::CompleteSend {
                         agent_id,

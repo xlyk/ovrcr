@@ -1017,6 +1017,14 @@ pub(crate) mod tests {
                 status: crate::CloudRunStatus::Finished,
             },
             crate::CloudCreationCommand::RetryCancel(recovery),
+            crate::CloudCreationCommand::ObservationProgress {
+                key: "d".repeat(64),
+                agent_id: "agent-376".into(),
+                run_id: "run-376".into(),
+                origin: "e".repeat(64),
+                observe: true,
+                offset: 4,
+            },
         ] {
             requests.push(Request::Supervisor(SupervisorRequest {
                 auth: auth.clone(),

@@ -42,7 +42,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         method = self.path.rsplit('/', 1)[-1]
         raw = self.rfile.read(int(self.headers['Content-Length']))
-        body = json.loads(raw[5:] if method == 'Send' else raw)
+        body = json.loads(raw[5:] if method in ('Send', 'ObserveRun') else raw)
         event({'event': 'rpc', 'method': method, **({'agent':body.get('agentId'),'run':body.get('runId')} if method == 'CancelRun' else {})})
         if self.headers.get('Authorization') != 'Bearer fixture_bridge_bearer_0123456789':
             self.send_error(401)
@@ -66,6 +66,37 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.server.source_sha = body['options']['cloud']['repos'][0]['startingRef']
             self.server.creation_key = body['idempotencyKey']
             values[method] = {'agentId': 'fixture-agent-373', 'model': {'id': 'composer-2.5'}}
+        if method == 'ObserveRun':
+            if config.get('observe_scenario') == 'missing_run':
+                self.send_error(404)
+                return
+            assert body['runId'] in self.server.streams
+            offset = int(body.get('afterOffset', '0'))
+            event({'event':'observe_request','run':body['runId'],'after':offset})
+            marker = config.get('observe_pause_file')
+            if marker:
+                marker = Path(marker)
+                marker.write_text(body['runId'])
+                until = time.monotonic() + 30
+                while not marker.with_suffix('.release').exists():
+                    assert time.monotonic() < until
+                    time.sleep(0.01)
+            events = self.server.streams[body['runId']][offset:]
+            scenario = config.get('observe_scenario')
+            if scenario == 'wrong_run': events = [dict(offset='1',sdkMessage={'type':'thinking','message':{'agent_id':'fixture-agent-373','run_id':'foreign-run'}})]
+            if scenario == 'changed_offset': events = events[:1] + [dict(events[1], offset='1')]
+            if scenario == 'missing_offset': events = [{k:v for k,v in events[0].items() if k!='offset'}]
+            if scenario == 'replayed_completion': events = events + events[-2:]
+            if scenario == 'gap': events = [dict(events[0],offset='2')]
+            drop = config.get('drop_observe_after') if offset == 0 or scenario == 'disconnect_forever' else None
+            encoded = b''.join(struct.pack('>BI',0,len(item))+item for item in [json.dumps(v).encode() for v in events[:drop]])
+            if drop is None: encoded += struct.pack('>BI',2,2)+b'{}'
+            self.send_response(200)
+            self.send_header('Content-Type','application/connect+json')
+            self.send_header('Content-Length',str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+            return
         if method == 'Send':
             assert set(body) == {'agentId', 'message', 'options', 'idempotencyKey'}
             assert body['agentId'] == 'fixture-agent-373' and body['options'] == {'model': {'id': 'composer-2.5'}}
@@ -130,8 +161,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if scenario == 'terminal_replay': events.append(events[-2])
             if config.get('result_branch'):
                 result['git'] = {'branches':[{'repoUrl':'https://github.com/acme/app','branch':'fixture-result','prUrl':'https://github.com/acme/app/pull/17' if config.get('result_pr') else ''}]}
+            if config.get('equal_content_events'): events.insert(4,events[3])
+            self.server.streams[run] = [dict(v, offset=str(i+1)) for i,v in enumerate(events)]
+            drop = config.get('drop_send_after')
+            if drop is not None:
+                events = [dict(v, offset=str(100+i)) for i,v in enumerate(events[:drop])]
             encoded = b''.join(struct.pack('>BI',0,len(item))+item for item in [json.dumps(v).encode() for v in events])
-            encoded += struct.pack('>BI',2,2)+b'{}'
+            if drop is None: encoded += struct.pack('>BI',2,2)+b'{}'
             if not config.get('pause_after_identity'):
                 self.send_response(200)
                 self.send_header('Content-Type','application/connect+json')
@@ -174,6 +210,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(encoded)
 
 server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+server.streams = {}
 server.send_keys = set()
 server.sends = 0
 server.run_ids = set()

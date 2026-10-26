@@ -3,7 +3,16 @@ use super::*;
 use ovrcr_protocol::{
     CloudCreationCommand as C, CloudCreationIntent, CloudRunStatus, CloudSendIntent,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+
+#[derive(Debug)]
+struct Disconnected;
+impl std::fmt::Display for Disconnected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("observation transport disconnected; remote state unknown")
+    }
+}
+impl std::error::Error for Disconnected {}
 
 #[derive(Default)]
 pub(super) struct Control {
@@ -127,23 +136,30 @@ fn source_tool(message: &Value, call: &mut Option<(String, String)>, sha: &str) 
 }
 
 impl Catalog {
-    fn send(&self, request: &Value, mut receive: impl FnMut(Value) -> Result<()>) -> Result<()> {
+    fn stream(
+        &self,
+        method: &str,
+        request: &Value,
+        mut receive: impl FnMut(Value) -> Result<()>,
+    ) -> Result<()> {
         let bytes = serde_json::to_vec(request)?;
         let mut payload = vec![0];
         payload.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
         payload.extend_from_slice(&bytes);
         let response = self
             .agent
-            .post(&format!("{}/sdk.v1.SdkAgentService/Send", self.endpoint))
+            .post(&format!(
+                "{}/sdk.v1.SdkAgentService/{method}",
+                self.endpoint
+            ))
             .timeout(self.deadline.saturating_duration_since(Instant::now()))
             .set("Authorization", &format!("Bearer {}", self.token))
             .set("Content-Type", "application/connect+json")
             .set("Connect-Protocol-Version", "1")
             .send_bytes(&payload)
-            .map_err(|_| {
-                anyhow::anyhow!(
-                    "Send observation disconnected; remote work may continue; do not retry"
-                )
+            .map_err(|error| match error {
+                ureq::Error::Transport(_) => anyhow::Error::new(Disconnected),
+                _ => anyhow::anyhow!("observation request refused; no transport recovery"),
             })?;
         ensure!(
             response.status() == 200
@@ -162,7 +178,7 @@ impl Catalog {
             let mut header = [0u8; 5];
             reader
                 .read_exact(&mut header)
-                .context("Send stream ended without complete receipt; remote state unknown")?;
+                .map_err(|_| anyhow::Error::new(Disconnected))?;
             let len = u32::from_be_bytes(header[1..].try_into()?) as u64;
             total += len + 5;
             ensure!(
@@ -170,7 +186,9 @@ impl Catalog {
                 "Connect stream bounds/flags invalid"
             );
             let mut data = vec![0; len as usize];
-            reader.read_exact(&mut data)?;
+            reader
+                .read_exact(&mut data)
+                .map_err(|_| anyhow::Error::new(Disconnected))?;
             let value: Value = serde_json::from_slice(&data)?;
             ensure!(value.is_object(), "Connect object required");
             if header[0] == 2 {
@@ -227,12 +245,17 @@ pub(super) fn send(
     let mut probe = None;
     let mut result: Option<Value> = None;
     let mut done = false;
-    let mut seen = HashSet::new();
-    let observed = catalog.send(&intent.request(), |envelope| {
-        let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&envelope)?));
-        if !seen.insert(digest) {
-            return Ok(());
-        }
+    let origin = crate::agent_runner::private_identifier()?;
+    let mut send_seen = HashSet::new();
+    let mut replay = HashMap::<String, usize>::new();
+    let mut offsets = HashMap::<(bool, u64), String>::new();
+    let mut send_offset = 0u64;
+    let mut observe_offset = 0u64;
+    let mut observing = false;
+    let mut applied = |envelope: &Value,
+                       run: &mut Option<String>,
+                       admit: &mut dyn FnMut(&C) -> Result<()>|
+     -> Result<()> {
         ensure!(!done, "frame after done; outcome unverified");
         ensure!(
             ["sdkMessage", "result", "done", "interactionUpdate", "step"]
@@ -266,7 +289,7 @@ pub(super) fn send(
                     agent_id: agent.into(),
                     run_id: id.into(),
                 })?;
-                run = Some(id.into());
+                *run = Some(id.into());
                 *control.target.lock().unwrap() = Some((intent.key.clone(), id.into()));
                 cancel(catalog, agent, &intent.key, id, admit, control);
                 send_boundary(fixture, "after_ack")?;
@@ -331,7 +354,117 @@ pub(super) fn send(
             bail!("unrecognized step/delta; result remains unverified");
         }
         Ok(())
-    });
+    };
+    let observed = (|| -> Result<()> {
+        for attachment in 0..3 {
+            let request = if observing {
+                let id = run.as_ref().context("Observe requires exact durable run")?;
+                if observe_offset == 0 {
+                    json!({"runId":id})
+                } else {
+                    json!({"runId":id,"afterOffset":observe_offset.to_string()})
+                }
+            } else {
+                intent.request()
+            };
+            let outcome = catalog.stream(
+                if observing { "ObserveRun" } else { "Send" },
+                &request,
+                |envelope| {
+                    let offset = envelope
+                        .get("offset")
+                        .map(|v| -> Result<u64> {
+                            let text = v.as_str().context("stream offset must be a string")?;
+                            let value = text
+                                .parse::<u64>()
+                                .context("stream offset must be numeric")?;
+                            ensure!(
+                                value > 0 && value.to_string() == text,
+                                "invalid exclusive stream offset"
+                            );
+                            Ok(value)
+                        })
+                        .transpose()?;
+                    ensure!(!observing || offset.is_some(), "ObserveRun offset missing");
+                    let mut normalized = envelope.clone();
+                    normalized
+                        .as_object_mut()
+                        .context("stream object missing")?
+                        .remove("offset");
+                    let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&normalized)?));
+                    if let Some(offset) = offset {
+                        let previous = if observing {
+                            observe_offset
+                        } else {
+                            send_offset
+                        };
+                        if offset <= previous {
+                            ensure!(
+                                offsets.get(&(observing, offset)) == Some(&digest),
+                                "changed or stale stream offset"
+                            );
+                            return Ok(());
+                        }
+                        ensure!(
+                            !observing || offset == previous + 1,
+                            "ObserveRun progress gap"
+                        );
+                    }
+                    ensure!(offsets.len() < 4096, "observation progress bound reached");
+                    let duplicate = if observing {
+                        if let Some(count) = replay.get_mut(&digest).filter(|count| **count > 0) {
+                            *count -= 1;
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        !send_seen.insert(serde_json::to_vec(&envelope)?)
+                    };
+                    if !duplicate {
+                        applied(&envelope, &mut run, admit)?;
+                        if !observing {
+                            *replay.entry(digest.clone()).or_default() += 1;
+                        }
+                    }
+                    if let Some(offset) = offset {
+                        let id = run.as_ref().context("offset before exact durable run")?;
+                        admit(&C::ObservationProgress {
+                            key: intent.key.clone(),
+                            agent_id: agent.into(),
+                            run_id: id.clone(),
+                            origin: origin.clone(),
+                            observe: observing,
+                            offset,
+                        })?;
+                        offsets.insert((observing, offset), digest);
+                        if observing {
+                            observe_offset = offset;
+                        } else {
+                            send_offset = offset;
+                        }
+                    }
+                    Ok(())
+                },
+            );
+            match outcome {
+                Ok(()) => return Ok(()),
+                Err(error) if error.is::<Disconnected>() && run.is_some() && attachment < 2 => {
+                    admit(&C::ObservationLost {
+                        key: intent.key.clone(),
+                        agent_id: agent.into(),
+                        run_id: run.clone().unwrap(),
+                    })?;
+                    println!(
+                        "Observation disconnected; recovering exact run on the same owned bridge. Remote work may continue."
+                    );
+                    observing = true;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        unreachable!()
+    })();
     let qualify = || -> Result<(String, CloudRunStatus, Value)> {
         observed?;
         let id = run
@@ -517,7 +650,7 @@ pub(super) fn cancel(
     agent: &str,
     key: &str,
     run: &str,
-    admit: &mut impl FnMut(&C) -> Result<()>,
+    admit: &mut (impl FnMut(&C) -> Result<()> + ?Sized),
     control: &Control,
 ) {
     if control.serviced.load(std::sync::atomic::Ordering::Acquire)

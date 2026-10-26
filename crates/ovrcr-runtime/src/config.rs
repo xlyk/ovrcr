@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 24;
+const SCHEMA_VERSION: i64 = 25;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -411,6 +411,10 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
         // Older writers discard retained cloud recovery controller authority.
         transaction.pragma_update(None, "user_version", 24)?;
     }
+    if schema_identity(&transaction)?.1 < 25 {
+        // Older writers discard exclusive cloud observation progress.
+        transaction.pragma_update(None, "user_version", 25)?;
+    }
     transaction.commit().context("commit registry migration")?;
     Ok(connection)
 }
@@ -461,6 +465,7 @@ pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
                 | 21
                 | 22
                 | 23
+                | 24
                 | SCHEMA_VERSION
         )
     {
@@ -850,49 +855,53 @@ mod tests {
     }
 
     #[test]
-    fn schema_twenty_three_cloud_authority_survives_offline_read_and_upgrade() {
-        let dir = tempfile::tempdir().unwrap();
-        let config = dir.path().join("instance");
-        initialize_registry(&config).unwrap();
-        let database = database_path(&config);
-        let connection = Connection::open(&database).unwrap();
-        connection.pragma_update(None, "user_version", 23).unwrap();
-        connection.execute("INSERT INTO retained_sessions(id,run,project,workspace,name,label,cwd,kind,title_revision,stopped) VALUES(42,7,'demo','root','cloud','cloud',X'2f746d70','\"Terminal\"',0,1)",[]).unwrap();
-        let metadata = r#"{"original_intent":"unchanged","claimed":true,"cancel_requested":true,"cancel_claimed":true,"closed":true,"unresolved":"immutable"}"#;
-        connection
-            .execute(
-                "INSERT INTO cloud_creations(session,metadata) VALUES(42,?1)",
-                [metadata],
-            )
-            .unwrap();
-        let private = config.join("cloud-creations");
-        std::fs::create_dir(&private).unwrap();
-        let payload = private.join("a".repeat(64));
-        std::fs::write(&payload, b"original immutable uncertain Send").unwrap();
-        drop(connection);
-        load_registry(&config).unwrap();
-        assert_eq!(
-            schema_version(&database),
-            23,
-            "offline read must not migrate"
-        );
-        initialize_registry(&config).unwrap();
-        assert_eq!(schema_version(&database), SCHEMA_VERSION);
-        let connection = Connection::open(&database).unwrap();
-        assert_eq!(
+    fn legacy_cloud_authority_survives_offline_read_and_upgrade() {
+        for version in [23, 24] {
+            let dir = tempfile::tempdir().unwrap();
+            let config = dir.path().join("instance");
+            initialize_registry(&config).unwrap();
+            let database = database_path(&config);
+            let connection = Connection::open(&database).unwrap();
             connection
-                .query_row(
-                    "SELECT metadata FROM cloud_creations WHERE session=42",
-                    [],
-                    |row| row.get::<_, String>(0)
+                .pragma_update(None, "user_version", version)
+                .unwrap();
+            connection.execute("INSERT INTO retained_sessions(id,run,project,workspace,name,label,cwd,kind,title_revision,stopped) VALUES(42,7,'demo','root','cloud','cloud',X'2f746d70','\"Terminal\"',0,1)",[]).unwrap();
+            let metadata = r#"{"original_intent":"unchanged","claimed":true,"cancel_requested":true,"cancel_claimed":true,"closed":true,"unresolved":"immutable"}"#;
+            connection
+                .execute(
+                    "INSERT INTO cloud_creations(session,metadata) VALUES(42,?1)",
+                    [metadata],
                 )
-                .unwrap(),
-            metadata
-        );
-        assert_eq!(
-            std::fs::read(payload).unwrap(),
-            b"original immutable uncertain Send"
-        );
+                .unwrap();
+            let private = config.join("cloud-creations");
+            std::fs::create_dir(&private).unwrap();
+            let payload = private.join("a".repeat(64));
+            std::fs::write(&payload, b"original immutable uncertain Send").unwrap();
+            drop(connection);
+            load_registry(&config).unwrap();
+            assert_eq!(
+                schema_version(&database),
+                version,
+                "offline read must not migrate"
+            );
+            initialize_registry(&config).unwrap();
+            assert_eq!(schema_version(&database), SCHEMA_VERSION);
+            let connection = Connection::open(&database).unwrap();
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT metadata FROM cloud_creations WHERE session=42",
+                        [],
+                        |row| row.get::<_, String>(0)
+                    )
+                    .unwrap(),
+                metadata
+            );
+            assert_eq!(
+                std::fs::read(payload).unwrap(),
+                b"original immutable uncertain Send"
+            );
+        }
     }
 
     #[test]
