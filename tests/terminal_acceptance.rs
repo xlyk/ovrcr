@@ -326,6 +326,8 @@ case "$PATH" in "$HOME/claude-auth-fixture:"*) ;; *) exit 26 ;; esac
 for key in XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME PI_CODING_AGENT_DIR PI_CODING_AGENT_SESSION_DIR CODEX_HOME GROK_HOME CLAUDE_CONFIG_DIR; do
     eval '[ -z "${'"$key"'+x}" ]' || exit 27
 done
+exec 0<&- 1>&- 2>&-
+/bin/sleep 0.2
 exit 23
 "#,
     )?;
@@ -472,7 +474,19 @@ impl OuterDashboard {
             self.send(b"n\r")?;
             declined_prompt = Some(before.len());
         };
-        let child_status = self.child.as_mut().map(|child| child.try_wait());
+        let mut child_status = self.child.as_mut().map(|child| child.try_wait());
+        // PTY closure can precede the original child's wait status.
+        while reason == "closed its PTY"
+            && matches!(child_status, Some(Ok(None)))
+            && Instant::now() < deadline
+        {
+            thread::park_timeout(
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(5)),
+            );
+            child_status = self.child.as_mut().map(|child| child.try_wait());
+        }
         bail!(
             "outer dashboard {reason} before readiness; child_status={child_status:?}; size={:?}, alternate_screen={}; screen: {}; startup output: {}",
             self.parser.screen().size(),
