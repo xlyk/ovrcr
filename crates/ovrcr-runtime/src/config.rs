@@ -403,6 +403,10 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
         // Older writers discard distinct Send claims and exact run receipts.
         transaction.pragma_update(None, "user_version", 22)?;
     }
+    if schema_identity(&transaction)?.1 < 23 {
+        // Older writers discard cancellation intent and exact live claims.
+        transaction.pragma_update(None, "user_version", 23)?;
+    }
     transaction.commit().context("commit registry migration")?;
     Ok(connection)
 }
