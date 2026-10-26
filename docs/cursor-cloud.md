@@ -94,7 +94,9 @@ ID and explicit model, then commits before retiring creation bytes. Send uses a 
 owner. Its credential generation, explicit model and acknowledged agent must
 match the original creation receipt. Full prompt/options bytes live only in the
 same private directory; SQLite keeps their digest and non-payload operation
-receipts. The exact run ID must commit before payload retirement. A crash after
+receipts. A successful durable Send claim retires the prior Ready/Unread immediately;
+activity stays unknown until its exact run is observed. A failed claim commit
+preserves prior response authority. The exact run ID must commit before payload retirement. A crash after
 backend acceptance but before that receipt remains visibly uncertain. A late
 exact receipt can enrich a closed row, but cannot reopen delivery or reporting.
 Each conversation is bounded to 128 retained Sends per local handle; reaching the

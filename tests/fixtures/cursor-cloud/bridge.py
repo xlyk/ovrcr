@@ -76,7 +76,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             run = 'fixture-run-' + str(self.server.sends)
             self.server.run_ids.add(run)
             event({'event':'send_identity','agent':'fixture-agent-373','run':run,'key':body['idempotencyKey']})
-            if config.get('drop_send_reply'):
+            if config.get('drop_send_reply') or config.get('drop_send_reply_on') == self.server.sends:
                 self.connection.shutdown(socket.SHUT_RDWR)
                 return
             if config.get('send_pause_file'):
@@ -102,6 +102,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if scenario == 'bad_source': events[2]['sdkMessage']['message']['result']['success']['stdout'] = 'wrong\n'
             if scenario == 'duplicate': events.insert(4,events[3])
             if scenario == 'bad_call': events[2]['sdkMessage']['message']['call_id'] = 'different-call'
+            if scenario in ('shell_success', 'shell_flat_success'):
+                events[1] = sdk('tool_call',name='shell',call_id='source-probe',args={'command':'git rev-parse HEAD'},status='running')
+                success = {'stdout':self.server.source_sha+'\n','stderr':'','exitCode':0}
+                result_value = success if scenario == 'shell_flat_success' else {'status':'success','value':dict(success,signal='')}
+                events[2] = sdk('tool_call',name='shell',call_id='source-probe',args={'command':'git rev-parse HEAD'},status='completed',result=result_value)
+            if scenario == 'shell_failure_discriminator':
+                events[1] = sdk('tool_call',name='shell',call_id='source-probe',args={'command':'git rev-parse HEAD'},status='running')
+                events[2] = sdk('tool_call',name='shell',call_id='source-probe',args={'command':'git rev-parse HEAD'},status='completed',result={'status':'failure','exitCode':0,'stderr':'','stdout':self.server.source_sha+'\n'})
             if scenario == 'bad_success': events[2]['sdkMessage']['message']['result']['success']['exitCode'] = 1
             if scenario == 'missing_done': events.pop()
             if scenario == 'terminal_replay': events.append(events[-2])

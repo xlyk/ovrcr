@@ -478,6 +478,14 @@ impl Session {
                     command,
                     &reserve.invocation,
                 ))?;
+                if matches!(command.as_ref(), CloudCreationCommand::ClaimSend { .. }) {
+                    // A durable new attempt retires prior response authority before any reply can escape.
+                    reporting.ready = None;
+                    if let Some(snapshot) = &mut reporting.snapshot {
+                        snapshot.activity = None;
+                        snapshot.native_control = None;
+                    }
+                }
                 AgentOperationResult::CloudCreationCommitted
             }
 

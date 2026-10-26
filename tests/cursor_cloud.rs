@@ -1190,6 +1190,7 @@ fn managed_send_storage_faults_never_dispatch_without_claim_or_retire_unreceipte
         ("intent", 0),
         ("claim", 0),
         ("receipt", 1),
+        ("terminal", 1),
         ("corrupt", 0),
         ("closure", 1),
     ] {
@@ -1224,6 +1225,7 @@ fn managed_send_storage_faults_never_dispatch_without_claim_or_retire_unreceipte
             "intent" => "json_array_length(NEW.metadata,'$.sends') > 0",
             "claim" => "json_extract(NEW.metadata,'$.sends[0].claimed') = 1",
             "receipt" => "json_type(NEW.metadata,'$.sends[0].run_id') = 'text'",
+            "terminal" => "json_type(NEW.metadata,'$.sends[0].terminal') = 'text'",
             _ => "0",
         };
         database.execute_batch(&format!("CREATE TRIGGER fail_send BEFORE UPDATE ON cloud_creations WHEN {condition} BEGIN SELECT RAISE(ABORT,'fixture Send storage fault'); END;")).unwrap();
@@ -1291,6 +1293,18 @@ fn managed_send_storage_faults_never_dispatch_without_claim_or_retire_unreceipte
                     .count(),
                 1
             );
+        }
+        if mode == "terminal" {
+            let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect)
+            else {
+                panic!("inspect")
+            };
+            let current = sessions.iter().find(|s| s.id == session.id).unwrap();
+            assert_eq!(
+                current.agent.as_ref().unwrap().effective_activity(),
+                ovrcr::protocol::AgentActivity::Unknown
+            );
+            assert!(current.unread.is_none());
         }
         database.execute_batch("DROP TRIGGER fail_send;").unwrap();
         if mode == "closure" {
@@ -1424,5 +1438,195 @@ fn managed_send_crash_and_discard_boundaries_preserve_uncertainty_and_exact_late
             }
             assert!(!fixture.text(&session).contains("Ready: exact run"));
         }
+    }
+}
+
+#[test]
+fn review_374_followup_claim_clears_prior_ready_before_lost_run_identity() {
+    let fixture = Fixture::new("composer-2.5", true, true, false);
+    let config_path = fixture.live.root.path().join("bridge.json");
+    let mut config: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+    config["drop_send_reply_on"] = json!(2);
+    fs::write(config_path, config.to_string()).unwrap();
+    let session = fixture.launch();
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Press Enter to close preview.")
+    });
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "prepare".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Cloud handle durably retained:")
+    });
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "Inspect source".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Ready: exact run fixture-run-1")
+    });
+    let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect) else {
+        panic!("inspect")
+    };
+    assert_eq!(
+        sessions
+            .iter()
+            .find(|s| s.id == session.id)
+            .unwrap()
+            .agent
+            .as_ref()
+            .unwrap()
+            .effective_activity(),
+        ovrcr::protocol::AgentActivity::ResponseReady
+    );
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "Follow-up whose reply is lost".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Observation unknown/unverified:")
+    });
+    let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect) else {
+        panic!("inspect")
+    };
+    let current = sessions.iter().find(|s| s.id == session.id).unwrap();
+    assert_eq!(
+        current.agent.as_ref().unwrap().effective_activity(),
+        ovrcr::protocol::AgentActivity::Unknown,
+        "a claimed follow-up must retire prior Ready even without a new run ID"
+    );
+    assert!(
+        current.unread.is_none(),
+        "prior completion cannot remain an Unread/alert target"
+    );
+    assert_eq!(
+        fixture
+            .events()
+            .iter()
+            .filter(|e| e["method"] == "Send")
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn review_374_contradictory_shell_failure_cannot_verify_source_or_publish_ready() {
+    let fixture = Fixture::new("composer-2.5", true, true, false);
+    let config_path = fixture.live.root.path().join("bridge.json");
+    let mut config: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+    config["send_scenario"] = json!("shell_failure_discriminator");
+    fs::write(config_path, config.to_string()).unwrap();
+    let session = fixture.launch();
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Press Enter to close preview.")
+    });
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "prepare".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Cloud handle durably retained:")
+    });
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "Inspect source".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        let text = fixture.text(&session);
+        text.contains("Ready: exact run") || text.contains("Observation unknown/unverified:")
+    });
+    assert!(
+        fixture
+            .text(&session)
+            .contains("Observation unknown/unverified:"),
+        "shell failure discriminator must defeat superficially successful flat output"
+    );
+    let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect) else {
+        panic!("inspect")
+    };
+    let current = sessions.iter().find(|s| s.id == session.id).unwrap();
+    assert_ne!(
+        current.agent.as_ref().unwrap().effective_activity(),
+        ovrcr::protocol::AgentActivity::ResponseReady
+    );
+    assert!(current.unread.is_none());
+}
+
+#[test]
+fn managed_recorded_shell_success_shapes_and_duplicate_frames_remain_verified() {
+    for scenario in ["shell_success", "shell_flat_success", "duplicate"] {
+        let fixture = Fixture::new("composer-2.5", true, true, false);
+        let config_path = fixture.live.root.path().join("bridge.json");
+        let mut config: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+        config["send_scenario"] = json!(scenario);
+        fs::write(config_path, config.to_string()).unwrap();
+        let session = fixture.launch();
+        fixture.until(|| {
+            fixture
+                .text(&session)
+                .contains("Press Enter to close preview.")
+        });
+        fixture.live.request(Request::SendTerminal {
+            session: session.id,
+            text: "prepare".into(),
+            submit: true,
+        });
+        fixture.until(|| {
+            fixture
+                .text(&session)
+                .contains("Cloud handle durably retained:")
+        });
+        fixture.live.request(Request::SendTerminal {
+            session: session.id,
+            text: "Inspect source".into(),
+            submit: true,
+        });
+        fixture.until(|| {
+            fixture
+                .text(&session)
+                .contains("Ready: exact run fixture-run-1")
+        });
+        assert_eq!(
+            fixture
+                .text(&session)
+                .matches("Inspecting selected source.")
+                .count(),
+            1,
+            "{scenario}"
+        );
+        let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect) else {
+            panic!("inspect")
+        };
+        let current = sessions.iter().find(|s| s.id == session.id).unwrap();
+        assert_eq!(
+            current.agent.as_ref().unwrap().effective_activity(),
+            ovrcr::protocol::AgentActivity::ResponseReady
+        );
+        assert_eq!(
+            fixture
+                .events()
+                .iter()
+                .filter(|e| e["method"] == "Send")
+                .count(),
+            1
+        );
     }
 }

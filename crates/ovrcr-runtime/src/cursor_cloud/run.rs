@@ -83,9 +83,23 @@ fn source_tool(message: &Value, call: &mut Option<(String, String)>, sha: &str) 
             "source result command/output mismatch"
         );
         value
-    } else if result["status"] == "success" {
+    } else if result.get("status").is_some() {
+        ensure!(
+            result["status"] == "success"
+                && result.as_object().is_some_and(|v| v.len() == 2)
+                && result["value"].is_object()
+                && result["value"]["signal"] == "",
+            "shell result discriminator is not a recognized success"
+        );
         &result["value"]
     } else {
+        ensure!(
+            result.as_object().is_some_and(|v| v.len() == 3
+                && ["stdout", "stderr", "exitCode"]
+                    .iter()
+                    .all(|k| v.contains_key(*k))),
+            "unrecognized flat shell success shape"
+        );
         result
     };
     if name == "shell" {
