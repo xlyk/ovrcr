@@ -12,7 +12,7 @@ use live::{Live, Stop, group_exists, wait_deadline};
 use ovrcr::protocol::{HierarchySnapshot, Request, Response};
 use portable_pty::{Child as PtyChild, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::io::{Read, Write};
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::process::{Child, Command};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -50,10 +50,10 @@ impl AcceptanceFixture {
     }
 
     fn cli_timeout(&self, args: &[&str], timeout: Duration) -> Result<std::process::Output> {
-        let child = Command::new(&self.executable)
+        let child = self
+            .live
+            .command()
             .args(args)
-            .env("OVRCR_SOCKET", &self.socket)
-            .env("OVRCR_HOME", &self.config)
             .spawn()
             .context("run OVRCR CLI")?;
         bounded_output(child, timeout)
@@ -283,6 +283,75 @@ fn require_success(output: std::process::Output, operation: &str) -> Result<Stri
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+#[test]
+fn acceptance_cli_uses_fixture_environment() -> Result<()> {
+    let mut live = Live::idle();
+    let executable = live.root.path().join("check-cli-environment");
+    std::fs::write(
+        &executable,
+        r#"#!/bin/sh
+[ "$HOME" = "${OVRCR_HOME%/instance}" ] || exit 24
+[ "$SHELL" = /bin/sh ] || exit 25
+case "$PATH" in "$HOME/claude-auth-fixture:"*) ;; *) exit 26 ;; esac
+for key in XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME PI_CODING_AGENT_DIR PI_CODING_AGENT_SESSION_DIR CODEX_HOME GROK_HOME CLAUDE_CONFIG_DIR; do
+    eval '[ -z "${'"$key"'+x}" ]' || exit 27
+done
+"#,
+    )?;
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))?;
+    live.executable = executable;
+    let fixture = AcceptanceFixture {
+        live,
+        managed_pgids: Vec::new(),
+    };
+    let output = fixture.cli(&[])?;
+    assert!(
+        output.status.success(),
+        "fixture environment rejected: {:?}",
+        output.status
+    );
+    Ok(())
+}
+
+#[test]
+fn outer_dashboard_reports_early_child_exit_with_fixture_environment() -> Result<()> {
+    let mut live = Live::idle();
+    let executable = live.root.path().join("exit-dashboard");
+    std::fs::write(
+        &executable,
+        r#"#!/bin/sh
+[ "$HOME" = "${OVRCR_HOME%/instance}" ] || exit 24
+[ "$SHELL" = /bin/sh ] || exit 25
+case "$PATH" in "$HOME/claude-auth-fixture:"*) ;; *) exit 26 ;; esac
+for key in XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME PI_CODING_AGENT_DIR PI_CODING_AGENT_SESSION_DIR CODEX_HOME GROK_HOME CLAUDE_CONFIG_DIR; do
+    eval '[ -z "${'"$key"'+x}" ]' || exit 27
+done
+exit 23
+"#,
+    )?;
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))?;
+    live.executable = executable;
+    let fixture = AcceptanceFixture {
+        live,
+        managed_pgids: Vec::new(),
+    };
+    let error = match OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    ) {
+        Ok(_) => bail!("exited child must not establish Dashboard readiness"),
+        Err(error) => error.to_string(),
+    };
+    assert!(error.contains("closed its PTY"), "{error}");
+    assert!(error.contains("code: 23"), "{error}");
+    Ok(())
+}
+
 struct OuterDashboard {
     master: Option<Box<dyn MasterPty + Send>>,
     writer: Box<dyn Write + Send>,
@@ -313,14 +382,19 @@ impl OuterDashboard {
             std::fs::copy(&fixture.executable, &executable)?;
         }
         let mut command = CommandBuilder::new(&executable);
-        command.env("OVRCR_SOCKET", &fixture.socket);
-        command.env("OVRCR_HOME", &fixture.config);
+        for (key, value) in fixture.command().get_envs() {
+            match value {
+                Some(value) => command.env(key, value),
+                None => command.env_remove(key),
+            }
+        }
         command.env("OVRCR_SERVER_EXECUTABLE", server_executable);
         command.env(
             "OVRCR_DASHBOARD_CONFIG",
             fixture.config.join("dashboard.toml"),
         );
         let child = pair.slave.spawn_command(command)?;
+        drop(pair.slave);
         let reader = pair.master.try_clone_reader()?;
         let writer = pair.master.take_writer()?;
         let (sender, received) = mpsc::channel();
@@ -398,8 +472,9 @@ impl OuterDashboard {
             self.send(b"n\r")?;
             declined_prompt = Some(before.len());
         };
+        let child_status = self.child.as_mut().map(|child| child.try_wait());
         bail!(
-            "outer dashboard {reason} before readiness; size={:?}, alternate_screen={}; screen: {}; startup output: {}",
+            "outer dashboard {reason} before readiness; child_status={child_status:?}; size={:?}, alternate_screen={}; screen: {}; startup output: {}",
             self.parser.screen().size(),
             self.parser.screen().alternate_screen(),
             self.rendered(),
@@ -659,8 +734,10 @@ impl Drop for OuterDashboard {
             Box::new(std::io::sink()),
         ));
         self.master.take();
-        if let Some(child) = self.child.take() {
-            if let Ok(pid) = child.process_id().ok_or(()) {
+        if let Some(mut child) = self.child.take() {
+            if !matches!(child.try_wait(), Ok(Some(_)))
+                && let Some(pid) = child.process_id()
+            {
                 unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
             }
             let _ = wait_pty_child(child, Duration::from_secs(2));
