@@ -1270,6 +1270,35 @@ fn cli_request(socket: &std::path::Path, request: Request) -> Result<Response, S
     client::request(&mut stream, 1, request).map_err(|error| error.to_string())
 }
 
+#[test]
+fn context_helper_selects_session_from_executable_directory_alias() {
+    let mut fixture = live::Live::idle().bounded();
+    let executable = fixture.executable.canonicalize().unwrap();
+    let alias = fixture.root.path().join("binary-alias");
+    std::os::unix::fs::symlink(executable.parent().unwrap(), &alias).unwrap();
+    fixture.executable = alias.join(executable.file_name().unwrap());
+    assert_ne!(fixture.executable, executable);
+    assert_eq!(fixture.executable.canonicalize().unwrap(), executable);
+    fixture.start_binary();
+    fixture.ready("feature/context-alias");
+    let Response::Hierarchy(hierarchy) = fixture.request(Request::List) else {
+        panic!("expected hierarchy");
+    };
+    let session = hierarchy
+        .projects
+        .iter()
+        .flat_map(|project| &project.workspaces)
+        .flat_map(|workspace| &workspace.sessions)
+        .next()
+        .expect("fixture local shell")
+        .id;
+    let mut dashboard = select_session(&fixture.socket, session);
+    assert!(matches!(
+        dashboard_request(&mut dashboard, Request::List).unwrap(),
+        Response::Hierarchy(_)
+    ));
+}
+
 fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
     // macOS requires native context: hash before claiming the Dashboard so
     // greeting validation cannot hold up selection during collector startup.
@@ -1323,7 +1352,9 @@ fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
                 socket.canonicalize().unwrap()
             );
             assert_eq!(
-                std::path::Path::new(&context.callback_executable),
+                std::path::Path::new(&context.callback_executable)
+                    .canonicalize()
+                    .unwrap(),
                 callback.as_path()
             );
             let expected_callback_sha256 = expected_callback_sha256.unwrap_or_else(|| {
