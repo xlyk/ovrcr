@@ -85,6 +85,10 @@ const SAMPLES: &[(&str, &str)] = &[
     ("delegation.default_model", "\"test/model\""),
     ("title_model", "\"pi/matrix\""),
     ("picker_roots", "[\"/tmp/ovrcr-matrix\"]"),
+    (
+        "cursor_cloud_accounts",
+        "[{name = 'work', keychain_service = 'ovrcr', keychain_account = 'work', model = 'composer-2.5', repositories = ['https://github.com/acme/app'], owners = [], bridge_archive = '/tmp/sdk.tar.gz'}]",
+    ),
     ("agents", "[{ name = \"matrix\", argv = [\"matrix\"] }]"),
     ("launch_choices", "{ p = { kind = \"Terminal\" } }"),
 ];
@@ -386,6 +390,7 @@ fn matrix_covers_every_declared_setting() {
             "quota.cursor.dashboard",
             "quota.cursor.state_db",
             "agents",
+            "cursor_cloud_accounts",
             "launch_choices",
             "delegation.progress_deadline_ms",
             "delegation.enabled",
@@ -403,7 +408,8 @@ fn matrix_covers_every_declared_setting() {
         kinds,
         [
             Bool, Bool, Str, Bool, Str, Str, Bool, Str, Array, Str, Bool, Bool, Str, Str, Str, Str,
-            Bool, Str, Array, Table, Integer, Bool, Array, Array, Str, Str, Integer, Integer,
+            Bool, Str, Array, Array, Table, Integer, Bool, Array, Array, Str, Str, Integer,
+            Integer,
         ]
     );
     // Every test-side table names a declared setting, so none goes stale.
@@ -890,4 +896,32 @@ fn delegation_policy_uses_catalog_writer_and_rejects_invalid_limits_without_chan
             .max_execution_attempts,
         None
     );
+}
+
+#[test]
+fn cloud_account_policy_roundtrips_through_shared_writer_without_changing_other_settings() {
+    let root = tempfile::tempdir().unwrap();
+    let document = root.path().join("dashboard.toml");
+    std::fs::write(&document, "# keep user settings\nbranch_prefix = 'kept/'\n").unwrap();
+    let value = lookup(SAMPLES, "cursor_cloud_accounts").unwrap();
+    settings::set(&document, "cursor_cloud_accounts", Some(value)).unwrap();
+    let report = settings::load_document(root.path(), &document);
+    assert!(report.findings.is_empty(), "{:?}", report.findings);
+    assert_eq!(report.settings.cursor_cloud_accounts[0].name, "work");
+    assert_eq!(
+        report.settings.cursor_cloud_accounts[0].model,
+        "composer-2.5"
+    );
+    assert_eq!(report.settings.branch_prefix, "kept/");
+    let before = std::fs::read_to_string(&document).unwrap();
+    assert!(before.contains("# keep user settings"));
+    assert!(
+        settings::set(
+            &document,
+            "cursor_cloud_accounts",
+            Some(&value.replace("composer-2.5", "auto"))
+        )
+        .is_err()
+    );
+    assert_eq!(std::fs::read_to_string(&document).unwrap(), before);
 }

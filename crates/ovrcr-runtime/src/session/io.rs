@@ -57,6 +57,8 @@ pub(super) fn wait_for_child(
     while group_exists(session.pgid).unwrap_or(true) {
         thread::park_timeout(Duration::from_millis(5));
     }
+    // This Session owns a unique scratch root; an old run cannot erase a replacement.
+    drop(session.cloud_scratch.lock().unwrap().take());
     let _ = events.send(SessionEvent::Exited {
         id: session.summary.id,
         run: session.run(),

@@ -102,3 +102,10 @@ process-stop proof. Archive and unarchive invalidate the previous run identity,
 so delayed recovery requests and process callbacks cannot cross these transitions.
 Returned rows are stopped without launching; unresolved ownership still requires
 acknowledgement before reopening.
+
+Cursor cloud profiles are typed `Settings.cursor_cloud_accounts` values in the
+same settings document. Ordinary Agent creation generates `cursor-cloud:ACCOUNT`
+choices with explicit managed argv, independent of PATH discovery. Protocol 60
+appends `AgentProvider::CursorCloud`; local Cursor remains `Cursor`. Preview
+capabilities include no readiness, titles or conversation recovery. See
+[Cursor cloud](../cursor-cloud.md) and [published source](../adr/0011-cursor-cloud-published-source.md).

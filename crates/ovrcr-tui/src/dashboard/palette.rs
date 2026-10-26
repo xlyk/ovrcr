@@ -2528,10 +2528,37 @@ impl Dashboard {
         let path = std::env::var_os("PATH").unwrap_or_default();
         let shell = std::env::var_os("SHELL");
         let launcher = std::env::current_exe().ok();
-        apply_overrides(
+        let mut entries = apply_overrides(
             detect_agents(&path, shell.as_deref(), launcher.as_deref()),
             &self.settings.agents,
-        )
+        );
+        entries.retain(|entry| {
+            entry.name != "cursor-cloud" && !entry.name.starts_with("cursor-cloud:")
+        });
+        if cfg!(target_os = "macos")
+            && let Some(launcher) = launcher
+        {
+            for account in &self.settings.cursor_cloud_accounts {
+                if account.validate().is_ok() {
+                    entries.insert(
+                        entries.len().saturating_sub(2),
+                        super::agents::AgentEntry {
+                            name: format!("cursor-cloud:{}", account.name),
+                            argv: vec![
+                                launcher.as_os_str().to_owned(),
+                                "agent".into(),
+                                "run".into(),
+                                "cursor-cloud".into(),
+                                "--".into(),
+                                account.name.clone().into(),
+                            ],
+                            source: AgentSource::Detected,
+                        },
+                    );
+                }
+            }
+        }
+        entries
     }
 
     fn refresh_terminal_form(&self, fields: &mut [Field], _name_edited: bool) {
@@ -4531,6 +4558,44 @@ mod launch_tests {
                 "{entrypoint}"
             );
         }
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn ordinary_agent_creation_selects_named_cursor_cloud_account() {
+        let mut d = dashboard();
+        d.settings.cursor_cloud_accounts = vec![ovrcr_protocol::CursorCloudAccount {
+            name: "work".into(),
+            keychain_service: "ovrcr".into(),
+            keychain_account: "work".into(),
+            model: "composer-2.5".into(),
+            repositories: vec!["https://github.com/acme/app".into()],
+            owners: vec![],
+            bridge_archive: "/tmp/bridge.tar.gz".into(),
+        }];
+        d.settings.agents = vec![ovrcr_protocol::AgentOverride {
+            name: "cursor-cloud:work".into(),
+            argv: vec!["unrelated-custom-command".into()],
+        }];
+        let mut fields = d.launch_fields("p", false);
+        fields
+            .iter_mut()
+            .find(|f| f.label == "Start")
+            .unwrap()
+            .value = "Agent".into();
+        let field = fields.iter_mut().find(|f| f.label == "Agent").unwrap();
+        field.value = "cursor-cloud:work".into();
+        let launch = d.selected_launch(&fields).unwrap().unwrap();
+        assert_eq!(
+            launch.kind,
+            SessionKind::Agent {
+                name: "cursor-cloud:work".into()
+            }
+        );
+        assert_eq!(
+            &launch.argv[1..],
+            ["agent", "run", "cursor-cloud", "--", "work"].map(OsString::from)
+        );
     }
 
     #[test]

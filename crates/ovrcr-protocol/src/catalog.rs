@@ -239,7 +239,7 @@ fn path_text(path: &std::path::Path) -> Option<String> {
     Some(path.display().to_string())
 }
 
-const CATALOG: [Entry; 28] = [
+const CATALOG: [Entry; 29] = [
     Entry {
         path: "desktop_notifications",
         shape: Shape::Toggle,
@@ -470,6 +470,19 @@ const CATALOG: [Entry; 28] = [
         show_off: |_| false,
     },
     Entry {
+        path: "cursor_cloud_accounts",
+        shape: Shape::Typed("an array of named cloud account policies"),
+        owner: SettingOwner::Server,
+        group: "Agents",
+        label: "Cursor cloud accounts",
+        off_state: None,
+        about: &[
+            "Named Keychain references, explicit model and repository/owner policy; selection is not billing identity attestation. macOS only.",
+        ],
+        value: |settings| display(&settings.cursor_cloud_accounts),
+        show_off: |_| false,
+    },
+    Entry {
         path: "launch_choices",
         shape: Shape::Launches,
         owner: SettingOwner::Dashboard,
@@ -619,6 +632,7 @@ mod tests {
                 "quota.cursor.dashboard",
                 "quota.cursor.state_db",
                 "agents",
+                "cursor_cloud_accounts",
                 "launch_choices",
                 "delegation.progress_deadline_ms",
                 "delegation.enabled",

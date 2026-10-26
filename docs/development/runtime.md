@@ -123,3 +123,13 @@ parent/source authority before spawn. Initial input rechecks actual baseline
 content and ancestor candidate/review versions. Followup and acceptance reject
 stale dependency witnesses; collection preserves the original evidence and
 reports the gap. Graph revision changes do not interrupt existing children.
+
+Cursor cloud previews require a positive managed reservation and invocation
+channel. A descendant admission probe is authenticated against that same
+supervised native tree; direct adapter invocation fails closed. The shared
+Reporter owns lease teardown. Each Session owns a unique private cloud scratch
+root, removed by its waiter after PTY drain and process-group exit, so killing
+the adapter cannot leave its bearer file behind or erase a replacement run's
+root. The SDK Bridge receives an environment allowlist without OVRCR credentials.
+Git, Keychain, archive extraction, discovery and catalog I/O run in the adapter
+under a thirty-second preflight deadline, outside Server input/lifecycle locks.

@@ -1042,3 +1042,23 @@ fn codex_setup_keeps_already_configured_native_value_formatting() {
     assert!(output.status.success());
     assert_eq!(output.stdout, configured.as_bytes());
 }
+
+#[test]
+fn cursor_cloud_requires_managed_admission_even_for_direct_adapter() {
+    let root = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["agent", "run", "cursor-cloud", "--", "work"],
+        vec!["agent", "cloud-preview", "work"],
+    ] {
+        let output = command(&root).args(args).output().unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("admission")
+                || (!cfg!(target_os = "macos")
+                    && String::from_utf8_lossy(&output.stderr).contains("unavailable on Linux")),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!root.path().join("socket").exists());
+    }
+}

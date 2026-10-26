@@ -14,6 +14,8 @@ pub enum AgentProvider {
     Omp,
     /// Cursor CLI. Appended: existing bincode discriminants stay unchanged.
     Cursor,
+    /// Native cloud preview; remote delivery is unavailable until later gates.
+    CursorCloud,
 }
 
 impl AgentProvider {
@@ -27,6 +29,7 @@ impl AgentProvider {
             Self::Hermes => "hermes",
             Self::Omp => "omp",
             Self::Cursor => "cursor-agent",
+            Self::CursorCloud => "cursor-cloud",
         }
     }
 
@@ -40,6 +43,7 @@ impl AgentProvider {
             "hermes" => Self::Hermes,
             "omp" => Self::Omp,
             "cursor-agent" => Self::Cursor,
+            "cursor-cloud" => Self::CursorCloud,
             _ => return None,
         })
     }
@@ -764,6 +768,7 @@ pub(crate) mod tests {
             (AgentProvider::Hermes, "hermes"),
             (AgentProvider::Omp, "omp"),
             (AgentProvider::Cursor, "cursor-agent"),
+            (AgentProvider::CursorCloud, "cursor-cloud"),
         ] {
             assert_eq!(provider.name(), name);
             assert_eq!(AgentProvider::from_name(name), Some(provider));
@@ -782,6 +787,7 @@ pub(crate) mod tests {
             (AgentProvider::Hermes, true),
             (AgentProvider::Grok, false),
             (AgentProvider::Cursor, false),
+            (AgentProvider::CursorCloud, false),
         ] {
             assert_eq!(provider.supports_readiness(), expected, "{provider:?}");
         }
