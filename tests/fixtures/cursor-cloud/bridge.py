@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local pinned-bridge fixture. Never contacts Cursor; Send is always rejected."""
+"""Local pinned-bridge fixture. Never contacts Cursor; streamed Send uses recorded SDK shapes."""
 import argparse
 import http.server
 import json
@@ -8,6 +8,9 @@ import socket
 from pathlib import Path
 import sys
 import tempfile
+import struct
+import time
+import threading
 
 p = argparse.ArgumentParser()
 p.add_argument('--host')
@@ -38,7 +41,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         method = self.path.rsplit('/', 1)[-1]
-        body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+        raw = self.rfile.read(int(self.headers['Content-Length']))
+        body = json.loads(raw[5:] if method == 'Send' else raw)
         event({'event': 'rpc', 'method': method})
         if self.headers.get('Authorization') != 'Bearer fixture_bridge_bearer_0123456789':
             self.send_error(401)
@@ -59,11 +63,71 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if config.get('drop_creation_reply'):
                 self.connection.shutdown(socket.SHUT_RDWR)
                 return
+            self.server.source_sha = body['options']['cloud']['repos'][0]['startingRef']
+            self.server.creation_key = body['idempotencyKey']
             values[method] = {'agentId': 'fixture-agent-373', 'model': {'id': 'composer-2.5'}}
+        if method == 'Send':
+            assert set(body) == {'agentId', 'message', 'options', 'idempotencyKey'}
+            assert body['agentId'] == 'fixture-agent-373' and body['options'] == {'model': {'id': 'composer-2.5'}}
+            assert len(body['idempotencyKey']) == 64 and body['idempotencyKey'] != self.server.creation_key
+            assert body['idempotencyKey'] not in self.server.send_keys
+            self.server.send_keys.add(body['idempotencyKey'])
+            self.server.sends += 1
+            run = 'fixture-run-' + str(self.server.sends)
+            self.server.run_ids.add(run)
+            event({'event':'send_identity','agent':'fixture-agent-373','run':run,'key':body['idempotencyKey']})
+            if config.get('drop_send_reply'):
+                self.connection.shutdown(socket.SHUT_RDWR)
+                return
+            if config.get('send_pause_file'):
+                marker = Path(config['send_pause_file'])
+                marker.write_text(run)
+                until = time.monotonic() + 30
+                while not marker.with_suffix('.release').exists():
+                    assert time.monotonic() < until
+                    time.sleep(0.01)
+            def sdk(kind, **fields):
+                return {'sdkMessage': {'type':kind, 'message':dict(agent_id='fixture-agent-373', run_id=run, **fields)}}
+            probe = dict(name='run_terminal_cmd',call_id='source-probe',args={'command':'git rev-parse HEAD'})
+            result = {'agentId':'fixture-agent-373','runId':run,'status':'RUN_LIFECYCLE_STATUS_FINISHED','model':{'id':'composer-2.5'},'result':'Fixture inspection complete.'}
+            self.server.results[run] = result
+            events = [sdk('thinking',text=''), sdk('tool_call',name='run_terminal_cmd',call_id='source-probe',status='running'),
+                sdk('tool_call',**probe,status='completed',result={'success':{'command':'git rev-parse HEAD','stdout':self.server.source_sha+'\n','interleavedOutput':self.server.source_sha+'\n'},'isBackground':False}),
+                sdk('assistant',message={'content':[{'type':'text','text':'Inspecting selected source.\n'}]}),
+                {'result':dict(agentId='fixture-agent-373',runId=run,status='RUN_LIFECYCLE_STATUS_FINISHED',result=result)},
+                {'done':{'agentId':'fixture-agent-373','runId':run}}]
+            scenario = config.get('send_scenario')
+            if scenario == 'cross_run': events[1]['sdkMessage']['message']['run_id'] = 'foreign-run'
+            if scenario == 'unknown_shape': events[1]['sdkMessage']['type'] = 'unrecognized'
+            if scenario == 'bad_source': events[2]['sdkMessage']['message']['result']['success']['stdout'] = 'wrong\n'
+            if scenario == 'duplicate': events.insert(4,events[3])
+            if scenario == 'bad_call': events[2]['sdkMessage']['message']['call_id'] = 'different-call'
+            if scenario == 'bad_success': events[2]['sdkMessage']['message']['result']['success']['exitCode'] = 1
+            if scenario == 'missing_done': events.pop()
+            if scenario == 'terminal_replay': events.append(events[-2])
+            if config.get('result_branch'):
+                result['git'] = {'branches':[{'repoUrl':'https://github.com/acme/app','branch':'fixture-result','prUrl':'https://github.com/acme/app/pull/17' if config.get('result_pr') else ''}]}
+            encoded = b''.join(struct.pack('>BI',0,len(item))+item for item in [json.dumps(v).encode() for v in events])
+            encoded += struct.pack('>BI',2,2)+b'{}'
+            self.send_response(200)
+            self.send_header('Content-Type','application/connect+json')
+            self.send_header('Content-Length',str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+            return
+        if method == 'GetAgent':
+            assert body == {'agentId':'fixture-agent-373','options':{'apiKey':'ovrcr-fixture-not-a-credential'}}
+            repo = 'https://github.com/other/app' if config.get('send_scenario') == 'wrong_repository' else 'https://github.com/acme/app'
+            values[method] = {'agent':{'agentId':'fixture-agent-373','cloud':{'repos':[repo]}}}
+        if method == 'GetRun':
+            assert body['options'] == {'runtime':'RUNTIME_CLOUD','agentId':'fixture-agent-373','apiKey':'ovrcr-fixture-not-a-credential'}
+            assert body['runId'] in self.server.run_ids
+            values[method] = {'run':self.server.results[body['runId']]}
+            if config.get('send_scenario') == 'wrong_snapshot': values[method]['run'] = dict(values[method]['run'],runId='foreign-run')
         if method not in values:
             self.send_error(405)
             return
-        if method not in ['GetVersion', 'CreateAgent'] and body != {'options': {'apiKey': 'ovrcr-fixture-not-a-credential'}}:
+        if method not in ['GetVersion', 'CreateAgent', 'GetAgent', 'GetRun'] and body != {'options': {'apiKey': 'ovrcr-fixture-not-a-credential'}}:
             self.send_error(401)
             return
         encoded = json.dumps(values[method]).encode()
@@ -73,7 +137,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
-server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
+server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+server.send_keys = set()
+server.sends = 0
+server.run_ids = set()
+server.results = {}
 port = server.server_port
 print('cursor-sdk-bridge ready ' + json.dumps({'schemaVersion': 1, 'serverVersion': '1.0.0', 'pid': os.getpid(),
     'transport': 'tcp', 'protocol': 'connect', 'host': '127.0.0.1', 'port': port,

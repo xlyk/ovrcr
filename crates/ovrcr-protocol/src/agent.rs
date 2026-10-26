@@ -58,6 +58,7 @@ impl AgentProvider {
                 | AgentProvider::Omp
                 | AgentProvider::Claude
                 | AgentProvider::Hermes
+                | AgentProvider::CursorCloud
         )
     }
 }
@@ -789,7 +790,7 @@ pub(crate) mod tests {
             (AgentProvider::Hermes, true),
             (AgentProvider::Grok, false),
             (AgentProvider::Cursor, false),
-            (AgentProvider::CursorCloud, false),
+            (AgentProvider::CursorCloud, true),
         ] {
             assert_eq!(provider.supports_readiness(), expected, "{provider:?}");
         }

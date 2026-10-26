@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 21;
+const SCHEMA_VERSION: i64 = 22;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -399,6 +399,10 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
         crate::retained::cloud_creation::create_schema(&transaction)?;
         transaction.pragma_update(None, "user_version", 21)?;
     }
+    if schema_identity(&transaction)?.1 < 22 {
+        // Older writers discard distinct Send claims and exact run receipts.
+        transaction.pragma_update(None, "user_version", 22)?;
+    }
     transaction.commit().context("commit registry migration")?;
     Ok(connection)
 }
@@ -446,6 +450,7 @@ pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
                 | 18
                 | 19
                 | 20
+                | 21
                 | SCHEMA_VERSION
         )
     {

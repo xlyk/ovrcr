@@ -61,6 +61,52 @@ impl CloudCreationReceipt {
     }
 }
 
+/// The full immutable semantic request crosses the authenticated admission channel;
+/// its prompt is published privately, never retained in SQLite metadata.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloudSendIntent {
+    pub key: String,
+    pub creation_key: String,
+    pub agent_id: String,
+    pub credential_generation: String,
+    pub model: String,
+    pub prompt: String,
+}
+impl CloudSendIntent {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        CloudCreationReceipt {
+            agent_id: self.agent_id.clone(),
+            model: self.model.clone(),
+        }
+        .validate()?;
+        if ![&self.key, &self.creation_key, &self.credential_generation]
+            .iter()
+            .all(|v| {
+                v.len() == 64
+                    && v.bytes()
+                        .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+            })
+            || self.key == self.creation_key
+            || self.prompt.trim().is_empty()
+            || self.prompt.len() > 32768
+            || self.prompt.contains('\0')
+        {
+            anyhow::bail!("invalid immutable cloud Send intent");
+        }
+        Ok(())
+    }
+    pub fn request(&self) -> serde_json::Value {
+        serde_json::json!({"agentId":self.agent_id,"message":{"text":self.prompt},"options":{"model":{"id":self.model}},"idempotencyKey":self.key})
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CloudRunStatus {
+    Finished,
+    Error,
+    Cancelled,
+    Expired,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CloudCreationCommand {
     Prepare(CloudCreationIntent),
@@ -70,6 +116,32 @@ pub enum CloudCreationCommand {
     Acknowledge {
         key: String,
         receipt: CloudCreationReceipt,
+    },
+    PrepareSend(CloudSendIntent),
+    ClaimSend {
+        key: String,
+        credential_generation: String,
+    },
+    AcknowledgeSend {
+        key: String,
+        agent_id: String,
+        run_id: String,
+    },
+    ObserveSend {
+        key: String,
+        agent_id: String,
+        run_id: String,
+    },
+    ObservationLost {
+        key: String,
+        agent_id: String,
+        run_id: String,
+    },
+    CompleteSend {
+        key: String,
+        agent_id: String,
+        run_id: String,
+        status: CloudRunStatus,
     },
 }
 

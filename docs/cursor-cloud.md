@@ -1,4 +1,4 @@
-# Cursor cloud validation and durable handle preparation
+# Cursor cloud prompts and verified results
 
 On macOS, ordinary **Agent** creation lists `cursor-cloud:ACCOUNT` for each valid
 named account in `dashboard.toml`. Local `cursor-agent` remains separate.
@@ -36,10 +36,25 @@ key's repository/model access through one owned official SDK Bridge. It shows
 account, repository, full commit SHA and explicit model. Local edits are visibly
 excluded. Nothing is implicitly uploaded, committed or pushed. Enter closes the
 preview and its owned bridge. Type `prepare` and Enter to allocate a local cloud
-handle through the pinned SDK. This introduces no prompt entry or Send. The
-acknowledgement is a local handle, not proof that a backend agent/run exists;
-GetAgent is deliberately not required before a future first Send. Terminal
-responses, Retry and active reattachment remain blocked.
+handle through the pinned SDK. The acknowledgement is a local handle, not proof that a backend agent/run exists.
+After preparation, enter a prompt to Send on that retained conversation. Its first
+Send creates backend work. The terminal names its exact accepted run, streams
+recognized assistant content, and reports Ready only after source-tool proof,
+matching terminal result/done/end receipts and an independent exact GetRun.
+GetAgent must confirm the same conversation, cloud runtime and repository.
+A later idle prompt uses the same account/conversation with a new Send key and
+run. A failed run reports Error; a disconnected or unrecognized stream reports
+observation unknown, since remote work and charges may continue. Prose never
+creates an input/approval request. Terminal responses, Retry and active
+reattachment remain blocked.
+
+Busy prompts are rejected visibly and the latest rejected prompt stays in local
+adapter memory for manual `/resubmit` when idle. It is never a future-prompt queue
+and is lost when that adapter exits. An empty idle line or `/detach` closes local
+observation; an active synchronous stream processes `/detach` after it returns.
+An uncertain Send refuses further prompts and offers `/detach` and the existing
+local Discard control. There is no automatic retry, new conversation or newest-run
+lookup. Changed profile defaults cannot rewrite retained requests.
 
 The official standalone archive is pinned to SDK **1.0.40**, bridge **1.0.0**,
 protocol **sdk.v1**; installation does not download or select a newer release.
@@ -52,13 +67,15 @@ Matching definitions are vendored under
 The client uses authenticated Connect unary requests over loopback HTTP/1.1,
 with redirects/proxy discovery disabled and bounded responses. Only GetVersion,
 Me, ListModels and ListRepositories are used for validation; explicit `prepare`
-also uses CreateAgent. The bridge receives its selected
+also uses CreateAgent. Send uses the pinned Connect streaming envelope and exact
+GetAgent/GetRun reads, without ResumeAgent, ListRuns or automatic PR creation.
+The bridge receives its selected
 key in a separate environment without OVRCR reporting or delegation credentials.
 
 ## Retention and local controls
 
 The existing Server/SessionStore owns creation, using the same SQLite connection
-as retained Sessions. Schema 21 retains the original Session/run, invocation,
+as retained Sessions. Schema 22 retains the original Session/run, invocation,
 Server lifetime, selected account/profile, credential generation, canonical source,
 model/options, immutable CreateAgent key, dispatch claim and exact receipt. A
 confined `cloud-creations/` directory in the selected instance stores the original
@@ -73,8 +90,15 @@ persistence permits no creation. Closure and the claim serialize under the same
 retained owner. Closure that wins blocks dispatch; a claim that wins stays
 possibly escaped even if local Discard follows. Bridge I/O holds no shared
 lifecycle or retained lock. Receipt retention validates the exact returned agent
-ID and explicit model, then commits before retiring creation bytes. Future Send
-must have its own independent intent, claim and exact run-receipt boundary.
+ID and explicit model, then commits before retiring creation bytes. Send uses a distinct immutable body/key and claim under this same serialized
+owner. Its credential generation, explicit model and acknowledged agent must
+match the original creation receipt. Full prompt/options bytes live only in the
+same private directory; SQLite keeps their digest and non-payload operation
+receipts. The exact run ID must commit before payload retirement. A crash after
+backend acceptance but before that receipt remains visibly uncertain. A late
+exact receipt can enrich a closed row, but cannot reopen delivery or reporting.
+Each conversation is bounded to 128 retained Sends per local handle; reaching the
+limit refuses another Send. Restart never silently replaces a handle.
 
 An unresolved creation stays on its original row through exit and restart without
 inventing a conversation reference, replacing its key, using a resume picker or
@@ -103,7 +127,8 @@ Copy [`tests/fixtures/cursor-cloud/bridge.py`](../tests/fixtures/cursor-cloud/br
 to that path with mode 0700. An adjacent `bridge.json` contains an absolute `log`
 path, and optionally a model/repository or `reject_credential` flag. The adapter
 uses only a fixed fake credential and recorded publication proof in this mode.
-The fixture accepts one exact creation shape and always rejects Send. It records
+The fixture accepts exact creation and Connect Send shapes, including delayed
+run_terminal_cmd arguments and result.success. It records
 method names, process IDs and resource paths, allowing exact permitted creation
 counts, zero-Send assertions and owned cleanup checks.
 A diagnostic `preflight_helper` executable and bounded `preflight_timeout_ms`
@@ -119,3 +144,32 @@ A pause ends only when its sibling `.release` file exists, with a 30-second boun
 These controls exist only for diagnostic fixtures and never enable real keys.
 The fake bridge's adjacent configuration supports `drop_creation_reply` to model
 acceptance whose reply is lost; this says nothing about upstream retry guarantees.
+
+## Result links and limits
+
+Only explicit result branches/PR URLs are candidates. A published branch is
+labelled as a branch, with no PR inferred or created. The verifier reads GitHub
+through `gh api`, binds the exact repository/branch commit, and requires its merge
+base with the selected source to equal that source. An existing PR must additionally
+match the exact repository, head branch and commit. Unavailable credentials,
+mismatched identities and ambiguous output remain visibly unverified. There is
+no missing-branch fallback and no automatic PR creation. Arbitrary transcript URLs
+and artifact download paths are not promoted to verified links. Result/source
+qualification does not independently attest the agent's claimed tests.
+
+The first Send asks for a correlated `git rev-parse HEAD` tool before other tools.
+Only recorded pinned shell/run_terminal_cmd success shapes can confirm the selected
+published SHA; assistant claims alone cannot. Later follow-ups retain that source
+provenance while allowing the same conversation's work to advance. Unknown SDK
+shapes fail closed. Live/paid Cursor behavior, native Keychain and packaged runtime
+acceptance remain separate release gates; local fixture success proves wiring only.
+
+Send diagnostic controls mirror creation: cloud-fixture.json `send_crash_at` or
+`send_pause_at` accepts before_dispatch, after_claim, after_reply, after_ack;
+pauses require an absolute `send_checkpoint` and end at its `.release` sibling
+within 30 seconds. bridge.json `drop_send_reply` accepts then loses the reply;
+`send_pause_file` stalls the stream until its `.release` sibling. Corruption
+`send_scenario` values include cross_run, unknown_shape, bad_source, bad_call,
+bad_success, missing_done, wrong_repository and wrong_snapshot. Tests use a
+private Git-backed gh executable to exercise the same production link verifier
+without network or real credentials; fixture evidence does not prove live GitHub.

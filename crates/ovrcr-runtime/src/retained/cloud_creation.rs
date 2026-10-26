@@ -3,7 +3,16 @@ use super::*;
 use crate::server::delegation_files::Directory;
 use ovrcr_protocol::{CloudCreationCommand, CloudCreationIntent, CloudCreationReceipt};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct SendRecord {
+    pub key: String,
+    pub digest: String,
+    pub claimed: bool,
+    pub run_id: Option<String>,
+    pub terminal: Option<ovrcr_protocol::CloudRunStatus>,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Record {
     pub intent: CloudCreationIntent,
@@ -14,6 +23,8 @@ pub(crate) struct Record {
     pub closed: bool,
     pub discarded: bool,
     pub receipt: Option<CloudCreationReceipt>,
+    #[serde(default)]
+    pub sends: Vec<SendRecord>,
 }
 impl Record {
     pub fn validate(&self) -> Result<()> {
@@ -24,12 +35,54 @@ impl Record {
                 bail!("invalid retained creation receipt");
             }
         }
+        let mut keys = std::collections::HashSet::new();
+        let mut runs = std::collections::HashSet::new();
+        if self.sends.len() > 128
+            || (!self.sends.is_empty() && self.receipt.is_none())
+            || self.sends.iter().any(|send| {
+                send.key == self.intent.key
+                    || !keys.insert(&send.key)
+                    || ![&send.key, &send.digest].iter().all(|v| {
+                        v.len() == 64
+                            && v.bytes()
+                                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+                    })
+                    || send.run_id.as_ref().is_some_and(|id| {
+                        !send.claimed
+                            || !runs.insert(id)
+                            || id.is_empty()
+                            || id.len() > 256
+                            || !id
+                                .bytes()
+                                .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c))
+                    })
+                    || (send.terminal.is_some() && send.run_id.is_none())
+            })
+        {
+            bail!("invalid retained Send authority");
+        }
         if self.discarded && !self.closed {
             bail!("invalid creation closure");
         }
         Ok(())
     }
     pub fn description(&self) -> String {
+        if !self.discarded
+            && let Some(send) = self.sends.last()
+        {
+            return format!(
+                "Cloud Send {}. Remote work may continue; Retry and active reattachment unavailable. Explicit local Discard: ovrcr terminal cloud-discard <id>.",
+                if send.terminal.is_some() {
+                    "terminal receipt retained"
+                } else if send.run_id.is_some() {
+                    "exact run retained; observation unknown after disconnect"
+                } else if send.claimed {
+                    "unresolved, possibly escaped"
+                } else {
+                    "prepared, never dispatched"
+                }
+            );
+        }
         let status = if self.discarded {
             "discarded locally; any escaped effect remains unknown"
         } else if self.receipt.is_some() {
@@ -40,7 +93,7 @@ impl Record {
             "prepared, never dispatched; automatic creation unavailable"
         };
         format!(
-            "Cloud creation {status}. Send unavailable. Explicit local Discard: ovrcr terminal cloud-discard <id>."
+            "Cloud creation {status}. Explicit local Discard: ovrcr terminal cloud-discard <id>."
         )
     }
     fn requires_discard(&self) -> bool {
@@ -78,6 +131,11 @@ impl SessionStore {
             .values()
             .filter_map(|r| r.cloud_creation.as_ref())
         {
+            for send in &creation.sends {
+                if send.run_id.is_some() || creation.discarded {
+                    directory.remove(&send.key)?;
+                }
+            }
             if creation.receipt.is_some() || creation.discarded {
                 directory.remove(&creation.intent.key)?;
             }
@@ -116,7 +174,13 @@ impl SessionStore {
             params![sql_integer(id.0)?, sql_integer(run.0)?],
             |row| row.get(0),
         )?;
-        if fenced && !matches!(command, CloudCreationCommand::Acknowledge { .. }) {
+        if fenced
+            && !matches!(
+                command,
+                CloudCreationCommand::Acknowledge { .. }
+                    | CloudCreationCommand::AcknowledgeSend { .. }
+            )
+        {
             bail!("cloud creation delivery is closed");
         }
 
@@ -136,9 +200,145 @@ impl SessionStore {
                     closed: false,
                     discarded: false,
                     receipt: None,
+                    sends: Vec::new(),
                 };
                 self.save_creation(id, record)?;
                 directory.publish(&intent.key, &serde_json::to_vec(&intent.request())?)?;
+            }
+            CloudCreationCommand::PrepareSend(intent) => {
+                intent.validate()?;
+                let mut record =
+                    existing.context("durable creation receipt required before Send")?;
+                let receipt = record
+                    .receipt
+                    .as_ref()
+                    .context("durable creation receipt required before Send")?;
+                if record.closed
+                    || record.run != run
+                    || record.invocation != invocation
+                    || record.lifetime != lifetime
+                    || intent.creation_key != record.intent.key
+                    || intent.agent_id != receipt.agent_id
+                    || intent.credential_generation != record.intent.credential_generation
+                    || intent.model != record.intent.account.model
+                    || record.sends.len() >= 128
+                    || record.sends.iter().any(|s| s.key == intent.key)
+                    || record.sends.last().is_some_and(|s| s.terminal.is_none())
+                {
+                    bail!(
+                        "Send busy, closed or original account/options/identity changed; retain prompt for manual resubmission"
+                    );
+                }
+                let bytes = serde_json::to_vec(&intent.request())?;
+                record.sends.push(SendRecord {
+                    key: intent.key.clone(),
+                    digest: format!("{:x}", Sha256::digest(&bytes)),
+                    claimed: false,
+                    run_id: None,
+                    terminal: None,
+                });
+                self.save_creation(id, record)?;
+                directory.publish(&intent.key, &bytes)?;
+            }
+            CloudCreationCommand::ClaimSend { key, .. }
+            | CloudCreationCommand::AcknowledgeSend { key, .. }
+            | CloudCreationCommand::CompleteSend { key, .. }
+            | CloudCreationCommand::ObservationLost { key, .. }
+            | CloudCreationCommand::ObserveSend { key, .. } => {
+                let mut record = existing.context("original Send unavailable")?;
+                if record.run != run
+                    || record.invocation != invocation
+                    || record.lifetime != lifetime
+                {
+                    bail!("stale Send owner");
+                }
+                let agent = &record
+                    .receipt
+                    .as_ref()
+                    .context("creation receipt missing")?
+                    .agent_id;
+                let index = record
+                    .sends
+                    .iter()
+                    .position(|s| &s.key == key)
+                    .context("original Send unavailable")?;
+                match command {
+                    CloudCreationCommand::ClaimSend {
+                        credential_generation,
+                        ..
+                    } => {
+                        if record.closed
+                            || record.sends[index].claimed
+                            || credential_generation != &record.intent.credential_generation
+                        {
+                            bail!("Send closed, already claimed or credential changed; no retry");
+                        }
+                        if format!("{:x}", Sha256::digest(directory.read(key)?))
+                            != record.sends[index].digest
+                        {
+                            bail!("immutable Send payload corrupt; no dispatch");
+                        }
+                        record.sends[index].claimed = true;
+                    }
+                    CloudCreationCommand::AcknowledgeSend {
+                        agent_id, run_id, ..
+                    } => {
+                        CloudCreationReceipt {
+                            agent_id: run_id.clone(),
+                            model: record.intent.account.model.clone(),
+                        }
+                        .validate()?;
+                        if agent_id != agent
+                            || !record.sends[index].claimed
+                            || record.sends[index]
+                                .run_id
+                                .as_ref()
+                                .is_some_and(|r| r != run_id)
+                            || record
+                                .sends
+                                .iter()
+                                .enumerate()
+                                .any(|(i, s)| i != index && s.run_id.as_ref() == Some(run_id))
+                        {
+                            bail!("exact Send receipt identity mismatch");
+                        }
+                        record.sends[index].run_id = Some(run_id.clone());
+                    }
+                    CloudCreationCommand::ObservationLost {
+                        agent_id, run_id, ..
+                    }
+                    | CloudCreationCommand::ObserveSend {
+                        agent_id, run_id, ..
+                    } => {
+                        if record.closed
+                            || agent_id != agent
+                            || record.sends[index].run_id.as_ref() != Some(run_id)
+                        {
+                            bail!("observation identity mismatch or closed");
+                        }
+                    }
+                    CloudCreationCommand::CompleteSend {
+                        agent_id,
+                        run_id,
+                        status,
+                        ..
+                    } => {
+                        if record.closed
+                            || agent_id != agent
+                            || record.sends[index].run_id.as_ref() != Some(run_id)
+                            || record.sends[index].terminal.is_some_and(|s| s != *status)
+                        {
+                            bail!("terminal Send identity mismatch or closed");
+                        }
+                        record.sends[index].terminal = Some(*status);
+                    }
+                    _ => unreachable!(),
+                }
+                let retire = record.sends[index].run_id.is_some();
+                self.save_creation(id, record)?;
+                if retire {
+                    directory.remove(key)?;
+                }
             }
             CloudCreationCommand::Claim { key } | CloudCreationCommand::Acknowledge { key, .. } => {
                 let mut record = existing.context("original cloud creation unavailable")?;
@@ -208,7 +408,16 @@ impl SessionStore {
             .context("no retained cloud creation")?;
         record.discarded = true;
         let key = record.intent.key.clone();
+        let sends = record
+            .sends
+            .iter()
+            .map(|s| s.key.clone())
+            .collect::<Vec<_>>();
         self.save_creation(id, record)?;
+        let directory = Directory::open(&config.canonicalize()?.join("cloud-creations"), false)?;
+        for send in sends {
+            directory.remove(&send)?;
+        }
         Directory::open(&config.canonicalize()?.join("cloud-creations"), false)?.remove(&key)?;
         Ok(())
     }

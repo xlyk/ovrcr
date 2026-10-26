@@ -6669,6 +6669,281 @@ mod agent_reporting {
         assert!(f.state.session_summary(SessionId(900)).is_none());
     }
 
+    #[test]
+    fn cloud_send_requires_durable_creation_and_distinct_immutable_claim() {
+        let f = Fixture::new();
+        let auth = cloud_auth(&f, 0, "cloud-reserve");
+        let creation = cloud_intent();
+        let send = CloudSendIntent {
+            key: "d".repeat(64),
+            creation_key: creation.key.clone(),
+            agent_id: "agent-374".into(),
+            credential_generation: creation.credential_generation.clone(),
+            model: creation.account.model.clone(),
+            prompt: "Only inspect the selected source".into(),
+        };
+        let submit = |operation: &str, command| {
+            f.command(
+                &auth,
+                operation,
+                AgentCommand::CloudCreation(Box::new(command)),
+            )
+        };
+        rejected(submit(
+            "early-send",
+            CloudCreationCommand::PrepareSend(send.clone()),
+        ));
+        for (op, command) in [
+            ("prepare", CloudCreationCommand::Prepare(creation.clone())),
+            (
+                "claim",
+                CloudCreationCommand::Claim {
+                    key: creation.key.clone(),
+                },
+            ),
+            (
+                "ack",
+                CloudCreationCommand::Acknowledge {
+                    key: creation.key.clone(),
+                    receipt: CloudCreationReceipt {
+                        agent_id: send.agent_id.clone(),
+                        model: send.model.clone(),
+                    },
+                },
+            ),
+            (
+                "send-prepare",
+                CloudCreationCommand::PrepareSend(send.clone()),
+            ),
+            (
+                "send-claim",
+                CloudCreationCommand::ClaimSend {
+                    key: send.key.clone(),
+                    credential_generation: send.credential_generation.clone(),
+                },
+            ),
+        ] {
+            assert_eq!(
+                submit(op, command),
+                Response::AgentOperation(AgentOperationResult::CloudCreationCommitted)
+            );
+        }
+        rejected(submit(
+            "duplicate-send-claim",
+            CloudCreationCommand::ClaimSend {
+                key: send.key.clone(),
+                credential_generation: send.credential_generation.clone(),
+            },
+        ));
+        let mut next = send.clone();
+        next.key = "e".repeat(64);
+        rejected(submit("busy-send", CloudCreationCommand::PrepareSend(next)));
+        assert!(
+            f.state
+                .session_summary(SessionId(900))
+                .unwrap()
+                .recovery
+                .unwrap()
+                .unavailable
+                .unwrap()
+                .contains("Send unresolved")
+        );
+        f.state
+            .discard_cloud_creation(SessionId(900), f.session.run())
+            .unwrap();
+        rejected(submit(
+            "closed-send",
+            CloudCreationCommand::ClaimSend {
+                key: send.key,
+                credential_generation: send.credential_generation,
+            },
+        ));
+    }
+
+    #[test]
+    fn cloud_send_exact_receipts_options_and_closure_cannot_cross_runs_or_accounts() {
+        let f = Fixture::new();
+        let auth = cloud_auth(&f, 0, "reserve");
+        let creation = cloud_intent();
+        let send = CloudSendIntent {
+            key: "d".repeat(64),
+            creation_key: creation.key.clone(),
+            agent_id: "agent-374".into(),
+            credential_generation: creation.credential_generation.clone(),
+            model: creation.account.model.clone(),
+            prompt: "Inspect source".into(),
+        };
+        let submit = |op: &str, c| f.command(&auth, op, AgentCommand::CloudCreation(Box::new(c)));
+        for (op, c) in [
+            ("prepare", CloudCreationCommand::Prepare(creation.clone())),
+            (
+                "claim",
+                CloudCreationCommand::Claim {
+                    key: creation.key.clone(),
+                },
+            ),
+            (
+                "ack",
+                CloudCreationCommand::Acknowledge {
+                    key: creation.key,
+                    receipt: CloudCreationReceipt {
+                        agent_id: send.agent_id.clone(),
+                        model: send.model.clone(),
+                    },
+                },
+            ),
+        ] {
+            assert_eq!(
+                submit(op, c),
+                Response::AgentOperation(AgentOperationResult::CloudCreationCommitted)
+            );
+        }
+        for (i, field) in ["credential", "model", "agent", "creation"]
+            .iter()
+            .enumerate()
+        {
+            let mut changed = send.clone();
+            match *field {
+                "credential" => changed.credential_generation = "f".repeat(64),
+                "model" => changed.model = "other".into(),
+                "agent" => changed.agent_id = "other-agent".into(),
+                _ => changed.creation_key = "f".repeat(64),
+            }
+            rejected(submit(
+                &format!("changed-{i}"),
+                CloudCreationCommand::PrepareSend(changed),
+            ));
+        }
+        assert_eq!(
+            submit("send", CloudCreationCommand::PrepareSend(send.clone())),
+            Response::AgentOperation(AgentOperationResult::CloudCreationCommitted)
+        );
+        rejected(submit(
+            "credential-claim",
+            CloudCreationCommand::ClaimSend {
+                key: send.key.clone(),
+                credential_generation: "f".repeat(64),
+            },
+        ));
+        assert_eq!(
+            submit(
+                "send-claim",
+                CloudCreationCommand::ClaimSend {
+                    key: send.key.clone(),
+                    credential_generation: send.credential_generation.clone()
+                }
+            ),
+            Response::AgentOperation(AgentOperationResult::CloudCreationCommitted)
+        );
+        rejected(submit(
+            "foreign-agent",
+            CloudCreationCommand::AcknowledgeSend {
+                key: send.key.clone(),
+                agent_id: "other-agent".into(),
+                run_id: "run-1".into(),
+            },
+        ));
+        assert_eq!(
+            submit(
+                "run",
+                CloudCreationCommand::AcknowledgeSend {
+                    key: send.key.clone(),
+                    agent_id: send.agent_id.clone(),
+                    run_id: "run-1".into()
+                }
+            ),
+            Response::AgentOperation(AgentOperationResult::CloudCreationCommitted)
+        );
+        rejected(submit(
+            "different-run",
+            CloudCreationCommand::AcknowledgeSend {
+                key: send.key.clone(),
+                agent_id: send.agent_id.clone(),
+                run_id: "run-2".into(),
+            },
+        ));
+        rejected(submit(
+            "stale-complete",
+            CloudCreationCommand::CompleteSend {
+                key: send.key.clone(),
+                agent_id: send.agent_id.clone(),
+                run_id: "run-2".into(),
+                status: CloudRunStatus::Finished,
+            },
+        ));
+        assert_eq!(
+            submit(
+                "complete",
+                CloudCreationCommand::CompleteSend {
+                    key: send.key.clone(),
+                    agent_id: send.agent_id.clone(),
+                    run_id: "run-1".into(),
+                    status: CloudRunStatus::Finished
+                }
+            ),
+            Response::AgentOperation(AgentOperationResult::CloudCreationCommitted)
+        );
+        let mut followup = send.clone();
+        followup.key = "e".repeat(64);
+        assert_eq!(
+            submit(
+                "followup",
+                CloudCreationCommand::PrepareSend(followup.clone())
+            ),
+            Response::AgentOperation(AgentOperationResult::CloudCreationCommitted)
+        );
+        assert_eq!(
+            submit(
+                "followup-claim",
+                CloudCreationCommand::ClaimSend {
+                    key: followup.key.clone(),
+                    credential_generation: followup.credential_generation
+                }
+            ),
+            Response::AgentOperation(AgentOperationResult::CloudCreationCommitted)
+        );
+        rejected(submit(
+            "reused-run",
+            CloudCreationCommand::AcknowledgeSend {
+                key: followup.key.clone(),
+                agent_id: send.agent_id.clone(),
+                run_id: "run-1".into(),
+            },
+        ));
+        f.state
+            .discard_cloud_creation(SessionId(900), f.session.run())
+            .unwrap();
+        assert_eq!(
+            submit(
+                "late-ack",
+                CloudCreationCommand::AcknowledgeSend {
+                    key: followup.key.clone(),
+                    agent_id: send.agent_id.clone(),
+                    run_id: "run-2".into()
+                }
+            ),
+            Response::AgentOperation(AgentOperationResult::CloudCreationCommitted)
+        );
+        rejected(submit(
+            "closed-observe",
+            CloudCreationCommand::ObserveSend {
+                key: followup.key,
+                agent_id: send.agent_id,
+                run_id: "run-2".into(),
+            },
+        ));
+        assert!(
+            f.state
+                .session_summary(SessionId(900))
+                .unwrap()
+                .recovery
+                .unwrap()
+                .unavailable
+                .unwrap()
+                .contains("discarded locally")
+        );
+    }
+
     fn activity(state: AgentActivity) -> AgentObservation {
         AgentObservation::Activity(ActivitySample {
             state,

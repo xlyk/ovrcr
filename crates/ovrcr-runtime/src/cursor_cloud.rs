@@ -1,4 +1,4 @@
-//! Cursor SDK 1.0.40 validation and durably admitted local handle allocation. No Send.
+//! Cursor SDK 1.0.40 validation, durable Send admission and exact-run observation.
 use anyhow::{Context, Result, bail, ensure};
 use ovrcr_protocol::{CursorCloudAccount, canonical_cloud_repository};
 use serde_json::{Value, json};
@@ -14,6 +14,7 @@ use std::{
 
 const LIMIT: u64 = 1024 * 1024;
 const READY_PREFIX: &str = "cursor-sdk-bridge ready ";
+mod run;
 pub const SDK_VERSION: &str = "1.0.40";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -27,7 +28,7 @@ impl std::fmt::Display for CloudLaunchPreview {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Cursor cloud validated preview\nAccount: {} (selected profile; billing identity not attested)\nRepository: {}\nPublished commit: {}\nModel: {}\nLocal edits are excluded; nothing is uploaded, committed or pushed.\nCreateAgent: explicit prepare required. Send: unavailable. Terminal responses, Retry and active reattachment remain blocked.\nType prepare then Enter to retain a cloud handle (no prompt or Send).\nPress Enter to close preview.",
+            "Cursor cloud validated preview\nAccount: {} (selected profile; billing identity not attested)\nRepository: {}\nPublished commit: {}\nModel: {}\nLocal edits are excluded; nothing is uploaded, committed or pushed.\nCreateAgent: explicit prepare required. Send: available after prepare. Terminal responses, Retry and active reattachment remain blocked.\nType prepare then Enter to retain a cloud handle (no prompt or Send).\nPress Enter to close preview.",
             self.account, self.repository, self.source_sha, self.model
         )
     }
@@ -351,7 +352,10 @@ impl Catalog {
                 (service, method),
                 ("SdkBridgeControlService", "GetVersion" | "Ping")
                     | ("SdkCursorService", "Me" | "ListModels" | "ListRepositories")
-                    | ("SdkAgentService", "CreateAgent")
+                    | (
+                        "SdkAgentService",
+                        "CreateAgent" | "GetAgent" | "GetRun" | "ListArtifacts"
+                    )
             ),
             "preview RPC unavailable"
         );
@@ -556,16 +560,106 @@ pub fn preview(
         );
         creation_boundary(fixture.as_ref(), "after_reply")?;
         admit(&CloudCreationCommand::Acknowledge {
-            key: intent.key,
+            key: intent.key.clone(),
             receipt: receipt.clone(),
         })?;
         creation_boundary(fixture.as_ref(), "after_ack")?;
         println!(
-            "Cloud handle durably retained: {}\nThis SDK acknowledgement allocates a local handle; backend existence is unverified. Send unavailable.\nAfter bridge exit, handle restoration unavailable. No automatic creation or Retry. Press Enter to detach.",
+            "Cloud handle durably retained: {}\nThis SDK acknowledgement allocates a local handle; backend existence is unverified until Send.\nAfter bridge exit, handle restoration unavailable. No automatic creation or Retry.\nEnter a prompt to Send; empty line detaches. Busy input is retained for explicit /resubmit.",
             receipt.agent_id
         );
-        input.clear();
-        std::io::stdin().lock().take(64).read_line(&mut input)?;
+        // Only the UI reader runs concurrently; durable operation and Reporter ownership stay unchanged.
+        struct InputState {
+            busy: bool,
+            epoch: u64,
+            rejected: Option<String>,
+        }
+        let input_state = std::sync::Arc::new(std::sync::Mutex::new(InputState {
+            busy: false,
+            epoch: 0,
+            rejected: None,
+        }));
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let reader_state = input_state.clone();
+        std::thread::spawn(move || {
+            let mut stdin = std::io::stdin().lock();
+            loop {
+                let mut line = String::new();
+                match stdin.by_ref().take(32770).read_line(&mut line) {
+                    Ok(0) | Err(_) => break,
+                    _ => {}
+                }
+                let mut state = reader_state.lock().unwrap();
+                if line.len() > 32768 {
+                    println!("Prompt exceeds 32768 bytes; not submitted. Input closed.");
+                    break;
+                }
+                if state.busy && line.trim() != "/detach" {
+                    state.rejected = Some(line);
+                    println!(
+                        "Busy: prompt rejected and retained locally. When idle type /resubmit to submit it manually."
+                    );
+                } else if let Err(std::sync::mpsc::TrySendError::Full((_, line))) =
+                    sender.try_send((state.epoch, line))
+                {
+                    state.rejected = Some(line);
+                    println!("Prompt rejected and retained locally; explicit /resubmit required.");
+                }
+            }
+        });
+        let mut source_verified = false;
+        while let Ok((epoch, line)) = receiver.recv() {
+            if line.trim() == "/detach" {
+                break;
+            }
+            let prompt = {
+                let mut state = input_state.lock().unwrap();
+                if epoch != state.epoch {
+                    state.rejected = Some(line);
+                    println!("Prompt rejected and retained locally; explicit /resubmit required.");
+                    continue;
+                }
+                let prompt = if line.trim() == "/resubmit" {
+                    state.rejected.take().unwrap_or_default()
+                } else {
+                    line
+                };
+                if prompt.trim().is_empty() {
+                    break;
+                }
+                state.busy = true;
+                state.epoch += 1;
+                prompt
+            };
+            match run::send(
+                &mut catalog,
+                &intent,
+                (&receipt.agent_id, &key),
+                prompt,
+                !source_verified,
+                fixture.as_ref(),
+                &mut admit,
+            ) {
+                Ok(verified) => source_verified |= verified,
+                Err(error) => {
+                    println!(
+                        "Observation unknown/unverified: {error}. Remote work may continue. No automatic Retry or further Send; /detach closes local observation. Discard: ovrcr terminal cloud-discard <id>."
+                    );
+                    while let Ok((_, line)) = receiver.recv() {
+                        if line.trim() == "/detach" {
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
+            let mut state = input_state.lock().unwrap();
+            state.busy = false;
+            println!(
+                "Idle on retained conversation {}. Enter follow-up, /resubmit, or empty line to detach.",
+                receipt.agent_id
+            );
+        }
     }
     drop(bridge);
     Ok(())

@@ -175,7 +175,7 @@ fn ordinary_cloud_agent_validates_preview_and_cleans_owned_tree_on_exit_and_sign
             "Published commit:",
             "Model: composer-2.5",
             "Local edits are excluded",
-            "CreateAgent: explicit prepare required. Send: unavailable.",
+            "CreateAgent: explicit prepare required. Send: available after prepare.",
         ] {
             assert!(text.contains(expected), "missing {expected}: {text}");
         }
@@ -885,5 +885,544 @@ fn restart_cleans_owned_publication_aliases_and_durably_retired_creation_payload
                 .count(),
             0
         );
+    }
+}
+
+#[test]
+fn managed_cloud_send_streams_exact_run_and_idle_followup_same_conversation() {
+    let fixture = Fixture::new("composer-2.5", true, true, false);
+    let session = fixture.launch();
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Press Enter to close preview.")
+    });
+    assert_eq!(
+        fixture.live.request(Request::SendTerminal {
+            session: session.id,
+            text: "prepare".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Cloud handle durably retained:")
+    });
+    assert_eq!(
+        fixture.live.request(Request::SendTerminal {
+            session: session.id,
+            text: "Inspect the selected source".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Ready: exact run fixture-run-1")
+    });
+    assert_eq!(
+        fixture.live.request(Request::SendTerminal {
+            session: session.id,
+            text: "Summarize that inspection".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Ready: exact run fixture-run-2")
+    });
+    let methods = fixture
+        .events()
+        .iter()
+        .filter_map(|e| e["method"].as_str().map(str::to_owned))
+        .collect::<Vec<_>>();
+    assert_eq!(methods.iter().filter(|m| *m == "CreateAgent").count(), 1);
+    assert_eq!(methods.iter().filter(|m| *m == "Send").count(), 2);
+    assert_eq!(methods.iter().filter(|m| *m == "GetAgent").count(), 2);
+    assert_eq!(methods.iter().filter(|m| *m == "GetRun").count(), 2);
+    assert_eq!(
+        methods
+            .iter()
+            .filter(|m| ["ResumeAgent", "ListRuns", "CancelRun"].contains(&m.as_str()))
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn managed_result_links_require_independent_exact_head_and_never_invent_a_pr() {
+    for mode in ["branch", "pr", "wrong-head"] {
+        let fixture = Fixture::new("composer-2.5", true, true, false);
+        let bridge_config = fixture.live.root.path().join("bridge.json");
+        let mut config: Value = serde_json::from_slice(&fs::read(&bridge_config).unwrap()).unwrap();
+        config["result_branch"] = json!(true);
+        config["result_pr"] = json!(mode != "branch");
+        fs::write(&bridge_config, config.to_string()).unwrap();
+        live::git(&fixture.live.repo, &["branch", "fixture-result"]);
+        let gh = fixture.live.claude.command.parent().unwrap().join("gh");
+        fs::write(&gh,format!(r#"#!/usr/bin/env python3
+import json,subprocess,sys
+repo={repo:?}
+sha=subprocess.check_output(['git','-C',repo,'rev-parse','fixture-result'],text=True).strip()
+base=subprocess.check_output(['git','-C',repo,'rev-parse','HEAD'],text=True).strip()
+assert sys.argv[1]=='api'
+path=sys.argv[2]
+if path=='repos/acme/app/commits/fixture-result': value={{'sha':sha}}
+elif path=='repos/acme/app/compare/'+base+'...'+sha:
+    ancestor=subprocess.check_output(['git','-C',repo,'merge-base',base,sha],text=True).strip()
+    value={{'status':'identical','merge_base_commit':{{'sha':ancestor}}}}
+elif path=='repos/acme/app/pulls/17': value={{'html_url':'https://github.com/acme/app/pull/17','head':{{'sha':('0'*40 if {wrong} else sha),'ref':'fixture-result','repo':{{'html_url':'https://github.com/acme/app'}}}}}}
+else: raise SystemExit(2)
+print(json.dumps(value))
+"#,repo=fixture.live.repo,wrong=if mode=="wrong-head" {"True"} else {"False"})).unwrap();
+        fs::set_permissions(&gh, fs::Permissions::from_mode(0o700)).unwrap();
+        let session = fixture.launch();
+        fixture.until(|| {
+            fixture
+                .text(&session)
+                .contains("Press Enter to close preview.")
+        });
+        fixture.live.request(Request::SendTerminal {
+            session: session.id,
+            text: "prepare".into(),
+            submit: true,
+        });
+        fixture.until(|| {
+            fixture
+                .text(&session)
+                .contains("Cloud handle durably retained:")
+        });
+        fixture.live.request(Request::SendTerminal {
+            session: session.id,
+            text: "Inspect source".into(),
+            submit: true,
+        });
+        let expected = match mode {
+            "branch" => "Verified published branch:",
+            "pr" => "Verified existing PR:",
+            _ => "Result link unverified:",
+        };
+        fixture.until(|| fixture.text(&session).contains(expected));
+        let text = fixture.text(&session);
+        if mode == "branch" {
+            assert!(!text.contains("Verified existing PR:"));
+            assert!(text.contains("no PR"));
+        }
+        if mode == "wrong-head" {
+            assert!(!text.contains("Verified existing PR:"));
+        }
+    }
+}
+
+#[test]
+fn managed_busy_prompt_is_rejected_retained_and_requires_manual_resubmission() {
+    let fixture = Fixture::new("composer-2.5", true, true, false);
+    let pause = fixture.live.root.path().join("send-paused");
+    let bridge_config = fixture.live.root.path().join("bridge.json");
+    let mut config: Value = serde_json::from_slice(&fs::read(&bridge_config).unwrap()).unwrap();
+    config["send_pause_file"] = json!(pause);
+    fs::write(&bridge_config, config.to_string()).unwrap();
+    let session = fixture.launch();
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Press Enter to close preview.")
+    });
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "prepare".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Cloud handle durably retained:")
+    });
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "Inspect source".into(),
+        submit: true,
+    });
+    fixture.until(|| pause.exists());
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "Retain this manual follow-up".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Busy: prompt rejected and retained locally")
+    });
+    fs::write(pause.with_extension("release"), "release").unwrap();
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Ready: exact run fixture-run-1")
+    });
+    assert_eq!(
+        fixture
+            .events()
+            .iter()
+            .filter(|e| e["method"] == "Send")
+            .count(),
+        1
+    );
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "/resubmit".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Ready: exact run fixture-run-2")
+    });
+    assert_eq!(
+        fixture
+            .events()
+            .iter()
+            .filter(|e| e["method"] == "Send")
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn managed_send_uncertainty_and_malformed_evidence_never_retry_or_become_ready() {
+    for scenario in [
+        "lost_reply",
+        "cross_run",
+        "unknown_shape",
+        "bad_source",
+        "bad_call",
+        "bad_success",
+        "missing_done",
+        "wrong_repository",
+        "wrong_snapshot",
+    ] {
+        let fixture = Fixture::new("composer-2.5", true, true, false);
+        let bridge_config = fixture.live.root.path().join("bridge.json");
+        let mut config: Value = serde_json::from_slice(&fs::read(&bridge_config).unwrap()).unwrap();
+        config["send_scenario"] = json!(scenario);
+        config["drop_send_reply"] = json!(scenario == "lost_reply");
+        fs::write(&bridge_config, config.to_string()).unwrap();
+        let session = fixture.launch();
+        fixture.until(|| {
+            fixture
+                .text(&session)
+                .contains("Press Enter to close preview.")
+        });
+        fixture.live.request(Request::SendTerminal {
+            session: session.id,
+            text: "prepare".into(),
+            submit: true,
+        });
+        fixture.until(|| {
+            fixture
+                .text(&session)
+                .contains("Cloud handle durably retained:")
+        });
+        fixture.live.request(Request::SendTerminal {
+            session: session.id,
+            text: "Inspect source".into(),
+            submit: true,
+        });
+        fixture.until(|| {
+            fixture
+                .text(&session)
+                .contains("Observation unknown/unverified:")
+        });
+        fixture.live.request(Request::SendTerminal {
+            session: session.id,
+            text: "/resubmit".into(),
+            submit: true,
+        });
+        fixture.until(|| {
+            fixture
+                .text(&session)
+                .contains("Busy: prompt rejected and retained locally")
+        });
+        let text = fixture.text(&session);
+        assert!(!text.contains("Ready: exact run"), "{scenario}: {text}");
+        let methods = fixture.events();
+        assert_eq!(
+            methods.iter().filter(|e| e["method"] == "Send").count(),
+            1,
+            "{scenario}"
+        );
+        assert_eq!(
+            methods
+                .iter()
+                .filter(|e| e["method"] == "CreateAgent")
+                .count(),
+            1
+        );
+        assert!(
+            methods
+                .iter()
+                .all(|e| e["method"] != "ListRuns" && e["method"] != "ResumeAgent")
+        );
+        assert_eq!(
+            fixture.live.request(Request::DiscardCloudCreation {
+                session: session.id,
+                expected_run: session.run
+            }),
+            Response::Ok
+        );
+        assert_eq!(
+            fs::read_dir(fixture.live.config.join("cloud-creations"))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+}
+
+#[test]
+fn managed_send_storage_faults_never_dispatch_without_claim_or_retire_unreceipted_payload() {
+    for (mode, sends) in [
+        ("intent", 0),
+        ("claim", 0),
+        ("receipt", 1),
+        ("corrupt", 0),
+        ("closure", 1),
+    ] {
+        let fixture = Fixture::new("composer-2.5", true, true, false);
+        let marker = fixture.live.root.path().join("send-storage");
+        if mode == "corrupt" || mode == "closure" {
+            let mut controls: Value =
+                serde_json::from_slice(&fs::read(&fixture.config).unwrap()).unwrap();
+            controls["send_pause_at"] = json!("before_dispatch");
+            controls["send_checkpoint"] = json!(marker);
+            fs::write(&fixture.config, controls.to_string()).unwrap();
+        }
+        let session = fixture.launch();
+        fixture.until(|| {
+            fixture
+                .text(&session)
+                .contains("Press Enter to close preview.")
+        });
+        fixture.live.request(Request::SendTerminal {
+            session: session.id,
+            text: "prepare".into(),
+            submit: true,
+        });
+        fixture.until(|| {
+            fixture
+                .text(&session)
+                .contains("Cloud handle durably retained:")
+        });
+        let database =
+            rusqlite::Connection::open(fixture.live.config.join("registry.sqlite3")).unwrap();
+        let condition = match mode {
+            "intent" => "json_array_length(NEW.metadata,'$.sends') > 0",
+            "claim" => "json_extract(NEW.metadata,'$.sends[0].claimed') = 1",
+            "receipt" => "json_type(NEW.metadata,'$.sends[0].run_id') = 'text'",
+            _ => "0",
+        };
+        database.execute_batch(&format!("CREATE TRIGGER fail_send BEFORE UPDATE ON cloud_creations WHEN {condition} BEGIN SELECT RAISE(ABORT,'fixture Send storage fault'); END;")).unwrap();
+        if mode == "closure" {
+            database.execute_batch("CREATE TRIGGER fail_send_close BEFORE INSERT ON cloud_creation_fences BEGIN SELECT RAISE(ABORT,'fixture closure fault'); END;").unwrap();
+        }
+        fixture.live.request(Request::SendTerminal {
+            session: session.id,
+            text: "PRIVATE_SEND_PAYLOAD_374".into(),
+            submit: true,
+        });
+        if mode == "corrupt" || mode == "closure" {
+            fixture.until(|| marker.exists());
+            if mode == "corrupt" {
+                let payload = fs::read_dir(fixture.live.config.join("cloud-creations"))
+                    .unwrap()
+                    .next()
+                    .unwrap()
+                    .unwrap()
+                    .path();
+                fs::write(payload, "corrupt").unwrap();
+            } else {
+                assert!(matches!(
+                    fixture.live.request(Request::DiscardCloudCreation {
+                        session: session.id,
+                        expected_run: session.run
+                    }),
+                    Response::Error { .. }
+                ));
+            }
+            fs::write(marker.with_extension("release"), "release").unwrap();
+        }
+        fixture.until(|| {
+            fixture.text(&session).contains(if mode == "closure" {
+                "Ready: exact run"
+            } else {
+                "Observation unknown/unverified:"
+            })
+        });
+        assert_eq!(
+            fixture
+                .events()
+                .iter()
+                .filter(|e| e["method"] == "Send")
+                .count(),
+            sends,
+            "{mode}"
+        );
+        let raw: String = database
+            .query_row(
+                "SELECT metadata FROM cloud_creations WHERE session=?1",
+                [session.id.0 as i64],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            !raw.contains("PRIVATE_SEND_PAYLOAD_374")
+                && !raw.contains("ovrcr-fixture-not-a-credential")
+        );
+        if mode == "receipt" {
+            assert!(raw.contains("\"run_id\":null"));
+            assert_eq!(
+                fs::read_dir(fixture.live.config.join("cloud-creations"))
+                    .unwrap()
+                    .count(),
+                1
+            );
+        }
+        database.execute_batch("DROP TRIGGER fail_send;").unwrap();
+        if mode == "closure" {
+            database
+                .execute_batch("DROP TRIGGER fail_send_close;")
+                .unwrap();
+        }
+        assert_eq!(
+            fixture.live.request(Request::DiscardCloudCreation {
+                session: session.id,
+                expected_run: session.run
+            }),
+            Response::Ok
+        );
+        assert_eq!(
+            fs::read_dir(fixture.live.config.join("cloud-creations"))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+}
+
+#[test]
+fn managed_send_crash_and_discard_boundaries_preserve_uncertainty_and_exact_late_identity() {
+    for (boundary, sends) in [
+        ("before_dispatch", 0),
+        ("after_claim", 1),
+        ("after_reply", 1),
+        ("after_ack", 1),
+    ] {
+        for discard in [false, true] {
+            let fixture = Fixture::new("composer-2.5", true, true, false);
+            let marker = fixture.live.root.path().join("send-checkpoint");
+            let mut controls: Value =
+                serde_json::from_slice(&fs::read(&fixture.config).unwrap()).unwrap();
+            controls[if discard {
+                "send_pause_at"
+            } else {
+                "send_crash_at"
+            }] = json!(boundary);
+            controls["send_checkpoint"] = json!(marker);
+            fs::write(&fixture.config, controls.to_string()).unwrap();
+            let session = fixture.launch();
+            fixture.until(|| {
+                fixture
+                    .text(&session)
+                    .contains("Press Enter to close preview.")
+            });
+            fixture.live.request(Request::SendTerminal {
+                session: session.id,
+                text: "prepare".into(),
+                submit: true,
+            });
+            fixture.until(|| {
+                fixture
+                    .text(&session)
+                    .contains("Cloud handle durably retained:")
+            });
+            fixture.live.request(Request::SendTerminal {
+                session: session.id,
+                text: "Inspect source".into(),
+                submit: true,
+            });
+            if discard {
+                fixture.until(|| marker.exists());
+                assert_eq!(
+                    fixture.live.request(Request::DiscardCloudCreation {
+                        session: session.id,
+                        expected_run: session.run
+                    }),
+                    Response::Ok
+                );
+                fs::write(marker.with_extension("release"), "release").unwrap();
+                fixture.until(|| {
+                    fixture
+                        .text(&session)
+                        .contains("Observation unknown/unverified:")
+                });
+            } else {
+                fixture.until(|| {
+                    let Response::Inventory { sessions, .. } =
+                        fixture.live.request(Request::Inspect)
+                    else {
+                        panic!("inspect")
+                    };
+                    sessions
+                        .iter()
+                        .find(|s| s.id == session.id)
+                        .is_some_and(|s| !s.phase.is_live())
+                });
+            }
+            // Claim wins before the adapter's next boundary; after_claim crash has zero actual RPCs.
+            let actual = if !discard && boundary == "after_claim" {
+                0
+            } else {
+                sends
+            };
+            assert_eq!(
+                fixture
+                    .events()
+                    .iter()
+                    .filter(|e| e["method"] == "Send")
+                    .count(),
+                actual,
+                "{boundary} discard={discard}"
+            );
+            let database =
+                rusqlite::Connection::open(fixture.live.config.join("registry.sqlite3")).unwrap();
+            let raw: String = database
+                .query_row(
+                    "SELECT metadata FROM cloud_creations WHERE session=?1",
+                    [session.id.0 as i64],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let retained: Value = serde_json::from_str(&raw).unwrap();
+            assert!(retained["sends"][0]["terminal"].is_null());
+            assert_eq!(
+                retained["sends"][0]["run_id"].is_string(),
+                boundary == "after_ack"
+                    || (discard && ["after_claim", "after_reply"].contains(&boundary))
+            );
+            if discard {
+                assert_eq!(
+                    fs::read_dir(fixture.live.config.join("cloud-creations"))
+                        .unwrap()
+                        .count(),
+                    0
+                );
+            }
+            assert!(!fixture.text(&session).contains("Ready: exact run"));
+        }
     }
 }

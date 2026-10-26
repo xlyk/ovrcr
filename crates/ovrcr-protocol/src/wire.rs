@@ -3117,13 +3117,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a043d017301630168016c0104",
+            "2a043e017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f043d017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f043e017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -3154,18 +3154,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d043d0000"),
+        ("Response::NotificationNavigation", "0d043e0000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e043d017301630168016c0104",
+            "0e01016e043e017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f010708090101690101043d017301630168016c0164",
+            "0f010708090101690101043e017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "10043d010708090101690101043d017301630168016c0164",
+            "10043e010708090101690101043e017301630168016c0164",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -3189,7 +3189,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e043d017301630168016c0104",
+            "08016e043e017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
