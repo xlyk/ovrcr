@@ -191,14 +191,13 @@ impl Catalog {
 pub(super) fn send(
     catalog: &mut Catalog,
     creation: &CloudCreationIntent,
-    binding: (&str, &str),
+    binding: (&str, &str, &Control),
     prompt: String,
     source_required: bool,
     fixture: Option<&Value>,
     admit: &mut impl FnMut(&C) -> Result<()>,
-    control: &Control,
 ) -> Result<bool> {
-    let (agent, key) = binding;
+    let (agent, key, control) = binding;
     let intent = CloudSendIntent {
         key: crate::agent_runner::private_identifier()?,
         creation_key: creation.key.clone(),

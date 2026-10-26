@@ -741,12 +741,11 @@ pub fn preview(
             match run::send(
                 &mut catalog,
                 &intent,
-                (&receipt.agent_id, &key),
+                (&receipt.agent_id, &key, &control),
                 prompt,
                 !source_verified,
                 fixture.as_ref(),
                 &mut submit,
-                &control,
             ) {
                 Ok(verified) => source_verified |= verified,
                 Err(error) => {

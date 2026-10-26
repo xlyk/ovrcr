@@ -990,6 +990,17 @@ pub(crate) mod tests {
                     model: "composer-2.5".into(),
                 },
             },
+            crate::CloudCreationCommand::Cancel,
+            crate::CloudCreationCommand::CheckCancel {
+                key: "a".repeat(64),
+                agent_id: "agent-375".into(),
+                run_id: "run-375".into(),
+            },
+            crate::CloudCreationCommand::ClaimCancel {
+                key: "a".repeat(64),
+                agent_id: "agent-375".into(),
+                run_id: "run-375".into(),
+            },
         ] {
             requests.push(Request::Supervisor(SupervisorRequest {
                 auth: auth.clone(),
