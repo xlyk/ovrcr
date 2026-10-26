@@ -44,15 +44,22 @@ Pre-1.0. Build from source:
 ```sh
 git clone https://github.com/xlyk/ovrcr.git
 cd ovrcr
-cargo build -p ovrcr --release
-install -m 755 target/release/ovrcr ~/.local/bin/ovrcr
+just install-release
 ovrcr --version
 ```
 
-On macOS, `just install-release` does the same and also packages the optional
-Bridge's startup assets into `~/.local/lib/ovrcr`. After installing a CLI any
-other way, run `just install-startup-assets` from the checkout so startup can
-install or repair the [Bridge](native/bridge/README.md).
+`just install-release` builds and installs the CLI at `~/.local/bin/ovrcr`.
+On macOS it also packages optional notification [Bridge](native/bridge/README.md)
+startup assets into `~/.local/lib/ovrcr` and installs the pinned official Cursor
+SDK archive into the separate `~/.local/lib/ovrcr-cursor-sdk/1.0.40` directory.
+The first Cursor dependency install needs `python3`, `curl` and GitHub access;
+set `OVRCR_CURSOR_BRIDGE_ARCHIVE=/absolute/official/archive.tar.gz` for an offline
+install. A valid installed pin is reused. No bridge is executed during installation.
+After installing a CLI any other way, run `just install-startup-assets` and,
+for the experimental macOS Cursor cloud provider, `just install-cursor-bridge`.
+Copy the printed absolute `bridge_archive` path into each account profile.
+See [Cursor cloud setup and release limits](docs/cursor-cloud.md). Linux installs
+the CLI without either macOS asset; Cursor cloud requires macOS Keychain.
 
 Client and server must match on the wire protocol `ovrcr --version` prints.
 Interactive startup offers to restart an older server (same protocol with a

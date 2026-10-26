@@ -4,6 +4,22 @@ On macOS, ordinary **Agent** creation lists `cursor-cloud:ACCOUNT` for each vali
 named account in `dashboard.toml`. Local `cursor-agent` remains separate.
 Linux explicitly reports this provider unavailable.
 
+`just install-release` installs the native adapter as part of `ovrcr` and the
+pinned official archive on macOS arm64 and x86_64. `just run` refreshes both too.
+To install only the dependency, run `just install-cursor-bridge`; it downloads
+only official release v1.0.40 and verifies the host architecture's SHA256.
+For an offline install use `just install-cursor-bridge /absolute/official/archive.tar.gz`.
+Release/development installs also accept `OVRCR_CURSOR_BRIDGE_ARCHIVE` for that
+explicit archive. A mismatched/missing supplied archive refuses installation,
+preserving the previous dependency. No downloaded code executes during install.
+
+The archive lives at `~/.local/lib/ovrcr-cursor-sdk/1.0.40/bridge.tar.gz`, beside
+`artifact.json` with SDK/bridge/protocol/hash metadata. Notification Bridge
+publication owns a different tree, `~/.local/lib/ovrcr`, and cannot replace this
+dependency. Copy the installer's printed **absolute** path into each profile;
+there is no PATH lookup, ambient endpoint, automatic settings edit or `~`
+expansion in `bridge_archive`. Existing explicit official archive paths remain valid.
+
 Configure a nonsecret profile in the existing settings document:
 
 ```toml
@@ -14,7 +30,7 @@ keychain_account = "work"
 model = "composer-2.5"
 repositories = ["https://github.com/acme/app"]
 owners = []
-bridge_archive = "/absolute/path/cursor-sdk-bridge-standalone-darwin-arm64.tar.gz"
+bridge_archive = "/Users/YOU/.local/lib/ovrcr-cursor-sdk/1.0.40/bridge.tar.gz"
 ```
 
 Store the selected Cursor API key as a generic password under that exact macOS
@@ -25,8 +41,13 @@ policy failures refuse validation. There is no ambient-login or model fallback.
 Repository policy accepts exact canonical GitHub URLs, or explicit GitHub owners.
 
 `ovrcr agent setup cursor-cloud --print` and
-`ovrcr agent doctor cursor-cloud --json` describe the configured profiles without
-reading credentials, starting a bridge or making cloud calls. `--settings PATH`
+`ovrcr agent doctor cursor-cloud --json` report configured profiles plus passive SHA256 checks of the installed archive
+and every configured archive, without reading credentials, extracting/executing
+code or making cloud calls. `bridge_dependency` reports the pin, absolute installed
+path and `verified`/`invalid` results. Missing or altered archives remain invalid;
+repair with the installer and recheck the configured absolute path. Diagnostic
+success means a report was produced; inspect each status. `runtime_checked` and
+`release_ready` remain false: a checksum establishes artifact identity only. `--settings PATH`
 selects an existing settings document for those diagnostics only. The ordinary
 managed launch grammar is `ovrcr agent run cursor-cloud -- ACCOUNT`; running it
 outside a managed OVRCR Agent session refuses admission.
@@ -62,8 +83,16 @@ The Darwin ARM64 archive SHA256 is
 `56f7f68a43ce73daa8d93c60b35b5301feb6a351e1dabfefe9873d80d56931cb`;
 Darwin x64 is
 `cc1e1779e9768fc0db09a93d98dce51498e507ee26a24ae04c0dd21b21700ea6`.
-Matching definitions are vendored under
+The archive manifest records source/bridge commit
+`863444c1b502763bc7e22777084d20d352d5cdf4`; the separately reviewed public
+[docs/schema source](https://github.com/cursor/sdk-bridge/tree/1ba4fe546ea597c2f14b571b0ebe59ab1d20b70e)
+is a different revision. Matching unmodified definitions are vendored under
 [`vendor/cursor-sdk-bridge/1.0.40/proto`](../vendor/cursor-sdk-bridge/1.0.40/proto).
+Rust uses explicit JSON translation against those definitions; there is no
+protobuf generation step or generated client to claim verified. Managed launch
+rechecks the actual archive before private extraction and requires runtime bridge
+1.0.0/protocol sdk.v1, independently of passive doctor results. It preserves
+strict discovery identity and fail-closed capability handling.
 The client uses authenticated Connect unary requests over loopback HTTP/1.1,
 with redirects/proxy discovery disabled and bounded responses. Only GetVersion,
 Me, ListModels and ListRepositories are used for validation; explicit `prepare`
@@ -268,3 +297,16 @@ fixed fake key, never real credentials), and `recovery_runs` in bridge.json, map
 exact fixture run IDs to lifecycle strings for a fresh bridge. `recovery_missing`
 returns a lookup failure. These simulate backend state across bridge lifetimes and
 prove local wiring only.
+
+## Packaging acceptance remains open
+
+The installed dependency and passive checks do not establish native release
+readiness. #378 still requires current-head packaged Dashboard/provider acceptance,
+separately approved concurrent two-account cloud proofs, required macOS/Linux CI
+and process cleanup receipts. Terminal correlated responses (#377), safe uncertain
+CreateAgent/Send Retry, and active option-preserving recovery remain blocked.
+#376 is partial: Observe progress/replay bookkeeping and deduplication remain open.
+The full official upstream local-agent smoke includes credentialed account access
+and a model Send and needs separate concrete approval. Passive checks or the
+zero-model local control subset cannot count as that full smoke. Existing fixture
+results and the standalone cloud POC retain their original scope.

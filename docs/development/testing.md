@@ -94,6 +94,19 @@ node --test tests/pi_reporting_extension.mjs
 
 Node 22; the Pi extension and its host run outside cargo.
 
+On macOS, the Cursor dependency packaging check exercises the real installer and
+a relocated CLI without executing the bridge or reading credentials. Supply the
+pinned host archive and the built CLI explicitly (CI downloads that exact official
+release into an isolated home first):
+
+```sh
+OVRCR_CURSOR_BRIDGE_ARCHIVE=/absolute/official/archive.tar.gz OVRCR_TEST_EXECUTABLE=/absolute/ovrcr python3 -I tests/cursor_bridge_install.py
+```
+
+This verifies passive setup/doctor and installation/refusal behavior only. It
+cannot close the upstream local-agent smoke, native cloud acceptance or capability
+gates in [Cursor cloud](../cursor-cloud.md).
+
 At the feature acceptance checkpoint, run the assigned gates and the workspace regression/lint checks; do not repeat them after every edit:
 
 ```sh

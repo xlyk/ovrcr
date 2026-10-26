@@ -33,9 +33,31 @@ fn accounts(document: Option<&Path>) -> AppResult<Vec<CursorCloudAccount>> {
 }
 pub(super) fn setup(document: Option<&Path>) -> AppResult<()> {
     let accounts = accounts(document)?;
+    let installed_archive = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .map(|home| home.join(".local/lib/ovrcr-cursor-sdk/1.0.40/bridge.tar.gz"));
+    let inspect = |path: &Path| match ovrcr_runtime::cursor_cloud::verify_bridge_archive(path) {
+        Ok(()) => serde_json::json!({"path":path, "status":"verified"}),
+        Err(error) => {
+            serde_json::json!({"path":path, "status":"invalid", "error":error.to_string()})
+        }
+    };
+    let dependency = serde_json::json!({
+        "sdk_version":ovrcr_runtime::cursor_cloud::SDK_VERSION,
+        "bridge_version":"1.0.0", "protocol":"sdk.v1",
+        "installed_archive":installed_archive.as_deref().map(inspect),
+        "configured_archives":accounts.iter().map(|profile| {
+            let mut report = inspect(Path::new(&profile.bridge_archive));
+            report["account"] = serde_json::json!(profile.name);
+            report
+        }).collect::<Vec<_>>(),
+        "runtime_checked":false, "release_ready":false,
+        "guidance":"Use just install-release, or python3 -I scripts/install-cursor-bridge.py [OFFICIAL_ARCHIVE] from the checkout; set each profile's absolute bridge_archive to the printed path. Passive SHA256 only; bridge/protocol/capabilities are checked on managed launch. No terminal response, safe uncertain Retry or active option-preserving recovery acceptance."
+    });
     println!(
         "{}",
-        serde_json::json!({"provider":"cursor-cloud", "platform_available":cfg!(target_os="macos"), "accounts":accounts,
+        serde_json::json!({"provider":"cursor-cloud", "platform_available":cfg!(target_os="macos"), "accounts":accounts, "bridge_dependency":dependency,
         "guidance":"macOS only. Configure named Keychain references, explicit model and repository/owner policy in dashboard.toml. Choose cursor-cloud:ACCOUNT in ordinary Agent creation. Preview validates origin and published HEAD; local edits are excluded. Profiles select credentials, not attested billing identities. Type prepare in the validated preview to retain a local SDK handle. Send prompts on the retained conversation; /cancel persists cancellation intent before exact live CancelRun, cloud-discard separately removes saved content. Remote work may continue. Reopen reconciles exact retained runs; /retry-cancel explicitly cancels a known recovered run. Terminal responses, uncertain Retry and active reattachment remain blocked."})
     );
     Ok(())

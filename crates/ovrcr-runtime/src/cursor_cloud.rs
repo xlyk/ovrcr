@@ -216,6 +216,54 @@ fn key(profile: &CursorCloudAccount, deadline: Instant, fixture: Option<&Value>)
     Ok(value)
 }
 
+/// Passive integrity check: no extraction, credential access, bridge or service call.
+pub fn verify_bridge_archive(path: &Path) -> Result<()> {
+    copy_pinned_archive(
+        path,
+        &mut std::io::sink(),
+        Instant::now() + Duration::from_secs(20),
+    )
+}
+
+fn copy_pinned_archive(
+    path: &Path,
+    destination: &mut impl std::io::Write,
+    deadline: Instant,
+) -> Result<()> {
+    let expected = if cfg!(target_arch = "aarch64") {
+        "56f7f68a43ce73daa8d93c60b35b5301feb6a351e1dabfefe9873d80d56931cb"
+    } else if cfg!(target_arch = "x86_64") {
+        "cc1e1779e9768fc0db09a93d98dce51498e507ee26a24ae04c0dd21b21700ea6"
+    } else {
+        bail!("unsupported bridge architecture")
+    };
+    // Nonblocking open lets passive diagnostics reject FIFOs without hanging.
+    let mut archive = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)?;
+    ensure!(
+        archive.metadata()?.is_file() && archive.metadata()?.len() <= 256 * LIMIT,
+        "archive exceeded bounds"
+    );
+    let mut digest = Sha256::new();
+    let mut buffer = [0; 65536];
+    loop {
+        let n = archive.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        ensure!(Instant::now() < deadline, "archive deadline");
+        digest.update(&buffer[..n]);
+        std::io::Write::write_all(destination, &buffer[..n])?;
+    }
+    ensure!(
+        format!("{:x}", digest.finalize()) == expected,
+        "pinned SDK archive checksum mismatch"
+    );
+    Ok(())
+}
+
 fn binary(
     profile: &CursorCloudAccount,
     root: &Path,
@@ -229,34 +277,8 @@ fn binary(
                 .context("fixture bridge required")?,
         ));
     }
-    let expected = if cfg!(target_arch = "aarch64") {
-        "56f7f68a43ce73daa8d93c60b35b5301feb6a351e1dabfefe9873d80d56931cb"
-    } else if cfg!(target_arch = "x86_64") {
-        "cc1e1779e9768fc0db09a93d98dce51498e507ee26a24ae04c0dd21b21700ea6"
-    } else {
-        bail!("unsupported bridge architecture")
-    };
-    let mut archive = File::open(&profile.bridge_archive)?;
-    ensure!(
-        archive.metadata()?.is_file() && archive.metadata()?.len() <= 256 * LIMIT,
-        "archive exceeded bounds"
-    );
     let mut pinned = tempfile::NamedTempFile::new_in(root)?;
-    let mut digest = Sha256::new();
-    let mut buffer = [0; 65536];
-    loop {
-        let n = archive.read(&mut buffer)?;
-        if n == 0 {
-            break;
-        }
-        ensure!(Instant::now() < deadline, "archive deadline");
-        digest.update(&buffer[..n]);
-        std::io::Write::write_all(&mut pinned, &buffer[..n])?;
-    }
-    ensure!(
-        format!("{:x}", digest.finalize()) == expected,
-        "pinned SDK archive checksum mismatch"
-    );
+    copy_pinned_archive(&profile.bridge_archive, &mut pinned, deadline)?;
     // Extract only the reviewed regular entrypoint, never archive paths or links.
     let bytes = output(
         Command::new("/usr/bin/tar")
