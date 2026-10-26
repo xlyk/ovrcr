@@ -6,10 +6,7 @@ use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Seek, SeekFrom},
-    os::unix::{
-        fs::{MetadataExt, OpenOptionsExt},
-        process::CommandExt,
-    },
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
@@ -43,7 +40,6 @@ fn output(command: &mut Command, deadline: Instant, max: u64) -> Result<Vec<u8>>
         .stdin(Stdio::null())
         .stdout(capture.try_clone()?)
         .stderr(Stdio::null())
-        .process_group(0)
         .spawn()?;
     let result = (|| -> Result<()> {
         loop {
@@ -67,10 +63,8 @@ fn output(command: &mut Command, deadline: Instant, max: u64) -> Result<Vec<u8>>
             std::thread::park_timeout(Duration::from_millis(10));
         }
     })();
-    // Keep the unreaped direct child as the group identity anchor through cleanup.
-    unsafe {
-        libc::kill(-(child.id() as i32), libc::SIGKILL);
-    }
+    // Descendants inherit the adapter group; its supervisor also cleans them after owner death.
+    let _ = child.kill();
     let status = child.wait()?;
     result?;
     ensure!(status.success(), "preflight command failed");
@@ -383,8 +377,22 @@ impl Catalog {
 }
 
 pub fn preview(profile: &CursorCloudAccount, workspace: &Path) -> Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(30);
     let fixture = fixture()?;
+    let budget = fixture
+        .as_ref()
+        .and_then(|fixture| fixture["preflight_timeout_ms"].as_u64())
+        .unwrap_or(30_000);
+    ensure!(
+        (1..=30_000).contains(&budget),
+        "invalid fixture preflight budget"
+    );
+    let deadline = Instant::now() + Duration::from_millis(budget);
+    if let Some(helper) = fixture
+        .as_ref()
+        .and_then(|fixture| fixture["preflight_helper"].as_str())
+    {
+        output(&mut Command::new(helper), deadline, 4096)?;
+    }
     let validated = source(profile, workspace, deadline, fixture.as_ref())?;
     let key = key(profile, deadline, fixture.as_ref())?;
     let root = PathBuf::from(

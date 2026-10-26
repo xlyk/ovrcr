@@ -69,5 +69,8 @@ path, and optionally a model/repository or `reject_credential` flag. The adapter
 uses only a fixed fake credential and recorded publication proof in this mode.
 The fixture rejects noncatalog methods and records method names, process IDs and
 resource paths, allowing zero CreateAgent/Send assertions and owned cleanup checks.
+A diagnostic `preflight_helper` executable and bounded `preflight_timeout_ms`
+(up to 30000) can stall the actual bounded-helper path for forced-death/timeout
+cleanup tests. Helpers inherit the supervised adapter process group.
 This proves native wiring and lifecycle with a local service, not real Keychain,
 Cursor access, or official-bridge runtime behavior. Production pins remain strict.

@@ -312,3 +312,58 @@ fn ordinary_cloud_agent_missing_invocation_channel_starts_no_adapter_or_bridge()
     });
     assert!(fixture.events().is_empty());
 }
+
+#[test]
+fn managed_preflight_helpers_and_descendants_are_cleaned_after_adapter_death_or_timeout() {
+    for mode in ["forced-adapter", "timeout"] {
+        let fixture = Fixture::new("composer-2.5", true, true, false);
+        let helper = fixture.live.root.path().join("blocked-helper.py");
+        let observed = helper.with_extension("json");
+        fs::write(&helper, format!("#!/usr/bin/env python3\nimport json,os,subprocess,sys,time\nfrom pathlib import Path\nchild=subprocess.Popen([sys.executable,'-c','import time; time.sleep(300)'])\nPath({:?}).write_text(json.dumps(dict(helper=os.getpid(),adapter=os.getppid(),grandchild=child.pid,root=os.environ['OVRCR_CURSOR_CLOUD_ROOT'])))\ntime.sleep(300)\n", observed)).unwrap();
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
+        let mut config: Value =
+            serde_json::from_slice(&fs::read(&fixture.config).unwrap()).unwrap();
+        config["preflight_helper"] = json!(helper);
+        if mode == "timeout" {
+            config["preflight_timeout_ms"] = json!(2000);
+        }
+        fs::write(&fixture.config, config.to_string()).unwrap();
+        let session = fixture.launch();
+        fixture.until(|| observed.exists());
+        let ids: Value = serde_json::from_slice(&fs::read(&observed).unwrap()).unwrap();
+        let helper = ids["helper"].as_i64().unwrap() as i32;
+        let adapter = ids["adapter"].as_i64().unwrap() as i32;
+        let grandchild = ids["grandchild"].as_i64().unwrap() as i32;
+        // Register the fixture-established group even in the original escaping implementation.
+        let helper_group = unsafe { libc::getpgid(helper) };
+        assert!(helper_group > 1);
+        fixture.live.own_group(helper_group);
+        if mode == "forced-adapter" {
+            assert_eq!(unsafe { libc::kill(adapter, libc::SIGKILL) }, 0);
+        } else {
+            fixture.until(|| {
+                fixture
+                    .text(&session)
+                    .contains("preflight command exceeded bounds")
+            });
+        }
+        let scratch = PathBuf::from(ids["root"].as_str().unwrap());
+        fixture.until(|| !scratch.exists());
+        assert_eq!(
+            unsafe { libc::kill(helper, 0) },
+            -1,
+            "preflight helper survived {mode}"
+        );
+        assert_eq!(
+            unsafe { libc::kill(grandchild, 0) },
+            -1,
+            "preflight descendant survived {mode}"
+        );
+        assert_eq!(
+            unsafe { libc::kill(adapter, 0) },
+            -1,
+            "adapter survived {mode}"
+        );
+        assert!(fixture.events().is_empty());
+    }
+}

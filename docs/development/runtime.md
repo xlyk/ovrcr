@@ -133,3 +133,9 @@ the adapter cannot leave its bearer file behind or erase a replacement run's
 root. The SDK Bridge receives an environment allowlist without OVRCR credentials.
 Git, Keychain, archive extraction, discovery and catalog I/O run in the adapter
 under a thirty-second preflight deadline, outside Server input/lifecycle locks.
+
+Preflight Git, Keychain and extraction helpers inherit the adapter's supervised
+process group. A helper timeout reaps the direct child and fails preflight,
+exiting the adapter; the surviving invocation supervisor then kills the whole
+group, including helper descendants. Helpers must not create separate groups
+whose only cleanup owner would disappear with the adapter.
