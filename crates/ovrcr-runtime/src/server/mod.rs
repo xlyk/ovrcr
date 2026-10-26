@@ -426,6 +426,9 @@ impl ServerState {
             {
                 let mut recovery = record.recovery(boot_id);
                 if summary.phase.is_live() {
+                    if let Some(operation) = &record.cloud_creation {
+                        recovery.unavailable = Some(operation.description());
+                    }
                     recovery.requires_ack = false;
                     recovery.attached = !record.identity_invalid
                         && summary.agent.as_ref().is_some_and(|agent| {
@@ -1346,11 +1349,27 @@ impl ServerState {
             })?;
         let command = match &record.metadata.kind {
             SessionKind::Agent { name } => {
-                let command = match record.conversation.as_ref() {
-                    Some(reference) => crate::recovery::resume_argv(name, reference),
-                    None => crate::recovery::picker_argv(name),
-                }
-                .and_then(|argv| crate::recovery::terminal_command(&argv));
+                let command = if let Some(target) = record
+                    .cloud_creation
+                    .as_ref()
+                    .and_then(|r| r.recovery_target())
+                {
+                    crate::recovery::terminal_command(&[
+                        std::env::current_exe()?.into_os_string(),
+                        "agent".into(),
+                        "run".into(),
+                        "cursor-cloud".into(),
+                        "--".into(),
+                        target.intent.account.name.clone().into(),
+                        serde_json::to_string(&target)?.into(),
+                    ])
+                } else {
+                    match record.conversation.as_ref() {
+                        Some(reference) => crate::recovery::resume_argv(name, reference),
+                        None => crate::recovery::picker_argv(name),
+                    }
+                    .and_then(|argv| crate::recovery::terminal_command(&argv))
+                };
                 match command {
                     Ok(command) => Some(command),
                     Err(error) => {

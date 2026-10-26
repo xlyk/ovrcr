@@ -29,6 +29,12 @@ pub(crate) struct Record {
     pub receipt: Option<CloudCreationReceipt>,
     #[serde(default)]
     pub sends: Vec<SendRecord>,
+    #[serde(default)]
+    pub recovery_owner: Option<(SessionRunId, String, String)>,
+    #[serde(default)]
+    pub recovery_cancel_claimed: bool,
+    #[serde(default)]
+    pub controller_conflict: Option<SessionId>,
 }
 impl Record {
     pub fn validate(&self) -> Result<()> {
@@ -65,6 +71,21 @@ impl Record {
         {
             bail!("invalid retained Send authority");
         }
+        if self.controller_conflict.is_some() && (!self.closed || self.receipt.is_none())
+            || self.recovery_cancel_claimed
+                && (self.recovery_owner.is_none() || !self.cancel_requested)
+            || self
+                .recovery_owner
+                .as_ref()
+                .is_some_and(|(run, invocation, lifetime)| {
+                    run.0 <= self.run.0
+                        || [invocation, lifetime].iter().any(|v| {
+                            v.is_empty() || v.len() > 256 || v.chars().any(char::is_control)
+                        })
+                })
+        {
+            bail!("invalid retained recovery authority");
+        }
         if (self.discarded || self.cancel_requested) && !self.closed
             || self.cancel_claimed && !self.cancel_requested
         {
@@ -72,7 +93,26 @@ impl Record {
         }
         Ok(())
     }
+    pub fn recovery_target(&self) -> Option<ovrcr_protocol::CloudRecovery> {
+        if self.discarded || self.controller_conflict.is_some() {
+            return None;
+        }
+        let send = self.sends.last()?;
+        Some(ovrcr_protocol::CloudRecovery {
+            intent: self.intent.clone(),
+            receipt: self.receipt.clone()?,
+            key: send.key.clone(),
+            run_id: send.run_id.clone()?,
+            cancel_requested: self.cancel_requested,
+        })
+    }
     pub fn description(&self) -> String {
+        if let Some(owner) = self.controller_conflict {
+            return format!(
+                "Cloud conversation already controlled by Session {}; second attachment rejected. Original request/receipt retained; explicit Discard available.",
+                owner.0
+            );
+        }
         if self.cancel_requested && !self.discarded {
             return format!(
                 "Cloud cancellation intent retained; delivery closed. {} Cancel acknowledgement means requested, not stopped. Remote work/charges may continue; after detach explicit Retry Cancel requires supported recovery. Saved unresolved content remains until cloud-discard.",
@@ -197,6 +237,63 @@ impl SessionStore {
             bail!("creation session ownership changed");
         }
         let existing = session.cloud_creation.clone();
+        if let CloudCreationCommand::Recover(target)
+        | CloudCreationCommand::Reconcile { target, .. }
+        | CloudCreationCommand::RetryCancel(target) = command
+        {
+            let mut record = existing.context("original recovery operation missing")?;
+            let mut expected = record.recovery_target().context("recovery unavailable")?;
+            // Intent may gain cancellation after target admission; identity never changes.
+            expected.cancel_requested = target.cancel_requested;
+            if &expected != target {
+                bail!("recovery account/source/exact-run binding changed");
+            }
+            let owner = (run, invocation.to_owned(), lifetime.to_owned());
+            if matches!(command, CloudCreationCommand::Recover(_)) {
+                if record.run == run
+                    || record
+                        .recovery_owner
+                        .as_ref()
+                        .is_some_and(|o| o.0 == run && o != &owner)
+                {
+                    bail!("cloud recovery already controlled by this Session");
+                }
+                if record.recovery_owner.as_ref() != Some(&owner) {
+                    record.recovery_cancel_claimed = false;
+                }
+                record.recovery_owner = Some(owner);
+            } else {
+                if record.recovery_owner.as_ref() != Some(&owner) {
+                    bail!("stale recovery controller");
+                }
+                if matches!(command, CloudCreationCommand::RetryCancel(_)) {
+                    let closed: bool = self.connection.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM cloud_creation_fences WHERE session=?1 AND run=?2)",
+                        params![sql_integer(id.0)?, sql_integer(run.0)?], |row| row.get(0))?;
+                    if closed {
+                        bail!("recovery attachment closed; no cancellation dispatch");
+                    }
+                    if record.recovery_cancel_claimed
+                        || record.sends.last().is_none_or(|s| s.terminal.is_some())
+                    {
+                        bail!(
+                            "exact recovery cancellation already claimed or terminal; no automatic retry"
+                        );
+                    }
+                    record.closed = true;
+                    record.cancel_requested = true;
+                    record.recovery_cancel_claimed = true;
+                }
+                if let CloudCreationCommand::Reconcile { status, .. } = command {
+                    let send = record.sends.last_mut().context("exact run missing")?;
+                    if send.terminal.is_some_and(|old| old != *status) {
+                        bail!("authoritative terminal outcome changed");
+                    }
+                    send.terminal = Some(*status);
+                }
+            }
+            return self.save_creation(id, record);
+        }
         let fenced: bool = self.connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM cloud_creation_fences WHERE session=?1 AND run=?2)",
             params![sql_integer(id.0)?, sql_integer(run.0)?],
@@ -263,6 +360,9 @@ impl SessionStore {
         }
         let directory = creation_directory(config, true)?;
         match command {
+            CloudCreationCommand::Recover(_)
+            | CloudCreationCommand::Reconcile { .. }
+            | CloudCreationCommand::RetryCancel(_) => unreachable!(),
             CloudCreationCommand::Cancel => {
                 let record = existing.as_ref().context("no retained cloud operation")?;
                 if record.run != run
@@ -293,6 +393,9 @@ impl SessionStore {
                     cancel_claimed: false,
                     receipt: None,
                     sends: Vec::new(),
+                    recovery_owner: None,
+                    recovery_cancel_claimed: false,
+                    controller_conflict: None,
                 };
                 self.save_creation(id, record)?;
                 directory.publish(&intent.key, &serde_json::to_vec(&intent.request())?)?;
@@ -460,6 +563,29 @@ impl SessionStore {
                             || record.receipt.as_ref().is_some_and(|r| r != receipt)
                         {
                             bail!("creation receipt identity mismatch");
+                        }
+                        if let Some(owner) = self
+                            .records
+                            .values()
+                            .find(|row| {
+                                row.id != id
+                                    && row
+                                        .cloud_creation
+                                        .as_ref()
+                                        .and_then(|r| r.receipt.as_ref())
+                                        .is_some_and(|r| r.agent_id == receipt.agent_id)
+                            })
+                            .map(|r| r.id)
+                        {
+                            record.receipt = Some(receipt.clone());
+                            record.controller_conflict = Some(owner);
+                            record.closed = true;
+                            self.save_creation(id, record)?;
+                            directory.remove(key)?;
+                            bail!(
+                                "cloud conversation already controlled by Session {}",
+                                owner.0
+                            );
                         }
                         record.receipt = Some(receipt.clone());
                         self.save_creation(id, record)?;

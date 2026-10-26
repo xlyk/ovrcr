@@ -148,7 +148,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             repo = 'https://github.com/other/app' if config.get('send_scenario') == 'wrong_repository' else 'https://github.com/acme/app'
             values[method] = {'agent':{'agentId':'fixture-agent-373','cloud':{'repos':[repo]}}}
         if method == 'GetRun':
+            if config.get('recovery_missing'):
+                self.send_error(404)
+                return
             assert body['options'] == {'runtime':'RUNTIME_CLOUD','agentId':'fixture-agent-373','apiKey':'ovrcr-fixture-not-a-credential'}
+            if body['runId'] in config.get('recovery_runs', {}):
+                self.server.run_ids.add(body['runId'])
+                self.server.results[body['runId']] = dict(agentId='fixture-agent-373',runId=body['runId'],status=config['recovery_runs'][body['runId']])
             assert body['runId'] in self.server.run_ids
             values[method] = {'run':self.server.results[body['runId']]}
             if config.get('cancel_snapshot_outcome') and body['runId'] in self.server.cancelled:

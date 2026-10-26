@@ -185,7 +185,12 @@ fn key(profile: &CursorCloudAccount, deadline: Instant, fixture: Option<&Value>)
             fixture["credential_missing"] != true,
             "selected Keychain credential missing"
         );
-        return Ok("ovrcr-fixture-not-a-credential".into());
+        return Ok(if fixture["credential_changed"] == true {
+            "ovrcr-fixture-replaced-not-a-credential"
+        } else {
+            "ovrcr-fixture-not-a-credential"
+        }
+        .into());
     }
     ensure!(
         cfg!(target_os = "macos"),
@@ -430,6 +435,7 @@ fn read_input(reader: &mut impl Read, pending: &mut Vec<u8>) -> Result<(Vec<Stri
 pub fn preview(
     profile: &CursorCloudAccount,
     workspace: &Path,
+    recovery: Option<&ovrcr_protocol::CloudRecovery>,
     admit: impl Fn(&ovrcr_protocol::CloudCreationCommand) -> Result<()> + Send + Sync + 'static,
 ) -> Result<()> {
     let admit = std::sync::Arc::new(admit);
@@ -451,7 +457,25 @@ pub fn preview(
         output(&mut Command::new(helper), deadline, 4096)?;
     }
     let validated = source(profile, workspace, deadline, fixture.as_ref())?;
+    if let Some(target) = recovery {
+        target.intent.validate()?;
+        target.receipt.validate()?;
+        ensure!(
+            target.intent.account.name == profile.name
+                && target.intent.account.keychain_service == profile.keychain_service
+                && target.intent.account.keychain_account == profile.keychain_account
+                && target.intent.repository == validated.repository
+                && target.intent.source_sha == validated.source_sha,
+            "retained account/source binding changed; recovery refused"
+        );
+    }
     let key = key(profile, deadline, fixture.as_ref())?;
+    if let Some(target) = recovery {
+        ensure!(
+            format!("{:x}", Sha256::digest(key.as_bytes())) == target.intent.credential_generation,
+            "selected credential changed; original account binding requires revalidation"
+        );
+    }
     let root = PathBuf::from(
         std::env::var_os("OVRCR_CURSOR_CLOUD_ROOT").context("Server-owned scratch is required")?,
     );
@@ -527,6 +551,12 @@ pub fn preview(
             .is_some_and(|id| !id.is_empty() && id.bytes().all(|c| c.is_ascii_digit())),
         "selected credential validation failed"
     );
+    if let Some(target) = recovery {
+        admit(&ovrcr_protocol::CloudCreationCommand::Recover(
+            target.clone(),
+        ))?;
+        return run::recover(&catalog, &key, target, &mut submit);
+    }
     let models = catalog.rpc("SdkCursorService", "ListModels", &options)?;
     ensure!(
         models["items"]

@@ -233,18 +233,20 @@ impl RetainedSession {
                 .map(|reference| reference.identity().to_owned()),
             attached: false,
             requires_ack: self.requires_ack(current_boot),
-            unavailable: self
-                .cloud_creation
-                .as_ref()
-                .map(|record| record.description())
-                .or_else(|| match &self.metadata.kind {
+            unavailable: match &self.cloud_creation {
+                Some(record) => record
+                    .recovery_target()
+                    .is_none()
+                    .then(|| record.description()),
+                None => match &self.metadata.kind {
                     SessionKind::Terminal => None,
                     SessionKind::Agent { name } => crate::recovery::unavailable(
                         name,
                         self.conversation.as_ref(),
                         self.identity_invalid,
                     ),
-                }),
+                },
+            },
             failure: self.failure.clone(),
         }
     }

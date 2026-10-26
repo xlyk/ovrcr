@@ -107,6 +107,16 @@ pub enum CloudRunStatus {
     Expired,
 }
 
+/// Exact nonsecret retained target; never contains replay bytes or credentials.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloudRecovery {
+    pub intent: CloudCreationIntent,
+    pub receipt: CloudCreationReceipt,
+    pub key: String,
+    pub run_id: String,
+    pub cancel_requested: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CloudCreationCommand {
     Prepare(CloudCreationIntent),
@@ -157,6 +167,13 @@ pub enum CloudCreationCommand {
         run_id: String,
         status: CloudRunStatus,
     },
+    Recover(CloudRecovery),
+    Reconcile {
+        target: CloudRecovery,
+        status: CloudRunStatus,
+    },
+    /// Explicit durable fresh-handle cancellation claim; never automatic.
+    RetryCancel(CloudRecovery),
 }
 
 #[cfg(test)]

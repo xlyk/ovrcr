@@ -45,8 +45,8 @@ GetAgent must confirm the same conversation, cloud runtime and repository.
 A later idle prompt uses the same account/conversation with a new Send key and
 run. A failed run reports Error; a disconnected or unrecognized stream reports
 observation unknown, since remote work and charges may continue. Prose never
-creates an input/approval request. Terminal responses, Retry and active
-reattachment remain blocked.
+creates an input/approval request. Terminal responses, uncertain CreateAgent/Send Retry and active
+reattachment remain blocked. Exact known-run recovery is described below.
 
 Busy prompts are rejected visibly and the latest rejected prompt stays in local
 adapter memory for manual `/resubmit` when idle. It is never a future-prompt queue
@@ -75,7 +75,7 @@ key in a separate environment without OVRCR reporting or delegation credentials.
 ## Retention and local controls
 
 The existing Server/SessionStore owns creation, using the same SQLite connection
-as retained Sessions. Schema 23 retains the original Session/run, invocation,
+as retained Sessions. Schema 24 retains the original Session/run, invocation,
 Server lifetime, selected account/profile, credential generation, canonical source,
 model/options, immutable CreateAgent key, dispatch claim and exact receipt. A
 confined `cloud-creations/` directory in the selected instance stores the original
@@ -139,8 +139,7 @@ services its exact retained target, including after stream loss. Partial termina
 input stays buffered; no terminal commands are injected. A failed admitted claim
 is not automatically retried. A detached bridge sends no CancelRun. Saved intent survives
 restart. Display/recovery never sends CancelRun automatically; explicit Retry
-Cancel requires the separate supported recovery path. This slice adds no fresh
-bridge cancellation, ResumeAgent or option mutation.
+Cancel requires the separate supported recovery path. An explicit recovered exact-run route is described below; display never sends cancellation.
 
 `ovrcr terminal cloud-discard ID` durably closes delivery and marks private content
 for retirement before deleting canonical files and owned temporary aliases. A
@@ -220,3 +219,49 @@ Cancellation fixtures additionally support bridge.json `pause_after_identity` wi
 an absolute marker path and its `.release` sibling, `cancel_outcome` for the cached
 stream status, and `cancel_snapshot_outcome` for independent exact GetRun status.
 These simulate races only and do not attest real upstream behavior.
+
+## Exact-run recovery
+
+`ovrcr terminal reopen ID` reuses the retained Session and working directory.
+Use `--ack-stopped` only after confirming the previous local process tree stopped.
+A cloud row with an exact acknowledged run starts a managed fresh bridge, validates
+its original credential generation and current account/source policy, then reads
+that exact conversation and run. Changed local model defaults do not replace the
+retained options. A changed credential or Keychain reference refuses recovery:
+repository access and matching profile names cannot revalidate account continuity.
+A missing working directory, changed source, wrong IDs, unknown lifecycle or failed
+lookup remains uncertain. Pending creation/Send without an exact run keeps its
+existing operation controls; no resume picker or newest-run discovery is used.
+
+A terminal snapshot is retained as historical reconciliation, without a new Ready,
+Unread or input alert. Active runs visibly say **Active reattachment unavailable**.
+Fresh active observation preserving another controller's options is unproved, so
+recovery sends no ObserveRun, ResumeAgent, CreateAgent, Send or option mutation.
+No Send or ObserveRun offsets are reused: no fresh observation stream is opened.
+
+For an active exact run, type `/retry-cancel` explicitly. A fresh credentialed exact
+GetRun registers the selected-key handle before the same SQLite owner commits
+cancellation intent, delivery closure and a recovery cancellation claim. CancelRun
+then targets that handle; a separate fresh GetRun supplies the outcome. Completion
+may win the race and remains Finished. An acknowledgement alone never means stopped.
+Each recovered attachment permits one admitted cancellation attempt. A failed or
+still-active outcome keeps the intent; detach and explicitly reopen before another
+Retry Cancel. Saved intent is never automatically dispatched. `/detach` closes local
+observation. Closing a pane remains display-only; closing the Session archives its
+row and warns that remote work and charges may continue.
+
+The original creation/Send operation identity and immutable private payloads survive
+attachment and archive transitions. Recovery authority is subordinate metadata in
+the same SessionStore row; only its current managed invocation can reconcile or
+claim cancellation. An exact conversation already owned by another retained Session
+is refused with that Session's ID. Discard and stale-owner fences remain authoritative;
+recovery never grants CreateAgent/Send dispatch. Uncertain retries stay unavailable
+until upstream scope, expiry, body-match and replay-identity guarantees are proven.
+Completed lookup and fixture success do not close the active-restoration or uncertain
+replay release gates.
+
+Recovery diagnostics support `credential_changed` in cloud-fixture.json (a second
+fixed fake key, never real credentials), and `recovery_runs` in bridge.json, mapping
+exact fixture run IDs to lifecycle strings for a fresh bridge. `recovery_missing`
+returns a lookup failure. These simulate backend state across bridge lifetimes and
+prove local wiring only.

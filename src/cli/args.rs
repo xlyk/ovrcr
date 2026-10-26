@@ -296,7 +296,7 @@ pub(super) enum TerminalCommand {
         #[arg(long, alias = "automatic")]
         reset: bool,
     },
-    /// Reopen a terminal and execute the agent resume command, or open its native resume picker when no conversation is saved. Confirm uncertain previous processes stopped with --ack-stopped.
+    /// Reopen the retained terminal: resume a supported agent, reconcile an exact cloud run without replay, or open its native picker. Confirm uncertain previous processes stopped with --ack-stopped.
     Reopen {
         id: u64,
         #[arg(long)]
@@ -458,7 +458,11 @@ pub(super) fn parse_activity_state(value: &str) -> std::result::Result<AgentActi
 #[derive(Subcommand)]
 pub(super) enum AgentCommand {
     #[command(hide = true)]
-    CloudPreview { account: String },
+    CloudPreview {
+        account: String,
+        #[arg(long)]
+        recovery: Option<String>,
+    },
     #[command(hide = true)]
     CloudAdmission,
     #[command(hide = true)]

@@ -128,3 +128,31 @@ CancelRun. Explicit Retry Cancel belongs to a supported exact-run recovery route
 uncertain CreateAgent/Send replay remains unavailable. Cloud Cancel keeps unresolved
 request bytes; Discard closes delivery and removes private copies/aliases without
 remote cancellation or a remote-termination claim.
+
+### Cursor exact-run reconciliation
+
+An exact last Send run permits the shared Reopen path (and eligible interrupted-row
+display) to launch the managed read-only recovery adapter in the same retained row.
+Its typed CloudRecovery target carries no prompt or credential and must match the
+original intent, local handle receipt and last exact run. The operation's original
+run/invocation/lifetime stay immutable; subordinate recovery-owner metadata fences
+the current managed attachment. Terminal reconciliation never enters a Reporter
+response cycle, so historical outcomes cannot create Ready/Unread/input alerts.
+
+The working directory and source prerequisite still apply. The selected Keychain
+reference and credential digest must equal the retained binding; model-default
+changes cannot replace saved options. Changed credentials require an account
+continuity contract that this pin does not provide and therefore fail closed.
+GetAgent verifies the exact cloud conversation/repository, and credentialed GetRun
+uses explicit cloud runtime, agent and run identity. Missing/expired lookup errors
+remain uncertain; a returned authoritative Expired is recorded as such.
+
+Active option-preserving recovery and uncertain request replay remain unavailable.
+No observation stream starts, so there is no cross-origin offset reuse or historical
+output replay. Explicit `/retry-cancel` performs exact GetRun registration, a durable
+serialized intent/closure/claim and CancelRun, followed by an independent fresh
+GetRun. It never trusts the handle's cached cancellation status. Only the current
+recovery owner can reconcile; Discard/archival and Session/run fences win races.
+A closed operation never regains CreateAgent/Send dispatch permission. The original
+Session is the single controller; duplicate exact handle receipts retain their
+identity but refuse a second attachment and identify the first Session.

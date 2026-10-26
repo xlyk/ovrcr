@@ -17,7 +17,9 @@ fn provider(name: &str) -> AgentProvider {
 
 pub(super) fn run(command: AgentCommand) -> AppResult<()> {
     let (name, argv) = match command {
-        AgentCommand::CloudPreview { account } => return super::cursor_cloud::preview(&account),
+        AgentCommand::CloudPreview { account, recovery } => {
+            return super::cursor_cloud::preview(&account, recovery.as_deref());
+        }
         AgentCommand::CloudAdmission => return super::cursor_cloud::admission(),
         AgentCommand::CloudCreation => return super::cursor_cloud::creation(),
         AgentCommand::Setup {

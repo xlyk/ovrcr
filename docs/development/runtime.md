@@ -146,8 +146,8 @@ dispatch claim and exact handle receipt are separate durable boundaries. Claim
 and local closure serialize under the retained mutex; the adapter releases those
 locks before bridge I/O. Local Discard is a closure, never a remote-cancellation
 receipt. Archive preserves unresolved bytes; local row deletion requires explicit
-Discard, including for acknowledged handles. The original Session owns the operation across restart; no handle
-restoration, automatic creation or uncertain Retry is permitted. Send requires the
+Discard, including for acknowledged handles. The original Session owns the operation across restart; no automatic creation or uncertain Retry is permitted. Exact-run read-only
+reconciliation uses the shared reopen path; active observation stays unavailable. Send requires the
 original durable creation receipt, immutable body/options and a distinct key/claim;
 exact run retention precedes payload retirement. Busy input is rejected for manual
 resubmission. Exact run observations use the existing Reporter/revisions; stream
@@ -171,3 +171,10 @@ one successful check admits one ClaimCancel attempt even if persistence/RPC fail
 Observation failure retains that exact target until authoritative terminal receipt
 or attachment exit. Recovery never starts this original-attachment reader. Private
 temporary alias sweeps run only during startup/explicit Discard, not each check.
+
+Cloud recovery adds no process/store owner: the shared retained reopen path starts
+its managed invocation and unique bridge scratch tree. Original operation identity
+is immutable; schema 24 protects subordinate recovery-owner and cancellation-claim
+metadata from older writers. Read-only historical reconciliation bypasses response
+cycles. Exact fresh GetRun registers a selected-key handle only; active observation
+remains unproved and no ResumeAgent/options replay is allowed.

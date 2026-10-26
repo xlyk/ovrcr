@@ -978,6 +978,16 @@ pub(crate) mod tests {
                 }),
             }));
         }
+        let recovery = crate::CloudRecovery {
+            intent: crate::cloud_creation::fixture_intent(),
+            receipt: crate::CloudCreationReceipt {
+                agent_id: "agent-376".into(),
+                model: "composer-2.5".into(),
+            },
+            key: "d".repeat(64),
+            run_id: "run-376".into(),
+            cancel_requested: true,
+        };
         for command in [
             crate::CloudCreationCommand::Prepare(crate::cloud_creation::fixture_intent()),
             crate::CloudCreationCommand::Claim {
@@ -1001,6 +1011,12 @@ pub(crate) mod tests {
                 agent_id: "agent-375".into(),
                 run_id: "run-375".into(),
             },
+            crate::CloudCreationCommand::Recover(recovery.clone()),
+            crate::CloudCreationCommand::Reconcile {
+                target: recovery.clone(),
+                status: crate::CloudRunStatus::Finished,
+            },
+            crate::CloudCreationCommand::RetryCancel(recovery),
         ] {
             requests.push(Request::Supervisor(SupervisorRequest {
                 auth: auth.clone(),

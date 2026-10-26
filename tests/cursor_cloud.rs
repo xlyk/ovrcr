@@ -2351,3 +2351,484 @@ fn managed_known_run_stream_failure_preserves_exact_live_cancel_target() {
         submit: true,
     });
 }
+
+#[test]
+fn managed_recovery_reconciles_exact_completed_run_without_replay_or_ready() {
+    let fixture = Fixture::new("composer-2.5", true, true, false);
+    let session = fixture.launch();
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Press Enter to close preview.")
+    });
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "prepare".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Cloud handle durably retained:")
+    });
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "Inspect source".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Ready: exact run fixture-run-1")
+    });
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "/detach".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect) else {
+            panic!("inventory")
+        };
+        !sessions
+            .iter()
+            .find(|s| s.id == session.id)
+            .unwrap()
+            .phase
+            .is_live()
+    });
+    let bridge_config = fixture.live.root.path().join("bridge.json");
+    let mut config: Value = serde_json::from_slice(&fs::read(&bridge_config).unwrap()).unwrap();
+    config["recovery_runs"] = json!({"fixture-run-1":"RUN_LIFECYCLE_STATUS_FINISHED"});
+    fs::write(bridge_config, config.to_string()).unwrap();
+    let settings_path = fixture.live.config.join("dashboard.toml");
+    let mut settings: ovrcr::protocol::Settings =
+        toml::from_str(&fs::read_to_string(&settings_path).unwrap()).unwrap();
+    settings.cursor_cloud_accounts[0].model = "changed-local-default".into();
+    fs::write(settings_path, toml::to_string(&settings).unwrap()).unwrap();
+    let reply = fixture.live.request(Request::ReopenSession {
+        session: session.id,
+        expected_run: session.run,
+        acknowledge_stopped: true,
+    });
+    let Response::CreatedSession(reopened) = reply else {
+        panic!("exact-run reconciliation refused: {reply:?}")
+    };
+    fixture.live.own_group(reopened.pid.unwrap() as i32);
+    assert_eq!(reopened.id, session.id);
+    fixture.until(|| {
+        fixture
+            .text(&reopened)
+            .contains("Reconciled exact run fixture-run-1: Finished")
+    });
+    assert!(!fixture.text(&reopened).contains("Ready: exact run"));
+    let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect) else {
+        panic!("inventory")
+    };
+    let row = sessions.iter().find(|s| s.id == session.id).unwrap();
+    assert!(
+        row.unread.is_none(),
+        "historical reconciliation cannot produce Unread"
+    );
+    assert!(
+        row.agent.as_ref().is_none_or(|a| a.effective_activity()
+            != ovrcr::protocol::AgentActivity::ResponseReady
+            && a.input_requests.is_empty()),
+        "historical reconciliation cannot publish Ready or input requests"
+    );
+    let events = fixture.events();
+    for (method, count) in [
+        ("CreateAgent", 1),
+        ("Send", 1),
+        ("GetRun", 2),
+        ("CancelRun", 0),
+        ("ObserveRun", 0),
+        ("ResumeAgent", 0),
+    ] {
+        assert_eq!(
+            events.iter().filter(|e| e["method"] == method).count(),
+            count,
+            "{method}"
+        );
+    }
+}
+
+fn recovered_active_cancel(mode: &str) {
+    let fixture = Fixture::new("composer-2.5", true, true, false);
+    let bridge_config = fixture.live.root.path().join("bridge.json");
+    let mut config: Value = serde_json::from_slice(&fs::read(&bridge_config).unwrap()).unwrap();
+    config["send_scenario"] = json!("unknown_shape");
+    fs::write(&bridge_config, config.to_string()).unwrap();
+    let session = fixture.launch();
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Press Enter to close preview.")
+    });
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "prepare".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Cloud handle durably retained:")
+    });
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "Inspect source".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Observation unknown/unverified:")
+    });
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "/detach".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect) else {
+            panic!("inventory")
+        };
+        !sessions
+            .iter()
+            .find(|s| s.id == session.id)
+            .unwrap()
+            .phase
+            .is_live()
+    });
+    assert_eq!(
+        fixture.live.request(Request::CancelCloudCreation {
+            session: session.id,
+            expected_run: session.run
+        }),
+        Response::Ok
+    );
+    fixture.live.request(Request::Shutdown { kill: true });
+    fixture.live.join();
+    fixture
+        .live
+        .start_binary_env(&[("OVRCR_CURSOR_CLOUD_FIXTURE", fixture.config.as_os_str())]);
+    config["recovery_runs"] = json!({"fixture-run-1":"RUN_LIFECYCLE_STATUS_RUNNING"});
+    config["cancel_snapshot_outcome"] = json!("RUN_LIFECYCLE_STATUS_FINISHED");
+    fs::write(&bridge_config, config.to_string()).unwrap();
+    let Response::CreatedSession(reopened) = fixture.live.request(Request::ReopenSession {
+        session: session.id,
+        expected_run: session.run,
+        acknowledge_stopped: true,
+    }) else {
+        panic!("reopen")
+    };
+    fixture.live.own_group(reopened.pid.unwrap() as i32);
+    fixture.until(|| {
+        fixture
+            .text(&reopened)
+            .contains("Active reattachment unavailable")
+    });
+    assert!(
+        fixture
+            .text(&reopened)
+            .contains("Saved cancellation intent retained")
+    );
+    assert_eq!(
+        fixture
+            .events()
+            .iter()
+            .filter(|e| e["method"] == "CancelRun")
+            .count(),
+        0
+    );
+    assert_eq!(
+        fixture
+            .events()
+            .iter()
+            .filter(|e| e["method"] == "ObserveRun")
+            .count(),
+        0
+    );
+    if mode == "discard" {
+        assert!(
+            fixture
+                .live
+                .command()
+                .args(["terminal", "cloud-discard", &session.id.0.to_string()])
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    if mode == "storage" {
+        let db = rusqlite::Connection::open(fixture.live.config.join("registry.sqlite3")).unwrap();
+        db.execute_batch("CREATE TRIGGER fail_recovery_cancel BEFORE UPDATE ON cloud_creations WHEN json_extract(NEW.metadata,'$.recovery_cancel_claimed')=1 BEGIN SELECT RAISE(ABORT,'fixture full'); END;").unwrap();
+    }
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "/retry-cancel".into(),
+        submit: true,
+    });
+    if mode != "completion" {
+        fixture.until(|| {
+            fixture
+                .text(&reopened)
+                .contains("Cursor cloud validation failed:")
+        });
+        assert_eq!(
+            fixture
+                .events()
+                .iter()
+                .filter(|e| e["method"] == "CancelRun")
+                .count(),
+            0,
+            "{mode}"
+        );
+        assert_eq!(
+            fixture
+                .events()
+                .iter()
+                .filter(|e| e["method"] == "Send")
+                .count(),
+            1,
+            "{mode}"
+        );
+        return;
+    }
+    fixture.until(|| {
+        fixture
+            .text(&reopened)
+            .contains("Reconciled exact run fixture-run-1: Finished")
+    });
+    let methods = fixture.events();
+    assert_eq!(
+        methods
+            .iter()
+            .filter(|e| e["method"] == "CancelRun")
+            .count(),
+        1
+    );
+    assert_eq!(methods.iter().filter(|e| e["method"] == "Send").count(), 1);
+    assert!(!fixture.text(&reopened).contains("Ready: exact run"));
+}
+
+#[test]
+fn managed_recovery_duplicate_conversation_identifies_original_session() {
+    let fixture = Fixture::new("composer-2.5", true, true, false);
+    let original = fixture.launch();
+    fixture.until(|| {
+        fixture
+            .text(&original)
+            .contains("Press Enter to close preview.")
+    });
+    fixture.live.request(Request::SendTerminal {
+        session: original.id,
+        text: "prepare".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        fixture
+            .text(&original)
+            .contains("Cloud handle durably retained:")
+    });
+    let Response::CreatedSession(second) =
+        fixture
+            .live
+            .request(Request::CreateSession(CreateSessionRequest {
+                project: PROJECT.into(),
+                workspace: WORKSPACE.into(),
+                name: "second-cloud".into(),
+                label: None,
+                argv: vec![
+                    fixture.live.executable.clone().into_os_string(),
+                    "agent".into(),
+                    "run".into(),
+                    "cursor-cloud".into(),
+                    "--".into(),
+                    "work".into(),
+                ],
+                kind: SessionKind::Agent {
+                    name: "cursor-cloud:work".into(),
+                },
+            }))
+    else {
+        panic!("second session")
+    };
+    fixture.live.own_group(second.pid.unwrap() as i32);
+    fixture.until(|| {
+        fixture
+            .text(&second)
+            .contains("Press Enter to close preview.")
+    });
+    fixture.live.request(Request::SendTerminal {
+        session: second.id,
+        text: "prepare".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        fixture
+            .text(&second)
+            .contains("Cursor cloud validation failed:")
+    });
+    assert!(
+        !fixture
+            .text(&second)
+            .contains("Cloud handle durably retained:")
+    );
+    let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect) else {
+        panic!("inventory")
+    };
+    let reason = sessions
+        .iter()
+        .find(|s| s.id == second.id)
+        .unwrap()
+        .recovery
+        .as_ref()
+        .unwrap()
+        .unavailable
+        .as_ref()
+        .unwrap();
+    assert!(
+        reason.contains(&format!("Session {}", original.id.0)),
+        "{reason}"
+    );
+}
+
+#[test]
+fn managed_recovery_account_source_and_unknown_outcomes_fail_closed() {
+    for mode in [
+        "profile",
+        "credential",
+        "source",
+        "identity",
+        "status",
+        "missing",
+    ] {
+        let fixture = Fixture::new("composer-2.5", true, true, false);
+        let bridge_config = fixture.live.root.path().join("bridge.json");
+        let session = fixture.launch();
+        fixture.until(|| {
+            fixture
+                .text(&session)
+                .contains("Press Enter to close preview.")
+        });
+        fixture.live.request(Request::SendTerminal {
+            session: session.id,
+            text: "prepare".into(),
+            submit: true,
+        });
+        fixture.until(|| {
+            fixture
+                .text(&session)
+                .contains("Cloud handle durably retained:")
+        });
+        fixture.live.request(Request::SendTerminal {
+            session: session.id,
+            text: "Inspect source".into(),
+            submit: true,
+        });
+        fixture.until(|| {
+            fixture
+                .text(&session)
+                .contains("Ready: exact run fixture-run-1")
+        });
+        fixture.live.request(Request::SendTerminal {
+            session: session.id,
+            text: "/detach".into(),
+            submit: true,
+        });
+        fixture.until(|| {
+            let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect)
+            else {
+                panic!("inventory")
+            };
+            !sessions
+                .iter()
+                .find(|s| s.id == session.id)
+                .unwrap()
+                .phase
+                .is_live()
+        });
+        let mut config: Value = serde_json::from_slice(&fs::read(&bridge_config).unwrap()).unwrap();
+        config["recovery_runs"] = json!({"fixture-run-1":if mode=="status" {"UNKNOWN_STATUS"} else {"RUN_LIFECYCLE_STATUS_FINISHED"}});
+        if mode == "identity" {
+            config["send_scenario"] = json!("wrong_snapshot");
+        }
+        if mode == "missing" {
+            config["recovery_missing"] = json!(true);
+        }
+        fs::write(&bridge_config, config.to_string()).unwrap();
+        if mode == "profile" {
+            let path = fixture.live.config.join("dashboard.toml");
+            let mut settings: ovrcr::protocol::Settings =
+                toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            settings.cursor_cloud_accounts[0].keychain_account = "other".into();
+            fs::write(path, toml::to_string(&settings).unwrap()).unwrap();
+        }
+        if mode == "credential" {
+            let mut value: Value =
+                serde_json::from_slice(&fs::read(&fixture.config).unwrap()).unwrap();
+            value["credential_changed"] = json!(true);
+            fs::write(&fixture.config, value.to_string()).unwrap();
+        }
+        if mode == "source" {
+            live::git(
+                &fixture.workspace,
+                &[
+                    "remote",
+                    "set-url",
+                    "origin",
+                    "https://github.com/acme/other",
+                ],
+            );
+        }
+        let Response::CreatedSession(reopened) = fixture.live.request(Request::ReopenSession {
+            session: session.id,
+            expected_run: session.run,
+            acknowledge_stopped: true,
+        }) else {
+            panic!("reopen {mode}")
+        };
+        fixture.live.own_group(reopened.pid.unwrap() as i32);
+        fixture.until(|| {
+            fixture
+                .text(&reopened)
+                .contains("Cursor cloud validation failed:")
+        });
+        assert!(
+            !fixture.text(&reopened).contains("Reconciled exact run"),
+            "{mode}"
+        );
+        for (method, count) in [
+            ("CreateAgent", 1),
+            ("Send", 1),
+            ("CancelRun", 0),
+            ("ObserveRun", 0),
+            ("ResumeAgent", 0),
+        ] {
+            assert_eq!(
+                fixture
+                    .events()
+                    .iter()
+                    .filter(|e| e["method"] == method)
+                    .count(),
+                count,
+                "{mode} {method}"
+            );
+        }
+    }
+}
+
+#[test]
+fn managed_recovery_active_retry_cancel_is_explicit_and_uses_independent_snapshot() {
+    recovered_active_cancel("completion");
+}
+#[test]
+fn managed_recovery_discard_wins_before_explicit_cancel_claim() {
+    recovered_active_cancel("discard");
+}
+#[test]
+fn managed_recovery_failed_cancel_claim_permits_zero_cancel_rpc() {
+    recovered_active_cancel("storage");
+}

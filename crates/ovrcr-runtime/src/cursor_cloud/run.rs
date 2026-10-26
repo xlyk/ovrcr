@@ -561,3 +561,125 @@ pub(super) fn cancel(
         _ => println!("Remote cancellation unconfirmed for exact run {run}; no automatic retry."),
     }
 }
+
+/// Fresh exact lookup registers a credential-bound handle; no active stream is restored.
+pub(super) fn recover(
+    catalog: &Catalog,
+    key: &str,
+    target: &ovrcr_protocol::CloudRecovery,
+    admit: &mut impl FnMut(&C) -> Result<()>,
+) -> Result<()> {
+    let agent = &target.receipt.agent_id;
+    if target.cancel_requested {
+        println!(
+            "Saved cancellation intent retained; remote cancellation unconfirmed. Explicit /retry-cancel required."
+        );
+    }
+    let info = catalog.rpc(
+        "SdkAgentService",
+        "GetAgent",
+        &json!({"agentId":agent,"options":{"apiKey":key}}),
+    )?;
+    ensure!(
+        info["agent"]["agentId"] == *agent
+            && info["agent"].get("local").is_none()
+            && info["agent"]["cloud"]["repos"] == json!([target.intent.repository]),
+        "retained conversation/source binding mismatch"
+    );
+    let mut catalog = catalog.clone();
+    let lookup = |catalog: &Catalog| -> Result<Option<CloudRunStatus>> {
+        let snapshot = catalog.rpc("SdkAgentService", "GetRun", &json!({"runId":target.run_id,"options":{"runtime":"RUNTIME_CLOUD","agentId":agent,"apiKey":key}}))?;
+        identity(&snapshot["run"], agent, &target.run_id)?;
+        if let Ok(status) = terminal(&snapshot["run"]["status"]) {
+            return Ok(Some(status));
+        }
+        ensure!(
+            matches!(
+                snapshot["run"]["status"].as_str(),
+                Some("RUN_LIFECYCLE_STATUS_CREATING" | "RUN_LIFECYCLE_STATUS_RUNNING")
+            ),
+            "unknown exact-run lifecycle; observation remains uncertain"
+        );
+        Ok(None)
+    };
+    if let Some(status) = lookup(&catalog)? {
+        admit(&C::Reconcile {
+            target: target.clone(),
+            status,
+        })?;
+        println!(
+            "Reconciled exact run {}: {status:?}. Historical outcome; no new Ready or Unread.",
+            target.run_id
+        );
+        return Ok(());
+    }
+    println!(
+        "Active reattachment unavailable: option-preserving fresh observation is unproved. Remote work/charges may continue; no mutation issued.\nSaved cancellation intent, if present, is not dispatched automatically. Type /retry-cancel for this exact known run, or /detach. Uncertain CreateAgent/Send Retry unavailable; unresolved immutable requests stay retained."
+    );
+    use std::io::BufRead;
+    let stdin = std::io::stdin();
+    let mut input = stdin.lock();
+    loop {
+        let mut line = String::new();
+        if input.by_ref().take(65).read_line(&mut line)? == 0 {
+            return Ok(());
+        }
+        ensure!(
+            line.len() <= 64,
+            "recovery control exceeds 64 bytes; no dispatch"
+        );
+        match line.trim() {
+            "" | "/detach" => return Ok(()),
+            "/retry-cancel" => {
+                catalog.deadline = Instant::now() + Duration::from_secs(30);
+                // A new credentialed GET registers the exact handle before CancelRun.
+                if let Some(status) = lookup(&catalog)? {
+                    admit(&C::Reconcile {
+                        target: target.clone(),
+                        status,
+                    })?;
+                    println!(
+                        "Reconciled exact run {}: {status:?}. Historical outcome; no new Ready or Unread.",
+                        target.run_id
+                    );
+                    return Ok(());
+                }
+                admit(&C::RetryCancel(target.clone()))?;
+                let response = catalog.rpc(
+                    "SdkAgentService",
+                    "CancelRun",
+                    &json!({"agentId":agent,"runId":target.run_id}),
+                );
+                if matches!(response, Ok(ref value) if *value == json!({})) {
+                    println!(
+                        "Cancellation requested; acknowledgement does not prove remote termination."
+                    );
+                } else {
+                    println!(
+                        "Cancellation RPC failed or refused; remote cancellation unconfirmed."
+                    );
+                }
+                // Never trust the registered handle's locally cached cancelled status.
+                match lookup(&catalog) {
+                    Ok(Some(status)) => {
+                        admit(&C::Reconcile {
+                            target: target.clone(),
+                            status,
+                        })?;
+                        println!(
+                            "Reconciled exact run {}: {status:?}. Historical outcome; no new Ready or Unread.",
+                            target.run_id
+                        );
+                    }
+                    _ => println!(
+                        "Remote cancellation unconfirmed; saved intent retained. Detach and reopen for another explicit Retry Cancel."
+                    ),
+                }
+                return Ok(());
+            }
+            _ => println!(
+                "Recovery is read-only. Uncertain Retry unavailable; retained operation identity unchanged. Use /retry-cancel or /detach."
+            ),
+        }
+    }
+}

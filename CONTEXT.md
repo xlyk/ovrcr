@@ -50,6 +50,12 @@ A nonsecret named selection policy containing one explicit Keychain credential r
 **Cursor SDK Bridge**:
 The pinned official Cursor process owned by one cloud attachment inside the Server-managed process tree. It is separate from the macOS OVRCR Bridge app.
 
+**Cloud reconciliation**:
+A read of the original retained cloud conversation/run through a freshly validated
+credential-bound bridge. A historical terminal outcome creates no new Ready or
+Unread. Active reattachment and uncertain CreateAgent/Send replay remain gated;
+explicit Retry Cancel is a separate durable exact-run action.
+
 **Published source**:
 The selected workspace's canonical origin and exact HEAD commit, verified as published at that origin. Local edits are excluded; launching does not upload, commit or push them.
 
