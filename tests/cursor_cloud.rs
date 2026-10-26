@@ -524,15 +524,13 @@ fn managed_creation_crashes_retain_original_operation_and_require_explicit_disca
             }),
             Response::Error { .. }
         ));
-        if boundary != "after_ack" {
-            assert!(matches!(
-                fixture.live.request(Request::DeleteArchivedSession {
-                    session: session.id,
-                    expected_run: archived.run
-                }),
-                Response::Error { .. }
-            ));
-        }
+        assert!(matches!(
+            fixture.live.request(Request::DeleteArchivedSession {
+                session: session.id,
+                expected_run: archived.run
+            }),
+            Response::Error { .. }
+        ));
         assert_eq!(
             fixture.live.request(Request::DiscardCloudCreation {
                 session: session.id,

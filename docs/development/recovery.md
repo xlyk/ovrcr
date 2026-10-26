@@ -102,7 +102,7 @@ Native Claude continuity and macOS GUI input from #116 are verified on `8347563`
 Cursor cloud creation is retained under the same SessionStore, before a
 conversation reference exists. The original row shows prepared/never-dispatched,
 unresolved/possibly-escaped, exact handle acknowledgement, or explicit local
-Discard. Archive preserves unresolved request bytes; deleting that row requires
+Discard. Archive preserves unresolved request bytes; deleting any cloud-creation row requires
 `ovrcr terminal cloud-discard ID`. Stale run observations cannot discard another
 generation. Neither display, restart, Reopen nor Retry may create another handle,
 choose a new key, open a native resume picker or Send to discover identity.

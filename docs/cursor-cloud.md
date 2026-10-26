@@ -81,7 +81,7 @@ inventing a conversation reference, replacing its key, using a resume picker or
 automatically creating another session. Archive preserves it. Explicit
 `ovrcr terminal cloud-discard ID` closes local delivery and retires payloads;
 it does not claim remote cancellation or resolve an escaped effect. Local row
-deletion refuses unresolved creation until that Discard succeeds. An authenticated
+deletion requires that Discard, including after an exact handle acknowledgement. An authenticated
 late exact receipt may enrich the existing closed operation, without reopening
 it. Missing rows and stale owners cannot be recreated by a receipt. Once the
 owned bridge exits, restoring the same pre-Send handle is unavailable on this

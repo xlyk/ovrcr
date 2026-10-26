@@ -145,8 +145,8 @@ commands require the current CursorCloud reservation; intent/private publication
 dispatch claim and exact handle receipt are separate durable boundaries. Claim
 and local closure serialize under the retained mutex; the adapter releases those
 locks before bridge I/O. Local Discard is a closure, never a remote-cancellation
-receipt. Archive preserves unresolved bytes; deletion requires their explicit
-Discard. The original Session owns the operation across restart; no handle
+receipt. Archive preserves unresolved bytes; local row deletion requires explicit
+Discard, including for acknowledged handles. The original Session owns the operation across restart; no handle
 restoration, automatic creation, Retry or Send is permitted by this slice. The
 accepted pending-submission exception permits immutable request bytes only in
 confined owner-only plaintext files, readable by same-user programs and backups;

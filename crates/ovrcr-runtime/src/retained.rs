@@ -967,7 +967,7 @@ impl SessionStore {
     }
 
     pub fn remove(&mut self, id: SessionId, run: SessionRunId) -> Result<bool> {
-        self.refuse_unresolved_creation(id)?;
+        self.refuse_creation_deletion(id)?;
         if self.records.get(&id).is_none_or(|record| record.run != run) {
             return Ok(false);
         }

@@ -43,8 +43,8 @@ impl Record {
             "Cloud creation {status}. Send unavailable. Explicit local Discard: ovrcr terminal cloud-discard <id>."
         )
     }
-    fn unresolved(&self) -> bool {
-        !self.discarded && self.receipt.is_none()
+    fn requires_discard(&self) -> bool {
+        !self.discarded
     }
 }
 pub(crate) fn create_schema(connection: &Connection) -> Result<()> {
@@ -212,15 +212,15 @@ impl SessionStore {
         Directory::open(&config.canonicalize()?.join("cloud-creations"), false)?.remove(&key)?;
         Ok(())
     }
-    pub(crate) fn refuse_unresolved_creation(&self, id: SessionId) -> Result<()> {
+    pub(crate) fn refuse_creation_deletion(&self, id: SessionId) -> Result<()> {
         if self
             .records
             .get(&id)
             .and_then(|r| r.cloud_creation.as_ref())
-            .is_some_and(Record::unresolved)
+            .is_some_and(Record::requires_discard)
         {
             bail!(
-                "unresolved cloud creation retained; explicit cloud-discard required before local record deletion"
+                "cloud creation retained; explicit cloud-discard required before local record deletion"
             );
         }
         Ok(())
