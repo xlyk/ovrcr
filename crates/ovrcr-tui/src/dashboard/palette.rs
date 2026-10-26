@@ -256,6 +256,7 @@ fn close_confirm_action_line() -> String {
 }
 
 struct CloseConfirmText {
+    warning: Option<&'static str>,
     identity: String,
     place: String,
     project: String,
@@ -364,6 +365,9 @@ fn close_confirm_segments(text: &CloseConfirmText) -> Vec<(String, CloseConfirmR
         (String::new(), CloseConfirmRole::Blank),
         (CLOSE_CONSEQUENCE.to_string(), CloseConfirmRole::Consequence),
     ];
+    if let Some(warning) = text.warning {
+        lines.push((warning.to_owned(), CloseConfirmRole::Consequence));
+    }
     if let Some(error) = &text.error
         && !error.is_empty()
     {
@@ -1050,7 +1054,7 @@ impl Dashboard {
         }
         self.whichkey = None;
         let session = find_session(self, id).unwrap();
-        let immediate = !session.phase.is_live();
+        let immediate = !session.phase.is_live() && session.close_warning().is_none();
         let run = session.run;
         let mut palette = Palette {
             page: self.command_page(Command::CloseTerminal(id)),
@@ -2244,7 +2248,9 @@ impl Dashboard {
                                 };
                             }
                             Command::CloseTerminal(id)
-                                if find_session(self, id).is_some_and(|s| !s.phase.is_live()) =>
+                                if find_session(self, id).is_some_and(|s| {
+                                    !s.phase.is_live() && s.close_warning().is_none()
+                                }) =>
                             {
                                 let run = find_session(self, id).unwrap().run;
                                 action = self.palette_submit(
@@ -3538,6 +3544,7 @@ impl Dashboard {
     fn close_confirm_text(&self, palette: &Palette) -> CloseConfirmText {
         let Page::Confirm { request, target } = &palette.page else {
             return CloseConfirmText {
+                warning: None,
                 identity: CLOSE_TITLE.to_string(),
                 place: String::new(),
                 project: String::new(),
@@ -3548,6 +3555,7 @@ impl Dashboard {
         };
         let Some(Request::CloseTerminal { session, .. }) = request else {
             return CloseConfirmText {
+                warning: None,
                 identity: CLOSE_TITLE.to_string(),
                 place: target.clone(),
                 project: String::new(),
@@ -3558,6 +3566,7 @@ impl Dashboard {
         };
         let Some(found) = find_session(self, *session) else {
             return CloseConfirmText {
+                warning: None,
                 identity: close_terminal_identity("Terminal", session.0),
                 place: target.clone(),
                 project: "unavailable".into(),
@@ -3571,6 +3580,7 @@ impl Dashboard {
             .unwrap_or_else(|| found.workspace.clone());
         let name = found.display_name();
         CloseConfirmText {
+            warning: found.close_warning(),
             identity: close_terminal_identity(name, found.id.0),
             place: format!("{} / {name}", session_workspace_heading(self, found)),
             project: found.project.clone(),

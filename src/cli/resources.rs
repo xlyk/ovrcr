@@ -265,6 +265,9 @@ pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppRe
         }
         TerminalCommand::Close { id } => {
             let session = inventory_session(id)?;
+            if let Some(warning) = session.close_warning() {
+                eprintln!("{warning}");
+            }
             mutate_without_start(
                 Request::CloseTerminal {
                     session: SessionId(id),

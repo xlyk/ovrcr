@@ -2436,6 +2436,44 @@ fn managed_recovery_reconciles_exact_completed_run_without_replay_or_ready() {
             && a.input_requests.is_empty()),
         "historical reconciliation cannot publish Ready or input requests"
     );
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "exit".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect) else {
+            panic!("inventory")
+        };
+        !sessions
+            .iter()
+            .find(|s| s.id == session.id)
+            .unwrap()
+            .phase
+            .is_live()
+    });
+    let closed = fixture
+        .live
+        .command()
+        .args(["terminal", "close", &session.id.0.to_string()])
+        .output()
+        .unwrap();
+    assert!(closed.status.success(), "{:?}", closed);
+    assert!(
+        String::from_utf8_lossy(&closed.stderr).contains("Remote work and charges may continue"),
+        "close must warn on stderr: {:?}",
+        closed
+    );
+    let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect) else {
+        panic!("inventory")
+    };
+    assert!(
+        sessions
+            .iter()
+            .find(|s| s.id == session.id)
+            .unwrap()
+            .archived
+    );
     let events = fixture.events();
     for (method, count) in [
         ("CreateAgent", 1),

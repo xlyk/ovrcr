@@ -93,6 +93,16 @@ pub struct SessionSummary {
 }
 
 impl SessionSummary {
+    /// Closing a local cloud attachment does not terminate its remote work.
+    pub fn close_warning(&self) -> Option<&'static str> {
+        let cloud = self
+            .agent
+            .as_ref()
+            .is_some_and(|agent| agent.binding.provider == crate::AgentProvider::CursorCloud)
+            || matches!(&self.kind, SessionKind::Agent { name } if name == "cursor-cloud" || name.starts_with("cursor-cloud:"));
+        cloud.then_some("Remote work and charges may continue. Closing detaches local control and archives its record; it does not cancel cloud work.")
+    }
+
     /// Display may recover an interrupted agent, never acknowledge process ownership.
     pub fn can_auto_recover(&self) -> bool {
         !self.archived

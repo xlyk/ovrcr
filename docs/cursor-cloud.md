@@ -248,7 +248,10 @@ Each recovered attachment permits one admitted cancellation attempt. A failed or
 still-active outcome keeps the intent; detach and explicitly reopen before another
 Retry Cancel. Saved intent is never automatically dispatched. `/detach` closes local
 observation. Closing a pane remains display-only; closing the Session archives its
-row and warns that remote work and charges may continue.
+row and warns that remote work and charges may continue. The Dashboard shows its
+existing close confirmation for cloud rows even after local exit; the explicit
+`terminal close ID` command prints the same warning on stderr, including in JSON
+mode, before issuing close. Closing does not send CancelRun.
 
 The original creation/Send operation identity and immutable private payloads survive
 attachment and archive transitions. Recovery authority is subordinate metadata in
