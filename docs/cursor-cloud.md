@@ -134,7 +134,10 @@ success for the failed boundary. There is no automatic cancellation retry.
 
 `ovrcr terminal cloud-cancel ID` persists the same intent/closure for prepared,
 uncertain or detached rows. Its success acknowledges local durable intent only;
-it does not promise that a detached bridge sent CancelRun. Saved intent survives
+the original live adapter checks this typed intent at most once per second and
+services its exact retained target, including after stream loss. Partial terminal
+input stays buffered; no terminal commands are injected. A failed admitted claim
+is not automatically retried. A detached bridge sends no CancelRun. Saved intent survives
 restart. Display/recovery never sends CancelRun automatically; explicit Retry
 Cancel requires the separate supported recovery path. This slice adds no fresh
 bridge cancellation, ResumeAgent or option mutation.

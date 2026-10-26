@@ -164,3 +164,10 @@ complete that live intent. Cancellation acknowledgement never proves terminal
 state; only independent credentialed exact GetRun supplies the outcome. Discard
 retires canonical private files and owned aliases after durable closure, with
 startup cleanup retry. Restart never issues CancelRun automatically.
+
+The original live adapter stdin reader checks typed exact-target cancellation
+intent at most once per second, outside Server locks. CheckCancel is read-only;
+one successful check admits one ClaimCancel attempt even if persistence/RPC fails.
+Observation failure retains that exact target until authoritative terminal receipt
+or attachment exit. Recovery never starts this original-attachment reader. Private
+temporary alias sweeps run only during startup/explicit Discard, not each check.

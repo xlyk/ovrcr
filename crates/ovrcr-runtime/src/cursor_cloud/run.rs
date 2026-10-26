@@ -9,6 +9,7 @@ use std::collections::HashSet;
 pub(super) struct Control {
     pub target: std::sync::Mutex<Option<(String, String)>>,
     attempted: std::sync::atomic::AtomicBool,
+    serviced: std::sync::atomic::AtomicBool,
 }
 const SOURCE_PROBE: &str = "git rev-parse HEAD";
 const TYPES: &[&str] = &[
@@ -358,7 +359,6 @@ pub(super) fn send(
         }
         Ok((id, status, snapshot["run"].clone()))
     }();
-    *control.target.lock().unwrap() = None;
     match qualify {
         Ok((id, status, snapshot)) => {
             if let Err(error) = admit(&C::CompleteSend {
@@ -374,6 +374,7 @@ pub(super) fn send(
                 });
                 return Err(error);
             }
+            *control.target.lock().unwrap() = None;
             if status == CloudRunStatus::Finished {
                 println!("\nReady: exact run {id}. Source and terminal status verified.");
             } else {
@@ -520,6 +521,19 @@ pub(super) fn cancel(
     admit: &mut impl FnMut(&C) -> Result<()>,
     control: &Control,
 ) {
+    if control.serviced.load(std::sync::atomic::Ordering::Acquire)
+        || admit(&C::CheckCancel {
+            key: key.into(),
+            agent_id: agent.into(),
+            run_id: run.into(),
+        })
+        .is_err()
+        || control
+            .serviced
+            .swap(true, std::sync::atomic::Ordering::AcqRel)
+    {
+        return;
+    }
     if admit(&C::ClaimCancel {
         key: key.into(),
         agent_id: agent.into(),
@@ -527,6 +541,9 @@ pub(super) fn cancel(
     })
     .is_err()
     {
+        println!(
+            "Cancellation admission not durably acknowledged; remote cancellation not attempted; no automatic retry."
+        );
         return;
     }
     control

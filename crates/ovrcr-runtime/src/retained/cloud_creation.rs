@@ -132,6 +132,10 @@ fn creation_directory(config: &Path, create: bool) -> Result<Directory> {
     // open every private publication component without following links.
     let root = config.canonicalize()?.join("cloud-creations");
     let directory = Directory::open(&root, create)?;
+    Ok(directory)
+}
+fn cleanup_creation_aliases(config: &Path, directory: &Directory) -> Result<()> {
+    let root = config.canonicalize()?.join("cloud-creations");
     for entry in std::fs::read_dir(&root)? {
         let name = entry?.file_name().to_string_lossy().into_owned();
         if name.starts_with('.')
@@ -141,7 +145,7 @@ fn creation_directory(config: &Path, create: bool) -> Result<Directory> {
             directory.remove(&name)?;
         }
     }
-    Ok(directory)
+    Ok(())
 }
 impl SessionStore {
     pub(crate) fn cleanup_creation_payloads(&self, config: &Path) -> Result<()> {
@@ -149,6 +153,7 @@ impl SessionStore {
             return Ok(());
         }
         let directory = creation_directory(config, false)?;
+        cleanup_creation_aliases(config, &directory)?;
         for creation in self
             .records
             .values()
@@ -204,6 +209,7 @@ impl SessionStore {
                     | CloudCreationCommand::AcknowledgeSend { .. }
                     | CloudCreationCommand::Cancel
                     | CloudCreationCommand::ClaimCancel { .. }
+                    | CloudCreationCommand::CheckCancel { .. }
                     | CloudCreationCommand::ObserveSend { .. }
                     | CloudCreationCommand::ObservationLost { .. }
                     | CloudCreationCommand::CompleteSend { .. }
@@ -212,6 +218,49 @@ impl SessionStore {
             bail!("cloud creation delivery is closed");
         }
 
+        if matches!(
+            command,
+            CloudCreationCommand::ClaimCancel { .. } | CloudCreationCommand::CheckCancel { .. }
+        ) {
+            match command {
+                CloudCreationCommand::ClaimCancel {
+                    key,
+                    agent_id,
+                    run_id,
+                }
+                | CloudCreationCommand::CheckCancel {
+                    key,
+                    agent_id,
+                    run_id,
+                } => {
+                    let mut record = existing.clone().context("no retained cloud operation")?;
+                    if record.run != run
+                        || record.invocation != invocation
+                        || record.lifetime != lifetime
+                        || !record.cancel_requested
+                        || record.discarded
+                        || record.cancel_claimed
+                        || record
+                            .receipt
+                            .as_ref()
+                            .is_none_or(|r| &r.agent_id != agent_id)
+                        || !record.sends.last().is_some_and(|s| {
+                            &s.key == key
+                                && s.run_id.as_ref() == Some(run_id)
+                                && s.terminal.is_none()
+                        })
+                    {
+                        bail!("exact live cancellation unavailable; no automatic retry");
+                    }
+                    if matches!(command, CloudCreationCommand::ClaimCancel { .. }) {
+                        record.cancel_claimed = true;
+                        self.save_creation(id, record)?;
+                    }
+                }
+                _ => unreachable!(),
+            }
+            return Ok(());
+        }
         let directory = creation_directory(config, true)?;
         match command {
             CloudCreationCommand::Cancel => {
@@ -224,30 +273,8 @@ impl SessionStore {
                 }
                 self.cancel_creation(id, run)?;
             }
-            CloudCreationCommand::ClaimCancel {
-                key,
-                agent_id,
-                run_id,
-            } => {
-                let mut record = existing.context("no retained cloud operation")?;
-                if record.run != run
-                    || record.invocation != invocation
-                    || record.lifetime != lifetime
-                    || !record.cancel_requested
-                    || record.discarded
-                    || record.cancel_claimed
-                    || record
-                        .receipt
-                        .as_ref()
-                        .is_none_or(|r| &r.agent_id != agent_id)
-                    || !record.sends.last().is_some_and(|s| {
-                        &s.key == key && s.run_id.as_ref() == Some(run_id) && s.terminal.is_none()
-                    })
-                {
-                    bail!("exact live cancellation unavailable; no automatic retry");
-                }
-                record.cancel_claimed = true;
-                self.save_creation(id, record)?;
+            CloudCreationCommand::ClaimCancel { .. } | CloudCreationCommand::CheckCancel { .. } => {
+                unreachable!()
             }
             CloudCreationCommand::Prepare(intent) => {
                 intent.validate()?;
@@ -497,6 +524,7 @@ impl SessionStore {
             .collect::<Vec<_>>();
         self.save_creation(id, record)?;
         let directory = creation_directory(config, false)?;
+        cleanup_creation_aliases(config, &directory)?;
         for send in sends {
             directory.remove(&send)?;
         }

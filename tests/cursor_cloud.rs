@@ -1736,16 +1736,32 @@ fn managed_live_cancel_known_run_requires_durable_intent_and_authoritative_outco
                 })
             });
         }
-        fixture.live.request(Request::SendTerminal {
-            session: session.id,
-            text: "/cancel".into(),
-            submit: true,
-        });
+        assert_eq!(
+            fixture.live.request(Request::SendTerminal {
+                session: session.id,
+                text: "partial λ".into(),
+                submit: false
+            }),
+            Response::Ok
+        );
+        assert_eq!(
+            fixture.live.request(Request::CancelCloudCreation {
+                session: session.id,
+                expected_run: session.run
+            }),
+            Response::Ok
+        );
         fixture.until(|| {
             fixture
                 .text(&session)
                 .contains("Cancellation requested for exact run fixture-run-1")
         });
+        fixture.live.request(Request::SendTerminal {
+            session: session.id,
+            text: " τελικό".into(),
+            submit: true,
+        });
+        fixture.until(|| fixture.text(&session).contains("partial λ τελικό"));
         let cancels: Vec<_> = fixture
             .events()
             .into_iter()
@@ -2257,4 +2273,75 @@ fn managed_discard_cleanup_failure_is_not_success_and_restart_retires_all_owned_
             .count(),
         0
     );
+}
+
+#[test]
+fn managed_known_run_stream_failure_preserves_exact_live_cancel_target() {
+    let fixture = Fixture::new("composer-2.5", true, true, false);
+    let path = fixture.live.root.path().join("bridge.json");
+    let mut config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    config["send_scenario"] = json!("unknown_shape");
+    fs::write(path, config.to_string()).unwrap();
+    let session = fixture.launch();
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Press Enter to close preview.")
+    });
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "prepare".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Cloud handle durably retained")
+    });
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "inspect".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Observation unknown/unverified")
+    });
+    assert!(
+        fixture
+            .text(&session)
+            .contains("Observing exact run fixture-run-1")
+    );
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "/cancel".into(),
+        submit: true,
+    });
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Cancellation requested for exact run fixture-run-1")
+    });
+    assert_eq!(
+        fixture
+            .events()
+            .iter()
+            .filter(|e| e["method"] == "CancelRun")
+            .count(),
+        1
+    );
+    assert_eq!(
+        fixture
+            .events()
+            .iter()
+            .filter(|e| e["method"] == "Send")
+            .count(),
+        1
+    );
+    fixture.live.request(Request::SendTerminal {
+        session: session.id,
+        text: "/detach".into(),
+        submit: true,
+    });
 }

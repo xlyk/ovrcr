@@ -590,13 +590,80 @@ pub fn preview(
         let control_agent = receipt.agent_id.clone();
         let reader_state = input_state.clone();
         std::thread::spawn(move || {
-            let mut stdin = std::io::stdin().lock();
-            loop {
-                let mut line = String::new();
-                match stdin.by_ref().take(32770).read_line(&mut line) {
-                    Ok(0) | Err(_) => break,
-                    _ => {}
+            use std::os::fd::FromRawFd;
+            let fd = unsafe { libc::dup(libc::STDIN_FILENO) };
+            if fd < 0 {
+                return;
+            }
+            let mut stdin = unsafe { File::from_raw_fd(fd) };
+            let mut pending = Vec::new();
+            let mut lines = std::collections::VecDeque::new();
+            let mut check_at = Instant::now();
+            let mut eof = false;
+            'input: loop {
+                if Instant::now() >= check_at {
+                    let target = reader_control.target.lock().unwrap().clone();
+                    if let Some((send, run)) = target {
+                        run::cancel(
+                            &control_catalog,
+                            &control_agent,
+                            &send,
+                            &run,
+                            &mut |c| control_admit(c),
+                            &reader_control,
+                        );
+                    }
+                    check_at = Instant::now() + Duration::from_secs(1);
                 }
+                let Some(line) = lines.pop_front() else {
+                    if eof {
+                        break;
+                    }
+                    let mut poll = libc::pollfd {
+                        fd,
+                        events: libc::POLLIN,
+                        revents: 0,
+                    };
+                    let ready = unsafe { libc::poll(&mut poll, 1, 100) };
+                    if ready == 0 {
+                        continue;
+                    }
+                    if ready < 0 {
+                        if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+                        {
+                            continue;
+                        }
+                        break;
+                    }
+                    let mut bytes = [0; 4096];
+                    let count = match stdin.read(&mut bytes) {
+                        Ok(0) => {
+                            if let Ok(line) = String::from_utf8(std::mem::take(&mut pending))
+                                && !line.is_empty()
+                            {
+                                lines.push_back(line);
+                            }
+                            eof = true;
+                            continue;
+                        }
+                        Err(_) => break,
+                        Ok(count) => count,
+                    };
+                    for byte in &bytes[..count] {
+                        pending.push(*byte);
+                        if pending.len() > 32768 {
+                            println!("Prompt exceeds 32768 bytes; not submitted. Input closed.");
+                            break 'input;
+                        }
+                        if *byte == b'\n' {
+                            let Ok(line) = String::from_utf8(std::mem::take(&mut pending)) else {
+                                break 'input;
+                            };
+                            lines.push_back(line);
+                        }
+                    }
+                    continue;
+                };
                 if line.trim() == "/cancel" {
                     match control_admit(&CloudCreationCommand::Cancel) {
                         Ok(()) => {
