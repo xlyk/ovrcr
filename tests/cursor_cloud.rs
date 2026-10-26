@@ -1761,7 +1761,13 @@ fn managed_live_cancel_known_run_requires_durable_intent_and_authoritative_outco
             text: " τελικό".into(),
             submit: true,
         });
-        fixture.until(|| fixture.text(&session).contains("partial λ τελικό"));
+        fixture.until(|| fixture.text(&session).contains("τελικό"));
+        let echoed = fixture.text(&session);
+        assert!(
+            echoed.contains("partial λ") && echoed.contains("τελικό"),
+            "partial Unicode input was lost: {echoed}"
+        );
+        assert!(echoed.contains("Busy: prompt rejected and retained locally"));
         let cancels: Vec<_> = fixture
             .events()
             .into_iter()

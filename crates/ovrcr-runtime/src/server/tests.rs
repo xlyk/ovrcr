@@ -7058,10 +7058,8 @@ mod agent_reporting {
             .discard_cloud_creation(SessionId(900), f.session.run())
             .unwrap();
         rejected(submit("discarded-cancel", claim.clone()));
-        f.session.mark_exited(0);
-        f.state.refresh_session(SessionId(900)).unwrap();
         f.state
-            .close_terminal(SessionId(900), f.session.run(), Duration::ZERO)
+            .close_terminal(SessionId(900), f.session.run(), Duration::from_secs(2))
             .unwrap();
         let archived = f.state.session_summary(SessionId(900)).unwrap();
         f.state

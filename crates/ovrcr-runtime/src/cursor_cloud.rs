@@ -406,6 +406,27 @@ fn creation_boundary(fixture: Option<&Value>, boundary: &str) -> Result<()> {
     Ok(())
 }
 
+/// The live stdin seam keeps incomplete UTF-8/lines private until newline or EOF.
+fn read_input(reader: &mut impl Read, pending: &mut Vec<u8>) -> Result<(Vec<String>, bool)> {
+    let mut bytes = [0; 4096];
+    let count = reader.read(&mut bytes)?;
+    let mut lines = Vec::new();
+    for byte in &bytes[..count] {
+        pending.push(*byte);
+        ensure!(
+            pending.len() <= 32768,
+            "Prompt exceeds 32768 bytes; not submitted"
+        );
+        if *byte == b'\n' {
+            lines.push(String::from_utf8(std::mem::take(pending)).context("input UTF-8 invalid")?);
+        }
+    }
+    if count == 0 && !pending.is_empty() {
+        lines.push(String::from_utf8(std::mem::take(pending)).context("input UTF-8 invalid")?);
+    }
+    Ok((lines, count == 0))
+}
+
 pub fn preview(
     profile: &CursorCloudAccount,
     workspace: &Path,
@@ -600,7 +621,7 @@ pub fn preview(
             let mut lines = std::collections::VecDeque::new();
             let mut check_at = Instant::now();
             let mut eof = false;
-            'input: loop {
+            loop {
                 if Instant::now() >= check_at {
                     let target = reader_control.target.lock().unwrap().clone();
                     if let Some((send, run)) = target {
@@ -635,31 +656,14 @@ pub fn preview(
                         }
                         break;
                     }
-                    let mut bytes = [0; 4096];
-                    let count = match stdin.read(&mut bytes) {
-                        Ok(0) => {
-                            if let Ok(line) = String::from_utf8(std::mem::take(&mut pending))
-                                && !line.is_empty()
-                            {
-                                lines.push_back(line);
-                            }
-                            eof = true;
-                            continue;
+                    match read_input(&mut stdin, &mut pending) {
+                        Ok((batch, closed)) => {
+                            lines.extend(batch);
+                            eof = closed;
                         }
-                        Err(_) => break,
-                        Ok(count) => count,
-                    };
-                    for byte in &bytes[..count] {
-                        pending.push(*byte);
-                        if pending.len() > 32768 {
-                            println!("Prompt exceeds 32768 bytes; not submitted. Input closed.");
-                            break 'input;
-                        }
-                        if *byte == b'\n' {
-                            let Ok(line) = String::from_utf8(std::mem::take(&mut pending)) else {
-                                break 'input;
-                            };
-                            lines.push_back(line);
+                        Err(error) => {
+                            println!("{error}; Input closed.");
+                            break;
                         }
                     }
                     continue;
@@ -767,4 +771,55 @@ pub fn preview(
     }
     drop(bridge);
     Ok(())
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+    use std::io::Write;
+    #[test]
+    fn bounded_live_reader_preserves_split_utf8_partial_lines_multiple_lines_and_eof() {
+        let (mut writer, mut reader) = std::os::unix::net::UnixStream::pair().unwrap();
+        let mut pending = Vec::new();
+        writer.write_all(b"partial \xce").unwrap();
+        assert_eq!(
+            read_input(&mut reader, &mut pending).unwrap(),
+            (vec![], false)
+        );
+        writer
+            .write_all("λ τελικό\nnext\n".as_bytes().split_at(1).1)
+            .unwrap();
+        assert_eq!(
+            read_input(&mut reader, &mut pending).unwrap(),
+            (
+                vec!["partial λ τελικό\n".to_owned(), "next\n".to_owned()],
+                false
+            )
+        );
+        writer.write_all(b"tail").unwrap();
+        assert_eq!(
+            read_input(&mut reader, &mut pending).unwrap(),
+            (vec![], false)
+        );
+        drop(writer);
+        assert_eq!(
+            read_input(&mut reader, &mut pending).unwrap(),
+            (vec!["tail".to_owned()], true)
+        );
+        assert_eq!(
+            read_input(&mut reader, &mut pending).unwrap(),
+            (vec![], true)
+        );
+        let mut oversized = std::io::Cursor::new(vec![b'x'; 32769]);
+        let mut pending = Vec::new();
+        for _ in 0..8 {
+            assert!(
+                read_input(&mut oversized, &mut pending)
+                    .unwrap()
+                    .0
+                    .is_empty()
+            );
+        }
+        assert!(read_input(&mut oversized, &mut pending).is_err());
+    }
 }
