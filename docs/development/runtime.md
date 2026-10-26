@@ -140,15 +140,19 @@ exiting the adapter; the surviving invocation supervisor then kills the whole
 group, including helper descendants. Helpers must not create separate groups
 whose only cleanup owner would disappear with the adapter.
 
-Cursor cloud creation is a Server/SessionStore operation. Authenticated Reporter
+Cursor cloud creation and Send share one Server/SessionStore operation record. Authenticated Reporter
 commands require the current CursorCloud reservation; intent/private publication,
 dispatch claim and exact handle receipt are separate durable boundaries. Claim
 and local closure serialize under the retained mutex; the adapter releases those
 locks before bridge I/O. Local Discard is a closure, never a remote-cancellation
 receipt. Archive preserves unresolved bytes; local row deletion requires explicit
 Discard, including for acknowledged handles. The original Session owns the operation across restart; no handle
-restoration, automatic creation, Retry or Send is permitted by this slice. The
+restoration, automatic creation or uncertain Retry is permitted. Send requires the
+original durable creation receipt, immutable body/options and a distinct key/claim;
+exact run retention precedes payload retirement. Busy input is rejected for manual
+resubmission. Exact run observations use the existing Reporter/revisions; stream
+loss remains unknown and no newest-run lookup supplies identity. The
 accepted pending-submission exception permits immutable request bytes only in
 confined owner-only plaintext files, readable by same-user programs and backups;
 credentials stay outside them. Creation payload retirement follows durable exact
-identity/receipt; future Send payload retirement requires its exact durable run ID.
+identity/receipt; Send payload retirement requires its exact durable run ID.

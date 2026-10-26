@@ -10,7 +10,7 @@
 
 Agent runtimes and terminal multiplexers are everywhere. On a checklist they all look the same.
 
-OVRCR is for a pile of coding-agent PTYs across a pile of worktrees. Register a Git repo, create a workspace (it makes the worktree), start Claude, Codex, Pi, Grok, Hermes, OMP, Cursor Agent, or a shell. One Rust server owns the sessions. macOS also offers a [Cursor cloud account validation preview](docs/cursor-cloud.md); cloud prompt delivery remains unavailable.
+OVRCR is for a pile of coding-agent PTYs across a pile of worktrees. Register a Git repo, create a workspace (it makes the worktree), start Claude, Codex, Pi, Grok, Hermes, OMP, Cursor Agent, or a shell. One Rust server owns the sessions. macOS also offers [Cursor cloud prompts and exact-run results](docs/cursor-cloud.md), with durable submission uncertainty and same-conversation idle follow-ups. Terminal responses, uncertain Retry and active reattachment remain blocked.
 
 80 themes in Appearance, with 54 Dark and 26 Light choices. Catppuccin Mocha remains the default; the original eight palettes and saved theme IDs are preserved. See the [complete theme catalog](docs/themes/catalog.md).
 

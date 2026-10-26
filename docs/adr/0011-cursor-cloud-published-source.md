@@ -1,7 +1,8 @@
 # ADR 0011: Cursor cloud launches use published workspace source
 
 Status: Accepted in [issue #358](https://github.com/xlyk/ovrcr/issues/358).
-Implemented boundary: account/source/model validation preview, issue #372.
+Implemented boundaries: account/source/model validation preview (#372), durable
+local handle preparation (#373), immutable Send and exact-run results (#374).
 
 A Cursor cloud launch uses the selected workspace's canonical GitHub origin and
 exact HEAD commit. The commit must appear in the origin's published refs. The
@@ -15,6 +16,7 @@ before any prompt. Local working-tree edits are excluded. Launch never uploads,
 commits or pushes local changes. A profile name or successful repository lookup
 does not attest the remote billing identity.
 
-This decision does not authorize CreateAgent or Send in the preview slice.
-Durable creation/submission receipts, terminal responses, uncertain retries and
-active reattachment remain gated by the later sequential implementation slices.
+The preview remains read-only until explicit prepare. The later creation/Send
+slices retain independent durable claims and exact identity receipts. Terminal
+responses, uncertain retries and active reattachment remain gated by official
+capability evidence and their later sequential implementation slices.

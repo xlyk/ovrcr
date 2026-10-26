@@ -109,12 +109,15 @@ choose a new key, open a native resume picker or Send to discover identity.
 A bridge death between local handle acknowledgement and first Send fails closed:
 the pinned SDK has no verified same-handle restoration route in this slice.
 
-SQLite stores only nonsecret creation authority and receipt metadata. The
+SQLite stores only nonsecret creation/Send authority and exact receipt metadata. The
 accepted pending-submission exception permits immutable semantic request bytes
 in confined owner-only private plaintext files; same-user programs and backups
 can read them. Credentials are injected in memory at dispatch. Creation bytes
-retire after the exact agent ID/model receipt is durable; a future Send has a
-separate exact run-receipt boundary. Startup cleans owned temporary aliases and
+retire after the exact agent ID/model receipt is durable; each Send has a
+separate immutable body/key, dispatch claim and exact run-receipt boundary.
+An uncertain Send stays on its original row with its original account/options;
+only an authenticated original run receipt can retire its payload. A disconnected
+stream proves no remote stop, and replay cannot produce another Ready. Startup cleans owned temporary aliases and
 payloads whose durable receipt/Discard already permits retirement, without any
 remote effect. Corrupt/full storage refuses new effects and never evicts retained
 requests to make room. See [Cursor cloud controls](../cursor-cloud.md).
