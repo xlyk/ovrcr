@@ -273,6 +273,102 @@ fn ordinary_cloud_agent_refuses_policy_unpublished_source_bad_key_and_missing_mo
 }
 
 #[test]
+fn managed_cloud_refuses_incompatible_bridge_before_account_requests() {
+    let required = [
+        "agent.create",
+        "agent.send",
+        "run.cancel",
+        "agent.management",
+        "cursor.catalog",
+    ];
+    let base = json!({"bridgeVersion":"1.0.0", "protocolVersion":"sdk.v1"});
+    let mut cases = vec![base.clone()];
+    for malformed in [json!(null), json!("agent.create"), json!([true])] {
+        let mut version = base.clone();
+        version["capabilities"] = malformed;
+        cases.push(version);
+    }
+    let mut malformed = base.clone();
+    let mut mixed = json!(required);
+    mixed.as_array_mut().unwrap().push(json!(5));
+    malformed["capabilities"] = mixed;
+    cases.push(malformed);
+    for missing in required {
+        let mut version = base.clone();
+        version["capabilities"] = json!(
+            required
+                .iter()
+                .filter(|flag| **flag != missing)
+                .collect::<Vec<_>>()
+        );
+        cases.push(version);
+    }
+    for field in ["bridgeVersion", "protocolVersion"] {
+        let mut version = base.clone();
+        version["capabilities"] = json!(required);
+        version[field] = json!("unsupported");
+        cases.push(version);
+    }
+    for version in cases {
+        let fixture = Fixture::new("composer-2.5", true, true, false);
+        let path = fixture.live.root.path().join("bridge.json");
+        let mut config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        config["version_response"] = version.clone();
+        fs::write(path, config.to_string()).unwrap();
+        let session = fixture.launch();
+        fixture.until(|| {
+            let text = fixture.text(&session);
+            text.contains("Cursor cloud validation failed") || text.contains("validated preview")
+        });
+        assert!(
+            fixture
+                .text(&session)
+                .contains("Cursor cloud validation failed"),
+            "incompatible bridge accepted: {version}"
+        );
+        assert!(!fixture.text(&session).contains("validated preview"));
+        let events = fixture.events();
+        let methods = events
+            .iter()
+            .filter_map(|event| event["method"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            methods,
+            ["GetVersion"],
+            "must refuse before credentialed/catalog or agent operations: {version}"
+        );
+        fixture.no_mutations();
+    }
+}
+
+#[test]
+fn managed_cloud_accepts_unknown_additional_bridge_capabilities() {
+    let fixture = Fixture::new("composer-2.5", true, true, false);
+    let path = fixture.live.root.path().join("bridge.json");
+    let mut config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    config["version_response"] = json!({"bridgeVersion":"1.0.0", "protocolVersion":"sdk.v1",
+        "capabilities":["future.unrecognized", "cursor.catalog", "agent.management", "run.cancel", "agent.send", "agent.create"]});
+    fs::write(path, config.to_string()).unwrap();
+    let session = fixture.launch();
+    fixture.until(|| {
+        fixture
+            .text(&session)
+            .contains("Press Enter to close preview.")
+    });
+    assert!(
+        fixture
+            .text(&session)
+            .contains("Cursor cloud validated preview")
+    );
+    assert!(
+        fixture
+            .text(&session)
+            .contains("Terminal responses, Retry and active reattachment remain blocked")
+    );
+    fixture.no_mutations();
+}
+
+#[test]
 fn ordinary_cloud_agent_missing_selected_credential_starts_no_bridge() {
     let fixture = Fixture::new("composer-2.5", true, true, false);
     let mut config: Value = serde_json::from_slice(&fs::read(&fixture.config).unwrap()).unwrap();

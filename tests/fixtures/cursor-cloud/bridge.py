@@ -50,7 +50,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if config.get('reject_credential') and method == 'Me':
             self.send_error(401)
             return
-        values = {'GetVersion': {'bridgeVersion': '1.0.0', 'protocolVersion': 'sdk.v1'},
+        values = {'GetVersion': config.get('version_response', {'bridgeVersion': '1.0.0', 'protocolVersion': 'sdk.v1', 'capabilities': ['agent.create', 'agent.resume', 'agent.send', 'run.observe', 'run.wait', 'run.cancel', 'agent.management', 'cursor.catalog', 'artifacts.chunked', 'agent.usage']}),
                   'Me': {'user': {'userId': '123'}},
                   'ListModels': {'items': [{'id': config.get('model', 'composer-2.5')}]},
                   'ListRepositories': {'items': [{'url': config.get('repository', 'https://github.com/acme/app')}]}}

@@ -92,7 +92,11 @@ Rust uses explicit JSON translation against those definitions; there is no
 protobuf generation step or generated client to claim verified. Managed launch
 rechecks the actual archive before private extraction and requires runtime bridge
 1.0.0/protocol sdk.v1, independently of passive doctor results. It preserves
-strict discovery identity and fail-closed capability handling.
+strict discovery identity and requires advertised `agent.create`, `agent.send`,
+`run.cancel`, `agent.management` and `cursor.catalog` before account/catalog
+requests or agent operations. Missing/malformed capability lists refuse launch;
+unknown additional strings are forward compatible. Advertisements are protocol
+negotiation, not behavioral proof of terminal responses, retry or active recovery.
 The client uses authenticated Connect unary requests over loopback HTTP/1.1,
 with redirects/proxy discovery disabled and bounded responses. Only GetVersion,
 Me, ListModels and ListRepositories are used for validation; explicit `prepare`

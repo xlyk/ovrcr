@@ -565,6 +565,24 @@ pub fn preview(
         version["bridgeVersion"] == "1.0.0" && version["protocolVersion"] == "sdk.v1",
         "bridge runtime version mismatch"
     );
+    let capabilities = version["capabilities"]
+        .as_array()
+        .context("bridge runtime capabilities missing or malformed")?;
+    ensure!(
+        capabilities.iter().all(Value::is_string)
+            && [
+                "agent.create",
+                "agent.send",
+                "run.cancel",
+                "agent.management",
+                "cursor.catalog"
+            ]
+            .iter()
+            .all(|required| capabilities
+                .iter()
+                .any(|value| value.as_str() == Some(required))),
+        "bridge runtime capabilities missing or malformed"
+    );
     let options = json!({"options":{"apiKey":key}});
     let user = catalog.rpc("SdkCursorService", "Me", &options)?;
     ensure!(
