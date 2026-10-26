@@ -484,6 +484,15 @@ fn agent_hook_cli_timeout_is_bounded() {
 #[test]
 fn agent_hook_cli_deadline_spans_stdin_and_dripped_response() {
     let root = tempfile::tempdir().unwrap();
+    // Cargo re-links `ovrcr` into `target/debug` on every test invocation, and macOS spends
+    // several hundred milliseconds validating a freshly written ad-hoc-signed binary on its first
+    // exec. Pay that once here so the timing below measures the helper, not the loader.
+    run_cli_bounded({
+        let mut warm = isolated_command(&root);
+        warm.arg("--version");
+        warm
+    })
+    .unwrap();
     let socket = root.path().join("drip.sock");
     let listener = UnixListener::bind(&socket).unwrap();
     listener.set_nonblocking(true).unwrap();
@@ -517,15 +526,6 @@ fn agent_hook_cli_deadline_spans_stdin_and_dripped_response() {
         }
     });
 
-    // Cargo re-links `ovrcr` into `target/debug` on every test invocation, and macOS spends
-    // several hundred milliseconds validating a freshly written ad-hoc-signed binary on its first
-    // exec. Pay that once here so the timing below measures the helper, not the loader.
-    run_cli_bounded({
-        let mut warm = isolated_command(&root);
-        warm.arg("--version");
-        warm
-    })
-    .unwrap();
     let mut command = isolated_command(&root);
     command
         .args(["report", "claude", "--stdin-json"])
