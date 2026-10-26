@@ -387,6 +387,10 @@ pub enum Request {
         view_revision: u64,
         bytes: Vec<u8>,
     },
+    CancelCloudCreation {
+        session: SessionId,
+        expected_run: SessionRunId,
+    },
     DiscardCloudCreation {
         session: SessionId,
         expected_run: SessionRunId,
@@ -933,6 +937,13 @@ mod wire_snapshot {
                     session: SessionId(1),
                     expected_run: SessionRunId(4),
                     acknowledge_stopped: false,
+                },
+            ),
+            (
+                "CancelCloudCreation",
+                Request::CancelCloudCreation {
+                    session: SessionId(1),
+                    expected_run: SessionRunId(4),
                 },
             ),
             (
@@ -3102,7 +3113,8 @@ mod wire_snapshot {
         ("Request::SetSessionTitle", "200101057469746c65"),
         ("Request::ResetSessionTitle", "200100"),
         ("Request::ReopenSession", "21010400"),
-        ("Request::DiscardCloudCreation", "370104"),
+        ("Request::CancelCloudCreation", "370104"),
+        ("Request::DiscardCloudCreation", "380104"),
         ("Request::UnarchiveSession", "230104"),
         ("Request::DeleteArchivedSession", "220104"),
         ("Request::RecoverSession", "250104"),
@@ -3117,13 +3129,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a043e017301630168016c0104",
+            "2a043f017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f043e017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f043f017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -3154,18 +3166,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d043e0000"),
+        ("Response::NotificationNavigation", "0d043f0000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e043e017301630168016c0104",
+            "0e01016e043f017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f010708090101690101043e017301630168016c0164",
+            "0f010708090101690101043f017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "10043e010708090101690101043e017301630168016c0164",
+            "10043f010708090101690101043f017301630168016c0164",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -3189,7 +3201,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e043e017301630168016c0104",
+            "08016e043f017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -3284,11 +3296,23 @@ mod wire_snapshot {
         ),
         (
             "AgentRequest::15",
-            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e08014061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e08044061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161",
         ),
         (
             "AgentRequest::16",
-            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e08024061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161096167656e742d3337330c636f6d706f7365722d322e35",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e08054061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161096167656e742d3337330c636f6d706f7365722d322e35",
+        ),
+        (
+            "AgentRequest::17",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e0801",
+        ),
+        (
+            "AgentRequest::18",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e08024061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161096167656e742d3337350772756e2d333735",
+        ),
+        (
+            "AgentRequest::19",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e08034061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161096167656e742d3337350772756e2d333735",
         ),
         (
             "AgentResponse::0",

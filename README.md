@@ -105,3 +105,8 @@ cargo test -p ovrcr
 ## License
 
 OVRCR is licensed under the MIT License. See [`LICENSE`](LICENSE).
+
+Cursor cloud live terminals accept `/cancel` for durable exact-run cancellation
+intent. `ovrcr terminal cloud-cancel ID` closes local delivery; `cloud-discard ID`
+separately retires saved private content. RPC acknowledgement is not proof that
+remote work stopped; see [cloud controls](docs/cursor-cloud.md#cancel-and-discard).

@@ -642,6 +642,12 @@ impl ServerState {
         Ok(())
     }
 
+    pub fn cancel_cloud_creation(&self, id: SessionId, expected: SessionRunId) -> Result<()> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        self.retained.lock().cancel_creation(id, expected)
+    }
+
     pub fn discard_cloud_creation(&self, id: SessionId, expected: SessionRunId) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;

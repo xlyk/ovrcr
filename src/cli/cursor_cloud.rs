@@ -36,7 +36,7 @@ pub(super) fn setup(document: Option<&Path>) -> AppResult<()> {
     println!(
         "{}",
         serde_json::json!({"provider":"cursor-cloud", "platform_available":cfg!(target_os="macos"), "accounts":accounts,
-        "guidance":"macOS only. Configure named Keychain references, explicit model and repository/owner policy in dashboard.toml. Choose cursor-cloud:ACCOUNT in ordinary Agent creation. Preview validates origin and published HEAD; local edits are excluded. Profiles select credentials, not attested billing identities. Type prepare in the validated preview to retain a local SDK handle. Send prompts on the retained conversation; terminal responses, Retry and active reattachment remain blocked."})
+        "guidance":"macOS only. Configure named Keychain references, explicit model and repository/owner policy in dashboard.toml. Choose cursor-cloud:ACCOUNT in ordinary Agent creation. Preview validates origin and published HEAD; local edits are excluded. Profiles select credentials, not attested billing identities. Type prepare in the validated preview to retain a local SDK handle. Send prompts on the retained conversation; /cancel persists cancellation intent before exact live CancelRun, cloud-discard separately removes saved content. Remote work may continue; terminal responses, Retry and active reattachment remain blocked."})
     );
     Ok(())
 }

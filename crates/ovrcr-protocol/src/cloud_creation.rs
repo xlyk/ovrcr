@@ -110,6 +110,20 @@ pub enum CloudRunStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CloudCreationCommand {
     Prepare(CloudCreationIntent),
+    /// Explicit local cancellation intent; closes all later delivery.
+    Cancel,
+    /// Read-only intent check for the exact original live attachment.
+    CheckCancel {
+        key: String,
+        agent_id: String,
+        run_id: String,
+    },
+    /// One live-attachment attempt, only after the exact original run is durable.
+    ClaimCancel {
+        key: String,
+        agent_id: String,
+        run_id: String,
+    },
     Claim {
         key: String,
     },

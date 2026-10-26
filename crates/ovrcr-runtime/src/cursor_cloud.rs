@@ -338,6 +338,7 @@ impl Bridge {
         }
     }
 }
+#[derive(Clone)]
 struct Catalog {
     agent: ureq::Agent,
     endpoint: String,
@@ -354,7 +355,7 @@ impl Catalog {
                     | ("SdkCursorService", "Me" | "ListModels" | "ListRepositories")
                     | (
                         "SdkAgentService",
-                        "CreateAgent" | "GetAgent" | "GetRun" | "ListArtifacts"
+                        "CreateAgent" | "GetAgent" | "GetRun" | "ListArtifacts" | "CancelRun"
                     )
             ),
             "preview RPC unavailable"
@@ -405,11 +406,34 @@ fn creation_boundary(fixture: Option<&Value>, boundary: &str) -> Result<()> {
     Ok(())
 }
 
+/// The live stdin seam keeps incomplete UTF-8/lines private until newline or EOF.
+fn read_input(reader: &mut impl Read, pending: &mut Vec<u8>) -> Result<(Vec<String>, bool)> {
+    let mut bytes = [0; 4096];
+    let count = reader.read(&mut bytes)?;
+    let mut lines = Vec::new();
+    for byte in &bytes[..count] {
+        pending.push(*byte);
+        ensure!(
+            pending.len() <= 32768,
+            "Prompt exceeds 32768 bytes; not submitted"
+        );
+        if *byte == b'\n' {
+            lines.push(String::from_utf8(std::mem::take(pending)).context("input UTF-8 invalid")?);
+        }
+    }
+    if count == 0 && !pending.is_empty() {
+        lines.push(String::from_utf8(std::mem::take(pending)).context("input UTF-8 invalid")?);
+    }
+    Ok((lines, count == 0))
+}
+
 pub fn preview(
     profile: &CursorCloudAccount,
     workspace: &Path,
-    mut admit: impl FnMut(&ovrcr_protocol::CloudCreationCommand) -> Result<()>,
+    admit: impl Fn(&ovrcr_protocol::CloudCreationCommand) -> Result<()> + Send + Sync + 'static,
 ) -> Result<()> {
+    let admit = std::sync::Arc::new(admit);
+    let mut submit = |command: &ovrcr_protocol::CloudCreationCommand| admit(command);
     let fixture = fixture()?;
     let budget = fixture
         .as_ref()
@@ -580,14 +604,97 @@ pub fn preview(
             rejected: None,
         }));
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let control = std::sync::Arc::new(run::Control::default());
+        let reader_control = control.clone();
+        let control_admit = admit.clone();
+        let control_catalog = catalog.clone();
+        let control_agent = receipt.agent_id.clone();
         let reader_state = input_state.clone();
         std::thread::spawn(move || {
-            let mut stdin = std::io::stdin().lock();
+            use std::os::fd::FromRawFd;
+            let fd = unsafe { libc::dup(libc::STDIN_FILENO) };
+            if fd < 0 {
+                return;
+            }
+            let mut stdin = unsafe { File::from_raw_fd(fd) };
+            let mut pending = Vec::new();
+            let mut lines = std::collections::VecDeque::new();
+            let mut check_at = Instant::now();
+            let mut eof = false;
             loop {
-                let mut line = String::new();
-                match stdin.by_ref().take(32770).read_line(&mut line) {
-                    Ok(0) | Err(_) => break,
-                    _ => {}
+                if Instant::now() >= check_at {
+                    let target = reader_control.target.lock().unwrap().clone();
+                    if let Some((send, run)) = target {
+                        run::cancel(
+                            &control_catalog,
+                            &control_agent,
+                            &send,
+                            &run,
+                            &mut |c| control_admit(c),
+                            &reader_control,
+                        );
+                    }
+                    check_at = Instant::now() + Duration::from_secs(1);
+                }
+                let Some(line) = lines.pop_front() else {
+                    if eof {
+                        break;
+                    }
+                    let mut poll = libc::pollfd {
+                        fd,
+                        events: libc::POLLIN,
+                        revents: 0,
+                    };
+                    let ready = unsafe { libc::poll(&mut poll, 1, 100) };
+                    if ready == 0 {
+                        continue;
+                    }
+                    if ready < 0 {
+                        if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+                        {
+                            continue;
+                        }
+                        break;
+                    }
+                    match read_input(&mut stdin, &mut pending) {
+                        Ok((batch, closed)) => {
+                            lines.extend(batch);
+                            eof = closed;
+                        }
+                        Err(error) => {
+                            println!("{error}; Input closed.");
+                            break;
+                        }
+                    }
+                    continue;
+                };
+                if line.trim() == "/cancel" {
+                    match control_admit(&CloudCreationCommand::Cancel) {
+                        Ok(()) => {
+                            println!(
+                                "Cancellation intent durably retained; delivery closed. Remote cancellation unconfirmed; unresolved content retained until Discard."
+                            );
+                            let target = reader_control.target.lock().unwrap().clone();
+                            if let Some((send, run)) = target {
+                                run::cancel(
+                                    &control_catalog,
+                                    &control_agent,
+                                    &send,
+                                    &run,
+                                    &mut |c| control_admit(c),
+                                    &reader_control,
+                                );
+                            } else {
+                                println!(
+                                    "Local delivery stopped before dispatch if no attempt was claimed; any original in-flight attempt remains uncertain."
+                                );
+                            }
+                        }
+                        Err(error) => println!(
+                            "Cancellation not durably acknowledged: {error}; remote cancellation not attempted."
+                        ),
+                    }
+                    continue;
                 }
                 let mut state = reader_state.lock().unwrap();
                 if line.len() > 32768 {
@@ -634,11 +741,11 @@ pub fn preview(
             match run::send(
                 &mut catalog,
                 &intent,
-                (&receipt.agent_id, &key),
+                (&receipt.agent_id, &key, &control),
                 prompt,
                 !source_verified,
                 fixture.as_ref(),
-                &mut admit,
+                &mut submit,
             ) {
                 Ok(verified) => source_verified |= verified,
                 Err(error) => {
@@ -663,4 +770,55 @@ pub fn preview(
     }
     drop(bridge);
     Ok(())
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+    use std::io::Write;
+    #[test]
+    fn bounded_live_reader_preserves_split_utf8_partial_lines_multiple_lines_and_eof() {
+        let (mut writer, mut reader) = std::os::unix::net::UnixStream::pair().unwrap();
+        let mut pending = Vec::new();
+        writer.write_all(b"partial \xce").unwrap();
+        assert_eq!(
+            read_input(&mut reader, &mut pending).unwrap(),
+            (vec![], false)
+        );
+        writer
+            .write_all("λ τελικό\nnext\n".as_bytes().split_at(1).1)
+            .unwrap();
+        assert_eq!(
+            read_input(&mut reader, &mut pending).unwrap(),
+            (
+                vec!["partial λ τελικό\n".to_owned(), "next\n".to_owned()],
+                false
+            )
+        );
+        writer.write_all(b"tail").unwrap();
+        assert_eq!(
+            read_input(&mut reader, &mut pending).unwrap(),
+            (vec![], false)
+        );
+        drop(writer);
+        assert_eq!(
+            read_input(&mut reader, &mut pending).unwrap(),
+            (vec!["tail".to_owned()], true)
+        );
+        assert_eq!(
+            read_input(&mut reader, &mut pending).unwrap(),
+            (vec![], true)
+        );
+        let mut oversized = std::io::Cursor::new(vec![b'x'; 32769]);
+        let mut pending = Vec::new();
+        for _ in 0..8 {
+            assert!(
+                read_input(&mut oversized, &mut pending)
+                    .unwrap()
+                    .0
+                    .is_empty()
+            );
+        }
+        assert!(read_input(&mut oversized, &mut pending).is_err());
+    }
 }

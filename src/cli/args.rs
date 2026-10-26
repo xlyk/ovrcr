@@ -270,6 +270,10 @@ pub(super) enum WorkspaceCommand {
 
 #[derive(Subcommand)]
 pub(super) enum TerminalCommand {
+    /// Persist cloud cancellation intent and close further delivery; remote cancellation remains unconfirmed.
+    CloudCancel {
+        id: u64,
+    },
     /// Discard retained cloud creation locally; remote effects may remain unknown.
     CloudDiscard {
         id: u64,

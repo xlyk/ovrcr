@@ -1,4 +1,4 @@
-# Cursor cloud prompts and verified results
+# Cursor cloud prompts, cancellation and results
 
 On macOS, ordinary **Agent** creation lists `cursor-cloud:ACCOUNT` for each valid
 named account in `dashboard.toml`. Local `cursor-agent` remains separate.
@@ -75,7 +75,7 @@ key in a separate environment without OVRCR reporting or delegation credentials.
 ## Retention and local controls
 
 The existing Server/SessionStore owns creation, using the same SQLite connection
-as retained Sessions. Schema 22 retains the original Session/run, invocation,
+as retained Sessions. Schema 23 retains the original Session/run, invocation,
 Server lifetime, selected account/profile, credential generation, canonical source,
 model/options, immutable CreateAgent key, dispatch claim and exact receipt. A
 confined `cloud-creations/` directory in the selected instance stores the original
@@ -112,6 +112,46 @@ late exact receipt may enrich the existing closed operation, without reopening
 it. Missing rows and stale owners cannot be recreated by a receipt. Once the
 owned bridge exits, restoring the same pre-Send handle is unavailable on this
 pin, so recovery fails closed. No automatic Retry is implemented.
+
+## Cancel and Discard
+
+Type `/cancel` in the live terminal, including while a Send is busy. The Server
+commits cancellation intent and closes further delivery before acknowledging it.
+An unclaimed request cannot dispatch; a claimed request without its original run
+ID remains possibly sent and remote cancellation unconfirmed. No CreateAgent,
+Send, ListRuns or newest-run selection is used to discover a cancellation target.
+Cancel alone keeps unresolved private request content.
+
+For the exact known run, a separate durable claim admits at most one CancelRun
+on that original live bridge. If the original in-flight Send supplies the missing
+run ID later, that identity commits before the live attachment completes the
+already requested cancellation. An RPC acknowledgement means **requested**.
+Only an independent credentialed exact GetRun confirms Cancelled, Finished or
+Error; the bridge's cached cancelled status is not remote termination proof.
+A completion that wins the race is shown accurately. Delivery remains closed.
+A failed intent/claim write permits no cancellation RPC and reports no durable
+success for the failed boundary. There is no automatic cancellation retry.
+
+`ovrcr terminal cloud-cancel ID` persists the same intent/closure for prepared,
+uncertain or detached rows. Its success acknowledges local durable intent only;
+the original live adapter checks this typed intent at most once per second and
+services its exact retained target, including after stream loss. Partial terminal
+input stays buffered; no terminal commands are injected. A failed admitted claim
+is not automatically retried. A detached bridge sends no CancelRun. Saved intent survives
+restart. Display/recovery never sends CancelRun automatically; explicit Retry
+Cancel requires the separate supported recovery path. This slice adds no fresh
+bridge cancellation, ResumeAgent or option mutation.
+
+`ovrcr terminal cloud-discard ID` durably closes delivery and marks private content
+for retirement before deleting canonical files and owned temporary aliases. A
+cleanup failure reports an error; startup retries retirement from the durable
+record. Discard never calls CancelRun and cannot undo an already claimed remote
+attempt. Late exact receipts can enrich the original closed record without
+restoring payloads, dispatch permission or a deleted row. Archive preserves
+unresolved content; deleting the local row requires Discard first. Closing a pane
+is a display action. Closing the session ends local control and archives its row;
+remote work and charges can continue. Local file deletion does not erase backups
+or snapshots.
 
 ## Isolated acceptance
 
@@ -175,3 +215,8 @@ within 30 seconds. bridge.json `drop_send_reply` accepts then loses the reply;
 bad_success, missing_done, wrong_repository and wrong_snapshot. Tests use a
 private Git-backed gh executable to exercise the same production link verifier
 without network or real credentials; fixture evidence does not prove live GitHub.
+
+Cancellation fixtures additionally support bridge.json `pause_after_identity` with
+an absolute marker path and its `.release` sibling, `cancel_outcome` for the cached
+stream status, and `cancel_snapshot_outcome` for independent exact GetRun status.
+These simulate races only and do not attest real upstream behavior.
