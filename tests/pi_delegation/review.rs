@@ -6,6 +6,17 @@ fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+// Directory::write scratch is exactly .<64 lower hex>; published review files remain visible.
+fn publication_name(name: &std::ffi::OsStr) -> bool {
+    !name.to_str().is_some_and(|name| {
+        name.len() == 65
+            && name.starts_with('.')
+            && name.as_bytes()[1..]
+                .iter()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+    })
+}
+
 fn publication_snapshot(
     fixture: &RecoveryFixture,
     snapshot: &AssignmentSnapshot,
@@ -2574,17 +2585,6 @@ fn public_review_necessary_line_beyond_installed_read_limit_blocks_without_trunc
         context_paths: vec!["necessary-long-line".into()],
     };
     let candidate = fs::read(&assignment.target.coding.candidate.path).unwrap();
-    // Directory::write uses exactly .<64 lower hex> while atomically replacing
-    // observation checkpoints. Its concurrent scratch lifetime is not a publication.
-    let publication_name = |name: &std::ffi::OsStr| {
-        !name.to_str().is_some_and(|name| {
-            name.len() == 65
-                && name.starts_with('.')
-                && name.as_bytes()[1..]
-                    .iter()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
-        })
-    };
     assert!(!publication_name(std::ffi::OsStr::new(&format!(
         ".{}",
         "a0".repeat(32)
@@ -2987,6 +2987,7 @@ fn public_review_retired_authority_after_view_preparation_publishes_no_files_or_
             let mut names: Vec<_> = fs::read_dir(implementation_root)
                 .unwrap()
                 .map(|entry| entry.unwrap().file_name())
+                .filter(|name| publication_name(name))
                 .collect();
             names.sort();
             names
