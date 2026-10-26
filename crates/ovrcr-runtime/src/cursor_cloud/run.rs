@@ -419,7 +419,7 @@ pub(super) fn send(
                             false
                         }
                     } else {
-                        !send_seen.insert(serde_json::to_vec(&envelope)?)
+                        !send_seen.insert(Sha256::digest(serde_json::to_vec(&envelope)?))
                     };
                     if !duplicate {
                         applied(&envelope, &mut run, admit)?;
