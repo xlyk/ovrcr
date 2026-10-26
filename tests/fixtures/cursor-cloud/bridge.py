@@ -43,7 +43,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         method = self.path.rsplit('/', 1)[-1]
         raw = self.rfile.read(int(self.headers['Content-Length']))
         body = json.loads(raw[5:] if method == 'Send' else raw)
-        event({'event': 'rpc', 'method': method})
+        event({'event': 'rpc', 'method': method, **({'agent':body.get('agentId'),'run':body.get('runId')} if method == 'CancelRun' else {})})
         if self.headers.get('Authorization') != 'Bearer fixture_bridge_bearer_0123456789':
             self.send_error(401)
             return
@@ -88,13 +88,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     time.sleep(0.01)
             def sdk(kind, **fields):
                 return {'sdkMessage': {'type':kind, 'message':dict(agent_id='fixture-agent-373', run_id=run, **fields)}}
-            probe = dict(name='run_terminal_cmd',call_id='source-probe',args={'command':'git rev-parse HEAD'})
+            if config.get('pause_after_identity'):
+                first = json.dumps(sdk('thinking',text='')).encode()
+                self.send_response(200)
+                self.send_header('Content-Type','application/connect+json')
+                self.end_headers()
+                self.wfile.write(struct.pack('>BI',0,len(first))+first)
+                self.wfile.flush()
+                marker = Path(config['pause_after_identity'])
+                marker.write_text(run)
+                until = time.monotonic() + 30
+                while not marker.with_suffix('.release').exists():
+                    assert time.monotonic() < until
+                    time.sleep(0.01)
+            probe = dict(name='run_terminal_cmd' ,call_id='source-probe',args={'command':'git rev-parse HEAD'})
             result = {'agentId':'fixture-agent-373','runId':run,'status':'RUN_LIFECYCLE_STATUS_FINISHED','model':{'id':'composer-2.5'},'result':'Fixture inspection complete.'}
+            if run in self.server.cancelled:
+                result['status'] = config.get('cancel_outcome','RUN_LIFECYCLE_STATUS_CANCELLED')
             self.server.results[run] = result
             events = [sdk('thinking',text=''), sdk('tool_call',name='run_terminal_cmd',call_id='source-probe',status='running'),
                 sdk('tool_call',**probe,status='completed',result={'success':{'command':'git rev-parse HEAD','stdout':self.server.source_sha+'\n','interleavedOutput':self.server.source_sha+'\n'},'isBackground':False}),
                 sdk('assistant',message={'content':[{'type':'text','text':'Inspecting selected source.\n'}]}),
-                {'result':dict(agentId='fixture-agent-373',runId=run,status='RUN_LIFECYCLE_STATUS_FINISHED',result=result)},
+                {'result':dict(agentId='fixture-agent-373',runId=run,status=result['status'],result=result)},
                 {'done':{'agentId':'fixture-agent-373','runId':run}}]
             scenario = config.get('send_scenario')
             if scenario == 'cross_run': events[1]['sdkMessage']['message']['run_id'] = 'foreign-run'
@@ -117,12 +132,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 result['git'] = {'branches':[{'repoUrl':'https://github.com/acme/app','branch':'fixture-result','prUrl':'https://github.com/acme/app/pull/17' if config.get('result_pr') else ''}]}
             encoded = b''.join(struct.pack('>BI',0,len(item))+item for item in [json.dumps(v).encode() for v in events])
             encoded += struct.pack('>BI',2,2)+b'{}'
-            self.send_response(200)
-            self.send_header('Content-Type','application/connect+json')
-            self.send_header('Content-Length',str(len(encoded)))
-            self.end_headers()
+            if not config.get('pause_after_identity'):
+                self.send_response(200)
+                self.send_header('Content-Type','application/connect+json')
+                self.send_header('Content-Length',str(len(encoded)))
+                self.end_headers()
             self.wfile.write(encoded)
             return
+        if method == 'CancelRun':
+            assert body == {'agentId':'fixture-agent-373','runId':body['runId']} and body['runId'] in self.server.run_ids
+            self.server.cancelled.add(body['runId'])
+            values[method] = {}
         if method == 'GetAgent':
             assert body == {'agentId':'fixture-agent-373','options':{'apiKey':'ovrcr-fixture-not-a-credential'}}
             repo = 'https://github.com/other/app' if config.get('send_scenario') == 'wrong_repository' else 'https://github.com/acme/app'
@@ -131,11 +151,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             assert body['options'] == {'runtime':'RUNTIME_CLOUD','agentId':'fixture-agent-373','apiKey':'ovrcr-fixture-not-a-credential'}
             assert body['runId'] in self.server.run_ids
             values[method] = {'run':self.server.results[body['runId']]}
+            if config.get('cancel_snapshot_outcome') and body['runId'] in self.server.cancelled:
+                values[method]['run'] = dict(values[method]['run'],status=config['cancel_snapshot_outcome'])
             if config.get('send_scenario') == 'wrong_snapshot': values[method]['run'] = dict(values[method]['run'],runId='foreign-run')
         if method not in values:
             self.send_error(405)
             return
-        if method not in ['GetVersion', 'CreateAgent', 'GetAgent', 'GetRun'] and body != {'options': {'apiKey': 'ovrcr-fixture-not-a-credential'}}:
+        if method not in ['GetVersion', 'CreateAgent', 'GetAgent', 'GetRun', 'CancelRun'] and body != {'options': {'apiKey': 'ovrcr-fixture-not-a-credential'}}:
             self.send_error(401)
             return
         encoded = json.dumps(values[method]).encode()
@@ -150,6 +172,7 @@ server.send_keys = set()
 server.sends = 0
 server.run_ids = set()
 server.results = {}
+server.cancelled = set()
 port = server.server_port
 print('cursor-sdk-bridge ready ' + json.dumps({'schemaVersion': 1, 'serverVersion': '1.0.0', 'pid': os.getpid(),
     'transport': 'tcp', 'protocol': 'connect', 'host': '127.0.0.1', 'port': port,

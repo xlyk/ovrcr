@@ -156,3 +156,11 @@ accepted pending-submission exception permits immutable request bytes only in
 confined owner-only plaintext files, readable by same-user programs and backups;
 credentials stay outside them. Creation payload retirement follows durable exact
 identity/receipt; Send payload retirement requires its exact durable run ID.
+
+Cloud Cancel uses the same serialized operation row. Intent and delivery closure
+commit together; a separate exact-run live cancellation claim commits before RPC.
+Original delayed run receipts remain admissible after cancellation, then may
+complete that live intent. Cancellation acknowledgement never proves terminal
+state; only independent credentialed exact GetRun supplies the outcome. Discard
+retires canonical private files and owned aliases after durable closure, with
+startup cleanup retry. Restart never issues CancelRun automatically.

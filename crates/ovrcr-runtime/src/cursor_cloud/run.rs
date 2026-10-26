@@ -5,6 +5,11 @@ use ovrcr_protocol::{
 };
 use std::collections::HashSet;
 
+#[derive(Default)]
+pub(super) struct Control {
+    pub target: std::sync::Mutex<Option<(String, String)>>,
+    attempted: std::sync::atomic::AtomicBool,
+}
 const SOURCE_PROBE: &str = "git rev-parse HEAD";
 const TYPES: &[&str] = &[
     "system",
@@ -190,6 +195,7 @@ pub(super) fn send(
     source_required: bool,
     fixture: Option<&Value>,
     admit: &mut impl FnMut(&C) -> Result<()>,
+    control: &Control,
 ) -> Result<bool> {
     let (agent, key) = binding;
     let intent = CloudSendIntent {
@@ -261,6 +267,8 @@ pub(super) fn send(
                     run_id: id.into(),
                 })?;
                 run = Some(id.into());
+                *control.target.lock().unwrap() = Some((intent.key.clone(), id.into()));
+                cancel(catalog, agent, &intent.key, id, admit, control);
                 send_boundary(fixture, "after_ack")?;
                 let info = catalog.rpc(
                     "SdkAgentService",
@@ -331,7 +339,7 @@ pub(super) fn send(
             .context("Send unresolved; original reply lost; do not retry")?;
         let result = result.context("terminal result missing")?;
         ensure!(done, "done receipt missing");
-        let status = terminal(&result["status"])?;
+        let streamed_status = terminal(&result["status"])?;
         let snapshot = catalog.rpc(
             "SdkAgentService",
             "GetRun",
@@ -340,14 +348,18 @@ pub(super) fn send(
         identity(&snapshot["run"], agent, &id)?;
         terminal_status_model(&snapshot["run"], &creation.account.model)?;
         ensure!(
-            snapshot["run"]["status"] == result["status"],
+            control.attempted.load(std::sync::atomic::Ordering::Acquire)
+                || snapshot["run"]["status"] == result["status"],
             "independent exact-run status mismatch"
         );
+        let status = terminal(&snapshot["run"]["status"])?;
+        let _ = streamed_status;
         if status == CloudRunStatus::Finished {
             ensure!(source, "source tool proof missing; result unverified");
         }
         Ok((id, status, snapshot["run"].clone()))
     }();
+    *control.target.lock().unwrap() = None;
     match qualify {
         Ok((id, status, snapshot)) => {
             if let Err(error) = admit(&C::CompleteSend {
@@ -498,4 +510,39 @@ fn show_links(catalog: &Catalog, creation: &CloudCreationIntent, snapshot: &Valu
         }
     }
     Ok(())
+}
+
+/// A live original attachment may finish an explicit intent; failed claims permit no RPC.
+pub(super) fn cancel(
+    catalog: &Catalog,
+    agent: &str,
+    key: &str,
+    run: &str,
+    admit: &mut impl FnMut(&C) -> Result<()>,
+    control: &Control,
+) {
+    if admit(&C::ClaimCancel {
+        key: key.into(),
+        agent_id: agent.into(),
+        run_id: run.into(),
+    })
+    .is_err()
+    {
+        return;
+    }
+    control
+        .attempted
+        .store(true, std::sync::atomic::Ordering::Release);
+    let mut catalog = catalog.clone();
+    catalog.deadline = Instant::now() + Duration::from_secs(30);
+    match catalog.rpc(
+        "SdkAgentService",
+        "CancelRun",
+        &json!({"agentId":agent,"runId":run}),
+    ) {
+        Ok(value) if value == json!({}) => println!(
+            "Cancellation requested for exact run {run}; authoritative terminal outcome still required."
+        ),
+        _ => println!("Remote cancellation unconfirmed for exact run {run}; no automatic retry."),
+    }
 }

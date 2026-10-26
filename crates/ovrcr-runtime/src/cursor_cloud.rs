@@ -338,6 +338,7 @@ impl Bridge {
         }
     }
 }
+#[derive(Clone)]
 struct Catalog {
     agent: ureq::Agent,
     endpoint: String,
@@ -354,7 +355,7 @@ impl Catalog {
                     | ("SdkCursorService", "Me" | "ListModels" | "ListRepositories")
                     | (
                         "SdkAgentService",
-                        "CreateAgent" | "GetAgent" | "GetRun" | "ListArtifacts"
+                        "CreateAgent" | "GetAgent" | "GetRun" | "ListArtifacts" | "CancelRun"
                     )
             ),
             "preview RPC unavailable"
@@ -408,8 +409,10 @@ fn creation_boundary(fixture: Option<&Value>, boundary: &str) -> Result<()> {
 pub fn preview(
     profile: &CursorCloudAccount,
     workspace: &Path,
-    mut admit: impl FnMut(&ovrcr_protocol::CloudCreationCommand) -> Result<()>,
+    admit: impl Fn(&ovrcr_protocol::CloudCreationCommand) -> Result<()> + Send + Sync + 'static,
 ) -> Result<()> {
+    let admit = std::sync::Arc::new(admit);
+    let mut submit = |command: &ovrcr_protocol::CloudCreationCommand| admit(command);
     let fixture = fixture()?;
     let budget = fixture
         .as_ref()
@@ -580,6 +583,11 @@ pub fn preview(
             rejected: None,
         }));
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let control = std::sync::Arc::new(run::Control::default());
+        let reader_control = control.clone();
+        let control_admit = admit.clone();
+        let control_catalog = catalog.clone();
+        let control_agent = receipt.agent_id.clone();
         let reader_state = input_state.clone();
         std::thread::spawn(move || {
             let mut stdin = std::io::stdin().lock();
@@ -588,6 +596,34 @@ pub fn preview(
                 match stdin.by_ref().take(32770).read_line(&mut line) {
                     Ok(0) | Err(_) => break,
                     _ => {}
+                }
+                if line.trim() == "/cancel" {
+                    match control_admit(&CloudCreationCommand::Cancel) {
+                        Ok(()) => {
+                            println!(
+                                "Cancellation intent durably retained; delivery closed. Remote cancellation unconfirmed; unresolved content retained until Discard."
+                            );
+                            let target = reader_control.target.lock().unwrap().clone();
+                            if let Some((send, run)) = target {
+                                run::cancel(
+                                    &control_catalog,
+                                    &control_agent,
+                                    &send,
+                                    &run,
+                                    &mut |c| control_admit(c),
+                                    &reader_control,
+                                );
+                            } else {
+                                println!(
+                                    "Local delivery stopped before dispatch if no attempt was claimed; any original in-flight attempt remains uncertain."
+                                );
+                            }
+                        }
+                        Err(error) => println!(
+                            "Cancellation not durably acknowledged: {error}; remote cancellation not attempted."
+                        ),
+                    }
+                    continue;
                 }
                 let mut state = reader_state.lock().unwrap();
                 if line.len() > 32768 {
@@ -638,7 +674,8 @@ pub fn preview(
                 prompt,
                 !source_verified,
                 fixture.as_ref(),
-                &mut admit,
+                &mut submit,
+                &control,
             ) {
                 Ok(verified) => source_verified |= verified,
                 Err(error) => {

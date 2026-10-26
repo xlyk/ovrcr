@@ -233,6 +233,16 @@ pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppRe
                 json_output,
             )
         }
+        TerminalCommand::CloudCancel { id } => {
+            let session = online_session(id)?;
+            mutate_without_start(
+                Request::CancelCloudCreation {
+                    session: session.id,
+                    expected_run: session.run,
+                },
+                json_output,
+            )
+        }
         TerminalCommand::CloudDiscard { id } => {
             let session = online_session(id)?;
             mutate_without_start(

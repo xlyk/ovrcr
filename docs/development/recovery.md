@@ -121,3 +121,10 @@ stream proves no remote stop, and replay cannot produce another Ready. Startup c
 payloads whose durable receipt/Discard already permits retirement, without any
 remote effect. Corrupt/full storage refuses new effects and never evicts retained
 requests to make room. See [Cursor cloud controls](../cursor-cloud.md).
+
+Cursor cloud cancellation intent survives detach/restart with its original
+operation. Recovery remains observation-only and never automatically sends
+CancelRun. Explicit Retry Cancel belongs to a supported exact-run recovery route;
+uncertain CreateAgent/Send replay remains unavailable. Cloud Cancel keeps unresolved
+request bytes; Discard closes delivery and removes private copies/aliases without
+remote cancellation or a remote-termination claim.

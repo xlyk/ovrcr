@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 22;
+const SCHEMA_VERSION: i64 = 23;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -451,6 +451,7 @@ pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
                 | 19
                 | 20
                 | 21
+                | 22
                 | SCHEMA_VERSION
         )
     {

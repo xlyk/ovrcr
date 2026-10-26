@@ -387,6 +387,10 @@ pub enum Request {
         view_revision: u64,
         bytes: Vec<u8>,
     },
+    CancelCloudCreation {
+        session: SessionId,
+        expected_run: SessionRunId,
+    },
     DiscardCloudCreation {
         session: SessionId,
         expected_run: SessionRunId,
@@ -933,6 +937,13 @@ mod wire_snapshot {
                     session: SessionId(1),
                     expected_run: SessionRunId(4),
                     acknowledge_stopped: false,
+                },
+            ),
+            (
+                "CancelCloudCreation",
+                Request::CancelCloudCreation {
+                    session: SessionId(1),
+                    expected_run: SessionRunId(4),
                 },
             ),
             (
