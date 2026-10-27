@@ -84,6 +84,7 @@ tempfile = { workspace = true }
 vt100 = { workspace = true }
 
 [dev-dependencies]
+ahash = { version = "0.8.12", default-features = false, features = ["std"] }
 bincode = { workspace = true }
 sha2 = { workspace = true }
 ratatui = { workspace = true }

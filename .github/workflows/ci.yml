@@ -32,6 +32,7 @@ jobs:
           lscpu > target/linux-startup-diagnosis/cpu.txt
           stat --printf='%s bytes\n' target/debug/ovrcr > target/linux-startup-diagnosis/executable.txt
           sha256sum target/debug/ovrcr >> target/linux-startup-diagnosis/executable.txt
+          export OVRCR_STARTUP_EXPECTED_SHA256="$(sha256sum target/debug/ovrcr | cut -d ' ' -f1)"
           cat /proc/loadavg >> target/linux-startup-diagnosis/host.txt
           failed=0
           burner_pids=()
@@ -52,6 +53,13 @@ jobs:
                 echo "$!" >> target/linux-startup-diagnosis/owned-cpu-burners.pid
               done
             fi
+            set +e
+            cargo test -p ovrcr --test server_lifecycle --features acceptance-diagnostics diagnostic_full_executable_hash_cost -- --ignored --exact --nocapture --test-threads=1 > "target/linux-startup-diagnosis/$arm-hash-bench.log" 2>&1
+            bench_result=$?
+            set -e
+            echo "$bench_result" > "target/linux-startup-diagnosis/$arm-hash-bench.exit"
+            cat "target/linux-startup-diagnosis/$arm-hash-bench.log"
+            if [[ "$bench_result" != 0 ]]; then failed=1; fi
             for attempt in 1 2 3; do
               log="target/linux-startup-diagnosis/$arm-$attempt.log"
               set +e
