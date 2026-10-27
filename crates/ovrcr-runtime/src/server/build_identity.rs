@@ -1,18 +1,40 @@
 //! Startup-captured executable equality, bound to the owning socket and process.
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::DefaultHasher;
 use std::fs::{self, OpenOptions};
-use std::hash::Hasher;
+use std::hash::{BuildHasher, Hasher};
 use std::io::{Read, Write};
 use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 const MAX_IDENTITY_BYTES: u64 = 16 * 1024;
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum FingerprintAlgorithm {
+    #[default]
+    LegacyDefaultHasher,
+    #[serde(rename = "ahash0812_seed0_block64k_v1")]
+    Ahash0812Seed0Block64kV1 {
+        arch: String,
+        aes: bool,
+        ssse3: bool,
+        endian: FingerprintEndian,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum FingerprintEndian {
+    Little,
+    Big,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExecutableBuild {
+    #[serde(default)]
+    algorithm: FingerprintAlgorithm,
     bytes: u64,
     fingerprint: u64,
 }
@@ -28,18 +50,23 @@ pub fn executable_build(path: &Path) -> Result<ExecutableBuild> {
     if !before.is_file() {
         bail!("server executable is not a regular file");
     }
-    let mut hash = DefaultHasher::new();
+    let mut hash = ahash::RandomState::with_seeds(0, 0, 0, 0).build_hasher();
     let mut bytes = 0;
     let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let count = file
-            .read(&mut buffer)
+    // aHash write boundaries affect its output; short reads must not change the partition.
+    while bytes < before.len() {
+        let count = (before.len() - bytes).min(buffer.len() as u64) as usize;
+        file.read_exact(&mut buffer[..count])
             .context("read server executable build")?;
-        if count == 0 {
-            break;
-        }
         hash.write(&buffer[..count]);
         bytes += count as u64;
+    }
+    if file
+        .read(&mut [0_u8; 1])
+        .context("check server executable EOF")?
+        != 0
+    {
+        bail!("server executable changed while reading its build");
     }
     let after = file.metadata().context("recheck server executable")?;
     if bytes != before.len()
@@ -52,6 +79,17 @@ pub fn executable_build(path: &Path) -> Result<ExecutableBuild> {
         bail!("server executable changed while reading its build");
     }
     Ok(ExecutableBuild {
+        // Conservatively distinguish compilation features even when a backend ignores them.
+        algorithm: FingerprintAlgorithm::Ahash0812Seed0Block64kV1 {
+            arch: std::env::consts::ARCH.into(),
+            aes: cfg!(target_feature = "aes"),
+            ssse3: cfg!(target_feature = "ssse3"),
+            endian: if cfg!(target_endian = "little") {
+                FingerprintEndian::Little
+            } else {
+                FingerprintEndian::Big
+            },
+        },
         bytes,
         fingerprint: hash.finish(),
     })
@@ -229,6 +267,90 @@ mod tests {
         changed[70_000] = 8;
         fs::write(&path, changed).unwrap();
         assert_ne!(executable_build(&path).unwrap(), first);
+    }
+
+    #[test]
+    fn capture_covers_small_files_and_fixed_block_boundaries() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("executable");
+        for length in [3, 65_535, 65_536, 65_537, 131_079] {
+            let mut bytes = vec![7; length];
+            fs::write(&path, &bytes).unwrap();
+            let original = executable_build(&path).unwrap();
+            assert_eq!(original.bytes, length as u64);
+            assert_eq!(executable_build(&path).unwrap(), original);
+            bytes[length - 1] = 8;
+            fs::write(&path, &bytes).unwrap();
+            assert_ne!(executable_build(&path).unwrap(), original);
+        }
+    }
+
+    #[test]
+    fn legacy_unknown_and_foreign_platform_builds_cannot_equal_current_capture() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("executable");
+        fs::write(&executable, vec![7; 131_079]).unwrap();
+        let current = executable_build(&executable).unwrap();
+        let encoded = serde_json::to_value(&current).unwrap();
+        assert_eq!(encoded["algorithm"]["kind"], "ahash0812_seed0_block64k_v1");
+        assert_eq!(executable_build(&executable).unwrap(), current);
+        let mut legacy = encoded.clone();
+        legacy.as_object_mut().unwrap().remove("algorithm");
+        assert_ne!(
+            serde_json::from_value::<ExecutableBuild>(legacy).unwrap(),
+            current
+        );
+        let mut foreign = encoded.clone();
+        foreign["algorithm"]["arch"] = "unfamiliar-platform".into();
+        assert_ne!(
+            serde_json::from_value::<ExecutableBuild>(foreign).unwrap(),
+            current
+        );
+        let mut unknown = encoded.clone();
+        unknown["algorithm"]["kind"] = "unknown-fingerprint".into();
+        assert!(serde_json::from_value::<ExecutableBuild>(unknown).is_err());
+        let mut unknown_field = encoded;
+        unknown_field["algorithm"]["unexpected"] = true.into();
+        assert!(serde_json::from_value::<ExecutableBuild>(unknown_field).is_err());
+    }
+
+    #[test]
+    fn private_legacy_stale_record_is_replaceable_without_adopting_its_build() {
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("server.sock");
+        let _listener = UnixListener::bind(&socket).unwrap();
+        let executable = root.path().join("executable");
+        fs::write(&executable, b"reviewed executable").unwrap();
+        let build = executable_build(&executable).unwrap();
+        let old = Publication::publish(&socket, executable.clone(), build.clone()).unwrap();
+        let path = identity_path(&socket);
+        let mut legacy: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        legacy["build"].as_object_mut().unwrap().remove("algorithm");
+        fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        assert_ne!(
+            read_server_build(&socket, std::process::id())
+                .unwrap()
+                .build,
+            build
+        );
+        let replacement = Publication::publish(&socket, executable.clone(), build.clone()).unwrap();
+        drop(old);
+        assert_eq!(
+            read_server_build(&socket, std::process::id())
+                .unwrap()
+                .build,
+            build
+        );
+        let mut unknown: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        unknown["build"]["algorithm"]["kind"] = "unknown-fingerprint".into();
+        let unknown = serde_json::to_vec(&unknown).unwrap();
+        fs::write(&path, &unknown).unwrap();
+        assert!(Publication::publish(&socket, executable, build).is_err());
+        assert_eq!(fs::read(&path).unwrap(), unknown);
+        drop(replacement);
+        assert!(!path.exists());
     }
 
     #[test]

@@ -2836,7 +2836,6 @@ dependencies = [
 name = "ovrcr"
 version = "0.1.0"
 dependencies = [
- "ahash",
  "anyhow",
  "bincode",
  "chrono",
@@ -2880,6 +2879,7 @@ dependencies = [
 name = "ovrcr-runtime"
 version = "0.1.0"
 dependencies = [
+ "ahash",
  "anyhow",
  "base64",
  "bincode",

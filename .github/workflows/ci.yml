@@ -18,7 +18,7 @@ jobs:
       - name: Install shell fixture
         run: sudo apt-get update && sudo apt-get install -y zsh
       - name: Build exact existing test
-        run: cargo test -p ovrcr --test server_lifecycle --features acceptance-diagnostics --no-run
+        run: cargo test -p ovrcr --test server_lifecycle --test client_startup_server --features acceptance-diagnostics --no-run
       - name: Six independent measurements, preserving every original result
         env:
           OVRCR_STARTUP_DIAGNOSTIC: '1'
@@ -32,7 +32,6 @@ jobs:
           lscpu > target/linux-startup-diagnosis/cpu.txt
           stat --printf='%s bytes\n' target/debug/ovrcr > target/linux-startup-diagnosis/executable.txt
           sha256sum target/debug/ovrcr >> target/linux-startup-diagnosis/executable.txt
-          export OVRCR_STARTUP_EXPECTED_SHA256="$(sha256sum target/debug/ovrcr | cut -d ' ' -f1)"
           cat /proc/loadavg >> target/linux-startup-diagnosis/host.txt
           failed=0
           burner_pids=()
@@ -53,13 +52,6 @@ jobs:
                 echo "$!" >> target/linux-startup-diagnosis/owned-cpu-burners.pid
               done
             fi
-            set +e
-            cargo test -p ovrcr --test server_lifecycle --features acceptance-diagnostics diagnostic_full_executable_hash_cost -- --ignored --exact --nocapture --test-threads=1 > "target/linux-startup-diagnosis/$arm-hash-bench.log" 2>&1
-            bench_result=$?
-            set -e
-            echo "$bench_result" > "target/linux-startup-diagnosis/$arm-hash-bench.exit"
-            cat "target/linux-startup-diagnosis/$arm-hash-bench.log"
-            if [[ "$bench_result" != 0 ]]; then failed=1; fi
             for attempt in 1 2 3; do
               log="target/linux-startup-diagnosis/$arm-$attempt.log"
               set +e
@@ -72,6 +64,17 @@ jobs:
             done
             cleanup
           done
+          set +e
+          cargo test -p ovrcr --test client_startup_server --features acceptance-diagnostics -- --nocapture --test-threads=1 > target/linux-startup-diagnosis/client-startup.log 2>&1
+          client_result=$?
+          echo "$client_result" > target/linux-startup-diagnosis/client-startup.exit
+          cat target/linux-startup-diagnosis/client-startup.log
+          cargo test -p ovrcr-runtime --lib server::build_identity::tests --features acceptance-diagnostics -- --nocapture --test-threads=1 > target/linux-startup-diagnosis/build-identity.log 2>&1
+          identity_result=$?
+          echo "$identity_result" > target/linux-startup-diagnosis/build-identity.exit
+          cat target/linux-startup-diagnosis/build-identity.log
+          set -e
+          if [[ "$client_result" != 0 || "$identity_result" != 0 ]]; then failed=1; fi
           exit "$failed"
       - uses: actions/upload-artifact@v4
         if: always()
