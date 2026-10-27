@@ -178,3 +178,12 @@ is immutable; schema 24 protects subordinate recovery-owner and cancellation-cla
 metadata from older writers. Read-only historical reconciliation bypasses response
 cycles. Exact fresh GetRun registers a selected-key handle only; active observation
 remains unproved and no ResumeAgent/options replay is allowed.
+
+Executable equality uses every byte in fixed 64 KiB blocks with aHash 0.8.12,
+explicit zero seeds and an algorithm/version descriptor. The descriptor includes
+architecture, endianness and AES/SSSE3 compilation flags; flags conservatively
+distinguish builds even when the chosen backend ignores them. It is not an
+authenticity proof. Untagged private legacy records remain recognized for stale
+replacement but cannot equal the new algorithm; unknown algorithm names or fields
+remain refused. Full verification and metadata rechecks precede socket binding
+and identity publication, including `/proc/self/exe` on Linux.

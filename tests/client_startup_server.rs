@@ -121,6 +121,37 @@ fn same_build_connects_without_restart_offer() {
 }
 
 #[test]
+fn legacy_and_foreign_platform_decline_preserve_running_session() {
+    let fixture = serving_fixture();
+    let _environment = Environment::new(&fixture, &fixture.executable);
+    fixture.ready("tagged-server");
+    let before = fixture.request(Request::Inspect);
+    let sidecar = fixture.socket.with_extension("sock.build.json");
+    let original: serde_json::Value = serde_json::from_slice(&fs::read(&sidecar).unwrap()).unwrap();
+    for legacy in [true, false] {
+        let mut record = original.clone();
+        if legacy {
+            record["build"].as_object_mut().unwrap().remove("algorithm");
+        } else {
+            record["build"]["algorithm"]["arch"] = "unfamiliar-platform".into();
+        }
+        let contents = serde_json::to_vec(&record).unwrap();
+        fs::write(&sidecar, &contents).unwrap();
+        let mut prompts = 0;
+        let error = connect_dashboard(&fixture.paths(), &mut |prompt| {
+            assert!(prompt.contains("different build"), "{prompt}");
+            prompts += 1;
+            Ok(false)
+        })
+        .expect_err("legacy or foreign descriptors require explicit restart approval");
+        assert_eq!(prompts, 1);
+        assert!(format!("{error:#}").contains("declined"));
+        assert_eq!(fs::read(&sidecar).unwrap(), contents);
+        assert_eq!(fixture.request(Request::Inspect), before);
+    }
+}
+
+#[test]
 fn unknown_build_decline_preserves_running_session() {
     let fixture = serving_fixture();
     let _environment = Environment::new(&fixture, &fixture.executable);

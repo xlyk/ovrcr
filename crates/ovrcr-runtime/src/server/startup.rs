@@ -96,7 +96,6 @@ fn run_server_inner(
     let running_executable = Path::new("/proc/self/exe");
     #[cfg(not(target_os = "linux"))]
     let running_executable = executable.as_path();
-    let build = build_identity::executable_build(running_executable)?;
     let parent = paths
         .socket
         .parent()
@@ -106,7 +105,7 @@ fn run_server_inner(
     let bound_socket = resolve_bound_socket(&paths.socket)?;
     eprintln!("ovrcr server starting for {}", paths.socket.display());
     let startup_lock = acquire_startup_lock(parent)?;
-    if paths.socket.exists() {
+    let stale_socket = if paths.socket.exists() {
         match UnixStream::connect(&paths.socket) {
             Ok(_) => bail!("server is already running"),
             Err(error)
@@ -115,19 +114,25 @@ fn run_server_inner(
                     io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
                 ) =>
             {
-                match fs::remove_file(&paths.socket) {
-                    Ok(()) => {}
-                    Err(remove_error) if remove_error.kind() == io::ErrorKind::NotFound => {}
-                    Err(remove_error) => {
-                        return Err(remove_error).with_context(|| {
-                            format!("remove stale server socket {}", paths.socket.display())
-                        });
-                    }
-                }
+                true
             }
             Err(error) => {
                 return Err(error)
                     .with_context(|| format!("probe server socket {}", paths.socket.display()));
+            }
+        }
+    } else {
+        false
+    };
+    let build = build_identity::executable_build(running_executable)?;
+    if stale_socket {
+        match fs::remove_file(&paths.socket) {
+            Ok(()) => {}
+            Err(remove_error) if remove_error.kind() == io::ErrorKind::NotFound => {}
+            Err(remove_error) => {
+                return Err(remove_error).with_context(|| {
+                    format!("remove stale server socket {}", paths.socket.display())
+                });
             }
         }
     }
