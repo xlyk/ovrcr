@@ -5559,7 +5559,20 @@ fn read_empty_dashboard_response(dashboard: &mut UnixStream) -> ServerMessage {
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         assert!(!remaining.is_zero(), "Dashboard response timed out");
-        dashboard.set_read_timeout(Some(remaining)).unwrap();
+        if let Err(error) = dashboard.set_read_timeout(Some(remaining)) {
+            let mut status = libc::pollfd {
+                fd: dashboard.as_raw_fd(),
+                events: libc::POLLIN | libc::POLLHUP,
+                revents: 0,
+            };
+            // macOS rejects timeout setup after peer close; queued frames still reach EOF.
+            assert!(
+                error.raw_os_error() == Some(libc::EINVAL)
+                    && unsafe { libc::poll(&mut status, 1, 0) } == 1
+                    && status.revents & libc::POLLHUP != 0,
+                "Dashboard timeout setup failed: {error}"
+            );
+        }
         match read_frame::<ServerMessage>(dashboard).unwrap() {
             ServerMessage::Event(ServerEvent::HierarchyChanged(hierarchy)) => {
                 assert!(
@@ -5578,6 +5591,55 @@ fn read_empty_dashboard_response(dashboard: &mut UnixStream) -> ServerMessage {
             response => return response,
         }
     }
+}
+
+#[test]
+fn empty_dashboard_response_preserves_complete_frame_after_peer_close() {
+    let (mut dashboard, mut peer) = UnixStream::pair().unwrap();
+    let expected = ServerMessage::Response {
+        request_id: 21,
+        response: Response::Error {
+            code: ErrorCode::Conflict,
+            message: "dashboard is already registered on this connection".into(),
+        },
+    };
+    write_frame(&mut peer, &expected).unwrap();
+    drop(peer);
+    assert_eq!(read_empty_dashboard_response(&mut dashboard), expected);
+}
+
+#[test]
+fn empty_dashboard_response_rejects_closed_peer_without_a_complete_frame() {
+    for bytes in [
+        &[][..],
+        &[0, 0][..],
+        &[0, 0, 0, 2, 0][..],
+        &[0, 0, 0, 1, 255][..],
+    ] {
+        let (mut dashboard, mut peer) = UnixStream::pair().unwrap();
+        peer.write_all(bytes).unwrap();
+        drop(peer);
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| read_empty_dashboard_response(
+                &mut dashboard
+            )))
+            .is_err(),
+            "invalid closed-peer frame {bytes:?} must fail"
+        );
+    }
+}
+
+#[test]
+fn empty_dashboard_response_keeps_open_peer_reads_bounded() {
+    let (mut dashboard, _peer) = UnixStream::pair().unwrap();
+    let started = Instant::now();
+    assert!(
+        catch_unwind(AssertUnwindSafe(|| read_empty_dashboard_response(
+            &mut dashboard
+        )))
+        .is_err()
+    );
+    assert!(started.elapsed() >= Duration::from_secs(2));
 }
 
 #[test]
