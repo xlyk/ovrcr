@@ -1,85 +1,330 @@
-# Temporary diagnosis only. This branch must never be merged as acceptance.
-name: Linux startup diagnosis
+# Temporary evidence workflow. Install only on the diagnostic branch after review.
+# Dispatch requires the full SHA of the final clean candidate; no branch/tag input is accepted.
+name: Linux clean-source retry proof
+
 on:
   workflow_dispatch:
-env:
-  CARGO_TERM_COLOR: never
+    inputs:
+      candidate_sha:
+        description: Full 40-character commit SHA of the final clean candidate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
 jobs:
-  startup-diagnosis:
+  clean-source-linux-ab:
+    name: Exact-source Linux A/B retry proof
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      SHELL: /bin/bash
+      CARGO_TERM_COLOR: always
+      BASELINE_SHA: b754ab886706f2177bbc4c1c59c754598a72931a
+      CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+      TEST_NAME: startup_stale_concurrent_attempts_leave_one_surviving_server
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: linux-headless
-          cache-on-failure: true
-      - name: Install shell fixture
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux shell-test dependency
         run: sudo apt-get update && sudo apt-get install -y zsh
-      - name: Build exact existing test
-        run: cargo test -p ovrcr --test server_lifecycle --test client_startup_server --features acceptance-diagnostics --no-run
-      - name: Six independent measurements, preserving every original result
-        env:
-          OVRCR_STARTUP_DIAGNOSTIC: '1'
+
+      - name: Validate exact revisions and create clean worktrees
         shell: bash
         run: |
-          mkdir -p target/linux-startup-diagnosis
-          git rev-parse HEAD > target/linux-startup-diagnosis/revision.txt
-          uname -a > target/linux-startup-diagnosis/host.txt
-          rustc -Vv >> target/linux-startup-diagnosis/host.txt
-          nproc >> target/linux-startup-diagnosis/host.txt
-          lscpu > target/linux-startup-diagnosis/cpu.txt
-          stat --printf='%s bytes\n' target/debug/ovrcr > target/linux-startup-diagnosis/executable.txt
-          sha256sum target/debug/ovrcr >> target/linux-startup-diagnosis/executable.txt
-          cat /proc/loadavg >> target/linux-startup-diagnosis/host.txt
-          failed=0
-          burner_pids=()
-          cleanup() {
-            for burner_pid in "${burner_pids[@]}"; do
-              if kill "$burner_pid"; then kill_status=0; else kill_status=$?; fi
-              if wait "$burner_pid"; then wait_status=0; else wait_status=$?; fi
-              echo "owned_pid=$burner_pid kill_status=$kill_status original_wait_status=$wait_status" >> target/linux-startup-diagnosis/cpu-burner-cleanup.txt
-            done
-            burner_pids=()
-          }
-          trap cleanup EXIT
-          for arm in baseline cpu_load; do
-            if [[ "$arm" == cpu_load ]]; then
-              for burner in 1 2 3 4; do
-                python3 -c 'while True: pass' &
-                burner_pids+=("$!")
-                echo "$!" >> target/linux-startup-diagnosis/owned-cpu-burners.pid
-              done
+          set -euo pipefail
+          proof_root="$RUNNER_TEMP/ovrcr-retry-clean-proof"
+          evidence="$proof_root/evidence"
+          mkdir -p "$evidence" "$proof_root/home/.config" "$proof_root/home/.local/share" "$proof_root/home/.local/state" "$proof_root/home/.cache"
+          chmod 700 "$proof_root/home"
+
+          if [[ ! "$CANDIDATE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "candidate_sha must be exactly 40 hexadecimal characters" >&2
+            exit 2
+          fi
+          candidate_sha="${CANDIDATE_SHA,,}"
+          if [[ "$candidate_sha" == "$BASELINE_SHA" ]]; then
+            echo "candidate_sha must differ from the fixed baseline" >&2
+            exit 2
+          fi
+          git cat-file -e "$BASELINE_SHA^{commit}"
+          git cat-file -e "$candidate_sha^{commit}"
+          [[ "$(git rev-parse "$BASELINE_SHA^{commit}")" == "$BASELINE_SHA" ]]
+          [[ "$(git rev-parse "$candidate_sha^{commit}")" == "$candidate_sha" ]]
+          if [[ -n "$(git status --porcelain --untracked-files=all)" ]]; then
+            echo "workflow checkout is not clean" >&2
+            exit 2
+          fi
+
+          git worktree add --detach "$proof_root/baseline" "$BASELINE_SHA"
+          git worktree add --detach "$proof_root/candidate" "$candidate_sha"
+          for arm in baseline candidate; do
+            tree="$proof_root/$arm"
+            expected="$BASELINE_SHA"
+            [[ "$arm" == candidate ]] && expected="$candidate_sha"
+            [[ "$(git -C "$tree" rev-parse HEAD)" == "$expected" ]]
+            [[ -z "$(git -C "$tree" status --porcelain --untracked-files=all)" ]]
+            source="$tree/tests/server_lifecycle.rs"
+            grep -Fq "fn $TEST_NAME()" "$source"
+            excerpt="$(grep -n -A1 -F 'assert_ne!(workers[0].id(), workers[1].id());' "$source" || true)"
+            if ! grep -Fq 'let deadline = Instant::now() + Duration::from_secs(2);' <<< "$excerpt"; then
+              echo "$arm does not retain the existing two-second observation deadline" >&2
+              exit 2
             fi
-            for attempt in 1 2 3; do
-              log="target/linux-startup-diagnosis/$arm-$attempt.log"
-              set +e
-              cargo test -p ovrcr --test server_lifecycle --features acceptance-diagnostics startup_stale_concurrent_attempts_leave_one_surviving_server -- --exact --nocapture --test-threads=1 > "$log" 2>&1
-              result=$?
-              set -e
-              echo "$result" > "target/linux-startup-diagnosis/$arm-$attempt.exit"
-              cat "$log"
-              if [[ "$result" != 0 ]]; then failed=1; fi
-            done
-            cleanup
+            {
+              printf '%s HEAD=%s\n' "$arm" "$expected"
+              printf '%s test_source_sha256=' "$arm"
+              sha256sum "$source"
+              printf '%s targeted_wait_source:\n%s\n' "$arm" "$excerpt"
+            } >> "$evidence/source-refs-and-test.txt"
           done
-          set +e
-          cargo test -p ovrcr --test client_startup_server --features acceptance-diagnostics -- --nocapture --test-threads=1 > target/linux-startup-diagnosis/client-startup.log 2>&1
-          client_result=$?
-          echo "$client_result" > target/linux-startup-diagnosis/client-startup.exit
-          cat target/linux-startup-diagnosis/client-startup.log
-          cargo test -p ovrcr-runtime --lib server::build_identity::tests --features acceptance-diagnostics -- --nocapture --test-threads=1 > target/linux-startup-diagnosis/build-identity.log 2>&1
-          identity_result=$?
-          echo "$identity_result" > target/linux-startup-diagnosis/build-identity.exit
-          cat target/linux-startup-diagnosis/build-identity.log
-          set -e
-          if [[ "$client_result" != 0 || "$identity_result" != 0 ]]; then failed=1; fi
-          exit "$failed"
-      - uses: actions/upload-artifact@v4
+
+          original_home="$HOME"
+          cargo_home="${CARGO_HOME:-$original_home/.cargo}"
+          rustup_home="${RUSTUP_HOME:-$original_home/.rustup}"
+          {
+            printf 'workflow_checkout=%s\n' "$(git rev-parse HEAD)"
+            printf 'baseline_sha=%s\n' "$BASELINE_SHA"
+            printf 'candidate_sha=%s\n' "$candidate_sha"
+          } > "$evidence/revisions.txt"
+          {
+            echo "PROOF_ROOT=$proof_root"
+            echo "PROOF_HOME=$proof_root/home"
+            echo "CARGO_HOME=$cargo_home"
+            echo "RUSTUP_HOME=$rustup_home"
+            echo "HOME=$proof_root/home"
+            echo "XDG_CONFIG_HOME=$proof_root/home/.config"
+            echo "XDG_DATA_HOME=$proof_root/home/.local/share"
+            echo "XDG_STATE_HOME=$proof_root/home/.local/state"
+            echo "XDG_CACHE_HOME=$proof_root/home/.cache"
+            echo "CANDIDATE_SHA=$candidate_sha"
+          } >> "$GITHUB_ENV"
+
+      - name: Record host and compiler provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            date -u '+captured_at_utc=%Y-%m-%dT%H:%M:%SZ'
+            uname -a
+            cat /etc/os-release
+            lscpu
+            printf 'online_processors='
+            getconf _NPROCESSORS_ONLN
+            if [[ -r /sys/fs/cgroup/cpu.max ]]; then
+              printf 'cgroup_cpu_max='
+              cat /sys/fs/cgroup/cpu.max
+            fi
+            printf 'HOME=%s\nCARGO_HOME=%s\nRUSTUP_HOME=%s\n' "$HOME" "$CARGO_HOME" "$RUSTUP_HOME"
+            rustc -Vv
+            cargo -V
+            rustup show active-toolchain
+          } > "$PROOF_ROOT/evidence/host-and-compiler.txt"
+          cat > "$PROOF_ROOT/evidence/test-contract.txt" <<EOF_CONTRACT
+          exact_filter=$TEST_NAME --exact
+          existing_observation_deadline=2s (verified in both exact source worktrees)
+          per_invocation_hard_cap=5m (same maximum as the existing nextest CI profile)
+          retries=0 (direct libtest binary; no nextest retry)
+          outer_job_budget=30m
+          features=acceptance-diagnostics
+          cargo_profile=default test profile; no --release, RUSTFLAGS, or target-feature override
+          build_scope=only ovrcr server_lifecycle integration target and its required ovrcr binary
+          EOF_CONTRACT
+
+      - name: Build only the selected integration target once per arm
+        id: build
+        shell: bash
+        run: |
+          set -uo pipefail
+          unset RUSTFLAGS CARGO_ENCODED_RUSTFLAGS
+          unset PI_CODING_AGENT_DIR PI_CODING_AGENT_SESSION_DIR CODEX_HOME GROK_HOME CLAUDE_CONFIG_DIR OVRCR_HOME OVRCR_SOCKET OVRCR_CONFIG OVRCR_DASHBOARD_CONFIG
+          build_failure=0
+          for arm in baseline candidate; do
+            tree="$PROOF_ROOT/$arm"
+            target="$PROOF_ROOT/target-$arm"
+            arm_evidence="$PROOF_ROOT/evidence/$arm"
+            mkdir -p "$target" "$arm_evidence"
+            printf 'CARGO_TARGET_DIR=%s cargo test --locked -p ovrcr --test server_lifecycle --features acceptance-diagnostics --no-run\n' "$target" > "$arm_evidence/build-command.txt"
+
+            if (cd "$tree" && CARGO_TARGET_DIR="$target" cargo test --locked -p ovrcr --test server_lifecycle --features acceptance-diagnostics --no-run) > "$arm_evidence/build.log" 2>&1; then
+              build_status=0
+            else
+              build_status=$?
+              build_failure=1
+            fi
+            printf '%s\n' "$build_status" > "$arm_evidence/build.exit"
+            if [[ "$build_status" -ne 0 ]]; then
+              continue
+            fi
+            if [[ -n "$(git -C "$tree" status --porcelain --untracked-files=all)" ]]; then
+              echo "build dirtied the $arm source worktree" >&2
+              printf 'source_worktree_dirty_after_build\n' > "$arm_evidence/source-status.txt"
+              build_failure=1
+              continue
+            fi
+            printf 'clean_after_build\n' > "$arm_evidence/source-status.txt"
+
+            mapfile -t test_bins < <(find "$target/debug/deps" -maxdepth 1 -type f -name 'server_lifecycle-*' -perm /111 -print | sort)
+            ovrcr_bin="$target/debug/ovrcr"
+            if [[ "${#test_bins[@]}" -ne 1 || ! -x "$ovrcr_bin" ]]; then
+              echo "expected one server_lifecycle test binary and its matching ovrcr binary for $arm" >&2
+              printf 'artifact_discovery=failed\n' > "$arm_evidence/artifacts.txt"
+              printf '1\n' > "$arm_evidence/build.exit"
+              build_failure=1
+              continue
+            fi
+            printf '%s\n' "${test_bins[0]}" > "$PROOF_ROOT/evidence/$arm/test-bin.path"
+            {
+              printf 'arm=%s\n' "$arm"
+              printf 'source_revision=%s\n' "$(git -C "$tree" rev-parse HEAD)"
+              for artifact in "$ovrcr_bin" "${test_bins[0]}"; do
+                stat -c 'path=%n size_bytes=%s' "$artifact"
+                sha256sum "$artifact"
+              done
+            } > "$arm_evidence/artifacts.txt"
+          done
+          printf '%s\n' "$build_failure" > "$PROOF_ROOT/evidence/build.aggregate.exit"
+          exit "$build_failure"
+
+      - name: Run three sequential pairs idle and under four owned CPU burners
+        if: steps.build.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset RUSTFLAGS CARGO_ENCODED_RUSTFLAGS
+          unset PI_CODING_AGENT_DIR PI_CODING_AGENT_SESSION_DIR CODEX_HOME GROK_HOME CLAUDE_CONFIG_DIR OVRCR_HOME OVRCR_SOCKET OVRCR_CONFIG OVRCR_DASHBOARD_CONFIG
+          evidence="$PROOF_ROOT/evidence"
+          mkdir -p "$evidence/trials/idle" "$evidence/trials/load"
+          printf 'condition\tpair\tarm\texit_code\texecuted_tests\tverdict\n' > "$evidence/trial-summary.tsv"
+          test_failure=0
+          load_failure=0
+          source_failure=0
+          burner_pids=()
+          burner_cleanup_done=0
+
+          cleanup_burners() {
+            [[ "$burner_cleanup_done" == 1 ]] && return 0
+            burner_cleanup_done=1
+            cleanup_failure=0
+            : > "$evidence/burner-cleanup.tsv"
+            for index in "${!burner_pids[@]}"; do
+              pid="${burner_pids[$index]}"
+              if kill -0 "$pid" 2>/dev/null; then
+                if kill -TERM "$pid" 2>/dev/null; then kill_status=0; else kill_status=$?; fi
+                if wait "$pid"; then wait_status=0; else wait_status=$?; fi
+                if [[ "$kill_status" -ne 0 || "$wait_status" -ne 143 ]]; then cleanup_failure=1; fi
+                printf 'index=%s pid=%s kill_status=%s wait_status=%s expected_wait_status=143\n' "$index" "$pid" "$kill_status" "$wait_status" >> "$evidence/burner-cleanup.tsv"
+              else
+                if wait "$pid"; then wait_status=0; else wait_status=$?; fi
+                printf 'index=%s pid=%s kill_status=already-exited wait_status=%s expected=running_then_SIGTERM_reaped\n' "$index" "$pid" "$wait_status" >> "$evidence/burner-cleanup.tsv"
+                cleanup_failure=1
+              fi
+            done
+            printf 'cleanup_exit=%s\n' "$cleanup_failure" >> "$evidence/burner-cleanup.tsv"
+            printf 'cleanup_status=%s\n' "$cleanup_failure" > "$evidence/cleanup-verdict.txt"
+            return "$cleanup_failure"
+          }
+          trap 'cleanup_burners || true' EXIT
+
+          run_trial() {
+            condition="$1"
+            pair="$2"
+            arm="$3"
+            test_bin="$(< "$PROOF_ROOT/evidence/$arm/test-bin.path")"
+            log="$evidence/trials/$condition/pair-$pair-$arm.log"
+            printf 'timeout --signal=TERM --kill-after=5s 5m %q %q --exact --nocapture --test-threads=1 --color never\n' "$test_bin" "$TEST_NAME" > "$evidence/trials/$condition/pair-$pair-$arm.command.txt"
+            if timeout --signal=TERM --kill-after=5s 5m "$test_bin" "$TEST_NAME" --exact --nocapture --test-threads=1 --color never > "$log" 2>&1; then
+              exit_code=0
+            else
+              exit_code=$?
+            fi
+            executed_tests="$(awk '$1 == "running" && ($3 == "test" || $3 == "tests") { print $2; exit }' "$log")"
+            if [[ "$exit_code" -eq 0 && "$executed_tests" == 1 ]] \
+              && grep -Fq "test $TEST_NAME ... " "$log" \
+              && grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$log"; then
+              verdict=PASS
+            else
+              verdict=FAIL
+              test_failure=1
+            fi
+            printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$condition" "$pair" "$arm" "$exit_code" "${executed_tests:-0}" "$verdict" >> "$evidence/trial-summary.tsv"
+          }
+
+          check_burners() {
+            point="$1"
+            pair="$2"
+            for index in "${!burner_pids[@]}"; do
+              pid="${burner_pids[$index]}"
+              state_code="$(ps -p "$pid" -o stat= 2>/dev/null | tr -d '[:space:]' || true)"
+              if kill -0 "$pid" 2>/dev/null && [[ -n "$state_code" && "$state_code" != Z* ]]; then
+                state="alive:$state_code"
+              else
+                state=not-running
+                load_failure=1
+              fi
+              printf 'point=%s pair=%s index=%s pid=%s state=%s\n' "$point" "$pair" "$index" "$pid" "$state" >> "$evidence/burner-observations.tsv"
+            done
+            if [[ "${#burner_pids[@]}" -ne 4 ]]; then load_failure=1; fi
+          }
+
+          # Paired order is fixed: baseline then candidate, with no concurrent tests.
+          for pair in 1 2 3; do
+            run_trial idle "$pair" baseline
+            run_trial idle "$pair" candidate
+          done
+
+          : > "$evidence/burner-start.tsv"
+          for index in 0 1 2 3; do
+            python3 -c 'while True: pass' > "$evidence/burner-$index.log" 2>&1 &
+            pid=$!
+            burner_pids+=("$pid")
+            printf 'index=%s pid=%s owner=workflow-step command=python3 -c %q\n' "$index" "$pid" 'while True: pass' >> "$evidence/burner-start.tsv"
+          done
+          sleep 1
+          check_burners ready 0
+          for pair in 1 2 3; do
+            check_burners before-pair "$pair"
+            run_trial load "$pair" baseline
+            run_trial load "$pair" candidate
+            check_burners after-pair "$pair"
+          done
+
+          for arm in baseline candidate; do
+            if [[ -n "$(git -C "$PROOF_ROOT/$arm" status --porcelain --untracked-files=all)" ]]; then
+              source_failure=1
+              printf '%s dirty_after_tests\n' "$arm" >> "$evidence/source-status-after-tests.txt"
+            else
+              printf '%s clean_after_tests\n' "$arm" >> "$evidence/source-status-after-tests.txt"
+            fi
+          done
+          if [[ "$test_failure" -eq 0 ]]; then test_verdict=PASS; else test_verdict=FAIL; fi
+          if [[ "$load_failure" -eq 0 ]]; then load_verdict=PASS; else load_verdict=FAIL; fi
+          if [[ "$source_failure" -eq 0 ]]; then source_verdict=PASS; else source_verdict=FAIL; fi
+          if [[ "$test_failure" -eq 0 && "$load_failure" -eq 0 && "$source_failure" -eq 0 ]]; then diagnostic_verdict=PASS; else diagnostic_verdict=FAIL; fi
+          {
+            printf 'test_verdict=%s\n' "$test_verdict"
+            printf 'load_verdict=%s\n' "$load_verdict"
+            printf 'source_verdict=%s\n' "$source_verdict"
+            printf 'diagnostic_verdict=%s\n' "$diagnostic_verdict"
+            echo 'strict_rule=any failed or zero-count invocation, including baseline, makes the diagnostic job fail even if every candidate trial passes'
+          } > "$evidence/assertion-verdict.txt"
+
+          # Freeze assertion verdict above; cleanup has its own recorded status.
+          if cleanup_burners; then cleanup_status=0; else cleanup_status=1; fi
+          trap - EXIT
+          if [[ "$test_failure" -ne 0 || "$load_failure" -ne 0 || "$source_failure" -ne 0 || "$cleanup_status" -ne 0 ]]; then exit 1; fi
+
+      - name: Upload clean-source proof evidence
         if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: linux-startup-diagnosis-${{ github.run_id }}-${{ github.run_attempt }}
-          path: target/linux-startup-diagnosis/
-          if-no-files-found: error
+          name: clean-source-linux-ab-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ovrcr-retry-clean-proof/evidence/
+          if-no-files-found: warn
           retention-days: 14
