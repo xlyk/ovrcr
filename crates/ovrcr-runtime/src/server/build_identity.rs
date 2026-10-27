@@ -9,11 +9,10 @@ use std::path::{Path, PathBuf};
 
 const MAX_IDENTITY_BYTES: u64 = 16 * 1024;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum FingerprintAlgorithm {
-    #[default]
-    LegacyDefaultHasher,
+    LegacyDefaultHasher {},
     #[serde(rename = "ahash0812_seed0_block64k_v1")]
     Ahash0812Seed0Block64kV1 {
         arch: String,
@@ -21,6 +20,12 @@ enum FingerprintAlgorithm {
         ssse3: bool,
         endian: FingerprintEndian,
     },
+}
+
+impl Default for FingerprintAlgorithm {
+    fn default() -> Self {
+        Self::LegacyDefaultHasher {}
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -306,6 +311,12 @@ mod tests {
             serde_json::from_value::<ExecutableBuild>(foreign).unwrap(),
             current
         );
+        let mut legacy_unknown_field = encoded.clone();
+        legacy_unknown_field["algorithm"] = serde_json::json!({
+            "kind": "legacy_default_hasher",
+            "unexpected": true,
+        });
+        assert!(serde_json::from_value::<ExecutableBuild>(legacy_unknown_field).is_err());
         let mut unknown = encoded.clone();
         unknown["algorithm"]["kind"] = "unknown-fingerprint".into();
         assert!(serde_json::from_value::<ExecutableBuild>(unknown).is_err());
@@ -342,13 +353,18 @@ mod tests {
                 .build,
             build
         );
-        let mut unknown: serde_json::Value =
-            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        unknown["build"]["algorithm"]["kind"] = "unknown-fingerprint".into();
-        let unknown = serde_json::to_vec(&unknown).unwrap();
-        fs::write(&path, &unknown).unwrap();
-        assert!(Publication::publish(&socket, executable, build).is_err());
-        assert_eq!(fs::read(&path).unwrap(), unknown);
+        for algorithm in [
+            serde_json::json!({"kind": "unknown-fingerprint"}),
+            serde_json::json!({"kind": "legacy_default_hasher", "unexpected": true}),
+        ] {
+            let mut unknown: serde_json::Value =
+                serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            unknown["build"]["algorithm"] = algorithm;
+            let unknown = serde_json::to_vec(&unknown).unwrap();
+            fs::write(&path, &unknown).unwrap();
+            assert!(Publication::publish(&socket, executable.clone(), build.clone()).is_err());
+            assert_eq!(fs::read(&path).unwrap(), unknown);
+        }
         drop(replacement);
         assert!(!path.exists());
     }
