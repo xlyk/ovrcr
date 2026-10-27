@@ -115,7 +115,9 @@ fn run(cli: Cli) -> AppResult<()> {
             ovrcr::task_runner::supervise(&run_dir, &pi_executable).map_err(RuntimeError::internal)
         }
         Command::Server => {
+            ovrcr_runtime::server::startup_diagnostic("server_command");
             ovrcr::service::load_environment_file().map_err(RuntimeError::internal)?;
+            ovrcr_runtime::server::startup_diagnostic("server_environment_loaded");
             run_server(
                 ServerPaths::resolve().map_err(RuntimeError::internal)?,
                 RegistryPath::resolve().map_err(RuntimeError::internal)?.0,

@@ -1,261 +1,68 @@
-name: CI
-
+# Temporary diagnosis only. This branch must never be merged as acceptance.
+name: Linux startup diagnosis
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
-
-# Superseded PR commits should not occupy runners. Keep main's runs intact.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 env:
-  CARGO_TERM_COLOR: always
-
+  CARGO_TERM_COLOR: never
 jobs:
-  checks:
-    name: checks
-    # macOS covers the GUI feature as well as the headless workspace.
-    runs-on: macos-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: taiki-e/install-action@nextest
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: checks
-          cache-on-failure: true
-      - name: Install zsh for shell integration tests
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y zsh
-      - name: Configure git identity
-        run: |
-          git config --global user.name "OVRCR CI"
-          git config --global user.email "ci@ovrcr.invalid"
-      - name: Format
-        run: cargo fmt --all -- --check
-      # Clippy covers compilation too; a preceding cargo check duplicates work.
-      - name: Lint
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      # nextest retries timing-sensitive failures and reports them as FLAKY;
-      # see .config/nextest.toml. Doc tests stay on cargo test below.
-      - name: Test
-        run: cargo nextest run --workspace --all-targets --all-features --profile ci -E 'not test(partial_resize_connection_delivers_error_before_owner_close)'
-      - name: Doc tests
-        run: cargo test --workspace --doc
-      - name: Relocated macOS startup assets
-        run: |
-          cargo build -p ovrcr --bin ovrcr
-          sh scripts/package-startup.sh target/startup-assets target/debug/ovrcr
-          python3 -I native/bridge/check-local-startup.py
-          python3 -I native/bridge/check-installer.py
-          python3 -I native/bridge/check-startup-package.py target/startup-assets
-          python3 -I native/bridge/check-packaging.py 'target/startup-assets/OVRCR Bridge.app'
-          python3 -I native/bridge/check-guards.py 'target/startup-assets/OVRCR Bridge.app'
-          sh scripts/package-startup.sh --local-development target/startup-assets-local-development "$PWD/target/debug/ovrcr"
-          python3 -I native/bridge/check-startup-package.py --local-development target/startup-assets-local-development
-          python3 -I native/bridge/check-packaging.py --local-development 'target/startup-assets-local-development/OVRCR Bridge Local.app'
-          python3 -I native/bridge/check-guards.py --local-development 'target/startup-assets-local-development/OVRCR Bridge Local.app'
-      - name: Relocated pinned Cursor dependency and passive CLI diagnostics
-        run: |
-          bridge_home=$(mktemp -d)
-          trap 'rm -rf "$bridge_home"' EXIT
-          HOME="$bridge_home" python3 -I scripts/install-cursor-bridge.py
-          OVRCR_CURSOR_BRIDGE_ARCHIVE="$bridge_home/.local/lib/ovrcr-cursor-sdk/1.0.40/bridge.tar.gz" OVRCR_TEST_EXECUTABLE="$PWD/target/debug/ovrcr" python3 -I tests/cursor_bridge_install.py
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Extension tests
-        run: node --test tests/pi_package_bootstrap.mjs tests/pi_reporting_extension.mjs tests/omp_reporting_extension.mjs tests/pi_delegation_extension.mjs tests/pi_interrupt_extension.mjs tests/pi_question_extension.mjs tests/pi_continuation_records.mjs tests/pi_observation_extension.mjs tests/pi_workflow_tracker.mjs
-      - name: Provision pinned Pi loader test host
-        run: |
-          mkdir -p "$RUNNER_TEMP/ovrcr-pi-package-evidence"
-          npm install --prefix "$RUNNER_TEMP/ovrcr-pi-package-host" --no-audit --no-fund --ignore-scripts @earendil-works/pi-coding-agent@0.87.1
-          cp "$RUNNER_TEMP/ovrcr-pi-package-host/package-lock.json" "$RUNNER_TEMP/ovrcr-pi-package-evidence/package-lock.json"
-          cp "$RUNNER_TEMP/ovrcr-pi-package-host/node_modules/@earendil-works/pi-coding-agent/package.json" "$RUNNER_TEMP/ovrcr-pi-package-evidence/host-package.json"
-      - name: Installed Pi package through production materialization
-        env:
-          OVRCR_TEST_PI_PACKAGE_ROOT: ${{ runner.temp }}/ovrcr-pi-package-host/node_modules/@earendil-works/pi-coding-agent
-        run: |
-          set -o pipefail
-          cargo test -p ovrcr --test pi_package --features acceptance-diagnostics production_materializer_loads_local_package_with_one_injected_owner -- --ignored --exact --nocapture --test-threads=1 2>&1 | tee "$RUNNER_TEMP/ovrcr-pi-package-evidence/test.log"
-      # The nested tests/pi_child_tools_installed.mjs needs actual assignment argv;
-      # it must not enter the ordinary extension-test batch above.
-      - name: Installed Pi effective child tools through production assignment argv
-        env:
-          OVRCR_TEST_PI_PACKAGE_ROOT: ${{ runner.temp }}/ovrcr-pi-package-host/node_modules/@earendil-works/pi-coding-agent
-        run: |
-          set -o pipefail
-          cargo test -p ovrcr --test pi_delegation --features acceptance-diagnostics coding::production_assignment_argv_preserves_installed_sdk_child_publication_tools -- --ignored --exact --nocapture --test-threads=1 2>&1 | tee "$RUNNER_TEMP/ovrcr-pi-package-evidence/child-tools.log"
-      - name: Upload installed Pi loader evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pi-package-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ovrcr-pi-package-evidence/
-          if-no-files-found: error
-          retention-days: 14
-
-  linux:
-    name: linux
-    if: github.event_name == 'workflow_dispatch'
-    env:
-      SHELL: /bin/bash
+  startup-diagnosis:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: linux-headless
           cache-on-failure: true
-      - name: Install shell test dependency
+      - name: Install shell fixture
         run: sudo apt-get update && sudo apt-get install -y zsh
-      - name: Configure fixture Git identity
-        run: |
-          git config --global user.name "OVRCR CI"
-          git config --global user.email "ci@ovrcr.invalid"
-      - name: Format
-        run: cargo fmt --all -- --check
-      - name: Lint
-        run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: Test
-        run: cargo nextest run --workspace --all-targets --profile ci -E 'not test(partial_resize_connection_delivers_error_before_owner_close)'
-      - name: Doc tests
-        run: cargo test --workspace --doc
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Extension tests
-        run: node --test tests/pi_package_bootstrap.mjs tests/pi_reporting_extension.mjs tests/omp_reporting_extension.mjs tests/pi_delegation_extension.mjs tests/pi_interrupt_extension.mjs tests/pi_question_extension.mjs tests/pi_continuation_records.mjs tests/pi_observation_extension.mjs tests/pi_workflow_tracker.mjs
-      - name: Provision pinned Pi loader test host
-        run: |
-          mkdir -p "$RUNNER_TEMP/ovrcr-pi-package-evidence"
-          npm install --prefix "$RUNNER_TEMP/ovrcr-pi-package-host" --no-audit --no-fund --ignore-scripts @earendil-works/pi-coding-agent@0.87.1
-          cp "$RUNNER_TEMP/ovrcr-pi-package-host/package-lock.json" "$RUNNER_TEMP/ovrcr-pi-package-evidence/package-lock.json"
-          cp "$RUNNER_TEMP/ovrcr-pi-package-host/node_modules/@earendil-works/pi-coding-agent/package.json" "$RUNNER_TEMP/ovrcr-pi-package-evidence/host-package.json"
-      - name: Installed Pi package through production materialization
+      - name: Build exact existing test
+        run: cargo test -p ovrcr --test server_lifecycle --features acceptance-diagnostics --no-run
+      - name: Six independent measurements, preserving every original result
         env:
-          OVRCR_TEST_PI_PACKAGE_ROOT: ${{ runner.temp }}/ovrcr-pi-package-host/node_modules/@earendil-works/pi-coding-agent
+          OVRCR_STARTUP_DIAGNOSTIC: '1'
+        shell: bash
         run: |
-          set -o pipefail
-          cargo test -p ovrcr --test pi_package --features acceptance-diagnostics production_materializer_loads_local_package_with_one_injected_owner -- --ignored --exact --nocapture --test-threads=1 2>&1 | tee "$RUNNER_TEMP/ovrcr-pi-package-evidence/test.log"
-      # The nested tests/pi_child_tools_installed.mjs needs actual assignment argv;
-      # it must not enter the ordinary extension-test batch above.
-      - name: Installed Pi effective child tools through production assignment argv
-        env:
-          OVRCR_TEST_PI_PACKAGE_ROOT: ${{ runner.temp }}/ovrcr-pi-package-host/node_modules/@earendil-works/pi-coding-agent
-        run: |
-          set -o pipefail
-          cargo test -p ovrcr --test pi_delegation --features acceptance-diagnostics coding::production_assignment_argv_preserves_installed_sdk_child_publication_tools -- --ignored --exact --nocapture --test-threads=1 2>&1 | tee "$RUNNER_TEMP/ovrcr-pi-package-evidence/child-tools.log"
-      - name: Upload installed Pi loader evidence
+          mkdir -p target/linux-startup-diagnosis
+          git rev-parse HEAD > target/linux-startup-diagnosis/revision.txt
+          uname -a > target/linux-startup-diagnosis/host.txt
+          rustc -Vv >> target/linux-startup-diagnosis/host.txt
+          nproc >> target/linux-startup-diagnosis/host.txt
+          cat /proc/loadavg >> target/linux-startup-diagnosis/host.txt
+          failed=0
+          burner_pid=''
+          cleanup() {
+            if [[ -n "$burner_pid" ]]; then
+              kill "$burner_pid" 2>/dev/null || true
+              wait "$burner_pid" 2>/dev/null || true
+              burner_pid=''
+            fi
+          }
+          trap cleanup EXIT
+          for arm in baseline cpu_load; do
+            if [[ "$arm" == cpu_load ]]; then
+              python3 -c 'while True: pass' &
+              burner_pid=$!
+              echo "$burner_pid" > target/linux-startup-diagnosis/owned-cpu-burner.pid
+            fi
+            for attempt in 1 2 3; do
+              log="target/linux-startup-diagnosis/$arm-$attempt.log"
+              set +e
+              cargo test -p ovrcr --test server_lifecycle --features acceptance-diagnostics startup_stale_concurrent_attempts_leave_one_surviving_server -- --exact --nocapture --test-threads=1 > "$log" 2>&1
+              result=$?
+              set -e
+              echo "$result" > "target/linux-startup-diagnosis/$arm-$attempt.exit"
+              cat "$log"
+              if [[ "$result" != 0 ]]; then failed=1; fi
+            done
+            cleanup
+          done
+          exit "$failed"
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: pi-package-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ovrcr-pi-package-evidence/
-          if-no-files-found: error
-          retention-days: 14
-
-  linux-capacity:
-    name: linux capacity
-    if: github.event_name == 'workflow_dispatch'
-    env:
-      SHELL: /bin/bash
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: linux-capacity
-          cache-on-failure: true
-      - name: Install shell test dependency
-        run: sudo apt-get update && sudo apt-get install -y zsh
-      - name: Configure fixture Git identity
-        run: |
-          git config --global user.name "OVRCR CI"
-          git config --global user.email "ci@ovrcr.invalid"
-      - name: Record host provenance
-        run: |
-          mkdir -p target/hosted-linux-capacity/load
-          uname -a > target/hosted-linux-capacity/uname.txt
-          rustc -Vv > target/hosted-linux-capacity/rustc.txt
-          cargo -V > target/hosted-linux-capacity/cargo.txt
-          cat /proc/meminfo > target/hosted-linux-capacity/meminfo.txt
-          cat /proc/sys/net/core/somaxconn > target/hosted-linux-capacity/somaxconn.txt
-      - name: Run isolated 50-session capacity acceptance
-        timeout-minutes: 20
-        env:
-          OVRCR_LOAD_EVIDENCE: ${{ github.workspace }}/target/hosted-linux-capacity/load
-        run: |
-          set +e
-          cargo test --test claude_reporting_load --features acceptance-diagnostics fifty_session_reporting_capacity -- --ignored --exact --nocapture 2>&1 | tee target/hosted-linux-capacity/test.log
-          result=${PIPESTATUS[0]}
-          echo "$result" > target/hosted-linux-capacity/test.exit
-          exit "$result"
-      - name: Upload capacity evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-capacity-${{ github.run_id }}-${{ github.run_attempt }}
-          path: target/hosted-linux-capacity/
-          if-no-files-found: error
-          retention-days: 14
-
-  linux-memory:
-    name: linux memory high-water
-    if: github.event_name == 'workflow_dispatch'
-    env:
-      SHELL: /bin/bash
-      CARGO_INCREMENTAL: 0
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: linux-memory
-          cache-on-failure: true
-      - name: Compile memory fixture
-        run: cargo test --test claude_reporting_load --features acceptance-diagnostics --no-run
-      - name: Record isolated host provenance
-        run: |
-          mkdir -p target/hosted-linux-memory
-          git rev-parse HEAD > target/hosted-linux-memory/revision.txt
-          uname -a > target/hosted-linux-memory/uname.txt
-          rustc -Vv > target/hosted-linux-memory/rustc.txt
-          cat /proc/meminfo > target/hosted-linux-memory/meminfo.txt
-          df -k . > target/hosted-linux-memory/disk.txt
-          cat /proc/self/cgroup > target/hosted-linux-memory/cgroup.txt
-      - name: Run preflighted raw/index and sequential JSON acceptance
-        timeout-minutes: 15
-        env:
-          OVRCR_MEMORY_EVIDENCE: ${{ github.workspace }}/target/hosted-linux-memory
-        run: |
-          set +e
-          cargo test --test claude_reporting_load --features acceptance-diagnostics fifty_collector_raw_index_and_sequential_json_high_water -- --ignored --exact --nocapture 2>&1 | tee target/hosted-linux-memory/test.log
-          result=${PIPESTATUS[0]}
-          echo "$result" > target/hosted-linux-memory/test.exit
-          exit "$result"
-      - name: Upload memory evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-memory-${{ github.run_id }}-${{ github.run_attempt }}
-          path: target/hosted-linux-memory/
+          name: linux-startup-diagnosis-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/linux-startup-diagnosis/
           if-no-files-found: error
           retention-days: 14

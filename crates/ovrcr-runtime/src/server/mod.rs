@@ -3051,3 +3051,34 @@ fn same_path(left: &Path, right: &Path) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+// Temporary Linux startup diagnosis; this branch is never product acceptance.
+pub fn startup_diagnostic(stage: &'static str) {
+    #[cfg(all(target_os = "linux", feature = "acceptance-diagnostics"))]
+    if std::env::var_os("OVRCR_STARTUP_DIAGNOSTIC").is_some() {
+        let mut wall = std::mem::MaybeUninit::<libc::timespec>::uninit();
+        let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+        unsafe {
+            if libc::clock_gettime(libc::CLOCK_MONOTONIC, wall.as_mut_ptr()) != 0
+                || libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) != 0
+            {
+                eprintln!(
+                    "[DEBUG-linux-startup] pid={} stage={stage} measurement_error",
+                    std::process::id()
+                );
+                return;
+            }
+            let wall = wall.assume_init();
+            let usage = usage.assume_init();
+            eprintln!(
+                "[DEBUG-linux-startup] pid={} stage={stage} mono_ns={} user_us={} system_us={}",
+                std::process::id(),
+                wall.tv_sec as i128 * 1_000_000_000 + wall.tv_nsec as i128,
+                usage.ru_utime.tv_sec as i128 * 1_000_000 + usage.ru_utime.tv_usec as i128,
+                usage.ru_stime.tv_sec as i128 * 1_000_000 + usage.ru_stime.tv_usec as i128,
+            );
+        }
+    }
+    #[cfg(not(all(target_os = "linux", feature = "acceptance-diagnostics")))]
+    let _ = stage;
+}

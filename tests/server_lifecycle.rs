@@ -1497,6 +1497,12 @@ fn startup_stale_concurrent_attempts_leave_one_surviving_server() {
         );
     }
     let cleanup = catch_unwind(AssertUnwindSafe(|| finish_startup_workers(&mut workers)));
+    for (index, log) in logs.iter().enumerate() {
+        eprintln!(
+            "STARTUP_FINAL_STDERR index={index} text={:?}",
+            std::fs::read_to_string(log)
+        );
+    }
     if let Err(error) = result {
         if cleanup.is_err() {
             eprintln!("STARTUP_CLEANUP_FAILED_AFTER_ORIGINAL_FAILURE");

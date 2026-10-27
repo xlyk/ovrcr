@@ -91,12 +91,15 @@ fn run_server_inner(
     #[cfg(feature = "acceptance-diagnostics")] dashboard_monitor: Option<DashboardQueueMonitor>,
     #[cfg(not(feature = "acceptance-diagnostics"))] _dashboard_monitor: Option<()>,
 ) -> Result<()> {
+    startup_diagnostic("startup_entry");
     let executable = std::env::current_exe().context("resolve running server executable")?;
     #[cfg(target_os = "linux")]
     let running_executable = Path::new("/proc/self/exe");
     #[cfg(not(target_os = "linux"))]
     let running_executable = executable.as_path();
+    startup_diagnostic("fingerprint_begin");
     let build = build_identity::executable_build(running_executable)?;
+    startup_diagnostic("fingerprint_end");
     let parent = paths
         .socket
         .parent()
@@ -105,7 +108,9 @@ fn run_server_inner(
     secure_socket_directory(parent)?;
     let bound_socket = resolve_bound_socket(&paths.socket)?;
     eprintln!("ovrcr server starting for {}", paths.socket.display());
+    startup_diagnostic("startup_lock_begin");
     let startup_lock = acquire_startup_lock(parent)?;
+    startup_diagnostic("startup_lock_end");
     if paths.socket.exists() {
         match UnixStream::connect(&paths.socket) {
             Ok(_) => bail!("server is already running"),
@@ -149,6 +154,7 @@ fn run_server_inner(
                 return Err(error);
             }
         };
+    startup_diagnostic("publication_end");
     drop(startup_lock);
     eprintln!("ovrcr server listening on {}", paths.socket.display());
     // The socket is bound so concurrent starters see a live server, but a
@@ -189,11 +195,14 @@ fn run_server_inner(
         server_lifetime: super::navigation::new_identity()?,
         delegation_observations: super::delegation_observation::Observations::default(),
         callback_executable_sha256: std::env::current_exe().ok().and_then(|path| {
-            super::navigation::bridge_executable_sha256(
+            startup_diagnostic("callback_hash_begin");
+            let result = super::navigation::bridge_executable_sha256(
                 &path,
                 Instant::now() + Duration::from_secs(2),
             )
-            .ok()
+            .ok();
+            startup_diagnostic("callback_hash_end");
+            result
         }),
         tasks: Some(Arc::clone(&task_manager)),
         socket: bound_socket,
