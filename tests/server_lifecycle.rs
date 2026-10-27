@@ -20015,9 +20015,12 @@ fn diagnostic_full_executable_hash_cost() {
             );
             eprintln!("HASH_BENCH algorithm=sha256 full_bytes={bytes} external_digest_match=true");
         }
-        Err(error) => eprintln!(
-            "HASH_BENCH algorithm=sha256 error_kind={:?} full_bytes_unverified=true",
-            error.kind()
-        ),
+        Err(error) => {
+            eprintln!(
+                "HASH_BENCH algorithm=sha256 error_kind={:?} full_bytes_unverified=true",
+                error.kind()
+            );
+            panic!("full SHA256 comparison failed: {:?}", error.kind());
+        }
     }
 }
