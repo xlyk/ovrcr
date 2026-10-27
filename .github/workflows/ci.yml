@@ -29,22 +29,28 @@ jobs:
           uname -a > target/linux-startup-diagnosis/host.txt
           rustc -Vv >> target/linux-startup-diagnosis/host.txt
           nproc >> target/linux-startup-diagnosis/host.txt
+          lscpu > target/linux-startup-diagnosis/cpu.txt
+          stat --printf='%s bytes\n' target/debug/ovrcr > target/linux-startup-diagnosis/executable.txt
+          sha256sum target/debug/ovrcr >> target/linux-startup-diagnosis/executable.txt
           cat /proc/loadavg >> target/linux-startup-diagnosis/host.txt
           failed=0
-          burner_pid=''
+          burner_pids=()
           cleanup() {
-            if [[ -n "$burner_pid" ]]; then
-              kill "$burner_pid" 2>/dev/null || true
-              wait "$burner_pid" 2>/dev/null || true
-              burner_pid=''
-            fi
+            for burner_pid in "${burner_pids[@]}"; do
+              if kill "$burner_pid"; then kill_status=0; else kill_status=$?; fi
+              if wait "$burner_pid"; then wait_status=0; else wait_status=$?; fi
+              echo "owned_pid=$burner_pid kill_status=$kill_status original_wait_status=$wait_status" >> target/linux-startup-diagnosis/cpu-burner-cleanup.txt
+            done
+            burner_pids=()
           }
           trap cleanup EXIT
           for arm in baseline cpu_load; do
             if [[ "$arm" == cpu_load ]]; then
-              python3 -c 'while True: pass' &
-              burner_pid=$!
-              echo "$burner_pid" > target/linux-startup-diagnosis/owned-cpu-burner.pid
+              for burner in 1 2 3 4; do
+                python3 -c 'while True: pass' &
+                burner_pids+=("$!")
+                echo "$!" >> target/linux-startup-diagnosis/owned-cpu-burners.pid
+              done
             fi
             for attempt in 1 2 3; do
               log="target/linux-startup-diagnosis/$arm-$attempt.log"
