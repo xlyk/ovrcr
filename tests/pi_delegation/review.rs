@@ -17,6 +17,45 @@ fn publication_name(name: &std::ffi::OsStr) -> bool {
     })
 }
 
+fn publication_files(root: &Path) -> std::collections::BTreeSet<std::ffi::OsString> {
+    // Observe published names; concurrent checkpoint scratch is not a readable view.
+    fs::read_dir(root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .filter(|name| publication_name(name))
+        .collect()
+}
+
+#[test]
+fn review_publication_snapshot_ignores_only_atomic_scratch_and_detects_published_changes() {
+    let root = tempfile::tempdir().unwrap();
+    let scratch = format!(".{}", "b1".repeat(32));
+    let published = [
+        "brief-v1.json".to_owned(),
+        "candidate-v1.json".to_owned(),
+        "review-view-round-spec.json".to_owned(),
+        ".private-publication".to_owned(),
+        format!(".{}", "A0".repeat(32)),
+        format!(".{}", "g0".repeat(32)),
+        format!(".{}", "a".repeat(63)),
+        format!(".{}", "a".repeat(65)),
+        "a".repeat(64),
+    ];
+    for name in published.iter().chain(std::iter::once(&scratch)) {
+        fs::write(root.path().join(name), "complete").unwrap();
+    }
+    let before = publication_files(root.path());
+    fs::remove_file(root.path().join(scratch)).unwrap();
+    assert_eq!(publication_files(root.path()), before);
+    for name in &published {
+        fs::remove_file(root.path().join(name)).unwrap();
+        assert_ne!(publication_files(root.path()), before, "removed {name}");
+        fs::write(root.path().join(name), "complete").unwrap();
+    }
+    fs::write(root.path().join("new-readable-view.json"), "complete").unwrap();
+    assert_ne!(publication_files(root.path()), before);
+}
+
 fn publication_snapshot(
     fixture: &RecoveryFixture,
     snapshot: &AssignmentSnapshot,
@@ -1701,12 +1740,7 @@ fn public_review_refuses_unqualified_native_typed_publisher_before_prepare_or_la
             .collect::<rusqlite::Result<Vec<_>>>()
             .unwrap()
     };
-    let private_files = || -> std::collections::BTreeSet<_> {
-        fs::read_dir(current.brief.parent().unwrap())
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .collect()
-    };
+    let private_files = || publication_files(current.brief.parent().unwrap());
     let original_metadata = metadata();
     let original_files = private_files();
     let document = sources().pop().unwrap();
