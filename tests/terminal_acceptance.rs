@@ -16,6 +16,7 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::process::{Child, Command};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -361,7 +362,10 @@ struct OuterDashboard {
     received: Receiver<Vec<u8>>,
     reader: Option<JoinHandle<()>>,
     parser: vt100::Parser,
+    image: Option<Arc<tempfile::TempDir>>,
 }
+
+static DASHBOARD_IMAGE: Mutex<Weak<tempfile::TempDir>> = Mutex::new(Weak::new());
 
 impl OuterDashboard {
     fn start(fixture: &AcceptanceFixture, size: PtySize) -> Result<Self> {
@@ -375,9 +379,28 @@ impl OuterDashboard {
     ) -> Result<Self> {
         let pty = native_pty_system();
         let pair = pty.openpty(size)?;
-        // Isolate startup asset discovery from the shared Cargo target, while
-        // preserving the selected Server image and all real PTY behavior.
-        let directory = fixture.root.path().join("dashboard-client");
+        // Concurrent Dashboards reuse one private image to avoid startup delays
+        // from concurrent fresh executable copies; assets stay isolated.
+        let image = if fixture.executable == Path::new(env!("CARGO_BIN_EXE_ovrcr")) {
+            let mut cached = DASHBOARD_IMAGE.lock().unwrap();
+            Some(match cached.upgrade() {
+                Some(image) => image,
+                None => {
+                    let image = Arc::new(tempfile::tempdir()?);
+                    let directory = image.path().join("bin");
+                    std::fs::create_dir(&directory)?;
+                    std::fs::copy(&fixture.executable, directory.join("ovrcr"))?;
+                    *cached = Arc::downgrade(&image);
+                    image
+                }
+            })
+        } else {
+            None
+        };
+        let directory = image.as_ref().map_or_else(
+            || fixture.root.path().join("dashboard-client"),
+            |image| image.path().join("bin"),
+        );
         std::fs::create_dir_all(&directory)?;
         let executable = directory.join("ovrcr");
         if !executable.exists() {
@@ -408,6 +431,7 @@ impl OuterDashboard {
             received,
             reader: Some(reader_handle),
             parser: vt100::Parser::new(size.rows, size.cols, 0),
+            image,
         };
         dashboard.wait_for_startup(wait_deadline())?;
         Ok(dashboard)
@@ -707,7 +731,9 @@ impl OuterDashboard {
         let child = self.child.take().context("outer child already detached")?;
         let pid = child.process_id().context("outer child has no PID")? as libc::pid_t;
         let (sender, receiver) = mpsc::sync_channel(1);
+        let image = self.image.clone();
         let waiter = thread::spawn(move || {
+            let _image = image;
             let mut child = child;
             let _ = sender.send(child.wait());
         });
@@ -754,7 +780,7 @@ impl Drop for OuterDashboard {
             {
                 unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
             }
-            let _ = wait_pty_child(child, Duration::from_secs(2));
+            let _ = wait_pty_child(child, Duration::from_secs(2), self.image.clone());
         }
         if let Some(reader) = self.reader.take() {
             let _ = join_reader(reader, Duration::from_secs(2));
@@ -765,9 +791,11 @@ impl Drop for OuterDashboard {
 fn wait_pty_child(
     child: Box<dyn PtyChild + Send + Sync>,
     timeout: Duration,
+    image: Option<Arc<tempfile::TempDir>>,
 ) -> Result<portable_pty::ExitStatus> {
     let (sender, receiver) = mpsc::sync_channel(1);
     let waiter = thread::spawn(move || {
+        let _image = image;
         let mut child = child;
         let _ = sender.send(child.wait());
     });

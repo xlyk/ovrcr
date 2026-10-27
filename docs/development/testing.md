@@ -24,6 +24,12 @@ profile paths; explicit child overrides can point to task-owned provider fixture
 The thread adapter shares the test process environment, so local regression runs
 also require a private process HOME and provider profiles.
 
+Concurrent `OuterDashboard` clients share one private executable copy while
+their children are alive, avoiding startup delays from concurrent fresh images.
+Each client keeps its fixture HOME, settings, socket and selected Server image;
+custom executable fixtures retain their own copies. The last child owner removes
+the shared image after reaping, and startup assets remain outside the Cargo target.
+
 `Live::request` blocks until the server answers; `Live::bounded` — which `Live::binary` applies
 to itself — gives every request a deadline instead, so a test fails rather than
 hangs when its server stops answering. `Live::ready` creates the fixture
