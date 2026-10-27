@@ -6263,6 +6263,54 @@ fn accept_loop_survives_thread_spawn_failure() {
     server.join().unwrap().unwrap();
 }
 
+#[test]
+fn startup_preserves_stale_socket_replaced_during_executable_hash() {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("server.sock");
+    let stale = UnixListener::bind(&socket).unwrap();
+    drop(stale);
+
+    let registry = root.path().join("instance");
+    std::fs::create_dir(&registry).unwrap();
+    std::fs::write(
+        crate::config::database_path(&registry),
+        b"not a sqlite database",
+    )
+    .unwrap();
+
+    let replacement_identity = Arc::new(Mutex::new(None));
+    let hook_socket = socket.clone();
+    let hook_identity = Arc::clone(&replacement_identity);
+    *startup::AFTER_EXECUTABLE_BUILD_HOOK.lock().unwrap() = Some((
+        socket.clone(),
+        Box::new(move || {
+            std::fs::remove_file(&hook_socket).unwrap();
+            let replacement = UnixListener::bind(&hook_socket).unwrap();
+            let metadata = std::fs::symlink_metadata(&hook_socket).unwrap();
+            *hook_identity.lock().unwrap() = Some((metadata.dev(), metadata.ino()));
+            drop(replacement);
+        }),
+    ));
+
+    let error = run_server(
+        ServerPaths {
+            socket: socket.clone(),
+        },
+        registry,
+    )
+    .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("server socket changed during startup"),
+        "unexpected startup error: {error:#}"
+    );
+    let expected = replacement_identity.lock().unwrap().unwrap();
+    let current = std::fs::symlink_metadata(&socket).unwrap();
+    assert!(current.file_type().is_socket());
+    assert_eq!((current.dev(), current.ino()), expected);
+}
+
 mod agent_reporting {
     use super::*;
     use ovrcr_protocol::*;

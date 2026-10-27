@@ -1,4 +1,5 @@
 use super::*;
+use std::os::unix::fs::MetadataExt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ServerPaths {
@@ -23,6 +24,28 @@ impl ServerPaths {
 #[cfg(test)]
 pub(super) static FAIL_NEXT_ACCEPT_SPAWN: AtomicBool = AtomicBool::new(false);
 
+#[cfg(test)]
+type AfterExecutableBuildHook = (PathBuf, Box<dyn FnOnce() + Send>);
+
+#[cfg(test)]
+pub(super) static AFTER_EXECUTABLE_BUILD_HOOK: Mutex<Option<AfterExecutableBuildHook>> =
+    Mutex::new(None);
+
+#[cfg(test)]
+fn run_after_executable_build_hook(socket: &Path) {
+    let hook = {
+        let mut hook = AFTER_EXECUTABLE_BUILD_HOOK.lock().unwrap();
+        if hook.as_ref().is_some_and(|(target, _)| target == socket) {
+            hook.take()
+        } else {
+            None
+        }
+    };
+    if let Some((_, hook)) = hook {
+        hook();
+    }
+}
+
 pub(super) fn resolve_bound_socket(socket: &Path) -> Result<PathBuf> {
     let leaf = socket
         .file_name()
@@ -44,6 +67,42 @@ pub(super) fn resolve_bound_socket(socket: &Path) -> Result<PathBuf> {
     Ok(fs::canonicalize(parent)
         .with_context(|| format!("resolve server socket parent {}", parent.display()))?
         .join(leaf))
+}
+
+fn owned_socket_identity(metadata: &fs::Metadata) -> Result<(u32, u64, u64)> {
+    if !metadata.file_type().is_socket() || metadata.uid() != unsafe { libc::getuid() } {
+        bail!("server socket is not an owned Unix socket");
+    }
+    Ok((metadata.uid(), metadata.dev(), metadata.ino()))
+}
+
+fn stale_socket_identity(socket: &Path) -> Result<Option<(u32, u64, u64)>> {
+    let before = match fs::symlink_metadata(socket) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("inspect server socket before probe"),
+    };
+    let identity = owned_socket_identity(&before)?;
+    match UnixStream::connect(socket) {
+        Ok(_) => bail!("server is already running"),
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
+            ) => {}
+        Err(error) => {
+            return Err(error).with_context(|| format!("probe server socket {}", socket.display()));
+        }
+    }
+    let after = match fs::symlink_metadata(socket) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("inspect server socket after probe"),
+    };
+    if owned_socket_identity(&after)? != identity {
+        bail!("server socket changed during startup");
+    }
+    Ok(Some(identity))
 }
 
 pub(super) fn validate_bound_socket(socket: &Path) -> Result<PathBuf> {
@@ -105,35 +164,23 @@ fn run_server_inner(
     let bound_socket = resolve_bound_socket(&paths.socket)?;
     eprintln!("ovrcr server starting for {}", paths.socket.display());
     let startup_lock = acquire_startup_lock(parent)?;
-    let stale_socket = if paths.socket.exists() {
-        match UnixStream::connect(&paths.socket) {
-            Ok(_) => bail!("server is already running"),
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
-                ) =>
-            {
-                true
-            }
-            Err(error) => {
-                return Err(error)
-                    .with_context(|| format!("probe server socket {}", paths.socket.display()));
-            }
-        }
-    } else {
-        false
-    };
+    let stale_socket = stale_socket_identity(&paths.socket)?;
     let build = build_identity::executable_build(running_executable)?;
-    if stale_socket {
-        match fs::remove_file(&paths.socket) {
-            Ok(()) => {}
-            Err(remove_error) if remove_error.kind() == io::ErrorKind::NotFound => {}
-            Err(remove_error) => {
-                return Err(remove_error).with_context(|| {
-                    format!("remove stale server socket {}", paths.socket.display())
-                });
-            }
+    #[cfg(test)]
+    run_after_executable_build_hook(&paths.socket);
+    if let Some(identity) = stale_socket {
+        match stale_socket_identity(&paths.socket)? {
+            Some(current) if current == identity => match fs::remove_file(&paths.socket) {
+                Ok(()) => {}
+                Err(remove_error) if remove_error.kind() == io::ErrorKind::NotFound => {}
+                Err(remove_error) => {
+                    return Err(remove_error).with_context(|| {
+                        format!("remove stale server socket {}", paths.socket.display())
+                    });
+                }
+            },
+            Some(_) => bail!("server socket changed during startup"),
+            None => {}
         }
     }
     let titles_dir = bound_socket
