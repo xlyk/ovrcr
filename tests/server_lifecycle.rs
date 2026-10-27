@@ -4576,45 +4576,50 @@ fn slow_dashboard_recovers_after_output_burst() {
     assert_eq!(ovrcr::server::RAW_DISPATCH_QUEUE_CAPACITY, 64);
     let fixture = ControlFixture::new();
     fixture.ready("feature/slow-dashboard");
-    // awk emits the burst in well under a second on any runner; a shell
-    // loop needs several seconds on a slow CI machine.
+    // Hold the finite burst until this dashboard has acknowledged its view.
     let burst = fixture.create_session(
         "burst",
         vec![
-            "awk".into(),
-            "BEGIN { for (i = 0; i < 200000; i++) printf \"BURST_%06d\\n\", i; printf \"FINAL_MARKER\" }".into(),
+            "sh".into(),
+            "-c".into(),
+            "IFS= read -r start; exec awk 'BEGIN { for (i = 0; i < 200000; i++) printf \"BURST_%06d\\n\", i; printf \"FINAL_MARKER\" }'".into(),
         ],
     );
+    for pgid in fixture.session_groups() {
+        fixture.own_group(pgid);
+    }
 
-    let mut dashboard = connect_server(&fixture.socket).unwrap();
-    write_frame(
-        &mut dashboard,
-        &ClientMessage {
-            request_id: 1,
-            request: Request::DashboardHello,
-        },
-    )
-    .unwrap();
-    let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
-    write_frame(
-        &mut dashboard,
-        &ClientMessage {
-            request_id: 2,
-            request: Request::Select {
+    let mut connection = HistoryConnection::connect(&fixture.socket);
+    assert!(matches!(
+        history_request(&mut connection, 1, Request::DashboardHello),
+        Response::Hierarchy(_)
+    ));
+    assert!(matches!(
+        history_request(
+            &mut connection,
+            2,
+            Request::Select {
                 session: burst,
                 size: ovrcr::session::TerminalSize {
                     rows: 40,
                     cols: 120,
                 },
-            },
-        },
-    )
-    .unwrap();
+            }
+        ),
+        Response::Screen { .. }
+    ));
+    let mut dashboard = connection.stream;
     dashboard
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
-    let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
-
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: burst,
+            text: "start".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
     fixture.wait_exited(burst);
 
     let mut saw_dirty = false;
