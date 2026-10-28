@@ -50,7 +50,16 @@ success means a report was produced; inspect each status. `runtime_checked` and
 `release_ready` remain false: a checksum establishes artifact identity only. `--settings PATH`
 selects an existing settings document for those diagnostics only. The ordinary
 managed launch grammar is `ovrcr agent run cursor-cloud -- ACCOUNT`; running it
-outside a managed OVRCR Agent session refuses admission.
+outside a managed OVRCR Agent session refuses admission. To create that managed
+session from the CLI, use the same wrapper inside `terminal create` (or `new`):
+
+```sh
+ovrcr terminal create --project PROJECT --workspace BRANCH -- \
+  /absolute/path/to/ovrcr agent run cursor-cloud -- work
+```
+
+The retained session keeps the selected `cursor-cloud:work` identity, as ordinary
+Agent creation does. Account configuration and launch validation still apply.
 
 The preview validates the workspace origin and published HEAD, then the selected
 key's repository/model access through one owned official SDK Bridge. It shows

@@ -150,6 +150,101 @@ impl Fixture {
 }
 
 #[test]
+fn cli_cloud_creation_preserves_account_and_refuses_unconfigured_profile() {
+    let fixture = Fixture::new("composer-2.5", true, true, false);
+    for account in ["work", "not-configured"] {
+        let output = fixture
+            .live
+            .command()
+            .args([
+                "--json",
+                "terminal",
+                "create",
+                "--project",
+                PROJECT,
+                "--path",
+            ])
+            .arg(&fixture.workspace)
+            .args(["--name", account, "--"])
+            .arg(&fixture.live.executable)
+            .args(["agent", "run", "cursor-cloud", "--", account])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{:?}", output);
+        let created: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(created["kind"]["agent"], format!("cursor-cloud:{account}"));
+        if let Some(pid) = created["pid"].as_i64() {
+            fixture.live.own_group(pid as i32);
+        } else {
+            assert_ne!(account, "work", "valid profile exited before preview");
+        }
+        let id = ovrcr::session::SessionId(created["id"].as_u64().unwrap());
+        let Response::Inventory { sessions, .. } = fixture.live.request(Request::Inspect) else {
+            panic!("inventory")
+        };
+        let session = sessions.iter().find(|session| session.id == id).unwrap();
+        assert_eq!(
+            session.kind,
+            SessionKind::Agent {
+                name: format!("cursor-cloud:{account}")
+            }
+        );
+        if account == "work" {
+            fixture.until(|| {
+                let text = fixture.text(session);
+                assert!(!text.contains("validation failed"), "{text}");
+                text.contains("Press Enter to close preview.")
+            });
+            assert!(fixture.text(session).contains("Account: work"));
+            let started = fixture.events().remove(0);
+            let scratch = PathBuf::from(started["root"].as_str().unwrap());
+            assert!(scratch.is_dir());
+            assert_eq!(started["environment_isolated"], true);
+            assert_eq!(
+                fixture.live.request(Request::SendTerminal {
+                    session: id,
+                    text: "".into(),
+                    submit: true
+                }),
+                Response::Ok
+            );
+            fixture.until(|| !scratch.exists());
+            for key in ["pid", "adapter_pid"] {
+                assert_eq!(
+                    unsafe { libc::kill(started[key].as_i64().unwrap() as i32, 0) },
+                    -1
+                );
+            }
+        } else {
+            fixture.until(|| {
+                fixture
+                    .text(session)
+                    .contains("named cursor-cloud account is not configured")
+            });
+            assert!(
+                !fixture
+                    .text(session)
+                    .contains("Press Enter to close preview.")
+            );
+        }
+    }
+    assert_eq!(
+        fixture
+            .events()
+            .iter()
+            .filter(|e| e["event"] == "started")
+            .count(),
+        1,
+        "unknown account must not start another bridge"
+    );
+    assert!(fixture.events().iter().all(|e| {
+        !["CreateAgent", "Send", "CancelRun"]
+            .iter()
+            .any(|method| e["method"] == *method)
+    }));
+}
+
+#[test]
 fn ordinary_cloud_agent_validates_preview_and_cleans_owned_tree_on_exit_and_signals() {
     for mode in ["normal", "sigterm", "forced-adapter", "server-close"] {
         let fixture = Fixture::new("composer-2.5", true, true, false);
