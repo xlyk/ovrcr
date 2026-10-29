@@ -1,4 +1,4 @@
-//! Exact-run SDK 1.0.40 observation; no inference, replay or lifecycle owner.
+//! Exact-run SDK 1.0.40 observation; no inference, request replay or lifecycle owner.
 use super::*;
 use ovrcr_protocol::{
     CloudCreationCommand as C, CloudCreationIntent, CloudRunStatus, CloudSendIntent,
@@ -35,6 +35,59 @@ fn identity(value: &Value, agent: &str, run: &str) -> Result<()> {
         "exact run identity mismatch"
     );
     Ok(())
+}
+fn recognized(envelope: &Value) -> Result<bool> {
+    let count = ["sdkMessage", "result", "done", "interactionUpdate", "step"]
+        .iter()
+        .filter(|name| envelope.get(**name).is_some())
+        .count();
+    ensure!(count <= 1, "ambiguous SDK envelope");
+    Ok(count == 1)
+}
+fn metadata_identity(
+    value: &Value,
+    agent: &str,
+    run: &Option<String>,
+    hint: &mut Option<String>,
+) -> Result<()> {
+    let Some(fields) = value.as_object() else {
+        return Ok(());
+    };
+    if let Some(id) = fields.get("agent_id") {
+        ensure!(
+            id.as_str() == Some(agent),
+            "SDK metadata agent identity mismatch"
+        );
+    }
+    if let Some(id) = fields.get("run_id") {
+        let id = id.as_str().context("SDK metadata run identity malformed")?;
+        ensure!(
+            !id.is_empty()
+                && id.len() <= 256
+                && id
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c)),
+            "SDK metadata run identity malformed"
+        );
+        if let Some(run) = run {
+            ensure!(id == run, "SDK metadata run identity mismatch");
+        } else if let Some(hint) = hint.as_ref() {
+            ensure!(id == hint, "conflicting SDK metadata run identities");
+        } else {
+            *hint = Some(id.to_owned());
+        }
+    }
+    Ok(())
+}
+fn stream_token(envelope: &Value) -> Result<Option<String>> {
+    envelope
+        .get("offset")
+        .map(|value| {
+            let token = value.as_str().context("stream offset must be a string")?;
+            Ok((!token.is_empty()).then(|| token.to_owned()))
+        })
+        .transpose()
+        .map(Option::flatten)
 }
 fn terminal(value: &Value) -> Result<CloudRunStatus> {
     Ok(match value.as_str() {
@@ -247,29 +300,26 @@ pub(super) fn send(
     let mut done = false;
     let origin = crate::agent_runner::private_identifier()?;
     let mut replay = HashMap::<String, usize>::new();
-    let mut offsets = HashMap::<(bool, u64), String>::new();
-    let mut send_offset = 0u64;
-    let mut observe_offset = 0u64;
+    let mut offsets = HashMap::<(bool, String), String>::new();
+    let mut observe_offset: Option<String> = None;
+    let mut send_revision = 0u64;
+    let mut observe_revision = 0u64;
+    let mut metadata_run_hint: Option<String> = None;
     let mut observing = false;
     let mut applied = |envelope: &Value,
                        run: &mut Option<String>,
+                       metadata_run_hint: &mut Option<String>,
                        admit: &mut dyn FnMut(&C) -> Result<()>|
      -> Result<()> {
         ensure!(!done, "frame after done; outcome unverified");
-        ensure!(
-            ["sdkMessage", "result", "done", "interactionUpdate", "step"]
-                .iter()
-                .filter(|n| envelope.get(**n).is_some())
-                .count()
-                == 1,
-            "ambiguous/unknown SDK envelope"
-        );
+        ensure!(recognized(envelope)?, "no recognized SDK envelope");
         if let Some(sdk) = envelope.get("sdkMessage") {
             let kind = sdk["type"].as_str().context("SDK type missing")?;
-            ensure!(
-                TYPES.contains(&kind),
-                "SDK shape unrecognized; outcome unverified"
-            );
+            if !TYPES.contains(&kind) {
+                metadata_identity(&sdk["message"], agent, run, metadata_run_hint)?;
+                metadata_identity(sdk, agent, run, metadata_run_hint)?;
+                return Ok(());
+            }
             let message = &sdk["message"];
             let id = message["run_id"]
                 .as_str()
@@ -282,6 +332,9 @@ pub(super) fn send(
                 "SDK conversation/model mismatch"
             );
             if run.is_none() {
+                if let Some(hint) = metadata_run_hint.as_ref() {
+                    ensure!(hint == id, "SDK run identity disagrees with metadata");
+                }
                 send_boundary(fixture, "after_reply")?;
                 admit(&C::AcknowledgeSend {
                     key: intent.key.clone(),
@@ -358,11 +411,11 @@ pub(super) fn send(
         for attachment in 0..3 {
             let request = if observing {
                 let id = run.as_ref().context("Observe requires exact durable run")?;
-                if observe_offset == 0 {
-                    json!({"runId":id})
-                } else {
-                    json!({"runId":id,"afterOffset":observe_offset.to_string()})
+                let mut request = json!({"runId":id});
+                if let Some(offset) = observe_offset.as_ref() {
+                    request["afterOffset"] = json!(offset);
                 }
+                request
             } else {
                 intent.request()
             };
@@ -370,44 +423,39 @@ pub(super) fn send(
                 if observing { "ObserveRun" } else { "Send" },
                 &request,
                 |envelope| {
-                    let offset = envelope
-                        .get("offset")
-                        .map(|v| -> Result<u64> {
-                            let text = v.as_str().context("stream offset must be a string")?;
-                            let value = text
-                                .parse::<u64>()
-                                .context("stream offset must be numeric")?;
-                            ensure!(
-                                value > 0 && value.to_string() == text,
-                                "invalid exclusive stream offset"
-                            );
-                            Ok(value)
-                        })
-                        .transpose()?;
-                    ensure!(!observing || offset.is_some(), "ObserveRun offset missing");
+                    // The Bridge's empty object is a no-offset keepalive. Future outer
+                    // envelopes are also ignored, but never become progress or authority.
+                    if !recognized(&envelope)? {
+                        return Ok(());
+                    }
+                    let metadata = envelope
+                        .get("sdkMessage")
+                        .and_then(|sdk| sdk["type"].as_str())
+                        .is_some_and(|kind| !TYPES.contains(&kind));
+                    if metadata {
+                        let sdk = &envelope["sdkMessage"];
+                        metadata_identity(&sdk["message"], agent, &run, &mut metadata_run_hint)?;
+                        metadata_identity(sdk, agent, &run, &mut metadata_run_hint)?;
+                    }
+                    let offset = stream_token(&envelope)?;
+                    ensure!(
+                        !observing || metadata || offset.is_some(),
+                        "ObserveRun offset missing"
+                    );
                     let mut normalized = envelope.clone();
                     normalized
                         .as_object_mut()
                         .context("stream object missing")?
                         .remove("offset");
                     let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&normalized)?));
-                    if let Some(offset) = offset {
-                        let previous = if observing {
-                            observe_offset
-                        } else {
-                            send_offset
-                        };
-                        if offset <= previous {
+                    if let Some(offset) = offset.as_ref() {
+                        if let Some(previous) = offsets.get(&(observing, offset.clone())) {
                             ensure!(
-                                offsets.get(&(observing, offset)) == Some(&digest),
-                                "changed or stale stream offset"
+                                previous == &digest,
+                                "changed payload for repeated stream offset"
                             );
                             return Ok(());
                         }
-                        ensure!(
-                            !observing || offset == previous + 1,
-                            "ObserveRun progress gap"
-                        );
                     }
                     ensure!(offsets.len() < 4096, "observation progress bound reached");
                     let duplicate = if observing {
@@ -422,27 +470,36 @@ pub(super) fn send(
                         false
                     };
                     if !duplicate {
-                        applied(&envelope, &mut run, admit)?;
+                        applied(&envelope, &mut run, &mut metadata_run_hint, admit)?;
                         if !observing {
                             *replay.entry(digest.clone()).or_default() += 1;
                         }
                     }
                     if let Some(offset) = offset {
-                        let id = run.as_ref().context("offset before exact durable run")?;
-                        admit(&C::ObservationProgress {
-                            key: intent.key.clone(),
-                            agent_id: agent.into(),
-                            run_id: id.clone(),
-                            origin: origin.clone(),
-                            observe: observing,
-                            offset,
-                        })?;
-                        offsets.insert((observing, offset), digest);
-                        if observing {
-                            observe_offset = offset;
-                        } else {
-                            send_offset = offset;
+                        if let Some(id) = run.as_ref() {
+                            let revision = if observing {
+                                observe_revision.checked_add(1)
+                            } else {
+                                send_revision.checked_add(1)
+                            }
+                            .context("observation revision exhausted")?;
+                            admit(&C::ObservationProgress {
+                                key: intent.key.clone(),
+                                agent_id: agent.into(),
+                                run_id: id.clone(),
+                                origin: origin.clone(),
+                                observe: observing,
+                                offset: offset.clone(),
+                                revision,
+                            })?;
+                            if observing {
+                                observe_revision = revision;
+                                observe_offset = Some(offset.clone());
+                            } else {
+                                send_revision = revision;
+                            }
                         }
+                        offsets.insert((observing, offset), digest);
                     }
                     Ok(())
                 },
@@ -747,7 +804,7 @@ pub(super) fn recover(
         return Ok(());
     }
     println!(
-        "Active reattachment unavailable: option-preserving fresh observation is unproved. Remote work/charges may continue; no mutation issued.\nSaved cancellation intent, if present, is not dispatched automatically. Type /retry-cancel for this exact known run, or /detach. Uncertain CreateAgent/Send Retry unavailable; unresolved immutable requests stay retained."
+        "Active reattachment unavailable: this Bridge handle cannot be restored after it exits. Remote work/charges may continue; no mutation issued.\nSaved cancellation intent, if present, is not dispatched automatically. Type /retry-cancel for this exact known run, or /detach. Uncertain CreateAgent/Send replay is not planned; unresolved immutable requests stay retained."
     );
     use std::io::BufRead;
     let stdin = std::io::stdin();
