@@ -44,6 +44,8 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       # nextest retries timing-sensitive failures and reports them as FLAKY;
       # see .config/nextest.toml. Doc tests stay on cargo test below.
+      - name: Offline Cursor cloud preflight
+        run: python3 -I -m unittest discover -s experiments/cursor-cloud -p test_client.py -v
       - name: Test
         run: cargo nextest run --workspace --all-targets --all-features --profile ci -E 'not test(partial_resize_connection_delivers_error_before_owner_close)'
       - name: Doc tests
@@ -128,6 +130,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Lint
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Offline Cursor cloud preflight
+        run: python3 -I -m unittest discover -s experiments/cursor-cloud -p test_client.py -v
       - name: Test
         run: cargo nextest run --workspace --all-targets --profile ci -E 'not test(partial_resize_connection_delivers_error_before_owner_close)'
       - name: Doc tests

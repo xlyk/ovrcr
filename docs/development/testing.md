@@ -128,6 +128,17 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 - Interactive Dashboard fixtures can encounter optional native-hook or Bridge setup offers. Decline recognized optional offers with `n`, leave unknown decisions unanswered, and wait for the actual alternate-screen Dashboard before sending test input. Preserve fresh-output assertions separately from waits for already-rendered state. The development GUI retains a single Cmd-K intent across dashboard restart; tests must not resend the shortcut to compensate for startup.
 - The shared initial-admission lifecycle cases can fail with `supervisor must select a fresh UUID` when a saturated host pushes the fixture's `/bin/sh` reply past the product's one-second probe budget; read a recurrence as contention unless its evidence says otherwise, per the [issue #62 diagnosis](../../research/issue-62-lifecycle-diagnosis/README.md).
 
+## Standalone Cursor cloud client
+
+The offline-only client suite uses synthetic credentials, a controlled external bridge
+process and real private files/sockets/Git repositories. It covers preflight, a
+coding run with exact-run observation recovery, same-conversation follow-up,
+third-run cancellation and optional read-only owned-bridge restart, including
+uncertain receipts, source/result verification, original deadlines and closure. It creates no cloud work and requires no
+OVRCR Server or live account. Run `python3 -I -m unittest discover -s experiments/cursor-cloud -p test_client.py -v`.
+See [invocation and acceptance mapping](../../experiments/cursor-cloud/README.md)
+for deadlines, ownership receipts and the separately gated live proof.
+
 ## Git owner acceptance receipts
 
 With `acceptance-diagnostics`, a private fixture can set
