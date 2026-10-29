@@ -351,7 +351,10 @@ asserted admission/result boundary. A controlled latency regression
 adds an observed 250 ms wait inside each real Git peer process: normal coding must
 finish all three fetches, both fixture test results and both Run 2 all-ref reads,
 plus independent PR verification, while an explicit 2-second
-work clock must still stop before creation. No clock is renewed. Stall peers record
+work clock must still stop before creation. No clock is renewed. The selected
+credential audit covers all six remote Git reads: three fetches, the pre-creation
+heads snapshot, and the two all-ref reads around follow-up. Each read must supply
+the selected credential and refuse the unrelated remote. Stall peers record
 that the intended phase was reached and trickle beyond the absolute deadline. Expired-entry
 and exhausted-cleanup cases keep separate zero/late budget checks. New coding
 stall cases use the named normal coding work/total allowance so preparation can

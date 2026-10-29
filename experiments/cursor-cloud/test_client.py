@@ -159,7 +159,7 @@ if 'fetch' in args or 'ls-remote' in args:
     other = subprocess.run(['/usr/bin/git', *options, 'credential', 'fill'], input='protocol=https\nhost=github.com\npath=unrelated/other\n\n', text=True, capture_output=True)
     unrelated_refused = other.returncode != 0 and 'GITHUB-SECRET-SENTINEL-364' not in other.stdout
     with open(""" + repr(str(root / "git-auth-audit.jsonl")) + r""", 'a') as audit:
-        audit.write(json.dumps({'credential_supplied': supplied, 'refused': auth.returncode != 0, 'other_remote_refused': unrelated_refused}) + '\n')
+        audit.write(json.dumps({'operation': operation, 'credential_supplied': supplied, 'refused': auth.returncode != 0, 'other_remote_refused': unrelated_refused}) + '\n')
     if not supplied:
         sys.exit(1)
 os.execv('/usr/bin/git', ['git', '-c', """ + repr("url." + str(repo) + ".insteadOf=https://github.com/fixture/disposable") + r""", *args])
@@ -1117,8 +1117,10 @@ sys.exit(result)
                 gh_rows = [json.loads(line) for line in (self.case_root / "github-audit.jsonl").read_text().splitlines()]
                 self.assertTrue(all(row["ambient_excluded"] and row["config_matches"] and row["selected_pat_matches"] for row in gh_rows))
                 if scenario == "success":
-                    self.assertEqual(sum(row["kind"] == "credential" for row in gh_rows), 5)
+                    self.assertEqual(sum(row["kind"] == "credential" for row in gh_rows), 6)
                     git_rows = [json.loads(line) for line in (self.case_root / "git-auth-audit.jsonl").read_text().splitlines()]
+                    self.assertEqual([row["operation"] for row in git_rows],
+                                     ["fetch", "fetch", "ls-remote", "fetch", "ls-remote", "ls-remote"])
                     self.assertTrue(all(row["credential_supplied"] and row["other_remote_refused"] for row in git_rows))
                     self.assertEqual(report["github_auth"]["login"], "fixture")
                 else:
