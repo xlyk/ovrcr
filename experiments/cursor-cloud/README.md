@@ -368,8 +368,13 @@ the external Git executable with an owned URL-rewriting peer; Git itself and all
 repositories, files, processes and sockets are real. Narrow test-runner tracing
 forces real signal/storage faults at final verification and closure boundaries.
 The capacity fault targets the first actual Journal.close, including Run 3 cancel
-closure, so an earlier successful closure cannot make the persistence test vacuous;
-it does not replace the client's authority, constructors or persistence. There is
+closure, so an earlier successful closure cannot make the persistence test vacuous.
+The exhausted-child case holds the real owned termination boundary until its
+original reap cutoff and requires a positive cutoff receipt with no wait admitted.
+A separate admitted-wait timeout case preserves unconfirmed-exit coverage, while
+the delayed-wait case still requires actual exit confirmation. Existing work,
+total, cleanup and shutdown-reserve budgets remain unchanged.
+These controls do not replace the client's authority, constructors or persistence. There is
 no test-mode CLI flag,
 endpoint attachment, alternate client constructor or production pin bypass.
 `fake_bridge.py` is solely a synthetic external executable packaged by the test;
