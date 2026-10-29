@@ -113,8 +113,9 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 The offline-only client suite uses synthetic credentials, a controlled external bridge
 process and real private files/sockets/Git repositories. It covers preflight, a
-coding run with exact-run observation recovery and same-conversation follow-up,
-including uncertain receipts, source/result verification and closure. It creates no cloud work and requires no
+coding run with exact-run observation recovery, same-conversation follow-up,
+third-run cancellation and optional read-only owned-bridge restart, including
+uncertain receipts, source/result verification, original deadlines and closure. It creates no cloud work and requires no
 OVRCR Server or live account. Run `python3 -I -m unittest discover -s experiments/cursor-cloud -p test_client.py -v`.
 See [invocation and acceptance mapping](../../experiments/cursor-cloud/README.md)
 for deadlines, ownership receipts and the separately gated live proof.

@@ -1,14 +1,14 @@
-# Cursor cloud coding, observation and follow-up (#363–#365)
+# Cursor cloud three-run proof (#363–#366)
 
 This standalone Python 3.11+ client runs preflight and, with an explicit fresh
-journal, one cloud creation and two sequential Sends for
+journal, one cloud creation and three sequential Sends for
 [#362](https://github.com/xlyk/ovrcr/issues/362). `--preflight-only` retains the
 catalog-only path. Run 1 exercises exact-run observation recovery, then Run 2 asks
-for the earlier public token and fix in the same conversation. It changes no OVRCR
-provider. Cancellation proof, fresh-bridge recovery and live acceptance remain NOT RUN
-(#366–#367).
-Error cleanup can request cancellation of an exact known active run; that does not
-count as the later cancellation proof. The official Cursor SDK Bridge is separate
+for the earlier public token and fix in the same conversation. Run 3 requests a
+harmless wait of at most 90 seconds and proves exact-run cancellation. Once all
+three runs are terminal, an optional owned bridge restart retrieves the exact
+completed Run 1 read-only. It changes no OVRCR provider. Cloud lifecycle acceptance remains
+unverified (#367). Error cleanup of an earlier run is separate from Run 3's proof. The official Cursor SDK Bridge is separate
 from OVRCR's macOS Bridge.
 
 ## Invocation
@@ -26,10 +26,14 @@ real credential use, cloud calls, fixture publication or paid execution.
 2. Obtain the standalone archive for the host from the explicit
    [v1.0.40 release](https://github.com/cursor/sdk-bridge/releases/tag/v1.0.40).
    The client never downloads, selects latest, or uses an installed bridge.
-3. Supply the selected key in the environment variable explicitly named by
-   `credential_ref`. Resolve it with an approved secret manager at execution;
-   never put the key in the manifest, shell command arguments, source or logs.
-   An existing `CURSOR_API_KEY` or IDE login is never a fallback.
+3. Supply the selected Cursor key in the environment variable explicitly named
+   by `credential_ref`. Coding also requires `github_credential_ref` to name
+   `env:OVRCR_POC_GITHUB_PAT` (or another explicitly approved variable) containing
+   the selected GitHub PAT. Resolve both with the approved secret manager at
+   execution; never put values in the manifest, arguments, source, logs or configs.
+   Missing/empty/invalid PAT, aliased credential references or equal credential
+   values stop before bridge startup. Ambient
+   `GH_TOKEN`, `GITHUB_TOKEN`, a keyring login or `CURSOR_API_KEY` is no fallback.
 4. After that separate authorization, invoke:
 
    ```sh
@@ -37,24 +41,34 @@ real credential use, cloud calls, fixture publication or paid execution.
      --manifest /absolute/path/approved-manifest.json \
      --archive /absolute/path/cursor-sdk-bridge-standalone-darwin-arm64.tar.gz \
      --journal /absolute/path/new-private-experiment \
-     --github-config /absolute/path/existing-gh-config \
      --github-login APPROVED_GITHUB_LOGIN
    ```
 
 Add `--preflight-only` and omit `--journal` for catalog checks with zero
-CreateAgent/Send calls. `--help` describes these paths. Coding requires Git at `/usr/bin/git` and an installed `gh` on the initial PATH.
-The nonsecret GitHub login/config prerequisite is separate from the selected Cursor
-key. `gh auth status --active --hostname github.com` must identify the approved
-GitHub login in that config before execution. The client checks only projected
-login/active/state metadata (no `--show-token`). It clears ambient GH_TOKEN and
-GITHUB_TOKEN along with the rest of the inherited environment. Each fetch uses an
-isolated HOME, disables system/global Git configuration and hooks, refuses prompts,
-and supplies only a per-command `gh auth git-credential` helper scoped to the exact
-approved repository URL, with useHttpPath, selected GH_CONFIG_DIR and username.
-An unrelated repository on github.com receives no helper credential. The helper passes its credential directly to Git;
-the client captures no token, writes no auth config and changes no global Git
-settings. This supports an authorized private disposable repository. The client
-never uploads local source.
+CreateAgent/Send calls. That path does not resolve a GitHub PAT and may omit
+`github_credential_ref`. `--help` describes these paths. Coding requires Git at
+`/usr/bin/git`, an installed `gh` on the initial PATH and an exact
+`--github-login` matching the PAT. The selected GitHub identity is separate from
+the Cursor key.
+
+The client supplies only the explicitly selected PAT as `GH_TOKEN` to trusted
+`gh auth status`, PR queries and the Git remote process that invokes the scoped
+credential helper. A new private `GH_CONFIG_DIR` is created inside the owned
+runtime root; no user GitHub config or keyring supplies a fallback. Projected
+metadata must show the exact login, active status, success and
+`tokenSource=GH_TOKEN`. A successful command exit alone is insufficient.
+`--github-config` was intentionally removed: existing coding invocations must add
+`github_credential_ref`, select the PAT and keep `--github-login`.
+
+Each fetch retains isolated HOME, disabled system/global Git configuration and
+hooks, no prompts, and only a per-command `gh auth git-credential` helper scoped
+to the exact approved repository URL with useHttpPath and the selected username.
+An unrelated repository receives no helper credential. The helper passes its
+credential directly to Git; the client captures no token, writes no auth config
+and changes no global settings. The bridge receives only its Cursor key; local
+Git and fixture/test processes receive neither credential. Both selected secrets
+are rejected from private journal keys/values and redacted from final reports.
+The client never uploads local source.
 
 JSON is emitted on stdout, with no raw stderr/discovery/HTTP captures. Save it only
 to the approved evidence destination. Exit 0 requires successful preflight, the requested coding path (unless
@@ -65,10 +79,11 @@ Me is recorded as selected-key credential context, not stable billing identity.
 The report records the requested USD ceiling; a local timer and unavailable usage
 are **not** a remote spending cap or evidence of zero cost.
 
-The configured future experiment ceiling is exactly one CreateAgent attempt and
-three Send attempts, with no retries. Allowed effects are restricted to the fixture
-change, result branch, exact-run cancellation and owned local shutdown. This slice uses at most one creation and two Sends, with separately generated
-original keys. Run 2 is admitted only after Run 1 independently qualifies. It never retries either operation or starts a replacement conversation.
+The experiment ceiling is exactly one CreateAgent attempt and three Send attempts,
+with no retries. Allowed effects are restricted to the fixture change, result branch,
+exact-run cancellation and owned local shutdown. Every Send uses a separately
+generated original key. Run 2 follows independently qualified Run 1; Run 3 follows
+qualified Run 2. Uncertain receipts never buy another Send or conversation.
 
 ## Fixture and authorized publication recipe
 
@@ -108,10 +123,16 @@ and original operation key. The client fsyncs the request and directory, then
 fsyncs its attempt claim in `events.jsonl`, before dispatch. Credentials enter only
 the in-memory outgoing request. Claims retain the original key and request digest.
 Secrets in JSON property names and nested values are rejected before publication.
-Creation identity/model must be durably saved before GetAgent and the separately
-keyed Send. GetAgent must match the exact conversation, cloud runtime and repository.
-The early Send init supplies the exact run/agent/model receipt. Only after its
-receipt is durable is the original request removed and that removal synced.
+The pinned SDK's CreateAgent allocates a local cloud handle; the first Send
+creates the backend agent and run together. The allocated agent ID/model must be
+durably saved before the separately keyed Send. The first recognized SDK message
+supplies the exact run/agent receipt; cloud streams do not emit `system/init`. Only
+after that receipt is durable is the original request removed and that removal synced. GetAgent then must match the exact conversation,
+cloud runtime and repository before observation or tool-event processing. A failed
+metadata check blocks coding/follow-up qualification and leaves the exact known run
+available for bounded error cleanup. Criterion 4 requires validated metadata, not
+merely a Send attempt. Closed admission still retains late Send/result receipts
+without dispatching a metadata lookup or new work.
 Missing receipts retain the original request and close admission. Journal capacity
 is 256 KiB with closure reserve; storage failure blocks new effects and never
 evicts an unresolved record. Owner-only plaintext remains accessible to same-user
@@ -120,20 +141,49 @@ programs and backups.
 The prompt requires the first tool to execute exactly
 `git rev-parse HEAD && cat SOURCE_MARKER`, then fix addition, run the fixture tests
 and remember a random harmless public continuity token. Source qualifies only from
-a correlated running/completed `shell` tool receipt, before any other tool. Its
-`args.command` and `result` (`stdout`, `stderr`, integer `exitCode`) must match the
-probe and independently fetched selected SHA/marker exactly. Assistant prose and
+a correlated running/completed `shell` or `run_terminal_cmd` tool receipt, before
+any other tool. Its `args.command` must be the probe, optionally prefixed with
+`cd /workspace && ` as observed in Cursor; execution metadata does not change that
+command check. Cloud `run_terminal_cmd` can first announce the call without args,
+then supply them in a second running update. All updates must retain the same
+agent/run/call/name; completion must supply the exact command. Its captured
+`result.success` must be foreground, with stdout and interleaved output both equal
+to the independently fetched SHA/marker. That cloud shape omits exitCode/stderr;
+any explicit nonzero exit, stderr or signal still fails. The `shell` form keeps
+its existing flat or `{"status": "success", "value": ...}` check, including empty
+stderr/signal and integer zero exitCode.
+
+`source-tool-capture.json` preserves the three proof-5 tool events with synthetic
+agent/run/call/request IDs and a source-SHA placeholder. The entry-point regression
+replays it through the existing fake bridge; no live calls or credentials are used.
+Redacted source-tool events are
+saved in the existing private bounded journal before validation, including rejected
+events; no raw credentials or discovery data are captured. Assistant prose and
 branch ancestry cannot qualify it. The
 [SDK tool payloads are unstable](https://cursor.com/docs/sdk/typescript#stream-events):
 unknown shapes remain unverified instead of being guessed.
 
-Coding success also requires exact agent/run/model, FINISHED result, matching done
-and a successful Connect end-stream frame. Keepalives and unknown envelope cases
+Coding success also requires exact agent/run identity, FINISHED result, matching
+done and a successful Connect end-stream frame. The selected model is explicit in
+CreateAgent and every Send. When the initial message or terminal result supplies a
+model, it must match; an omitted model is not an attestation. The pinned bridge
+reconstructs cloud handles on GetRun without their original requested model, so
+ObserveRun results may omit it. Keepalives and unknown envelope cases
 are ignored; malformed, compressed, oversized, duplicate or out-of-order frames
 fail. Git then independently fetches the returned result branch, checks ancestry,
 checks the final diff and every intervening commit for only `addition.py`, and
 runs the unchanged three tests in an isolated checkout with explicit `-I -B`
 (isolated imports/environment and no stale bytecode). A failed test is a failure.
+
+Captured cloud results use a scheme-less repository URL and can omit the SDK's
+`git.branches[].branch` field. Only the exact approved URL with or without its
+`https://` prefix is accepted. Before CreateAgent, the client records published
+Git heads. If the completed result lacks a branch name, it requires exactly one
+new head and every earlier head unchanged, fetches that exact ref and checks its
+observed commit before the same ancestry/diff/tests. Zero or multiple new heads
+remain unverified. Assistant prose and branch-name guesses are not used.
+Follow-up may likewise omit branch metadata, but the independent all-ref and PR
+snapshots must still be unchanged and contain the already verified result commit.
 
 After Run 1's early exact identity is durable, an exact GetRun snapshot must show
 RUNNING or successful FINISHED status. ERROR, CANCELLED and EXPIRED snapshots are
@@ -152,13 +202,46 @@ only the existing exact-run error cleanup may cancel a known active run.
 Run 2 uses the same agent, journal and global counters, a new original operation
 key and a distinct durable run ID. Its prompt never restates the public token and
 asks for the token and completed fix without file, branch or PR changes. Success
-requires exact terminal model/identity and stream end, the exact recalled token/fix,
-unchanged result repository/branch/PR metadata, identical independently read
+requires exact terminal identity and stream end (and matching model when supplied),
+the exact recalled token/fix, unchanged result repository/branch/PR metadata, identical independently read
 advertised Git refs (including tags and the verified Run 1 commit), and identical
 independent GitHub PR snapshots. It does not re-edit or rerun
 the fixture: the previously tested commit must remain unchanged. Unknown result
 shapes cannot qualify. A lost Run 2 receipt retains its original request and never
 cancels Run 1 or dispatches a replacement.
+
+Run 3 asks only for `sleep 90`, forbidding edits, branch publication and PRs. Its
+early original-stream identity must be distinct from both earlier runs and durable
+before a running tool/status event qualifies activity. The client then closes
+admission durably, records exact cancellation intent, and calls CancelRun once for
+that agent/run. Selection of the first cancel closure and its attempt claim share
+the existing signal authority. A durable discard winning before this claim permits
+no CancelRun; an already claimed cancellation may still arrive. Empty acknowledgement is only requested. An exact terminal GetRun
+snapshot or correlated terminal ObserveRun result must prove CANCELLED. FINISHED
+winning the race is BLOCKED/inconclusive and never triggers a fourth Send. An exact
+original terminal result arriving before activity is durably retained immediately;
+no later snapshot or cleanup can replace it with uncertainty or recancel it. Missing,
+wrong or reused identities retain uncertainty without discovery Send/ListRuns.
+Late receipts cannot reopen admission, and an already attempted CancelRun is not
+reissued during cleanup.
+
+After all three known runs are terminal, the client uses the same cleanup routine
+to stop its original bridge and account for the exact token. A replacement bridge
+is admitted only after both process exit and token removal are confirmed. The
+cached cleanup deadline is retained; the probe runs before its shutdown reserve
+and before the original work deadline. Fresh GetRun supplies the exact completed
+Run 1 ID and explicit cloud/agent/key routing options. Those are read options, not
+remote AgentOptions updates. Unavailable/invalid retrieval stays BLOCKED with no
+new work. The pinned ResumeAgent method explicitly applies updated options, so it
+is never called: option-preserving ResumeAgent and active continuation after
+process death remain unverified. Completed-run retrieval proves neither capability.
+
+One bounded GetUsage read may record available usage on the original known bridge
+before shutdown, independently of fresh-bridge retrieval. Costs retain
+the official float-cent fields: `chargedCents` is charged cost, `rawCostCents` is
+undiscounted cost. Optional absent cost remains UNAVAILABLE, and eventually
+consistent billing is no remote spending-cap proof. Usage errors never trigger
+polling, an attachment or new work.
 
 Independent PR checks use `gh pr list` for the exact disposable repository with
 `--state all` and the explicitly selected gh configuration. Each snapshot rechecks
@@ -183,7 +266,8 @@ persistence or closure fails, even when independent coding-result evidence passe
 Cleanup
 requests cancellation only for an exact known active run, with durable intent;
 an empty acknowledgement alone leaves the remote outcome unresolved. One bounded
-GetRun reads its terminal state, without selecting or listing another run.
+GetRun reads its terminal state, without selecting or listing another run. Each
+attempt's report record retains its actual terminal outcome or unresolved identity.
 
 ## Pin and wire contract
 
@@ -246,7 +330,10 @@ bridge exit, cleanup checks the saved device/inode identities, removes only that
 file and its empty directory, and separately records actual removal. Foreign,
 replaced, nonprivate or unconfirmed token ownership is retained as UNRESOLVED.
 Only known files and empty private directories are removed; unexpected state is
-retained at the reported exact root. Never treat process exit as token deletion.
+retained at the reported exact root. This includes any nonempty private GitHub
+config or HOME metadata such as a gh device identifier; it is reported as retained
+for owned operator inspection rather than recursively deleted. Never treat
+process exit as token deletion.
 
 ## Offline checks
 
@@ -264,7 +351,10 @@ asserted admission/result boundary. A controlled latency regression
 adds an observed 250 ms wait inside each real Git peer process: normal coding must
 finish all three fetches, both fixture test results and both Run 2 all-ref reads,
 plus independent PR verification, while an explicit 2-second
-work clock must still stop before creation. No clock is renewed. Stall peers record
+work clock must still stop before creation. No clock is renewed. The selected
+credential audit covers all six remote Git reads: three fetches, the pre-creation
+heads snapshot, and the two all-ref reads around follow-up. Each read must supply
+the selected credential and refuse the unrelated remote. Stall peers record
 that the intended phase was reached and trickle beyond the absolute deadline. Expired-entry
 and exhausted-cleanup cases keep separate zero/late budget checks. New coding
 stall cases use the named normal coding work/total allowance so preparation can
@@ -276,8 +366,15 @@ shutdown reserve. Source-admission failures must match their expected reason, so
 deadline in the same stage cannot qualify that guard. Coding cases substitute
 the external Git executable with an owned URL-rewriting peer; Git itself and all
 repositories, files, processes and sockets are real. Narrow test-runner tracing
-forces real signal/storage faults at final verification and cleanup boundaries;
-it does not replace the client's authority, constructors or persistence. There is
+forces real signal/storage faults at final verification and closure boundaries.
+The capacity fault targets the first actual Journal.close, including Run 3 cancel
+closure, so an earlier successful closure cannot make the persistence test vacuous.
+The exhausted-child case holds the real owned termination boundary until its
+original reap cutoff and requires a positive cutoff receipt with no wait admitted.
+A separate admitted-wait timeout case preserves unconfirmed-exit coverage, while
+the delayed-wait case still requires actual exit confirmation. Existing work,
+total, cleanup and shutdown-reserve budgets remain unchanged.
+These controls do not replace the client's authority, constructors or persistence. There is
 no test-mode CLI flag,
 endpoint attachment, alternate client constructor or production pin bypass.
 `fake_bridge.py` is solely a synthetic external executable packaged by the test;
@@ -293,6 +390,25 @@ returns its report; fixture cleanup never qualifies client exit or token removal
 Tests remove only their own roots after recording
 client-reported uncertainty. CI runs this full feature suite on macOS and Linux.
 
+`test_source_probe_accepts_workspace_prefix_and_checks_sha_and_marker` exercises
+the observed working-directory prefix through the normal entry point, accepting
+the correct output and separately rejecting a wrong SHA or marker.
+
+The stream fixture follows SDK 1.0.40's shipped `consumeSseStream` and
+`sdkMessageToRunStreamMessage`: the outer `sdkMessage.type` wraps the complete SDK
+message, including its own `type`, `agent_id` and `run_id`. It begins with thinking
+or status rather than a synthetic init and omits model from observed results.
+`test_cloud_stream_without_init_or_observed_model_reads_result` exercises coding,
+observation, follow-up and cancellation through the normal client entry point.
+
+The peer models lazy cloud creation: GetAgent returns 404 until the first Send.
+`test_cloud_metadata_waits_for_first_send_materialization` checks durable allocation,
+Send claim/identity, metadata, source probe and verified result in order. Wrong cloud
+identity/runtime/repository or unavailable metadata after the run receipt must keep
+criterion 4 BLOCKED, dispatch no follow-up, and clean up only the exact known run. The
+close-before-Send fixture injects discard immediately after the durable CreateAgent
+receipt, preserving its zero-Send boundary without a pre-Send metadata lookup.
+
 The discard-after-Send peer receives the real claimed request, records durable
 discard through the existing signal/journal gate, then emits the early identity and
 terminal result. Both must be retained as late, with no observation or new work.
@@ -305,6 +421,9 @@ controlled ordering proof, with no product-clock change or widened sleep.
 | Acceptance | Entry-point assertion |
 | --- | --- |
 | Required explicit inputs / no ambient fallback | `test_missing_inputs*`, `test_missing_or_bad_manifest*`, `test_selected_key*` |
+| Explicit GitHub PAT, source and private config | `test_coding_requires_explicit_github_pat*`, `test_selected_github_helper*`, `test_catalog_preflight*` |
+| Credential process separation and redaction | `test_cursor_and_github_credentials*`, `test_selected_github_pat_reaches*`, `test_selected_github_pat_is_redacted*`; actual child environment and common stdout/journal assertions |
+| Unknown private GitHub metadata retained safely | `test_private_github_config_residue*` |
 | Pinned checksum / architecture / archive manifest | `test_checksum_mismatch*`, `test_archive_manifest_mismatch*`, success receipt |
 | Ready handshake, sdk.v1, explicit selected key/model/repository | `test_success*`, `test_runtime_auth_model_and_repository_mismatch*` |
 | Startup / partial headers / body / error / trickle bounds | `test_stalls_and_trickle*` |
@@ -324,7 +443,7 @@ The #364 acceptance cases map to these additional entry-point assertions:
 | 1: existing path, explicit cloud options/SHA/model, one creation/Send | `test_coding_verifies_patch_and_exact_write_ahead_order` plus peer exact request checks |
 | 2: falsifiable fixture, selected/default source distinction and private-fetch auth | `test_independent_fixture_source_admission_precedes_any_creation`, `test_selected_github_helper*` and success baseline/result test receipts |
 | 3: private lock, durable claims, bounded capacity | `test_private_owner_storage_and_capacity_fail_before_new_effect` and external write-ahead checks |
-| 4: durable exact creation before GetAgent/Send | success, `test_lost_receipts*`, creation/GetAgent identity/model cases in `test_coding_rejects*` |
+| 4: durable allocated identity before Send; exact backend metadata after durable run identity | `test_cloud_metadata_waits_for_first_send_materialization`, `test_lost_receipts*`, creation/GetAgent identity/model and metadata-failure cleanup cases in `test_coding_rejects*` |
 | 5: exact early run, source probe, framing/result/end | `test_coding_rejects*`; success includes split frames, keepalives and unknown envelopes |
 | 6: source, ancestry, allowed history/diff, independent tests | success and wrong-source/ancestry/diff/failed-tests cases in `test_coding_rejects*` |
 | 7: uncertain receipt retention; no replacement/retry/guessed run | `test_lost_receipts*`, storage/identity cases and common method-count assertions |
@@ -343,8 +462,9 @@ The #365 entry-point assertions add:
 | 5: no replacement on error, retained Run 2 uncertainty, exact Run 2 cleanup | `test_observation_errors*`, `test_follow_up_uncertain*` and inherited closure/lost-receipt cases |
 | 6–7: separate receipts/reasons, actual wire/private records and global bounds | `recovery_criteria` plus every new case's method counts, peer request-shape/write-ahead and journal assertions |
 
-Inherited success expectations intentionally advance from one Send to two, include
-GetRun/ObserveRun traffic and three original keys. Selected-helper calls intentionally
+Inherited success expectations intentionally advance to three Sends, include
+GetRun/ObserveRun/CancelRun and read-only restart traffic, and four original keys
+(one creation plus three Sends). Selected-helper calls intentionally
 increase from three to exactly five: source SHA, default HEAD, result branch, and
 both Run 2 all-ref snapshots. PR API reads recheck the selected gh account separately. Rejection assertions still forbid
 replacement work; source/framing cases now fail on the observation path where
@@ -352,11 +472,27 @@ applicable. Discard after Run 1 verification prevents Run 2, so a qualified codi
 result can coexist with overall failure. Failed-terminal snapshot cases cover ERROR/CANCELLED/EXPIRED before drop and
 during attachment via `test_failed_terminal_snapshots*`. Existing production clocks are unchanged.
 
+The #366 entry-point assertions add:
+
+| #366 criterion | Assertion |
+| --- | --- |
+| 1–2: final separately keyed Send, exact activity/intent/cancel and terminal proof | `test_third_send_cancels*`; peer verifies durable activity and closure before exact CancelRun |
+| 3: acknowledgement, completion race, unknown/reused IDs and late receipts | `test_third_cancellation_ack*`, `test_third_terminal_before_activity*`, `test_third_discard_winning*`; no fourth Send or discovery target |
+| 4–5: owned fresh read-only GetRun, unsupported option-preserving ResumeAgent | `test_fresh_read_only_probe*`; no ResumeAgent/options mutation or new work |
+| 6: original deadlines/reserve, both bridge lifecycles and token leftovers | `test_third_stalled_control*`, `test_restart_waits*`, `test_fresh_read_only_probe*` and inherited cleanup cases |
+| 7–8: per-run identities/outcomes, usage availability and native capability gaps | `test_third_send_cancels*`, `test_usage_cost*`, fault reports and common ownership assertions |
+| 9: actual main/external process/Git/storage boundaries | full suite, peer method order and exact shapes, private journal and original wait receipts |
+
 The JSON report includes stage errors, criterion-specific receipts, original keys,
 identities, source/result checks, deadline configuration, verification-process waits
 and resource disposition. `recovery_criteria` separately records active observation, completed-result recovery,
-offset resume and follow-up. Later proof stages and missing cost remain explicitly
-NOT RUN or unavailable.
+offset resume and follow-up. `cancellation` and `fresh_bridge` retain separate
+verdicts/reasons; `runs` accounts for every Send. `resources.previous_bridge`
+records the original owned exit/token disposition separately from the final bridge.
+The original work/total/cached cleanup deadline values remain in `deadlines`.
+`remaining_remote` retains the conversation/result branch, without remote deletion.
+Terminal-response, uncertain-retry, ResumeAgent preservation and active process-death
+continuation stay explicitly unresolved; missing cost remains unavailable.
 
 These tests prove offline client behavior, not official-bridge runtime compatibility,
 account permissions, cloud source selection, coding/control behavior, remote cost,

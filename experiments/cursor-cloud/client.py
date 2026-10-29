@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded Cursor cloud coding, observation and follow-up; --preflight-only checks catalogs."""
+"""Bounded three-run Cursor cloud proof; --preflight-only checks catalogs."""
 import argparse
 import fcntl
 import secrets
@@ -110,11 +110,12 @@ def read_json(path):
 def validate_manifest(manifest):
     required = {"credential_ref", "repository_policy", "repository", "disposable", "source_sha",
                 "model", "max_cost_usd", "allowed_effects", "limits"}
-    if set(manifest) != required:
+    if set(manifest) - {"github_credential_ref"} != required:
         raise Failure("manifest fields missing or unknown")
-    if not isinstance(manifest["credential_ref"], str) or not re.fullmatch(
-            r"env:[A-Z][A-Z0-9_]{0,127}", manifest["credential_ref"]):
-        raise Failure("credential_ref must explicitly name one environment variable")
+    for field in ("credential_ref", "github_credential_ref"):
+        if field in manifest and (not isinstance(manifest[field], str) or not re.fullmatch(
+                r"env:[A-Z][A-Z0-9_]{0,127}", manifest[field])):
+            raise Failure(field + " must explicitly name one environment variable")
     repo = manifest["repository"]
     if not isinstance(repo, str) or not re.fullmatch(r"https://github\.com/[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+", repo):
         raise Failure("exact GitHub repository URL required")
@@ -462,27 +463,30 @@ def command(argv, cwd, root, deadlines, resources, expected=0, extra_env=None):
                     deadlines.current = deadline
 
 
-def github_auth(config, login, repository, root, deadlines, resources):
-    if not GH or not config or not Path(config).is_absolute() or not Path(config).is_dir() or not login or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", login):
-        raise Failure("coding requires explicit --github-config, --github-login and installed gh")
-    env = {"GH_CONFIG_DIR": config, "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
+def github_auth(github_key, login, repository, root, deadlines, resources):
+    if not GH or not github_key or not login or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", login):
+        raise Failure("coding requires selected GitHub credential, --github-login and installed gh")
+    config = str(root / "github-config")
+    env = {"GH_CONFIG_DIR": config, "GH_TOKEN": github_key,
+           "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
     query = '.hosts["github.com"] | map({login,active,state,tokenSource})'
     output = command([GH, "auth", "status", "--active", "--hostname", "github.com", "--json", "hosts", "--jq", query],
                      root, root, deadlines, resources, extra_env=env)
     accounts = json.loads(output)
-    if not isinstance(accounts, list) or len(accounts) != 1 or not isinstance(accounts[0], dict) or accounts[0].get("login") != login or accounts[0].get("active") is not True or accounts[0].get("state") != "success":
+    if not isinstance(accounts, list) or len(accounts) != 1 or not isinstance(accounts[0], dict) or accounts[0].get("login") != login or accounts[0].get("active") is not True or accounts[0].get("state") != "success" or accounts[0].get("tokenSource") != "GH_TOKEN":
         raise Failure("selected GitHub login is not the active qualified gh account")
     resources["github_config"] = config
     resources["github_login"] = login
     resources["github_repository"] = repository
-    return {"host": "github.com", "login": login, "active": True,
-            "credential_route": "selected gh config and git-credential; token never captured"}
+    return {"host": "github.com", "login": login, "active": True, "token_source": "GH_TOKEN",
+            "credential_route": "explicit selected PAT and private gh config; token never captured"}
 
 
-def pull_requests(repository, root, deadlines, resources, journal):
-    github_auth(resources["github_config"], resources["github_login"], repository, root, deadlines, resources)
+def pull_requests(repository, root, deadlines, resources, journal, github_key):
+    github_auth(github_key, resources["github_login"], repository, root, deadlines, resources)
     fields = "number,url,title,body,state,isDraft,headRefName,headRefOid,baseRefName,baseRefOid,updatedAt,labels,assignees,reviewRequests,milestone,autoMergeRequest,maintainerCanModify"
-    env = {"GH_CONFIG_DIR": resources["github_config"], "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
+    env = {"GH_CONFIG_DIR": resources["github_config"], "GH_TOKEN": github_key,
+           "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
     output = command([GH, "pr", "list", "--repo", repository, "--state", "all", "--limit", "100", "--json", fields],
                      root, root, deadlines, resources, extra_env=env)
     snapshot = json.loads(output)
@@ -507,7 +511,7 @@ def pull_requests(repository, root, deadlines, resources, journal):
     return canonical
 
 
-def git(argv, checkout, root, deadlines, resources):
+def git(argv, checkout, root, deadlines, resources, github_key=""):
     options = [GIT, "-c", "core.hooksPath=" + os.devnull]
     env = None
     if argv[0] in {"fetch", "ls-remote"}:
@@ -517,21 +521,22 @@ def git(argv, checkout, root, deadlines, resources):
         scope = "credential." + resources["github_repository"]
         options += ["-c", "credential.helper=", "-c", "credential.useHttpPath=true", "-c", scope + ".helper=!" + shlex.quote(GH) + " auth git-credential",
                     "-c", scope + ".username=" + resources["github_login"]]
-        env = {"GH_CONFIG_DIR": resources["github_config"], "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
+        env = {"GH_CONFIG_DIR": resources["github_config"], "GH_TOKEN": github_key,
+               "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
     return command([*options, *argv], checkout, root, deadlines, resources, extra_env=env).strip()
 
 
-def fixture_source(manifest, root, deadlines, resources):
+def fixture_source(manifest, root, deadlines, resources, github_key):
     checkout = root / "verification"
     checkout.mkdir(mode=0o700)
     git(["init", "-q"], checkout, root, deadlines, resources)
     remote = manifest["repository"]
-    git(["fetch", "--quiet", "--no-tags", remote, manifest["source_sha"]], checkout, root, deadlines, resources)
+    git(["fetch", "--quiet", "--no-tags", remote, manifest["source_sha"]], checkout, root, deadlines, resources, github_key)
     selected = git(["rev-parse", "FETCH_HEAD"], checkout, root, deadlines, resources)
     if selected != manifest["source_sha"]:
         raise Failure("independent source fetch returned another revision")
     git(["update-ref", "refs/heads/selected", selected], checkout, root, deadlines, resources)
-    git(["fetch", "--quiet", "--no-tags", remote, "HEAD"], checkout, root, deadlines, resources)
+    git(["fetch", "--quiet", "--no-tags", remote, "HEAD"], checkout, root, deadlines, resources, github_key)
     default = git(["rev-parse", "FETCH_HEAD"], checkout, root, deadlines, resources)
     marker = git(["show", default + ":SOURCE_MARKER"], checkout, root, deadlines, resources)
     if default == selected or marker != DEFAULT_MARKER.strip():
@@ -599,7 +604,7 @@ def valid_id(value):
     return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,200}", value)
 
 
-def exact_snapshot(port, token, key, state, deadlines, journal):
+def exact_snapshot(port, token, key, state, deadlines, journal, require_success=True):
     snapshot = checked_rpc(port, token, "SdkAgentService", "GetRun", {"runId": state["runId"], "options": {
         "runtime": "RUNTIME_CLOUD", "agentId": state["agentId"], "apiKey": key}}, deadlines).get("run")
     if not isinstance(snapshot, dict) or snapshot.get("agentId") != state["agentId"] or snapshot.get("runId") != state["runId"]:
@@ -611,9 +616,19 @@ def exact_snapshot(port, token, key, state, deadlines, journal):
     state["active"] = status not in TERMINAL
     if not state["active"]:
         state["terminal_status"] = status
-        if status != "RUN_LIFECYCLE_STATUS_FINISHED":
+        if require_success and status != "RUN_LIFECYCLE_STATUS_FINISHED":
             raise Failure("unsuccessful terminal snapshot forbids qualification and follow-up")
     return status
+
+
+def original_run_identity(message, agent_id, model):
+    # Cloud SDK messages carry identity directly; there is no system/init event.
+    if not isinstance(message, dict) or not valid_id(message.get("run_id")) or message.get("agent_id") != agent_id or ("model" in message and message["model"] != {"id": model}):
+        raise Failure("early original-stream run identity/model missing or mismatched; unresolved")
+    identity = {"agentId": agent_id, "runId": message["run_id"]}
+    if "model" in message:
+        identity["model"] = message["model"]
+    return identity
 
 
 def stream_identity(envelope, state):
@@ -692,13 +707,14 @@ def recover_stream(port, token, submission, deadlines, journal, state, key, repo
 
 
 def collect_run(manifest, key, token, port, submission, journal, deadlines, report, state, coding):
-    if report["attempts"]["Send"] >= 2:
-        raise Failure("two-Send slice exhausted; no retry")
+    if report["attempts"]["Send"] >= 3:
+        raise Failure("three-Send experiment exhausted; no retry")
     report["active_stage"] = "Send_claim"
     journal.claim("Send", submission)
     report["operation_keys"]["Send" if coding else "FollowUpSend"] = submission["idempotencyKey"]
     journal.ensure_open()
     report["active_stage"] = "Send"
+    retain_run(report, state)
     state.pop("runId", None)
     state.pop("terminal_status", None)
     state["active"] = False
@@ -708,6 +724,7 @@ def collect_run(manifest, key, token, port, submission, journal, deadlines, repo
     done = False
     source_proven = not coding
     probe_call = None
+    probe_name = None
     for envelope in (recover_stream(port, token, submission, deadlines, journal, state, key, report) if coding else
                      send_stream(port, token, submission, deadlines)):
         if done:
@@ -722,29 +739,63 @@ def collect_run(manifest, key, token, port, submission, journal, deadlines, repo
             if not isinstance(message, dict):
                 raise Failure("SDK message payload is invalid")
             if state.get("runId") is None:
-                if sdk["type"] != "system" or message.get("subtype") != "init" or not valid_id(message.get("run_id")) or message.get("agent_id") != state["agentId"] or message.get("model") != {"id": manifest["model"]}:
-                    raise Failure("early original-stream run identity/model missing or mismatched; unresolved")
+                identity = original_run_identity(message, state["agentId"], manifest["model"])
                 if not coding and message["run_id"] == report["run"]["runId"]:
                     raise Failure("follow-up reused the original run identity")
-                identity = {"agentId": message["agent_id"], "runId": message["run_id"], "model": message["model"]}
                 journal.receipt("Send", identity)
                 state.update(identity, active=True)
                 report["run" if coding else "follow_up_run"] = identity
+                if coding and not journal.closed:
+                    # Cloud CreateAgent allocates locally; Send materializes metadata.
+                    journal.ensure_open()
+                    report["active_stage"] = "GetAgent"
+                    agent = checked_rpc(port, token, "SdkAgentService", "GetAgent",
+                                        {"agentId": state["agentId"], "options": {"apiKey": key}}, deadlines)
+                    journal.append({"event": "GetAgent", "receipt": agent})
+                    info = agent.get("agent")
+                    if not isinstance(info, dict) or not isinstance(info.get("cloud"), dict):
+                        raise Failure("GetAgent cloud identity/repository mismatch")
+                    if agent.get("agent", {}).get("agentId") != state["agentId"] or "local" in agent.get("agent", {}) or agent.get("agent", {}).get("cloud", {}).get("repos") != [manifest["repository"]]:
+                        raise Failure("GetAgent cloud identity/repository mismatch")
+                    report["cloud_identity"] = info
+                    report["active_stage"] = "Send"
             if message.get("agent_id") != state["agentId"] or message.get("run_id") != state["runId"]:
                 raise Failure("stream agent/run identity mismatch")
             if sdk["type"] == "tool_call" and not source_proven:
-                if message.get("name") != "shell" or message.get("args") != {"command": SOURCE_PROBE} or not valid_id(message.get("call_id")) or message.get("truncated"):
+                journal.append({"event": "source_tool_event", "receipt": redact(message, journal.secrets)})
+                args = message.get("args")
+                name, status = message.get("name"), message.get("status")
+                pending_args = name == "run_terminal_cmd" and status == "running" and "args" not in message
+                if name not in ("shell", "run_terminal_cmd") or not valid_id(message.get("call_id")) or message.get("truncated") or (not pending_args and (not isinstance(args, dict) or args.get("command") not in (SOURCE_PROBE, "cd /workspace && " + SOURCE_PROBE))):
                     raise Failure("initial source probe is missing/unrecognized; source unverified")
-                if message.get("status") == "running" and probe_call is None:
-                    probe_call = message["call_id"]
-                elif message.get("status") == "completed" and message["call_id"] == probe_call:
+                if probe_call is not None and (message["call_id"] != probe_call or name != probe_name):
+                    raise Failure("source probe tool ordering/correlation mismatch")
+                if status == "running" and (probe_call is None or name == "run_terminal_cmd"):
+                    probe_call, probe_name = message["call_id"], name
+                elif status == "completed" and message["call_id"] == probe_call:
                     expected = {"stdout": manifest["source_sha"] + "\n" + SELECTED_MARKER, "stderr": "", "exitCode": 0}
                     observed = message.get("result")
-                    if observed != expected or type(observed.get("exitCode")) is not int:
+                    if name == "run_terminal_cmd":
+                        # Captured cloud success omits exitCode/stderr; interleaved output
+                        # must equal stdout, with no background or failure result.
+                        value = observed.get("success") if isinstance(observed, dict) else None
+                        matches = (isinstance(value, dict) and set(observed) == {"success", "isBackground"}
+                                   and observed["isBackground"] is False and value.get("command") == args["command"]
+                                   and value.get("stdout") == value.get("interleavedOutput") == expected["stdout"]
+                                   and value.get("stderr", "") == "" and value.get("signal", "") == ""
+                                   and type(value.get("exitCode", 0)) is int and value.get("exitCode", 0) == 0)
+                    else:
+                        # The pinned SDK wraps ShellSuccessSchema in status/value.
+                        if isinstance(observed, dict) and observed.get("status") == "success":
+                            value = observed.get("value")
+                            if isinstance(value, dict) and value.get("signal") == "":
+                                observed = {field: value.get(field) for field in expected}
+                        matches = observed == expected and type(observed.get("exitCode")) is int
+                    if not matches:
                         raise Failure("initial source probe differs from independently verified source")
                     journal.append({"event": "source_probe", "receipt": message})
                     source_proven = True
-                    report["source_probe"] = {"verdict": "PASS", "call_id": probe_call, "receipt": "first correlated shell tool; exact HEAD and marker"}
+                    report["source_probe"] = {"verdict": "PASS", "call_id": probe_call, "receipt": "first correlated " + name + " tool; exact HEAD and marker"}
                 else:
                     raise Failure("source probe tool ordering/correlation mismatch")
             if sdk["type"] == "status" and message.get("status") in {"ERROR", "CANCELLED", "EXPIRED"}:
@@ -760,7 +811,7 @@ def collect_run(manifest, key, token, port, submission, journal, deadlines, repo
                     for record in (terminal, result)):
                 raise Failure("terminal agent/run identity missing or mismatched")
             journal.append({"event": "result", "receipt": terminal, "late": journal.closed})
-            if terminal.get("status") != "RUN_LIFECYCLE_STATUS_FINISHED" or result.get("status") != terminal["status"] or result.get("model") != {"id": manifest["model"]} or terminal.get("errorCode") or result.get("errorCode"):
+            if terminal.get("status") != "RUN_LIFECYCLE_STATUS_FINISHED" or result.get("status") != terminal["status"] or ("model" in result and result["model"] != {"id": manifest["model"]}) or terminal.get("errorCode") or result.get("errorCode"):
                 status = result.get("status")
                 state["active"] = not isinstance(status, str) or status not in TERMINAL
                 if not state["active"]:
@@ -793,13 +844,15 @@ def collect_run(manifest, key, token, port, submission, journal, deadlines, repo
     return result
 
 
-def coding_run(manifest, key, token, port, journal, root, deadlines, report, state):
+def coding_run(manifest, key, token, port, journal, root, deadlines, report, state, github_key):
     report["coding"] = "BLOCKED"
     report["active_stage"] = "source_fixture"
     journal.ensure_open()
-    source = fixture_source(manifest, root, deadlines, report["resources"])
+    source = fixture_source(manifest, root, deadlines, report["resources"], github_key)
     report["source"] = source
     journal.append({"event": "source", "receipt": source})
+    before_heads = set(git(["ls-remote", "--heads", manifest["repository"]], root / "verification", root, deadlines, report["resources"], github_key).splitlines())
+    journal.append({"event": "source_heads", "refs": sorted(before_heads)})
     creation = {"idempotencyKey": secrets.token_hex(16), "options": {
         "model": {"id": manifest["model"]}, "cloud": {
             "repos": [{"url": manifest["repository"], "startingRef": manifest["source_sha"]}],
@@ -819,15 +872,6 @@ def coding_run(manifest, key, token, port, journal, root, deadlines, report, sta
     state["agentId"] = response["agentId"]
     report["agent"] = response
     journal.ensure_open()
-    report["active_stage"] = "GetAgent"
-    agent = checked_rpc(port, token, "SdkAgentService", "GetAgent",
-                        {"agentId": state["agentId"], "options": {"apiKey": key}}, deadlines)
-    journal.append({"event": "GetAgent", "receipt": agent})
-    info = agent.get("agent")
-    if not isinstance(info, dict) or not isinstance(info.get("cloud"), dict):
-        raise Failure("GetAgent cloud identity/repository mismatch")
-    if agent.get("agent", {}).get("agentId") != state["agentId"] or "local" in agent.get("agent", {}) or agent.get("agent", {}).get("cloud", {}).get("repos") != [manifest["repository"]]:
-        raise Failure("GetAgent cloud identity/repository mismatch")
     continuity = secrets.token_hex(16)
     journal.append({"event": "continuity_token", "token": continuity})
     report["continuity_token"] = continuity
@@ -844,14 +888,30 @@ def coding_run(manifest, key, token, port, journal, root, deadlines, report, sta
     if not isinstance(metadata, dict):
         raise Failure("result repository/branch/PR metadata is invalid")
     branches = metadata.get("branches", [])
-    if not isinstance(branches, list) or len(branches) != 1 or not isinstance(branches[0], dict) or branches[0].get("repoUrl") != manifest["repository"] or branches[0].get("prUrl"):
+    if not isinstance(branches, list) or len(branches) != 1 or not isinstance(branches[0], dict) or branches[0].get("repoUrl") not in (manifest["repository"], manifest["repository"].removeprefix("https://")) or branches[0].get("prUrl"):
         raise Failure("result repository/branch/PR metadata is invalid")
     branch = branches[0].get("branch")
+    published_tip = None
+    if branch in (None, ""):
+        # Cloud results can omit branch. Require one new independently published
+        # head, with every pre-run head unchanged; never select an old/guessed ref.
+        after_heads = set(git(["ls-remote", "--heads", manifest["repository"]], root / "verification", root, deadlines, report["resources"], github_key).splitlines())
+        added = after_heads - before_heads
+        if not before_heads <= after_heads or len(added) != 1:
+            raise Failure("result has no unique new published branch")
+        published_tip, branch = next(iter(added)).split("\trefs/heads/", 1)
+        if not re.fullmatch(r"[0-9a-f]{40}", published_tip):
+            raise Failure("result has no unique new published branch")
     if not isinstance(branch, str) or not re.fullmatch(r"[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*", branch):
         raise Failure("result branch is missing or unsafe")
     checkout = root / "verification"
-    git(["fetch", "--quiet", "--no-tags", manifest["repository"], "refs/heads/" + branch], checkout, root, deadlines, report["resources"])
+    git(["fetch", "--quiet", "--no-tags", manifest["repository"], "refs/heads/" + branch], checkout, root, deadlines, report["resources"], github_key)
     tip = git(["rev-parse", "FETCH_HEAD"], checkout, root, deadlines, report["resources"])
+    if published_tip is not None:
+        if tip != published_tip:
+            raise Failure("published result branch changed before verification")
+        journal.append({"event": "result_branch_ref", "branch": branch, "commit": tip,
+                        "origin": "unique new Git head after exact completed run"})
     git(["merge-base", "--is-ancestor", manifest["source_sha"], tip], checkout, root, deadlines, report["resources"])
     report["active_stage"] = "result_diff"
     diff = git(["diff", "--name-status", manifest["source_sha"], tip], checkout, root, deadlines, report["resources"])
@@ -871,13 +931,13 @@ def coding_run(manifest, key, token, port, journal, root, deadlines, report, sta
         report["coding"] = "PASS"
 
 
-def follow_up_run(manifest, key, token, port, journal, root, deadlines, report, state):
+def follow_up_run(manifest, key, token, port, journal, root, deadlines, report, state, github_key):
     report["active_stage"] = "follow_up"
     report["recovery_criteria"]["follow_up"] = {"verdict": "BLOCKED", "reason": "follow-up not yet qualified"}
     journal.ensure_open()
     checkout = root / "verification"
-    refs = git(["ls-remote", manifest["repository"]], checkout, root, deadlines, report["resources"])
-    prs = pull_requests(manifest["repository"], root, deadlines, report["resources"], journal)
+    refs = git(["ls-remote", manifest["repository"]], checkout, root, deadlines, report["resources"], github_key)
+    prs = pull_requests(manifest["repository"], root, deadlines, report["resources"], journal, github_key)
     submission = {"agentId": state["agentId"], "idempotencyKey": secrets.token_hex(16),
                   "message": {"text": "Recall the harmless public continuity token from the earlier turn and the completed fix. "
                               "Do not change files, branches or PRs. Reply exactly on two lines: TOKEN=<earlier token> then "
@@ -886,13 +946,17 @@ def follow_up_run(manifest, key, token, port, journal, root, deadlines, report, 
     report["active_stage"] = "follow_up"
     if result.get("result") != "TOKEN=" + report["continuity_token"] + "\nFIX=addition.py adds its two inputs.":
         raise Failure("follow-up recalled token/fix is incorrect or unverified")
-    expected_git = {"branches": [{"repoUrl": manifest["repository"], "branch": report["result"]["branch"]}]}
-    if result.get("git") != expected_git:
+    # Missing SDK branch metadata is not an attestation: the independent ref
+    # and PR comparisons below must still prove the verified result unchanged.
+    expected_git = [{"branches": [{"repoUrl": url, **branch}]} for url in
+                    (manifest["repository"], manifest["repository"].removeprefix("https://"))
+                    for branch in ({}, {"branch": ""}, {"branch": report["result"]["branch"]})]
+    if result.get("git") not in expected_git:
         raise Failure("follow-up changed repository/branch/PR metadata")
-    after = git(["ls-remote", manifest["repository"]], checkout, root, deadlines, report["resources"])
+    after = git(["ls-remote", manifest["repository"]], checkout, root, deadlines, report["resources"], github_key)
     if after != refs or (report["result"]["commit"] + "\trefs/heads/" + report["result"]["branch"]) not in refs.splitlines():
         raise Failure("follow-up changed independently verified branch/file state")
-    if pull_requests(manifest["repository"], root, deadlines, report["resources"], journal) != prs:
+    if pull_requests(manifest["repository"], root, deadlines, report["resources"], journal, github_key) != prs:
         raise Failure("follow-up changed independently verified PR state")
     with authority():
         journal.ensure_open()
@@ -901,6 +965,105 @@ def follow_up_run(manifest, key, token, port, journal, root, deadlines, report, 
         journal.append({"event": "follow_up_verified", "receipt": report["follow_up"]})
         report["recovery_criteria"]["follow_up"] = {"verdict": "PASS", "receipt": report["follow_up"]}
         report["stages"].append({"stage": "follow_up", "verdict": "PASS"})
+
+
+def retain_run(report, state):
+    if state.get("send_attempted"):
+        record = {"agentId": state.get("agentId"), "runId": state.get("runId"),
+                  "terminal": state.get("terminal_status", "UNRESOLVED"),
+                  "identity": "DURABLE" if state.get("runId") else "UNRESOLVED; no replay"}
+        runs = report.setdefault("runs", [])
+        if runs and runs[-1]["runId"] == record["runId"]:
+            runs[-1] = record
+        else:
+            runs.append(record)
+
+
+def record_cancellation_result(envelope, manifest, state, journal):
+    terminal = envelope["result"]
+    result = terminal.get("result")
+    if not isinstance(result, dict) or result.get("agentId") != state["agentId"] or result.get("runId") != state["runId"] or result.get("status") not in TERMINAL or result["status"] != terminal.get("status") or ("model" in result and result["model"] != {"id": manifest["model"]}):
+        raise Failure("cancellation terminal identity/status/model mismatch")
+    journal.append({"event": "cancellation_result", "receipt": terminal, "late": journal.closed})
+    state.update(active=False, terminal_status=result["status"])
+
+
+def cancellation_run(manifest, key, token, port, journal, deadlines, report, state):
+    report["active_stage"] = "cancellation_proof"
+    report["cancellation"] = {"verdict": "BLOCKED", "reason": "exact active run and terminal cancellation not yet proven"}
+    journal.ensure_open()
+    if state.get("terminal_status") != "RUN_LIFECYCLE_STATUS_FINISHED" or report["attempts"]["Send"] != 2:
+        raise Failure("third Send requires the two earlier successful terminal runs")
+    submission = {"agentId": state["agentId"], "idempotencyKey": secrets.token_hex(16),
+                  "message": {"text": "Run only a harmless shell command `sleep 90` (at most 90 seconds). "
+                              "Do not edit files, publish branches or create PRs. This run will be cancelled."},
+                  "options": {"model": {"id": manifest["model"]}}}
+    journal.claim("Send", submission)
+    report["operation_keys"]["CancellationSend"] = submission["idempotencyKey"]
+    journal.ensure_open()
+    retain_run(report, state)
+    state.pop("runId", None)
+    state.pop("terminal_status", None)
+    state.update(active=False, send_attempted=True)
+    report["attempts"]["Send"] += 1
+    original = send_stream(port, token, submission, deadlines)
+    activity = False
+    try:
+        for envelope in original:
+            if sum(field in envelope for field in ("sdkMessage", "result", "done", "interactionUpdate", "step")) > 1:
+                raise Failure("multiple Connect envelope cases are invalid")
+            sdk = envelope.get("sdkMessage")
+            if not state.get("runId"):
+                if not isinstance(sdk, dict) or sdk.get("type") not in SDK_TYPES:
+                    continue
+                message = sdk.get("message")
+                identity = original_run_identity(message, state["agentId"], manifest["model"])
+                if message["run_id"] in {row["runId"] for row in report["runs"]}:
+                    raise Failure("third Send reused an earlier run identity")
+                journal.receipt("Send", identity)
+                state.update(identity, active=True)
+                report["cancellation_run"] = identity
+            stream_identity(envelope, state)
+            journal.ensure_open()
+            if isinstance(sdk, dict) and sdk.get("type") in {"tool_call", "status"}:
+                message = sdk.get("message", {})
+                if message.get("status") in {"running", "RUNNING"}:
+                    journal.append({"event": "cancellation_activity", "agentId": state["agentId"], "runId": state["runId"]})
+                    activity = True
+                    break
+            if "result" in envelope:
+                record_cancellation_result(envelope, manifest, state, journal)
+                break
+            if "done" in envelope:
+                break
+    finally:
+        original.close()
+    if not state.get("runId"):
+        raise Failure("third Send has no exact durable run identity; no discovery or retry")
+    if activity:
+        with authority():
+            journal.ensure_open()
+            journal.close("cancel")
+            journal.append({"event": "cancel_intent", "agentId": state["agentId"], "runId": state["runId"]})
+            state["cancel_attempted"] = True
+        report["cancellation"]["request"] = "UNCONFIRMED"
+        checked_rpc(port, token, "SdkAgentService", "CancelRun", {"agentId": state["agentId"], "runId": state["runId"]}, deadlines)
+        report["cancellation"]["request"] = "ACKNOWLEDGED; not terminal proof"
+    status = state.get("terminal_status") or exact_snapshot(port, token, key, state, deadlines, journal, require_success=False)
+    if status not in TERMINAL and activity:
+        for envelope in send_stream(port, token, {"runId": state["runId"]}, deadlines, "ObserveRun"):
+            if sum(field in envelope for field in ("sdkMessage", "result", "done", "interactionUpdate", "step")) > 1:
+                raise Failure("multiple Connect envelope cases are invalid")
+            stream_identity(envelope, state)
+            if "result" in envelope:
+                record_cancellation_result(envelope, manifest, state, journal)
+    status = state.get("terminal_status", "UNRESOLVED")
+    report["cancellation"].update(terminal=status, runId=state["runId"], activity=activity,
+                                 verdict="PASS" if activity and status == "RUN_LIFECYCLE_STATUS_CANCELLED" else "BLOCKED",
+                                 reason="authoritative CANCELLED" if activity and status == "RUN_LIFECYCLE_STATUS_CANCELLED" else "inconclusive completion race" if status == "RUN_LIFECYCLE_STATUS_FINISHED" else "cancellation unconfirmed")
+    if status not in TERMINAL:
+        raise Failure("cancellation remains unresolved; acknowledgement is not terminal proof")
+    report["stages"].append({"stage": "cancellation_proof", "verdict": report["cancellation"]["verdict"]})
 
 
 def cleanup(process, root, token_identity, port, token, deadlines, resources, journal=None, state=None, key=""):
@@ -919,15 +1082,18 @@ def cleanup(process, root, token_identity, port, token, deadlines, resources, jo
                 try:
                     journal.close("cleanup")
                     if journal.closure_durable and not journal.failed and state.get("active") and state.get("runId") and journal.close_kind != "discard":
-                        journal.append({"event": "cancel_intent", "agentId": state["agentId"], "runId": state["runId"]})
-                        resources["cancel_request"] = "UNCONFIRMED"
-                        checked_rpc(port, token, "SdkAgentService", "CancelRun", {"agentId": state["agentId"], "runId": state["runId"]}, deadlines)
-                        resources["cancel_request"] = "ACKNOWLEDGED; not terminal proof"
+                        if not state.get("cancel_attempted"):
+                            journal.append({"event": "cancel_intent", "agentId": state["agentId"], "runId": state["runId"]})
+                            state["cancel_attempted"] = True
+                            resources["cancel_request"] = "UNCONFIRMED"
+                            checked_rpc(port, token, "SdkAgentService", "CancelRun", {"agentId": state["agentId"], "runId": state["runId"]}, deadlines)
+                            resources["cancel_request"] = "ACKNOWLEDGED; not terminal proof"
                         snapshot = checked_rpc(port, token, "SdkAgentService", "GetRun", {"runId": state["runId"], "options": {
                             "runtime": "RUNTIME_CLOUD", "agentId": state["agentId"], "apiKey": key}}, deadlines).get("run", {})
                         journal.append({"event": "cancel_snapshot", "receipt": snapshot})
                         if isinstance(snapshot, dict) and snapshot.get("agentId") == state["agentId"] and snapshot.get("runId") == state["runId"] and isinstance(snapshot.get("status"), str) and snapshot["status"] in TERMINAL:
                             resources["remote_outcome"] = snapshot["status"]
+                            state.update(active=False, terminal_status=snapshot["status"])
                 except (Failure, OSError, ValueError, http.client.HTTPException):
                     resources["remote_cleanup"] = "UNCONFIRMED; exact identities and evidence retained"
                 resources["journal_health"] = "FAILED; no further dispatch" if journal.failed else "DURABLE"
@@ -981,7 +1147,7 @@ def cleanup(process, root, token_identity, port, token, deadlines, resources, jo
                 if (root / "verification").exists() and all(x["exit"] != "UNRESOLVED" for x in resources.get("verification_processes", [])):
                     shutil.rmtree(root / "verification")
                     resources["verification_cleanup"] = "REMOVED"
-                for name in ("bridge", "workspace", "state", "home", "tmp"):
+                for name in ("bridge", "workspace", "state", "home", "github-config", "tmp"):
                     path = root / name
                     if name == "bridge":
                         path.unlink(missing_ok=True)
@@ -1005,6 +1171,19 @@ def redact(value, secrets):
     return value
 
 
+def launch_bridge(binary, root, key, resources):
+    env = {"PATH": os.defpath, "HOME": str(root / "home"), "TMPDIR": str(root / "tmp"),
+           "TMP": str(root / "tmp"), "TEMP": str(root / "tmp"), "CURSOR_API_KEY": key,
+           "CURSOR_SDK_CLIENT_LANGUAGE": "python"}
+    resources["launch_attempted"] = True
+    process = subprocess.Popen([str(binary), "--host", "127.0.0.1", "--port", "0",
+                               "--workspace", str(root / "workspace"), "--state-root", str(root / "state")],
+                               cwd=root / "workspace", env=env, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    resources["pid"] = process.pid
+    return process
+
+
 def main(argv=None):
     deadlines = Deadlines()
     previous = signal.signal(signal.SIGALRM, expired)
@@ -1016,11 +1195,10 @@ def main(argv=None):
     root = process = token_identity = port = journal = None
     state = {}
     old_controls = {}
-    key = token = ""
+    key = github_key = token = ""
     stage = "inputs"
     parser = Arguments(description=__doc__)
-    parser.add_argument("--github-config", help="explicit existing gh config directory; read by selected credential helper only")
-    parser.add_argument("--github-login", help="exact active GitHub login for independent Git fetches; separate from Cursor key")
+    parser.add_argument("--github-login", help="exact GitHub login verified with the manifest-selected PAT; isolated config, no keyring fallback")
     parser.add_argument("--journal", help="absolute owner-only evidence directory; retained, never replayed")
     parser.add_argument("--preflight-only", action="store_true", help="catalog checks only; zero CreateAgent/Send")
     parser.add_argument("--manifest", required=True, help="explicit approved nonsecret JSON manifest")
@@ -1037,9 +1215,18 @@ def main(argv=None):
                 raise Failure("explicit --journal required for a coding run")
             if args.preflight_only and args.journal:
                 raise Failure("--journal belongs only to the coding path")
+            if not args.preflight_only:
+                reference = manifest.get("github_credential_ref")
+                if reference is None:
+                    raise Failure("coding requires explicit github_credential_ref")
+                github_key = os.environ.get(reference[4:], "")
+                if not github_key or len(github_key) > 4096 or any(c.isspace() for c in github_key):
+                    raise Failure("selected GitHub credential is missing or invalid; no ambient fallback")
+                if reference == manifest["credential_ref"] or github_key == key:
+                    raise Failure("Cursor and GitHub credentials must be distinct")
             if args.journal:
                 stage = "journal"
-                journal = Journal(args.journal, [key])
+                journal = Journal(args.journal, [key, github_key])
                 report["resources"]["journal"] = str(journal.path)
                 for sig, kind in ((signal.SIGUSR1, "cancel"), (signal.SIGUSR2, "discard")):
                     old_controls[sig] = signal.signal(sig, lambda signum, frame, kind=kind: journal.close(kind))
@@ -1048,20 +1235,12 @@ def main(argv=None):
             stage = "pin"
             root = Path(tempfile.mkdtemp(prefix="ovrcr-cursor-poc-")).resolve()
             report["resources"]["private_root"] = str(root)
-            for name in ("workspace", "state", "home", "tmp"):
+            for name in ("workspace", "state", "home", "tmp", "github-config"):
                 (root / name).mkdir(mode=0o700)
             binary, report["pin"] = unpack_archive(args.archive, root, deadlines)
             report["stages"].append({"stage": stage, "verdict": "PASS", "receipt": report["pin"]})
             stage = "startup"
-            env = {"PATH": os.defpath, "HOME": str(root / "home"), "TMPDIR": str(root / "tmp"),
-                   "TMP": str(root / "tmp"), "TEMP": str(root / "tmp"), "CURSOR_API_KEY": key,
-                   "CURSOR_SDK_CLIENT_LANGUAGE": "python"}
-            report["resources"]["launch_attempted"] = True
-            process = subprocess.Popen([str(binary), "--host", "127.0.0.1", "--port", "0",
-                                       "--workspace", str(root / "workspace"), "--state-root", str(root / "state")],
-                                       cwd=root / "workspace", env=env, stdin=subprocess.DEVNULL,
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-            report["resources"]["pid"] = process.pid
+            process = launch_bridge(binary, root, key, report["resources"])
             ready = ready_line(process, deadlines)
             port = endpoint(ready, process, root)
             token, token_identity = identify_token(ready, root)
@@ -1104,11 +1283,53 @@ def main(argv=None):
             if not args.preflight_only:
                 report["coding"] = "BLOCKED"
                 stage = "github_auth"
-                report["github_auth"] = github_auth(args.github_config, args.github_login, manifest["repository"], root, deadlines, report["resources"])
+                report["github_auth"] = github_auth(github_key, args.github_login, manifest["repository"], root, deadlines, report["resources"])
                 journal.append({"event": "github_auth", "receipt": report["github_auth"]})
                 stage = "coding"
-                coding_run(manifest, key, token, port, journal, root, deadlines, report, state)
-                follow_up_run(manifest, key, token, port, journal, root, deadlines, report, state)
+                coding_run(manifest, key, token, port, journal, root, deadlines, report, state, github_key)
+                follow_up_run(manifest, key, token, port, journal, root, deadlines, report, state, github_key)
+                cancellation_run(manifest, key, token, port, journal, deadlines, report, state)
+                try:
+                    usage = checked_rpc(port, token, "SdkAgentService", "GetUsage", {"agentId": state["agentId"]}, deadlines).get("usage")
+                    if isinstance(usage, dict):
+                        journal.append({"event": "usage", "receipt": usage})
+                        report["usage"] = {"observed": usage, "cost": "AVAILABLE; float cents, eventually consistent" if isinstance(usage.get("cost"), dict) else "UNAVAILABLE; optional cost absent",
+                                           "hard_remote_spend_cap": "UNVERIFIED"}
+                except (Failure, OSError, ValueError, http.client.HTTPException):
+                    pass
+                retain_run(report, state)
+                report["resume_options"] = {"verdict": "NOT RUN", "reason": "pinned ResumeAgent applies updated options; preservation unverified; no call"}
+                report["fresh_bridge"] = {"verdict": "NOT RUN", "reason": "all three terminal runs and remaining original budget required"}
+                if len(report["runs"]) == 3 and all(row["terminal"] in TERMINAL for row in report["runs"]):
+                    report["active_stage"] = "fresh_bridge"
+                    previous_bridge = {name: report["resources"][name] for name in ("pid", "token_file", "launch_attempted")}
+                    cleanup(process, None, token_identity, port, token, deadlines, previous_bridge)
+                    report["resources"]["previous_bridge"] = previous_bridge
+                    if previous_bridge.get("process_exit") == "CONFIRMED" and previous_bridge.get("token_cleanup") == "REMOVED":
+                        process = token_identity = port = None
+                        token = ""
+                        report["resources"]["launch_attempted"] = False
+                        report["resources"].pop("pid", None)
+                        report["resources"].pop("token_file", None)
+                        deadlines.arm(min(deadlines.work, deadlines.cleanup_deadline - SHUTDOWN_RESERVE))
+                        process = launch_bridge(binary, root, key, report["resources"])
+                        ready = ready_line(process, deadlines)
+                        port = endpoint(ready, process, root)
+                        token, token_identity = identify_token(ready, root)
+                        journal.secrets.append(token)
+                        report["resources"]["token_file"] = str(token_identity[0])
+                        snapshot_state = {**report["run"], "active": False}
+                        try:
+                            status = exact_snapshot(port, token, key, snapshot_state, deadlines, journal)
+                            if status != "RUN_LIFECYCLE_STATUS_FINISHED":
+                                raise Failure("fresh bridge did not retrieve the exact completed run")
+                            report["fresh_bridge"] = {"verdict": "PASS", "runId": snapshot_state["runId"], "method": "GetRun",
+                                                      "options": "read-only cloud routing; no remote option updates",
+                                                      "active_continuation": "NOT RUN; completed-run retrieval only"}
+                        except (Failure, OSError, ValueError, http.client.HTTPException):
+                            report["fresh_bridge"] = {"verdict": "BLOCKED", "reason": "exact read-only retrieval unavailable; no ResumeAgent or new work"}
+                    else:
+                        report["fresh_bridge"] = {"verdict": "BLOCKED", "reason": "original owned process/token disposition unresolved; no replacement launched"}
     except Failure as error:
         report["stages"].append({"stage": report.pop("active_stage", stage), "verdict": "FAIL", "reason": str(error)})
     except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired, tarfile.TarError, http.client.HTTPException):
@@ -1118,6 +1339,7 @@ def main(argv=None):
             cleanup(process, root, token_identity, port, token, deadlines, report["resources"], journal, state, key)
         except (Failure, OSError):
             report["resources"]["cleanup"] = "UNRESOLVED; cleanup deadline or operation failed"
+        retain_run(report, state)
         for sig, handler in old_controls.items():
             signal.signal(sig, handler)
         if journal is not None:
@@ -1132,12 +1354,23 @@ def main(argv=None):
     report["proof_stages"] = {name: "NOT RUN" for name in ("observation", "follow_up", "cancellation_proof", "fresh_bridge", "live_cloud", "native_provider")}
     report["proof_stages"]["observation"] = report.get("observation", "NOT RUN")
     report["proof_stages"]["follow_up"] = report["recovery_criteria"]["follow_up"]["verdict"]
-    report["deadlines"] = {"work_seconds": WORK_SECONDS, "total_seconds": TOTAL_SECONDS, "clock": "absolute monotonic; no renewal"}
+    for name, field in (("cancellation_proof", "cancellation"), ("fresh_bridge", "fresh_bridge")):
+        report["proof_stages"][name] = report.get(field, {}).get("verdict", "NOT RUN")
+    report["native_gates"] = {"terminal_response": "BLOCKED; no verified correlated cloud method", "uncertain_retry": "BLOCKED; no verified replay contract", "active_process_death": "NOT RUN"}
+    report["remaining_remote"] = {"agentId": state.get("agentId", "UNRESOLVED" if state.get("creation_attempted") else "NOT CREATED"), "result_branch": report.get("result", {}).get("branch", "UNAVAILABLE"), "cleanup": "no remote archive/delete"}
+    report["deadlines"] = {"work_seconds": WORK_SECONDS, "total_seconds": TOTAL_SECONDS, "clock": "absolute monotonic; no renewal",
+                           "started_monotonic": deadlines.started, "work_deadline": deadlines.work,
+                           "total_deadline": deadlines.total, "cleanup_deadline": deadlines.cleanup_deadline}
+    report.setdefault("resume_options", {"verdict": "NOT RUN", "reason": "pinned ResumeAgent updates options; preservation unverified; no call"})
+    if "cancellation" in report:
+        report["cancellation"]["terminal"] = state.get("terminal_status", "UNRESOLVED")
+    if report["coding"] == "PASS":
+        report["control_recovery"] = "PASS" if all(report["recovery_criteria"][name]["verdict"] == "PASS" for name in ("active_observation", "offset_resume", "follow_up")) and report.get("cancellation", {}).get("verdict") == "PASS" and report.get("fresh_bridge", {}).get("verdict") == "PASS" else "BLOCKED"
     receipts = {
         "1": ("agent" in report, report.get("operation_keys", "no admitted request")),
         "2": ("source" in report, report.get("source", "fixture source unverified")),
         "3": (report["resources"].get("journal_health") == "DURABLE", report["resources"].get("journal", "no journal")),
-        "4": (report["attempts"]["Send"] in {1, 2}, report.get("agent", "creation/GetAgent unverified")),
+        "4": ("cloud_identity" in report, {"allocation": report.get("agent"), "cloud_identity": report.get("cloud_identity")}),
         "5": ("stream" in report, {"run": report.get("run"), "stream": report.get("stream")}),
         "6": (report["coding"] == "PASS", report.get("result", "source/effect result unverified")),
         "7": ("UNRESOLVED" not in report["resources"].get("remote_outcome", "UNRESOLVED"), report["resources"].get("remote_outcome", "no remote identity receipt")),
@@ -1157,7 +1390,7 @@ def main(argv=None):
     stages_ok = not any(item["verdict"] == "FAIL" for item in report["stages"])
     passed = report["preflight"] == "PASS" and report["coding"] in {"NOT RUN", "PASS"} and clean and journal_ok and stages_ok
     report["outcome"] = "PASS" if passed else "FAIL"
-    report = redact(report, [key, token])
+    report = redact(report, [key, github_key, token])
     print(json.dumps(report, sort_keys=True))
     return 0 if passed else 1
 

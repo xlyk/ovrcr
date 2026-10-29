@@ -21,7 +21,7 @@ CODING_BUDGETS = (15, 20, 1.5, 0.75)
 
 
 class PreflightEntryPointTests(unittest.TestCase):
-    def run_fixture(self, scenario="success", mutate=None, pin_change=None, env_change=None, budgets=None, coding=False, process_delay=0):
+    def run_fixture(self, scenario="success", mutate=None, pin_change=None, env_change=None, budgets=None, coding=False, process_delay=0, source_events=None):
         if budgets is None:
             budgets = CODING_BUDGETS if coding else PREFLIGHT_BUDGETS
         temp = tempfile.TemporaryDirectory()
@@ -43,6 +43,7 @@ class PreflightEntryPointTests(unittest.TestCase):
         config = {"audit": str(audit), "unrelated": str(unrelated), "scenario": scenario, "journal": str(journal)}
         git_override = ""
         if coding:
+            manifest["github_credential_ref"] = "env:OVRCR_POC_GITHUB_PAT"
             repo = root / "remote"
             repo.mkdir()
             def git(*args):
@@ -76,6 +77,9 @@ class PreflightEntryPointTests(unittest.TestCase):
                 git("commit", "-m", "unrelated source")
                 git("branch", "-f", "cursor/result", "HEAD")
             git("switch", "main")
+            if scenario.startswith("result_missing_branch"):
+                config["result_commit"] = git("rev-parse", "cursor/result")
+                git("branch", "-D", "cursor/result")
             gh_config = root / "github-config"
             gh_config.mkdir(mode=0o700)
             (gh_config / "owned-marker").write_text("preserve selected config")
@@ -86,10 +90,18 @@ config = """ + repr(str(gh_config)) + r"""
 scenario = """ + repr(scenario) + r"""
 kind = 'pulls' if sys.argv[1:3] == ['pr', 'list'] else 'credential' if 'git-credential' in sys.argv else 'status'
 with open(""" + repr(str(root / "github-audit.jsonl")) + r""", 'a') as audit:
-    audit.write(json.dumps({'kind': kind, 'config_matches': os.environ.get('GH_CONFIG_DIR') == config, 'ambient_excluded': not (os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')), 'pr_argv': sys.argv[1:] if kind == 'pulls' else None}) + '\n')
+    audit.write(json.dumps({'kind': kind, 'config_matches': os.environ.get('GH_CONFIG_DIR') == str(Path(os.environ['HOME']).parent / 'github-config') and os.environ.get('GH_CONFIG_DIR') != config and (Path(os.environ['GH_CONFIG_DIR']).stat().st_mode & 0o777) == 0o700, 'selected_pat_matches': os.environ.get('GH_TOKEN') == 'GITHUB-SECRET-SENTINEL-364', 'ambient_excluded': not os.environ.get('GITHUB_TOKEN') and os.environ.get('GH_TOKEN') not in {'AMBIENT_GH_MUST_NOT_WIN', 'AMBIENT_GITHUB_MUST_NOT_WIN'}, 'pr_argv': sys.argv[1:] if kind == 'pulls' else None}) + '\n')
+if scenario == 'github_config_residue':
+    residue = Path(os.environ['GH_CONFIG_DIR']) / 'device-id'
+    fd = os.open(residue, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as output:
+        output.write('owned-nonsecret-device-id')
 if kind == 'status':
+    if scenario == 'github_pat_error':
+        print('GITHUB-SECRET-SENTINEL-364')
+        sys.exit(1)
     changed_account = scenario == 'pr_account_after' and Path(""" + repr(str(root / "pr-effects.json")) + r""").exists()
-    print(json.dumps([{'login': 'other' if scenario == 'github_wrong_login' or changed_account else 'fixture', 'active': True, 'state': 'error' if scenario == 'github_auth_bad' else 'success', 'tokenSource': 'keyring'}]))
+    print(json.dumps([{'login': 'other' if scenario == 'github_wrong_login' or changed_account else 'fixture', 'active': True, 'state': 'error' if scenario == 'github_auth_bad' else 'success', 'tokenSource': 'keyring' if scenario == 'github_wrong_token_source' else 'GH_TOKEN'}]))
 elif kind == 'pulls':
     request_shape = '--repo' in sys.argv and sys.argv[sys.argv.index('--repo') + 1] == 'https://github.com/fixture/disposable' and '--state' in sys.argv and sys.argv[sys.argv.index('--state') + 1] == 'all' and '--limit' in sys.argv and sys.argv[sys.argv.index('--limit') + 1] == '100'
     assert request_shape
@@ -122,7 +134,7 @@ else:
     request = sys.stdin.read()
     if scenario == 'github_helper_refused' or 'host=github.com' not in request:
         sys.exit(1)
-    print('username=fixture\npassword=GITHUB-SECRET-SENTINEL-364\n')
+    print('username=fixture\npassword=' + os.environ.get('GH_TOKEN', '') + '\n')
 """)
             gh_peer.chmod(0o700)
             shim = root / "git-peer"
@@ -147,12 +159,12 @@ if 'fetch' in args or 'ls-remote' in args:
     other = subprocess.run(['/usr/bin/git', *options, 'credential', 'fill'], input='protocol=https\nhost=github.com\npath=unrelated/other\n\n', text=True, capture_output=True)
     unrelated_refused = other.returncode != 0 and 'GITHUB-SECRET-SENTINEL-364' not in other.stdout
     with open(""" + repr(str(root / "git-auth-audit.jsonl")) + r""", 'a') as audit:
-        audit.write(json.dumps({'credential_supplied': supplied, 'refused': auth.returncode != 0, 'other_remote_refused': unrelated_refused}) + '\n')
+        audit.write(json.dumps({'operation': operation, 'credential_supplied': supplied, 'refused': auth.returncode != 0, 'other_remote_refused': unrelated_refused}) + '\n')
     if not supplied:
         sys.exit(1)
 os.execv('/usr/bin/git', ['git', '-c', """ + repr("url." + str(repo) + ".insteadOf=https://github.com/fixture/disposable") + r""", *args])
 """)
-            if scenario in {"git_stall", "verification_reap_delayed", "verification_reap_exhausted", "verification_reap_interrupted", "verification_reap_transition", "verification_reap_termination"}:
+            if scenario in {"git_stall", "verification_reap_delayed", "verification_reap_exhausted", "verification_reap_wait_timeout", "verification_reap_interrupted", "verification_reap_transition", "verification_reap_transition_pending_alarm", "verification_reap_termination"}:
                 program = "import json, os, sys, time\nif 'fetch' in sys.argv:\n with open(" + repr(str(root / "verification-stall.json")) + ", 'w') as receipt: json.dump({'phase': 'git_fetch_stall', 'pid': os.getpid()}, receipt)\n time.sleep(30)\nos.execv('/usr/bin/git', ['git', *sys.argv[1:]])\n"
                 shim.write_text("#!" + sys.executable + "\n" + program)
             shim.chmod(0o700)
@@ -178,6 +190,8 @@ os.execv('/usr/bin/git', ['git', '-c', """ + repr("url." + str(repo) + ".instead
                 fd = os.open(journal / "events.jsonl", os.O_WRONLY | os.O_CREAT, 0o600)
                 os.write(fd, b'{"event":"prior-unresolved-claim"}\n')
                 os.close(fd)
+        if source_events is not None:
+            config["source_events"] = json.loads(json.dumps(source_events).replace("SOURCE_SHA", manifest["source_sha"]))
         if mutate:
             mutate(manifest)
         manifest_path = root / "manifest.json"
@@ -214,37 +228,67 @@ original_spawn = g["subprocess"].Popen
 original_killpg = g["os"].killpg
 owned = []
 scenario = %r
+competing_alarm = scenario == "verification_reap_transition_pending_alarm"
+if competing_alarm:
+    scenario = "verification_reap_transition"
+competing_alarm_fired = False
 def tracked_spawn(*args, **kwargs):
+    if journal_path is not None:
+        argv, env = args[0], kwargs.get("env", {})
+        kind = ("bridge" if Path(argv[0]).name == "bridge" else "gh" if argv[0] == g["GH"] else
+                "git_remote" if argv[0] == g["GIT"] and any(item in argv for item in ("fetch", "ls-remote")) else
+                "git_local" if argv[0] == g["GIT"] else "fixture_tests")
+        with (journal_path.parent / "process-env-audit.jsonl").open("a") as audit:
+            audit.write(json.dumps({"kind": kind, "pat_present": "GITHUB-SECRET-SENTINEL-364" in env.values(),
+                                   "cursor_key_present": "API-SECRET-SENTINEL-363" in env.values(),
+                                   "secret_in_argv": any(secret in str(argv) for secret in ("GITHUB-SECRET-SENTINEL-364", "API-SECRET-SENTINEL-363", "BRIDGE-SECRET-SENTINEL-363"))}) + chr(10))
     process = original_spawn(*args, **kwargs)
     owned.append(process)
-    if scenario in {"verification_reap_delayed", "verification_reap_exhausted", "verification_reap_interrupted", "verification_reap_transition", "verification_reap_termination"} and args[0][0] == g["GIT"] and "fetch" in args[0]:
+    if scenario in {"verification_reap_delayed", "verification_reap_exhausted", "verification_reap_wait_timeout", "verification_reap_interrupted", "verification_reap_transition", "verification_reap_termination"} and args[0][0] == g["GIT"] and "fetch" in args[0]:
         original_wait = process.wait
         group = os.getpgid(process.pid)
         interrupted = False
-        def tracked_killpg(pgid, sig):
+        def inject_stale_alarm(items):
             nonlocal interrupted
-            if scenario == "verification_reap_termination" and not interrupted:
+            previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGALRM})
+            try:
+                # Publish the fault before a competing alarm can consume its flag.
                 interrupted = True
-                blocked = signal.SIGALRM in signal.pthread_sigmask(signal.SIG_BLOCK, set())
                 with (journal_path.parent / "verification-reaping.jsonl").open("a") as gate:
-                    gate.write(json.dumps({"event": "stale_alarm", "boundary": "killpg", "pid": process.pid, "pgid": pgid, "time": time.monotonic(), "signal_blocked": blocked}) + chr(10))
+                    gate.write(json.dumps({"event": "stale_alarm", "pid": process.pid, "time": time.monotonic(), **items}) + chr(10))
                 os.kill(os.getpid(), signal.SIGALRM)
+            finally:
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+        def tracked_killpg(pgid, sig):
+            if scenario == "verification_reap_termination" and not interrupted:
+                blocked = signal.SIGALRM in signal.pthread_sigmask(signal.SIG_BLOCK, set())
+                inject_stale_alarm({"boundary": "killpg", "pgid": pgid, "signal_blocked": blocked})
             with (journal_path.parent / "verification-reaping.jsonl").open("a") as gate:
                 gate.write(json.dumps({"event": "termination_attempt", "pid": process.pid, "pgid": pgid, "signal": sig, "time": time.monotonic()}) + chr(10))
-            return original_killpg(pgid, sig)
+            result = original_killpg(pgid, sig)
+            caller = sys._getframe(1)
+            if scenario == "verification_reap_exhausted" and pgid == group and caller.f_code.co_name == "command":
+                deadlines = caller.f_locals["deadlines"]
+                end = deadlines.cleanup_deadline
+                cutoff = end - g["SHUTDOWN_RESERVE"]
+                # Exhaust admission at the original cutoff, without renewing either clock.
+                while time.monotonic() < cutoff:
+                    time.sleep(min(0.01, max(0, cutoff - time.monotonic())))
+                with (journal_path.parent / "verification-reaping.jsonl").open("a") as gate:
+                    gate.write(json.dumps({"event": "reap_cutoff_elapsed", "pid": process.pid, "pgid": pgid,
+                                           "time": time.monotonic(), "cutoff": cutoff, "cleanup_end": end,
+                                           "total_deadline": deadlines.total,
+                                           "signal_blocked": signal.SIGALRM in signal.pthread_sigmask(signal.SIG_BLOCK, set())}) + chr(10))
+            return result
         g["os"].killpg = tracked_killpg
         original_close = process.stdout.close
         def interrupted_close():
-            nonlocal interrupted
             if scenario == "verification_reap_transition" and not interrupted:
-                interrupted = True
-                with (journal_path.parent / "verification-reaping.jsonl").open("a") as gate:
-                    gate.write(json.dumps({"event": "stale_alarm", "boundary": "stdout.close", "pid": process.pid, "pgid": group, "time": time.monotonic(), "cleanup_end": sys._getframe(1).f_locals["deadlines"].cleanup_deadline}) + chr(10))
-                os.kill(os.getpid(), signal.SIGALRM)
+                inject_stale_alarm({"boundary": "stdout.close", "pgid": group,
+                                    "cleanup_end": sys._getframe(1).f_locals["deadlines"].cleanup_deadline})
             return original_close()
         process.stdout.close = interrupted_close
         def delayed_wait(timeout=None):
-            nonlocal interrupted
             caller = sys._getframe(1)
             if caller.f_code.co_name != "command":
                 return original_wait(timeout=timeout)
@@ -253,18 +297,15 @@ def tracked_spawn(*args, **kwargs):
                 gate.write(json.dumps({"event": "wait_started", "pid": process.pid, "pgid": group, "time": started, "timeout": timeout, "total_deadline": caller.f_locals["deadlines"].total, "cleanup_end": caller.f_locals.get("end")}) + "\\n")
             if scenario in {"verification_reap_interrupted", "verification_reap_transition", "verification_reap_termination"}:
                 if not interrupted:
-                    interrupted = True
-                    with (journal_path.parent / "verification-reaping.jsonl").open("a") as gate:
-                        gate.write(json.dumps({"event": "stale_alarm", "pid": process.pid, "time": time.monotonic()}) + chr(10))
-                    os.kill(os.getpid(), signal.SIGALRM)
+                    inject_stale_alarm({})
             else:
-                time.sleep(0.4)
+                time.sleep(2 if scenario == "verification_reap_wait_timeout" else 0.4)
             result = original_wait(timeout=timeout)
             with (journal_path.parent / "verification-reaping.jsonl").open("a") as gate:
                 gate.write(json.dumps({"event": "wait_confirmed", "pid": process.pid, "time": time.monotonic(), "exit": result}) + "\\n")
             return result
         process.wait = delayed_wait
-    if scenario == "launch_uncertain" or (scenario == "verification_launch_uncertain" and args[0][0] == g["GH"]):
+    if scenario == "launch_uncertain" or (scenario == "verification_launch_uncertain" and args[0][0] == g["GH"]) or (scenario == "fresh_launch_uncertain" and Path(args[0][0]).name == "bridge" and sum(Path(p.args[0]).name == "bridge" for p in owned) == 2):
         time.sleep(0.2)
         raise TimeoutError("synthetic interrupted process operation")
     return process
@@ -273,7 +314,12 @@ fault_fired = False
 journal_path = Path(sys.argv[sys.argv.index("--journal") + 1]) if "--journal" in sys.argv else None
 publication_line = next(i for i, line in enumerate(Path(sys.argv[1]).read_text().splitlines(), 1) if 'report["result"] = {"branch": branch' in line)
 def fault_at_boundary(frame, event, arg):
-    global fault_fired
+    global fault_fired, competing_alarm_fired
+    if competing_alarm and not competing_alarm_fired and event == "line" and frame.f_code.co_name in {"interrupted_close", "inject_stale_alarm"} and frame.f_locals.get("interrupted"):
+        competing_alarm_fired = True
+        with (journal_path.parent / "verification-reaping.jsonl").open("a") as gate:
+            gate.write(json.dumps({"event": "competing_alarm", "boundary": "fault flag before receipt", "signal_blocked": signal.SIGALRM in signal.pthread_sigmask(signal.SIG_BLOCK, set())}) + chr(10))
+        os.kill(os.getpid(), signal.SIGALRM)
     if frame.f_code.co_filename == sys.argv[1] and not fault_fired:
         if scenario == "discard_after_send" and event == "call" and frame.f_code.co_name == "sync_directory" and frame.f_back.f_code.co_name == "receipt" and frame.f_back.f_locals.get("method") == "Send":
             fault_fired = True
@@ -295,10 +341,20 @@ def fault_at_boundary(frame, event, arg):
             else:
                 gate["outcome"] = "control gate unavailable"
             (journal_path.parent / "fault-gate.json").write_text(json.dumps(gate))
-        if scenario == "capacity_at_cleanup" and event == "call" and frame.f_code.co_name == "cleanup":
+        if scenario == "close_before_send" and event == "return" and frame.f_code.co_name == "receipt" and frame.f_locals.get("method") == "CreateAgent":
+            fault_fired = True
+            blocked = signal.SIGUSR2 in signal.pthread_sigmask(signal.SIG_BLOCK, set())
+            (journal_path.parent / "fault-gate.json").write_text(json.dumps({"boundary": "durable allocation before Send claim", "signal_blocked": blocked}))
+            os.kill(os.getpid(), signal.SIGUSR2)
+        if scenario == "third_discard_before_cancel_claim" and event == "return" and frame.f_code.co_name == "append" and frame.f_locals.get("value", {}).get("event") == "cancellation_activity":
+            fault_fired = True
+            blocked = signal.SIGUSR2 in signal.pthread_sigmask(signal.SIG_BLOCK, set())
+            (journal_path.parent / "fault-gate.json").write_text(json.dumps({"boundary": "durable activity before cancel claim", "signal_blocked": blocked}))
+            os.kill(os.getpid(), signal.SIGUSR2)
+        if scenario == "capacity_at_cleanup" and event == "call" and frame.f_code.co_name == "close":
             fault_fired = True
             (journal_path / "capacity").write_bytes(b"x" * (256 * 1024))
-            (journal_path.parent / "fault-gate.json").write_text(json.dumps({"boundary": "cleanup", "capacity_written": True}))
+            (journal_path.parent / "fault-gate.json").write_text(json.dumps({"boundary": "first Journal.close", "capacity_written": True}))
         if scenario == "discard_at_verification" and event == "line" and frame.f_lineno == publication_line:
             fault_fired = True
             blocked = signal.SIGUSR2 in signal.pthread_sigmask(signal.SIG_BLOCK, set())
@@ -309,9 +365,9 @@ def fault_at_boundary(frame, event, arg):
             (journal_path.parent / "fault-gate.json").write_text(json.dumps({"boundary": "coding_run return", "coding": frame.f_locals["report"]["coding"], "signal": "SIGALRM", "total_budget_remaining": frame.f_locals["deadlines"].total - time.monotonic()}))
             os.kill(os.getpid(), signal.SIGALRM)
     return fault_at_boundary
-if scenario in {"discard_after_send", "capacity_at_cleanup", "discard_at_verification", "alarm_after_coding_pass"}:
+if competing_alarm or scenario in {"close_before_send", "discard_after_send", "capacity_at_cleanup", "discard_at_verification", "alarm_after_coding_pass", "third_discard_before_cancel_claim"}:
     sys.settrace(fault_at_boundary)
-if scenario in {"verification_reap_delayed", "verification_reap_exhausted", "verification_reap_interrupted", "verification_reap_transition", "verification_reap_termination"}:
+if scenario in {"verification_reap_delayed", "verification_reap_exhausted", "verification_reap_wait_timeout", "verification_reap_interrupted", "verification_reap_transition", "verification_reap_termination"}:
     original_cleanup = g["cleanup"]
     def observed_cleanup(*args, **kwargs):
         deadlines = args[5]
@@ -334,13 +390,15 @@ finally:
         process.wait(timeout=1)
 sys.exit(result)
 """ % (*budgets, git_override, scenario)
-        env = dict(os.environ, EXPLICIT_FIXTURE_KEY="API-SECRET-SENTINEL-363", CURSOR_API_KEY="AMBIENT-MUST-NOT-WIN")
+        env = dict(os.environ, EXPLICIT_FIXTURE_KEY="API-SECRET-SENTINEL-363", CURSOR_API_KEY="AMBIENT-MUST-NOT-WIN", OVRCR_POC_GITHUB_PAT="GITHUB-SECRET-SENTINEL-364")
+        if coding:
+            env["GH_CONFIG_DIR"] = str(gh_config)
         if env_change:
             env_change(env)
         start = time.monotonic()
         run = subprocess.run([sys.executable, "-I", "-c", runner, str(CLIENT), host + "-" + arch,
                               digest, "--manifest", str(manifest_path), "--archive", str(archive),
-                              *(["--journal", str(journal), "--github-config", str(gh_config), "--github-login", "fixture"] if coding else ["--preflight-only"])],
+                              *(["--journal", str(journal), "--github-login", "fixture"] if coding else ["--preflight-only"])],
                              env=env, text=True, capture_output=True, timeout=budgets[1] + 2)
         elapsed = time.monotonic() - start
         events = [json.loads(line) for line in audit.read_text().splitlines()] if audit.exists() else []
@@ -361,7 +419,7 @@ sys.exit(result)
         if coding:
             self.assertEqual(report["attempts"], {name: methods.count(name) for name in ("CreateAgent", "Send")})
             self.assertLessEqual(methods.count("CreateAgent"), 1)
-            self.assertLessEqual(methods.count("Send"), 2)
+            self.assertLessEqual(methods.count("Send"), 3)
             self.assertTrue(all(e["request_shape"] for e in events if e.get("method") in {"CreateAgent", "GetAgent", "Send"}))
         self.assertEqual(unrelated.read_text(), "UNRELATED-SECRET")
         if journal.exists():
@@ -380,7 +438,7 @@ sys.exit(result)
             items = {"report.json": run.stdout.encode(), "wire.json": json.dumps(events, sort_keys=True).encode()}
             if journal.exists():
                 items.update({"journal-" + path.name: path.read_bytes() for path in journal.iterdir() if path.is_file()})
-            for name in ("verification-stall.json", "fault-gate.json", "github-audit.jsonl", "git-auth-audit.jsonl", "process-latency.jsonl", "verification-reaping.jsonl"):
+            for name in ("verification-stall.json", "fault-gate.json", "github-audit.jsonl", "git-auth-audit.jsonl", "process-env-audit.jsonl", "process-latency.jsonl", "verification-reaping.jsonl"):
                 if (root / name).exists():
                     items[name] = (root / name).read_bytes()
             for name, data in items.items():
@@ -389,10 +447,188 @@ sys.exit(result)
                     output.write(data)
         return run, report, events
 
+    def test_third_send_cancels_exact_active_run_then_reads_completed_run_on_fresh_bridge(self):
+        run, report, events = self.run_fixture("third_delayed_cancel", coding=True)
+        self.assertEqual(run.returncode, 0, report)
+        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
+        self.assertEqual(report["cancellation"]["verdict"], "PASS", report)
+        self.assertEqual(report["cancellation"]["terminal"], "RUN_LIFECYCLE_STATUS_CANCELLED")
+        self.assertEqual(report["fresh_bridge"]["verdict"], "PASS", report)
+        self.assertEqual(report["fresh_bridge"]["runId"], "run-fixture")
+        self.assertEqual([row["terminal"] for row in report["runs"]], ["RUN_LIFECYCLE_STATUS_FINISHED", "RUN_LIFECYCLE_STATUS_FINISHED", "RUN_LIFECYCLE_STATUS_CANCELLED"])
+        methods = [row["method"] for row in events if "method" in row]
+        self.assertEqual(methods.count("CreateAgent"), 1)
+        self.assertEqual(methods.count("Send"), 3)
+        self.assertEqual(methods.count("CancelRun"), 1)
+        self.assertNotIn("ResumeAgent", methods)
+        self.assertNotIn("ListRuns", methods)
+        self.assertTrue(all(row["request_shape"] for row in events if row.get("method") in {"GetRun", "Send"}))
+        self.assertTrue(next(row["cancel_gate"] for row in events if row.get("method") == "CancelRun"))
+        self.assertTrue(next(row["exact_cancel"] for row in events if row.get("method") == "CancelRun"))
+        self.assertEqual(methods.count("ObserveRun"), 3)
+        self.assertEqual(len([row for row in events if "pid" in row and "token_file" in row]), 2)
+        self.assertEqual(report["resources"]["previous_bridge"]["process_exit"], "CONFIRMED")
+        self.assertEqual(report["resources"]["previous_bridge"]["token_cleanup"], "REMOVED")
+        self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
+        self.assertEqual(report["resources"]["token_cleanup"], "REMOVED")
+        rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+        self.assertEqual(len({row["operation_key"] for row in rows if row["event"] == "claim"}), 4)
+        self.assertEqual([row["kind"] for row in rows if row["event"] == "closure"], ["cancel"])
+        self.assertTrue(any(row["event"] == "cancellation_result" and row["late"] for row in rows))
+        self.assertFalse(list((self.case_root / "journal").glob("*.request.json")))
+
+    def test_third_cancellation_ack_race_unknown_ids_and_late_receipts_never_add_work(self):
+        for scenario in ("third_ack_only", "third_completion_race", "third_no_id", "third_wrong_agent", "third_reused_id", "third_no_activity", "third_snapshot_wrong_id", "third_observer_wrong_id", "third_observer_bad_status", "third_observer_error", "third_late_discard"):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True)
+                methods = [row["method"] for row in events if "method" in row]
+                self.assertEqual(methods.count("Send"), 3)
+                self.assertEqual(methods.count("CreateAgent"), 1)
+                self.assertNotIn("ListRuns", methods)
+                self.assertNotIn("ResumeAgent", methods)
+                self.assertNotEqual(report["cancellation"]["verdict"], "PASS")
+                self.assertEqual(report["follow_up"]["result"], "FINISHED")
+                if scenario == "third_completion_race":
+                    self.assertEqual(run.returncode, 0, report)
+                    self.assertEqual(report["cancellation"]["terminal"], "RUN_LIFECYCLE_STATUS_FINISHED")
+                    self.assertIn("inconclusive", report["cancellation"]["reason"])
+                    self.assertEqual(report["fresh_bridge"]["verdict"], "PASS")
+                else:
+                    self.assertEqual(run.returncode, 1, report)
+                    self.assertEqual(len([row for row in events if "token_file" in row]), 1)
+                if scenario in {"third_no_id", "third_wrong_agent", "third_reused_id", "third_late_discard"}:
+                    self.assertNotIn("CancelRun", methods)
+                if scenario in {"third_no_id", "third_wrong_agent", "third_reused_id"}:
+                    self.assertTrue((self.case_root / "journal" / "Send.request.json").exists())
+                    self.assertIsNone(report["runs"][-1]["runId"])
+                    self.assertEqual(report["runs"][-1]["terminal"], "UNRESOLVED")
+                if scenario == "third_ack_only":
+                    self.assertEqual(report["cancellation"]["request"], "ACKNOWLEDGED; not terminal proof")
+                    self.assertEqual(report["runs"][-1]["terminal"], "UNRESOLVED")
+                    self.assertEqual(methods.count("CancelRun"), 1)
+                if scenario == "third_late_discard":
+                    rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+                    self.assertTrue(any(row["event"] == "receipt" and row.get("method") == "Send" and row.get("late") and row["receipt"].get("runId") == "run-cancel" for row in rows))
+                    self.assertFalse((self.case_root / "journal" / "Send.request.json").exists())
+
+    def test_third_discard_winning_after_activity_forbids_cancel_dispatch(self):
+        run, report, events = self.run_fixture("third_discard_before_cancel_claim", coding=True)
+        self.assertEqual(run.returncode, 1, report)
+        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
+        self.assertFalse(any(row.get("method") == "CancelRun" for row in events))
+        self.assertEqual(report["runs"][-1]["runId"], "run-cancel")
+        self.assertEqual(report["runs"][-1]["terminal"], "UNRESOLVED")
+        self.assertNotEqual(report["cancellation"]["verdict"], "PASS")
+        self.assertEqual(len([row for row in events if "token_file" in row]), 1)
+        gate = json.loads((self.case_root / "fault-gate.json").read_text())
+        self.assertEqual(gate["boundary"], "durable activity before cancel claim")
+        self.assertFalse(gate["signal_blocked"])
+        rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+        activity = next(i for i,row in enumerate(rows) if row["event"] == "cancellation_activity")
+        closure = next(i for i,row in enumerate(rows) if row["event"] == "closure")
+        self.assertLess(activity, closure)
+        self.assertEqual(rows[closure]["kind"], "discard")
+        self.assertFalse(any(row["event"] == "cancel_intent" for row in rows))
+        self.assertFalse(list((self.case_root / "journal").glob("*.request.json")))
+
+    def test_third_terminal_before_activity_survives_stale_or_unavailable_snapshots(self):
+        for scenario in ("third_early_finished_stale", "third_early_finished_unavailable"):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True)
+                self.assertEqual(run.returncode, 0, report)
+                self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
+                self.assertEqual(report["cancellation"]["verdict"], "BLOCKED")
+                self.assertIn("inconclusive", report["cancellation"]["reason"])
+                self.assertEqual(report["cancellation"]["terminal"], "RUN_LIFECYCLE_STATUS_FINISHED")
+                self.assertEqual(report["runs"][-1]["terminal"], "RUN_LIFECYCLE_STATUS_FINISHED")
+                self.assertEqual(report["resources"]["remote_outcome"], "RUN_LIFECYCLE_STATUS_FINISHED")
+                self.assertEqual(report["fresh_bridge"]["verdict"], "PASS")
+                self.assertFalse(any(row.get("method") == "CancelRun" for row in events))
+                self.assertFalse(any(row.get("method") == "GetRun" and row.get("run_id") == "run-cancel" for row in events))
+                rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+                terminal = next(i for i,row in enumerate(rows) if row["event"] == "cancellation_result")
+                closure = next(i for i,row in enumerate(rows) if row["event"] == "closure")
+                self.assertLess(terminal, closure)
+                self.assertFalse(rows[terminal]["late"])
+                self.assertEqual(rows[terminal]["receipt"]["status"], "RUN_LIFECYCLE_STATUS_FINISHED")
+
+    def test_third_stalled_control_and_observation_keep_original_shutdown_reserve(self):
+        for scenario, phase in (("third_cancel_stall", "third_cancel"), ("third_observer_stall", "third_observer")):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True, budgets=(6, 8, 1.5, 0.75))
+                self.assertEqual(run.returncode, 1, report)
+                self.assertTrue(any(row.get("stall") == phase for row in events))
+                self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
+                self.assertEqual(sum(row.get("method") == "CancelRun" for row in events), 1)
+                self.assertNotEqual(report["cancellation"]["verdict"], "PASS")
+                self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
+                self.assertEqual(report["resources"]["token_cleanup"], "REMOVED")
+                self.assertLess(report["elapsed_seconds"], 8)
+                self.assertEqual(len([row for row in events if "token_file" in row]), 1)
+
+    def test_fresh_read_only_probe_refuses_resume_updates_and_retains_original_clock(self):
+        for scenario in ("fresh_unavailable", "fresh_requires_resume", "fresh_wrong_id", "fresh_stall"):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True)
+                self.assertEqual(run.returncode, 0, report)
+                self.assertEqual(report["fresh_bridge"]["verdict"], "BLOCKED")
+                self.assertEqual(report["resume_options"]["verdict"], "NOT RUN")
+                self.assertIn("preservation unverified", report["resume_options"]["reason"])
+                methods = [row["method"] for row in events if "method" in row]
+                self.assertNotIn("ResumeAgent", methods)
+                self.assertEqual(methods.count("CreateAgent"), 1)
+                self.assertEqual(methods.count("Send"), 3)
+                fresh = [row for row in events if row.get("bridge_index") == 2]
+                self.assertEqual([row["method"] for row in fresh], ["GetRun", "Shutdown"] if scenario != "fresh_stall" else ["GetRun"])
+                self.assertTrue(all(row["request_shape"] for row in fresh))
+                if scenario == "fresh_stall":
+                    self.assertTrue(any(row.get("stall") == "fresh_get_run" for row in events))
+                clock = report["deadlines"]
+                self.assertEqual(clock["work_deadline"], clock["started_monotonic"] + CODING_BUDGETS[0])
+                self.assertEqual(clock["total_deadline"], clock["started_monotonic"] + CODING_BUDGETS[1])
+                self.assertLess(report["elapsed_seconds"], CODING_BUDGETS[0])
+                self.assertLess(clock["cleanup_deadline"], clock["total_deadline"])
+                self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
+                self.assertEqual(report["resources"]["token_cleanup"], "REMOVED")
+
+    def test_restart_waits_for_owned_exit_and_token_disposition_and_unknown_launch_stays_unknown(self):
+        for scenario in ("first_token_leftover", "second_token_leftover", "fresh_launch_uncertain"):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True)
+                self.assertEqual(run.returncode, 1, report)
+                started = [row for row in events if "token_file" in row]
+                self.assertEqual(len(started), 1 if scenario == "first_token_leftover" else 2)
+                if scenario == "first_token_leftover":
+                    self.assertEqual(report["fresh_bridge"]["verdict"], "BLOCKED")
+                    self.assertEqual(report["resources"]["previous_bridge"]["token_cleanup"], "UNRESOLVED")
+                if scenario == "fresh_launch_uncertain":
+                    self.assertEqual(report["resources"]["process_exit"], "UNRESOLVED")
+                    self.assertEqual(report["resources"]["token_cleanup"], "UNRESOLVED")
+                else:
+                    self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
+                    self.assertEqual(report["resources"]["token_cleanup"], "UNRESOLVED")
+                self.assertIn("RETAINED", report["resources"]["private_root_cleanup"])
+
+    def test_usage_cost_keeps_float_cents_and_missing_cost_unavailable(self):
+        for scenario in ("success", "usage_cost"):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True)
+                self.assertEqual(run.returncode, 0, report)
+                self.assertEqual(sum(row.get("method") == "GetUsage" for row in events), 1)
+                self.assertEqual(report["usage"]["observed"]["usage"]["totalTokens"], "24")
+                if scenario == "usage_cost":
+                    self.assertEqual(report["usage"]["observed"]["cost"], {"rawCostCents": 2.0, "chargedCents": 1.5})
+                else:
+                    self.assertNotIn("cost", report["usage"]["observed"])
+                    self.assertIn("UNAVAILABLE", report["usage"]["cost"])
+                self.assertEqual(report["native_gates"]["active_process_death"], "NOT RUN")
+                self.assertIn("BLOCKED", report["native_gates"]["terminal_response"])
+                self.assertIn("BLOCKED", report["native_gates"]["uncertain_retry"])
+
     def test_recovery_and_follow_up_use_exact_run_and_private_original_keys(self):
         run, report, events = self.run_fixture(coding=True)
         self.assertEqual(run.returncode, 0, report)
-        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 2})
+        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
         for name in ("active_observation", "offset_resume", "follow_up"):
             self.assertEqual(report["recovery_criteria"][name]["verdict"], "PASS", report)
         self.assertEqual(report["recovery_criteria"]["completed_result"]["verdict"], "NOT RUN")
@@ -400,7 +636,7 @@ sys.exit(result)
         self.assertEqual(report["follow_up"]["agentId"], report["run"]["agentId"])
         methods = [e["method"] for e in events if "method" in e]
         self.assertEqual(methods.count("ObserveRun"), 2)
-        self.assertNotIn("CancelRun", methods)
+        self.assertEqual(methods.count("CancelRun"), 1)
         self.assertTrue(any(e.get("original_send_closed") for e in events))
         self.assertTrue(any(e.get("original_observer_closed") for e in events))
         self.assertEqual([e["observation_request"] for e in events if e.get("method") == "ObserveRun"], [{"runId": "run-fixture"}, {"runId": "run-fixture", "afterOffset": "observe-3"}])
@@ -408,7 +644,7 @@ sys.exit(result)
         self.assertTrue(all(e["write_ahead"] for e in events if e.get("method") in {"CreateAgent", "Send"}))
         rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
         claims = [row for row in rows if row["event"] == "claim"]
-        self.assertEqual(len({row["operation_key"] for row in claims}), 3)
+        self.assertEqual(len({row["operation_key"] for row in claims}), 4)
         offsets = [row for row in rows if row["event"] == "observe_offset"]
         self.assertTrue(offsets)
         self.assertTrue(all(row["origin"] == "ObserveRun" and row["runId"] == "run-fixture" for row in offsets))
@@ -536,7 +772,7 @@ sys.exit(result)
                 else:
                     gh_rows = [json.loads(line) for line in (self.case_root / "github-audit.jsonl").read_text().splitlines()]
                     self.assertEqual(sum(row["kind"] == "pulls" for row in gh_rows), 2)
-                    self.assertTrue(all(row["ambient_excluded"] and row["config_matches"] for row in gh_rows))
+                    self.assertTrue(all(row["ambient_excluded"] and row["config_matches"] and row["selected_pat_matches"] for row in gh_rows))
                     rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
                     results = [row["receipt"]["result"]["git"] for row in rows if row["event"] == "result"]
                     self.assertEqual(results[0], results[1])
@@ -564,22 +800,157 @@ sys.exit(result)
         self.assertEqual(phase["phase"], "pr_inventory_stall")
         self.assertIn(phase["pid"], [row["pid"] for row in report["resources"]["verification_processes"]])
 
+    def test_source_probe_accepts_workspace_prefix_and_checks_sha_and_marker(self):
+        for scenario in ("source_prefix", "source_prefix_wrong_sha", "source_prefix_wrong_marker"):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True)
+                if scenario == "source_prefix":
+                    self.assertEqual(run.returncode, 0, report)
+                    self.assertEqual(report["source_probe"]["verdict"], "PASS")
+                    self.assertEqual(report["coding"], "PASS")
+                else:
+                    self.assertEqual(run.returncode, 1, report)
+                    self.assertIn("initial source probe differs", report["stages"][-1]["reason"])
+                    self.assertNotIn("source_probe", report)
+                    self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1})
+
+    def test_missing_cloud_branch_uses_only_unique_new_git_ref(self):
+        for suffix in ("", "_none", "_ambiguous"):
+            with self.subTest(suffix=suffix):
+                capture = json.loads(Path(__file__).with_name("source-tool-capture.json").read_text())
+                run, report, events = self.run_fixture("result_missing_branch" + suffix, coding=True, source_events=capture)
+                self.assertEqual(run.returncode, 1 if suffix else 0, report)
+                if suffix:
+                    self.assertIn("unique new published branch", report["stages"][-1]["reason"])
+                    self.assertNotIn("result", report)
+                    self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1})
+                else:
+                    self.assertEqual(report["source_probe"]["verdict"], "PASS")
+                    self.assertEqual(report["result"]["branch"], "cursor/result")
+                    self.assertEqual(report["result"]["tests"], "PASS; 3 tests")
+                    self.assertEqual(report["follow_up"]["git_refs"], "UNCHANGED; all advertised refs")
+                    self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
+                    rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+                    discovery = next(row for row in rows if row["event"] == "result_branch_ref")
+                    self.assertEqual(discovery["branch"], "cursor/result")
+                    self.assertEqual(discovery["commit"], report["result"]["commit"])
+                    self.assertEqual(discovery["origin"], "unique new Git head after exact completed run")
+
+    def test_source_probe_replays_redacted_cloud_capture(self):
+        capture = Path(__file__).with_name("source-tool-capture.json")
+        for fault in (None, "source", "command", "run", "call"):
+            with self.subTest(fault=fault):
+                messages = json.loads(capture.read_text())
+                if fault == "source":
+                    messages[-1]["result"]["success"]["stdout"] = "wrong source\n"
+                if fault == "command":
+                    messages[1]["args"]["command"] = "echo wrong command"
+                if fault == "run":
+                    messages[1]["run_id"] = "wrong-run"
+                if fault == "call":
+                    messages[1]["call_id"] = "different-call"
+                run, report, events = self.run_fixture("source_capture", coding=True, source_events=messages)
+                self.assertEqual(run.returncode, 0 if fault is None else 1, report)
+                if fault is None:
+                    self.assertEqual(report["source_probe"]["verdict"], "PASS")
+                    self.assertEqual(report["result"]["tests"], "PASS; 3 tests")
+                    self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
+                    rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+                    captured = [row["receipt"] for row in rows if row["event"] == "source_tool_event"]
+                    self.assertEqual(len(captured), 3)
+                    self.assertNotIn("args", captured[0])
+                    self.assertEqual(captured[-1]["result"]["success"]["stdout"], report["source"]["source_sha"] + "\nOVRCR_SELECTED_BASELINE_364\n")
+                else:
+                    self.assertIn({"source": "differs", "command": "missing/unrecognized", "run": "identity mismatch", "call": "ordering/correlation"}[fault], report["stages"][-1]["reason"])
+                    self.assertNotIn("source_probe", report)
+                    self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1})
+
+    def test_source_probe_accepts_pinned_sdk_shell_shape(self):
+        run, report, events = self.run_fixture("source_sdk", coding=True)
+        self.assertEqual(run.returncode, 0, report)
+        self.assertEqual(report["source_probe"]["verdict"], "PASS")
+        self.assertEqual(report["coding"], "PASS")
+        self.assertEqual(report["result"]["tests"], "PASS; 3 tests")
+        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
+
+    def test_pinned_sdk_source_failures_retain_redacted_tool_evidence(self):
+        for fault, reason in (("wrong_sha", "differs"), ("wrong_marker", "differs"),
+                              ("bool_exit", "differs"), ("signal", "differs"),
+                              ("error", "differs"), ("truncated", "missing/unrecognized"),
+                              ("wrong_call", "ordering/correlation"),
+                              ("wrong_command", "missing/unrecognized")):
+            with self.subTest(fault=fault):
+                run, report, events = self.run_fixture("source_sdk_" + fault, coding=True)
+                self.assertEqual(run.returncode, 1, report)
+                self.assertIn(reason, report["stages"][-1]["reason"])
+                self.assertNotIn("source_probe", report)
+                self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1})
+                rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+                source_events = [row["receipt"] for row in rows if row["event"] == "source_tool_event"]
+                self.assertEqual(len(source_events), 2)
+                rejected = source_events[-1]
+                self.assertEqual(rejected["status"], "completed")
+                if fault == "error":
+                    self.assertEqual(rejected["result"]["error"]["message"], "[REDACTED]")
+                if fault == "wrong_command":
+                    self.assertEqual(rejected["args"]["command"], "echo [REDACTED]")
+
+    def test_cloud_stream_without_init_or_observed_model_reads_result(self):
+        run, report, events = self.run_fixture("cloud_status_first", coding=True)
+        self.assertEqual(run.returncode, 0, report)
+        self.assertEqual(report["coding"], "PASS")
+        self.assertEqual(report["recovery_criteria"]["follow_up"]["verdict"], "PASS")
+        self.assertEqual(report["cancellation"]["verdict"], "PASS")
+        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
+        rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+        identities = [row["receipt"] for row in rows if row["event"] == "receipt" and row["method"] == "Send"]
+        self.assertEqual([row["runId"] for row in identities], ["run-fixture", "run-follow-up", "run-cancel"])
+        self.assertTrue(all("model" not in row for row in identities))
+        terminal = next(row["receipt"]["result"] for row in rows if row["event"] == "result")
+        self.assertNotIn("model", terminal)
+        self.assertEqual(terminal["status"], "RUN_LIFECYCLE_STATUS_FINISHED")
+
+    def test_cloud_metadata_waits_for_first_send_materialization(self):
+        run, report, events = self.run_fixture(coding=True)
+        self.assertEqual(run.returncode, 0, report)
+        self.assertEqual(report["coding"], "PASS")
+        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
+        methods = [row["method"] for row in events if "method" in row]
+        self.assertEqual(methods.count("GetAgent"), 1)
+        self.assertEqual(report["criteria"]["4"]["verdict"], "PASS")
+        self.assertLess(methods.index("CreateAgent"), methods.index("Send"))
+        self.assertLess(methods.index("Send"), methods.index("GetAgent"))
+        self.assertLess(methods.index("GetAgent"), methods.index("GetRun"))
+        self.assertFalse(any(row.get("cloud_metadata_uncreated") for row in events))
+        rows = [json.loads(line) for line in (self.case_root / "journal" / "events.jsonl").read_text().splitlines()]
+        allocated = next(i for i, row in enumerate(rows) if row["event"] == "receipt" and row["method"] == "CreateAgent")
+        claimed = next(i for i, row in enumerate(rows) if row["event"] == "claim" and row["method"] == "Send")
+        materialized = next(i for i, row in enumerate(rows) if row["event"] == "receipt" and row["method"] == "Send")
+        metadata = next(i for i, row in enumerate(rows) if row["event"] == "GetAgent")
+        probe = next(i for i, row in enumerate(rows) if row["event"] == "source_probe")
+        verified = next(i for i, row in enumerate(rows) if row["event"] == "verified")
+        self.assertLess(allocated, claimed)
+        self.assertLess(claimed, materialized)
+        self.assertLess(materialized, metadata)
+        self.assertLess(metadata, probe)
+        self.assertLess(probe, verified)
+
     def test_coding_verifies_patch_and_exact_write_ahead_order(self):
         run, report, events = self.run_fixture(coding=True)
         self.assertEqual(run.returncode, 0, report)
         self.assertEqual(report["coding"], "PASS")
-        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 2})
+        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
         methods = [event["method"] for event in events if "method" in event]
-        self.assertEqual(methods, ["Ping", "GetVersion", "Ping", "Me", "ListModels", "ListRepositories", "CreateAgent", "GetAgent", "Send", "GetRun", "ObserveRun", "GetRun", "ObserveRun", "Send", "Shutdown"])
+        self.assertEqual(methods, ["Ping", "GetVersion", "Ping", "Me", "ListModels", "ListRepositories", "CreateAgent", "Send", "GetAgent", "GetRun", "ObserveRun", "GetRun", "ObserveRun", "Send", "Send", "CancelRun", "GetRun", "GetUsage", "Shutdown", "GetRun", "Shutdown"])
         self.assertTrue(all(event["write_ahead"] for event in events if event.get("method") in {"CreateAgent", "Send"}))
         self.assertEqual(report["result"]["tests"], "PASS; 3 tests")
-        self.assertEqual(report["control_recovery"], "NOT RUN")
+        self.assertEqual(report["control_recovery"], "PASS")
         journal = self.case_root / "journal"
         rows = [json.loads(line) for line in (journal / "events.jsonl").read_text().splitlines()]
         claims = [row for row in rows if row["event"] == "claim"]
-        self.assertEqual(len({row["operation_key"] for row in claims}), 3)
+        self.assertEqual(len({row["operation_key"] for row in claims}), 4)
         self.assertFalse(list(journal.glob("*.request.json")))
-        self.assertEqual([row["method"] for row in rows if row["event"] == "receipt"], ["CreateAgent", "Send", "Send"])
+        self.assertEqual([row["method"] for row in rows if row["event"] == "receipt"], ["CreateAgent", "Send", "Send", "Send"])
 
     def test_slow_external_processes_progress_under_normal_budget_and_obey_short_deadline(self):
         for name, budgets in [("short", (2, 2.6, 0.4, 0.15)), ("normal", None)]:
@@ -608,11 +979,11 @@ sys.exit(result)
                     self.assertEqual(report["coding"], "PASS")
                     self.assertEqual(report["deadlines"]["work_seconds"], CODING_BUDGETS[0])
                     self.assertEqual(report["deadlines"]["total_seconds"], CODING_BUDGETS[1])
-                    self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 2})
+                    self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
                     self.assertEqual(report["source"]["baseline_tests"], "FAIL; 3 tests, 2 failures")
                     self.assertEqual(report["result"]["tests"], "PASS; 3 tests")
                     self.assertEqual(sum(row["command"] == "fetch" for row in progressed), 3)
-                    self.assertEqual(sum(row["command"] == "ls-remote" for row in progressed), 2)
+                    self.assertEqual(sum(row["command"] == "ls-remote" for row in progressed), 3)
                     for criterion in ("active_observation", "offset_resume", "follow_up"):
                         self.assertEqual(report["recovery_criteria"][criterion]["verdict"], "PASS")
                     self.assertGreater(sum(row["delay_seconds"] for row in progressed), 3)
@@ -640,13 +1011,14 @@ sys.exit(result)
 
     def test_coding_rejects_unverified_source_identity_results_and_framing(self):
         cases = ["wrong_source", "assistant_source_only", "late_source_probe", "wrong_model", "wrong_diff", "failed_tests", "failed_run",
-                 "creation_no_id", "creation_wrong_model", "get_agent_wrong_id", "get_agent_local", "get_agent_wrong_repo",
+                 "creation_no_id", "creation_wrong_model", "get_agent_wrong_id", "get_agent_local", "get_agent_wrong_repo", "get_agent_unavailable",
                  "early_no_id", "early_wrong_agent", "early_wrong_model", "terminal_wrong_run", "terminal_wrong_model",
                  "missing_result", "missing_done", "wrong_done", "end_error", "missing_end", "bad_flags", "bad_json", "duplicate_result", "after_done", "result_bad_git", "result_bad_branch", "sdk_bad_payload", "probe_bool_exit", "wrong_ancestry"]
         reasons = {
             "wrong_source": "initial source probe differs", "assistant_source_only": "coding lacks", "late_source_probe": "initial source probe is missing",
             "wrong_model": "run result/model", "wrong_diff": "result changes files", "failed_tests": "independent Git/fixture command failed", "failed_run": "run result/model",
             "creation_no_id": "creation identity/model", "creation_wrong_model": "creation identity/model",
+            "get_agent_unavailable": "RPC rejected (HTTP 404)",
             "get_agent_wrong_id": "GetAgent cloud identity", "get_agent_local": "GetAgent cloud identity", "get_agent_wrong_repo": "GetAgent cloud identity",
             "early_no_id": "early original-stream", "early_wrong_agent": "early original-stream", "early_wrong_model": "early original-stream",
             "terminal_wrong_run": "terminal agent/run", "terminal_wrong_model": "run result/model", "missing_result": "done identity/order",
@@ -662,23 +1034,107 @@ sys.exit(result)
                 self.assertEqual(run.returncode, 1, report)
                 self.assertNotEqual(report["coding"], "PASS")
                 self.assertIn(reasons[scenario], report["stages"][-1]["reason"], report)
+                if scenario.startswith("get_agent_"):
+                    self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 1})
+                    self.assertEqual(report["stages"][-1]["stage"], "GetAgent")
+                    self.assertEqual(report["criteria"]["4"]["verdict"], "BLOCKED")
+                    self.assertEqual(report["resources"]["remote_outcome"], "RUN_LIFECYCLE_STATUS_CANCELLED")
+                    self.assertEqual(report["run"]["runId"], "run-fixture")
+                    self.assertNotIn("source_probe", report)
+                    self.assertNotIn("result", report)
+                    cancels = [e for e in events if e.get("method") == "CancelRun"]
+                    self.assertEqual(len(cancels), 1)
+                    self.assertTrue(cancels[0]["exact_cancel"])
+                    self.assertEqual(cancels[0]["run_id"], "run-fixture")
+                    self.assertNotIn("ObserveRun", [e.get("method") for e in events])
                 methods = [e["method"] for e in events if "method" in e]
                 self.assertEqual(methods.count("CreateAgent"), 1)
                 self.assertLessEqual(methods.count("Send"), 1)
                 self.assertFalse(set(methods) & {"ListRuns", "ResumeAgent"})
                 self.assertTrue((self.case_root / "journal" / "events.jsonl").exists())
 
+    def test_coding_requires_explicit_github_pat_even_with_ambient_tokens(self):
+        cases = [
+            (lambda m: m.pop("github_credential_ref"), lambda e: None),
+            (lambda m: None, lambda e: e.pop("OVRCR_POC_GITHUB_PAT")),
+            (lambda m: None, lambda e: e.update(OVRCR_POC_GITHUB_PAT="")),
+            (lambda m: None, lambda e: e.update(OVRCR_POC_GITHUB_PAT="not a token")),
+            (lambda m: None, lambda e: e.update(OVRCR_POC_GITHUB_PAT="x" * 4097)),
+            (lambda m: m.update(github_credential_ref="ambient"), lambda e: None),
+        ]
+        for mutate, change in cases:
+            with self.subTest(case=cases.index((mutate, change))):
+                def environment(env):
+                    env.update(GH_TOKEN="AMBIENT_GH_MUST_NOT_WIN", GITHUB_TOKEN="AMBIENT_GITHUB_MUST_NOT_WIN")
+                    change(env)
+                run, report, events = self.run_fixture(coding=True, mutate=mutate, env_change=environment)
+                self.assertEqual(run.returncode, 1, report)
+                self.assertEqual(report["stages"][-1]["stage"], "inputs")
+                self.assertEqual(report["attempts"], {"CreateAgent": 0, "Send": 0})
+                self.assertFalse(events)
+                self.assertFalse((self.case_root / "github-audit.jsonl").exists())
+
+    def test_cursor_and_github_credentials_must_be_distinct_before_bridge_startup(self):
+        cases = [
+            (lambda m: m.update(github_credential_ref=m["credential_ref"]), lambda e: None),
+            (lambda m: None, lambda e: e.update(OVRCR_POC_GITHUB_PAT=e["EXPLICIT_FIXTURE_KEY"])),
+        ]
+        for mutate, change in cases:
+            with self.subTest(case=cases.index((mutate, change))):
+                run, report, events = self.run_fixture(coding=True, mutate=mutate, env_change=change)
+                self.assertEqual(run.returncode, 1, report)
+                self.assertEqual(report["stages"][-1]["stage"], "inputs")
+                self.assertIn("credentials must be distinct", report["stages"][-1]["reason"])
+                self.assertEqual(report["attempts"], {"CreateAgent": 0, "Send": 0})
+                self.assertFalse(events)
+
+    def test_selected_github_pat_reaches_only_trusted_authentication_processes(self):
+        run, report, events = self.run_fixture(coding=True, env_change=lambda env: env.update(
+            GH_TOKEN="AMBIENT_GH_MUST_NOT_WIN", GITHUB_TOKEN="AMBIENT_GITHUB_MUST_NOT_WIN"))
+        self.assertEqual(run.returncode, 0, report)
+        self.assertEqual(report["attempts"], {"CreateAgent": 1, "Send": 3})
+        self.assertEqual(report["github_auth"]["token_source"], "GH_TOKEN")
+        self.assertTrue(all(row["github_pat_excluded"] for row in events if "token_file" in row))
+        children = [json.loads(row) for row in (self.case_root / "process-env-audit.jsonl").read_text().splitlines()]
+        self.assertEqual({row["kind"] for row in children}, {"bridge", "gh", "git_local", "git_remote", "fixture_tests"})
+        for child in children:
+            self.assertEqual(child["pat_present"], child["kind"] in {"gh", "git_remote"}, child)
+            self.assertEqual(child["cursor_key_present"], child["kind"] == "bridge", child)
+            self.assertFalse(child["secret_in_argv"], child)
+        gh_rows = [json.loads(row) for row in (self.case_root / "github-audit.jsonl").read_text().splitlines()]
+        self.assertTrue(all(row["selected_pat_matches"] and row["config_matches"] and row["ambient_excluded"] for row in gh_rows))
+
+    def test_private_github_config_residue_is_retained_with_confirmed_token_cleanup(self):
+        run, report, events = self.run_fixture("github_config_residue", coding=True)
+        self.assertEqual(run.returncode, 0, report)
+        self.assertEqual(report["resources"]["process_exit"], "CONFIRMED")
+        self.assertEqual(report["resources"]["token_cleanup"], "REMOVED")
+        self.assertEqual(report["resources"]["private_root_cleanup"], "RETAINED; inspect exact owned root")
+        residue = Path(report["resources"]["private_root"]) / "github-config" / "device-id"
+        self.assertEqual(residue.read_text(), "owned-nonsecret-device-id")
+        self.assertEqual(residue.stat().st_mode & 0o777, 0o600)
+
+    def test_selected_github_pat_is_redacted_from_receipts_reports_and_errors(self):
+        for scenario in ("github_pat_response_key", "github_pat_nested_key", "github_pat_error"):
+            with self.subTest(scenario=scenario):
+                run, report, events = self.run_fixture(scenario, coding=True)
+                self.assertEqual(run.returncode, 1, report)
+                self.assertEqual(report["stages"][-1]["stage"], "github_auth" if scenario == "github_pat_error" else "CreateAgent")
+                self.assertEqual(report["attempts"], {"CreateAgent": 0 if scenario == "github_pat_error" else 1, "Send": 0})
+
     def test_selected_github_helper_authenticates_private_fetch_and_refuses_bad_auth(self):
-        for scenario in ("success", "github_wrong_login", "github_auth_bad", "github_helper_refused"):
+        for scenario in ("success", "github_wrong_login", "github_auth_bad", "github_wrong_token_source", "github_helper_refused"):
             with self.subTest(scenario=scenario):
                 run, report, events = self.run_fixture(scenario, coding=True,
                                                        env_change=lambda env: env.update(GH_TOKEN="AMBIENT_GH_MUST_NOT_WIN", GITHUB_TOKEN="AMBIENT_GITHUB_MUST_NOT_WIN"))
                 self.assertEqual(run.returncode, 0 if scenario == "success" else 1, report)
                 gh_rows = [json.loads(line) for line in (self.case_root / "github-audit.jsonl").read_text().splitlines()]
-                self.assertTrue(all(row["ambient_excluded"] and row["config_matches"] for row in gh_rows))
+                self.assertTrue(all(row["ambient_excluded"] and row["config_matches"] and row["selected_pat_matches"] for row in gh_rows))
                 if scenario == "success":
-                    self.assertEqual(sum(row["kind"] == "credential" for row in gh_rows), 5)
+                    self.assertEqual(sum(row["kind"] == "credential" for row in gh_rows), 6)
                     git_rows = [json.loads(line) for line in (self.case_root / "git-auth-audit.jsonl").read_text().splitlines()]
+                    self.assertEqual([row["operation"] for row in git_rows],
+                                     ["fetch", "fetch", "ls-remote", "fetch", "ls-remote", "ls-remote"])
                     self.assertTrue(all(row["credential_supplied"] and row["other_remote_refused"] for row in git_rows))
                     self.assertEqual(report["github_auth"]["login"], "fixture")
                 else:
@@ -710,7 +1166,7 @@ sys.exit(result)
                     self.assertEqual(report["attempts"], {"CreateAgent": 0, "Send": 0})
                 else:
                     self.assertEqual(report["criteria"]["6"]["verdict"], "PASS")
-                    self.assertEqual(json.loads((self.case_root / "fault-gate.json").read_text())["boundary"], "cleanup")
+                    self.assertEqual(json.loads((self.case_root / "fault-gate.json").read_text())["boundary"], "first Journal.close")
 
     def test_final_verified_publication_and_discard_share_one_authority(self):
         run, report, events = self.run_fixture("discard_at_verification", coding=True, budgets=(6, 8, 1.5, 0.75))
@@ -795,13 +1251,18 @@ sys.exit(result)
                 self.assertFalse(any(row["event"] == "claim" for row in rows[closure + 1:]))
                 self.assertFalse(any(row["event"] == "verified" for row in rows))
                 self.assertFalse(list((self.case_root / "journal").glob("*.request.json")))
+                if scenario == "close_before_send":
+                    gate = json.loads((self.case_root / "fault-gate.json").read_text())
+                    self.assertEqual(gate["boundary"], "durable allocation before Send claim")
+                    self.assertFalse(gate["signal_blocked"])
+                    self.assertTrue(any(row["event"] == "receipt" and row["method"] == "CreateAgent" and not row["late"] for row in rows[:closure]))
                 if "after_create" in scenario:
                     self.assertTrue(any(row["event"] == "receipt" and row["late"] for row in rows[closure + 1:]))
                 if scenario == "discard_after_send":
                     self.assertTrue(any(row["event"] == "result" and row["late"] for row in rows[closure + 1:]))
                     identity = next(row for row in rows[closure + 1:] if row["event"] == "receipt" and row.get("method") == "Send")
                     self.assertTrue(identity["late"])
-                    self.assertEqual(identity["receipt"], {"agentId": "bc-fixture", "runId": "run-fixture", "model": {"id": "fixture-model"}})
+                    self.assertEqual(identity["receipt"], {"agentId": "bc-fixture", "runId": "run-fixture"})
                     self.assertTrue(next(e["write_ahead"] for e in events if e.get("method") == "Send"))
                     self.assertTrue(any(e.get("discard_gate") == {"send_received_before_closure": True, "closure_before_init": True} for e in events))
                     self.assertFalse(set(methods) & {"GetRun", "ObserveRun"})
@@ -831,7 +1292,8 @@ sys.exit(result)
 
     def test_known_verification_child_reaping_shares_cleanup_budget_and_preserves_uncertainty(self):
         cases = [("verification_reap_delayed", (3, 5, 1.5, 0.5)),
-                 ("verification_reap_exhausted", (3, 3.4, 1.5, 0.3))]
+                 ("verification_reap_exhausted", (3, 3.4, 1.5, 0.3)),
+                 ("verification_reap_wait_timeout", (3, 5, 1.5, 0.5))]
         for scenario, budgets in cases:
             with self.subTest(scenario=scenario):
                 run, report, events = self.run_fixture(scenario, coding=True, budgets=budgets)
@@ -839,10 +1301,29 @@ sys.exit(result)
                 self.assertEqual(phase["phase"], "git_fetch_stall")
                 receipt = next(row for row in report["resources"]["verification_processes"] if row["pid"] == phase["pid"])
                 gates = [json.loads(line) for line in (self.case_root / "verification-reaping.jsonl").read_text().splitlines()]
-                waiting = next(row for row in gates if row["event"] == "wait_started")
+                waiting = next((row for row in gates if row["event"] == "wait_started"), None)
                 cleanup = next(row for row in gates if row["event"] == "cleanup_bound")
-                self.assertEqual(waiting["pid"], phase["pid"])
-                self.assertEqual(waiting["pgid"], phase["pid"])
+                termination = next(row for row in gates if row["event"] == "termination_attempt")
+                self.assertEqual(termination["pid"], phase["pid"])
+                self.assertEqual(termination["pgid"], phase["pid"])
+                self.assertEqual(sum(row["event"] == "termination_attempt" for row in gates), 1)
+                if scenario == "verification_reap_exhausted":
+                    cutoff = next(row for row in gates if row["event"] == "reap_cutoff_elapsed")
+                    self.assertEqual(cutoff["pid"], phase["pid"])
+                    self.assertEqual(cutoff["pgid"], phase["pid"])
+                    self.assertTrue(cutoff["signal_blocked"])
+                    self.assertGreaterEqual(cutoff["time"], cutoff["cutoff"])
+                    self.assertLess(cutoff["time"], cutoff["total_deadline"])
+                    self.assertEqual(cutoff["cutoff"], cutoff["cleanup_end"] - budgets[3])
+                    self.assertEqual(cleanup["end"], cutoff["cleanup_end"])
+                    self.assertIsNone(waiting, gates)
+                    expected_end = min(termination["time"] + budgets[2], cutoff["total_deadline"])
+                else:
+                    self.assertIsNotNone(waiting, gates)
+                    self.assertEqual(waiting["pid"], phase["pid"])
+                    self.assertEqual(waiting["pgid"], phase["pid"])
+                    expected_end = min(waiting["time"] + budgets[2], waiting["total_deadline"])
+                    self.assertLessEqual(waiting["timeout"], expected_end - budgets[3] - waiting["time"] + 0.05)
                 self.assertEqual(run.returncode, 1, report)
                 self.assertEqual(report["outcome"], "FAIL")
                 self.assertEqual(report["stages"][-1]["stage"], "source_fixture")
@@ -864,14 +1345,18 @@ sys.exit(result)
                     self.assertFalse(any(row["event"] == "wait_confirmed" for row in gates))
                     self.assertIn("verification process exit unconfirmed", report["resources"]["private_root_cleanup"])
                     self.assertTrue(Path(report["resources"]["private_root"]).exists())
-                expected_end = min(waiting["time"] + budgets[2], waiting["total_deadline"])
                 self.assertLessEqual(cleanup["end"], expected_end + 0.05)
-                self.assertLessEqual(waiting["timeout"], expected_end - budgets[3] - waiting["time"] + 0.05)
+                self.assertEqual(cleanup["returned_end"], cleanup["end"])
 
     def test_stale_alarm_retries_exact_child_cleanup_transition_and_wait_within_shared_end(self):
         for scenario in ["verification_reap_interrupted", "verification_reap_transition", "verification_reap_termination"]:
             with self.subTest(scenario=scenario):
                 self.check_stale_alarm_cleanup(scenario)
+
+    def test_stale_alarm_during_fault_receipt_publication_preserves_exact_cleanup(self):
+        self.check_stale_alarm_cleanup("verification_reap_transition_pending_alarm")
+        gates = [json.loads(line) for line in (self.case_root / "verification-reaping.jsonl").read_text().splitlines()]
+        self.assertEqual(sum(row["event"] == "competing_alarm" for row in gates), 1)
 
     def check_stale_alarm_cleanup(self, scenario):
         run, report, events = self.run_fixture(scenario, coding=True, budgets=(3, 5, 1.5, 0.5))
@@ -894,7 +1379,7 @@ sys.exit(result)
         self.assertFalse(set(e.get("method") for e in events) & {"CreateAgent", "Send"})
         self.assertEqual(receipt["exit"], -9, report)
         self.assertGreaterEqual(len(waits), 2 if scenario == "verification_reap_interrupted" else 1)
-        if scenario == "verification_reap_transition":
+        if scenario.startswith("verification_reap_transition"):
             alarm = next(row for row in gates if row["event"] == "stale_alarm")
             self.assertEqual(alarm["boundary"], "stdout.close")
             self.assertEqual(alarm["pgid"], phase["pid"])
@@ -910,7 +1395,7 @@ sys.exit(result)
         cleanup = next(row for row in gates if row["event"] == "cleanup_bound")
         self.assertEqual(cleanup["returned_end"], cleanup["end"])
         self.assertTrue(all(row["cleanup_end"] == cleanup["end"] for row in waits))
-        if scenario == "verification_reap_transition":
+        if scenario.startswith("verification_reap_transition"):
             self.assertEqual(alarm["cleanup_end"], cleanup["end"])
         self.assertTrue(all(0 < row["timeout"] <= cleanup["end"] - 0.5 - row["time"] + 0.05 for row in waits))
         self.assertLessEqual(cleanup["end"], waits[0]["time"] + 1.55)
@@ -986,6 +1471,12 @@ sys.exit(result)
                 self.assertEqual(run.returncode, 1)
                 self.assertEqual(report["stages"][-1]["stage"], "inputs")
                 self.assertEqual(events, [])
+
+    def test_catalog_preflight_does_not_require_or_resolve_github_pat(self):
+        run, report, events = self.run_fixture(env_change=lambda env: env.pop("OVRCR_POC_GITHUB_PAT"))
+        self.assertEqual(run.returncode, 0, report)
+        self.assertEqual(report["preflight"], "PASS")
+        self.assertEqual(report["attempts"], {"CreateAgent": 0, "Send": 0})
 
     def test_selected_key_is_required_despite_ambient_login(self):
         run, report, events = self.run_fixture(env_change=lambda env: env.pop("EXPLICIT_FIXTURE_KEY"))
