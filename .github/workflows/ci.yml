@@ -63,6 +63,12 @@ jobs:
           python3 -I native/bridge/check-startup-package.py --local-development target/startup-assets-local-development
           python3 -I native/bridge/check-packaging.py --local-development 'target/startup-assets-local-development/OVRCR Bridge Local.app'
           python3 -I native/bridge/check-guards.py --local-development 'target/startup-assets-local-development/OVRCR Bridge Local.app'
+      - name: Relocated pinned Cursor dependency and passive CLI diagnostics
+        run: |
+          bridge_home=$(mktemp -d)
+          trap 'rm -rf "$bridge_home"' EXIT
+          HOME="$bridge_home" python3 -I scripts/install-cursor-bridge.py
+          OVRCR_CURSOR_BRIDGE_ARCHIVE="$bridge_home/.local/lib/ovrcr-cursor-sdk/1.0.40/bridge.tar.gz" OVRCR_TEST_EXECUTABLE="$PWD/target/debug/ovrcr" python3 -I tests/cursor_bridge_install.py
       - uses: actions/setup-node@v4
         with:
           node-version: 22

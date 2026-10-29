@@ -54,6 +54,21 @@ pub fn run_native_with_env(
         &mut Vec<(OsString, OsString)>,
     ) -> Option<HookHandler>,
 ) -> Result<ExitStatus> {
+    run_native_admitted(argv, environment, move |available, argv, environment| {
+        Ok(channel_ready(available, argv, environment))
+    })
+}
+
+/// A provider with mandatory admission may refuse before any native process starts.
+pub fn run_native_admitted(
+    argv: &[OsString],
+    environment: &[(OsString, OsString)],
+    channel_ready: impl FnOnce(
+        bool,
+        &mut Vec<OsString>,
+        &mut Vec<(OsString, OsString)>,
+    ) -> Result<Option<HookHandler>>,
+) -> Result<ExitStatus> {
     argv.first().context("native command is required")?;
     let mut signals = Signals::new([
         libc::SIGINT,
@@ -68,7 +83,7 @@ pub fn run_native_with_env(
     let mut argv = argv.to_vec();
     // The caller releases reporting ownership before an untracked native spawn.
     let mut native_environment = environment.to_vec();
-    let handler = channel_ready(channel.is_some(), &mut argv, &mut native_environment);
+    let handler = channel_ready(channel.is_some(), &mut argv, &mut native_environment)?;
     let executable = argv.first().context("native command is required")?;
     let mut command = Command::new(executable);
     command

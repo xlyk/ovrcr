@@ -367,6 +367,13 @@ fn respond(request: Request, answer: Answer, state: &mut State) -> Response {
         }
         Request::Supervisor(supervisor) => {
             let receipt = match supervisor.command {
+                AgentCommand::CloudCreation(_) => {
+                    if answer == Answer::Refuse {
+                        refusal()
+                    } else {
+                        Response::AgentOperation(AgentOperationResult::CloudCreationCommitted)
+                    }
+                }
                 AgentCommand::WorkflowSource { binding, .. } => {
                     if answer == Answer::Refuse {
                         refusal()

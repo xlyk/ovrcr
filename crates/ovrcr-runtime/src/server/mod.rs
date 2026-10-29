@@ -1,7 +1,7 @@
 pub(crate) mod delegation;
 mod delegation_coding;
 mod delegation_fallback;
-mod delegation_files;
+pub(crate) mod delegation_files;
 mod delegation_observation;
 pub(crate) mod delegation_recovery;
 use crate::config::{
@@ -419,10 +419,16 @@ impl ServerState {
             let mut summary = session.summary();
             summary.title = record.effective_title();
             summary.manual_title = record.metadata.pinned_title.clone();
-            if !summary.phase.is_live() || record.conversation.is_some() || record.identity_invalid
+            if !summary.phase.is_live()
+                || record.conversation.is_some()
+                || record.identity_invalid
+                || record.cloud_creation.is_some()
             {
                 let mut recovery = record.recovery(boot_id);
                 if summary.phase.is_live() {
+                    if let Some(operation) = &record.cloud_creation {
+                        recovery.unavailable = Some(operation.description());
+                    }
                     recovery.requires_ack = false;
                     recovery.attached = !record.identity_invalid
                         && summary.agent.as_ref().is_some_and(|agent| {
@@ -611,6 +617,7 @@ impl ServerState {
                     "session changed; refresh inventory",
                 ));
             }
+            self.retained.lock().close_creation(id, expected_run)?;
             if !summary.phase.is_live() {
                 return self.archive_session_locked(id, expected_run);
             }
@@ -638,6 +645,20 @@ impl ServerState {
         Ok(())
     }
 
+    pub fn cancel_cloud_creation(&self, id: SessionId, expected: SessionRunId) -> Result<()> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        self.retained.lock().cancel_creation(id, expected)
+    }
+
+    pub fn discard_cloud_creation(&self, id: SessionId, expected: SessionRunId) -> Result<()> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        self.retained
+            .lock()
+            .discard_creation(id, expected, &self.registry_path)
+    }
+
     pub fn delete_archived_session(&self, id: SessionId, expected: SessionRunId) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
@@ -651,7 +672,11 @@ impl ServerState {
                 "session archive state changed; refresh inventory",
             ));
         }
-        self.retained.lock().remove(id, expected)?;
+        {
+            let mut retained = self.retained.lock();
+            retained.cleanup_creation_payloads(&self.registry_path)?;
+            retained.remove(id, expected)?;
+        }
         Ok(())
     }
 
@@ -707,6 +732,7 @@ impl ServerState {
             .get(&id)
             .filter(|session| session.run() == summary.run)
             .cloned();
+        self.retained.lock().close_creation(id, summary.run)?;
         if let Some(session) = &session {
             session.revoke_hook_capability();
         }
@@ -1323,11 +1349,27 @@ impl ServerState {
             })?;
         let command = match &record.metadata.kind {
             SessionKind::Agent { name } => {
-                let command = match record.conversation.as_ref() {
-                    Some(reference) => crate::recovery::resume_argv(name, reference),
-                    None => crate::recovery::picker_argv(name),
-                }
-                .and_then(|argv| crate::recovery::terminal_command(&argv));
+                let command = if let Some(target) = record
+                    .cloud_creation
+                    .as_ref()
+                    .and_then(|r| r.recovery_target())
+                {
+                    crate::recovery::terminal_command(&[
+                        std::env::current_exe()?.into_os_string(),
+                        "agent".into(),
+                        "run".into(),
+                        "cursor-cloud".into(),
+                        "--".into(),
+                        target.intent.account.name.clone().into(),
+                        serde_json::to_string(&target)?.into(),
+                    ])
+                } else {
+                    match record.conversation.as_ref() {
+                        Some(reference) => crate::recovery::resume_argv(name, reference),
+                        None => crate::recovery::picker_argv(name),
+                    }
+                    .and_then(|argv| crate::recovery::terminal_command(&argv))
+                };
                 match command {
                     Ok(command) => Some(command),
                     Err(error) => {
@@ -1459,7 +1501,11 @@ impl ServerState {
                 "use terminal acknowledge-stopped before removing an ownership-uncertain record",
             ));
         }
-        self.retained.lock().remove(id, summary.run)?;
+        {
+            let mut retained = self.retained.lock();
+            retained.cleanup_creation_payloads(&self.registry_path)?;
+            retained.remove(id, summary.run)?;
+        }
         if let Some(session) = self.sessions.lock().unwrap().remove(&id) {
             session.revoke_hook_capability();
         }

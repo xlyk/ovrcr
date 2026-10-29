@@ -235,6 +235,32 @@ impl Loader<'_> {
             let roots = roots.iter().map(|root| expand_tilde(root)).collect();
             self.accept("picker_roots", &mut settings.picker_roots, roots);
         }
+        if let Some(accounts) = self.take_array::<ovrcr_protocol::CursorCloudAccount>(
+            table,
+            "cursor_cloud_accounts",
+            "a named cloud account policy",
+        ) {
+            let mut valid = Vec::new();
+            for account in accounts {
+                if account.validate().is_err()
+                    || valid
+                        .iter()
+                        .any(|a: &ovrcr_protocol::CursorCloudAccount| a.name == account.name)
+                {
+                    self.finding(
+                        "cursor_cloud_accounts",
+                        "invalid or duplicate cloud account policy; ignored".into(),
+                    );
+                } else {
+                    valid.push(account);
+                }
+            }
+            self.accept(
+                "cursor_cloud_accounts",
+                &mut settings.cursor_cloud_accounts,
+                valid,
+            );
+        }
         self.drop_unknown_fields(table, "agents", element_fields("agents"));
         if let Some(agents) =
             self.take_array::<AgentOverride>(table, "agents", "a table { name, argv }")
@@ -770,6 +796,18 @@ mod tests {
     }
 
     #[test]
+    fn cursor_cloud_profiles_are_typed_and_fail_closed() {
+        let report = read(
+            "cursor_cloud_accounts = [{ name = 'work', keychain_service = 'ovrcr.cursor', keychain_account = 'work', model = 'composer-2.5', repositories = ['https://github.com/acme/app'], owners = [], bridge_archive = '/tmp/bridge.tar.gz' }]\n",
+        );
+        assert_eq!(report.settings.cursor_cloud_accounts.len(), 1);
+        assert_eq!(report.settings.cursor_cloud_accounts[0].name, "work");
+        let invalid = read("cursor_cloud_accounts = [{ name = 'work', model = 'auto' }]\n");
+        assert!(invalid.settings.cursor_cloud_accounts.is_empty());
+        assert!(!invalid.findings.is_empty());
+    }
+
+    #[test]
     fn ready_sound_choice_defaults_or_fails_closed_without_changing_opt_ins() {
         for notifications in [false, true] {
             for sound in [false, true] {
@@ -845,7 +883,7 @@ branch_prefix = "kh/"
 picker_roots = ["/tmp/a", "~/b"]
 agents = [{ name = "claude", argv = ["claude", "--x"] }]
 ready_sound_choice = "chime"
-
+cursor_cloud_accounts = [{ name = "work", keychain_service = "ovrcr.cursor", keychain_account = "work", model = "composer-2.5", repositories = ["https://github.com/acme/app"], owners = [], bridge_archive = "/tmp/sdk.tar.gz" }]
 [launch_choices.ovrcr]
 kind = "Agent"
 preset = "claude"
@@ -1066,6 +1104,7 @@ max_execution_attempts = 2
                 "quota.cursor.dashboard",
                 "quota.cursor.state_db",
                 "agents",
+                "cursor_cloud_accounts",
                 "launch_choices",
                 "delegation.progress_deadline_ms",
                 "delegation.enabled",

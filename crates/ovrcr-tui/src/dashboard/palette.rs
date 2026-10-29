@@ -256,6 +256,7 @@ fn close_confirm_action_line() -> String {
 }
 
 struct CloseConfirmText {
+    warning: Option<&'static str>,
     identity: String,
     place: String,
     project: String,
@@ -364,6 +365,9 @@ fn close_confirm_segments(text: &CloseConfirmText) -> Vec<(String, CloseConfirmR
         (String::new(), CloseConfirmRole::Blank),
         (CLOSE_CONSEQUENCE.to_string(), CloseConfirmRole::Consequence),
     ];
+    if let Some(warning) = text.warning {
+        lines.push((warning.to_owned(), CloseConfirmRole::Consequence));
+    }
     if let Some(error) = &text.error
         && !error.is_empty()
     {
@@ -1050,7 +1054,7 @@ impl Dashboard {
         }
         self.whichkey = None;
         let session = find_session(self, id).unwrap();
-        let immediate = !session.phase.is_live();
+        let immediate = !session.phase.is_live() && session.close_warning().is_none();
         let run = session.run;
         let mut palette = Palette {
             page: self.command_page(Command::CloseTerminal(id)),
@@ -2244,7 +2248,9 @@ impl Dashboard {
                                 };
                             }
                             Command::CloseTerminal(id)
-                                if find_session(self, id).is_some_and(|s| !s.phase.is_live()) =>
+                                if find_session(self, id).is_some_and(|s| {
+                                    !s.phase.is_live() && s.close_warning().is_none()
+                                }) =>
                             {
                                 let run = find_session(self, id).unwrap().run;
                                 action = self.palette_submit(
@@ -2528,10 +2534,37 @@ impl Dashboard {
         let path = std::env::var_os("PATH").unwrap_or_default();
         let shell = std::env::var_os("SHELL");
         let launcher = std::env::current_exe().ok();
-        apply_overrides(
+        let mut entries = apply_overrides(
             detect_agents(&path, shell.as_deref(), launcher.as_deref()),
             &self.settings.agents,
-        )
+        );
+        entries.retain(|entry| {
+            entry.name != "cursor-cloud" && !entry.name.starts_with("cursor-cloud:")
+        });
+        if cfg!(target_os = "macos")
+            && let Some(launcher) = launcher
+        {
+            for account in &self.settings.cursor_cloud_accounts {
+                if account.validate().is_ok() {
+                    entries.insert(
+                        entries.len().saturating_sub(2),
+                        super::agents::AgentEntry {
+                            name: format!("cursor-cloud:{}", account.name),
+                            argv: vec![
+                                launcher.as_os_str().to_owned(),
+                                "agent".into(),
+                                "run".into(),
+                                "cursor-cloud".into(),
+                                "--".into(),
+                                account.name.clone().into(),
+                            ],
+                            source: AgentSource::Detected,
+                        },
+                    );
+                }
+            }
+        }
+        entries
     }
 
     fn refresh_terminal_form(&self, fields: &mut [Field], _name_edited: bool) {
@@ -3511,6 +3544,7 @@ impl Dashboard {
     fn close_confirm_text(&self, palette: &Palette) -> CloseConfirmText {
         let Page::Confirm { request, target } = &palette.page else {
             return CloseConfirmText {
+                warning: None,
                 identity: CLOSE_TITLE.to_string(),
                 place: String::new(),
                 project: String::new(),
@@ -3521,6 +3555,7 @@ impl Dashboard {
         };
         let Some(Request::CloseTerminal { session, .. }) = request else {
             return CloseConfirmText {
+                warning: None,
                 identity: CLOSE_TITLE.to_string(),
                 place: target.clone(),
                 project: String::new(),
@@ -3531,6 +3566,7 @@ impl Dashboard {
         };
         let Some(found) = find_session(self, *session) else {
             return CloseConfirmText {
+                warning: None,
                 identity: close_terminal_identity("Terminal", session.0),
                 place: target.clone(),
                 project: "unavailable".into(),
@@ -3544,6 +3580,7 @@ impl Dashboard {
             .unwrap_or_else(|| found.workspace.clone());
         let name = found.display_name();
         CloseConfirmText {
+            warning: found.close_warning(),
             identity: close_terminal_identity(name, found.id.0),
             place: format!("{} / {name}", session_workspace_heading(self, found)),
             project: found.project.clone(),
@@ -4531,6 +4568,44 @@ mod launch_tests {
                 "{entrypoint}"
             );
         }
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn ordinary_agent_creation_selects_named_cursor_cloud_account() {
+        let mut d = dashboard();
+        d.settings.cursor_cloud_accounts = vec![ovrcr_protocol::CursorCloudAccount {
+            name: "work".into(),
+            keychain_service: "ovrcr".into(),
+            keychain_account: "work".into(),
+            model: "composer-2.5".into(),
+            repositories: vec!["https://github.com/acme/app".into()],
+            owners: vec![],
+            bridge_archive: "/tmp/bridge.tar.gz".into(),
+        }];
+        d.settings.agents = vec![ovrcr_protocol::AgentOverride {
+            name: "cursor-cloud:work".into(),
+            argv: vec!["unrelated-custom-command".into()],
+        }];
+        let mut fields = d.launch_fields("p", false);
+        fields
+            .iter_mut()
+            .find(|f| f.label == "Start")
+            .unwrap()
+            .value = "Agent".into();
+        let field = fields.iter_mut().find(|f| f.label == "Agent").unwrap();
+        field.value = "cursor-cloud:work".into();
+        let launch = d.selected_launch(&fields).unwrap().unwrap();
+        assert_eq!(
+            launch.kind,
+            SessionKind::Agent {
+                name: "cursor-cloud:work".into()
+            }
+        );
+        assert_eq!(
+            &launch.argv[1..],
+            ["agent", "run", "cursor-cloud", "--", "work"].map(OsString::from)
+        );
     }
 
     #[test]

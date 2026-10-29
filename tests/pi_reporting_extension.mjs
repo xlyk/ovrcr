@@ -3,12 +3,57 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync, chmodSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHost, assistant } from "./fixtures/pi/pi_host.mjs";
 
 const SOURCE = resolve("src/pi-reporting-extension.mjs");
 const TRANSPORT = resolve("src/ovrcr-reporting-transport.mjs");
 const materialized = [];
+
+test("fixture result receipt appears only after its complete JSON is written", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ovrcr-pi-receipt-"));
+  materialized.push(dir);
+  const brief = join(dir, "brief-v1.json");
+  const receipt = `${brief}.published`;
+  const boundary = join(dir, "write-boundary");
+  const gate = join(dir, "allow-result");
+  const extension = join(dir, "extension.mjs");
+  const preload = join(dir, "observe-write.cjs");
+  writeFileSync(brief, JSON.stringify({ identity: { contract: 1 }, handle: "fixture", contract: { scope: "read README" } }));
+  writeFileSync(gate, "1");
+  writeFileSync(extension, `export default api => {
+    for (const name of ["ovrcr_publish", "ovrcr_accept"])
+      api.registerTool({ name, execute: async () => ({ details: { published: true } }) });
+  };`);
+  // Observe the actual fixture writer after creation, before any bytes reach disk.
+  writeFileSync(preload, `const fs = require("node:fs");
+    const assert = require("node:assert/strict");
+    const write = fs.writeFileSync;
+    const receipt = process.env.OVRCR_TEST_RECEIPT;
+    fs.writeFileSync = (path, value, ...options) => {
+      if (typeof path !== "string" || !(path === receipt || path.startsWith(receipt + ".")))
+        return write(path, value, ...options);
+      const fd = fs.openSync(path, "w");
+      try {
+        write(process.env.OVRCR_TEST_RECEIPT_BOUNDARY, "observed");
+        assert.equal(fs.existsSync(receipt), false, "incomplete result receipt became visible");
+        write(fd, value, ...options);
+      } finally { fs.closeSync(fd); }
+    };
+    require("node:module").syncBuiltinESMExports();
+  `);
+  const child = spawnSync(process.execPath, ["--require", preload, resolve("tests/fixtures/pi/pi_host.mjs"), "-e", extension], {
+    input: `Perform the read-only research assignment in ${brief}. Read the contract.\n`,
+    encoding: "utf8",
+    env: { ...process.env, OVRCR_TEST_DELEGATION: "1", OVRCR_TEST_DELEGATION_RESULT_GATE: gate,
+      OVRCR_TEST_RECEIPT: receipt, OVRCR_TEST_RECEIPT_BOUNDARY: boundary },
+    timeout: 5000,
+  });
+  assert.ifError(child.error);
+  assert.equal(child.status, 0, child.stderr);
+  assert.equal(readFileSync(boundary, "utf8"), "observed");
+  assert.deepEqual(JSON.parse(readFileSync(receipt, "utf8")), { details: { published: true } });
+});
 
 after(() => {
   for (const dir of materialized) rmSync(dir, { recursive: true, force: true });

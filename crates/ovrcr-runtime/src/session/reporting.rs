@@ -262,6 +262,7 @@ impl MeasurementWatermarks {
 }
 
 pub(crate) enum AgentPersistence<'a> {
+    CloudCreation(&'a ovrcr_protocol::CloudCreationCommand, &'a str),
     Reservation(&'a ReserveAgent),
     Command(&'a AgentCommand),
 }
@@ -464,6 +465,30 @@ impl Session {
             bail!("operation receipt is unavailable or stale");
         };
         let result = match &r.command {
+            AgentCommand::CloudCreation(command) => {
+                let reserve = &reporting
+                    .reservation
+                    .as_ref()
+                    .context("missing cloud reservation")?
+                    .0;
+                if reserve.provider != AgentProvider::CursorCloud {
+                    bail!("cloud creation requires selected managed provider");
+                }
+                persist(AgentPersistence::CloudCreation(
+                    command,
+                    &reserve.invocation,
+                ))?;
+                if matches!(command.as_ref(), CloudCreationCommand::ClaimSend { .. }) {
+                    // A durable new attempt retires prior response authority before any reply can escape.
+                    reporting.ready = None;
+                    if let Some(snapshot) = &mut reporting.snapshot {
+                        snapshot.activity = None;
+                        snapshot.native_control = None;
+                    }
+                }
+                AgentOperationResult::CloudCreationCommitted
+            }
+
             AgentCommand::WorkflowSource {
                 binding,
                 producer,

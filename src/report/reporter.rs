@@ -221,6 +221,32 @@ impl Reporter {
         );
     }
 
+    pub fn cloud_creation(
+        &mut self,
+        command: ovrcr_protocol::CloudCreationCommand,
+        deadline: Instant,
+    ) -> bool {
+        if self.closed || self.provider != AgentProvider::CursorCloud {
+            return false;
+        }
+        let Ok(operation) = private_identifier() else {
+            return false;
+        };
+        let Some(lease) = self.lease.as_mut() else {
+            return false;
+        };
+        matches!(
+            lease.command(
+                operation,
+                AgentCommand::CloudCreation(Box::new(command)),
+                deadline
+            ),
+            Ok(Response::AgentOperation(
+                AgentOperationResult::CloudCreationCommitted
+            ))
+        )
+    }
+
     pub fn closed(&self) -> bool {
         self.closed
     }

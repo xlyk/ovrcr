@@ -102,3 +102,23 @@ process-stop proof. Archive and unarchive invalidate the previous run identity,
 so delayed recovery requests and process callbacks cannot cross these transitions.
 Returned rows are stopped without launching; unresolved ownership still requires
 acknowledgement before reopening.
+Schema version 25 protects separate Send/Observe exclusive progress and original
+stream origin inside the same Send record; a retained cursor never authorizes
+fresh-bridge active restoration.
+Schema version 24 protects subordinate cloud recovery controller/claims without changing original operation identity.
+Schema version 23 protects durable cancellation intent/claims from older writers;
+no new owner or table is introduced.
+Schema version 22 adds distinct immutable Send claims/run receipts to the existing
+creation record; full prompt bytes remain private subordinate publications.
+Schema version 21 adds creation metadata and closure fences under the existing
+SessionStore connection. Private request files are subordinate publications, not
+a provider persistence owner. Exact local CreateAgent identity/receipt retires
+creation material; it neither proves backend existence nor substitutes for the
+later Send/run receipt boundary. See [Cursor cloud](../cursor-cloud.md).
+
+Cursor cloud profiles are typed `Settings.cursor_cloud_accounts` values in the
+same settings document. Ordinary Agent creation generates `cursor-cloud:ACCOUNT`
+choices with explicit managed argv, independent of PATH discovery. Protocol 65 appends original-attachment observation progress; protocol 64 adds exact recovery/reconciliation and explicit recovery cancellation; protocol 63 adds explicit cancellation commands; protocol 62 includes immutable Send commands; protocol 60
+appends `AgentProvider::CursorCloud`; local Cursor remains `Cursor`. Readiness uses exact verified run observations; titles and active conversation
+recovery remain unavailable. See
+[Cursor cloud](../cursor-cloud.md) and [published source](../adr/0011-cursor-cloud-published-source.md).

@@ -94,14 +94,26 @@ fn interrupt_receipt<'a>(child: &'a AssignmentSnapshot, request: &str) -> &'a Di
         .find(|r| r.operation == DispatchOperation::Interrupt && r.request == request)
         .unwrap()
 }
-fn terminal_contains(f: &Fixture, child: &AssignmentSnapshot, marker: &str) {
-    let Response::TerminalText { text, .. } = f.live.request(Request::ReadTerminal {
-        session: child.identity.session.unwrap(),
-        max_lines: Some(200),
-    }) else {
-        panic!("terminal");
-    };
-    assert!(text.contains(marker), "{text}");
+fn wait_interrupt_consumed(f: &Fixture, child: &AssignmentSnapshot) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let consumed = child.brief.with_extension("json.interrupt-consumed");
+    loop {
+        let Response::TerminalText { text, .. } = f.live.request(Request::ReadTerminal {
+            session: child.identity.session.unwrap(),
+            max_lines: Some(200),
+        }) else {
+            panic!("terminal");
+        };
+        // The fixture file can arrive before its stdout reaches the Server's PTY reader.
+        if consumed.exists() && text.contains("CHILD_NATIVE_ESCAPE_CONSUMED") {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "interrupt consumption not visible: {text}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[test]
@@ -207,13 +219,12 @@ fn interrupt_then_confirm(unknown: bool) {
     let original_args = interrupt_args(&first, "interrupt-one");
     let interrupted: AssignmentSnapshot =
         serde_json::from_value(f.tool("ovrcr_interrupt", original_args.clone())).unwrap();
-    wait_file(&first.brief.with_extension("json.interrupt-consumed"));
+    wait_interrupt_consumed(&f, &first);
     assert_eq!(
         bytes(&f, &first),
         before + 1,
         "exactly one Escape without submit"
     );
-    terminal_contains(&f, &first, "CHILD_NATIVE_ESCAPE_CONSUMED");
     let outcome = if unknown {
         DispatchOutcome::Unknown
     } else {

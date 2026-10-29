@@ -1090,6 +1090,20 @@ fn configure_proxy_stream(stream: &std::os::unix::net::UnixStream) -> std::io::R
     }
 }
 
+fn read_proxy_message(
+    stream: &mut std::os::unix::net::UnixStream,
+) -> anyhow::Result<Option<ClientMessage>> {
+    use std::io::Read;
+    let mut first = [0];
+    match stream.read(&mut first) {
+        // Observer cancellation can kill its CLI after handshake, before any request.
+        Ok(0) => Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => Ok(None),
+        Err(error) => Err(error.into()),
+        Ok(_) => read_frame(&mut first.as_slice().chain(stream)).map(Some),
+    }
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn control_proxy_closed_peer_does_not_prevent_the_next_valid_frame() {
@@ -1125,6 +1139,74 @@ fn control_proxy_closed_peer_does_not_prevent_the_next_valid_frame() {
     );
 }
 
+#[test]
+fn control_proxy_preserves_queued_frames_and_rejects_incomplete_or_invalid_requests() {
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+    let (mut stream, mut peer) = UnixStream::pair().unwrap();
+    let expected = ClientMessage {
+        request_id: 1007,
+        request: Request::Inspect,
+    };
+    write_frame(&mut peer, &expected).unwrap();
+    drop(peer);
+    assert_eq!(read_proxy_message(&mut stream).unwrap(), Some(expected));
+    assert_eq!(read_proxy_message(&mut stream).unwrap(), None);
+
+    for bytes in [&[0, 0][..], &[0, 0, 0, 2, 0][..], &[0, 0, 0, 1, 255][..]] {
+        let (mut stream, mut peer) = UnixStream::pair().unwrap();
+        peer.write_all(bytes).unwrap();
+        drop(peer);
+        assert!(
+            read_proxy_message(&mut stream).is_err(),
+            "bad frame {bytes:?} must fail"
+        );
+    }
+    for bytes in [&[][..], &[0][..]] {
+        let (mut stream, mut peer) = UnixStream::pair().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+        peer.write_all(bytes).unwrap();
+        assert!(
+            read_proxy_message(&mut stream).is_err(),
+            "open peer timeout must fail"
+        );
+    }
+}
+
+#[test]
+fn control_proxy_post_handshake_disconnect_preserves_the_next_request() {
+    let live = Live::binary();
+    let mut proxy = ControlProxy::new(
+        live.root.path().join("disconnect.sock"),
+        live.socket.clone(),
+        live.root.path().join("fault"),
+    );
+    let abandoned = connect_server(&proxy.path).unwrap();
+    drop(abandoned);
+    let request = Request::Workflow(Box::new(WorkflowRequest::Parents {
+        auth: DelegationAuth {
+            session: SessionId(1007),
+            capability: "unregistered-test-source".into(),
+            controller: None,
+            source: None,
+        },
+    }));
+    let expected = live.request(request.clone());
+    let actual = (|| -> anyhow::Result<Response> {
+        let mut next = connect_server(&proxy.path)?;
+        next.set_read_timeout(Some(Duration::from_secs(5)))?;
+        client::request(&mut next, 1007, request)
+    })();
+    proxy.retire();
+    assert_eq!(
+        actual.unwrap(),
+        expected,
+        "next frame must reach the real Server"
+    );
+}
+
 impl ControlProxy {
     fn new(
         path: std::path::PathBuf,
@@ -1154,7 +1236,9 @@ impl ControlProxy {
                 if exchange_preamble(&mut stream).is_err() {
                     continue;
                 }
-                let mut message: ClientMessage = read_frame(&mut stream).unwrap();
+                let Some(mut message) = read_proxy_message(&mut stream).unwrap() else {
+                    continue;
+                };
                 // This serial fault proxy tests mutation ordering. Keep observer reads
                 // nonblocking here; dedicated observation tests use the real wait path.
                 if let Request::Delegation(request) = &mut message.request

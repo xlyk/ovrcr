@@ -24,6 +24,7 @@ run *args:
     if [[ "$(uname -s)" == Darwin ]]; then
       rtk proxy sh scripts/package-startup.sh ${bridge_package_flag:+"$bridge_package_flag"} "${CARGO_TARGET_DIR:-target}/debug/$payload_name" "${CARGO_TARGET_DIR:-target}/debug/ovrcr"
       sh scripts/publish-startup-assets.sh ${bridge_package_flag:+"$bridge_package_flag"} "${CARGO_TARGET_DIR:-target}/debug/$payload_name"
+      python3 -I scripts/install-cursor-bridge.py ${OVRCR_CURSOR_BRIDGE_ARCHIVE:+"$OVRCR_CURSOR_BRIDGE_ARCHIVE"}
     fi
     mkdir -p "$HOME/.local/bin"
     pending="$(mktemp "$HOME/.local/bin/.ovrcr.XXXXXX")"
@@ -75,6 +76,9 @@ install-release:
     #!/usr/bin/env bash
     set -euo pipefail
     rtk proxy cargo build -p ovrcr --bin ovrcr --release --target-dir "${CARGO_TARGET_DIR:-target}"
+    if [[ "$(uname -s)" == Darwin ]]; then
+      python3 -I scripts/install-cursor-bridge.py ${OVRCR_CURSOR_BRIDGE_ARCHIVE:+"$OVRCR_CURSOR_BRIDGE_ARCHIVE"}
+    fi
     mkdir -p "$HOME/.local/bin"
     pending="$(mktemp "$HOME/.local/bin/.ovrcr.XXXXXX")"
     trap 'rm -f "$pending"' EXIT
@@ -83,6 +87,10 @@ install-release:
     if [[ "$(uname -s)" == Darwin ]]; then
       just install-startup-assets "$HOME/.local/bin/ovrcr"
     fi
+
+# Install only the pinned Cursor SDK archive; optional explicit offline archive.
+install-cursor-bridge *args:
+    rtk proxy python3 -I scripts/install-cursor-bridge.py "$@"
 
 # Controlled stop of the selected instance, then rebuild and launch; failures stay explicit.
 restart *args:

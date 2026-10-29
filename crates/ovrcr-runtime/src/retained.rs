@@ -1,4 +1,5 @@
 //! Durable row identity and recovery metadata. Process handles and output stay in Session.
+pub(crate) mod cloud_creation;
 use anyhow::{Context, Result, bail};
 use ovrcr_protocol::{
     AgentActivity, SessionId, SessionKind, SessionPhase, SessionRecovery, SessionRunId,
@@ -215,6 +216,7 @@ pub(crate) struct RetainedSession {
     pub failure: Option<String>,
     pub conversation: Option<ovrcr_protocol::ConversationReference>,
     pub identity_invalid: bool,
+    pub cloud_creation: Option<cloud_creation::Record>,
     pub subjects: HashMap<String, ConversationSubject>,
 }
 
@@ -231,13 +233,19 @@ impl RetainedSession {
                 .map(|reference| reference.identity().to_owned()),
             attached: false,
             requires_ack: self.requires_ack(current_boot),
-            unavailable: match &self.metadata.kind {
-                SessionKind::Terminal => None,
-                SessionKind::Agent { name } => crate::recovery::unavailable(
-                    name,
-                    self.conversation.as_ref(),
-                    self.identity_invalid,
-                ),
+            unavailable: match &self.cloud_creation {
+                Some(record) => record
+                    .recovery_target()
+                    .is_none()
+                    .then(|| record.description()),
+                None => match &self.metadata.kind {
+                    SessionKind::Terminal => None,
+                    SessionKind::Agent { name } => crate::recovery::unavailable(
+                        name,
+                        self.conversation.as_ref(),
+                        self.identity_invalid,
+                    ),
+                },
             },
             failure: self.failure.clone(),
         }
@@ -296,7 +304,9 @@ pub(crate) struct SessionStore {
 
 impl SessionStore {
     pub fn open(config: &Path) -> Result<Self> {
-        Self::from_connection(crate::config::open_writable_registry(config)?)
+        let store = Self::from_connection(crate::config::open_writable_registry(config)?)?;
+        store.cleanup_creation_payloads(config)?;
+        Ok(store)
     }
 
     fn from_connection(connection: Connection) -> Result<Self> {
@@ -313,6 +323,7 @@ impl SessionStore {
         let connection = Connection::open_in_memory().unwrap();
         create_schema(&connection).unwrap();
         create_delegation_schema(&connection).unwrap();
+        cloud_creation::create_schema(&connection).unwrap();
         create_conversation_schema(&connection).unwrap();
         create_conversation_subject_schema(&connection).unwrap();
         Self::from_connection(connection).unwrap()
@@ -341,6 +352,7 @@ impl SessionStore {
             failure: None,
             conversation: None,
             identity_invalid: false,
+            cloud_creation: None,
             disposition: Disposition::Active,
             subjects: HashMap::new(),
         };
@@ -573,6 +585,7 @@ impl SessionStore {
             failure: None,
             conversation: None,
             identity_invalid: false,
+            cloud_creation: None,
             disposition: Disposition::Active,
             subjects: HashMap::new(),
         };
@@ -880,6 +893,7 @@ impl SessionStore {
         expected: SessionRunId,
         archived: bool,
     ) -> Result<()> {
+        self.close_creation(id, expected)?;
         let record = self.records.get(&id).context("session not found")?;
         if record.run != expected || (record.disposition == Disposition::Archived) == archived {
             bail!("session archive state changed");
@@ -955,6 +969,7 @@ impl SessionStore {
     }
 
     pub fn remove(&mut self, id: SessionId, run: SessionRunId) -> Result<bool> {
+        self.refuse_creation_deletion(id)?;
         if self.records.get(&id).is_none_or(|record| record.run != run) {
             return Ok(false);
         }
@@ -1044,6 +1059,7 @@ fn read_records(
             failure: row.get(13)?,
             conversation: None,
             identity_invalid: false,
+            cloud_creation: None,
             disposition: match row.get::<_, i64>(14)? {
                 0 => Disposition::Active,
                 1 => Disposition::Archived,
@@ -1122,6 +1138,20 @@ fn read_records(
             let (id, conversation, subject) = row?;
             if let Some(record) = records.get_mut(&SessionId(id)) {
                 record.subjects.insert(conversation, subject);
+            }
+        }
+    }
+    if has_table(connection, "cloud_creations")? {
+        let mut query = connection.prepare("SELECT session, metadata FROM cloud_creations")?;
+        let rows = query.query_map([], |row| {
+            Ok((read_integer(row, 0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (id, raw) = row?;
+            let creation: cloud_creation::Record = serde_json::from_str(&raw)?;
+            creation.validate()?;
+            if let Some(record) = records.get_mut(&SessionId(id)) {
+                record.cloud_creation = Some(creation);
             }
         }
     }

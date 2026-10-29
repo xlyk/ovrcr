@@ -123,3 +123,67 @@ parent/source authority before spawn. Initial input rechecks actual baseline
 content and ancestor candidate/review versions. Followup and acceptance reject
 stale dependency witnesses; collection preserves the original evidence and
 reports the gap. Graph revision changes do not interrupt existing children.
+
+Cursor cloud previews require a positive managed reservation and invocation
+channel. A descendant admission probe is authenticated against that same
+supervised native tree; direct adapter invocation fails closed. The shared
+Reporter owns lease teardown. Each Session owns a unique private cloud scratch
+root, removed by its waiter after PTY drain and process-group exit, so killing
+the adapter cannot leave its bearer file behind or erase a replacement run's
+root. The SDK Bridge receives an environment allowlist without OVRCR credentials.
+Git, Keychain, archive extraction, discovery and catalog I/O run in the adapter
+under a thirty-second preflight deadline, outside Server input/lifecycle locks.
+
+Preflight Git, Keychain and extraction helpers inherit the adapter's supervised
+process group. A helper timeout reaps the direct child and fails preflight,
+exiting the adapter; the surviving invocation supervisor then kills the whole
+group, including helper descendants. Helpers must not create separate groups
+whose only cleanup owner would disappear with the adapter.
+
+Cursor cloud creation and Send share one Server/SessionStore operation record. Authenticated Reporter
+commands require the current CursorCloud reservation; intent/private publication,
+dispatch claim and exact handle receipt are separate durable boundaries. Claim
+and local closure serialize under the retained mutex; the adapter releases those
+locks before bridge I/O. Local Discard is a closure, never a remote-cancellation
+receipt. Archive preserves unresolved bytes; local row deletion requires explicit
+Discard, including for acknowledged handles. The original Session owns the operation across restart; no automatic creation or uncertain Retry is permitted. Exact-run read-only
+reconciliation uses the shared reopen path; active observation stays unavailable. Send requires the
+original durable creation receipt, immutable body/options and a distinct key/claim;
+exact run retention precedes payload retirement. Busy input is rejected for manual
+resubmission. Exact run observations use the existing Reporter/revisions; stream
+loss remains unknown and no newest-run lookup supplies identity. The
+accepted pending-submission exception permits immutable request bytes only in
+confined owner-only plaintext files, readable by same-user programs and backups;
+credentials stay outside them. Creation payload retirement follows durable exact
+identity/receipt; Send payload retirement requires its exact durable run ID.
+
+Cloud Cancel uses the same serialized operation row. Intent and delivery closure
+commit together; a separate exact-run live cancellation claim commits before RPC.
+Original delayed run receipts remain admissible after cancellation, then may
+complete that live intent. Cancellation acknowledgement never proves terminal
+state; only independent credentialed exact GetRun supplies the outcome. Discard
+retires canonical private files and owned aliases after durable closure, with
+startup cleanup retry. Restart never issues CancelRun automatically.
+
+The original live adapter stdin reader checks typed exact-target cancellation
+intent at most once per second, outside Server locks. CheckCancel is read-only;
+one successful check admits one ClaimCancel attempt even if persistence/RPC fails.
+Observation failure retains that exact target until authoritative terminal receipt
+or attachment exit. Recovery never starts this original-attachment reader. Private
+temporary alias sweeps run only during startup/explicit Discard, not each check.
+
+Cloud recovery adds no process/store owner: the shared retained reopen path starts
+its managed invocation and unique bridge scratch tree. Original operation identity
+is immutable; schema 24 protects subordinate recovery-owner and cancellation-claim
+metadata from older writers. Read-only historical reconciliation bypasses response
+cycles. Exact fresh GetRun registers a selected-key handle only; active observation
+remains unproved and no ResumeAgent/options replay is allowed.
+
+Executable equality uses every byte in fixed 64 KiB blocks with aHash 0.8.12,
+explicit zero seeds and an algorithm/version descriptor. The descriptor includes
+architecture, endianness and AES/SSSE3 compilation flags; flags conservatively
+distinguish builds even when the chosen backend ignores them. It is not an
+authenticity proof. Untagged private legacy records remain recognized for stale
+replacement but cannot equal the new algorithm; unknown algorithm names or fields
+remain refused. Full verification and metadata rechecks precede socket binding
+and identity publication, including `/proc/self/exe` on Linux.

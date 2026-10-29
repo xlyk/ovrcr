@@ -96,3 +96,71 @@ reasoning. Native confirmation that Grok 1.0.40 creates the file for a supplied
 The common base includes archive prerequisite #115 from `c633103`. Use separate worktrees from the merged common base. Shared enum additions, adapter registration, protocol snapshots/version and capability documentation require a single integration owner: agree appended variant order and land each registration sequentially. Provider modules and their tests can proceed concurrently. Do not independently redesign the shared contract or persistence schema. #117 needs no changes to adapter registration.
 
 Native Claude continuity and macOS GUI input from #116 are verified on `8347563`; automated macOS/Linux, capacity and memory checks passed on that revision. See the [acceptance record](../../research/issue-116-claude-recovery/native-continuity-20260917/README.md) for the two-restart proof and platform boundaries. Native Linux GUI was not exercised. Downstream tickets require their own provider acceptance; this evidence does not authorize additional paid runs or a merge. The existing limitation for persistent storage failure followed by owner death before invalidation commits remains unchanged.
+
+## Cursor cloud creation
+
+Cursor cloud creation is retained under the same SessionStore, before a
+conversation reference exists. The original row shows prepared/never-dispatched,
+unresolved/possibly-escaped, exact handle acknowledgement, or explicit local
+Discard. Archive preserves unresolved request bytes; deleting any cloud-creation row requires
+`ovrcr terminal cloud-discard ID`. Stale run observations cannot discard another
+generation. Neither display, restart, Reopen nor Retry may create another handle,
+choose a new key, open a native resume picker or Send to discover identity.
+A bridge death between local handle acknowledgement and first Send fails closed:
+the pinned SDK has no verified same-handle restoration route in this slice.
+
+SQLite stores only nonsecret creation/Send authority and exact receipt metadata. The
+accepted pending-submission exception permits immutable semantic request bytes
+in confined owner-only private plaintext files; same-user programs and backups
+can read them. Credentials are injected in memory at dispatch. Creation bytes
+retire after the exact agent ID/model receipt is durable; each Send has a
+separate immutable body/key, dispatch claim and exact run-receipt boundary.
+An uncertain Send stays on its original row with its original account/options;
+only an authenticated original run receipt can retire its payload. A disconnected
+stream proves no remote stop, and replay cannot produce another Ready. Startup cleans owned temporary aliases and
+payloads whose durable receipt/Discard already permits retirement, without any
+remote effect. Corrupt/full storage refuses new effects and never evicts retained
+requests to make room. See [Cursor cloud controls](../cursor-cloud.md).
+
+Cursor cloud cancellation intent survives detach/restart with its original
+operation. Recovery remains observation-only and never automatically sends
+CancelRun. Explicit Retry Cancel belongs to a supported exact-run recovery route;
+uncertain CreateAgent/Send replay remains unavailable. Cloud Cancel keeps unresolved
+request bytes; Discard closes delivery and removes private copies/aliases without
+remote cancellation or a remote-termination claim.
+
+### Cursor exact-run reconciliation
+
+An exact last Send run permits the shared Reopen path (and eligible interrupted-row
+display) to launch the managed read-only recovery adapter in the same retained row.
+Its typed CloudRecovery target carries no prompt or credential and must match the
+original intent, local handle receipt and last exact run. The operation's original
+run/invocation/lifetime stay immutable; subordinate recovery-owner metadata fences
+the current managed attachment. Terminal reconciliation never enters a Reporter
+response cycle, so historical outcomes cannot create Ready/Unread/input alerts.
+
+The working directory and source prerequisite still apply. The selected Keychain
+reference and credential digest must equal the retained binding; model-default
+changes cannot replace saved options. Changed credentials require an account
+continuity contract that this pin does not provide and therefore fail closed.
+GetAgent verifies the exact cloud conversation/repository, and credentialed GetRun
+uses explicit cloud runtime, agent and run identity. Missing/expired lookup errors
+remain uncertain; a returned authoritative Expired is recorded as such.
+
+Active option-preserving recovery and uncertain request replay remain unavailable.
+No observation stream starts, so there is no cross-origin offset reuse or historical
+output replay. Explicit `/retry-cancel` performs exact GetRun registration, a durable
+serialized intent/closure/claim and CancelRun, followed by an independent fresh
+GetRun. It never trusts the handle's cached cancellation status. Only the current
+recovery owner can reconcile; Discard/archival and Session/run fences win races.
+A closed operation never regains CreateAgent/Send dispatch permission. The original
+Session is the single controller; duplicate exact handle receipts retain their
+identity but refuse a second attachment and identify the first Session.
+
+The original live Cursor cloud attachment may recover an interrupted transport
+through at most two ObserveRun attempts on its still-owned bridge. Shared SQLite
+stores separate Send/Observe progress fenced to the immutable operation, exact
+account/conversation/run and original stream origin. Starting Observe never uses
+a Send offset. Replayed envelopes cannot publish fresh terminal cycles. These
+cursors are not carried into freshly hydrated run handles; active reopen remains
+unavailable pending its separate preservation/replay acceptance gate.

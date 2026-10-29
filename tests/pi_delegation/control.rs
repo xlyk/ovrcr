@@ -114,14 +114,34 @@ pub(super) fn confirm(
     returned: &str,
     request: &str,
 ) -> AssignmentSnapshot {
-    serde_json::from_value(fixture.tool(
+    let reply = fixture.tool(
         "ovrcr_confirm_return",
         serde_json::json!({
             "handle":snapshot.handle,"request":request,"returned_request":returned,
             "expected_control_epoch":snapshot.control.epoch,"evidence":snapshot.control_evidence,
         }),
-    ))
-    .unwrap()
+    );
+    serde_json::from_value(reply.clone()).unwrap_or_else(|error| {
+        let current = fixture.reconcile(&snapshot.handle);
+        panic!("confirmation {request} after {returned}: {error}; reply={reply}; reconciled={:?}; current={:?}", snapshot.control_evidence, current.control_evidence)
+    })
+}
+
+fn settled(fixture: &RecoveryFixture, snapshot: &AssignmentSnapshot) -> AssignmentSnapshot {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let current = fixture.reconcile(&snapshot.handle);
+        assert_eq!(current.identity, snapshot.identity);
+        assert_eq!(current.control, snapshot.control);
+        if current.activity == AgentActivity::ResponseReady {
+            return current;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "child did not settle: {current:?}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn read_marker(fixture: &RecoveryFixture, child: SessionId, marker: &str) {
@@ -149,6 +169,7 @@ fn public_assignment_human_takeover_return_fences_generics_and_preserves_history
     let fixture = OwnedFollowup::new();
     let first: AssignmentSnapshot = serde_json::from_value(fixture.start()).unwrap();
     let original = complete(&fixture, &first);
+    settled(&fixture, &original);
     let sibling: AssignmentSnapshot = serde_json::from_value(fixture.start()).unwrap();
     let sibling = complete(&fixture, &sibling);
     let child = original.identity.session.unwrap();
@@ -291,12 +312,19 @@ fn public_assignment_human_takeover_return_fences_generics_and_preserves_history
         "identity":confirmed.identity,"result_version":confirmed.result_version,
         "result_digest":original.publication.as_ref().unwrap().identity.digest,"expected_control_epoch":4}));
     assert_eq!(rejected["dispatch"], "Refused", "{rejected}");
+    let hold = original
+        .brief
+        .parent()
+        .unwrap()
+        .join("brief-v2.json.hold-settlement");
+    fs::write(&hold, "force settlement after return evidence is captured").unwrap();
     let fresh:AssignmentSnapshot=serde_json::from_value(fixture.tool("ovrcr_followup",serde_json::json!({
         "handle":confirmed.handle,"expected_identity":confirmed.identity,"expected_result_version":confirmed.result_version,
         "expected_control_epoch":4,"text":"Reconcile the human clarification and publish fresh evidence."}))).unwrap();
     assert_eq!(fresh.result_version, 2);
     assert!(!fresh.control.attribution_invalidated);
     let fresh = complete(&fixture, &fresh);
+    wait_file(&fresh.brief.with_extension("json.settlement-held"));
     assert_eq!(
         fs::read(&original.result_path).unwrap(),
         original_bytes,
@@ -310,6 +338,10 @@ fn public_assignment_human_takeover_return_fences_generics_and_preserves_history
     let human = transition(&fixture, &mut stream, child, "take-two", true, 3);
     assert_eq!(human.control.epoch, 5);
     let returned = transition(&fixture, &mut stream, child, "return-two", false, 3);
+    assert_eq!(returned.activity, AgentActivity::Busy);
+    fs::remove_file(&hold).unwrap();
+    // Publication precedes settlement; confirmation needs evidence from after both.
+    let returned = settled(&fixture, &returned);
     let confirmed = confirm(&fixture, &returned, "return-two", "confirm-two");
     assert_eq!(confirmed.control.epoch, 7);
     let stale=fixture.tool("ovrcr_followup",serde_json::json!({"handle":fresh.handle,"expected_identity":fresh.identity,

@@ -694,8 +694,9 @@ impl Hooks {
             }
             Ok(None) => false,
             Err(_) => {
-                self.stop_collector(deadline);
+                // Reaping may consume the deadline needed to publish the lost source.
                 self.source_health(reporter, Some("collector_unavailable"), deadline);
+                self.stop_collector(deadline);
                 false
             }
         }

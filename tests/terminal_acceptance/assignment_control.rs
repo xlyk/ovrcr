@@ -53,7 +53,6 @@ fn fixture() -> Result<(AcceptanceFixture, AssignmentSnapshot, SessionId)> {
     fs::set_permissions(bin.join("pi"), fs::Permissions::from_mode(0o700))?;
     let host = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pi/pi_host.mjs");
     let gate = live.root.path().join("result-gate");
-    fs::write(&gate, "1")?;
     let bytes = live.root.path().join("input-bytes");
     fs::create_dir(&bytes)?;
     live.start_binary_env(&[
@@ -121,7 +120,13 @@ fn fixture() -> Result<(AcceptanceFixture, AssignmentSnapshot, SessionId)> {
         "project":"fixture","workspace":workspace,"scope":"Read README only","model_provider":"test","model":"fixture-model","acceptance_evidence":["citation"]}),
         "start.json",
     )?)?;
+    fs::write(
+        assignment.brief.with_extension("json.hold-settlement"),
+        "hold",
+    )?;
+    fs::write(&gate, "1")?;
     wait_file(&assignment.brief.with_extension("json.published"))?;
+    wait_file(&assignment.brief.with_extension("json.settlement-held"))?;
     fixture.managed_pgids = fixture.session_pgids()?;
     Ok((fixture, assignment, parent.id))
 }
@@ -130,7 +135,7 @@ fn fixture() -> Result<(AcceptanceFixture, AssignmentSnapshot, SessionId)> {
 fn assigned_child_is_view_only_until_explicit_dashboard_takeover_and_return() -> Result<()> {
     let (mut fixture, assignment, _parent) = fixture()?;
     let child = assignment.identity.session.context("assigned child")?;
-    let before_title = fixture
+    let published = fixture
         .list()?
         .projects
         .into_iter()
@@ -138,6 +143,36 @@ fn assigned_child_is_view_only_until_explicit_dashboard_takeover_and_return() ->
         .flat_map(|w| w.sessions)
         .find(|s| s.id == child)
         .context("child before title")?;
+    assert_eq!(published.activity, AgentActivity::Busy);
+    fs::remove_file(assignment.brief.with_extension("json.hold-settlement"))?;
+    // Publication precedes final activity reports; rename must compare settled evidence.
+    let deadline = Instant::now() + wait_deadline();
+    let before_title = loop {
+        let current = fixture
+            .list()?
+            .projects
+            .into_iter()
+            .flat_map(|p| p.workspaces)
+            .flat_map(|w| w.sessions)
+            .find(|s| s.id == child)
+            .context("settling child")?;
+        assert_eq!(current.run, published.run);
+        assert_eq!(
+            current.assignment_control.as_ref().unwrap().control,
+            published.assignment_control.as_ref().unwrap().control
+        );
+        if current.activity == AgentActivity::ResponseReady {
+            break current;
+        }
+        if Instant::now() >= deadline {
+            bail!("child did not settle: {current:?}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert!(
+        before_title.agent.as_ref().unwrap().activity_revision
+            > published.agent.as_ref().unwrap().activity_revision
+    );
     let title = "takeover-child-323";
     assert_eq!(
         fixture.request(Request::SetSessionTitle {

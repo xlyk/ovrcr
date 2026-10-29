@@ -44,6 +44,23 @@ _Avoid_: custom command as a third session category
 A detected or configured agent selected for launch. This launch choice alone does not establish reporting support or determine everything that may later run in the session.
 _Avoid_: any arbitrary command as an agent
 
+**Cursor cloud account**:
+A nonsecret named selection policy containing one explicit Keychain credential reference, model and allowed repositories or owners. Selecting it does not attest a remote billing identity. Local `cursor-agent` is a separate provider.
+
+**Cursor SDK Bridge**:
+The pinned official Cursor process owned by one cloud attachment inside the Server-managed process tree. It is separate from the macOS OVRCR Bridge app.
+
+**Cloud reconciliation**:
+A read of the original retained cloud conversation/run through a freshly validated
+credential-bound bridge. A historical terminal outcome creates no new Ready or
+Unread. The original live attachment may recover a transport interruption on its
+still-owned bridge using separate durable Observe progress; this does not authorize
+fresh-handle restoration. Active reattachment and uncertain CreateAgent/Send replay remain gated;
+explicit Retry Cancel is a separate durable exact-run action.
+
+**Published source**:
+The selected workspace's canonical origin and exact HEAD commit, verified as published at that origin. Local edits are excluded; launching does not upload, commit or push them.
+
 **Terminal**:
 The launch choice for opening a shell, optionally with a custom command. It creates a terminal session with a stable session title.
 _Avoid_: custom command as a separate session type
