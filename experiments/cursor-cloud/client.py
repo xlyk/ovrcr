@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One bounded Cursor cloud coding run; use --preflight-only for catalog checks."""
+"""Bounded Cursor cloud coding, observation and follow-up; --preflight-only checks catalogs."""
 import argparse
 import fcntl
 import secrets
@@ -45,6 +45,7 @@ GH = shutil.which("gh")
 SOURCE_PROBE = "git rev-parse HEAD && cat SOURCE_MARKER"
 SELECTED_MARKER = "OVRCR_SELECTED_BASELINE_364\n"
 DEFAULT_MARKER = "OVRCR_DEFAULT_TIP_364\n"
+SDK_TYPES = {"system", "assistant", "user", "tool_call", "status", "thinking", "task", "usage"}
 TERMINAL = {"RUN_LIFECYCLE_STATUS_FINISHED", "RUN_LIFECYCLE_STATUS_ERROR",
             "RUN_LIFECYCLE_STATUS_CANCELLED", "RUN_LIFECYCLE_STATUS_EXPIRED"}
 
@@ -478,11 +479,40 @@ def github_auth(config, login, repository, root, deadlines, resources):
             "credential_route": "selected gh config and git-credential; token never captured"}
 
 
+def pull_requests(repository, root, deadlines, resources, journal):
+    github_auth(resources["github_config"], resources["github_login"], repository, root, deadlines, resources)
+    fields = "number,url,title,body,state,isDraft,headRefName,headRefOid,baseRefName,baseRefOid,updatedAt,labels,assignees,reviewRequests,milestone,autoMergeRequest,maintainerCanModify"
+    env = {"GH_CONFIG_DIR": resources["github_config"], "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
+    output = command([GH, "pr", "list", "--repo", repository, "--state", "all", "--limit", "100", "--json", fields],
+                     root, root, deadlines, resources, extra_env=env)
+    snapshot = json.loads(output)
+    if not isinstance(snapshot, list) or len(snapshot) >= 100:
+        raise Failure("independent PR snapshot unavailable or incomplete")
+    numbers = set()
+    for row in snapshot:
+        if not isinstance(row, dict) or set(row) != set(fields.split(",")) or type(row.get("number")) is not int or row["number"] <= 0 or row["number"] in numbers:
+            raise Failure("independent PR snapshot malformed")
+        numbers.add(row["number"])
+        if (any(not isinstance(row[name], str) for name in ("url", "title", "body", "state", "headRefName", "headRefOid", "baseRefName", "baseRefOid", "updatedAt")) or
+                row["url"] != repository + "/pull/" + str(row["number"]) or row["state"] not in {"OPEN", "CLOSED", "MERGED"} or
+                any(type(row[name]) is not bool for name in ("isDraft", "maintainerCanModify")) or
+                any(not re.fullmatch(r"[0-9a-f]{40}", row[name]) for name in ("headRefOid", "baseRefOid")) or
+                any(not row[name] for name in ("headRefName", "baseRefName", "updatedAt")) or
+                any(not isinstance(row[name], list) for name in ("labels", "assignees", "reviewRequests")) or
+                any(row[name] is not None and not isinstance(row[name], dict) for name in ("milestone", "autoMergeRequest"))):
+            raise Failure("independent PR snapshot malformed")
+    canonical = json.dumps(sorted(snapshot, key=lambda row: row["number"]), sort_keys=True)
+    journal.append({"event": "github_pr_snapshot", "repository": repository, "count": len(snapshot),
+                    "numbers": sorted(numbers), "sha256": hashlib.sha256(canonical.encode()).hexdigest()})
+    return canonical
+
+
 def git(argv, checkout, root, deadlines, resources):
     options = [GIT, "-c", "core.hooksPath=" + os.devnull]
     env = None
-    if argv[0] == "fetch":
-        if argv[-2] != resources["github_repository"]:
+    if argv[0] in {"fetch", "ls-remote"}:
+        repository = argv[-2] if argv[0] == "fetch" else argv[-1]
+        if repository != resources["github_repository"]:
             raise Failure("Git credential helper is restricted to the approved repository")
         scope = "credential." + resources["github_repository"]
         options += ["-c", "credential.helper=", "-c", "credential.useHttpPath=true", "-c", scope + ".helper=!" + shlex.quote(GH) + " auth git-credential",
@@ -533,16 +563,16 @@ def read_exact(response, length, deadlines):
     return bytes(data)
 
 
-def send_stream(port, token, request, deadlines):
+def send_stream(port, token, request, deadlines, method="Send"):
     payload = json.dumps(request).encode()
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=deadlines.remaining())
     try:
-        connection.request("POST", "/sdk.v1.SdkAgentService/Send", body=struct.pack(">BI", 0, len(payload)) + payload,
+        connection.request("POST", "/sdk.v1.SdkAgentService/" + method, body=struct.pack(">BI", 0, len(payload)) + payload,
                            headers={"Authorization": "Bearer " + token,
                                     "Content-Type": "application/connect+json", "Connect-Protocol-Version": "1"})
         response = connection.getresponse()
         if response.status != 200 or response.getheader("Content-Type", "").split(";")[0] != "application/connect+json":
-            raise Failure("Send transport rejected or invalid Connect content type")
+            raise Failure("stream transport rejected or invalid Connect content type")
         total = 0
         for _ in range(1024):
             flags, length = struct.unpack(">BI", read_exact(response, 5, deadlines))
@@ -567,6 +597,200 @@ def send_stream(port, token, request, deadlines):
 
 def valid_id(value):
     return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,200}", value)
+
+
+def exact_snapshot(port, token, key, state, deadlines, journal):
+    snapshot = checked_rpc(port, token, "SdkAgentService", "GetRun", {"runId": state["runId"], "options": {
+        "runtime": "RUNTIME_CLOUD", "agentId": state["agentId"], "apiKey": key}}, deadlines).get("run")
+    if not isinstance(snapshot, dict) or snapshot.get("agentId") != state["agentId"] or snapshot.get("runId") != state["runId"]:
+        raise Failure("observation snapshot agent/run identity mismatch")
+    status = snapshot.get("status")
+    if status not in TERMINAL | {"RUN_LIFECYCLE_STATUS_RUNNING"}:
+        raise Failure("observation snapshot lifecycle is unverified")
+    journal.append({"event": "observation_snapshot", "receipt": snapshot})
+    state["active"] = status not in TERMINAL
+    if not state["active"]:
+        state["terminal_status"] = status
+        if status != "RUN_LIFECYCLE_STATUS_FINISHED":
+            raise Failure("unsuccessful terminal snapshot forbids qualification and follow-up")
+    return status
+
+
+def stream_identity(envelope, state):
+    for name in ("sdkMessage", "result", "done"):
+        if name not in envelope:
+            continue
+        record = envelope[name]
+        if name == "sdkMessage":
+            if isinstance(record, dict) and record.get("type") not in SDK_TYPES:
+                continue
+            record = record.get("message") if isinstance(record, dict) else None
+            fields = ("agent_id", "run_id")
+        else:
+            fields = ("agentId", "runId")
+        if not isinstance(record, dict) or record.get(fields[0]) != state["agentId"] or record.get(fields[1]) != state["runId"]:
+            raise Failure("observation stream agent/run identity mismatch")
+
+
+def recover_stream(port, token, submission, deadlines, journal, state, key, report):
+    original = send_stream(port, token, submission, deadlines)
+    seen = set()
+    try:
+        for envelope in original:
+            yield envelope
+            seen.add(json.dumps({k: v for k, v in envelope.items() if k != "offset"}, sort_keys=True))
+            if state.get("runId") and not journal.closed:
+                report["active_stage"] = "observation"
+                before = exact_snapshot(port, token, key, state, deadlines, journal)
+                break
+        else:
+            return
+    finally:
+        original.close()
+    report["recovery_criteria"]["active_observation"] = {"verdict": "BLOCKED", "reason": "observation not yet qualified"}
+    journal.append({"event": "send_stream_dropped", "agentId": state["agentId"], "runId": state["runId"], "status": before})
+    request = {"runId": state["runId"]}
+    offsets = set()
+    interrupted = False
+    recovered = False
+    attached_active = False
+    # One beginning replay and at most one intentional durable-offset resume.
+    for attachment in range(2):
+        journal.append({"event": "observe_request", "agentId": state["agentId"], "request": request, "origin": "ObserveRun"})
+        observer = send_stream(port, token, request, deadlines, "ObserveRun")
+        try:
+            for envelope in observer:
+                stream_identity(envelope, state)
+                encoded = json.dumps({k: v for k, v in envelope.items() if k != "offset"}, sort_keys=True)
+                replay = attachment == 0 and encoded in seen
+                journal.append({"event": "observe_event", "agentId": state["agentId"], "runId": state["runId"],
+                                "replay": replay, "sha256": hashlib.sha256(encoded.encode()).hexdigest()})
+                if not replay:
+                    yield envelope
+                if attachment == 0 and not replay and envelope.get("sdkMessage", {}).get("type") in SDK_TYPES and not attached_active and state["active"]:
+                    attached_active = exact_snapshot(port, token, key, state, deadlines, journal) == "RUN_LIFECYCLE_STATUS_RUNNING"
+                offset = envelope.get("offset")
+                if offset is not None:
+                    if not isinstance(offset, str) or not offset or len(offset) > 1024 or offset in offsets:
+                        raise Failure("invalid or repeated exclusive ObserveRun offset")
+                    offsets.add(offset)
+                    journal.append({"event": "observe_offset", "origin": "ObserveRun", "agentId": state["agentId"],
+                                    "runId": state["runId"], "offset": offset})
+                    if attachment == 0 and not replay and envelope.get("sdkMessage", {}).get("type") in SDK_TYPES and attached_active and state["active"]:
+                        request = {"runId": state["runId"], "afterOffset": offset}
+                        interrupted = True
+                        report["recovery_criteria"]["offset_resume"] = {"verdict": "BLOCKED", "reason": "cursor saved; resumed stream not yet qualified"}
+                        break
+            else:
+                recovered = True
+                break
+        finally:
+            observer.close()
+    if not recovered:
+        raise Failure("observation did not finish after bounded cursor resume")
+    state["observation_receipt"] = {"before": before, "interrupted": interrupted, "attached_active": attached_active, "terminal_at_checkpoint": not attached_active and not state["active"], "request": request}
+
+
+def collect_run(manifest, key, token, port, submission, journal, deadlines, report, state, coding):
+    if report["attempts"]["Send"] >= 2:
+        raise Failure("two-Send slice exhausted; no retry")
+    report["active_stage"] = "Send_claim"
+    journal.claim("Send", submission)
+    report["operation_keys"]["Send" if coding else "FollowUpSend"] = submission["idempotencyKey"]
+    journal.ensure_open()
+    report["active_stage"] = "Send"
+    state.pop("runId", None)
+    state.pop("terminal_status", None)
+    state["active"] = False
+    state["send_attempted"] = True
+    report["attempts"]["Send"] += 1
+    result = None
+    done = False
+    source_proven = not coding
+    probe_call = None
+    for envelope in (recover_stream(port, token, submission, deadlines, journal, state, key, report) if coding else
+                     send_stream(port, token, submission, deadlines)):
+        if done:
+            raise Failure("message after done; stream order invalid")
+        if sum(field in envelope for field in ("sdkMessage", "result", "done", "interactionUpdate", "step")) > 1:
+            raise Failure("multiple Connect envelope cases are invalid")
+        sdk = envelope.get("sdkMessage")
+        if "sdkMessage" in envelope and not isinstance(sdk, dict):
+            raise Failure("SDK envelope payload must be an object")
+        if isinstance(sdk, dict) and sdk.get("type") in SDK_TYPES:
+            message = sdk.get("message")
+            if not isinstance(message, dict):
+                raise Failure("SDK message payload is invalid")
+            if state.get("runId") is None:
+                if sdk["type"] != "system" or message.get("subtype") != "init" or not valid_id(message.get("run_id")) or message.get("agent_id") != state["agentId"] or message.get("model") != {"id": manifest["model"]}:
+                    raise Failure("early original-stream run identity/model missing or mismatched; unresolved")
+                if not coding and message["run_id"] == report["run"]["runId"]:
+                    raise Failure("follow-up reused the original run identity")
+                identity = {"agentId": message["agent_id"], "runId": message["run_id"], "model": message["model"]}
+                journal.receipt("Send", identity)
+                state.update(identity, active=True)
+                report["run" if coding else "follow_up_run"] = identity
+            if message.get("agent_id") != state["agentId"] or message.get("run_id") != state["runId"]:
+                raise Failure("stream agent/run identity mismatch")
+            if sdk["type"] == "tool_call" and not source_proven:
+                if message.get("name") != "shell" or message.get("args") != {"command": SOURCE_PROBE} or not valid_id(message.get("call_id")) or message.get("truncated"):
+                    raise Failure("initial source probe is missing/unrecognized; source unverified")
+                if message.get("status") == "running" and probe_call is None:
+                    probe_call = message["call_id"]
+                elif message.get("status") == "completed" and message["call_id"] == probe_call:
+                    expected = {"stdout": manifest["source_sha"] + "\n" + SELECTED_MARKER, "stderr": "", "exitCode": 0}
+                    observed = message.get("result")
+                    if observed != expected or type(observed.get("exitCode")) is not int:
+                        raise Failure("initial source probe differs from independently verified source")
+                    journal.append({"event": "source_probe", "receipt": message})
+                    source_proven = True
+                    report["source_probe"] = {"verdict": "PASS", "call_id": probe_call, "receipt": "first correlated shell tool; exact HEAD and marker"}
+                else:
+                    raise Failure("source probe tool ordering/correlation mismatch")
+            if sdk["type"] == "status" and message.get("status") in {"ERROR", "CANCELLED", "EXPIRED"}:
+                state.update(active=False, terminal_status="RUN_LIFECYCLE_STATUS_" + message["status"])
+                raise Failure("cloud run failed; status diagnostics suppressed")
+        if "result" in envelope:
+            if result is not None:
+                raise Failure("duplicate terminal result")
+            terminal = envelope["result"]
+            result = terminal.get("result") if isinstance(terminal, dict) else None
+            if not state.get("runId") or not isinstance(result, dict) or any(
+                    record.get("agentId") != state["agentId"] or record.get("runId") != state["runId"]
+                    for record in (terminal, result)):
+                raise Failure("terminal agent/run identity missing or mismatched")
+            journal.append({"event": "result", "receipt": terminal, "late": journal.closed})
+            if terminal.get("status") != "RUN_LIFECYCLE_STATUS_FINISHED" or result.get("status") != terminal["status"] or result.get("model") != {"id": manifest["model"]} or terminal.get("errorCode") or result.get("errorCode"):
+                status = result.get("status")
+                state["active"] = not isinstance(status, str) or status not in TERMINAL
+                if not state["active"]:
+                    state["terminal_status"] = status
+                raise Failure("run result/model is not successful FINISHED")
+            state["active"] = False
+            state["terminal_status"] = result["status"]
+        if "done" in envelope:
+            if result is None or envelope["done"] != {"agentId": state["agentId"], "runId": state["runId"]} or done:
+                raise Failure("done identity/order mismatch")
+            done = True
+    if not result or not done or not source_proven:
+        raise Failure("coding lacks source/result/done/successful stream end evidence")
+    journal.ensure_open()
+    if coding:
+        recovery = state.get("observation_receipt")
+        if not recovery:
+            raise Failure("coding observation recovery is unverified")
+        criteria = report["recovery_criteria"]
+        if recovery["before"] in TERMINAL or recovery["terminal_at_checkpoint"]:
+            criteria["completed_result"] = {"verdict": "PASS", "receipt": "terminal snapshot before Send drop or first observer checkpoint; exact-run replay finished"}
+            criteria["active_observation"] = {"verdict": "NOT RUN" if recovery["before"] in TERMINAL else "BLOCKED", "reason": "completion preceded interruption or active observer checkpoint"}
+        elif recovery["attached_active"]:
+            criteria["active_observation"] = {"verdict": "PASS", "receipt": "exact RUNNING snapshots before Send drop and during ObserveRun; terminal stream recovered"}
+        else:
+            criteria["active_observation"] = {"verdict": "BLOCKED", "reason": "inconclusive; no active snapshot during observation"}
+        criteria["offset_resume"] = ({"verdict": "PASS", "receipt": recovery["request"]} if recovery["interrupted"] else
+                                     {"verdict": "NOT RUN", "reason": "no durable ObserveRun offset interrupted while active"})
+        report["observation"] = "PASS"
+    return result
 
 
 def coding_run(manifest, key, token, port, journal, root, deadlines, report, state):
@@ -613,81 +837,7 @@ def coding_run(manifest, key, token, port, journal, root, deadlines, report, sta
               "or create a PR. Remember this harmless public continuity token for a later turn: " + continuity)
     submission = {"agentId": state["agentId"], "idempotencyKey": secrets.token_hex(16),
                   "message": {"text": prompt}, "options": {"model": {"id": manifest["model"]}}}
-    report["active_stage"] = "Send_claim"
-    journal.claim("Send", submission)
-    report["operation_keys"]["Send"] = submission["idempotencyKey"]
-    journal.ensure_open()
-    report["active_stage"] = "Send"
-    state["send_attempted"] = True
-    report["attempts"]["Send"] = 1
-    result = None
-    done = False
-    source_proven = False
-    probe_call = None
-    for envelope in send_stream(port, token, submission, deadlines):
-        if done:
-            raise Failure("message after done; stream order invalid")
-        if sum(field in envelope for field in ("sdkMessage", "result", "done", "interactionUpdate", "step")) > 1:
-            raise Failure("multiple Connect envelope cases are invalid")
-        sdk = envelope.get("sdkMessage")
-        if "sdkMessage" in envelope and not isinstance(sdk, dict):
-            raise Failure("SDK envelope payload must be an object")
-        if isinstance(sdk, dict) and sdk.get("type") in {"system", "assistant", "user", "tool_call", "status", "thinking", "task", "usage"}:
-            message = sdk.get("message")
-            if not isinstance(message, dict):
-                raise Failure("SDK message payload is invalid")
-            if state.get("runId") is None:
-                if sdk["type"] != "system" or message.get("subtype") != "init" or not valid_id(message.get("run_id")) or message.get("agent_id") != state["agentId"] or message.get("model") != {"id": manifest["model"]}:
-                    raise Failure("early original-stream run identity/model missing or mismatched; unresolved")
-                identity = {"agentId": message["agent_id"], "runId": message["run_id"], "model": message["model"]}
-                journal.receipt("Send", identity)
-                state.update(identity, active=True)
-                report["run"] = identity
-            if message.get("agent_id") != state["agentId"] or message.get("run_id") != state["runId"]:
-                raise Failure("stream agent/run identity mismatch")
-            if sdk["type"] == "tool_call" and not source_proven:
-                if message.get("name") != "shell" or message.get("args") != {"command": SOURCE_PROBE} or not valid_id(message.get("call_id")) or message.get("truncated"):
-                    raise Failure("initial source probe is missing/unrecognized; source unverified")
-                if message.get("status") == "running" and probe_call is None:
-                    probe_call = message["call_id"]
-                elif message.get("status") == "completed" and message["call_id"] == probe_call:
-                    expected = {"stdout": manifest["source_sha"] + "\n" + SELECTED_MARKER, "stderr": "", "exitCode": 0}
-                    observed = message.get("result")
-                    if observed != expected or type(observed.get("exitCode")) is not int:
-                        raise Failure("initial source probe differs from independently verified source")
-                    journal.append({"event": "source_probe", "receipt": message})
-                    source_proven = True
-                    report["source_probe"] = {"verdict": "PASS", "call_id": probe_call, "receipt": "first correlated shell tool; exact HEAD and marker"}
-                else:
-                    raise Failure("source probe tool ordering/correlation mismatch")
-            if sdk["type"] == "status" and message.get("status") in {"ERROR", "CANCELLED", "EXPIRED"}:
-                state.update(active=False, terminal_status="RUN_LIFECYCLE_STATUS_" + message["status"])
-                raise Failure("cloud run failed; status diagnostics suppressed")
-        if "result" in envelope:
-            if result is not None:
-                raise Failure("duplicate terminal result")
-            terminal = envelope["result"]
-            result = terminal.get("result") if isinstance(terminal, dict) else None
-            if not state.get("runId") or not isinstance(result, dict) or any(
-                    record.get("agentId") != state["agentId"] or record.get("runId") != state["runId"]
-                    for record in (terminal, result)):
-                raise Failure("terminal agent/run identity missing or mismatched")
-            journal.append({"event": "result", "receipt": terminal, "late": journal.closed})
-            if terminal.get("status") != "RUN_LIFECYCLE_STATUS_FINISHED" or result.get("status") != terminal["status"] or result.get("model") != {"id": manifest["model"]} or terminal.get("errorCode") or result.get("errorCode"):
-                status = result.get("status")
-                state["active"] = not isinstance(status, str) or status not in TERMINAL
-                if not state["active"]:
-                    state["terminal_status"] = status
-                raise Failure("run result/model is not successful FINISHED")
-            state["active"] = False
-            state["terminal_status"] = result["status"]
-        if "done" in envelope:
-            if result is None or envelope["done"] != {"agentId": state["agentId"], "runId": state["runId"]} or done:
-                raise Failure("done identity/order mismatch")
-            done = True
-    if not result or not done or not source_proven:
-        raise Failure("coding lacks source/result/done/successful stream end evidence")
-    journal.ensure_open()
+    result = collect_run(manifest, key, token, port, submission, journal, deadlines, report, state, True)
     report["stream"] = {"result": "FINISHED", "done": True, "end": "SUCCESS"}
     report["active_stage"] = "result_fetch"
     metadata = result.get("git")
@@ -719,6 +869,38 @@ def coding_run(manifest, key, token, port, journal, root, deadlines, report, sta
         journal.append({"event": "verified", "receipt": report["result"]})
         report["stages"].append({"stage": "coding", "verdict": "PASS", "receipt": report["result"]})
         report["coding"] = "PASS"
+
+
+def follow_up_run(manifest, key, token, port, journal, root, deadlines, report, state):
+    report["active_stage"] = "follow_up"
+    report["recovery_criteria"]["follow_up"] = {"verdict": "BLOCKED", "reason": "follow-up not yet qualified"}
+    journal.ensure_open()
+    checkout = root / "verification"
+    refs = git(["ls-remote", manifest["repository"]], checkout, root, deadlines, report["resources"])
+    prs = pull_requests(manifest["repository"], root, deadlines, report["resources"], journal)
+    submission = {"agentId": state["agentId"], "idempotencyKey": secrets.token_hex(16),
+                  "message": {"text": "Recall the harmless public continuity token from the earlier turn and the completed fix. "
+                              "Do not change files, branches or PRs. Reply exactly on two lines: TOKEN=<earlier token> then "
+                              "FIX=addition.py adds its two inputs."}, "options": {"model": {"id": manifest["model"]}}}
+    result = collect_run(manifest, key, token, port, submission, journal, deadlines, report, state, False)
+    report["active_stage"] = "follow_up"
+    if result.get("result") != "TOKEN=" + report["continuity_token"] + "\nFIX=addition.py adds its two inputs.":
+        raise Failure("follow-up recalled token/fix is incorrect or unverified")
+    expected_git = {"branches": [{"repoUrl": manifest["repository"], "branch": report["result"]["branch"]}]}
+    if result.get("git") != expected_git:
+        raise Failure("follow-up changed repository/branch/PR metadata")
+    after = git(["ls-remote", manifest["repository"]], checkout, root, deadlines, report["resources"])
+    if after != refs or (report["result"]["commit"] + "\trefs/heads/" + report["result"]["branch"]) not in refs.splitlines():
+        raise Failure("follow-up changed independently verified branch/file state")
+    if pull_requests(manifest["repository"], root, deadlines, report["resources"], journal) != prs:
+        raise Failure("follow-up changed independently verified PR state")
+    with authority():
+        journal.ensure_open()
+        report["follow_up"] = {**report["follow_up_run"], "token": "CORRECT", "fix": "CORRECT", "result": "FINISHED",
+                               "tests": "NO NEW FILES; original verified commit unchanged", "git_refs": "UNCHANGED; all advertised refs", "pull_requests": "UNCHANGED; independent all-state snapshot"}
+        journal.append({"event": "follow_up_verified", "receipt": report["follow_up"]})
+        report["recovery_criteria"]["follow_up"] = {"verdict": "PASS", "receipt": report["follow_up"]}
+        report["stages"].append({"stage": "follow_up", "verdict": "PASS"})
 
 
 def cleanup(process, root, token_identity, port, token, deadlines, resources, journal=None, state=None, key=""):
@@ -828,7 +1010,9 @@ def main(argv=None):
     previous = signal.signal(signal.SIGALRM, expired)
     report = {"preflight": "FAIL", "stages": [], "attempts": {"CreateAgent": 0, "Send": 0},
               "coding": "NOT RUN", "control_recovery": "NOT RUN", "native_provider": "NOT RUN",
-              "usage": "UNAVAILABLE; no zero-cost or hard remote spend-cap claim", "resources": {}}
+              "usage": "UNAVAILABLE; no zero-cost or hard remote spend-cap claim", "resources": {},
+              "recovery_criteria": {name: {"verdict": "NOT RUN", "reason": "stage not reached"} for name in
+                                    ("active_observation", "completed_result", "offset_resume", "follow_up")}}
     root = process = token_identity = port = journal = None
     state = {}
     old_controls = {}
@@ -924,6 +1108,7 @@ def main(argv=None):
                 journal.append({"event": "github_auth", "receipt": report["github_auth"]})
                 stage = "coding"
                 coding_run(manifest, key, token, port, journal, root, deadlines, report, state)
+                follow_up_run(manifest, key, token, port, journal, root, deadlines, report, state)
     except Failure as error:
         report["stages"].append({"stage": report.pop("active_stage", stage), "verdict": "FAIL", "reason": str(error)})
     except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired, tarfile.TarError, http.client.HTTPException):
@@ -945,12 +1130,14 @@ def main(argv=None):
         signal.signal(signal.SIGALRM, previous)
     report.pop("active_stage", None)
     report["proof_stages"] = {name: "NOT RUN" for name in ("observation", "follow_up", "cancellation_proof", "fresh_bridge", "live_cloud", "native_provider")}
+    report["proof_stages"]["observation"] = report.get("observation", "NOT RUN")
+    report["proof_stages"]["follow_up"] = report["recovery_criteria"]["follow_up"]["verdict"]
     report["deadlines"] = {"work_seconds": WORK_SECONDS, "total_seconds": TOTAL_SECONDS, "clock": "absolute monotonic; no renewal"}
     receipts = {
         "1": ("agent" in report, report.get("operation_keys", "no admitted request")),
         "2": ("source" in report, report.get("source", "fixture source unverified")),
         "3": (report["resources"].get("journal_health") == "DURABLE", report["resources"].get("journal", "no journal")),
-        "4": (report["attempts"]["Send"] == 1, report.get("agent", "creation/GetAgent unverified")),
+        "4": (report["attempts"]["Send"] in {1, 2}, report.get("agent", "creation/GetAgent unverified")),
         "5": ("stream" in report, {"run": report.get("run"), "stream": report.get("stream")}),
         "6": (report["coding"] == "PASS", report.get("result", "source/effect result unverified")),
         "7": ("UNRESOLVED" not in report["resources"].get("remote_outcome", "UNRESOLVED"), report["resources"].get("remote_outcome", "no remote identity receipt")),

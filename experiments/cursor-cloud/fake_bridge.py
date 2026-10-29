@@ -58,6 +58,8 @@ def wait_record(predicate):
         if any(predicate(row) for row in journal_rows()):
             return
         time.sleep(0.002)
+    if scenario == "discard_after_send":
+        receipt(journal_gate_timeout=True)
     raise RuntimeError("synthetic deterministic journal gate was not reached")
 
 
@@ -73,7 +75,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         method = self.path.rsplit("/", 1)[-1]
         raw = self.rfile.read(int(self.headers["Content-Length"]))
-        body = json.loads(raw[5:] if method == "Send" else raw)
+        body = json.loads(raw[5:] if method in {"Send", "ObserveRun"} else raw)
+        sends = sum(row.get("method") == "Send" for row in [json.loads(line) for line in Path(CONFIG["audit"]).read_text().splitlines()])
+        follow_up = method == "Send" and sends == 1
         ahead = None
         if method in {"CreateAgent", "Send"}:
             journal = Path(CONFIG["journal"])
@@ -96,8 +100,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             shape = body == {"agentId": "bc-fixture", "options": {"apiKey": KEY}}
         if method == "Send":
             shape = set(body) == {"agentId", "message", "options", "idempotencyKey"} and body["agentId"] == "bc-fixture" and body["options"] == {"model": {"id": "fixture-model"}}
+        known_run = "run-follow-up" if sends == 2 else "run-fixture"
+        if method == "GetRun":
+            shape = body == {"runId": known_run, "options": {"runtime": "RUNTIME_CLOUD", "agentId": "bc-fixture", "apiKey": KEY}}
+        if method == "ObserveRun":
+            shape = body in ({"runId": "run-fixture"}, {"runId": "run-fixture", "afterOffset": "observe-3"})
+            if "afterOffset" in body:
+                saved_offsets = [row for row in journal_rows() if row["event"] == "observe_offset"]
+                shape = shape and bool(saved_offsets) and saved_offsets[-1] == {"event": "observe_offset", "origin": "ObserveRun", "agentId": "bc-fixture", "runId": "run-fixture", "offset": body["afterOffset"]}
+        if follow_up:
+            earlier = next(row["token"] for row in journal_rows() if row["event"] == "continuity_token")
+            shape = shape and earlier not in body["message"]["text"]
+            ahead = ahead and any(row["event"] == "verified" for row in journal_rows())
         receipt(method=method, request_shape=shape, key_matches=body.get("options", {}).get("apiKey") == KEY, write_ahead=ahead,
-                exact_cancel=body == {"agentId": "bc-fixture", "runId": "run-fixture"} if method == "CancelRun" else None)
+                exact_cancel=body == {"agentId": "bc-fixture", "runId": known_run} if method == "CancelRun" else None,
+                observation_request=body if method == "ObserveRun" else None)
         good_auth = self.headers.get("Authorization") == "Bearer " + TOKEN
         if method == "Shutdown":
             if scenario == "shutdown_stall":
@@ -146,21 +163,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if scenario == "get_agent_wrong_repo":
                 response["agent"]["cloud"]["repos"] = ["https://github.com/other/repo"]
         elif method == "CancelRun":
+            CONFIG["cancelled"] = True
             if scenario == "cancel_stall":
                 time.sleep(30)
             response = {}
         elif method == "GetRun":
-            response = {"run": {"agentId": "bc-fixture", "runId": "run-fixture", "status": "RUN_LIFECYCLE_STATUS_CANCELLED"}}
+            status = "RUN_LIFECYCLE_STATUS_CANCELLED" if CONFIG.get("cancelled") else "RUN_LIFECYCLE_STATUS_RUNNING"
             if scenario == "cancel_unconfirmed":
-                response["run"]["status"] = "RUN_LIFECYCLE_STATUS_RUNNING"
-        elif method == "Send":
+                status = "RUN_LIFECYCLE_STATUS_RUNNING"
+            CONFIG["snapshots"] = CONFIG.get("snapshots", 0) + 1
+            if scenario == "complete_before_drop" or (scenario == "complete_during_attach" and CONFIG["snapshots"] > 1):
+                status = "RUN_LIFECYCLE_STATUS_FINISHED"
+            if scenario.startswith("snapshot_") and (scenario.endswith("before_drop") or CONFIG["snapshots"] > 1):
+                status = "RUN_LIFECYCLE_STATUS_" + scenario.split("_")[1].upper()
+            response = {"run": {"agentId": "bc-fixture", "runId": known_run, "status": status}}
+            if scenario == "snapshot_wrong_id" and not CONFIG.get("cancelled"):
+                response["run"]["agentId"] = "wrong-agent"
+        elif method in {"Send", "ObserveRun"}:
             identity = {"agent_id": "bc-fixture", "run_id": "run-fixture"}
             def sdk(kind, **fields):
                 return {"sdkMessage": {"type": kind, "message": {**identity, **fields}}}
             probe = {"call_id": "source-probe", "name": "shell", "args": {"command": "git rev-parse HEAD && cat SOURCE_MARKER"}}
             result = {"agentId": "bc-fixture", "runId": "run-fixture", "model": {"id": "fixture-model"},
                       "status": "RUN_LIFECYCLE_STATUS_FINISHED", "git": {"branches": [{"repoUrl": "https://github.com/fixture/disposable", "branch": "cursor/result"}]}}
-            messages = [{}, {"futureEnvelope": {"opaque": True}},
+            messages = [{}, {"sdkMessage": {"type": "future", "message": {"opaque": True}}},
                         sdk("system", subtype="init", model={"id": "fixture-model"}),
                         sdk("tool_call", **probe, status="running"),
                         sdk("tool_call", **probe, status="completed", result={"stdout": CONFIG["source_sha"] + "\nOVRCR_SELECTED_BASELINE_364\n", "stderr": "", "exitCode": 0}),
@@ -205,11 +231,67 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 messages.append({})
             if scenario == "send_lost":
                 messages = [{}, {"futureEnvelope": {"opaque": True}}]
+            if follow_up:
+                Path(CONFIG["journal"]).parent.joinpath("pr-effects.json").write_text("second turn admitted")
+                identity["run_id"] = "run-follow-up"
+                result["runId"] = "run-follow-up"
+                earlier = next(row["token"] for row in journal_rows() if row["event"] == "continuity_token")
+                result["result"] = "TOKEN=" + earlier + "\nFIX=addition.py adds its two inputs."
+                messages = [sdk("system", subtype="init", model={"id": "fixture-model"}),
+                            {"result": {"agentId": "bc-fixture", "runId": "run-follow-up", "status": "RUN_LIFECYCLE_STATUS_FINISHED", "result": result}},
+                            {"done": {"agentId": "bc-fixture", "runId": "run-follow-up"}}]
+                if scenario == "follow_up_lost":
+                    messages = [{}, {"futureEnvelope": {"opaque": True}}]
+                if scenario == "follow_up_wrong_token":
+                    result["result"] = "TOKEN=wrong\nFIX=addition.py adds its two inputs."
+                if scenario == "follow_up_failed":
+                    result["status"] = messages[1]["result"]["status"] = "RUN_LIFECYCLE_STATUS_ERROR"
+                if scenario == "follow_up_same_run":
+                    messages[0]["sdkMessage"]["message"]["run_id"] = "run-fixture"
+                if scenario == "follow_up_wrong_agent":
+                    messages[0]["sdkMessage"]["message"]["agent_id"] = "wrong-agent"
+                if scenario == "follow_up_branch":
+                    result["git"]["branches"][0]["branch"] = "cursor/extra"
+                if scenario == "follow_up_pr":
+                    result["git"]["branches"][0]["prUrl"] = "https://github.com/fixture/disposable/pull/1"
+                if scenario in {"follow_up_extra_file", "follow_up_extra_ref", "follow_up_extra_tag"}:
+                    import subprocess
+                    def git(*args):
+                        subprocess.run(["/usr/bin/git", "-c", "user.name=Offline Fixture", "-c", "user.email=fixture@example.invalid", *args], cwd=CONFIG["repo"], check=True, capture_output=True)
+                    if scenario == "follow_up_extra_tag":
+                        git("tag", "cursor-extra", "cursor/result")
+                    elif scenario == "follow_up_extra_ref":
+                        git("branch", "cursor/extra", "cursor/result")
+                    else:
+                        git("switch", "cursor/result")
+                        Path(CONFIG["repo"], "extra.txt").write_text("unintended change")
+                        git("add", "extra.txt")
+                        git("commit", "-m", "unintended follow-up file")
+                        git("switch", "main")
+            if follow_up and scenario == "follow_up_partial":
+                messages = messages[:1] + [{"sdkMessage": []}]
+            for i, message in enumerate(messages):
+                if message:
+                    message["offset"] = ("observe-" if method == "ObserveRun" else "send-") + str(i)
+            if method == "ObserveRun":
+                if scenario == "invalid_offset":
+                    messages[3]["offset"] = False
+                if "afterOffset" in body:
+                    messages = messages[4:]
+                    if scenario == "wrong_offset":
+                        messages[0]["offset"] = body["afterOffset"]
+                if scenario == "observer_wrong_agent":
+                    messages[0 if "afterOffset" in body else 3]["sdkMessage"]["message"]["agent_id"] = "wrong-agent"
+                if scenario == "observer_wrong_run":
+                    messages[0 if "afterOffset" in body else 3]["sdkMessage"]["message"]["run_id"] = "wrong-run"
+                if scenario == "no_observe_offset":
+                    for message in messages:
+                        message.pop("offset", None)
             data = b"".join(struct.pack(">BI", 0, len(payload)) + payload for payload in [json.dumps(x).encode() for x in messages]) + struct.pack(">BI", 2, 2) + b"{}"
             if scenario in {"cancel_known", "cancel_unconfirmed", "cancel_stall"}:
                 first = json.dumps(messages[2]).encode()
                 data = struct.pack(">BI", 0, len(first)) + first + struct.pack(">BI", 0, 1) + b"["
-            if scenario == "end_error":
+            if scenario == "end_error" or (method == "ObserveRun" and scenario == "observer_error"):
                 end = json.dumps({"error": {"code": "internal", "message": KEY + TOKEN}}).encode()
                 data = data[:-7] + struct.pack(">BI", 2, len(end)) + end
             if scenario == "missing_end":
@@ -222,24 +304,50 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/connect+json")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
-            if scenario in {"discard_after_send", "partial_frame_trickle", "partial_frame_no_id"}:
-                first = json.dumps(messages[2]).encode()
+            if method == "Send" and scenario == "discard_after_send":
+                # Close after dispatch, before init can move this late-receipt case into observation.
+                before = ahead and not any(row["event"] == "closure" for row in journal_rows())
+                close_admission("discard")
+                receipt(discard_gate={"send_received_before_closure": before,
+                                      "closure_before_init": any(row["event"] == "closure" and row["kind"] == "discard" for row in journal_rows())})
+            if method == "ObserveRun" and "afterOffset" not in body and not scenario.startswith("snapshot_") and scenario not in {"complete_before_drop", "complete_during_attach", "no_observe_offset", "partial_frame_trickle", "cancel_known", "cancel_unconfirmed", "cancel_stall", "bad_flags", "bad_json"}:
+                prefix = b"".join(struct.pack(">BI", 0, len(payload)) + payload for payload in [json.dumps(x).encode() for x in messages[:4]])
+                self.wfile.write(prefix)
+                self.wfile.flush()
+                if scenario in {"observer_wrong_agent", "observer_wrong_run", "sdk_bad_payload", "late_source_probe"}:
+                    return
+                wait_record(lambda row: row["event"] == "observe_request" and "afterOffset" in row["request"])
+                self.connection.settimeout(1)
+                try:
+                    dropped = self.connection.recv(1) == b""
+                except OSError:
+                    dropped = False
+                receipt(original_observer_closed=dropped)
+                return
+            if method == "Send" and not follow_up and scenario not in {"send_lost", "bad_flags", "bad_json", "early_no_id", "early_wrong_agent", "early_wrong_model", "cancel_known", "cancel_unconfirmed", "cancel_stall", "partial_frame_no_id", "discard_after_send"}:
+                prefix = b"".join(struct.pack(">BI", 0, len(payload)) + payload for payload in [json.dumps(x).encode() for x in messages[:3]])
+                self.wfile.write(prefix)
+                self.wfile.flush()
+                wait_record(lambda row: row["event"] == "send_stream_dropped")
+                self.connection.settimeout(1)
+                try:
+                    dropped = self.connection.recv(1) == b""
+                except OSError:
+                    dropped = False
+                receipt(original_send_closed=dropped, completed_before_drop=scenario == "complete_before_drop")
+                return
+            if (method == "ObserveRun" and scenario == "partial_frame_trickle") or (method == "Send" and scenario == "partial_frame_no_id"):
                 if scenario != "partial_frame_no_id":
                     prefix = b"".join(struct.pack(">BI", 0, len(payload)) + payload for payload in [json.dumps(x).encode() for x in messages[:3]])
                     self.wfile.write(prefix)
                     self.wfile.flush()
                     wait_record(lambda row: row["event"] == "receipt" and row.get("method") == "Send")
-                if scenario == "discard_after_send":
-                    close_admission("discard")
-                    rest = messages[3:]
-                    data = b"".join(struct.pack(">BI", 0, len(payload)) + payload for payload in [json.dumps(x).encode() for x in rest]) + struct.pack(">BI", 2, 2) + b"{}"
-                else:
-                    receipt(stall=scenario)
-                    for byte in struct.pack(">BI", 0, 2000) + b" " * 2000:
-                        self.wfile.write(bytes([byte]))
-                        self.wfile.flush()
-                        time.sleep(0.02)
-                    return
+                receipt(stall=scenario)
+                for byte in struct.pack(">BI", 0, 2000) + b" " * 2000:
+                    self.wfile.write(bytes([byte]))
+                    self.wfile.flush()
+                    time.sleep(0.02)
+                return
             for offset in range(0, len(data), 3):
                 self.wfile.write(data[offset:offset + 3])
                 self.wfile.flush()
