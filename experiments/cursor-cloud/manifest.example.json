@@ -1,0 +1,22 @@
+{
+  "credential_ref": "env:CURSOR_POC_EXPLICIT_KEY",
+  "repository_policy": {
+    "owner": "REPLACE_OWNER",
+    "repository": "https://github.com/REPLACE_OWNER/REPLACE_DISPOSABLE_REPO"
+  },
+  "repository": "https://github.com/REPLACE_OWNER/REPLACE_DISPOSABLE_REPO",
+  "disposable": true,
+  "source_sha": "REPLACE_WITH_APPROVED_FULL_PUBLISHED_SHA",
+  "model": "REPLACE_WITH_EXACT_AVAILABLE_MODEL",
+  "max_cost_usd": "REPLACE_WITH_APPROVED_USD_CEILING",
+  "allowed_effects": [
+    "fixture_change",
+    "result_branch",
+    "exact_run_cancel",
+    "owned_local_shutdown"
+  ],
+  "limits": {
+    "CreateAgent": 1,
+    "Send": 3
+  }
+}
