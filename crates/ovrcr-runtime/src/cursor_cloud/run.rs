@@ -448,14 +448,14 @@ pub(super) fn send(
                         .context("stream object missing")?
                         .remove("offset");
                     let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&normalized)?));
-                    if let Some(offset) = offset.as_ref() {
-                        if let Some(previous) = offsets.get(&(observing, offset.clone())) {
-                            ensure!(
-                                previous == &digest,
-                                "changed payload for repeated stream offset"
-                            );
-                            return Ok(());
-                        }
+                    if let Some(offset) = offset.as_ref()
+                        && let Some(previous) = offsets.get(&(observing, offset.clone()))
+                    {
+                        ensure!(
+                            previous == &digest,
+                            "changed payload for repeated stream offset"
+                        );
+                        return Ok(());
                     }
                     ensure!(offsets.len() < 4096, "observation progress bound reached");
                     let duplicate = if observing {
