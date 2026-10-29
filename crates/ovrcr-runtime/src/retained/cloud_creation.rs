@@ -921,4 +921,82 @@ mod progress_tests {
         };
         assert!(record(current).validate().is_ok());
     }
+
+    #[test]
+    fn persisted_invalid_current_progress_fails_before_payload_cleanup() {
+        let cases = [
+            ("zero revision", "cursor".to_owned(), 0),
+            ("empty token", String::new(), 1),
+            (
+                "oversized token",
+                "x".repeat(ovrcr_protocol::MAX_FRAME_BYTES + 1),
+                1,
+            ),
+        ];
+        for (case, token, revision) in cases {
+            let root = tempfile::tempdir().unwrap();
+            let config = root.path().join("instance");
+            crate::config::initialize_registry(&config).unwrap();
+            let metadata = serde_json::to_string(&record(Progress {
+                origin: "f".repeat(64),
+                send: Some(StreamProgress::Current { token, revision }),
+                observe: None,
+            }))
+            .unwrap();
+
+            let database = crate::config::database_path(&config);
+            let connection = rusqlite::Connection::open(&database).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO retained_sessions(id,run,project,workspace,name,label,cwd,kind,title_revision,stopped) VALUES(42,7,'demo','root','cloud','cloud',X'2f746d70','\"Terminal\"',0,1)",
+                    [],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO cloud_creations(session,metadata) VALUES(42,?1)",
+                    [&metadata],
+                )
+                .unwrap();
+            drop(connection);
+
+            let payload_directory = config.join("cloud-creations");
+            std::fs::create_dir_all(&payload_directory).unwrap();
+            let creation_payload = payload_directory.join("a".repeat(64));
+            let send_payload = payload_directory.join("d".repeat(64));
+            std::fs::write(&creation_payload, b"creation payload sentinel").unwrap();
+            std::fs::write(&send_payload, b"send payload sentinel").unwrap();
+
+            let error = match crate::retained::SessionStore::open(&config) {
+                Ok(_) => panic!("{case} persisted observation progress was accepted"),
+                Err(error) => error,
+            };
+            assert!(
+                error
+                    .to_string()
+                    .contains("invalid retained Send authority"),
+                "{case}: {error:#}"
+            );
+
+            let connection = rusqlite::Connection::open(&database).unwrap();
+            let stored: String = connection
+                .query_row(
+                    "SELECT metadata FROM cloud_creations WHERE session=42",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(stored, metadata, "{case} metadata changed");
+            assert_eq!(
+                std::fs::read(&creation_payload).unwrap(),
+                b"creation payload sentinel",
+                "{case} creation payload changed"
+            );
+            assert_eq!(
+                std::fs::read(&send_payload).unwrap(),
+                b"send payload sentinel",
+                "{case} Send payload changed"
+            );
+        }
+    }
 }
