@@ -3,7 +3,7 @@ use super::*;
 use ovrcr_protocol::{
     CloudCreationCommand as C, CloudCreationIntent, CloudRunStatus, CloudSendIntent,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 #[derive(Debug)]
 struct Disconnected;
@@ -246,7 +246,6 @@ pub(super) fn send(
     let mut result: Option<Value> = None;
     let mut done = false;
     let origin = crate::agent_runner::private_identifier()?;
-    let mut send_seen = HashSet::new();
     let mut replay = HashMap::<String, usize>::new();
     let mut offsets = HashMap::<(bool, u64), String>::new();
     let mut send_offset = 0u64;
@@ -419,7 +418,8 @@ pub(super) fn send(
                             false
                         }
                     } else {
-                        !send_seen.insert(Sha256::digest(serde_json::to_vec(&envelope)?))
+                        // Equal Send content without a repeated offset is not a replay identity.
+                        false
                     };
                     if !duplicate {
                         applied(&envelope, &mut run, admit)?;

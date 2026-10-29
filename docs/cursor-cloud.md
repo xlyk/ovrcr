@@ -79,8 +79,11 @@ interruption with an exact durable run receipt, the original owned bridge may ma
 at most two ObserveRun attempts. The first starts at the beginning and suppresses
 already-applied Send events; the second resumes after durably acknowledged exclusive
 ObserveRun progress. Send and ObserveRun offsets are stored separately under the
-original account/conversation/run and stream origin in shared SQLite. Replayed
-completion cannot create another Ready/Unread. Invalid identity, malformed evidence,
+original account/conversation/run and stream origin in shared SQLite. Repeated
+offset identities suppress only matching events; equal text without a Send offset
+remains a distinct occurrence. Beginning ObserveRun replay consumes the count of
+already-applied occurrences, preserving repeated equal-content output.
+Replayed completion cannot create another Ready/Unread. Invalid identity, malformed evidence,
 missing/changed offsets or failed progress persistence stop observation. No Send is
 replayed, and no fresh bridge is started for this bounded recovery. Prose never
 creates an input/approval request. Terminal responses, uncertain CreateAgent/Send Retry and active

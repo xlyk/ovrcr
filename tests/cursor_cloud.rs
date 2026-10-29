@@ -3250,12 +3250,23 @@ fn managed_same_bridge_observe_rejects_foreign_changed_missing_and_failed_progre
 
 #[test]
 fn managed_same_bridge_observe_preserves_distinct_equal_content_events() {
+    check_managed_equal_content_events(true);
+}
+
+#[test]
+fn managed_send_preserves_distinct_equal_content_events_without_offsets() {
+    check_managed_equal_content_events(false);
+}
+
+fn check_managed_equal_content_events(interrupted: bool) {
     let fixture = Fixture::new("composer-2.5", true, true, false);
     let path = fixture.live.root.path().join("bridge.json");
     let mut config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    config["drop_send_after"] = json!(5);
     config["equal_content_events"] = json!(true);
-    config["observe_scenario"] = json!("replayed_completion");
+    if interrupted {
+        config["drop_send_after"] = json!(5);
+        config["observe_scenario"] = json!("replayed_completion");
+    }
     fs::write(&path, config.to_string()).unwrap();
     let session = fixture.launch();
     fixture.until(|| {

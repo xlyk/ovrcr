@@ -146,7 +146,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if scenario == 'cross_run': events[1]['sdkMessage']['message']['run_id'] = 'foreign-run'
             if scenario == 'unknown_shape': events[1]['sdkMessage']['type'] = 'unrecognized'
             if scenario == 'bad_source': events[2]['sdkMessage']['message']['result']['success']['stdout'] = 'wrong\n'
-            if scenario == 'duplicate': events.insert(4,events[3])
             if scenario == 'bad_call': events[2]['sdkMessage']['message']['call_id'] = 'different-call'
             if scenario in ('shell_success', 'shell_flat_success'):
                 events[1] = sdk('tool_call',name='shell',call_id='source-probe',args={'command':'git rev-parse HEAD'},status='running')
@@ -163,6 +162,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 result['git'] = {'branches':[{'repoUrl':'https://github.com/acme/app','branch':'fixture-result','prUrl':'https://github.com/acme/app/pull/17' if config.get('result_pr') else ''}]}
             if config.get('equal_content_events'): events.insert(4,events[3])
             self.server.streams[run] = [dict(v, offset=str(i+1)) for i,v in enumerate(events)]
+            if scenario == 'duplicate':
+                events = list(self.server.streams[run])
+                events.insert(4,events[3])
             drop = config.get('drop_send_after')
             if drop is not None:
                 events = [dict(v, offset=str(100+i)) for i,v in enumerate(events[:drop])]
