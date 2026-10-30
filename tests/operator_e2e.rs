@@ -1133,6 +1133,18 @@ mod compiled_worker {
         provider.sign_in(&live.config);
         start(&live, &provider);
         live.ready("feature/quick");
+        let Response::CreatedSession(other) =
+            live.request(Request::CreateSession(protocol::CreateSessionRequest {
+                project: live::PROJECT.into(),
+                workspace: live::WORKSPACE.into(),
+                name: "other".into(),
+                label: None,
+                argv: vec!["/bin/sh".into()],
+                kind: protocol::SessionKind::Terminal,
+            }))
+        else {
+            panic!("second real terminal")
+        };
         let mut ui = DashboardClient::connect(&live);
         let background = ui.create("fixture-b", true);
         ui.submit("Background completion while quick receipts wait");
@@ -1178,6 +1190,9 @@ mod compiled_worker {
         let conversation = summary.clone();
         ui.key(KeyCode::Esc);
         assert!(!ui.rendered().contains("Quick message · Ctrl-o"));
+        ui.dashboard.install_focus(other.id);
+        ui.flush();
+        assert_eq!(ui.dashboard.focused_session(), Some(other.id));
         provider.release("fixture-b");
         let completed =
             ui.wait_history(&provider, background.id, |h| h.conversation.worker_stopped);
@@ -1194,9 +1209,18 @@ mod compiled_worker {
         };
         assert_eq!(text, "Frozen first\nmessage 界🙂");
         let frozen = context.clone();
-        assert_eq!(frozen.session, Some(terminal.id));
-        assert_eq!(frozen.run, Some(terminal.run));
-        assert!(frozen.workspace_id.is_some() && frozen.cwd.is_some());
+        assert_eq!(
+            frozen,
+            protocol::OperatorContext {
+                project: Some(live::PROJECT.into()),
+                workspace: Some("feature/quick".into()),
+                workspace_id: Some(live::WORKSPACE.into()),
+                cwd: Some(terminal.cwd.clone()),
+                session: Some(terminal.id),
+                run: Some(terminal.run),
+            },
+            "late Create recaptured the newly selected terminal"
+        );
         let submitted = ui.hold(submit);
         let group = own_worker(&live, &conversation);
         ui.ctrl('o');
@@ -1240,7 +1264,7 @@ mod compiled_worker {
         assert!(!text.contains("Frozen first") && !text.contains("message 界🙂"));
         assert_eq!(
             ui.dashboard.focused_session(),
-            Some(terminal.id),
+            Some(other.id),
             "late receipts stole terminal focus"
         );
         // Real create failure is delivered after dismissal without retry or focus theft.
