@@ -196,3 +196,7 @@ ignored fixture entrypoints are invoked and checked by their owning parent or
 native acceptance; they are not passing product cases merely because ignored.
 Keep actual native screenshots/accessibility and live subscription acceptance
 separate from loopback evidence.
+
+The [2026-10-29–30 Operator acceptance record](../../research/rig-operator-2026-10-29/README.md)
+contains real ChatGPT GUI turns and a separate controlled concurrent-chat run,
+with executable hashes, cleanup receipts and remaining gate limitations.

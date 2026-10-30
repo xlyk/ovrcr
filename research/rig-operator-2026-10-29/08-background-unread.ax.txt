@@ -1,0 +1,88 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o] · 1 unread                                                                                                                       [Actions] [Menu]
+ CONSIGINT ────────────────────────────│New Conversation [Ctrl-n]       ┌interrupted · Native chat A · grok / fixture-a──────────────────────────────────[Stop Ctrl-x]
+  󰘬 main                          root │›  Native chat A                │90564f0d53d3061a5d","name":"review websocket shutdown","title":"review websocket shutdown","│
+     $ lo
+		3 text (settable) 󰚩 OVRCR Operator [o] · 1 unread                                                                                                                       [Actions] [Menu]
+		4 text (settable)  CONSIGINT ────────────────────────────│New Conversation [Ctrl-n]       ┌interrupted · Native chat A · grok / fixture-a──────────────────────────────────[Stop Ctrl-x]
+		5 text (settable)   󰘬 main                          root │›  Native chat A                │90564f0d53d3061a5d","name":"review websocket shutdown","title":"review websocket shutdown","│
+		6 text (settable)      $ local                           │ ● Native chat B                │display_name":"review websocket shutdown","label":"codex / gpt-5.4","pid":80673,"started_uni│
+		7 text (settable)   󰘬 gui-consigint-auth-handoff         │                                │x_ms":1793345227346,"phase":"running","activity":"unknown","exit_code":null,"exit_signal":nu│
+		8 text (settable)      $ local                           │                                │ll,"agent":null,"agent_epoch":0,"unread":null,"recovery":null,"reporting_unavailable":null,"│
+		9 text (settable)      - review auth handoff    grok:4.6 │                                │measurement_age_ms":null},{"scope":"Workspace","id":9,"archived":false,"run":1,"kind":"termi│
+		10 text (settable)   󰘬 gui-consigint-worktree-lifecycle   │                                │nal","project":"consigint","workspace":"gui-consigint-worktree-lifecycle","cwd":"/private/tm│
+		11 text (settable)      $ local                           │                                │p/ovrcr-rig-native-wub3bd7s/demo-parent/ovrcr-gui-KIg6TX/workspaces/consigint/bf943bcb808c1f│
+		12 text (settable)      - implement lif…  claude:sonnet-4 │                                │90564f0d53d3061a5d","name":"plan snapshot restore","title":"plan snapshot restore","display_│
+		13 text (settable)      - review websocke…  codex:gpt-5.4 │                                │name":"plan snapshot restore","label":"pi / grok-4.6","pid":80964,"started_unix_ms":17933452│
+		14 text (settable)      - plan snapshot res…  pi:grok-4.6 │                                │27633,"phase":"running","activity":"unknown","exit_code":null,"exit_signal":null,"agent":nul│
+		15 text (settable)                                        │                                │l,"agent_epoch":0,"unread":null,"recovery":null,"reporting_unavailable":null,"measurement_ag│
+		16 text (settable)  SPACELIFT-AGENT ──────────────────────│                                │e_ms":null}]}]},{"name":"spacelift-agent","workspaces":[{"project":"spacelift-agent","name":│
+		17 text (settable)   󰘬 main                          root │                                │"main","path":"/private/tmp/ovrcr-rig-native-wub3bd7s/demo-parent/ovrcr-gui-KIg6TX/repositor│
+		18 text (settable)      $ local                           │                                │ies/spacelift-agent","terminals":[{"scope":"Workspace","id":2,"archived":false,"run":1,"kind│
+		19 text (settable)   󰘬 gui-spacelift-agent-pipeline-progr…│                                │":"terminal","project":"spacelift-agent","workspace":"main","cwd":"/private/tmp/ovrcr-rig-na│
+		20 text (settable)      $ local                           │                                │tive-wub3bd7s/demo-parent/ovrcr-gui-KIg6TX/repositories/spacelift-agent","name":"local","tit│
+		21 text (settable)      - build pipeline …  claude:opus-4 │                                │le":"local","display_name":"local","label":"sh","pid":78907,"started_unix_ms":1793345225728,│
+		22 text (settable)   󰘬 gui-spacelift-agent-scope-quality  │                                │"phase":"running","activity":"unknown","exit_code":null,"exit_signal":null,"agent":null,"age│
+		23 text (settable)      $ local                           │                                │nt_epoch":0,"unread":null,"recovery":null,"reporting_unavailable":null,"measurement_age_ms":│
+		24 text (settable)      - review scope qu…  codex:gpt-5.4 │                                │null}]},{"project":"spacelift-agent","name":"gui-spacelift-agent-pipeline-progress-v2","path│
+		25 text (settable)                                        │                                │":"/private/tmp/ovrcr-rig-native-wub3bd7s/demo-parent/ovrcr-gui-KIg6TX/workspaces/spacelift-│
+		26 text (settable)                                        │                                │agent/efcc9d45c9cf66b20466046298d5b997","terminals":[{"scope":"Workspace","id":5,"archived":│
+		27 text (settable)                                        │                                │false,"run":1,"kind":"terminal","project":"spacelift-agent","workspace":"gui-spacelift-agent│
+		28 text (settable)                                        │                                │-pipeline-progress-v2","cwd":"/private/tmp/ovrcr-rig-native-wub3bd7s/demo-parent/ovrcr-gui-K│
+		29 text (settable)                                        │                                │Ig6TX/workspaces/spacelift-agent/efcc9d45c9cf66b20466046298d5b997","name":"local","title":"l│
+		30 text (settable)                                        │                                │ocal","display_name":"local","label":"sh","pid":79836,"started_unix_ms":1793345226498,"phase│
+		31 text (settable)                                        │                                │":"running","activity":"unknown","exit_code":null,"exit_signal":null,"agent":null,"agent_epo│
+		32 text (settable)                                        │                                │ch":0,"unread":null,"recovery":null,"reporting_unavailable":null,"measurement_age_ms":null},│
+		33 text (settable)                                        │                                │{"scope":"Workspace","id":11,"archived":false,"run":1,"kind":"terminal","project":"spacelift│
+		34 text (settable)                                        │                                │-agent","workspace":"gui-spacelift-agent-pipeline-progress-v2","cwd":"/private/tmp/ovrcr-rig│
+		35 text (settable)                                        │                                │-native-wub3bd7s/demo-parent/ovrcr-gui-KIg6TX/workspaces/spacelift-agent/efcc9d45c9cf66b2046│
+		36 text (settable)                                        │                                │6046298d5b997","name":"build pipeline progress","title":"build pipeline progress","display_n│
+		37 text (settable)                                        │                                │ame":"build pipeline progress","label":"claude / opus-4","pid":81693,"started_unix_ms":17933│
+		38 text (settable)                                        │                                │45228204,"phase":"running","activity":"unknown","exit_code":null,"exit_signal":null,"agent":│
+		39 text (settable)                                        │                                │null,"agent_epoch":0,"unread":null,"recovery":null,"reporting_unavailable":null,"measurement│
+		40 text (settable)                                        │                                │_age_ms":null}]},{"project":"spacelift-agent","name":"gui-spacelift-agent-scope-quality","pa│
+		41 text (settable)                                        │                                │th":"/private/tmp/ovrcr-rig-native-wub3bd7s/demo-parent/ovrcr-gui-KIg6TX/workspaces/spacelif│
+		42 text (settable)                                        │                                │t-agent/b04f6d61910853feb9aad8ad1d9e18c4","terminals":[{"scope":"Workspace","id":6,"archived│
+		43 text (settable)                                        │                                │":false,"run":1,"kind":"terminal","project":"spacelift-agent","workspace":"gui-spacelift-age│
+		44 text (settable)                                        │                                │nt-scope-quality","cwd":"/private/tmp/ovrcr-rig-native-wub3bd7s/demo-parent/ovrcr-gui-KIg6TX│
+		45 text (settable)                                        │                                │/workspaces/spacelift-agent/b04f6d61910853feb9aad8ad1d9e18c4","name":"local","title":"local"│
+		46 text (settable)                                        │                                │,"display_name":"local","label":"sh","pid":80093,"started_unix_ms":1793345226779,"phase":"ru│
+		47 text (settable)                                        │                                │nning","activity":"unknown","exit_code":null,"exit_signal":null,"agent":null,"agent_epoch":0│
+		48 text (settable)                                        │                                │,"unread":null,"recovery":null,"reporting_unavailable":null,"measurement_age_ms":null},{"sco│
+		49 text (settable)                                        │                                │pe":"Workspace","id":12,"archived":false,"run":1,"kind":"terminal","project":"spacelift-agen│
+		50 text (settable)                                        │                                │t","workspace":"gui-spacelift-agent-scope-quality","cwd":"/private/tmp/ovrcr-rig-native-wub3│
+		51 text (settable)                                        │                                │bd7s/demo-parent/ovrcr-gui-KIg6TX/workspaces/spacelift-agent/b04f6d61910853feb9aad8ad1d9e18c│
+		52 text (settable)                                        │                                │4","name":"review scope quality","title":"review scope quality","display_name":"review scope│
+		53 text (settable)                                        │                                │ quality","label":"codex / gpt-5.4","pid":82205,"started_unix_ms":1793345228492,"phase":"run│
+		54 text (settable)                                        │                                │ning","activity":"unknown","exit_code":null,"exit_signal":null,"agent":null,"agent_epoch":0,│
+		55 text (settable)                                        │                                │"unread":null,"recovery":null,"reporting_unavailable":null,"measurement_age_ms":null}]}]}]  │
+		56 text (settable)                                        │                                │                                                                                            │
+		57 text (settable)                                        │                                │CLI_END                                                                                     │
+		58 text (settable)                                        │                                │                                                                                            │
+		59 text (settable)                                        │                                │                                                                                            │
+		60 text (settable)                                        │                                │Operator                                                                                    │
+		61 text (settable)                                        │                                │A partial waiting                                                                           │
+		62 text (settable)                                        │                                │                                                                                            │
+		63 text (settable)                                        │                                │Interrupted · accepted operations may finish; no rollback.                                  │
+		64 text (settable)                                        │                                └────────────────────────────────────────────────────────────────────────────────────────────┘
+		65 text (settable)                                        │                                ┌consigint / main / #1 run 1 · Enter send · Shift-Enter newline · Tab/Ctrl-l chats · Ctrl-n n┐
+		66 text (settable)  QUOTA LEFT ───────────────────────────│                                │▏                                                                                           │
+		67 text (settable) Claude · not signed in                 │                                │                                                                                            │
+		68 text (settable) Codex · usage off                      │                                │                                                                                            │
+		69 text (settable) Grok · usage off                       │                                │                                                                                            │
+		70 text (settable) Cursor · usage off                     │                                │                                                                                            │
+		71 text (settable)                                        │                                └────────────────────────────────────────────────────────────────────────────────────────────┘
+		72 text (settable) OPERATOR  Enter Send / create  Ctrl-g Browse  Ctrl-l Conversations  Ctrl-n New Conversation  Ctrl-x Stop selected turn  Shift-Enter Newline
+	73 close button
+	74 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	75 minimize button
+	76 text OVRCR GUI
+77 menu bar
+	78 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o] · 1 unread                                                                                                                       [Actions] [Menu]
+ CONSIGINT ────────────────────────────│New Conversation [Ctrl-n]       ┌interrupted · Native chat A · grok / fixture-a──────────────────────────────────[Stop Ctrl-x]
+  󰘬 main                          root │›  Native chat A                │90564f0d53d3061a5d","name":"review websocket shutdown","title":"review websocket shutdown","│
+     $ lo
