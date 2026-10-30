@@ -266,6 +266,72 @@ fn status(chat: &Chat) -> &'static str {
     }
 }
 
+struct ConversationActivity {
+    label: String,
+    animated: bool,
+}
+fn conversation_activity(chat: &Chat) -> Option<ConversationActivity> {
+    if chat.summary.archived {
+        return None;
+    }
+    let label = if chat.submitting {
+        "Sending".into()
+    } else if chat.stopping {
+        "Stopping".into()
+    } else if chat.closing {
+        "Closing".into()
+    } else {
+        let turn = chat.summary.current_turn.as_ref()?;
+        if turn.state != OperatorTurnState::Running {
+            return (!chat.summary.worker_stopped).then(|| ConversationActivity {
+                label: "Stop unconfirmed".into(),
+                animated: false,
+            });
+        }
+        let mut outputs = BTreeSet::new();
+        let mut pending = BTreeMap::new();
+        if !chat.reading && !chat.dirty && chat.confirmed_tail == Some(chat.ordinal) {
+            for message in chat
+                .messages
+                .iter()
+                .rev()
+                .filter(|message| message.turn == turn.identity.turn)
+            {
+                match &message.content {
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput {
+                        id, ..
+                    }) => {
+                        outputs.insert(id);
+                    }
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
+                        id,
+                        name,
+                        ..
+                    }) if !outputs.contains(id) => {
+                        pending.insert(id, name);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        match pending.len() {
+            0 => "Responding".into(),
+            1 => format!(
+                "Waiting for {} result",
+                super::render::clip_text(
+                    &display_text(pending.first_key_value().unwrap().1).replace('\n', "\\n"),
+                    16
+                )
+            ),
+            count => format!("Waiting for {count} tool results"),
+        }
+    };
+    Some(ConversationActivity {
+        label,
+        animated: true,
+    })
+}
+
 fn expandable(message: &OperatorMessage) -> bool {
     matches!(
         message.content,
@@ -276,6 +342,18 @@ fn expandable(message: &OperatorMessage) -> bool {
     )
 }
 impl Dashboard {
+    pub(super) fn operator_conversation_busy(&self) -> bool {
+        self.operator.visible
+            && self.operator.new.is_none()
+            && self.outer_area.width >= 60
+            && self.outer_area.height >= 16
+            && self
+                .operator
+                .selected
+                .and_then(|id| self.operator.chats.get(&id.0))
+                .and_then(conversation_activity)
+                .is_some_and(|activity| activity.animated)
+    }
     pub(super) fn operator_quick_visible(&self) -> bool {
         self.operator
             .quick
@@ -1566,7 +1644,7 @@ impl Dashboard {
             quick,
         );
     }
-    pub(super) fn draw_operator(&self, frame: &mut Frame<'_>) {
+    pub(super) fn draw_operator(&self, frame: &mut Frame<'_>, now_unix_ms: u64) {
         if !self.operator.visible {
             return;
         }
@@ -1623,7 +1701,7 @@ impl Dashboard {
         else {
             return;
         };
-        self.draw_operator_conversation(frame, chat);
+        self.draw_operator_conversation(frame, chat, now_unix_ms);
     }
 }
 
@@ -3048,6 +3126,284 @@ mod tests {
         let (mut d, _) = setup();
         d.operator.visible = false;
         assert_eq!(d.redraw_interval(), super::super::status::SPINNER_INTERVAL);
+    }
+    #[test]
+    fn operator_activity_state_and_cadence() {
+        let (mut d, _) = setup();
+        d.sidebar_width = Some(0);
+        let assert_label = |d: &mut Dashboard, expected: &str| {
+            let screen = draw(d, 140, 40);
+            let context = d.operator_layout(d.outer_area).context;
+            let row: String = screen
+                .chars()
+                .skip(usize::from(context.y * 140 + context.x))
+                .take(context.width as usize)
+                .collect();
+            assert!(row.contains(expected), "expected {expected}: {row}");
+        };
+        d.operator.chats.get_mut(&1).unwrap().submitting = true;
+        assert_label(&mut d, "Sending");
+        assert_eq!(d.redraw_interval(), super::super::status::SPINNER_INTERVAL);
+        let chat = d.operator.chats.get_mut(&1).unwrap();
+        chat.submitting = false;
+        chat.reading = false;
+        chat.dirty = false;
+        chat.confirmed_tail = Some(0);
+        assert_label(&mut d, "Responding");
+        d.operator
+            .chats
+            .get_mut(&1)
+            .unwrap()
+            .messages
+            .push(delta(1, "stream"));
+        assert_label(&mut d, "Responding");
+        let call = |ordinal, id: &str, name: &str| {
+            message(
+                ordinal,
+                OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
+                    id: id.into(),
+                    name: name.into(),
+                    arguments: "{}".into(),
+                }),
+            )
+        };
+        let output = |ordinal, id: &str, status| {
+            message(
+                ordinal,
+                OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput {
+                    id: id.into(),
+                    output: String::new(),
+                    truncated: false,
+                    status,
+                }),
+            )
+        };
+        d.operator
+            .chats
+            .get_mut(&1)
+            .unwrap()
+            .messages
+            .push(call(2, "one", "bash"));
+        assert_label(&mut d, "Waiting for bash result");
+        let mut wrong_turn = output(3, "one", OperatorToolStatus::Succeeded);
+        wrong_turn.turn = OperatorTurnId(99);
+        d.operator.chats.get_mut(&1).unwrap().messages.extend([
+            wrong_turn,
+            output(4, "wrong-id", OperatorToolStatus::Succeeded),
+            call(5, "two", "inspect"),
+            delta(6, "between calls"),
+        ]);
+        assert_label(&mut d, "Waiting for 2 tool results");
+        d.operator.chats.get_mut(&1).unwrap().messages.push(output(
+            7,
+            "one",
+            OperatorToolStatus::Succeeded,
+        ));
+        assert_label(&mut d, "Waiting for inspect result");
+        for status in [
+            OperatorToolStatus::Succeeded,
+            OperatorToolStatus::Failed { exit_code: Some(2) },
+            OperatorToolStatus::TimedOut,
+        ] {
+            d.operator
+                .chats
+                .get_mut(&1)
+                .unwrap()
+                .messages
+                .push(output(8, "two", status));
+            assert_label(&mut d, "Responding");
+            d.operator.chats.get_mut(&1).unwrap().messages.pop();
+        }
+        for fallback in 0..3 {
+            let chat = d.operator.chats.get_mut(&1).unwrap();
+            chat.reading = fallback == 0;
+            chat.dirty = fallback == 1;
+            chat.confirmed_tail = if fallback == 2 { None } else { Some(0) };
+            assert_label(&mut d, "Responding");
+        }
+        let chat = d.operator.chats.get_mut(&1).unwrap();
+        chat.reading = false;
+        chat.dirty = false;
+        chat.confirmed_tail = Some(0);
+        chat.stopping = true;
+        assert_label(&mut d, "Stopping");
+        let chat = d.operator.chats.get_mut(&1).unwrap();
+        chat.stopping = false;
+        chat.closing = true;
+        assert_label(&mut d, "Closing");
+        let chat = d.operator.chats.get_mut(&1).unwrap();
+        chat.closing = false;
+        for state in [
+            OperatorTurnState::Complete,
+            OperatorTurnState::Interrupted,
+            OperatorTurnState::Error,
+        ] {
+            d.operator
+                .chats
+                .get_mut(&1)
+                .unwrap()
+                .summary
+                .current_turn
+                .as_mut()
+                .unwrap()
+                .state = state;
+            assert_label(&mut d, "Stop unconfirmed");
+        }
+        assert_eq!(
+            d.redraw_interval(),
+            super::super::event_loop::DASHBOARD_IDLE_REDRAW_INTERVAL
+        );
+        assert!(!d.operator.chats[&1].can_submit());
+        d.operator.chats.get_mut(&1).unwrap().summary.worker_stopped = true;
+        let complete = draw(&mut d, 140, 40);
+        assert!(
+            !complete.contains("Responding")
+                && !complete.contains("Waiting for")
+                && !complete.contains("Stop unconfirmed")
+        );
+        d.operator_select(Id(2));
+        assert_label(&mut d, "Responding");
+        for (cols, rows) in [(140, 40), (80, 24), (60, 24), (60, 16)] {
+            d.install_area(Rect::new(0, 0, cols, rows));
+            assert_eq!(d.redraw_interval(), super::super::status::SPINNER_INTERVAL);
+        }
+        d.install_area(Rect::new(0, 0, 59, 16));
+        assert_eq!(
+            d.redraw_interval(),
+            super::super::event_loop::DASHBOARD_IDLE_REDRAW_INTERVAL
+        );
+        d.install_area(Rect::new(0, 0, 140, 40));
+        d.operator.visible = false;
+        assert_eq!(
+            d.redraw_interval(),
+            super::super::event_loop::DASHBOARD_IDLE_REDRAW_INTERVAL
+        );
+        d.operator.visible = true;
+        d.operator_new();
+        assert_eq!(
+            d.redraw_interval(),
+            super::super::event_loop::DASHBOARD_IDLE_REDRAW_INTERVAL
+        );
+        d.operator.new = None;
+        d.sidebar_width = None;
+        d.operator.collapsed = true;
+        assert_eq!(d.redraw_interval(), super::super::status::SPINNER_INTERVAL);
+        d.operator.collapsed = false;
+        d.operator.list_offset = 100;
+        assert_eq!(d.redraw_interval(), super::super::status::SPINNER_INTERVAL);
+    }
+    #[test]
+    fn operator_activity_preserves_context_error_and_review_geometry() {
+        for theme in [
+            ovrcr_protocol::ThemeId::default(),
+            ovrcr_protocol::ThemeId::ALL[1],
+        ] {
+            for (cols, height) in [(140, 40), (80, 24), (60, 24), (60, 16)] {
+                let (mut d, _) = setup();
+                d.install_settings(ovrcr_protocol::Settings {
+                    theme,
+                    ..Default::default()
+                });
+                d.sidebar_width = Some(0);
+                let chat = d.operator.chats.get_mut(&1).unwrap();
+                chat.draft = "retained draft 界".into();
+                chat.context.project = Some("long target 界".repeat(12));
+                chat.context.session = Some(SessionId(11));
+                chat.context.run = Some(SessionRunId(1));
+                chat.messages = vec![message(
+                    1,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
+                        id: "pending".into(),
+                        name: "bash\u{1b}[31m\n界界界界界界界界界界界".into(),
+                        arguments: "{}".into(),
+                    }),
+                )];
+                chat.ordinal = 1;
+                chat.confirmed_tail = Some(1);
+                chat.reading = false;
+                chat.dirty = false;
+                chat.follow = false;
+                chat.anchor = Some((1, 0, 0));
+                chat.unread = Some(OperatorTurnId(1));
+                let cursor = chat.cursor;
+                d.install_area(Rect::new(0, 0, cols, height));
+                let layout = d.operator_layout(d.outer_area);
+                d.drain_outbox();
+                let mut terminal =
+                    ratatui::Terminal::new(ratatui::backend::TestBackend::new(cols, height))
+                        .unwrap();
+                let mut before = None;
+                for error in [None, Some("RETAINED_ERROR 界".repeat(20))] {
+                    d.operator.chats.get_mut(&1).unwrap().error = error.clone();
+                    for time in [0, 100] {
+                        terminal
+                            .draw(|f| super::super::render::draw_dashboard_at(f, &d, time))
+                            .unwrap();
+                        let b = terminal.backend().buffer();
+                        let row: String = (layout.context.x..layout.context.right())
+                            .map(|x| b[(x, layout.context.y)].symbol())
+                            .collect();
+                        assert!(
+                            row.contains("Waiting for bash\\u{1b}"),
+                            "{cols}×{height}: {row}"
+                        );
+                        assert!(row.contains(" result"), "{row}");
+                        assert!(!row.contains('\u{1b}'));
+                        if error.is_some() {
+                            assert!(row.starts_with("RETAINED_ERROR"), "{row}");
+                            assert_eq!(
+                                b[(layout.context.x, layout.context.y)].fg,
+                                crate::theme::ThemeTokens::for_id(theme).red
+                            );
+                        } else {
+                            assert!(
+                                row.contains("#11 run 1"),
+                                "target suffix must survive clipping: {row}"
+                            );
+                        }
+                        if time == 0 {
+                            before = Some(b.clone());
+                        } else {
+                            let changed: Vec<_> = b
+                                .content()
+                                .iter()
+                                .zip(before.as_ref().unwrap().content())
+                                .enumerate()
+                                .filter(|(_, (a, b))| a != b)
+                                .map(|(i, _)| i)
+                                .collect();
+                            assert_eq!(changed.len(), 1, "only the clock glyph may change");
+                            assert_eq!(changed[0] / cols as usize, layout.context.y as usize);
+                        }
+                    }
+                }
+                let chat = &d.operator.chats[&1];
+                assert_eq!(
+                    chat.cursor.position(&chat.draft),
+                    cursor.position(&chat.draft)
+                );
+                assert_eq!(chat.draft, "retained draft 界");
+                assert_eq!(chat.anchor, Some((1, 0, 0)));
+                assert_eq!(chat.unread, Some(OperatorTurnId(1)));
+                assert!(!chat.follow);
+                assert!(d.drain_outbox().is_empty());
+                d.operator
+                    .chats
+                    .get_mut(&1)
+                    .unwrap()
+                    .summary
+                    .current_turn
+                    .as_mut()
+                    .unwrap()
+                    .state = OperatorTurnState::Complete;
+                d.operator.chats.get_mut(&1).unwrap().summary.worker_stopped = true;
+                assert_eq!(
+                    d.operator_layout(d.outer_area).transcript,
+                    layout.transcript
+                );
+                assert_eq!(d.operator_layout(d.outer_area).composer, layout.composer);
+            }
+        }
     }
     fn click(d: &mut Dashboard, column: u16, row: u16, kind: MouseEventKind) {
         d.mouse_action(

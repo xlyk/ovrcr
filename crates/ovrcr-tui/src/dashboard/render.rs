@@ -745,7 +745,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     if !dashboard.operator.visible {
         dashboard.draw_start_screen(frame);
     }
-    dashboard.draw_operator(frame);
+    dashboard.draw_operator(frame, now_unix_ms);
     dashboard.draw_palette(frame);
     dashboard.draw_whichkey(frame);
     dashboard.draw_details(frame, now_unix_ms);

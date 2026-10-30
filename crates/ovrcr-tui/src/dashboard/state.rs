@@ -1247,6 +1247,7 @@ impl Dashboard {
             return Duration::from_millis(50);
         }
         if self.operator_sidebar_busy()
+            || self.operator_conversation_busy()
             || self.hierarchy.projects.iter().any(|project| {
                 project.workspaces.iter().any(|workspace| {
                     workspace

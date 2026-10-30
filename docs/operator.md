@@ -67,6 +67,15 @@ different chat or returning to a terminal does not pause active work.
 `Shift-Enter` inserts a newline; paste edits the draft without submitting.
 Send is offered only for a nonempty draft when the selected conversation can accept
 it; running, pending and unconfirmed-worker-stop states keep the draft.
+The context row above the composer shows `Sending` while submission acceptance is
+pending, then `Responding` while the assistant's turn is running, including quiet
+periods. `Waiting for <tool> result` (or a count) means a recorded call has no
+matching result in the current turn's caught-up history. It does not certify
+that an operation is executing. Paging history uses `Responding`. These labels
+stay visible when you scroll the journal or hide/collapse its sidebar. Stopping
+and closing have their own labels; `Stop unconfirmed` is static until stop proof
+arrives. Completion with confirmed worker stop removes the activity indicator.
+
 `PageUp` and `PageDown` scroll the transcript. The Working journal marks user
 prompts and joins assistant/tool activity with a fine guide in the current theme.
 Tool call and output receipts remain independently expandable, with adjacent rows

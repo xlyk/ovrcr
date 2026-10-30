@@ -469,6 +469,8 @@ mod compiled_worker {
                 ("release-b", "fixture-b"),
                 ("release-b-followup", "fixture-b-followup"),
                 ("release-quick", "fixture-quick"),
+                ("release-activity-start", "fixture-activity-start"),
+                ("release-activity", "fixture-activity"),
             ] {
                 if control.join(marker).exists() {
                     provider.release(model);
@@ -477,7 +479,7 @@ mod compiled_worker {
             provider.assert_healthy();
             thread::sleep(Duration::from_millis(25));
         }
-        fs::write(control.join("finished.json"), serde_json::json!({"seeded":seeded,"a_requests":provider.requests("fixture-a").len(),"b_requests":provider.requests("fixture-b").len(),"quick_requests":provider.requests("fixture-quick").len()}).to_string()).unwrap();
+        fs::write(control.join("finished.json"), serde_json::json!({"seeded":seeded,"a_requests":provider.requests("fixture-a").len(),"b_requests":provider.requests("fixture-b").len(),"quick_requests":provider.requests("fixture-quick").len(),"activity_requests":provider.requests("fixture-activity").len()}).to_string()).unwrap();
     }
 
     #[test]
@@ -1579,6 +1581,90 @@ mod compiled_worker {
         assert_eq!(ui.request(Request::Shutdown { kill: false }), Response::Ok);
         drop(ui);
         assert!(live.join_within(BUDGET).is_finished());
+    }
+
+    #[test]
+    fn operator_activity_waits_for_real_model_and_tool() {
+        let live = live::Live::idle().bounded();
+        let provider = Provider::new(live.root.path(), BUDGET);
+        provider.sign_in(&live.config);
+        start(&live, &provider);
+        let mut ui = DashboardClient::connect(&live);
+        let conversation = ui.create("fixture-activity", true);
+        ui.paste("ACTIVITY run one held Bash");
+        ui.key(KeyCode::Enter);
+        let submit = ui.take_operator_request();
+        let receipt = ui.hold(submit);
+        assert!(ui.rendered().contains("Sending"));
+        ui.receive(receipt);
+        ui.flush();
+        let group = own_worker(&live, &conversation);
+        let running = ui.wait_history(&provider, conversation.id, |history| {
+            !provider.requests("fixture-activity").is_empty()
+                && history
+                    .conversation
+                    .current_turn
+                    .as_ref()
+                    .is_some_and(|turn| turn.state == OperatorTurnState::Running)
+        });
+        assert!(!running.messages.iter().any(|message| matches!(
+            message.content,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(_))
+        )));
+        assert!(ui.rendered().contains("Responding"));
+        provider.release("fixture-activity-start");
+        let pending = ui.wait_history(&provider, conversation.id, |history| {
+            history.messages.iter().any(|message| {
+                matches!(
+                    message.content,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall { .. })
+                )
+            })
+        });
+        assert!(!pending.messages.iter().any(|message| matches!(
+            message.content,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput { .. })
+        )));
+        assert!(ui.rendered().contains("Waiting for bash result"));
+        std::fs::write(
+            live.root.path().join("fixture-activity.bash-release"),
+            b"release",
+        )
+        .unwrap();
+        let matched = ui.wait_history(&provider, conversation.id, |history| {
+            history.messages.iter().any(|message| matches!(&message.content,
+                OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput { output, status: OperatorToolStatus::Succeeded, .. }) if output.contains("CLOSE_BASH_OK")))
+        });
+        assert_eq!(
+            matched.conversation.current_turn.as_ref().unwrap().state,
+            OperatorTurnState::Running
+        );
+        assert!(ui.rendered().contains("Responding"));
+        provider.release("fixture-activity");
+        let complete = ui.wait_history(&provider, conversation.id, |history| {
+            history.conversation.worker_stopped && has_text(history, "ACTIVITY final")
+        });
+        assert_eq!(
+            complete.conversation.current_turn.as_ref().unwrap().state,
+            OperatorTurnState::Complete
+        );
+        let rendered = ui.rendered();
+        assert!(
+            !rendered.contains("Responding")
+                && !rendered.contains("Waiting for")
+                && !rendered.contains("Sending"),
+            "{rendered}"
+        );
+        assert_eq!(provider.requests("fixture-activity").len(), 2);
+        provider.assert_healthy();
+        assert_eq!(ui.request(Request::Shutdown { kill: true }), Response::Ok);
+        drop(ui);
+        assert!(live.join_within(BUDGET).is_finished());
+        assert_eq!(unsafe { libc::kill(-group, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
     }
 
     #[test]

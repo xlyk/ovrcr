@@ -808,7 +808,12 @@ impl Dashboard {
             bottom_rule,
         }
     }
-    pub(super) fn draw_operator_conversation(&self, frame: &mut Frame<'_>, chat: &Chat) {
+    pub(super) fn draw_operator_conversation(
+        &self,
+        frame: &mut Frame<'_>,
+        chat: &Chat,
+        now_unix_ms: u64,
+    ) {
         let layout = self.operator_layout(frame.area());
         let stop = !chat.summary.worker_stopped
             || chat
@@ -874,8 +879,42 @@ impl Dashboard {
             .collect();
         frame.render_widget(Paragraph::new(lines), layout.transcript);
         let error = chat.error.as_deref().or(self.operator.error.as_deref());
+        let mut context = layout.context;
+        if let Some(activity) = conversation_activity(chat) {
+            let (glyph, color) = super::super::status::sidebar_activity_glyph(
+                AgentActivity::Busy,
+                false,
+                now_unix_ms,
+            );
+            let label = if activity.animated {
+                format!("{glyph} {}", activity.label)
+            } else {
+                activity.label
+            };
+            // Keep room for the target or retained error beside even a long tool name.
+            let width = label
+                .width()
+                .min(usize::from(context.width.saturating_sub(12))) as u16;
+            let area = Rect::new(
+                context.right().saturating_sub(width),
+                context.y,
+                width,
+                context.height,
+            );
+            context.width = context.width.saturating_sub(width + 1);
+            frame.render_widget(
+                Paragraph::new(clip_text(&label, width as usize)).style(Style::default().fg(
+                    if activity.animated {
+                        color
+                    } else {
+                        super::super::render::SUBTEXT()
+                    },
+                )),
+                area,
+            );
+        }
         let caption = error.map_or_else(
-            || context_caption(&chat.context, layout.context.width),
+            || context_caption(&chat.context, context.width),
             display_text,
         );
         frame.render_widget(
@@ -884,7 +923,7 @@ impl Dashboard {
             } else {
                 BLUE()
             })),
-            layout.context,
+            context,
         );
         for (area, color) in [(layout.top_rule, MAUVE()), (layout.bottom_rule, SURFACE2())] {
             frame.render_widget(

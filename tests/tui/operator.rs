@@ -5,6 +5,133 @@ use ovrcr_protocol::{
 };
 
 #[test]
+fn operator_activity_draw_tracks_real_responses_and_clock() {
+    use ovrcr_protocol::{OperatorTurn, OperatorTurnId, OperatorTurnIdentity, OperatorTurnState};
+    for theme in [
+        ovrcr_protocol::ThemeId::default(),
+        ovrcr_protocol::ThemeId::ALL[1],
+    ] {
+        for (cols, rows) in [(140, 40), (80, 24), (60, 24), (60, 16)] {
+            let mut d = Dashboard::new(TerminalSize { rows, cols });
+            d.install_settings(ovrcr::tui::Settings {
+                theme,
+                ..Default::default()
+            });
+            d.key(KeyCode::Char('o'));
+            let list = d
+                .drain_outbox()
+                .into_iter()
+                .find(|m| matches!(m.request, Request::Operator(OperatorRequest::List { .. })))
+                .unwrap();
+            d.key(KeyCode::Enter);
+            let create = d
+                .drain_outbox()
+                .into_iter()
+                .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Create { .. })))
+                .unwrap();
+            let mut summary = OperatorConversationSummary {
+                id: OperatorConversationId(7),
+                session: SessionId(99),
+                run: SessionRunId(0),
+                archived: false,
+                worker_stopped: true,
+                provider: OperatorProvider::ChatGpt,
+                model: "fixture".into(),
+                title: "activity".into(),
+                current_turn: None,
+            };
+            d.handle_server_message(ServerMessage::Response {
+                request_id: create.request_id,
+                response: Response::Operator(OperatorResponse::Created(summary.clone())),
+            });
+            d.drain_outbox();
+            d.event_action(Event::Paste("submitted".into()));
+            d.key(KeyCode::Enter);
+            let submit = d
+                .drain_outbox()
+                .into_iter()
+                .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Submit { .. })))
+                .unwrap();
+            let mut terminal = Terminal::new(TestBackend::new(cols, rows)).unwrap();
+            let render = |d: &Dashboard, terminal: &mut Terminal<TestBackend>, time| {
+                terminal.draw(|f| draw_dashboard_at(f, d, time)).unwrap();
+                terminal.backend().buffer().clone()
+            };
+            let text = |b: &ratatui::buffer::Buffer| {
+                b.content().iter().map(|c| c.symbol()).collect::<String>()
+            };
+            assert!(text(&render(&d, &mut terminal, 0)).contains("Sending"));
+            let turn = OperatorTurn {
+                identity: OperatorTurnIdentity {
+                    conversation: summary.id,
+                    turn: OperatorTurnId(1),
+                    session: summary.session,
+                    run: SessionRunId(1),
+                },
+                state: OperatorTurnState::Running,
+                sequence: 1,
+            };
+            d.handle_server_message(ServerMessage::Response {
+                request_id: submit.request_id,
+                response: Response::Operator(OperatorResponse::Submitted(turn.clone())),
+            });
+            d.event_action(Event::Paste("retained 界🙂 draft".into()));
+            d.drain_outbox();
+            let first = render(&d, &mut terminal, 0);
+            let second = render(&d, &mut terminal, 100);
+            let first_text = text(&first);
+            assert!(
+                first_text.contains("Responding"),
+                "{cols}×{rows}: {first_text}"
+            );
+            let context_y = rows - 6;
+            let changes: Vec<_> = first
+                .content()
+                .iter()
+                .zip(second.content())
+                .enumerate()
+                .filter(|(_, (a, b))| a != b)
+                .map(|(i, _)| (i % cols as usize, i / cols as usize))
+                .collect();
+            assert!(
+                changes.iter().any(|&(x, y)| y == context_y as usize
+                    && first[(x as u16, y as u16)].symbol() == "⠋"),
+                "clock did not move journal spinner: {changes:?}"
+            );
+            assert!(text(&second).contains("retained") && text(&second).contains("draft"));
+            assert!(
+                changes
+                    .iter()
+                    .all(|&(x, y)| y == context_y as usize || (cols >= 100 && x < 39)),
+                "clock changed content: {changes:?}"
+            );
+            assert!(
+                d.drain_outbox().is_empty(),
+                "draw cannot send requests or PTY input"
+            );
+            summary.run = turn.identity.run;
+            summary.worker_stopped = true;
+            summary.current_turn = Some(OperatorTurn {
+                state: OperatorTurnState::Complete,
+                sequence: 2,
+                ..turn
+            });
+            // A real tracked List response updates authority independently of transcript contents.
+            d.handle_server_message(ServerMessage::Response {
+                request_id: list.request_id,
+                response: Response::Operator(OperatorResponse::Conversations(vec![summary])),
+            });
+            let complete = text(&render(&d, &mut terminal, 200));
+            assert!(
+                !complete.contains("Responding") && !complete.contains("Sending"),
+                "{complete}"
+            );
+            assert!(complete.contains("retained") && complete.contains("draft"));
+        }
+    }
+}
+
+#[test]
 fn operator_quick_opens_over_every_input_mode_without_pty_bytes() {
     for mode in [
         "Browse",

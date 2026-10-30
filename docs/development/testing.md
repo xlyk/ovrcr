@@ -87,6 +87,15 @@ and omit `--all-features`.
 
 ## Commands and isolated acceptance
 
+Operator activity regressions exercise derived state/cadence in the owning TUI
+unit suite, clock-controlled `draw_dashboard_at` through the public Dashboard,
+and `compiled_worker::operator_activity_waits_for_real_model_and_tool` in
+`operator_e2e` with `acceptance-diagnostics`. The latter holds a real Submitted
+receipt, a silent acknowledged model request and an actual Bash result, then
+releases each gate once through private synthetic OAuth and loopback inference.
+Native no-message frame pairs separately prove idle redraw; fixed TestBackend
+timestamps alone cannot prove event-loop animation.
+
 For Rust changes, choose the owning package and add a focused test filter as appropriate:
 
 ```sh
