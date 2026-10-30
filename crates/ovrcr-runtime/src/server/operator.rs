@@ -18,6 +18,20 @@ struct Controls {
     conversations: HashSet<OperatorConversationId>,
     workers: Vec<JoinHandle<()>>,
     closed: bool,
+    panicked: bool,
+}
+impl Controls {
+    fn prune_finished(&mut self) {
+        let mut index = 0;
+        while index < self.workers.len() {
+            if self.workers[index].is_finished() {
+                // Finished means the control and its guards have already returned/unwound.
+                self.panicked |= self.workers.swap_remove(index).join().is_err();
+            } else {
+                index += 1;
+            }
+        }
+    }
 }
 impl OperatorRuntime {
     #[cfg(test)]
@@ -30,16 +44,16 @@ impl OperatorRuntime {
         )
     }
     pub(super) fn join_controls(&self) -> Result<()> {
-        let workers = {
+        let (workers, mut panicked) = {
             let mut controls = self.controls.lock().unwrap();
             controls.closed = true;
-            std::mem::take(&mut controls.workers)
+            (std::mem::take(&mut controls.workers), controls.panicked)
         };
-        let mut panicked = false;
         for worker in workers {
             panicked |= worker.join().is_err();
         }
         if panicked {
+            self.controls.lock().unwrap().panicked = true;
             bail!("operator control panicked");
         }
         Ok(())
@@ -111,7 +125,7 @@ pub(super) fn dispatch_control(
         ));
     }
     let mut controls = state.operator.controls.lock().unwrap();
-    controls.workers.retain(|worker| !worker.is_finished());
+    controls.prune_finished();
     if controls.closed
         || controls.workers.len() >= MAX_LIVE_SESSIONS
         || !controls.conversations.insert(conversation)
@@ -421,5 +435,62 @@ impl ServerState {
         self.refresh_session_locked(identity.session)?;
         self.operator_changed(identity.conversation);
         Ok(turn)
+    }
+}
+
+#[cfg(test)]
+mod control_tests {
+    use super::*;
+
+    #[test]
+    fn pruned_control_panic_remains_a_shutdown_failure_without_blocking_admission() {
+        let (peer, stream) = UnixStream::pair().unwrap();
+        let owner = Arc::new(());
+        let state = crate::server::tests::test_state(
+            Some(DashboardSink::new()),
+            Some((owner.clone(), stream)),
+        );
+        let panicked = thread::spawn(|| panic!("owned control panic fixture"));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !panicked.is_finished() {
+            assert!(
+                Instant::now() < deadline,
+                "fixture thread must finish before pruning"
+            );
+            thread::yield_now();
+        }
+        state
+            .operator
+            .controls
+            .lock()
+            .unwrap()
+            .workers
+            .push(panicked);
+        // A new real control goes through normal admission/pruning, then refuses
+        // invalid text before journal/process effects. Pruning must retain its predecessor's failure.
+        assert!(matches!(
+            dispatch_control(
+                &state,
+                &owner,
+                1,
+                OperatorRequest::Submit {
+                    conversation: OperatorConversationId(1),
+                    expected_run: SessionRunId(0),
+                    text: String::new(),
+                    context: OperatorContext::default()
+                }
+            ),
+            Some(Response::Ok)
+        ));
+        assert!(
+            state.operator.control_snapshot().1 <= 1,
+            "finished handle must leave the bounded admission set"
+        );
+        let shutdown = state.operator.join_controls();
+        assert!(
+            shutdown.is_err(),
+            "pruning must not erase a finished control panic before shutdown"
+        );
+        drop(peer);
     }
 }
