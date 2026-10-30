@@ -437,15 +437,25 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         Block::default().style(Style::default().bg(BASE())),
         frame.area(),
     );
+    let title_fg = if dashboard.operator.visible {
+        SUBTEXT()
+    } else {
+        CRUST()
+    };
+    let title_bg = if dashboard.operator.visible {
+        BASE()
+    } else {
+        MAUVE()
+    };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("󰚩 ", Style::default().fg(CRUST())),
+            Span::styled("󰚩 ", Style::default().fg(title_fg)),
             Span::styled(
                 "OVRCR",
-                Style::default().fg(CRUST()).add_modifier(Modifier::BOLD),
+                Style::default().fg(title_fg).add_modifier(Modifier::BOLD),
             ),
         ]))
-        .style(Style::default().bg(MAUVE())),
+        .style(Style::default().bg(title_bg)),
         layout.title,
     );
 

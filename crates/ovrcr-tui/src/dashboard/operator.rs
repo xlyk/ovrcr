@@ -2333,6 +2333,207 @@ mod tests {
             .collect()
     }
     #[test]
+    fn operator_journal_theme_geometry_and_receipts() {
+        use crate::theme::ThemeTokens;
+        use ovrcr_protocol::{Settings, ThemeId};
+        for theme in [ThemeId::default(), ThemeId::ALL[1]] {
+            let tokens = ThemeTokens::for_id(theme);
+            let (mut d, _) = setup();
+            d.install_settings(Settings {
+                theme,
+                ..Default::default()
+            });
+            let chat = d.operator.chats.get_mut(&1).unwrap();
+            chat.summary.title = "REPEATED_REQUEST".into();
+            chat.messages = vec![
+                message(
+                    1,
+                    OperatorMessageContent::User {
+                        text: "Inspect 界é🙂".into(),
+                        context: OperatorContext::default(),
+                    },
+                ),
+                delta(2, "I will inspect."),
+                message(
+                    3,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
+                        id: "FULL_CALL_ID".into(),
+                        name: "Bash".into(),
+                        arguments: "FULL_ARGUMENTS".into(),
+                    }),
+                ),
+                message(
+                    4,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput {
+                        id: "FULL_CALL_ID".into(),
+                        output: String::new(),
+                        truncated: true,
+                        status: OperatorToolStatus::Failed { exit_code: Some(9) },
+                    }),
+                ),
+            ];
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 40)).unwrap();
+            d.install_area(Rect::new(0, 0, 140, 40));
+            d.draw(&mut terminal).unwrap();
+            let layout = d.operator_layout(d.outer_area);
+            let b = terminal.backend().buffer();
+            let header: String = (layout.header.x..layout.header.right())
+                .map(|x| b[(x, layout.header.y)].symbol())
+                .collect();
+            assert!(
+                !header.contains("REPEATED_REQUEST"),
+                "journal identity: {header}"
+            );
+            assert_eq!(b[(0, 0)].bg, tokens.base, "quiet Operator title fill");
+            assert_eq!(b[(layout.composer.x, layout.composer.y - 1)].symbol(), "─");
+            assert_eq!(
+                b[(layout.composer.x, layout.composer.y - 1)].fg,
+                tokens.mauve
+            );
+            assert_eq!(
+                b[(layout.composer.x, layout.composer.bottom())].fg,
+                tokens.surface2
+            );
+            let rows = transcript_rows(&d.operator.chats[&1], layout.transcript.width);
+            assert!(
+                rows.iter()
+                    .any(|(line, _)| line.to_string().starts_with("❯ "))
+            );
+            assert!(
+                rows.iter()
+                    .any(|(line, _)| line.to_string().starts_with("│ "))
+            );
+            assert!(
+                b.content()
+                    .iter()
+                    .any(|cell| cell.symbol() == "│" && cell.fg == tokens.surface2)
+            );
+            for (anchor, color, bold) in [
+                ((1, 0, 0), tokens.mauve, true),
+                ((1, 3, 0), tokens.text, false),
+                ((2, 3, 0), tokens.text, false),
+            ] {
+                let row = rows
+                    .iter()
+                    .position(|(_, source)| *source == anchor)
+                    .unwrap();
+                let cell = &b[(layout.transcript.x + 2, layout.transcript.y + row as u16)];
+                assert_eq!(cell.fg, color);
+                assert_eq!(cell.modifier.contains(Modifier::BOLD), bold);
+            }
+            let compact = rows
+                .iter()
+                .map(|(line, _)| line.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(!compact.contains("FULL_CALL_ID"));
+            assert!(
+                compact.contains("failed (exit 9)")
+                    && compact.contains("(no output)")
+                    && compact.contains("truncated")
+            );
+            let call = rows.iter().position(|(_, a)| a.0 == 3).unwrap();
+            let output = rows.iter().position(|(_, a)| a.0 == 4).unwrap();
+            assert_eq!(output, call + 1, "adjacent independent receipts");
+            d.key(KeyCode::Tab);
+            d.key(KeyCode::Tab);
+            d.key(KeyCode::Home);
+            d.key(KeyCode::Down);
+            d.key(KeyCode::Enter);
+            assert_eq!(d.operator.chats[&1].entry_focus, Some(3));
+            assert!(d.operator.chats[&1].expanded.contains(&3));
+            assert!(!d.operator.chats[&1].expanded.contains(&4));
+            let rows = transcript_rows(&d.operator.chats[&1], layout.transcript.width);
+            assert!(
+                rows.iter()
+                    .any(|(line, a)| a.0 == 3 && line.to_string().contains("FULL_CALL_ID"))
+            );
+            let row = rows.iter().position(|(_, a)| a.0 == 4).unwrap();
+            d.mouse_action(
+                MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    column: layout.transcript.x + 2,
+                    row: layout.transcript.y + row as u16,
+                    modifiers: KeyModifiers::NONE,
+                },
+                d.outer_area,
+            );
+            assert!(d.operator.chats[&1].expanded.contains(&4));
+            assert!(
+                transcript_rows(&d.operator.chats[&1], layout.transcript.width)
+                    .iter()
+                    .any(|(line, a)| a.0 == 4 && line.to_string().contains("FULL_CALL_ID"))
+            );
+            d.operator.visible = false;
+            d.draw(&mut terminal).unwrap();
+            assert_eq!(
+                terminal.backend().buffer()[(0, 0)].bg,
+                tokens.mauve,
+                "ordinary title unchanged"
+            );
+        }
+    }
+    #[test]
+    fn operator_journal_quick_content_height_and_modal_consumption() {
+        let (mut d, _) = setup();
+        d.operator_insert("underlying draft");
+        d.drain_outbox();
+        d.ctrl('o');
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 40)).unwrap();
+        d.install_area(Rect::new(0, 0, 140, 40));
+        let long_unicode = format!("{}é🙂", "界".repeat(500));
+        for (text, expected_height, error) in [
+            ("", 7, None),
+            ("界é🙂", 7, None),
+            ("a\nb", 7, None),
+            ("a\nb", 8, Some("FAILED")),
+            ("0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11", 16, None),
+            (&long_unicode, 16, Some("FAILED")),
+            ("short", 7, None),
+        ] {
+            let quick = d.operator.quick.as_mut().unwrap();
+            quick.text = text.into();
+            quick.cursor.key(&mut quick.text, KeyCode::End);
+            quick.error = error.map(str::to_owned);
+            d.draw(&mut terminal).unwrap();
+            let b = terminal.backend().buffer();
+            let top = (0..40)
+                .find(|y| (0..140).any(|x| b[(x, *y)].symbol() == "┌"))
+                .unwrap();
+            let bottom = (0..40)
+                .find(|y| (0..140).any(|x| b[(x, *y)].symbol() == "└"))
+                .unwrap();
+            assert_eq!(bottom - top + 1, expected_height, "quick text {text:?}");
+            let left = (0..140).find(|x| b[(*x, top)].symbol() == "┌").unwrap();
+            let right = (0..140).find(|x| b[(*x, top)].symbol() == "┐").unwrap();
+            assert_eq!(right - left + 1, 80);
+            let cursor =
+                ratatui::backend::Backend::get_cursor_position(terminal.backend_mut()).unwrap();
+            assert!(cursor.x > left && cursor.x < right);
+            assert!(
+                cursor.y >= top + 3 && cursor.y < bottom - 1 - u16::from(error.is_some()),
+                "editor cursor: {cursor:?}"
+            );
+            assert!(!matches!(
+                d.mouse_action(
+                    MouseEvent {
+                        kind: MouseEventKind::Down(MouseButton::Left),
+                        column: 1,
+                        row: 0,
+                        modifiers: KeyModifiers::NONE
+                    },
+                    d.outer_area
+                ),
+                DashboardAction::PtyBytes(_)
+            ));
+            assert_eq!(d.operator.selected, Some(Id(1)));
+            assert_eq!(d.operator.chats[&1].draft, "underlying draft");
+            assert!(d.drain_outbox().is_empty());
+        }
+    }
+    #[test]
     fn operator_original_typed_event_matrix_and_context_details() {
         let (mut d, _) = setup();
         let context = OperatorContext {
@@ -2415,6 +2616,10 @@ mod tests {
         ] {
             assert!(compact.contains(status), "{compact}");
         }
+        assert!(
+            !compact.contains("[bash]"),
+            "collapsed receipts hide raw IDs"
+        );
         assert!(!compact.contains("PRIVATE_MODEL_HISTORY") && !compact.contains("\"command\""));
         chat.expanded.extend([1, 3, 5, 6]);
         let expanded = transcript_lines(chat)
@@ -2423,6 +2628,8 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         for value in [
+            "Bash [bash]",
+            "Output [bash]",
             "stable-workspace",
             "/private/a/very/long/path",
             "session: 11 · run: 7",
@@ -2464,6 +2671,13 @@ mod tests {
                 .content()
                 .iter()
                 .any(|cell| cell.symbol() == "▌" && cell.bg == super::super::render::SURFACE0())
+        );
+        assert!(
+            buffer
+                .content()
+                .iter()
+                .any(|cell| cell.symbol() == "s" && cell.fg == super::super::render::GREEN()),
+            "successful receipts use work/success color"
         );
         let caption: String = (0..140)
             .map(|x| buffer[(x, d.operator_layout(d.outer_area).context.y)].symbol())
@@ -2597,6 +2811,20 @@ mod tests {
                 ),
             ];
             let screen = draw(&mut d, cols, rows);
+            let header = d.operator_layout(d.outer_area).header;
+            let header_text = screen
+                .chars()
+                .skip(usize::from(header.y * cols + header.x))
+                .take(usize::from(header.width))
+                .collect::<String>();
+            assert!(
+                header_text.starts_with(if cols < 100 {
+                    "chat-1 ·"
+                } else {
+                    "Operator ·"
+                }),
+                "selected identity at {cols}x{rows}: {header_text}"
+            );
             let content = content_area(&d, d.outer_area);
             let lines = screen.chars().collect::<Vec<_>>();
             let main: String = lines
@@ -2623,7 +2851,7 @@ mod tests {
                 (60, 16) => include_str!("operator/snapshots/original-60x16.txt"),
                 _ => unreachable!(),
             };
-            assert_eq!(snapshot, expected, "Original frame {cols}x{rows}");
+            assert_eq!(snapshot, expected, "Working journal frame {cols}x{rows}");
             assert_eq!(d.operator_layout(d.outer_area).composer.height, 2);
             if cols < 100 {
                 assert_eq!(content.x, 0, "conversation wins at {cols}");

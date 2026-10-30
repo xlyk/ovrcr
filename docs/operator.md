@@ -31,6 +31,8 @@ and Quick message palette action open the same form. It captures the current
 workspace/session run (or selected chat context) and configured provider/model
 defaults when opened. Type a message and press Enter to create and send once.
 `Shift-Enter` adds a newline; paste only edits. Empty messages cannot send.
+The dialog starts at seven rows, grows with wrapped input and errors up to sixteen
+rows, and stays at most eighty columns wide. Outside clicks remain modal.
 
 Esc before sending discards only the quick draft and restores the underlying view.
 Esc after sending dismisses the form while creation/submission continues; its late
@@ -63,14 +65,19 @@ position and status. Provider and model stay fixed after creation. Selecting a
 different chat or returning to a terminal does not pause active work.
 
 `Shift-Enter` inserts a newline; paste edits the draft without submitting.
-`PageUp` and `PageDown` scroll the transcript. Tool receipts stay compact until
-expanded; failures, timeouts and truncation remain visible in their summary.
-Expanded details retain the full command, cwd, captured context and output.
+`PageUp` and `PageDown` scroll the transcript. The Working journal marks user
+prompts and joins assistant/tool activity with a fine guide in the current theme.
+Tool call and output receipts remain independently expandable, with adjacent rows
+and raw IDs hidden until expanded. Failures, timeouts, truncation and empty output
+remain explicit. Expanded details retain full IDs, command, cwd, captured context
+and output. With the sidebar hidden, the local header retains the selected chat's
+title; the visible sidebar already supplies that identity at wider sizes.
 `Ctrl-g` returns to Browse while preserving the draft. Completed background replies stay Unread until their
 loaded tail is actually shown.
 
 The borderless prompt starts at two text rows and grows with the draft, up to six
-rows or one third of the body. The real terminal cursor follows the focused input.
+rows or one third of the body. Quiet top/bottom rules and one-cell edge padding
+define the editor. The real terminal cursor follows the focused input.
 At widths below 100 columns, the conversation uses the full width; `Ctrl-l` or Tab
 opens the same combined sidebar on demand. At 100 columns and above, the configured
 sidebar width is used. Below 60×16, resize guidance preserves drafts and active work.

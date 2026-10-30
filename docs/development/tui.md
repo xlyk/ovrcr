@@ -34,6 +34,9 @@ state; Repeat/Release and all modal mouse events are consumed. Its frozen
 generation/context/defaults follow a request-owned Create → Submit continuation,
 using the acknowledged conversation's retained `summary.run`. Esc hides submitted
 work, and only a still-visible matching generation may navigate on acceptance.
+The quick dialog starts at seven rows (two editor rows), grows with wrapped input
+and an optional error row to sixteen, and keeps its eighty-column cap. Errors and
+pending phase hints remain visible; shrinking the form cannot forward modal clicks.
 Failures retain the message; retries after Create target that chat. Notification
 retarget cancels an unsent form or hides its pending continuation. Quick visibility
 also blocks durable-tail review acknowledgement.
@@ -66,14 +69,25 @@ scroll/follow-tail and completion Unread state. Selecting a saved conversation n
 recaptures the last terminal's context. Scrolled transcripts keep a durable message
 ordinal, logical part and byte anchor
 across streaming, receipt expansion, conversation switches and resize. Styled
-graphemes survive wrapping; prose is bounded to 88 cells while command/output
-details use the available width. Successful completion
+graphemes survive wrapping; the Working journal reserves a two-cell gutter before
+wrapping and decorates only after source-byte anchor calculation. User prompts
+have a mauve cue; assistant/tool activity shares a muted guide. Prose is bounded
+to 88 cells after the gutter while command/output details use the remaining width.
+Adjacent tool calls and outputs stay separate disclosures under their original
+ordinals, without blank rows or collapsed raw IDs; expanded details retain IDs. Successful completion
 Unread comes from the exact durable turn summary; SDK model history stays private.
 `Tab` cycles sidebar, transcript and composer; `Ctrl-l` toggles sidebar/composer.
 Transcript Up/Down selects a user-context/tool entry; Enter expands its full details.
 The borderless composer uses `clamp(wrapped_draft_rows, 2, min(6, body_height / 3).max(2))`
-text rows and scrolls around the real cursor. `OperatorLayout` owns header,
-transcript, context and composer rectangles for rendering, hit-testing and review.
+text rows and scrolls around the real cursor. One-cell edge padding, a mauve top
+rule and muted bottom rule define the editor. `OperatorLayout` owns header,
+transcript, context, writable composer and both rule rectangles for rendering,
+hit-testing and review. The target uses the context row above the top rule.
+The local header shows Operator/provider/model/state when the sidebar identifies
+the chat; with the sidebar hidden it retains the clipped chat title, shortening
+model metadata first. Only visible Operator quiets the global title fill.
+The keymap-derived footer prioritizes Send, Newline, Browse and applicable Stop;
+secondary actions remain in navigation and menus.
 At widths below 100, the same combined sidebar opens on demand without changing the
 saved preference. Below 60×16, Operator shows resize guidance and preserves work.
 Unread review requires an unobscured, actually drawn, adequately sized transcript

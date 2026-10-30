@@ -1,7 +1,7 @@
 //! The shared sidebar is the sole conversation list and hit-test geometry.
 use super::*;
 use crate::dashboard::render::{
-    BASE, BLUE, MAUVE, SURFACE0, SURFACE2, TEXT, clip_text, compose_row,
+    BASE, BLUE, GREEN, MAUVE, SURFACE0, SURFACE2, TEAL, TEXT, clip_text, compose_row,
 };
 use ovrcr_protocol::AgentActivity;
 
@@ -25,7 +25,18 @@ impl Dashboard {
         };
         let outer = frame.area();
         let width = outer.width.min(80);
-        let height = outer.height.min(16);
+        let error_rows = u16::from(quick.error.is_some());
+        let draft_rows = wrapped_lines(
+            display_text(&format!("{} ", quick.text))
+                .split('\n')
+                .map(|line| Line::raw(line.to_owned()))
+                .collect(),
+            width.saturating_sub(2),
+        )
+        .len();
+        let height = (draft_rows.clamp(2, 11) as u16 + 5 + error_rows)
+            .min(16)
+            .min(outer.height);
         let area = Rect::new(
             outer.x + (outer.width - width) / 2,
             outer.y + (outer.height - height) / 2,
@@ -65,7 +76,7 @@ impl Dashboard {
             inner.x,
             inner.y + 2,
             inner.width,
-            inner.height.saturating_sub(5),
+            inner.height.saturating_sub(3 + error_rows),
         );
         let position = quick.cursor.position(&quick.text);
         let prefix = display_text(&quick.text[..position]);
@@ -354,6 +365,8 @@ pub(super) struct OperatorLayout {
     pub transcript: Rect,
     pub context: Rect,
     pub composer: Rect,
+    pub top_rule: Rect,
+    pub bottom_rule: Rect,
 }
 
 type Anchor = (u64, usize, usize);
@@ -363,6 +376,7 @@ struct TranscriptLine {
     part: usize,
     byte: usize,
     prose: bool,
+    gutter: &'static str,
 }
 fn push_lines(
     lines: &mut Vec<TranscriptLine>,
@@ -380,6 +394,7 @@ fn push_lines(
             part,
             byte,
             prose,
+            gutter: "│ ",
         });
         byte += text.len() + 1;
     }
@@ -390,6 +405,7 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
     let mut index = 0;
     while index < chat.messages.len() {
         let message = &chat.messages[index];
+        let first_line = lines.len();
         let mut ordinal = message.ordinal;
         let expanded = chat.expanded.contains(&ordinal);
         let disclosure = if expanded { "▾" } else { "▸" };
@@ -398,7 +414,14 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
         let error = Style::default().fg(super::super::render::RED());
         match &message.content {
             OperatorMessageContent::User { text, context } => {
-                push_lines(&mut lines, ordinal, 0, "You".into(), quiet, true);
+                push_lines(
+                    &mut lines,
+                    ordinal,
+                    0,
+                    "You".into(),
+                    Style::default().fg(MAUVE()).add_modifier(Modifier::BOLD),
+                    true,
+                );
                 if previous_context != Some(context) {
                     push_lines(
                         &mut lines,
@@ -441,7 +464,21 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
                 push_lines(&mut lines, ordinal, 3, display_text(text), normal, true);
             }
             OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(_)) => {
-                push_lines(&mut lines, ordinal, 0, "Operator".into(), quiet, true);
+                if index == 0
+                    || matches!(
+                        chat.messages[index - 1].content,
+                        OperatorMessageContent::User { .. }
+                    )
+                {
+                    push_lines(
+                        &mut lines,
+                        ordinal,
+                        0,
+                        "Operator".into(),
+                        Style::default().fg(BLUE()),
+                        true,
+                    );
+                }
                 let mut text = String::new();
                 while let Some(OperatorMessage {
                     content:
@@ -465,8 +502,8 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
                     &mut lines,
                     ordinal,
                     0,
-                    format!("{disclosure} {} [{}]", display_text(name), display_text(id)),
-                    quiet,
+                    format!("{disclosure} {}", display_text(name)),
+                    Style::default().fg(TEAL()),
                     false,
                 );
                 if expanded {
@@ -492,7 +529,9 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
                 status,
             }) => {
                 let (status, style) = match status {
-                    OperatorToolStatus::Succeeded => ("succeeded".into(), quiet),
+                    OperatorToolStatus::Succeeded => {
+                        ("succeeded".into(), Style::default().fg(GREEN()))
+                    }
                     OperatorToolStatus::Failed { exit_code } => (
                         format!(
                             "failed (exit {})",
@@ -507,7 +546,7 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
                     ordinal,
                     0,
                     format!(
-                        "{disclosure} {status}{}{} · Output [{}]",
+                        "{disclosure} {status}{}{} · Output",
                         if *truncated {
                             " · truncated at 64 KiB"
                         } else {
@@ -517,8 +556,7 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
                             " · (no output)"
                         } else {
                             ""
-                        },
-                        display_text(id)
+                        }
                     ),
                     style,
                     false,
@@ -539,7 +577,14 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
                 }
             }
             OperatorMessageContent::Worker(OperatorWorkerEvent::Completed(_)) => {
-                push_lines(&mut lines, ordinal, 0, "Turn complete".into(), quiet, true);
+                push_lines(
+                    &mut lines,
+                    ordinal,
+                    0,
+                    "Turn complete".into(),
+                    Style::default().fg(TEAL()),
+                    true,
+                );
             }
             OperatorMessageContent::Worker(OperatorWorkerEvent::Failed(message)) => {
                 push_lines(
@@ -562,7 +607,17 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
                 );
             }
         }
-        push_lines(&mut lines, ordinal, 4, String::new(), normal, true);
+        if matches!(message.content, OperatorMessageContent::User { .. }) {
+            for line in &mut lines[first_line..] {
+                line.gutter = if line.part == 0 { "❯ " } else { "  " };
+            }
+        }
+        if chat.messages.get(index + 1).is_none_or(|next| {
+            matches!(message.content, OperatorMessageContent::User { .. })
+                || matches!(next.content, OperatorMessageContent::User { .. })
+        }) {
+            push_lines(&mut lines, ordinal, 4, String::new(), normal, true);
+        }
         index += 1;
     }
     lines
@@ -629,6 +684,7 @@ pub(super) fn transcript_rows(chat: &Chat, width: u16) -> Vec<(Line<'static>, An
     logical_lines(chat)
         .into_iter()
         .flat_map(|entry| {
+            let width = width.saturating_sub(2).max(1);
             let limit = if entry.prose { width.min(88) } else { width };
             let line = if !entry.prose && entry.part == 0 {
                 Line::styled(
@@ -649,7 +705,16 @@ pub(super) fn transcript_rows(chat: &Chat, width: u16) -> Vec<(Line<'static>, An
                         .and_then(|sources| sources.iter().rev().find(|(start, _)| *start <= byte))
                         .copied()
                         .unwrap_or((0, entry.ordinal));
-                    (line, (ordinal, entry.part, byte - start))
+                    // Decoration follows source-byte calculation, so scroll anchors stay durable.
+                    let gutter = if entry.part == 4 { "  " } else { entry.gutter };
+                    let color = if gutter == "❯ " {
+                        MAUVE()
+                    } else {
+                        SURFACE2()
+                    };
+                    let mut spans = vec![Span::styled(gutter, Style::default().fg(color))];
+                    spans.extend(line.spans);
+                    (Line::from(spans), (ordinal, entry.part, byte - start))
                 })
         })
         .collect()
@@ -698,22 +763,34 @@ impl Dashboard {
                 .split('\n')
                 .map(|line| Line::raw(line.to_owned()))
                 .collect(),
-            body.width.saturating_sub(2),
+            body.width.saturating_sub(4),
         )
         .len();
         let height = (draft_rows.clamp(2, usize::from((body.height / 3).clamp(2, 6))) as u16)
-            .min(body.height.saturating_sub(2));
+            .min(body.height.saturating_sub(5));
         let header = Rect::new(body.x, body.y, body.width, body.height.min(1));
         let composer = Rect::new(
-            body.x.saturating_add(2),
-            body.bottom().saturating_sub(height),
-            body.width.saturating_sub(2),
+            body.x.saturating_add(3),
+            body.bottom().saturating_sub(height + 1),
+            body.width.saturating_sub(4),
             height,
         );
-        let context = Rect::new(
-            body.x,
+        let top_rule = Rect::new(
+            body.x + 1,
             composer.y.saturating_sub(1),
-            body.width,
+            body.width.saturating_sub(2),
+            1,
+        );
+        let bottom_rule = Rect::new(
+            body.x + 1,
+            composer.bottom(),
+            body.width.saturating_sub(2),
+            1,
+        );
+        let context = Rect::new(
+            body.x + 1,
+            top_rule.y.saturating_sub(1),
+            body.width.saturating_sub(2),
             1.min(body.height),
         );
         let transcript = Rect::new(
@@ -727,6 +804,8 @@ impl Dashboard {
             transcript,
             context,
             composer,
+            top_rule,
+            bottom_rule,
         }
     }
     pub(super) fn draw_operator_conversation(&self, frame: &mut Frame<'_>, chat: &Chat) {
@@ -744,18 +823,20 @@ impl Dashboard {
         let width = usize::from(title_width);
         let provider = chat.summary.provider.as_str();
         let state = status(chat);
+        let identity = if layout.header.x == frame.area().x {
+            display_text(&chat.summary.title)
+        } else {
+            "Operator".into()
+        };
+        let identity = clip_text(
+            &identity,
+            width.saturating_sub(provider.width() + state.width() + 9),
+        );
         let model = clip_text(
             &display_text(&chat.summary.model),
-            width.saturating_sub(width / 3 + provider.width() + state.width() + 9),
+            width.saturating_sub(identity.width() + provider.width() + state.width() + 9),
         );
-        let metadata = format!("{provider} / {model} · {state}");
-        let title = format!(
-            "{} · {metadata}",
-            clip_text(
-                &display_text(&chat.summary.title),
-                width.saturating_sub(metadata.width() + 3)
-            )
-        );
+        let title = format!("{identity} · {provider} / {model} · {state}");
         frame.render_widget(
             Paragraph::new(clip_text(&title, title_width as usize))
                 .style(Style::default().fg(super::super::render::SUBTEXT())),
@@ -792,10 +873,17 @@ impl Dashboard {
             Paragraph::new(caption).style(Style::default().fg(if error.is_some() {
                 super::super::render::RED()
             } else {
-                super::super::render::SUBTEXT()
+                BLUE()
             })),
             layout.context,
         );
+        for (area, color) in [(layout.top_rule, MAUVE()), (layout.bottom_rule, SURFACE2())] {
+            frame.render_widget(
+                Paragraph::new("─".repeat(usize::from(area.width)))
+                    .style(Style::default().fg(color)),
+                area,
+            );
+        }
         let focused =
             self.operator.editing && !self.operator.list_focus && !self.operator.transcript_focus;
         frame.render_widget(

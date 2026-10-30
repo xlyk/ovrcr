@@ -1,14 +1,12 @@
 󰚩 OVRCR Operator [o]       [Ctrl-o]         [Actions] [Menu]
 chat-1 · chat_gpt / fixture · complete
-You
-▸ Context · global
-Review this workspace.
+❯ You
+  ▸ Context · global
+  Review this workspace.
 
-Operator
-I will inspect its sessions.
-
-▸ succeeded · (no output) · Output [inspect]
-
+│ Operator
+│ I will inspect its sessions.
+│ ▸ succeeded · (no output) · Output
 
 
 
@@ -18,7 +16,9 @@ I will inspect its sessions.
 
 
 
-Managing global
-> ▏
+ Managing global
+ ──────────────────────────────────────────────────────────
+ > ▏
 
-OPERATOR  Enter Send  Ctrl-g Browse  Tab Chats
+ ──────────────────────────────────────────────────────────
+OPERATOR  Enter Send  Shift-Enter Newline  Ctrl-g Browse

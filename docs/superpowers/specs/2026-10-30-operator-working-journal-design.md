@@ -30,10 +30,12 @@ It is a visual target, not a backend/protocol specification.
    row between logical turns. Avoid repeated role labels for every assistant phase.
    Keep normal assistant prose readable; do not add a Markdown parser or infer
    structured operations from Bash text.
-4. Remove the repeated full request from the local conversation header. Show quiet
-   Operator identity, provider/model and current state, with the existing exact
-   Stop control when applicable. Keep current target near the editor and historic
-   context expandable with all original fields available.
+4. With the sidebar visible, remove the repeated full request from the local
+   conversation header. Show quiet Operator identity, provider/model and current
+   state, with the existing exact Stop control when applicable. With the sidebar
+   hidden/on demand, retain a clipped selected conversation title so its identity
+   stays visible; shorten model/secondary metadata before that title. Keep current
+   target near the editor and historic context expandable with all original fields.
 5. Compact tool call/output into adjacent journal rows, without intervening empty
    rows. Hide raw call IDs while collapsed; retain full IDs/arguments/output when
    expanded. Keep call and output independently expandable under their original

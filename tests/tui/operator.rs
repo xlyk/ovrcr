@@ -253,7 +253,7 @@ fn operator_sidebar_heading_precedes_projects_in_native_dashboard() {
 }
 
 #[test]
-fn operator_public_navigation_retains_each_draft_context_and_terminal_assignment() {
+fn operator_working_journal_input_geometry_preserves_context() {
     let mut d = Dashboard::new(TerminalSize {
         rows: 24,
         cols: 120,
@@ -266,17 +266,48 @@ fn operator_public_navigation_retains_each_draft_context_and_terminal_assignment
         .into_iter()
         .find(|m| matches!(m.request, Request::Operator(OperatorRequest::List { .. })))
         .unwrap();
-    let summaries: Vec<_> = (1..=2)
-        .map(|id| OperatorConversationSummary {
-            id: OperatorConversationId(id),
-            session: SessionId(90 + id),
+    // Exercise native creation before selecting independently loaded saved chats.
+    d.ctrl('n');
+    d.key(KeyCode::Enter);
+    let create = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Create { .. })))
+        .unwrap();
+    d.handle_server_message(ServerMessage::Response {
+        request_id: create.request_id,
+        response: Response::Operator(OperatorResponse::Created(OperatorConversationSummary {
+            id: OperatorConversationId(3),
+            session: SessionId(93),
             run: SessionRunId(0),
             archived: false,
             worker_stopped: true,
             provider: OperatorProvider::ChatGpt,
             model: "fixture".into(),
-            title: format!("chat-{id}"),
+            title: "created".into(),
             current_turn: None,
+        })),
+    });
+    let summaries: Vec<_> = (1..=2)
+        .map(|id| OperatorConversationSummary {
+            id: OperatorConversationId(id),
+            session: SessionId(90 + id),
+            run: SessionRunId(1),
+            archived: false,
+            worker_stopped: true,
+            provider: OperatorProvider::ChatGpt,
+            model: "fixture".into(),
+            title: format!("chat-{id}"),
+            current_turn: Some(ovrcr_protocol::OperatorTurn {
+                identity: ovrcr_protocol::OperatorTurnIdentity {
+                    conversation: OperatorConversationId(id),
+                    turn: ovrcr_protocol::OperatorTurnId(1),
+                    session: SessionId(90 + id),
+                    run: SessionRunId(1),
+                },
+                state: ovrcr_protocol::OperatorTurnState::Complete,
+                sequence: 1,
+            }),
         })
         .collect();
     let reads = d.handle_server_message(ServerMessage::Response {
@@ -290,17 +321,32 @@ fn operator_public_navigation_retains_each_draft_context_and_terminal_assignment
                 response: Response::Operator(OperatorResponse::History(
                     ovrcr_protocol::OperatorHistory {
                         conversation: summaries[conversation.0 as usize - 1].clone(),
-                        messages: vec![ovrcr_protocol::OperatorMessage {
-                            ordinal: 1,
-                            turn: ovrcr_protocol::OperatorTurnId(1),
-                            content: ovrcr_protocol::OperatorMessageContent::Worker(
-                                ovrcr_protocol::OperatorWorkerEvent::AssistantDelta(
-                                    (0..60)
-                                        .map(|n| format!("CHAT_{}_ROW_{n:02}\n", conversation.0))
-                                        .collect(),
+                        messages: vec![
+                            ovrcr_protocol::OperatorMessage {
+                                ordinal: 1,
+                                turn: ovrcr_protocol::OperatorTurnId(1),
+                                content: ovrcr_protocol::OperatorMessageContent::Worker(
+                                    ovrcr_protocol::OperatorWorkerEvent::ToolCall {
+                                        id: "INTEGRATION_CALL_ID".into(),
+                                        name: "Bash".into(),
+                                        arguments: "INTEGRATION_ARGUMENTS".into(),
+                                    },
                                 ),
-                            ),
-                        }],
+                            },
+                            ovrcr_protocol::OperatorMessage {
+                                ordinal: 2,
+                                turn: ovrcr_protocol::OperatorTurnId(1),
+                                content: ovrcr_protocol::OperatorMessageContent::Worker(
+                                    ovrcr_protocol::OperatorWorkerEvent::AssistantDelta(
+                                        (0..60)
+                                            .map(|n| {
+                                                format!("CHAT_{}_ROW_{n:02}\n", conversation.0)
+                                            })
+                                            .collect(),
+                                    ),
+                                ),
+                            },
+                        ],
                         next_after: None,
                     },
                 )),
@@ -310,7 +356,8 @@ fn operator_public_navigation_retains_each_draft_context_and_terminal_assignment
     d.drain_outbox();
     let area = Rect::new(0, 0, 120, 24);
     d.install_area(area);
-    for (row, draft) in [(2, "draft A"), (3, "draft B")] {
+    let mut anchors = Vec::new();
+    for (row, draft) in [(2, "draft A\n界é🙂"), (3, "draft B\n猫")] {
         d.mouse_action(
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
@@ -321,11 +368,57 @@ fn operator_public_navigation_retains_each_draft_context_and_terminal_assignment
             area,
         );
         d.key(KeyCode::Enter);
-        d.event_action(Event::Paste(draft.into()));
+        assert!(!matches!(
+            d.event_action(Event::Paste(draft.into())),
+            DashboardAction::PtyBytes(_)
+        ));
+        d.key(KeyCode::Tab);
+        d.key(KeyCode::Tab);
+        d.key(KeyCode::Home);
+        d.key(KeyCode::Enter);
+        let mut receipt = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        d.draw(&mut receipt).unwrap();
+        let expanded_screen = receipt
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<String>();
+        assert!(
+            expanded_screen.contains("INTEGRATION_ARGUMENTS"),
+            "expanded receipt at sidebar {row}: {expanded_screen}"
+        );
+        d.key(KeyCode::Tab);
+        d.key(KeyCode::PageDown);
+        d.key(KeyCode::PageDown);
+        d.key(KeyCode::PageDown);
+        d.key(KeyCode::PageDown);
+        d.key(KeyCode::PageDown);
+        d.key(KeyCode::PageDown);
         d.key(KeyCode::PageUp);
         if row == 3 {
             d.key(KeyCode::PageUp);
         }
+        let mut saved = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        d.draw(&mut saved).unwrap();
+        let screen = saved
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<String>();
+        assert_eq!(
+            screen.matches('✓').count(),
+            2,
+            "unseen tails stay Unread while scrolled"
+        );
+        anchors.push(
+            (0..60)
+                .find(|n| screen.contains(&format!("CHAT_{}_ROW_{n:02}", row - 1)))
+                .unwrap(),
+        );
     }
     d.install_focus(SessionId(3));
     d.mouse_action(
@@ -352,7 +445,7 @@ fn operator_public_navigation_retains_each_draft_context_and_terminal_assignment
         "{visible}"
     );
     assert!(
-        visible.contains("CHAT_1_ROW_34"),
+        visible.contains(&format!("CHAT_1_ROW_{:02}", anchors[0])),
         "first chat anchor: {visible}"
     );
     assert_eq!(
@@ -378,15 +471,61 @@ fn operator_public_navigation_retains_each_draft_context_and_terminal_assignment
         .map(|cell| cell.symbol())
         .collect();
     assert!(
-        second.contains("draft B") && second.contains("CHAT_2_ROW_24"),
+        second.contains("draft B") && second.contains(&format!("CHAT_2_ROW_{:02}", anchors[1])),
         "independent second chat anchor: {second}"
     );
+    // Resize and use the rendered receipt's actual hit row to collapse B independently.
+    let narrow = Rect::new(0, 0, 80, 24);
+    d.install_area(narrow);
+    d.key(KeyCode::Tab);
+    d.key(KeyCode::Tab);
+    d.key(KeyCode::Home);
+    let mut resized = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    d.draw(&mut resized).unwrap();
+    let hit = (1..22)
+        .find(|y| {
+            (0..80)
+                .map(|x| resized.backend().buffer()[(x, *y)].symbol())
+                .collect::<String>()
+                .contains("▾ Bash")
+        })
+        .unwrap();
+    d.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 3,
+            row: hit,
+            modifiers: KeyModifiers::NONE,
+        },
+        narrow,
+    );
+    d.draw(&mut resized).unwrap();
+    let collapsed = resized
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|c| c.symbol())
+        .collect::<String>();
+    assert!(
+        !collapsed.contains("INTEGRATION_ARGUMENTS") && !collapsed.contains("INTEGRATION_CALL_ID")
+    );
+    assert!(
+        collapsed.contains("│"),
+        "Working journal guide: {collapsed}"
+    );
+    d.key(KeyCode::Tab);
+    d.install_area(area);
     d.ctrl('l');
     d.key(KeyCode::Up);
     d.key(KeyCode::Enter);
     d.key(KeyCode::Enter);
-    let submit = d
-        .drain_outbox()
+    let requests = d.drain_outbox();
+    assert!(!requests.iter().any(|m| matches!(
+        m.request,
+        Request::Input { .. } | Request::AssignedHumanInput { .. }
+    )));
+    let submit = requests
         .into_iter()
         .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Submit { .. })))
         .unwrap();
@@ -400,12 +539,16 @@ fn operator_public_navigation_retains_each_draft_context_and_terminal_assignment
         unreachable!()
     };
     assert_eq!(conversation, OperatorConversationId(1));
-    assert_eq!(text, "draft A");
+    assert_eq!(text, "draft A\n界é🙂");
     assert_eq!(
         context,
         ovrcr_protocol::OperatorContext::default(),
         "selecting saved history cannot recapture the terminal context"
     );
+    assert!(!d.drain_outbox().iter().any(|m| matches!(
+        m.request,
+        Request::Input { .. } | Request::AssignedHumanInput { .. }
+    )));
     d.install_focus(SessionId(3));
     assert_eq!(d.focused_session(), Some(SessionId(3)));
 }

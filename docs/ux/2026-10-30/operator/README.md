@@ -1,7 +1,8 @@
 # Operator layout design
 
-Design snapshot from 2026-10-30. These mockups describe the proposed interface;
-they do not implement it in the native TUI.
+Design snapshot from 2026-10-30. These mockups preserve the comparison that led
+to the native Original layout, followed by the selected Working journal refinement.
+Browser previews remain design material; native verification has separate gates.
 
 Operator manages OVRCR projects, workspaces and sessions. The examples use one
 orchestration request: reuse a workspace, start Claude and Pi, and surface a
@@ -40,8 +41,19 @@ Use a text-first transcript, compact activity summaries and a prompt that grows
 with its draft. Show the captured workspace/session near the composer. Keep
 paths and shortcuts out of repeated message boilerplate.
 
-Kyle selected **Original layout** for implementation on 2026-10-30. The other
-layouts remain comparison material.
+Kyle selected **Original layout** for implementation on 2026-10-30, then selected
+**Working journal** to refine its appearance using the current theme. The native
+renderer now reserves a two-cell transcript gutter, guides assistant/tool activity,
+marks user prompts, and gives the borderless editor quiet rules. Adjacent call and
+output receipts retain independent disclosures and full expanded details; the
+prototype's exploratory single combined receipt is deferred. The local header
+avoids repeating the request while the sidebar is visible and retains a clipped
+chat title when hidden. Only Operator quiets the global title fill.
+
+The [selected refinement spec](../../../superpowers/specs/2026-10-30-operator-working-journal-design.md)
+is the native target. The other layouts remain comparison material. The original
+five pinned native frame filenames are retained for the intentional journal update;
+this does not claim fresh GUI, Linux, or live-provider acceptance.
 
 | Layout | Main distinction |
 | --- | --- |
@@ -63,8 +75,11 @@ Browser previews do not establish these native-terminal acceptance gates.
 ## Global quick message
 
 The requested shortcut opens a dialog to send the first message directly to a
-new Operator conversation, from anywhere within OVRCR. **Ctrl+O is the proposed
-binding.** It would become reserved for OVRCR while a child terminal has focus.
+new Operator conversation, from anywhere within OVRCR. **Ctrl+O is implemented**
+and reserved for OVRCR while a child terminal has focus. The native form now starts
+at seven rows, grows with wrapped draft/error content up to sixteen, and remains
+at most eighty columns wide. Modal click consumption and create/submit ownership
+are unchanged.
 
 - Capture and display the current workspace/session when the dialog opens.
 - Use the configured Operator provider/model defaults, without a setup step.
