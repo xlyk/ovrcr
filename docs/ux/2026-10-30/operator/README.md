@@ -1,0 +1,84 @@
+# Operator layout design
+
+Design snapshot from 2026-10-30. These mockups describe the proposed interface;
+they do not implement it in the native TUI.
+
+Operator manages OVRCR projects, workspaces and sessions. The examples use one
+orchestration request: reuse a workspace, start Claude and Pi, and surface a
+question from Pi. All displayed sessions and operations are simulated.
+
+## Preview
+
+Open [index.html](index.html) in a browser. The named picker compares nine layouts.
+Try the sidebar collapse heading, hover `[x]` controls, session links, and the
+**New Operator ^O** action. Ctrl+O works while the preview has keyboard focus.
+
+[mockups.fragment.html](mockups.fragment.html) is the editable source used by the
+inline Codex preview. `index.html` is its standalone export.
+
+## Sidebar requirements
+
+- Put Operator and its conversations above Projects in the existing left sidebar.
+  Remove the separate conversation-navigation column from the main area.
+- Each conversation occupies exactly one line: status slot, title and the
+  existing hover `[x]` close control. Keep the control keyboard-reachable too.
+- Reuse existing sidebar conventions: green busy spinner, teal unread `✓`,
+  normal-weight titles, selected-row background and a leading mauve `▌`.
+  Reviewing an unread reply clears its mark; collapsing the section does not.
+- Make the Operator heading collapsible. Match the blue uppercase heading,
+  muted rule and collapsed `▸ count` used by project headings.
+- Omit the conversation's model from the sidebar. Preserve drafts, targets,
+  scroll state and background work when changing the active view.
+
+## Conversation area
+
+Use a text-first transcript, compact activity summaries and a prompt that grows
+with its draft. Show the captured workspace/session near the composer. Keep
+paths and shortcuts out of repeated message boilerplate.
+
+The original layout is the reference; the alternatives remain available for
+selection. No final alternative beyond the shared requirements is selected here.
+
+| Layout | Main distinction |
+| --- | --- |
+| Original layout | Borderless conversation with compact action receipts |
+| Quiet | Sparse transcript and inline session links |
+| Action ledger | Ordered orchestration events and their targets |
+| Workspace brief | Workspace outcome, session rows and an open decision |
+| Dispatch console | Compact chronological dispatch receipts |
+| Parallel launch | Separate progress lanes for the launched sessions |
+| Session window | Conversation with a selectable session-output preview |
+| Target dock | Workspace and session context beside the conversation |
+| Current request | Earlier history compressed around the active request |
+
+At narrow widths, the conversation wins and the combined sidebar opens on demand.
+The design baseline includes 80×24 and a 60-column split. Proposed minimum:
+60×16; below it, show the required dimensions while preserving drafts and work.
+Browser previews do not establish these native-terminal acceptance gates.
+
+## Global quick message
+
+The requested shortcut opens a dialog to send the first message directly to a
+new Operator conversation, from anywhere within OVRCR. **Ctrl+O is the proposed
+binding.** It would become reserved for OVRCR while a child terminal has focus.
+
+- Capture and display the current workspace/session when the dialog opens.
+- Use the configured Operator provider/model defaults, without a setup step.
+- Enter creates the conversation and sends its first message; Shift+Enter adds
+  a newline. Whitespace alone cannot submit.
+- Esc cancels without creating an empty conversation and restores the previous
+  view and its draft. Other conversations keep running.
+- Insert the submitted conversation as one busy sidebar row and open its view.
+
+Native implementation must preserve underlying dialogs and confirmation state.
+It must retain the first message and captured context through Create, submit
+once after the acknowledged conversation identity arrives, and retain input on
+failure. The preview's close controls only remove local simulated rows; native
+Operator close behavior still needs the existing lifecycle/history guards.
+
+## Verification
+
+The preview checks cover all nine layouts: session navigation, separate drafts
+and targets, unread handling, collapse/close, quick-dialog keyboard flow,
+cancellation, multiline submission and narrow browser widths down to 320px.
+They do not prove native TUI behavior or provider execution.
