@@ -1,0 +1,12 @@
+{
+  "pid": 81708,
+  "command": [
+    "/private/tmp/ovrcr-inline-native3-jog29a41/operator_e2e",
+    "--exact",
+    "compiled_worker::native_provider_holder",
+    "--ignored",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "root": "/private/tmp/ovrcr-inline-native3-jog29a41"
+}

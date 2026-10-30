@@ -1,0 +1,7 @@
+{
+  "command": "rtk proxy python3 research/operator-inline-input-2026-10-30/native-03/record.py full-before",
+  "exit": 1,
+  "failure": "PermissionError: [Errno 1] Operation not permitted: ps",
+  "preserved_partial_receipt": "full-before-boundary.json",
+  "recovery": "Separate full-before-owned phase succeeded with scoped require_escalated; the partial receipt was not overwritten."
+}

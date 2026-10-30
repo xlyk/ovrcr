@@ -1,0 +1,16 @@
+{
+  "command": [
+    "rtk",
+    "proxy",
+    "cargo",
+    "build",
+    "-p",
+    "ovrcr",
+    "--features",
+    "gui,acceptance-diagnostics",
+    "--bins"
+  ],
+  "exit": 0,
+  "original_bytes": 158,
+  "original_sha256": "7b740ad117d37255c24f73b88d7d411b95dbe56470b85664ea7af1cc653724e8"
+}

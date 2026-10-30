@@ -1,5 +1,12 @@
 # Operator inline activity and input — native acceptance
 
+**Correction follow-up:** [native03 mixed-modifier acceptance](native-03/README.md)
+qualifies fresh source `8a141c71c0e3ccd6928b463ac24d6b9eb66ffff2`. It proves
+actual mixed Control chords preserve full/Quick drafts and running work, plus
+separate clear/Stop and terminal survival. Native02 below retains its original
+source/hashes and ordinary-path scope.
+
+
 The reviewed native GUI shows activity inside the journal, preserves history,
 context and unsent drafts, and applies the new editing commands in both message
 editors. A first Ctrl+C clears a draft; a separate empty full press stops only the
