@@ -1,0 +1,17 @@
+{
+  "command": [
+    "cargo",
+    "clippy",
+    "--workspace",
+    "--all-targets",
+    "--all-features",
+    "--",
+    "-D",
+    "warnings"
+  ],
+  "exit": 0,
+  "seconds": 7.453207015991211,
+  "raw_bytes": 265,
+  "raw_sha256": "582c41918155b41c93cfb08ae809a1bed507b93b78f4fe21990f8548aad99625",
+  "stored_sha256": "5a9866787720d23b465e429a1eba2682b7353f0498bc954b5c89095c6bf06d91"
+}

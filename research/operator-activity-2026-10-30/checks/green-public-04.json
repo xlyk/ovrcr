@@ -1,0 +1,18 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--test",
+    "tui",
+    "operator_activity_draw_tracks_real_responses_and_clock",
+    "--",
+    "--test-threads=1"
+  ],
+  "exit": 0,
+  "source_revision": "5efc90909e4998bd134414033f067f8d9253a1a3",
+  "isolated_root_removed": "/private/tmp/ovrcr-activity-check-mbeh8k11",
+  "bytes": 422,
+  "sha256": "3b8e3170a628c0aede92ecacede9d897041e832120771ae812a001e16258b490"
+}

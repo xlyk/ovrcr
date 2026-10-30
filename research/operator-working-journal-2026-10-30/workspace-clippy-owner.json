@@ -1,0 +1,13 @@
+{
+  "pid": 24120,
+  "command": [
+    "cargo",
+    "clippy",
+    "--workspace",
+    "--all-targets",
+    "--all-features",
+    "--",
+    "-D",
+    "warnings"
+  ]
+}

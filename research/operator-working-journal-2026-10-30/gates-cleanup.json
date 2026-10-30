@@ -1,0 +1,8 @@
+{
+  "successful_quick_root": "/private/tmp/ovrcr-journal-gates-2uduea7x",
+  "quick_reported_group_states": {},
+  "quick_remaining_files_before_remove": [],
+  "successful_quick_root_removed": true,
+  "failed_workspace_root_preserved": "/private/tmp/ovrcr-journal-gates-83a_s_6i",
+  "failed_fixture_original_cleanup": "shutdown response None; join TimedOut; fallback wait status not logged; subsequent absence is inventory only"
+}

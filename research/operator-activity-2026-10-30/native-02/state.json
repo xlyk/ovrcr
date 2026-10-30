@@ -1,0 +1,30 @@
+{
+  "source_revision": "ace3077b0c6743648b96b6986c3cac9ce50e7a07",
+  "root": "/private/tmp/ovrcr-activity-native2-7w7dtpj5",
+  "bundle": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app",
+  "holder": "/private/tmp/ovrcr-activity-native2-7w7dtpj5/operator_e2e",
+  "features": [
+    "gui",
+    "acceptance-diagnostics"
+  ],
+  "sha256": {
+    "ovrcr": "0c3806735e58e2242926dc3a2730007d36a042c28257ae2524dcafc708c5b4b2",
+    "ovrcr-gui": "cd7f49321d977b33c45c34bc9075091a3bfe700d95140e054ed50a92a87ad899"
+  },
+  "holder_sha256": "900f706a7121f3a04b3ca1235e0ef9804757090e69e8b1b5f570d9562a031f9e",
+  "source_sha256": {
+    "crates/ovrcr-tui/src/dashboard/operator.rs": "3078fe5d348cb91f2b88872ba263e15c5ac4d14d2026c536e820aa422bbc650b",
+    "crates/ovrcr-tui/src/dashboard/operator/render.rs": "687534e95128076b14e1c31746b6be8d4c83b2889d58686eb72fa037a50bcddb",
+    "crates/ovrcr-tui/src/dashboard/render.rs": "ad7d6c1ca8ac9a1adb279e87f25162aecf90fca985a7c050d2903ec2795bbd04",
+    "crates/ovrcr-tui/src/dashboard/state.rs": "e8cf45d068ddfab4ea92134888d6fea39c95221245c270257e84ece7113b1e7c",
+    "tests/operator_e2e.rs": "1e0361c2c7b7b9cd619e9d1f7f1ac00274e8735c2ccca421edd834b15b109bab",
+    "tests/support/operator_provider.rs": "8d36bb9d94807f5735927d347711c14c97f802574f446c511e3c2a8fd1178169"
+  },
+  "evidence_head": "39c1e6e79f0a87e0793e41f513fd082ae332294b",
+  "reused_frozen_artifacts": true,
+  "demo": "/private/tmp/ovrcr-activity-native2-7w7dtpj5/temp/ovrcr-gui-VIyf3Z",
+  "owner_tool_sessions": {
+    "holder": 2957,
+    "gui": 51116
+  }
+}

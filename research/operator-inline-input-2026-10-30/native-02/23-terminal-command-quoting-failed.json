@@ -1,0 +1,9 @@
+{
+  "call": "app.getAXStateAndScreenshot({disableDiffing:true,emit:false})",
+  "start_unix_ms": 1793387383327,
+  "end_unix_ms": 1793387383384,
+  "source_revision": "6e560817477ed9993c5806da958e39dd239b1511",
+  "jpg_sha256": "1bd31e6cd1c55ba4088a5634ce13eccef034efe5255a4b0de7460585a23674ce",
+  "ax_sha256": "2511c64014c9b81cda67f4a4b46bbb09f3995a92d8215fbe13ed709abe0cea77",
+  "activity": []
+}

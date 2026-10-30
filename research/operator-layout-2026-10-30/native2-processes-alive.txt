@@ -1,0 +1,5 @@
+90762 90759 90732 /Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui
+90851 90762 90732 /Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr server
+93351 90762 93351 /private/tmp/ovrcr-layout-native2-rsilv0bh/temp/ovrcr-gui-HaDJEh/dashboard-client/ovrcr
+5862 90851  5862 /Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr operator worker --conversation 2 --turn 2 --session 14 --run 1
+5123 90851  5123 /Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr operator worker --conversation 1 --turn 1 --session 13 --run 1

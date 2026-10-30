@@ -1,0 +1,11 @@
+{
+  "call": "app.getAXStateAndScreenshot({disableDiffing:true,emit:false})",
+  "start_unix_ms": 1793387408266,
+  "end_unix_ms": 1793387408325,
+  "source_revision": "6e560817477ed9993c5806da958e39dd239b1511",
+  "jpg_sha256": "76652fc667582360135a66bce9f7bdc83d70b745ebe2761d216eabfba083d567",
+  "ax_sha256": "b9efadc985276735ea2e6887e50e29867ebaba796ede628e7abca504073d1e2c",
+  "activity": [
+    "\t\t33 text (settable) Claude · unavailable                   │ Managing consigint / main / #1 run 1                                                                          "
+  ]
+}

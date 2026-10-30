@@ -1,0 +1,10 @@
+{
+  "pid": 97846,
+  "command": [
+    "cargo",
+    "test",
+    "--workspace",
+    "--all-targets",
+    "--all-features"
+  ]
+}

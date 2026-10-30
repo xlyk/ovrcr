@@ -1,0 +1,13 @@
+{
+  "call": "app.getAXStateAndScreenshot({disableDiffing:true,emit:false})",
+  "start_unix_ms": 1793387270302,
+  "end_unix_ms": 1793387271172,
+  "source_revision": "6e560817477ed9993c5806da958e39dd239b1511",
+  "jpg_sha256": "f9c8413a27b60115bba5585f4afa6a1bcc90bafba0c0ee374175f61038308263",
+  "ax_sha256": "5275c945e8d5e368fcc8a0956749e8066944a9b436d74d89f85f1922d6762198",
+  "activity": [
+    "\t\t24 text (settable)   ⠋ Waiting for bash result                                                                                  ",
+    "\t\t25 text (settable)  Managing consigint / main / #1 run 1                                                                        ",
+    "\t\t27 text (settable)  > Retained follow-up draft 界🙂; do not send.▏                                                              "
+  ]
+}

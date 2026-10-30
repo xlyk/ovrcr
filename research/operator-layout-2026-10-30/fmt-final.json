@@ -1,0 +1,28 @@
+{
+  "command": [
+    "rtk",
+    "proxy",
+    "cargo",
+    "fmt",
+    "--all",
+    "--",
+    "--check"
+  ],
+  "exit": 0,
+  "revision": "dc9b49dd47fd0eaa690ec65efe1f9e2019a4aec9",
+  "private_root": "/private/tmp/operator-layout-gate-pg79ckmf",
+  "isolated_environment_keys": [
+    "CARGO_HOME",
+    "CARGO_NET_OFFLINE",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_NOSYSTEM",
+    "HOME",
+    "NO_PROXY",
+    "PATH",
+    "RUSTUP_HOME",
+    "SHELL",
+    "TMPDIR",
+    "no_proxy"
+  ],
+  "utc": "2026-10-30T11:50:14.036652+00:00"
+}

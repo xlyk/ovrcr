@@ -1,0 +1,17 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--test",
+    "tui",
+    "--",
+    "--test-threads=1"
+  ],
+  "exit": 0,
+  "source_revision": "5efc90909e4998bd134414033f067f8d9253a1a3",
+  "isolated_root_removed": "/private/tmp/ovrcr-activity-check-nik114ej",
+  "bytes": 26358,
+  "sha256": "bf767cb66b72b43d3990eb72cfe04fe5f0a118bd3e7162f1086a0650b527ff64"
+}

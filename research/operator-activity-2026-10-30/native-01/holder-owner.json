@@ -1,0 +1,12 @@
+{
+  "pid": 32199,
+  "command": [
+    "/private/tmp/ovrcr-activity-native-c2dyqojc/operator_e2e",
+    "--exact",
+    "compiled_worker::native_provider_holder",
+    "--ignored",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "root": "/private/tmp/ovrcr-activity-native-c2dyqojc"
+}

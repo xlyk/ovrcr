@@ -1,0 +1,11 @@
+{
+  "root": "/private/tmp/ovrcr-layout-native-6lbcvrzq",
+  "bundle": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app",
+  "sha256": {
+    "ovrcr-gui": "4c20e1928d1b072852faf5f3f9538607c36387e5a7d3466d361327a99f337cda",
+    "ovrcr": "c6cb84f7250dc833ff7b33a4e5ad965d60c26919ef4ff9002c759b36159facde"
+  },
+  "revision": "299c289",
+  "holder_executable": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/debug/deps/operator_e2e-dabd65c9c03f9022",
+  "demo": "/private/tmp/ovrcr-layout-native-6lbcvrzq/temp/ovrcr-gui-6VJqah"
+}

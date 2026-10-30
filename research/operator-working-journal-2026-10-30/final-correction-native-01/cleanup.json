@@ -1,0 +1,52 @@
+{
+  "pids": {
+    "70230": "absent",
+    "70894": "absent",
+    "70924": "absent",
+    "71330": "absent",
+    "71434": "absent",
+    "71493": "absent",
+    "71555": "absent",
+    "71620": "absent",
+    "71688": "absent",
+    "71763": "absent",
+    "71838": "absent",
+    "71915": "absent",
+    "71989": "absent",
+    "72101": "absent",
+    "72430": "absent",
+    "72550": "absent",
+    "81257": "absent"
+  },
+  "groups": {
+    "70173": "absent",
+    "70815": "absent",
+    "71330": "absent",
+    "71434": "absent",
+    "71493": "absent",
+    "71555": "absent",
+    "71620": "absent",
+    "71688": "absent",
+    "71763": "absent",
+    "71838": "absent",
+    "71915": "absent",
+    "71989": "absent",
+    "72101": "absent",
+    "72430": "absent",
+    "72550": "absent",
+    "81257": "absent"
+  },
+  "demo_exists": false,
+  "socket_exists": false,
+  "gui_original_wait": {
+    "original_wait_exit": 0
+  },
+  "holder_original_wait": {
+    "original_wait_exit": 0
+  },
+  "frozen_hashes_after_close": {
+    "ovrcr": "d79fa8784c77c184cab4d3e030391affa97edce3df23605ad2479de1d7736b2e",
+    "ovrcr-gui": "cf5ecc4a24a30d1bb9cd450ef0bea377dbfadfb1042a12ec328f97f7cf44a5de"
+  },
+  "private_root_removed": true
+}

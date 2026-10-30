@@ -98,6 +98,26 @@ and omit `--all-features`.
 
 ## Commands and isolated acceptance
 
+Operator activity regressions exercise derived state/cadence in the owning TUI
+unit suite, clock-controlled `draw_dashboard_at` through the public Dashboard,
+and `compiled_worker::operator_activity_waits_for_real_model_and_tool` in
+`operator_e2e` with `acceptance-diagnostics`. The latter holds a real Submitted
+receipt, a silent acknowledged model request and an actual Bash result, then
+releases each gate once through private synthetic OAuth and loopback inference.
+Native no-message frame pairs separately prove idle redraw; fixed TestBackend
+timestamps alone cannot prove event-loop animation.
+The [initial activity record](../../research/operator-activity-2026-10-30/native-01/README.md)
+proves silent native animation; its later lock remains recorded. The
+[unlocked correction](../../research/operator-activity-2026-10-30/native-02/README.md)
+adds actual pending-tool movement with Operator collapsed, completed indicator
+absence and normal CUA close on the same frozen product revision.
+The [inline activity and message-input acceptance](../../research/operator-inline-input-2026-10-30/README.md)
+captures activity after message/tool entries, history scroll-away and retained
+viewport through completion, full/Quick Unicode edits, selected Ctrl+C Stop,
+independent response survival and ordinary terminal Ctrl+C on matching native
+artifacts. Known-repeat/frozen-receipt/overlay permutations remain explicitly
+separate automated evidence.
+
 For Rust changes, choose the owning package and add a focused test filter as appropriate:
 
 ```sh
@@ -207,6 +227,20 @@ ignored fixture entrypoints are invoked and checked by their owning parent or
 native acceptance; they are not passing product cases merely because ignored.
 Keep actual native screenshots/accessibility and live subscription acceptance
 separate from loopback evidence.
+
+Layout acceptance also holds real Create/Submit receipts outside the Dashboard to
+prove a dismissed quick message keeps its captured text and context, submits once,
+and preserves terminal focus while another chat completes. The close/archive case
+records two real Bash child groups, closes A, completes B and receives terminal
+output, then restarts and restores A without replay before an explicit new turn.
+The outer-PTY `operator_quick` case sends Ctrl+O, CSI-u Shift+Enter and bracketed
+paste through the compiled Dashboard, checks separate editor lines, dismisses to
+the original terminal, and verifies no conversation was created.
+See the [2026-10-30 layout acceptance record](../../research/operator-layout-2026-10-30/README.md)
+for exact revisions, native JPEG/AX evidence, commands, failures and platform gaps.
+The [Working journal native acceptance record](../../research/operator-working-journal-2026-10-30/README.md)
+adds matching-source journal/receipt/quick captures, the native 80×24 frame and
+kernel-confirmed nested 60×24/60×16 frames, with original owner waits and gate limits.
 
 The [2026-10-29–30 Operator acceptance record](../../research/rig-operator-2026-10-29/README.md)
 contains real ChatGPT GUI turns and a separate controlled concurrent-chat run,

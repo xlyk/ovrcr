@@ -1,0 +1,57 @@
+{
+  "pids": {
+    "39234": "absent",
+    "39924": "absent",
+    "39944": "absent",
+    "40368": "absent",
+    "40439": "absent",
+    "40498": "absent",
+    "40563": "absent",
+    "40628": "absent",
+    "40697": "absent",
+    "40916": "absent",
+    "41210": "absent",
+    "41285": "absent",
+    "41359": "absent",
+    "41434": "absent",
+    "41508": "absent",
+    "56531": "absent",
+    "63884": "absent",
+    "77713": "absent",
+    "77714": "absent",
+    "77719": "absent",
+    "77720": "absent",
+    "77722": "absent"
+  },
+  "groups": {
+    "39166": "absent",
+    "39900": "absent",
+    "40368": "absent",
+    "40439": "absent",
+    "40498": "absent",
+    "40563": "absent",
+    "40628": "absent",
+    "40697": "absent",
+    "40916": "absent",
+    "41210": "absent",
+    "41285": "absent",
+    "41359": "absent",
+    "41434": "absent",
+    "41508": "absent",
+    "56531": "absent",
+    "63884": "absent",
+    "77713": "absent",
+    "77722": "absent"
+  },
+  "gui_original_wait": {
+    "original_wait_exit": 0
+  },
+  "holder_original_wait": {
+    "original_wait_exit": 0
+  },
+  "demo_exists": false,
+  "socket_exists": false,
+  "nested_socket_exists": false,
+  "close_attempt": "Cmd-W left GUI alive; native close button used; no app query after close",
+  "private_root_removed": true
+}

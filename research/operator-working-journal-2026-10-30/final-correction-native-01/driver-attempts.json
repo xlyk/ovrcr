@@ -1,0 +1,8 @@
+[
+  {
+    "action": "app.drag([2194,1856],[1850,1100]); then app.pressKey(o)",
+    "result": "Computer Use server error -10005: windowNotFoundAtPosition((2924.0, 2167.0))",
+    "subsequent_key_executed": false,
+    "correction": "fresh AX/screenshot, actual JPEG1100x932; drag[1097,929] to[930,562], then o"
+  }
+]

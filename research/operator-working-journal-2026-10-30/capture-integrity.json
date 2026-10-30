@@ -1,0 +1,45 @@
+{
+  "verified": [
+    {
+      "state": "01-wide-concurrent-busy",
+      "ax_original_bytes": 8807
+    },
+    {
+      "state": "02-keyboard-call-unread",
+      "ax_original_bytes": 8819
+    },
+    {
+      "state": "03-mouse-output-details",
+      "ax_original_bytes": 8855
+    },
+    {
+      "state": "04-quick-compact-terminal-marker",
+      "ax_original_bytes": 8652
+    },
+    {
+      "state": "05-quick-multiline-cursor",
+      "ax_original_bytes": 8659
+    },
+    {
+      "state": "06-native-80x24-journal",
+      "ax_original_bytes": 3346
+    },
+    {
+      "state": "07-native-60x24-quick-complete",
+      "ax_original_bytes": 2997
+    },
+    {
+      "state": "08-nested-60x24-draft",
+      "ax_original_bytes": 2840
+    },
+    {
+      "state": "09-nested-60x16-floor",
+      "ax_original_bytes": 3025
+    },
+    {
+      "state": "10-nested-60x16-quick",
+      "ax_original_bytes": 3510
+    }
+  ],
+  "all_10_jpeg_and_full_ax_pairs_match_recorded_hashes": true
+}

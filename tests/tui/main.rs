@@ -591,6 +591,14 @@ fn control_punctuation_and_modified_keys_encode() {
             "{code:?}"
         );
     }
+    for modifiers in [
+        KeyModifiers::CONTROL,
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT,
+    ] {
+        assert_eq!(bytes(KeyCode::Char('c'), modifiers), vec![3]);
+    }
     assert_eq!(bytes(KeyCode::Up, KeyModifiers::SHIFT), b"\x1b[1;2A");
     assert_eq!(bytes(KeyCode::Right, KeyModifiers::CONTROL), b"\x1b[1;5C");
     assert_eq!(bytes(KeyCode::Backspace, KeyModifiers::ALT), b"\x1b\x7f");

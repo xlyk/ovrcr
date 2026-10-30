@@ -1,0 +1,24 @@
+󰚩 OVRCR Operator [o]            [Ctrl-o]                                            [Actions] [Menu]
+ OPERATOR ───────────────────────── [+]│Operator · chat_gpt / fixture · complete
+▌  chat-1                              │❯ You
+   chat-2                              │  ▸ Context · global
+                                       │  Review this workspace.
+                                       │
+                                       ││ Operator
+                                       ││ I will inspect its sessions.
+                                       ││ ▸ succeeded · (no output) · Output
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+ QUOTA LEFT ───────────────────────────│
+Claude · checking                      │ Managing global
+Codex · usage off                      │ ──────────────────────────────────────────────────────────
+Grok · usage off                       │ > ▏
+Cursor · usage off                     │
+                                       │ ──────────────────────────────────────────────────────────
+OPERATOR  Shift-Enter Newline  Ctrl-g Browse

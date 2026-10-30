@@ -1235,31 +1235,33 @@ fn client_with_wrong_protocol_version_is_refused() {
     use ovrcr::protocol::{PROTOCOL_VERSION, read_preamble};
     let fixture = Live::thread();
 
-    // A newer client: the server answers with its own preamble, then closes
-    // the connection without serving a frame.
-    let mut stream = UnixStream::connect(&fixture.socket).unwrap();
-    stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .unwrap();
-    let mut preamble = Vec::from(*b"OVRC");
-    preamble.extend_from_slice(&(PROTOCOL_VERSION + 1).to_be_bytes());
-    stream.write_all(&preamble).unwrap();
-    assert_eq!(read_preamble(&mut stream).unwrap(), PROTOCOL_VERSION);
-    // The server closes the connection, so either the frame write or the
-    // response read fails; neither may succeed.
-    let served = write_frame(
-        &mut stream,
-        &ClientMessage {
-            request_id: 1,
-            request: Request::List,
-        },
-    )
-    .and_then(|()| read_frame::<ServerMessage>(&mut stream));
-    assert!(
-        served.is_err(),
-        "server must not serve a client speaking another protocol version"
-    );
-    drop(stream);
+    // Both divergent integration parents and a newer client must fail before
+    // decoding any frame with their incompatible Cursor/Operator layouts.
+    for version in [68, 69, PROTOCOL_VERSION + 1] {
+        let mut stream = UnixStream::connect(&fixture.socket).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut preamble = Vec::from(*b"OVRC");
+        preamble.extend_from_slice(&version.to_be_bytes());
+        stream.write_all(&preamble).unwrap();
+        assert_eq!(read_preamble(&mut stream).unwrap(), PROTOCOL_VERSION);
+        // The server closes the connection, so either the frame write or the
+        // response read fails; neither may succeed.
+        let served = write_frame(
+            &mut stream,
+            &ClientMessage {
+                request_id: 1,
+                request: Request::List,
+            },
+        )
+        .and_then(|()| read_frame::<ServerMessage>(&mut stream));
+        assert!(
+            served.is_err(),
+            "server must not serve a client speaking another protocol version"
+        );
+        drop(stream);
+    }
 
     // A newer server: the client reports both versions and advises restarting.
     let peer = fixture.root.path().join("newer.sock");

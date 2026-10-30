@@ -1,0 +1,98 @@
+[
+  {
+    "pid": 78759,
+    "ppid": 78758,
+    "pgid": 78755,
+    "command": "/private/tmp/ovrcr-inline-native-j4yblu9b/operator_e2e --exact compiled_worker::native_provider_holder --ignored --nocapture --test-threads=1"
+  },
+  {
+    "pid": 80359,
+    "ppid": 80349,
+    "pgid": 80348,
+    "command": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+  },
+  {
+    "pid": 80632,
+    "ppid": 80359,
+    "pgid": 80348,
+    "command": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+  },
+  {
+    "pid": 81128,
+    "ppid": 80632,
+    "pgid": 81128,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 81219,
+    "ppid": 80632,
+    "pgid": 81219,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 81754,
+    "ppid": 80632,
+    "pgid": 81754,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 81380,
+    "ppid": 80632,
+    "pgid": 81380,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 81445,
+    "ppid": 80632,
+    "pgid": 81445,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 81510,
+    "ppid": 80632,
+    "pgid": 81510,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 82986,
+    "ppid": 80632,
+    "pgid": 82986,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 83039,
+    "ppid": 80359,
+    "pgid": 83039,
+    "command": "/private/tmp/ovrcr-inline-native-j4yblu9b/temp/ovrcr-gui-WKWn1j/dashboard-client/ovrcr"
+  },
+  {
+    "pid": 82203,
+    "ppid": 80632,
+    "pgid": 82203,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 82556,
+    "ppid": 80632,
+    "pgid": 82556,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 82640,
+    "ppid": 80632,
+    "pgid": 82640,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 82762,
+    "ppid": 80632,
+    "pgid": 82762,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 82871,
+    "ppid": 80632,
+    "pgid": 82871,
+    "command": "/bin/sh -i"
+  }
+]

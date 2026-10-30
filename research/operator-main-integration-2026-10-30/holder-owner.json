@@ -1,0 +1,12 @@
+{
+  "pid": 14801,
+  "command": [
+    "/private/tmp/ovrcr-main-native-hmmtjegy/operator_e2e",
+    "--exact",
+    "compiled_worker::native_provider_holder",
+    "--ignored",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "root": "/private/tmp/ovrcr-main-native-hmmtjegy"
+}

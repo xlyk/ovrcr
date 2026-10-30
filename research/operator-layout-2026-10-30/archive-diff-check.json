@@ -1,0 +1,31 @@
+{
+  "archive_revision": "7c227357e231598b66933757ed933d8db24e37d8",
+  "feature_base": "aef3e7f0",
+  "command": [
+    "git",
+    "diff",
+    "--check",
+    "aef3e7f0..HEAD"
+  ],
+  "exit": 0,
+  "stdout": "",
+  "stderr": "",
+  "intended_staged_command": [
+    "git",
+    "diff",
+    "--cached",
+    "--check"
+  ],
+  "intended_staged_exit": 0,
+  "feature_staged_command": [
+    "git",
+    "diff",
+    "--cached",
+    "--check",
+    "aef3e7f0"
+  ],
+  "feature_staged_exit": 0,
+  "manifest_sha256": "286221f08564310c813a907aaee17c3485ab1d3d569235e0641044fa3d59e3f8",
+  "historical_failed_check": "artifact-diff-check.json",
+  "rust_and_native_reruns": "not run; artifact-only conversion"
+}

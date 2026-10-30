@@ -1,0 +1,53 @@
+{
+  "unix_ms": 1793387261514,
+  "control_markers": [
+    "auth-ready.json",
+    "base.json",
+    "demo-instance",
+    "fixture-activity.executions",
+    "fixture-activity.pid",
+    "release-activity-start"
+  ],
+  "operator_conversations": [
+    {
+      "id": 1,
+      "session": 13,
+      "provider": "\"grok\"",
+      "model": "fixture-activity",
+      "title": "ACTIVITY Inspect this bounded native acceptance journal. History 01 \u00b7 preserve w"
+    }
+  ],
+  "operator_turns": [
+    {
+      "id": 1,
+      "conversation": 1,
+      "run": 1,
+      "state": "Running",
+      "sequence": 2
+    }
+  ],
+  "operator_messages": [
+    {
+      "ordinal": 1,
+      "conversation": 1,
+      "turn": 1,
+      "content": "{\"User\":{\"text\":\"ACTIVITY Inspect this bounded native acceptance journal.\\nHistory 01 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 02 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 03 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 04 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 05 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 06 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 07 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 08 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 09 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 10 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 11 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 12 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 13 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 14 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 15 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 16 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 17 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 18 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 19 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 20 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 21 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 22 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 23 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 24 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 25 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 26 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 27 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 28 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 29 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 30 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 31 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\\nHistory 32 \u00b7 preserve workspace context and older viewport \u754c\ud83d\ude42.\",\"context\":{\"project\":\"consigint\",\"workspace\":\"main\",\"workspace_id\":\"267b42e35e09adcffb03301772b439ef\",\"cwd\":\"/private/tmp/ovrcr-inline-native2-ukewk5au/temp/ovrcr-gui-yhWah0/repositories/consigint\",\"session\":1,\"run\":1}}}"
+    },
+    {
+      "ordinal": 2,
+      "conversation": 1,
+      "turn": 1,
+      "content": "{\"Worker\":{\"AssistantDelta\":\"ACTIVITY before tool\"}}"
+    },
+    {
+      "ordinal": 3,
+      "conversation": 1,
+      "turn": 1,
+      "content": "{\"Worker\":{\"ToolCall\":{\"id\":\"call-fixture-activity\",\"name\":\"bash\",\"arguments\":\"{\\\"command\\\":\\\"printf 'started\\\\n' >> '/private/tmp/ovrcr-inline-native2-ukewk5au/control/fixture-activity.executions'; printf '%s\\\\n' \\\\\\\"$$\\\\\\\" > '/private/tmp/ovrcr-inline-native2-ukewk5au/control/fixture-activity.pid'; while [ ! -e '/private/tmp/ovrcr-inline-native2-ukewk5au/control/fixture-activity.bash-release' ]; do /bin/sleep 0.01; done; printf 'CLOSE_%s\\\\n' BASH_OK\\\",\\\"cwd\\\":\\\"/private/tmp/ovrcr-inline-native2-ukewk5au/control\\\",\\\"timeout_seconds\\\":600}\"}}}"
+    }
+  ],
+  "frozen_sha256": {
+    "ovrcr": "cc000549d034d59f0a4855cccaa92f94ed7a2b03f5acc8aad465779c99c14c8e",
+    "ovrcr-gui": "66d7b7b58152205abcd169686ee7bd47ac8f4eb8570ac447a53be64479384bb4"
+  }
+}

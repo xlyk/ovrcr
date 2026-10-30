@@ -1,0 +1,155 @@
+{
+  "gui": {
+    "pid": 90762,
+    "state": "absent",
+    "original_wait": {
+      "original_wait_exit": 0
+    }
+  },
+  "holder": {
+    "pid": 88737,
+    "state": "absent",
+    "original_wait": {
+      "original_wait_exit": 0
+    }
+  },
+  "groups": [
+    {
+      "session": 1,
+      "pid": 91463,
+      "pgid": 91463,
+      "state": "absent"
+    },
+    {
+      "session": 2,
+      "pid": 91549,
+      "pgid": 91549,
+      "state": "absent"
+    },
+    {
+      "session": 3,
+      "pid": 91781,
+      "pgid": 91781,
+      "state": "absent"
+    },
+    {
+      "session": 4,
+      "pid": 92081,
+      "pgid": 92081,
+      "state": "absent"
+    },
+    {
+      "session": 5,
+      "pid": 92174,
+      "pgid": 92174,
+      "state": "absent"
+    },
+    {
+      "session": 6,
+      "pid": 92263,
+      "pgid": 92263,
+      "state": "absent"
+    },
+    {
+      "session": 7,
+      "pid": 92358,
+      "pgid": 92358,
+      "state": "absent"
+    },
+    {
+      "session": 8,
+      "pid": 92627,
+      "pgid": 92627,
+      "state": "absent"
+    },
+    {
+      "session": 9,
+      "pid": 92934,
+      "pgid": 92934,
+      "state": "absent"
+    },
+    {
+      "session": 10,
+      "pid": 93053,
+      "pgid": 93053,
+      "state": "absent"
+    },
+    {
+      "session": 11,
+      "pid": 93154,
+      "pgid": 93154,
+      "state": "absent"
+    },
+    {
+      "session": 12,
+      "pid": 93242,
+      "pgid": 93242,
+      "state": "absent"
+    },
+    {
+      "session": 13,
+      "pid": 5123,
+      "pgid": 5123,
+      "state": "absent"
+    },
+    {
+      "session": 14,
+      "pid": 5862,
+      "pgid": 5862,
+      "state": "absent"
+    }
+  ],
+  "processes": [
+    {
+      "pid": 90762,
+      "state": "absent"
+    },
+    {
+      "pid": 90851,
+      "state": "absent"
+    },
+    {
+      "pid": 93351,
+      "state": "absent"
+    },
+    {
+      "pid": 5862,
+      "state": "absent"
+    },
+    {
+      "pid": 5123,
+      "state": "absent"
+    },
+    {
+      "pid": 90762,
+      "state": "absent"
+    },
+    {
+      "pid": 90851,
+      "state": "absent"
+    },
+    {
+      "pid": 97250,
+      "state": "absent"
+    },
+    {
+      "pid": 96910,
+      "state": "absent"
+    },
+    {
+      "pid": 96911,
+      "state": "absent"
+    },
+    {
+      "pid": 96928,
+      "state": "absent"
+    },
+    {
+      "pid": 5862,
+      "state": "absent"
+    }
+  ],
+  "demo_exists": false,
+  "demo_socket_exists": false,
+  "nested_socket_exists": false
+}

@@ -1,0 +1,5 @@
+{
+  "result": "holder and gui wrapper both exited 1 before launch",
+  "error": "IndentationError: unexpected indent at line 5",
+  "correction": "dedent adapted existing wrapper"
+}

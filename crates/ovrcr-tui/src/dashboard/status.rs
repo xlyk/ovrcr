@@ -21,20 +21,34 @@ pub(super) const SPINNER_INTERVAL: Duration = Duration::from_millis(SPINNER_FRAM
 /// The glyph and colour a session holds still at, or `None` when its glyph is a moving
 /// spinner frame — the one state that needs the clock. [`busy`] and [`SessionStatus::of`]
 /// both read this, so the redraw cadence and the drawn glyph are a single decision.
+pub(super) fn sidebar_activity_glyph(
+    activity: AgentActivity,
+    unread: bool,
+    now_unix_ms: u64,
+) -> (char, Color) {
+    match activity {
+        AgentActivity::Unknown => ('-', MUTED()),
+        AgentActivity::Idle => (' ', MUTED()),
+        AgentActivity::WaitingInput => ('?', YELLOW()),
+        AgentActivity::Error => ('!', RED()),
+        AgentActivity::ResponseReady if unread => ('✓', TEAL()),
+        AgentActivity::ResponseReady => (' ', MUTED()),
+        AgentActivity::Busy => (
+            SPINNER_FRAMES
+                [((now_unix_ms / SPINNER_FRAME_MS) % SPINNER_FRAMES.len() as u64) as usize],
+            GREEN(),
+        ),
+    }
+}
 fn fixed_glyph(session: &SessionSummary) -> Option<(char, Color)> {
-    Some(match (&session.phase, super::ready::activity(session)) {
-        (SessionPhase::Exited { .. } | SessionPhase::Stopped, _) => ('·', MUTED()),
-        (SessionPhase::Interrupted, _) => ('!', YELLOW()),
-        (SessionPhase::Paused, _) => ('P', SUBTEXT()),
-        (_, AgentActivity::Unknown) => ('-', MUTED()),
-        (_, AgentActivity::Idle) => (' ', MUTED()),
-        (_, AgentActivity::WaitingInput) => ('?', YELLOW()),
-        (_, AgentActivity::Error) => ('!', RED()),
-        // A reviewed Ready response keeps its reported activity. The checkmark is the
-        // unreviewed mark, so it leaves when Unread does.
-        (_, AgentActivity::ResponseReady) if session.unread.is_some() => ('✓', TEAL()),
-        (_, AgentActivity::ResponseReady) => (' ', MUTED()),
-        (SessionPhase::Running, AgentActivity::Busy) => return None,
+    Some(match session.phase {
+        SessionPhase::Exited { .. } | SessionPhase::Stopped => ('·', MUTED()),
+        SessionPhase::Interrupted => ('!', YELLOW()),
+        SessionPhase::Paused => ('P', SUBTEXT()),
+        SessionPhase::Running if super::ready::activity(session) == AgentActivity::Busy => {
+            return None;
+        }
+        _ => sidebar_activity_glyph(super::ready::activity(session), session.unread.is_some(), 0),
     })
 }
 

@@ -1,0 +1,59 @@
+{
+  "unix_ms": 1793381901251,
+  "pids": {
+    "2770": "absent",
+    "75603": "absent",
+    "76580": "absent",
+    "76742": "absent",
+    "76803": "absent",
+    "76874": "absent",
+    "77076": "absent",
+    "77359": "absent",
+    "77424": "absent",
+    "77493": "absent",
+    "77569": "absent",
+    "77643": "absent",
+    "77717": "absent",
+    "77807": "absent",
+    "77882": "absent",
+    "78133": "absent",
+    "78320": "absent",
+    "84936": "absent",
+    "91223": "absent",
+    "91236": "absent"
+  },
+  "groups": {
+    "75601": "absent",
+    "76521": "absent",
+    "76803": "absent",
+    "76874": "absent",
+    "77076": "absent",
+    "77359": "absent",
+    "77424": "absent",
+    "77493": "absent",
+    "77569": "absent",
+    "77643": "absent",
+    "77717": "absent",
+    "77807": "absent",
+    "77882": "absent",
+    "78133": "absent",
+    "78320": "absent",
+    "84936": "absent"
+  },
+  "demo_exists": false,
+  "socket_exists": false,
+  "holder_original_wait": {
+    "original_wait_exit": 0
+  },
+  "gui_original_wait": {
+    "original_wait_exit": 0
+  },
+  "gui_launcher_tool_exit": 0,
+  "holder_launcher_tool_exit": 0,
+  "normal_cua_close": true,
+  "frozen_hashes_after_close": {
+    "ovrcr": "0c3806735e58e2242926dc3a2730007d36a042c28257ae2524dcafc708c5b4b2",
+    "ovrcr-gui": "cd7f49321d977b33c45c34bc9075091a3bfe700d95140e054ed50a92a87ad899"
+  },
+  "private_root_removed": true
+}

@@ -1,0 +1,530 @@
+<div id="operator-options" aria-label="OVRCR Operator layout alternatives">
+  <style>
+    #operator-options { color-scheme: light dark; }
+    #operator-options .m-screen { --m-bg: light-dark(#f7f7f5,#191c21); --m-fg: light-dark(#282d34,#dce1e7); --m-muted: light-dark(#606976,#9ba5b1); --m-rule: light-dark(#d5d9de,#343d47); --m-accent: light-dark(#1c6077,#8ccbd8); --m-heading: light-dark(#245bb1,#94baff); --m-mauve: light-dark(#7951a1,#caa4ef); --m-progress: light-dark(#3c6d22,#a6d785); --m-selected: light-dark(#e1e4e8,#303540); --m-surface: light-dark(#edf0ef,#22282e); --m-warn: light-dark(#8d5315,#e3ba78); background:var(--m-bg); color:var(--m-fg); font:13px/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; width:100%; margin-inline:auto; position:relative; isolation:isolate; }
+    #operator-options .m-screen * { box-sizing:border-box; }
+    #operator-options .m-screen [hidden] { display:none !important; }
+    #operator-options .m-screen button, #operator-options .m-screen textarea { font:inherit; color:inherit; }
+    #operator-options .m-screen button { border:0; border-radius:0; background:none; padding:0; text-align:left; }
+    #operator-options .m-screen button:focus-visible, #operator-options .m-screen textarea:focus-visible, #operator-options .m-screen summary:focus-visible { outline:2px solid var(--m-accent); outline-offset:3px; }
+    #operator-options .m-top { min-height:3em; padding:.55em 1.5ch; border-bottom:1px solid var(--m-rule); display:flex; gap:2ch; flex-wrap:wrap; align-items:center; }
+    #operator-options .m-top strong { font-weight:600; }
+    #operator-options .m-top .m-mode { margin-right:auto; color:var(--m-muted); }
+    #operator-options .m-quick-launch { color:var(--m-accent) !important; margin-right:10ch; }
+    #operator-options .m-dialog-layer { position:absolute; inset:0; z-index:5; display:flex; align-items:flex-start; justify-content:center; padding:8em 3ch 2em; background:color-mix(in srgb,var(--m-bg) 78%,transparent); }
+    #operator-options .m-quick-dialog { background:var(--m-bg); border:1px solid var(--m-mauve); width:min(64ch,100%); min-width:0; padding:1em 2ch; }
+    #operator-options .m-dialog-heading { display:flex; align-items:center; justify-content:space-between; gap:2ch; margin-bottom:1em; }
+    #operator-options .m-dialog-heading strong { font-weight:600; }
+    #operator-options .m-dialog-heading [data-dialog-cancel] { color:var(--m-mauve); }
+    #operator-options .m-dialog-context { color:var(--m-muted); margin-bottom:1.2em; overflow-wrap:anywhere; }
+    #operator-options .m-dialog-context strong { display:block; color:var(--m-fg); font-weight:400; }
+    #operator-options .m-quick-dialog label { display:block; margin-bottom:.4em; }
+    #operator-options .m-quick-dialog textarea { min-height:7em; padding:.5em 1ch; background:var(--m-surface); }
+    #operator-options .m-dialog-actions { display:flex; align-items:center; flex-wrap:wrap; gap:.65em 2ch; margin-top:1em; }
+    #operator-options .m-dialog-actions [data-dialog-submit] { color:var(--m-accent); }
+    #operator-options .m-dialog-actions [data-dialog-submit]:disabled { color:var(--m-muted); opacity:.65; }
+    #operator-options .m-dialog-hint { margin-top:.8em; color:var(--m-muted); }
+    #operator-options .m-shell { display:grid; grid-template-columns:var(--m-sidebar-width,26ch) minmax(0,1fr); min-height:49em; }
+    #operator-options .m-sidebar { display:flex; flex-direction:column; border-right:1px solid var(--m-rule); padding:1em 1.3ch .7em; min-width:0; }
+    #operator-options .m-sidebar-head { display:flex; gap:1ch; align-items:center; color:var(--m-heading); font-weight:600; margin-bottom:.55em; }
+    #operator-options .m-section-toggle { display:flex; gap:1ch; align-items:center; min-width:0; flex:1; color:var(--m-heading) !important; font-weight:600 !important; }
+    #operator-options .m-heading-rule { flex:1; min-width:1ch; height:0; border-top:1px solid var(--m-rule); }
+    #operator-options .m-collapsed-count { color:var(--m-muted); white-space:nowrap; font-weight:400; }
+    #operator-options .m-sidebar-head [data-new] { color:var(--m-mauve); font-weight:400; }
+    #operator-options .m-sidebar-row { display:grid; grid-template-columns:minmax(0,1fr) 3ch; align-items:center; width:calc(100% + 2.6ch); margin-left:-1.3ch; padding-right:.2ch; height:1.65em; }
+    #operator-options .m-sidebar-row:has(.is-active) { background:var(--m-selected); }
+    #operator-options .m-chat, #operator-options .m-session-row { display:grid; grid-template-columns:1ch 2ch minmax(0,1fr); align-items:center; height:100%; width:100%; min-width:0; padding:0 !important; margin:0; font-weight:400; }
+    #operator-options .m-selection-mark { color:var(--m-mauve); visibility:hidden; }
+    #operator-options .is-active .m-selection-mark { visibility:visible; }
+    #operator-options .m-status { text-align:center; width:2ch; color:var(--m-muted); }
+    #operator-options .m-status[data-status="busy"] { color:var(--m-progress); }
+    #operator-options .m-status[data-status="unread"] { color:var(--m-accent); }
+    #operator-options .m-status[data-status="input"] { color:var(--m-warn); }
+    #operator-options .m-row-label { display:block; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    #operator-options .m-row-close { color:var(--m-mauve) !important; white-space:nowrap; width:3ch; opacity:0; }
+    #operator-options .m-sidebar-row:hover .m-row-close, #operator-options .m-sidebar-row:focus-within .m-row-close { opacity:1; }
+    #operator-options .m-tree { border-top:1px solid var(--m-rule); padding-top:.8em; margin-top:.9em; }
+    #operator-options .m-project { margin:.7em 0; }
+    #operator-options .m-project-name { font-weight:600; }
+    #operator-options .m-branch { padding-left:1ch; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    #operator-options .m-sidebar-foot { margin-top:auto; padding-top:1em; color:var(--m-muted); }
+    #operator-options .m-main { min-width:0; display:flex; }
+    #operator-options .m-agent-view { min-width:0; width:100%; min-height:49em; padding:1em 3ch 0; display:flex; flex-direction:column; }
+    #operator-options .m-chat-header { display:flex; flex-wrap:wrap; justify-content:space-between; gap:.2em 2ch; margin-bottom:1.5em; }
+    #operator-options .m-chat-header strong { font-weight:600; min-width:0; max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    #operator-options .m-chat-provider { color:var(--m-muted); }
+    #operator-options .m-content-host { flex:1; min-width:0; }
+    #operator-options .m-design-content { min-width:0; overflow-wrap:anywhere; }
+    #operator-options .m-message { margin:0 0 1.4em; }
+    #operator-options .m-role { display:block; color:var(--m-muted); margin-bottom:.25em; }
+    #operator-options .m-user { border-left:2px solid var(--m-accent); padding-left:1.5ch; }
+    #operator-options .m-muted { color:var(--m-muted); }
+    #operator-options .m-warn { color:var(--m-warn); }
+    #operator-options .m-action-row { display:flex; gap:1.5ch; flex-wrap:wrap; align-items:baseline; margin:.35em 0; }
+    #operator-options .m-action-row .m-state { margin-left:auto; }
+    #operator-options .m-session-link { color:var(--m-accent) !important; text-decoration:underline; text-underline-offset:3px; }
+    #operator-options .m-attention { padding:.1em 0 .1em 1.5ch; border-left:2px solid var(--m-warn); margin:1.4em 0; }
+    #operator-options .m-attention strong { color:var(--m-warn); font-weight:500; }
+    #operator-options .m-tools { margin:.9em 0 1.4em; color:var(--m-muted); }
+    #operator-options .m-tools details { margin:.3em 0; }
+    #operator-options .m-tools summary { list-style-position:inside; }
+    #operator-options .m-tools details p { margin:.4em 0 .4em 2ch; color:var(--m-fg); }
+    #operator-options .m-bottom { margin-top:1.5em; }
+    #operator-options .m-context { padding-top:.65em; border-top:1px solid var(--m-rule); color:var(--m-muted); overflow-wrap:anywhere; }
+    #operator-options .m-context strong { color:var(--m-fg); font-weight:400; }
+    #operator-options .m-input { display:flex; gap:1ch; padding:.6em 0 .5em; }
+    #operator-options .m-input-mark { color:var(--m-accent); }
+    #operator-options textarea { border:0; border-radius:0; padding:0; resize:none; background:var(--m-bg); min-width:0; width:100%; min-height:3.4em; }
+    #operator-options textarea::placeholder { color:var(--m-muted); opacity:1; }
+    #operator-options .m-footer { padding:.5em 0 .7em; color:var(--m-muted); border-top:1px solid var(--m-rule); display:flex; flex-wrap:wrap; gap:0 2ch; }
+    #operator-options .m-nav-toggle { display:none; }
+    #operator-options .m-session-view { padding:1em 3ch; width:100%; min-width:0; }
+    #operator-options .m-session-header { display:flex; flex-wrap:wrap; gap:1em 2ch; justify-content:space-between; border-bottom:1px solid var(--m-rule); padding-bottom:.8em; }
+    #operator-options .m-session-output { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; margin:2em 0; }
+    #operator-options .m-session-input { margin-top:4em; border-top:1px solid var(--m-rule); padding-top:.7em; }
+    #operator-options .m-quick-thread { padding:1em 0; }
+    #operator-options .m-peek-tabs { display:flex; gap:2ch; flex-wrap:wrap; padding:.55em 0; border-top:1px solid var(--m-rule); border-bottom:1px solid var(--m-rule); }
+    #operator-options .m-peek-tabs button[aria-selected="true"] { color:var(--m-accent); text-decoration:underline; text-underline-offset:5px; }
+    #operator-options .m-peek-output { font:inherit; white-space:pre-wrap; overflow-wrap:anywhere; margin:.8em 0; }
+    #operator-options .m-compact-context { display:none; }
+    #operator-options .m-screen.m-narrow .m-shell { grid-template-columns:minmax(0,1fr); }
+    #operator-options .m-screen.m-narrow .m-sidebar { display:none; }
+    #operator-options .m-screen.m-narrow .m-agent-view { min-height:76em; padding-inline:2ch; }
+    #operator-options .m-screen.m-narrow .m-nav-toggle { display:block; }
+    #operator-options .m-screen.m-narrow.m-nav-open .m-sidebar { display:flex; min-height:76em; }
+    #operator-options .m-screen.m-narrow.m-nav-open .m-main { display:none; }
+    #operator-options .m-screen.m-narrow .m-columns { grid-template-columns:minmax(0,1fr); }
+    #operator-options .m-screen.m-narrow .m-parallel-lanes { grid-template-columns:minmax(0,1fr); }
+    #operator-options .m-screen.m-narrow .m-target-dock { border-left:0; border-top:1px solid var(--m-rule); padding:1em 0 0; }
+    #operator-options .m-screen.m-narrow .m-ledger-row { grid-template-columns:7ch minmax(0,1fr); }
+    @media (max-width:780px) {
+      #operator-options .m-shell { grid-template-columns:minmax(0,1fr); }
+      #operator-options .m-sidebar { display:none; }
+      #operator-options .m-nav-toggle { display:block; }
+      #operator-options .m-quick-launch { margin-right:0; }
+      #operator-options .m-dialog-layer { padding:4em 1ch 1em; }
+      #operator-options .m-quick-dialog { padding:1em 1.5ch; }
+      #operator-options .m-agent-view { min-height:76em; padding-inline:2ch; }
+      #operator-options .m-nav-open .m-sidebar { display:flex; min-height:76em; }
+      #operator-options .m-nav-open .m-main { display:none; }
+      #operator-options .m-columns, #operator-options .m-parallel-lanes { grid-template-columns:minmax(0,1fr) !important; }
+      #operator-options .m-target-dock { border-left:0 !important; border-top:1px solid var(--m-rule); padding:1em 0 0 !important; }
+      #operator-options .m-ledger-row { grid-template-columns:7ch minmax(0,1fr) !important; }
+    }
+    #operator-options .v-original { --m-sidebar-width:28ch; }
+    #operator-options .v-original .m-design-content { max-width:88ch; margin-inline:auto; }
+    #operator-options .v-quiet { --m-sidebar-width:24ch; }
+    #operator-options .v-quiet .m-chat-header { border-bottom:0; margin-bottom:2.6em; }
+    #operator-options .v-quiet .m-design-content { max-width:80ch; margin-inline:auto; }
+    #operator-options .v-quiet .m-role { margin-bottom:.45em; }
+    #operator-options .v-quiet .m-message { margin-bottom:1.9em; }
+    #operator-options .v-quiet .m-quiet-session { margin:.45em 0; display:flex; flex-wrap:wrap; gap:1ch; }
+    #operator-options .v-quiet .m-quiet-session .m-session-link { margin-left:auto; }
+    #operator-options .v-quiet .m-input { padding-top:1em; }
+    #operator-options .v-parallel .m-parallel-lanes { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:2.5ch; margin:1.5em 0; }
+    #operator-options .v-parallel .m-lane { border-top:1px solid var(--m-rule); padding-top:.65em; }
+    #operator-options .v-parallel .m-lane-heading { display:flex; justify-content:space-between; gap:1ch; margin-bottom:.65em; }
+    #operator-options .v-parallel .m-lane p { margin:.6em 0; }
+    #operator-options .v-parallel .m-lane-events { color:var(--m-muted); padding:0; list-style:none; margin:.8em 0; }
+    #operator-options .v-parallel .m-lane-events li { margin:.3em 0; }
+    #operator-options .v-session .m-chat-header { margin-bottom:1em; }
+    #operator-options .v-session .m-inspect { margin-top:1.5em; }
+    #operator-options .v-session .m-inspect-head { display:flex; justify-content:space-between; gap:1ch; flex-wrap:wrap; color:var(--m-muted); }
+    #operator-options .v-session .m-session-log { background:var(--m-surface); padding:.8em 1.5ch; margin:.6em 0; min-height:9.7em; }
+    #operator-options .v-session .m-bottom { margin-top:1em; }
+    #operator-options .v-dock .m-columns { display:grid; grid-template-columns:minmax(0,1fr) 25ch; gap:2.5ch; }
+    #operator-options .v-dock .m-target-dock { border-left:1px solid var(--m-rule); padding-left:2ch; }
+    #operator-options .v-dock .m-target-dock h4 { font:inherit; color:var(--m-muted); margin:0 0 .6em; }
+    #operator-options .v-dock .m-target-dock p { margin:.6em 0 1.2em; }
+    #operator-options .v-dock .m-target-dock .m-dock-session { border-top:1px solid var(--m-rule); padding:.8em 0; }
+    #operator-options .v-dock .m-bottom .m-context { border-top:0; padding:0; }
+    #operator-options .v-focus .m-earlier { color:var(--m-muted); border-bottom:1px solid var(--m-rule); padding-bottom:.7em; margin-bottom:1.6em; }
+    #operator-options .v-focus .m-earlier p { color:var(--m-fg); margin:.8em 0 0; }
+    #operator-options .v-focus .m-task-label { color:var(--m-muted); margin-bottom:.4em; }
+    #operator-options .v-focus .m-outcome { margin:1.4em 0; }
+    #operator-options .v-focus .m-outcome-row { display:grid; grid-template-columns:12ch minmax(0,1fr); gap:1ch; margin:.4em 0; }
+    #operator-options .v-focus .m-now { margin-top:1.4em; border-top:1px solid var(--m-rule); padding-top:.8em; }
+    #operator-options .v-focus .m-input { background:var(--m-surface); padding:.7em 1ch; margin-top:.6em; }
+    #operator-options .v-focus textarea { background:var(--m-surface); }
+  </style>
+  <template id="operator-frame-template">
+    <header class="m-top"><strong>OVRCR</strong><span class="m-mode">Operator</span><button type="button" class="m-quick-launch cursor-interaction" data-quick-open>New Operator ^O</button><button class="m-nav-toggle cursor-interaction" type="button" data-nav aria-expanded="false">Chats / projects ^L</button></header>
+    <div class="m-shell">
+      <aside class="m-sidebar" aria-label="Operator conversations and projects">
+        <section class="m-operator-section" aria-label="Operator conversations">
+          <div class="m-sidebar-head"><button type="button" class="m-section-toggle cursor-interaction" data-collapse-operator aria-expanded="true"><span>OPERATOR</span><span class="m-heading-rule" aria-hidden="true"></span><span class="m-collapsed-count" data-collapsed-count hidden>▸ 3</span></button><button type="button" class="cursor-interaction" data-new aria-label="New conversation (Ctrl-o)" data-tooltip="New conversation · Ctrl-o">[+]</button></div>
+          <div class="m-conversations">
+            <div class="m-sidebar-row" data-chat-row="release"><button class="m-chat is-active cursor-interaction" type="button" data-conversation="release" aria-pressed="true"><span class="m-selection-mark" aria-hidden="true">▌</span><span class="m-status" data-status="busy" role="img" aria-label="In progress">⠋</span><span class="m-row-label">Release review</span></button><button type="button" class="m-row-close cursor-interaction" data-close-conversation="release" aria-label="Close Release review">[x]</button></div>
+            <div class="m-sidebar-row" data-chat-row="cleanup"><button class="m-chat cursor-interaction" type="button" data-conversation="cleanup" aria-pressed="false"><span class="m-selection-mark" aria-hidden="true">▌</span><span class="m-status" data-status="idle" role="img" aria-label="Idle"> </span><span class="m-row-label">Session cleanup</span></button><button type="button" class="m-row-close cursor-interaction" data-close-conversation="cleanup" aria-label="Close Session cleanup">[x]</button></div>
+            <div class="m-sidebar-row" data-chat-row="staging"><button class="m-chat cursor-interaction" type="button" data-conversation="staging" aria-pressed="false"><span class="m-selection-mark" aria-hidden="true">▌</span><span class="m-status" data-status="unread" role="img" aria-label="Unread reply">✓</span><span class="m-row-label">Prepare staging</span></button><button type="button" class="m-row-close cursor-interaction" data-close-conversation="staging" aria-label="Close Prepare staging">[x]</button></div>
+          </div>
+        </section>
+        <div class="m-tree"><div class="m-sidebar-head"><span>PROJECTS</span><span class="m-heading-rule" aria-hidden="true"></span></div>
+          <div class="m-project"><div class="m-project-name">spacelift</div><div class="m-branch">release-review</div><div class="m-sidebar-row" data-session-row="claude"><button class="m-session-row cursor-interaction" type="button" data-session="claude"><span class="m-selection-mark" aria-hidden="true">▌</span><span class="m-status" data-status="busy" role="img" aria-label="In progress">⠋</span><span class="m-row-label">Claude #151</span></button><button type="button" class="m-row-close cursor-interaction" data-close-session="claude" aria-label="Close Claude session">[x]</button></div><div class="m-sidebar-row" data-session-row="pi"><button class="m-session-row cursor-interaction" type="button" data-session="pi"><span class="m-selection-mark" aria-hidden="true">▌</span><span class="m-status" data-status="input" role="img" aria-label="Input needed">?</span><span class="m-row-label">Pi #152</span></button><button type="button" class="m-row-close cursor-interaction" data-close-session="pi" aria-label="Close Pi session">[x]</button></div><div class="m-branch m-muted">main</div></div>
+          <div class="m-project"><div class="m-project-name">ovrcr</div><div class="m-branch m-muted">main</div><div class="m-branch m-muted">rig-operator</div></div>
+          <div class="m-project"><div class="m-project-name">spacelift-agent</div><div class="m-branch m-muted">extract-sweep</div><div class="m-branch m-muted">release-process</div></div>
+        </div><div class="m-sidebar-foot">Sessions 4 / 50</div>
+      </aside>
+      <main class="m-main">
+        <section class="m-agent-view"><header class="m-chat-header"><strong>Release review</strong><span class="m-chat-provider">chatgpt / gpt-6.1-sol</span></header><div class="m-content-host"></div><div class="m-bottom"></div></section>
+        <section class="m-session-view" hidden aria-label="Session preview"><header class="m-session-header"><span data-live-title></span><button type="button" class="m-session-link cursor-interaction" data-return>Back to Operator</button></header><div class="m-muted">spacelift / release-review</div><pre class="m-session-output" data-live-output></pre><div class="m-session-input">&gt; <span class="m-muted">Session input</span></div></section>
+      </main>
+    </div>
+    <div class="m-dialog-layer" hidden>
+      <section class="m-quick-dialog" role="dialog" aria-modal="true" aria-label="New Operator conversation">
+        <header class="m-dialog-heading"><strong>New Operator conversation</strong><button type="button" data-dialog-cancel class="cursor-interaction" aria-label="Cancel new conversation">[x]</button></header>
+        <div class="m-dialog-context">Context<strong data-dialog-context>spacelift / release-review</strong></div>
+        <label>Message<textarea data-dialog-message aria-label="First message to new Operator conversation" placeholder="What would you like Operator to do?" rows="4"></textarea></label>
+        <div class="m-dialog-actions"><button type="button" data-dialog-submit class="cursor-interaction" disabled>Start conversation ↵</button><button type="button" data-dialog-cancel class="m-muted cursor-interaction">Cancel Esc</button></div>
+        <div class="m-dialog-hint">Enter start · Shift+Enter newline</div>
+      </section>
+    </div>
+  </template>
+  <template id="operator-new-row-template"><div class="m-sidebar-row"><button class="m-chat cursor-interaction" type="button" aria-pressed="false"><span class="m-selection-mark" aria-hidden="true">▌</span><span class="m-status" data-status="busy" role="img" aria-label="In progress">⠋</span><span class="m-row-label"></span></button><button type="button" class="m-row-close cursor-interaction">[x]</button></div></template>
+  <template id="operator-composer-template">
+    <div class="m-context">Managing <strong>spacelift / release-review</strong> · 2 sessions</div>
+    <div class="m-input"><span class="m-input-mark">&gt;</span><textarea aria-label="Message to Operator" placeholder="Tell Pi to compare against main…" rows="2"></textarea></div>
+    <footer class="m-footer"><span>Enter send</span><span>Shift+Enter newline</span><span>^L chats</span><span>^G browse</span></footer>
+  </template>
+  <div class="viz-carousel" aria-label="Operator layout options">
+    <section data-variant="Original layout" class="m-variant">
+      <div class="m-screen v-original" aria-label="Original layout"><div class="m-design-content">
+        <div class="m-message m-user"><span class="m-role">You</span>Use the release-review workspace in spacelift. Start Claude for the review and Pi for a second opinion.</div>
+        <div class="m-message"><span class="m-role">Operator</span>I’ll reuse that workspace and start both sessions there.</div>
+        <div class="m-tools"><details><summary>Reused workspace · spacelift / release-review</summary><p>Existing worktree retained. No new workspace created.</p></details><details><summary>Started Claude #151 · running</summary><p>Assigned the release review in this workspace.</p></details><details><summary>Started Pi #152 · needs input</summary><p>Pi is waiting for a base branch.</p></details></div>
+        <div class="m-message"><span class="m-role">Operator</span>Both sessions are available in the sidebar. Claude is reviewing the branch; Pi needs one detail before continuing.</div>
+        <div class="m-attention"><strong>Pi #152 asks</strong><br>Which branch should I compare against? <button type="button" class="m-session-link cursor-interaction" data-session="pi">Open Pi</button></div>
+      </div></div>
+    </section>
+    <section data-variant="Quiet" class="m-variant" hidden>
+      <div class="m-screen v-quiet" aria-label="Quiet"><div class="m-design-content">
+        <div class="m-message"><span class="m-role">you</span>Use the release-review workspace in spacelift. Start Claude for the review and Pi for a second opinion.</div>
+        <div class="m-message"><span class="m-role">operator</span>Done. I reused <strong>spacelift / release-review</strong> and started both sessions.</div>
+        <div class="m-quiet-session"><span>Claude #151</span><span class="m-muted">reviewing the branch</span><button type="button" class="m-session-link cursor-interaction" data-session="claude">Open</button></div>
+        <div class="m-quiet-session"><span>Pi #152</span><span class="m-warn">waiting for input</span><button type="button" class="m-session-link cursor-interaction" data-session="pi">Open</button></div>
+        <div class="m-message" style="margin-top:2em">Pi asks: <strong>Which branch should I compare against?</strong></div>
+      </div></div>
+    </section>
+    <section data-variant="Action ledger" class="m-variant" hidden>
+  <style>
+    #operator-options .v-ledger .ledger-list { list-style: none; margin: 1.2em 0 0; padding: 0; }
+    #operator-options .v-ledger .ledger-step { display: grid; grid-template-columns: 3ch minmax(0, 1fr); gap: 1.2ch; padding: .65em 0; border-top: 1px solid var(--m-rule); }
+    #operator-options .v-ledger .ledger-number { color: var(--m-muted); }
+    #operator-options .v-ledger .ledger-body { min-width: 0; }
+    #operator-options .v-ledger .ledger-receipt { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .35em 2ch; }
+    #operator-options .v-ledger .ledger-target { overflow-wrap: anywhere; }
+    #operator-options .v-ledger .ledger-question { margin: .35em 0 0; color: var(--m-warn); }
+  </style>
+  <div class="m-screen v-ledger" aria-label="Action ledger">
+    <div class="m-design-content">
+      <div class="m-message m-user"><div class="m-role">You</div>Use the release-review workspace in spacelift. Start Claude for the review and Pi for a second opinion.</div>
+      <div class="m-message"><div class="m-role">Operator</div>I reused the workspace and started both sessions.</div>
+      <ol class="ledger-list">
+        <li class="ledger-step"><span class="ledger-number">01</span><div class="ledger-body"><div>Workspace reused</div><div class="m-muted ledger-target">spacelift / release-review</div></div></li>
+        <li class="ledger-step"><span class="ledger-number">02</span><div class="ledger-body"><div class="ledger-receipt"><span>Claude #151 · running</span><button type="button" class="m-session-link cursor-interaction" data-session="claude">Open Claude</button></div><div class="m-muted">Review session started.</div></div></li>
+        <li class="ledger-step"><span class="ledger-number">03</span><div class="ledger-body"><div class="ledger-receipt"><span>Pi #152 · needs base branch</span><button type="button" class="m-session-link cursor-interaction" data-session="pi">Open Pi</button></div><div class="m-muted">Second opinion session started.</div></div></li>
+        <li class="ledger-step"><span class="ledger-number">04</span><div class="ledger-body"><div class="m-muted">Pi needs your decision</div><p class="ledger-question">Which branch should I compare against?</p></div></li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section data-variant="Workspace brief" class="m-variant" hidden>
+  <style>
+    #operator-options .v-brief .brief-heading { margin: 1.25em 0 1em; padding-bottom: .7em; border-bottom: 1px solid var(--m-rule); }
+    #operator-options .v-brief .brief-target { color: var(--m-accent); overflow-wrap: anywhere; }
+    #operator-options .v-brief .brief-sessions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1em; margin-bottom: 1.5em; }
+    #operator-options .v-brief .brief-session { min-width: 0; display:grid; grid-template-columns:13ch minmax(0,1fr) 12ch; column-gap:2ch; border-bottom:1px solid var(--m-rule); padding-bottom:.7em; }
+    #operator-options .v-brief .brief-session p { grid-column:1 / 3; margin:.2em 0 0; }
+    #operator-options .v-brief .brief-session button { grid-column:3; grid-row:1 / 3; align-self:center; }
+    #operator-options .v-brief .brief-status { color: var(--m-accent); }
+    #operator-options .v-brief .brief-waiting { color: var(--m-warn); }
+    #operator-options .v-brief .brief-decision { padding-top: .8em; border-top: 1px solid var(--m-rule); }
+    #operator-options .v-brief .brief-decision p { margin: .35em 0 0; }
+    @media (max-width: 560px) { #operator-options .v-brief .brief-session { grid-template-columns:12ch minmax(0,1fr); } #operator-options .v-brief .brief-session button { grid-column:2;grid-row:3; } }
+  </style>
+  <div class="m-screen v-brief" aria-label="Workspace brief">
+    <div class="m-design-content">
+      <div class="m-message m-user"><div class="m-role">You</div>Use the release-review workspace in spacelift. Start Claude for the review and Pi for a second opinion.</div>
+      <div class="brief-heading"><div class="m-role">Operator · workspace brief</div><div class="brief-target">spacelift / release-review</div><div class="m-muted">Existing workspace reused. Both sessions started.</div></div>
+      <div class="brief-sessions">
+        <div class="brief-session"><div>Claude #151</div><div class="brief-status">Running</div><p class="m-muted">Review the branch.</p><button type="button" class="m-session-link cursor-interaction" data-session="claude">Open Claude</button></div>
+        <div class="brief-session"><div>Pi #152</div><div class="brief-waiting">Needs base branch</div><p class="m-muted">Provide a second opinion.</p><button type="button" class="m-session-link cursor-interaction" data-session="pi">Open Pi</button></div>
+      </div>
+      <div class="brief-decision"><div class="m-role">One decision · Pi #152</div><p>Which branch should I compare against?</p><p class="m-muted">Claude continues while Pi waits for your answer.</p></div>
+    </div>
+  </div>
+</section>
+
+<section data-variant="Dispatch console" class="m-variant" hidden>
+  <style>
+    #operator-options .v-console .console-stream { margin-top: 1.2em; }
+    #operator-options .v-console .console-line { display: grid; grid-template-columns: 9ch minmax(0, 1fr); gap: 1.5ch; padding: .3em 0; }
+    #operator-options .v-console .console-label { color: var(--m-muted); }
+    #operator-options .v-console .console-value { min-width: 0; overflow-wrap: anywhere; }
+    #operator-options .v-console .console-transition { color: var(--m-accent); }
+    #operator-options .v-console .console-links { display: flex; flex-wrap: wrap; gap: .4em 3ch; margin: .75em 0 1.25em; padding: .65em 0 .65em 10.5ch; border-bottom: 1px solid var(--m-rule); }
+    #operator-options .v-console .console-input { color: var(--m-warn); }
+    #operator-options .v-console .console-input .console-label { color: var(--m-warn); }
+  </style>
+  <div class="m-screen v-console" aria-label="Dispatch console">
+    <div class="m-design-content">
+      <div class="m-message m-user"><div class="m-role">You</div>Use the release-review workspace in spacelift. Start Claude for the review and Pi for a second opinion.</div>
+      <div class="console-stream" role="log" aria-label="Operator dispatch activity">
+        <div class="console-line"><span class="console-label">Operator</span><span class="console-value">Starting both sessions in the existing workspace.</span></div>
+        <div class="console-line"><span class="console-label">Target</span><span class="console-value">spacelift / release-review</span></div>
+        <div class="console-line"><span class="console-label">Workspace</span><span class="console-value">Reused</span></div>
+        <div class="console-line"><span class="console-label">Claude</span><span class="console-value">#151 · review<br><span class="console-transition">Launching → running</span></span></div>
+        <div class="console-line"><span class="console-label">Pi</span><span class="console-value">#152 · second opinion<br><span class="console-transition">Launching → needs base branch</span></span></div>
+      </div>
+      <div class="console-links"><button type="button" class="m-session-link cursor-interaction" data-session="claude">Open Claude</button><button type="button" class="m-session-link cursor-interaction" data-session="pi">Open Pi</button></div>
+      <div class="console-line console-input"><span class="console-label">Pi #152</span><span class="console-value">Which branch should I compare against?</span></div>
+      <div class="console-line"><span class="console-label">Operator</span><span class="console-value m-muted">Ready to pass your answer to Pi.</span></div>
+    </div>
+  </div>
+</section>
+
+    <section data-variant="Parallel launch" class="m-variant" hidden>
+      <div class="m-screen v-parallel" aria-label="Parallel launch"><div class="m-design-content">
+        <div class="m-message m-user"><span class="m-role">You</span>Use the release-review workspace in spacelift. Start Claude for the review and Pi for a second opinion.</div>
+        <div class="m-message"><span class="m-role">Operator</span>Reused <strong>spacelift / release-review</strong>. I started both sessions in parallel:</div>
+        <div class="m-parallel-lanes">
+          <section class="m-lane" aria-label="Claude launch"><div class="m-lane-heading"><strong>Claude #151</strong><span class="m-muted">running</span></div><p>Review the release branch.</p><ol class="m-lane-events"><li>Workspace attached</li><li>Session started</li><li>* Reviewing branch</li></ol><button type="button" class="m-session-link cursor-interaction" data-session="claude">Open Claude</button></section>
+          <section class="m-lane" aria-label="Pi launch"><div class="m-lane-heading"><strong>Pi #152</strong><span class="m-warn">input</span></div><p>Give an independent opinion.</p><ol class="m-lane-events"><li>Workspace attached</li><li>Session started</li><li>! Base branch needed</li></ol><button type="button" class="m-session-link cursor-interaction" data-session="pi">Open Pi</button></section>
+        </div>
+        <div class="m-attention"><strong>One question from Pi</strong><br>Which branch should I compare against?</div>
+        <div class="m-muted">Claude continues while Pi waits.</div>
+      </div></div>
+    </section>
+    <section data-variant="Session window" class="m-variant" hidden>
+      <div class="m-screen v-session" aria-label="Session window"><div class="m-design-content">
+        <div class="m-message m-user"><span class="m-role">You</span>Use the release-review workspace in spacelift. Start Claude for the review and Pi for a second opinion.</div>
+        <div class="m-message"><span class="m-role">Operator</span>Both sessions are open in the existing workspace. Claude is running; Pi is waiting for the base branch.</div>
+        <section class="m-inspect" aria-label="Live session window"><div class="m-inspect-head"><span>SESSION WINDOW</span><button type="button" class="m-session-link cursor-interaction" data-session="pi" data-preview-open>Open full session</button></div><div class="m-peek-tabs" role="tablist" aria-label="Session preview"><button type="button" class="cursor-interaction" role="tab" aria-selected="false" data-preview="claude">Claude #151 · running</button><button type="button" class="cursor-interaction" role="tab" aria-selected="true" data-preview="pi">Pi #152 · input</button></div><div class="m-session-log" role="tabpanel" aria-label="Selected session output"><div class="m-muted" data-preview-title>Pi / Second opinion</div><pre class="m-peek-output" data-preview-output>I’m ready to review release-review.
+
+Which branch should I compare against?
+
+&gt; Waiting for input</pre></div></section>
+      </div></div>
+    </section>
+    <section data-variant="Target dock" class="m-variant" hidden>
+      <div class="m-screen v-dock" aria-label="Target dock"><div class="m-design-content">
+        <div class="m-columns"><div>
+          <div class="m-message m-user"><span class="m-role">You</span>Use the release-review workspace in spacelift. Start Claude for the review and Pi for a second opinion.</div>
+          <div class="m-message"><span class="m-role">Operator</span>I reused the workspace and started both sessions.</div>
+          <div class="m-message">Claude is reviewing the branch. Pi needs a base branch before it can start the independent review.</div>
+          <div class="m-message">You can answer here, or open Pi directly. Claude will keep running.</div>
+        </div><aside class="m-target-dock" aria-label="Managed workspace and sessions"><h4>MANAGING</h4><strong>spacelift</strong><p>release-review<br><span class="m-muted">existing workspace</span></p><div class="m-dock-session"><strong>Claude #151</strong><br><span class="m-muted">running</span><br><button type="button" class="m-session-link cursor-interaction" data-session="claude">Open session</button></div><div class="m-dock-session"><strong>Pi #152</strong><br><span class="m-warn">needs input</span><p>Which branch should I compare against?</p><button type="button" class="m-session-link cursor-interaction" data-session="pi">Open session</button></div></aside></div>
+      </div></div>
+    </section>
+    <section data-variant="Current request" class="m-variant" hidden>
+      <div class="m-screen v-focus" aria-label="Current request"><div class="m-design-content">
+        <details class="m-earlier"><summary>Earlier · checked workspace and session capacity</summary><p>You asked what was running in spacelift. Operator found the existing release-review workspace and enough capacity to start two sessions.</p></details>
+        <div class="m-task-label">CURRENT REQUEST</div>
+        <div class="m-message">Use the release-review workspace in spacelift. Start Claude for the review and Pi for a second opinion.</div>
+        <div class="m-outcome"><div class="m-outcome-row"><span class="m-muted">Workspace</span><span>release-review · reused</span></div><div class="m-outcome-row"><span class="m-muted">Claude #151</span><span>running · <button type="button" class="m-session-link cursor-interaction" data-session="claude">Open</button></span></div><div class="m-outcome-row"><span class="m-muted">Pi #152</span><span class="m-warn">needs input · <button type="button" class="m-session-link cursor-interaction" data-session="pi">Open</button></span></div></div>
+        <div class="m-now"><span class="m-warn">PI NEEDS A DECISION</span><div style="margin-top:.5em">Which branch should I compare against?</div><div class="m-muted" style="margin-top:.5em">Reply here to have Operator pass on your answer.</div></div>
+      </div></div>
+    </section>
+  </div>
+  <script>
+    (() => {
+      const root = document.getElementById('operator-options');
+      const frameTemplate = root.querySelector('#operator-frame-template');
+      const composerTemplate = root.querySelector('#operator-composer-template');
+      const chatState = new WeakMap();
+      const sessions = {
+        claude:{title:'Claude #151 · Release review · running',label:'Claude / Release review',text:'Reviewing release-review in spacelift.\n\nI’ll inspect the branch and report release blockers.\n\n* Review in progress…'},
+        pi:{title:'Pi #152 · Second opinion · needs input',label:'Pi / Second opinion',text:'I’m ready to review release-review.\n\nWhich branch should I compare against?\n\n> Waiting for input'}
+      };
+      root.querySelectorAll('.m-screen').forEach((screen,index) => {
+        const content = screen.querySelector('.m-design-content');
+        const fragment = frameTemplate.content.cloneNode(true);
+        fragment.querySelector('.m-content-host').append(content);
+        fragment.querySelector('.m-bottom').append(composerTemplate.content.cloneNode(true));
+        screen.append(fragment);
+        chatState.set(screen,{selected:'release',drafts:{release:'',cleanup:'',staging:'',new:''},threads:{},nextId:1,dialogContext:'',returnFocus:null});
+        const tabs=screen.querySelectorAll('[data-preview]');
+        tabs.forEach((tab,tabIndex)=>{tab.id='session-tab-'+index+'-'+tabIndex;tab.setAttribute('aria-controls','session-panel-'+index);});
+        const panel=screen.querySelector('[role="tabpanel"]');
+        if(panel) { panel.id='session-panel-'+index; panel.setAttribute('aria-labelledby','session-tab-'+index+'-1'); }
+        const design={width:'Full width',appearance:'Follow theme'};
+        function renderDesign() {
+          screen.style.maxWidth=design.width==='Full width'?'none':(design.width==='80 columns'?'80ch':'60ch');
+          screen.classList.toggle('m-narrow',design.width!=='Full width');
+          screen.style.colorScheme=design.appearance==='Follow theme'?'light dark':design.appearance.toLowerCase();
+        }
+        renderDesign();
+        if(globalThis.Tweak) {
+          const tweak=new Tweak({container:screen,onChange:renderDesign});
+          tweak.addSelect(design,'width',{label:'Terminal width',options:['Full width','80 columns','60 columns']});
+          tweak.addSelect(design,'appearance',{label:'Appearance',options:['Follow theme','Dark','Light']});
+        }
+      });
+      function agentView(screen) {
+        screen.querySelector('.m-agent-view').hidden=false;
+        screen.querySelector('.m-session-view').hidden=true;
+        screen.classList.remove('m-nav-open');
+        screen.querySelector('[data-nav]').setAttribute('aria-expanded','false');
+        const state=chatState.get(screen);
+        screen.querySelectorAll('.m-session-row').forEach(button=>button.classList.remove('is-active'));
+        screen.querySelectorAll('.m-chat').forEach(button=>button.classList.toggle('is-active',button.dataset.conversation===state.selected));
+      }
+      function selectConversation(screen,id) {
+        const state=chatState.get(screen);
+        const input=screen.querySelector('textarea');
+        state.drafts[state.selected]=input.value;
+        state.selected=id;
+        input.value=state.drafts[id];
+        agentView(screen);
+        const existing=screen.querySelector('.m-quick-thread');
+        if(existing) existing.remove();
+        const content=screen.querySelector('.m-design-content');
+        content.hidden=id!=='release';
+        const titles={release:'Release review',cleanup:'Session cleanup',staging:'Prepare staging',new:'New conversation'};
+        const contexts={release:'Managing spacelift / release-review · 2 sessions',cleanup:'Managing ovrcr / main',staging:'Managing spacelift-agent / staging',new:'No workspace selected'};
+        const thread=state.threads[id];
+        screen.querySelector('.m-chat-header strong').textContent=thread?.title||titles[id];
+        screen.querySelector('.m-context').textContent=thread?'Managing '+thread.context:contexts[id];
+        input.placeholder=id==='release'?'Tell Pi to compare against main…':'Message Operator…';
+        screen.querySelectorAll('.m-chat').forEach(button=>{const selected=button.dataset.conversation===id;button.classList.toggle('is-active',selected);button.setAttribute('aria-pressed',String(selected));});
+        const selectedRow=screen.querySelector('[data-chat-row="'+id+'"]');
+        const unread=selectedRow?.querySelector('[data-status="unread"]');
+        if(unread) { unread.textContent=' '; unread.dataset.status='idle'; unread.setAttribute('aria-label','No unread reply'); }
+        if(id!=='release') {
+          const copy={cleanup:'The requested sessions have been closed. The workspace is retained.',staging:'Staging workspace is ready. Its sessions are available in Projects.',new:'What would you like Operator to manage?'};
+          const view=document.createElement('div');
+          view.className='m-quick-thread';
+          if(thread) {
+            const message=document.createElement('div');message.className='m-message m-user';
+            const role=document.createElement('span');role.className='m-role';role.textContent='You';
+            const text=document.createElement('div');text.style.whiteSpace='pre-wrap';text.textContent=thread.message;
+            message.append(role,text);
+            const activity=document.createElement('div');activity.className='m-muted';activity.textContent='⠋ Working…';
+            view.append(message,activity);
+          } else view.textContent=copy[id];
+          screen.querySelector('.m-content-host').append(view);
+        }
+      }
+      function setDialog(screen,open) {
+        screen.querySelector('.m-dialog-layer').hidden=!open;
+        screen.querySelector('.m-top').inert=open;
+        screen.querySelector('.m-shell').inert=open;
+      }
+      function openQuickDialog(screen) {
+        const state=chatState.get(screen);
+        if(!screen.querySelector('.m-dialog-layer').hidden) return;
+        state.returnFocus=document.activeElement;
+        const selectedSession=screen.querySelector('.m-session-row.is-active')?.dataset.session;
+        const targets={release:'spacelift / release-review',cleanup:'ovrcr / main',staging:'spacelift-agent / staging',new:'No workspace selected'};
+        state.dialogContext=!screen.querySelector('.m-session-view').hidden&&selectedSession?'spacelift / release-review / '+(selectedSession==='pi'?'Pi #152':'Claude #151'):(state.threads[state.selected]?.context||targets[state.selected]);
+        screen.querySelector('[data-dialog-context]').textContent=state.dialogContext;
+        screen.querySelector('[data-dialog-message]').value='';
+        screen.querySelector('[data-dialog-submit]').disabled=true;
+        setDialog(screen,true);
+        screen.querySelector('[data-dialog-message]').focus();
+      }
+      function cancelQuickDialog(screen) {
+        setDialog(screen,false);
+        const previous=chatState.get(screen).returnFocus;
+        if(previous?.isConnected&&previous!==document.body) previous.focus();
+      }
+      function submitQuickDialog(screen) {
+        const field=screen.querySelector('[data-dialog-message]');
+        if(screen.querySelector('.m-dialog-layer').hidden||!field.value.trim()) return;
+        const state=chatState.get(screen);
+        const id='quick-'+state.nextId++;
+        const message=field.value;
+        const title=message.trim().split(/\r?\n/,1)[0];
+        state.threads[id]={title,context:state.dialogContext,message};
+        state.drafts[id]='';
+        const row=root.querySelector('#operator-new-row-template').content.cloneNode(true);
+        row.querySelector('.m-sidebar-row').dataset.chatRow=id;
+        row.querySelector('.m-chat').dataset.conversation=id;
+        row.querySelector('.m-chat').setAttribute('aria-label',title);
+        row.querySelector('.m-row-label').textContent=title;
+        row.querySelector('.m-row-label').setAttribute('data-tooltip',title);
+        row.querySelector('.m-row-close').dataset.closeConversation=id;
+        row.querySelector('.m-row-close').setAttribute('aria-label','Close '+title);
+        screen.querySelector('.m-conversations').prepend(row);
+        const toggle=screen.querySelector('[data-collapse-operator]');toggle.setAttribute('aria-expanded','true');
+        screen.querySelector('.m-conversations').hidden=false;
+        const count=screen.querySelector('[data-collapsed-count]');count.hidden=true;count.textContent='▸ '+screen.querySelectorAll('[data-chat-row]').length;
+        setDialog(screen,false);
+        selectConversation(screen,id);
+        screen.querySelector('.m-bottom textarea').focus();
+      }
+      root.addEventListener('input',event=>{
+        if(event.target.matches('[data-dialog-message]')) event.target.closest('.m-screen').querySelector('[data-dialog-submit]').disabled=!event.target.value.trim();
+      });
+      document.addEventListener('keydown',event=>{
+        const screen=document.activeElement?.closest('.m-screen')||Array.from(root.querySelectorAll('.m-screen')).find(item=>!item.closest('.m-variant').hidden);
+        if(!screen) return;
+        if(event.ctrlKey&&!event.shiftKey&&!event.altKey&&!event.metaKey&&event.key.toLowerCase()==='o') {
+          event.preventDefault();event.stopPropagation();if(!event.repeat) openQuickDialog(screen);return;
+        }
+        if(screen.querySelector('.m-dialog-layer').hidden) return;
+        if(event.key==='Escape') { event.preventDefault();event.stopPropagation();cancelQuickDialog(screen); }
+        else if(event.key==='Enter'&&!event.shiftKey&&!event.ctrlKey&&!event.altKey&&!event.metaKey&&!event.isComposing&&event.target.matches('[data-dialog-message]')) { event.preventDefault();if(!event.repeat) submitQuickDialog(screen); }
+        else if(event.key==='Tab') {
+          const controls=Array.from(screen.querySelector('.m-quick-dialog').querySelectorAll('button:not([disabled]),textarea'));
+          const first=controls[0],last=controls[controls.length-1];
+          if(event.shiftKey&&document.activeElement===first) {event.preventDefault();last.focus();}
+          else if(!event.shiftKey&&document.activeElement===last) {event.preventDefault();first.focus();}
+        }
+      });
+      root.addEventListener('click',event=>{
+        const button=event.target.closest('button');
+        if(!button) return;
+        const screen=button.closest('.m-screen');
+        if(!screen) return;
+        if(button.hasAttribute('data-quick-open')||button.hasAttribute('data-new')) {
+          openQuickDialog(screen);
+        } else if(button.hasAttribute('data-dialog-cancel')) {
+          cancelQuickDialog(screen);
+        } else if(button.hasAttribute('data-dialog-submit')) {
+          submitQuickDialog(screen);
+        } else if(button.hasAttribute('data-collapse-operator')) {
+          const collapsed=button.getAttribute('aria-expanded')==='true';
+          button.setAttribute('aria-expanded',String(!collapsed));
+          screen.querySelector('.m-conversations').hidden=collapsed;
+          const count=screen.querySelector('[data-collapsed-count]');
+          count.hidden=!collapsed;
+          count.textContent='▸ '+screen.querySelectorAll('[data-chat-row]').length;
+        } else if(button.hasAttribute('data-close-conversation')) {
+          const id=button.dataset.closeConversation;
+          screen.querySelector('[data-chat-row="'+id+'"]').remove();
+          if(chatState.get(screen).selected===id) selectConversation(screen,screen.querySelector('[data-conversation]')?.dataset.conversation||'new');
+          screen.querySelector('[data-collapsed-count]').textContent='▸ '+screen.querySelectorAll('[data-chat-row]').length;
+        } else if(button.hasAttribute('data-close-session')) {
+          screen.querySelector('[data-session-row="'+button.dataset.closeSession+'"]').remove();
+          agentView(screen);
+        } else if(button.hasAttribute('data-nav')) {
+          const open=screen.classList.toggle('m-nav-open');
+          button.setAttribute('aria-expanded',String(open));
+        } else if(button.hasAttribute('data-preview')) {
+          const key=button.dataset.preview;
+          screen.querySelectorAll('[data-preview]').forEach(tab=>tab.setAttribute('aria-selected',String(tab===button)));
+          screen.querySelector('[data-preview-output]').textContent=sessions[key].text;
+          screen.querySelector('[data-preview-title]').textContent=sessions[key].label;
+          screen.querySelector('[data-preview-open]').dataset.session=key;
+          screen.querySelector('[role="tabpanel"]').setAttribute('aria-labelledby',button.id);
+        } else if(button.hasAttribute('data-session')) {
+          const session=sessions[button.dataset.session];
+          screen.querySelector('.m-agent-view').hidden=true;
+          screen.querySelector('.m-session-view').hidden=false;
+          screen.querySelector('[data-live-title]').textContent=session.title;
+          screen.querySelector('[data-live-output]').textContent=session.text;
+          screen.classList.remove('m-nav-open');
+          screen.querySelector('[data-nav]').setAttribute('aria-expanded','false');
+          screen.querySelectorAll('.m-chat').forEach(chat=>chat.classList.remove('is-active'));
+          screen.querySelectorAll('.m-session-row').forEach(row=>row.classList.toggle('is-active',row.dataset.session===button.dataset.session));
+        } else if(button.hasAttribute('data-return')) {
+          agentView(screen);
+        } else if(button.hasAttribute('data-conversation')) {
+          selectConversation(screen,button.dataset.conversation);
+        }
+      });
+    })();
+  </script>
+</div>

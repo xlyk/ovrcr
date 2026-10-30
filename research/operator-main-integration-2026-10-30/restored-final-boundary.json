@@ -1,0 +1,69 @@
+{
+  "unix_ms": 1793401670945,
+  "control_markers": [
+    "auth-ready.json",
+    "base.json",
+    "demo-instance",
+    "fixture-a.executions"
+  ],
+  "operator_conversations": [
+    {
+      "id": 1,
+      "session": 13,
+      "provider": "\"grok\"",
+      "model": "fixture-a",
+      "title": "A protocol70 native integration must preserve draft and show tool feedback"
+    }
+  ],
+  "operator_turns": [
+    {
+      "id": 1,
+      "conversation": 1,
+      "run": 1,
+      "state": "Interrupted",
+      "sequence": 4
+    }
+  ],
+  "operator_messages": [
+    {
+      "ordinal": 1,
+      "conversation": 1,
+      "turn": 1,
+      "content": "{\"User\":{\"text\":\"A protocol70 native integration must preserve draft and show tool feedback\",\"context\":{\"project\":\"consigint\",\"workspace\":\"main\",\"workspace_id\":\"29192e0d19affec7b0403fab79fbf666\",\"cwd\":\"/private/tmp/ovrcr-main-native-hmmtjegy/temp/ovrcr-gui-jH3i9M/repositories/consigint\",\"session\":1,\"run\":1}}}"
+    },
+    {
+      "ordinal": 2,
+      "conversation": 1,
+      "turn": 1,
+      "content": "{\"Worker\":{\"AssistantDelta\":\"A before tool\"}}"
+    },
+    {
+      "ordinal": 3,
+      "conversation": 1,
+      "turn": 1,
+      "content": "{\"Worker\":{\"ToolCall\":{\"id\":\"call-fixture-a\",\"name\":\"bash\",\"arguments\":\"{\\\"command\\\":\\\"printf 'E2E_A_TOOL\\\\nCLI_BEGIN\\\\n'; \\\\\\\"$OVRCR_EXECUTABLE\\\\\\\" --json list; cli_status=$?; printf '\\\\nCLI_END\\\\n'; printf 'ran\\\\n' >> '/private/tmp/ovrcr-main-native-hmmtjegy/control/fixture-a.executions'; exit \\\\\\\"$cli_status\\\\\\\"\\\",\\\"cwd\\\":\\\"/private/tmp/ovrcr-main-native-hmmtjegy/control\\\",\\\"timeout_seconds\\\":10}\"}}}"
+    },
+    {
+      "ordinal": 4,
+      "conversation": 1,
+      "turn": 1,
+      "content": "{\"Worker\":{\"ToolOutput\":{\"id\":\"call-fixture-a\",\"output\":\"E2E_A_TOOL\\nCLI_BEGIN\\n[{\\\"name\\\":\\\"consigint\\\",\\\"workspaces\\\":[{\\\"project\\\":\\\"consigint\\\",\\\"name\\\":\\\"main\\\",\\\"path\\\":\\\"/private/tmp/ovrcr-main-native-hmmtjegy/temp/ovrcr-gui-jH3i9M/repositories/consigint\\\",\\\"terminals\\\":[{\\\"scope\\\":\\\"Workspace\\\",\\\"id\\\":1,\\\"archived\\\":false,\\\"run\\\":1,\\\"kind\\\":\\\"terminal\\\",\\\"project\\\":\\\"consigint\\\",\\\"workspace\\\":\\\"main\\\",\\\"cwd\\\":\\\"/private/tmp/ovrcr-main-native-hmmtjegy/temp/ovrcr-gui-jH3i9M/repositories/consigint\\\",\\\"name\\\":\\\"local\\\",\\\"title\\\":\\\"local\\\",\\\"display_name\\\":\\\"local\\\",\\\"label\\\":\\\"zsh\\\",\\\"pid\\\":15701,\\\"started_unix_ms\\\":1793401569351,\\\"phase\\\":\\\"running\\\",\\\"activity\\\":\\\"unknown\\\",\\\"exit_code\\\":null,\\\"exit_signal\\\":null,\\\"agent\\\":null,\\\"agent_epoch\\\":0,\\\"unread\\\":null,\\\"recovery\\\":null,\\\"reporting_unavailable\\\":null,\\\"measurement_age_ms\\\":null}]},{\\\"project\\\":\\\"consigint\\\",\\\"name\\\":\\\"gui-consigint-auth-handoff\\\",\\\"path\\\":\\\"/private/tmp/ovrcr-main-native-hmmtjegy/temp/ovrcr-gui-jH3i9M/workspaces/consigint/d5a586aba243058d1cb69f33f44ceabe\\\",\\\"terminals\\\":[{\\\"scope\\\":\\\"Workspace\\\",\\\"id\\\":4,\\\"archived\\\":false,\\\"run\\\":1,\\\"kind\\\":\\\"terminal\\\",\\\"project\\\":\\\"consigint\\\",\\\"workspace\\\":\\\"gui-consigint-auth-handoff\\\",\\\"cwd\\\":\\\"/private/tmp/ovrcr-main-native-hmmtjegy/temp/ovrcr-gui-jH3i9M/workspaces/consigint/d5a586aba243058d1cb69f33f44ceabe\\\",\\\"name\\\":\\\"local\\\",\\\"title\\\":\\\"local\\\",\\\"display_name\\\":\\\"local\\\",\\\"label\\\":\\\"zsh\\\",\\\"pid\\\":15900,\\\"started_unix_ms\\\":1793401569894,\\\"phase\\\":\\\"running\\\",\\\"activity\\\":\\\"unknown\\\",\\\"exit_code\\\":null,\\\"exit_signal\\\":null,\\\"agent\\\":null,\\\"agent_epoch\\\":0,\\\"unread\\\":null,\\\"recovery\\\":null,\\\"reporting_unavailable\\\":null,\\\"measurement_age_ms\\\":null},{\\\"scope\\\":\\\"Workspace\\\",\\\"id\\\":10,\\\"archived\\\":false,\\\"run\\\":1,\\\"kind\\\":\\\"terminal\\\",\\\"project\\\":\\\"consigint\\\",\\\"workspace\\\":\\\"gui-consigint-auth-handoff\\\",\\\"cwd\\\":\\\"/private/tmp/ovrcr-main-native-hmmtjegy/temp/ovrcr-gui-jH3i9M/workspaces/consigint/d5a586aba243058d1cb69f33f44ceabe\\\",\\\"name\\\":\\\"review auth handoff\\\",\\\"title\\\":\\\"review auth handoff\\\",\\\"display_name\\\":\\\"review auth handoff\\\",\\\"label\\\":\\\"grok / grok-4.6\\\",\\\"pid\\\":16333,\\\"started_unix_ms\\\":1793401570933,\\\"phase\\\":\\\"running\\\",\\\"activity\\\":\\\"unknown\\\",\\\"exit_code\\\":null,\\\"exit_signal\\\":null,\\\"agent\\\":null,\\\"agent_epoch\\\":0,\\\"unread\\\":null,\\\"recovery\\\":null,\\\"reporting_unavailable\\\":null,\\\"measurement_age_ms\\\":null}]},{\\\"project\\\":\\\"consigint\\\",\\\"name\\\":\\\"gui-consigint-worktree-lifecycle\\\",\\\"path\\\":\\\"/private/tmp/ovrcr-main-native-hmmtjegy/temp/ovrcr-gui-jH3i9M/workspaces/consigint/04ddc11fcf2c4f3abe61ac6d06f3445b\\\",\\\"terminals\\\":[{\\\"scope\\\":\\\"Workspace\\\",\\\"id\\\":3,\\\"archived\\\":false,\\\"run\\\":1,\\\"kind\\\":\\\"terminal\\\",\\\"project\\\":\\\"consigint\\\",\\\"workspace\\\":\\\"gui-consigint-worktree-lifecycle\\\",\\\"cwd\\\":\\\"/private/tmp/ovrcr-main-native-hmmtjegy/temp/ovrcr-gui-jH3i9M/workspaces/consigint/04ddc11fcf2c4f3abe61ac6d06f3445b\\\",\\\"name\\\":\\\"local\\\",\\\"title\\\":\\\"local\\\",\\\"display_name\\\":\\\"local\\\",\\\"label\\\":\\\"zsh\\\",\\\"pid\\\":15836,\\\"started_unix_ms\\\":1793401569727,\\\"phase\\\":\\\"running\\\",\\\"activity\\\":\\\"unknown\\\",\\\"exit_code\\\":null,\\\"exit_signal\\\":null,\\\"agent\\\":null,\\\"agent_epoch\\\":0,\\\"unread\\\":null,\\\"recovery\\\":null,\\\"reporting_unavailable\\\":null,\\\"measurement_age_ms\\\":null},{\\\"scope\\\":\\\"Workspace\\\",\\\"id\\\":7,\\\"archived\\\":false,\\\"run\\\":1,\\\"kind\\\":\\\"terminal\\\",\\\"project\\\":\\\"consigint\\\",\\\"workspace\\\":\\\"gui-consigint-worktree-lifecycle\\\",\\\"cwd\\\":\\\"/private/tmp/ovrcr-main-native-hmmtjegy/temp/ovrcr-gui-jH3i9M/workspaces/consigint/04ddc11fcf2c4f3abe61ac6d06f3445b\\\",\\\"name\\\":\\\"implement lifecycle cleanup\\\",\\\"title\\\":\\\"implement lifecycle cleanup\\\",\\\"display_name\\\":\\\"implement lifecycle cleanup\\\",\\\"label\\\":\\\"claude / sonnet-4\\\",\\\"pid\\\":16109,\\\"started_unix_ms\\\":1793401570424,\\\"phase\\\":\\\"running\\\",\\\"activity\\\":\\\"unknown\\\",\\\"exit_code\\\":null,\\\"exit_signal\\\":null,\\\"agent\\\":null,\\\"agent_epoch\\\":0,\\\"unread\\\":null,\\\"recovery\\\":null,\\\"reporting_unavailable\\\":null,\\\"measurement_age_ms\\\":null},{\\\"scope\\\":\\\"Workspace\\\",\\\"id\\\":8,\\\"archived\\\":false,\\\"run\\\":1,\\\"kind\\\":\\\"terminal\\\",\\\"project\\\":\\\"consigint\\\",\\\"workspace\\\":\\\"gui-consigint-worktree-lifecycle\\\",\\\"cwd\\\":\\\"/private/tmp/ovrcr-main-native-hmmtjegy/temp/ovrcr-gui-jH3i9M/workspaces/consigint/04ddc11fcf2c4f3abe61ac6d06f3445b\\\",\\\"name\\\":\\\"review websocket shutdown\\\",\\\"title\\\":\\\"review websocket shutdown\\\",\\\"display_name\\\":\\\"review websocket shutdown\\\",\\\"label\\\":\\\"codex / gpt-5.4\\\",\\\"pid\\\":16183,\\\"started_unix_ms\\\":1793401570591,\\\"phase\\\":\\\"running\\\",\\\"activity\\\":\\\"unknown\\\",\\\"exit_code\\\":null,\\\"exit_signal\\\":null,\\\"agent\\\":null,\\\"agent_epoch\\\":0,\\\"unread\\\":null,\\\"recovery\\\":null,\\\"reporting_unavailable\\\":null,\\\"measurement_age_ms\\\":null},{\\\"scope\\\":\\\"Workspace\\\",\\\"id\\\":9,\\\"archived\\\":false,\\\"run\\\":1,\\\"kind\\\":\\\"terminal\\\",\\\"project\\\":\\\"consigint\\\",\\\"workspace\\\":\\\"gui-consigint-worktree-lifecycle\\\",\\\"cwd\\\":\\\"/private/tmp/ovrcr-main-native-hmmtjegy/temp/ovrcr-gui-jH3i9M/workspaces/consigint/04ddc11fcf2c4f3abe61ac6d06f3445b\\\",\\\"name\\\":\\\"plan snapshot restore\\\",\\\"title\\\":\\\"plan snapshot restore\\\",\\\"display_name\\\":\\\"plan snapshot restore\\\",\\\"label\\\":\\\"pi / grok-4.6\\\",\\\"pid\\\":16258,\\\"started_unix_ms\\\":1793401570762,\\\"phase\\\":\\\"running\\\",\\\"activity\\\":\\\"unknown\\\",\\\"exit_code\\\":null,\\\"exit_signal\\\":null,\\\"agent\\\":null,\\\"agent_epoch\\\":0,\\\"unread\\\":null,\\\"recovery\\\":null,\\\"reporting_unavailable\\\":null,\\\"measurement_age_ms\\\":null}]}]},{\\\"name\\\":\\\"spacelift-agent\\\",\\\"workspaces\\\":[{\\\"project\\\":\\\"spacelift-agent\\\",\\\"name\\\":\\\"main\\\",\\\"path\\\":\\\"/private/tmp/ovrcr-main-native-hmmtjegy/temp/ovrcr-gui-jH3i9M/repositories/spacelift-agent\\\",\\\"terminals\\\":[{\\\"scope\\\":\\\"Workspace\\\",\\\"id\\\":2,\\\"archived\\\":false,\\\"run\\\":1,\\\"kind\\\":\\\"terminal\\\",\\\"project\\\":\\\"spacelift-agent\\\",\\\"workspace\\\":\\\"main\\\",\\\"cwd\\\":\\\"/private/tmp/ovrcr-main-native-hmmtjegy/temp/ovrcr-gui-jH3i9M/repositories/spacelift-agent\\\",\\\"name\\\":\\\"local\\\",\\\"title\\\":\\\"local\\\",\\\"display_name\\\":\\\"local\\\",\\\"label\\\":\\\"zsh\\\",\\\"pid\\\":15776,\\\"started_unix_ms\\\":1793401569575,\\\"phase\\\":\\\"running\\\",\\\"activity\\\":\\\"unknown\\\",\\\"exit_code\\\":null,\\\"exit_signal\\\":null,\\\"agent\\\":null,\\\"agent_epoch\\\":0,\\\"unread\\\":null,\\\"recovery\\\":null,\\\"reporting_unavailable\\\":null,\\\"measurement_age_ms\\\":null}]},{\\\"project\\\":\\\"spacelift-agent\\\",\\\"name\\\":\\\"gui-spacelift-agent-pipeline-progress-v2\\\",\\\"path\\\":\\\"/private/tmp/ovrcr-main-native-hmmtjegy/temp/ovrcr-gui-jH3i9M/workspaces/spacelift-agent/315f67a94213d153cff4ed2f27f7498d\\\",\\\"terminals\\\":[{\\\"scope\\\":\\\"Workspace\\\",\\\"id\\\":5,\\\"archived\\\":false,\\\"run\\\":1,\\\"kind\\\":\\\"terminal\\\",\\\"project\\\":\\\"spacelift-agent\\\",\\\"workspace\\\":\\\"gui-spacelift-agent-pipeline-progress-v2\\\",\\\"cwd\\\":\\\"/private/tmp/ovrcr-main-native-hmmtjegy/temp/ovrcr-gui-jH3i9M/workspaces/spacelift-agent/315f67a94213d153cff4ed2f27f7498d\\\",\\\"name\\\":\\\"local\\\",\\\"title\\\":\\\"local\\\",\\\"display_name\\\":\\\"local\\\",\\\"label\\\":\\\"zsh\\\",\\\"pid\\\":15966,\\\"started_unix_ms\\\":1793401570062,\\\"phase\\\":\\\"running\\\",\\\"activity\\\":\\\"unknown\\\",\\\"exit_code\\\":null,\\\"exit_signal\\\":null,\\\"agent\\\":null,\\\"agent_epoch\\\":0,\\\"unread\\\":null,\\\"recovery\\\":null,\\\"reporting_unavailable\\\":null,\\\"measurement_age_ms\\\":null},{\\\"scope\\\":\\\"Workspace\\\",\\\"id\\\":11,\\\"archived\\\":false,\\\"run\\\":1,\\\"kind\\\":\\\"terminal\\\",\\\"project\\\":\\\"spacelift-agent\\\",\\\"workspace\\\":\\\"gui-spacelift-agent-pipeline-progress-v2\\\",\\\"cwd\\\":\\\"/private/tmp/ovrcr-main-native-hmmtjegy/temp/ovrcr-gui-jH3i9M/workspaces/spacelift-agent/315f67a94213d153cff4ed2f27f7498d\\\",\\\"name\\\":\\\"build pipeline progress\\\",\\\"title\\\":\\\"build pipeline progress\\\",\\\"display_name\\\":\\\"build pipeline progress\\\",\\\"label\\\":\\\"claude / opus-4\\\",\\\"pid\\\":16607,\\\"started_unix_ms\\\":1793401571114,\\\"phase\\\":\\\"running\\\",\\\"activity\\\":\\\"unknown\\\",\\\"exit_code\\\":null,\\\"exit_signal\\\":null,\\\"agent\\\":null,\\\"agent_epoch\\\":0,\\\"unread\\\":null,\\\"recovery\\\":null,\\\"reporting_unavailable\\\":null,\\\"measurement_age_ms\\\":null}]},{\\\"project\\\":\\\"spacelift-agent\\\",\\\"name\\\":\\\"gui-spacelift-agent-scope-quality\\\",\\\"path\\\":\\\"/private/tmp/ovrcr-main-native-hmmtjegy/temp/ovrcr-gui-jH3i9M/workspaces/spacelift-agent/74364196ee3a16b030943d657483f556\\\",\\\"terminals\\\":[{\\\"scope\\\":\\\"Workspace\\\",\\\"id\\\":6,\\\"archived\\\":false,\\\"run\\\":1,\\\"kind\\\":\\\"terminal\\\",\\\"project\\\":\\\"spacelift-agent\\\",\\\"workspace\\\":\\\"gui-spacelift-agent-scope-quality\\\",\\\"cwd\\\":\\\"/private/tmp/ovrcr-main-native-hmmtjegy/temp/ovrcr-gui-jH3i9M/workspaces/spacelift-agent/74364196ee3a16b030943d657483f556\\\",\\\"name\\\":\\\"local\\\",\\\"title\\\":\\\"local\\\",\\\"display_name\\\":\\\"local\\\",\\\"label\\\":\\\"zsh\\\",\\\"pid\\\":16034,\\\"started_unix_ms\\\":1793401570218,\\\"phase\\\":\\\"running\\\",\\\"activity\\\":\\\"unknown\\\",\\\"exit_code\\\":null,\\\"exit_signal\\\":null,\\\"agent\\\":null,\\\"agent_epoch\\\":0,\\\"unread\\\":null,\\\"recovery\\\":null,\\\"reporting_unavailable\\\":null,\\\"measurement_age_ms\\\":null},{\\\"scope\\\":\\\"Workspace\\\",\\\"id\\\":12,\\\"archived\\\":false,\\\"run\\\":1,\\\"kind\\\":\\\"terminal\\\",\\\"project\\\":\\\"spacelift-agent\\\",\\\"workspace\\\":\\\"gui-spacelift-agent-scope-quality\\\",\\\"cwd\\\":\\\"/private/tmp/ovrcr-main-native-hmmtjegy/temp/ovrcr-gui-jH3i9M/workspaces/spacelift-agent/74364196ee3a16b030943d657483f556\\\",\\\"name\\\":\\\"review scope quality\\\",\\\"title\\\":\\\"review scope quality\\\",\\\"display_name\\\":\\\"review scope quality\\\",\\\"label\\\":\\\"codex / gpt-5.4\\\",\\\"pid\\\":16847,\\\"started_unix_ms\\\":1793401571289,\\\"phase\\\":\\\"running\\\",\\\"activity\\\":\\\"unknown\\\",\\\"exit_code\\\":null,\\\"exit_signal\\\":null,\\\"agent\\\":null,\\\"agent_epoch\\\":0,\\\"unread\\\":null,\\\"recovery\\\":null,\\\"reporting_unavailable\\\":null,\\\"measurement_age_ms\\\":null}]}]}]\\n\\nCLI_END\\n\",\"truncated\":false,\"status\":\"Succeeded\"}}}"
+    },
+    {
+      "ordinal": 5,
+      "conversation": 1,
+      "turn": 1,
+      "content": "{\"Worker\":{\"AssistantDelta\":\"A partial waiting\"}}"
+    },
+    {
+      "ordinal": 6,
+      "conversation": 1,
+      "turn": 1,
+      "content": "\"Interrupted\""
+    }
+  ],
+  "frozen_sha256": {
+    "ovrcr": "c267cebf552bc34e76c1f0ec95214fcbd0fcafa750cc69d0bffc5c21007123ee",
+    "ovrcr-gui": "120842a4d098914f5633a4268a236ccc7cf492afe7ff3b1db6374ad5f60fea5e"
+  }
+}

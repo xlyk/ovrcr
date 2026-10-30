@@ -1,0 +1,31 @@
+{
+  "source_revision": "ffebfe859b7aae83872354ef55b12edd63db484e",
+  "root": "/private/tmp/ovrcr-main-native-hmmtjegy",
+  "bundle": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app",
+  "holder": "/private/tmp/ovrcr-main-native-hmmtjegy/operator_e2e",
+  "features": [
+    "gui",
+    "acceptance-diagnostics"
+  ],
+  "sha256": {
+    "ovrcr": "c267cebf552bc34e76c1f0ec95214fcbd0fcafa750cc69d0bffc5c21007123ee",
+    "ovrcr-gui": "120842a4d098914f5633a4268a236ccc7cf492afe7ff3b1db6374ad5f60fea5e"
+  },
+  "holder_sha256": "5eab8846082549fb7da37638c212f4a866e72b91a504b311282f0ea30fd42a4e",
+  "source_sha256": {
+    "crates/ovrcr-tui/src/dashboard/operator.rs": "c6334f7f63d69dee66500df1573bd2f11d60263eea3b998df509fa0e61f008a8",
+    "crates/ovrcr-tui/src/dashboard/operator/render.rs": "d01052bd7fd688937649ba8024b5348abbf435a705c9c8f1874fe5929cc08862",
+    "crates/ovrcr-tui/src/dashboard/render.rs": "ad7d6c1ca8ac9a1adb279e87f25162aecf90fca985a7c050d2903ec2795bbd04",
+    "crates/ovrcr-tui/src/dashboard/state.rs": "e8cf45d068ddfab4ea92134888d6fea39c95221245c270257e84ece7113b1e7c",
+    "crates/ovrcr-tui/src/dashboard/text_cursor.rs": "5f5231d2052a3a8a0f88be8224c5fb936f53efcdc4b8413267f8136e152c635c",
+    "src/gui/input.rs": "a520cec956dee09c506942f6479ec763f93c4801e3de974fc735849ae6bf4e72",
+    "tests/operator_e2e.rs": "38e66ad58b3c008eb88e3842fd122ff9f4f8be06e1b276b7da1dc33339ff1287",
+    "tests/support/operator_provider.rs": "8d36bb9d94807f5735927d347711c14c97f802574f446c511e3c2a8fd1178169",
+    "crates/ovrcr-protocol/src/codec.rs": "701924ff136a8ef876f352a407e7ac3f082e53b2876c5bac14ff11ed23ed4601",
+    "crates/ovrcr-protocol/src/wire.rs": "ba16f1d0e826c6aa96d4df2e94b82e0dbac05e6446d23282ad428e8dd71baeb8",
+    "crates/ovrcr-runtime/src/config.rs": "6d731b081f60440d2dfa752e898b0ad6ff47bdf54e775cc63ab339f68149af8f",
+    "crates/ovrcr-runtime/src/retained/operator.rs": "f5a98b6f9f23dc7d7131c822b5a090d4e12fd4e595c9bb69b04b95514d15237c",
+    "crates/ovrcr-runtime/src/server/operator.rs": "865ed490e74c524bc9eff86746978a1f421897687f469a4592b815bb76e5fad9"
+  },
+  "demo": "/private/tmp/ovrcr-main-native-hmmtjegy/temp/ovrcr-gui-jH3i9M"
+}

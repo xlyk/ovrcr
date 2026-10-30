@@ -17,6 +17,7 @@ pub(super) enum Action {
     Palette,
     Agents,
     Operator,
+    OperatorQuick,
     OperatorKey(KeyCode, KeyModifiers),
     CreateTerminal,
     CreateWorkspace,
@@ -208,6 +209,9 @@ impl KeyBinding {
         if self.press_only && key.kind != KeyEventKind::Press {
             return false;
         }
+        if let Action::OperatorKey(code, modifiers) = self.action {
+            return key.code == code && key.modifiers == modifiers;
+        }
         if key
             .modifiers
             .intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
@@ -215,9 +219,7 @@ impl KeyBinding {
             return false;
         }
         match self.action {
-            Action::OperatorKey(code, modifiers) => {
-                return key.code == code && key.modifiers == modifiers;
-            }
+            Action::OperatorQuick => return is_operator_quick_key(key),
             // Tasks answers to the bare key and to Ctrl-t.
             Action::Tasks => {
                 return key.code == KeyCode::Char('t')
@@ -248,17 +250,23 @@ impl Dashboard {
             .into_iter()
             .flat_map(|group| group.keys)
             .find(|binding| {
-                binding.matches(if browse && !binding.bare {
-                    browse_modifiers(key)
-                } else {
-                    key
-                })
+                binding.matches(
+                    if browse && !binding.bare && !matches!(binding.action, Action::OperatorKey(..))
+                    {
+                        browse_modifiers(key)
+                    } else {
+                        key
+                    },
+                )
             })
     }
 
     /// Run a binding's action. The key popup and the palette reach the same
     /// handlers as a bare key press.
     pub(super) fn run(&mut self, action: Action) -> DashboardAction {
+        if action == Action::OperatorQuick {
+            return self.open_operator_quick_message();
+        }
         self.agent_typing = None;
         // Opening a group stays inside the popup: it neither closes the popup
         // nor clears the notice, so it answers before the shared preamble.
@@ -276,6 +284,7 @@ impl Dashboard {
             Action::Palette => self.open_palette(),
             Action::Agents => self.open_agent_search(),
             Action::Operator => self.open_operator(),
+            Action::OperatorQuick => unreachable!(),
             Action::OperatorKey(code, modifiers) => {
                 self.operator_key(KeyEvent::new(code, modifiers))
             }
@@ -405,7 +414,27 @@ pub(super) fn agents_binding() -> KeyBinding {
     .group('v', "s")
 }
 
+pub(super) fn is_operator_quick_key(key: KeyEvent) -> bool {
+    key.code == KeyCode::Char('o') && key.modifiers == KeyModifiers::CONTROL
+}
 pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
+    let mut groups = mode_keymap(dashboard);
+    groups.push(KeyGroup {
+        title: "Global".into(),
+        keys: vec![
+            key_binding(
+                "Ctrl-o",
+                "Quick message",
+                "Start an Operator conversation with configured defaults".into(),
+                KeyCode::Char('o'),
+                Action::OperatorQuick,
+            )
+            .once(),
+        ],
+    });
+    groups
+}
+fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
     use KeyCode::{Char, Enter, Esc, PageDown, PageUp, Tab};
     if dashboard.operator_is_editing() {
         let native = |label, name, code, modifiers| {
@@ -417,26 +446,114 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                 Action::OperatorKey(code, modifiers),
             )
         };
+        if dashboard.operator_has_form() && !dashboard.operator_sidebar_focused() {
+            return vec![KeyGroup {
+                title: "New Operator conversation".into(),
+                keys: vec![
+                    native("Enter", "Create", Enter, KeyModifiers::NONE),
+                    native("Tab", "Provider/model", Tab, KeyModifiers::NONE),
+                    native("←/→", "Choose provider", KeyCode::Right, KeyModifiers::NONE),
+                    native("Ctrl-l", "Chats", Char('l'), KeyModifiers::CONTROL),
+                    native("Ctrl-g", "Browse", Char('g'), KeyModifiers::CONTROL),
+                ],
+            }];
+        }
+        if dashboard.operator_transcript_focused() {
+            return vec![KeyGroup {
+                title: "Operator transcript".into(),
+                keys: vec![
+                    native("Enter", "Expand details", Enter, KeyModifiers::NONE),
+                    native("↑/↓", "Select entry", KeyCode::Down, KeyModifiers::NONE),
+                    native("PageUp", "Earlier", PageUp, KeyModifiers::NONE),
+                    native("PageDown", "Later", PageDown, KeyModifiers::NONE),
+                    native("Tab", "Composer", Tab, KeyModifiers::NONE),
+                    native("Ctrl-g", "Browse", Char('g'), KeyModifiers::CONTROL),
+                ],
+            }];
+        }
+        if dashboard.operator_sidebar_focused() {
+            return vec![KeyGroup {
+                title: "Operator conversations".into(),
+                keys: vec![
+                    native(
+                        "j/k",
+                        "Select conversation",
+                        KeyCode::Down,
+                        KeyModifiers::NONE,
+                    ),
+                    native("Enter", "Open composer", Enter, KeyModifiers::NONE),
+                    native("x", "Close conversation", Char('x'), KeyModifiers::NONE),
+                    native("←", "Collapse", KeyCode::Left, KeyModifiers::NONE),
+                    native("→", "Expand", KeyCode::Right, KeyModifiers::NONE),
+                    native("Tab", "Transcript", Tab, KeyModifiers::NONE),
+                    native("Ctrl-l", "Composer", Char('l'), KeyModifiers::CONTROL),
+                    native(
+                        "Ctrl-n",
+                        "New Conversation",
+                        Char('n'),
+                        KeyModifiers::CONTROL,
+                    ),
+                    native("Ctrl-g", "Browse", Char('g'), KeyModifiers::CONTROL),
+                ],
+            }];
+        }
+        let mut keys = vec![
+            native("Enter", "Send", Enter, KeyModifiers::NONE).unless(
+                (!dashboard.operator_submit_available()).then_some("conversation cannot submit"),
+            ),
+            native("Shift-Enter", "Newline", Enter, KeyModifiers::SHIFT),
+            native("Ctrl-l", "Chats", Char('l'), KeyModifiers::CONTROL),
+            native(
+                "Ctrl-n",
+                "New Conversation",
+                Char('n'),
+                KeyModifiers::CONTROL,
+            ),
+            native("Tab", "Chats", Tab, KeyModifiers::NONE),
+            native("PageUp", "Earlier", PageUp, KeyModifiers::NONE),
+            native("PageDown", "Later", PageDown, KeyModifiers::NONE),
+            native("Ctrl-g", "Browse", Char('g'), KeyModifiers::CONTROL),
+        ];
+        keys.push(
+            native(
+                "Ctrl-c",
+                "Clear draft / Stop if empty",
+                Char('c'),
+                KeyModifiers::CONTROL,
+            )
+            .once(),
+        );
+        for (label, name, ch, modifiers) in [
+            ("Ctrl-a", "Line start", 'a', KeyModifiers::CONTROL),
+            ("Ctrl-e", "Line end", 'e', KeyModifiers::CONTROL),
+            ("Ctrl-b", "Previous grapheme", 'b', KeyModifiers::CONTROL),
+            ("Ctrl-f", "Next grapheme", 'f', KeyModifiers::CONTROL),
+            (
+                "Ctrl-h",
+                "Delete previous grapheme",
+                'h',
+                KeyModifiers::CONTROL,
+            ),
+            ("Ctrl-d", "Delete next grapheme", 'd', KeyModifiers::CONTROL),
+            ("Ctrl-u", "Delete line prefix", 'u', KeyModifiers::CONTROL),
+            ("Ctrl-k", "Delete line suffix", 'k', KeyModifiers::CONTROL),
+            ("Ctrl-w", "Delete previous word", 'w', KeyModifiers::CONTROL),
+            ("Alt-b", "Previous word", 'b', KeyModifiers::ALT),
+            ("Alt-f", "Next word", 'f', KeyModifiers::ALT),
+        ] {
+            keys.push(native(label, name, Char(ch), modifiers));
+        }
+        if dashboard.operator_stop_available() {
+            keys.push(native(
+                "Ctrl-x",
+                "Stop selected turn",
+                Char('x'),
+                KeyModifiers::CONTROL,
+            ));
+        }
         return vec![KeyGroup {
             title: "Operator".into(),
-            keys: vec![
-                native("Enter", "Send / create", Enter, KeyModifiers::NONE),
-                native("Shift-Enter", "Newline", Enter, KeyModifiers::SHIFT),
-                native("Ctrl-l", "Conversations", Char('l'), KeyModifiers::CONTROL),
-                native(
-                    "Ctrl-n",
-                    "New Conversation",
-                    Char('n'),
-                    KeyModifiers::CONTROL,
-                ),
-                native(
-                    "Ctrl-x",
-                    "Stop selected turn",
-                    Char('x'),
-                    KeyModifiers::CONTROL,
-                ),
-                native("Ctrl-g", "Browse", Char('g'), KeyModifiers::CONTROL),
-            ],
+            keys,
         }];
     }
     if dashboard.mode == InputMode::Terminal {

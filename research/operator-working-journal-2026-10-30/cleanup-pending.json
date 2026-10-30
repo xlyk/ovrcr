@@ -1,0 +1,56 @@
+{
+  "pids": {
+    "39234": "absent",
+    "39924": "present",
+    "39944": "present",
+    "40368": "present",
+    "40439": "present",
+    "40498": "present",
+    "40563": "present",
+    "40628": "present",
+    "40697": "present",
+    "40916": "present",
+    "41210": "present",
+    "41285": "present",
+    "41359": "present",
+    "41434": "present",
+    "41508": "present",
+    "56531": "present",
+    "63884": "absent",
+    "77713": "absent",
+    "77714": "absent",
+    "77719": "absent",
+    "77720": "absent",
+    "77722": "absent"
+  },
+  "groups": {
+    "39166": "absent",
+    "39900": "present",
+    "40368": "present",
+    "40439": "present",
+    "40498": "present",
+    "40563": "present",
+    "40628": "present",
+    "40697": "present",
+    "40916": "present",
+    "41210": "present",
+    "41285": "present",
+    "41359": "present",
+    "41434": "present",
+    "41508": "present",
+    "56531": "present",
+    "63884": "absent",
+    "77713": "absent",
+    "77722": "absent"
+  },
+  "demo_exists": true,
+  "socket_exists": true,
+  "nested_socket_exists": false,
+  "holder-exit.json": {
+    "original_wait_exit": 0
+  },
+  "frozen_hashes_after_close": {
+    "ovrcr": "3d7393bc5eff52e562d553f0268c18dc0984d8e56bf717d3253f7fbebe041298",
+    "ovrcr-gui": "7d3bba286f7a006c4ce235b381b8490430466d6e73149347dfb0aecdedf77d49"
+  }
+}

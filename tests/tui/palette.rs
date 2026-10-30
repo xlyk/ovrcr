@@ -3106,6 +3106,186 @@ fn shutdown_question_rejects_already_pending_navigation_confirmation() {
 }
 
 #[test]
+fn operator_quick_palette_fallback_restores_same_search_after_dismissal() {
+    let mut dashboard = dashboard_fixture();
+    palette_search(&mut dashboard, "Quick message");
+    dashboard.drain_outbox();
+    let before = palette_text(&dashboard);
+    dashboard.key(KeyCode::Enter);
+    assert!(palette_text(&dashboard).contains("Quick message · Ctrl-o"));
+    dashboard.key(KeyCode::Esc);
+    assert_eq!(palette_text(&dashboard), before);
+    assert!(dashboard.drain_outbox().is_empty());
+}
+
+#[test]
+fn operator_quick_pending_shutdown_ack_advances_under_visible_modal() {
+    let (mut dashboard, _, _root) = shutdown_navigation_fixture();
+    shutdown_question(&mut dashboard, "one");
+    let answer = answer_shutdown_question(&mut dashboard, "one", true);
+    dashboard.ctrl('o');
+    dashboard.event_action(Event::Paste("still editing".into()));
+    shutdown_question(&mut dashboard, "two");
+    assert!(
+        dashboard
+            .handle_server_message(ServerMessage::Response {
+                request_id: answer.request_id,
+                response: Response::Ok
+            })
+            .is_empty()
+    );
+    assert!(palette_text(&dashboard).contains("still editing"));
+    dashboard.key(KeyCode::Esc);
+    assert!(dashboard.drain_outbox().is_empty());
+    assert_shutdown_question(&dashboard, "two", "one");
+}
+
+#[test]
+fn operator_quick_notification_retarget_cancels_unsent_and_retains_submitted_continuation() {
+    use ovrcr_protocol::{OperatorRequest, OperatorResponse};
+    for submitted in [false, true] {
+        let (mut dashboard, offer, _root) = shutdown_navigation_fixture();
+        let confirmation = shutdown_navigation_confirmation(&mut dashboard, &offer);
+        dashboard.ctrl('o');
+        dashboard.event_action(Event::Paste("captured before navigation".into()));
+        let create = if submitted {
+            dashboard.key(KeyCode::Enter);
+            Some(
+                dashboard
+                    .drain_outbox()
+                    .into_iter()
+                    .find(|m| {
+                        matches!(m.request, Request::Operator(OperatorRequest::Create { .. }))
+                    })
+                    .unwrap(),
+            )
+        } else {
+            None
+        };
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id: confirmation.request_id,
+            response: Response::NotificationNavigationConfirmed(Some(Box::new(offer.clone()))),
+        });
+        assert!(!palette_text(&dashboard).contains("Quick message"));
+        assert_eq!(dashboard.focused_session(), Some(offer.ticket.session));
+        dashboard.drain_outbox();
+        if let Some(create) = create {
+            let outgoing = dashboard.handle_server_message(ServerMessage::Response {
+                request_id: create.request_id,
+                response: Response::Operator(OperatorResponse::Created(
+                    ovrcr_protocol::OperatorConversationSummary {
+                        id: ovrcr_protocol::OperatorConversationId(7),
+                        session: SessionId(99),
+                        run: ovrcr_protocol::SessionRunId(0),
+                        archived: false,
+                        worker_stopped: true,
+                        provider: ovrcr_protocol::OperatorProvider::ChatGpt,
+                        model: "gpt-6.1-sol".into(),
+                        title: "Quick".into(),
+                        current_turn: None,
+                    },
+                )),
+            });
+            assert_eq!(
+                outgoing
+                    .iter()
+                    .filter(|m| matches!(
+                        m.request,
+                        Request::Operator(OperatorRequest::Submit { .. })
+                    ))
+                    .count(),
+                1
+            );
+            assert!(!palette_text(&dashboard).contains("Quick message"));
+        } else {
+            dashboard.ctrl('o');
+            assert!(!palette_text(&dashboard).contains("captured before navigation"));
+            assert!(dashboard.drain_outbox().is_empty());
+        }
+    }
+}
+
+#[test]
+fn operator_quick_preserves_workspace_save_chain_and_exact_pending_response() {
+    let mut dashboard = dashboard_fixture();
+    palette_search(&mut dashboard, "remove workspace");
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    let DashboardAction::Request(remove) = dashboard.key(KeyCode::Enter) else {
+        panic!("removal request")
+    };
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: remove.request_id,
+        response: Response::Error {
+            code: ErrorCode::DirtyWorktree,
+            message: "worktree has changes".into(),
+        },
+    });
+    dashboard.ctrl('o');
+    dashboard.event_action(Event::Paste("private quick draft".into()));
+    dashboard.key(KeyCode::Esc);
+    assert!(dashboard.drain_outbox().is_empty());
+    assert!(palette_text(&dashboard).contains("Save uncommitted work"));
+    let DashboardAction::Request(save) = dashboard.key(KeyCode::Enter) else {
+        panic!("save request")
+    };
+    assert!(matches!(save.request, Request::SaveWorkspaceWip { .. }));
+    dashboard.ctrl('o');
+    dashboard.key(KeyCode::Esc);
+    assert!(dashboard.drain_outbox().is_empty());
+    assert!(
+        dashboard
+            .handle_server_message(ServerMessage::Response {
+                request_id: save.request_id + 99,
+                response: Response::Ok
+            })
+            .is_empty()
+    );
+    assert!(palette_text(&dashboard).contains("Save uncommitted work"));
+    let outgoing = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: save.request_id,
+        response: Response::Ok,
+    });
+    assert_eq!(
+        outgoing
+            .iter()
+            .filter(|m| matches!(m.request, Request::RemoveWorkspace { force: true, .. }))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn operator_quick_escape_never_answers_or_replaces_pending_shutdown_question() {
+    for pending in [false, true] {
+        let (mut dashboard, _, _root) = shutdown_navigation_fixture();
+        shutdown_question(&mut dashboard, "one");
+        let answer = pending.then(|| answer_shutdown_question(&mut dashboard, "one", true));
+        dashboard.ctrl('o');
+        dashboard.event_action(Event::Paste("quick draft".into()));
+        shutdown_question(&mut dashboard, "two");
+        dashboard.key(KeyCode::Esc);
+        assert!(
+            dashboard.drain_outbox().is_empty(),
+            "modal Escape cannot answer WIP save"
+        );
+        assert_shutdown_question(&dashboard, "one", "two");
+        if let Some(answer) = answer {
+            dashboard.handle_server_message(ServerMessage::Response {
+                request_id: answer.request_id + 999,
+                response: Response::Ok,
+            });
+            assert_shutdown_question(&dashboard, "one", "two");
+            dashboard.handle_server_message(ServerMessage::Response {
+                request_id: answer.request_id,
+                response: Response::Ok,
+            });
+            assert_shutdown_question(&dashboard, "two", "one");
+        }
+    }
+}
+
+#[test]
 fn shutdown_pending_answer_survives_navigation_and_advances_only_on_its_exact_ok() {
     let (mut dashboard, offer, _root) = shutdown_navigation_fixture();
     let focused = dashboard.focused_session();

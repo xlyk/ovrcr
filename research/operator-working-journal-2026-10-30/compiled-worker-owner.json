@@ -1,0 +1,16 @@
+{
+  "pid": 91972,
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--test",
+    "operator_e2e",
+    "--features",
+    "gui,acceptance-diagnostics",
+    "compiled_worker",
+    "--",
+    "--nocapture"
+  ]
+}

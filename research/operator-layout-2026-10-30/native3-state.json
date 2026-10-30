@@ -1,0 +1,14 @@
+{
+  "root": "/private/tmp/ovrcr-layout-native3-0ikk77nr",
+  "bundle": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app",
+  "sha256": {
+    "ovrcr-gui": "3e8ed03b3eb3b484076567d326be2611859b1ed73b51c3bba4e11ea20d26eeb0",
+    "ovrcr": "c6f83255d3fec86f0335f232836ed318385b245ef4ec197988d0c1d7593dd345"
+  },
+  "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+  "holder_executable": "/private/tmp/ovrcr-layout-native3-0ikk77nr/operator_e2e",
+  "holder_sha256": "b40ca591a62008da9cc317566c111b51fe887dab51820f79335a6caf06724770",
+  "demo": "/private/tmp/ovrcr-layout-native3-0ikk77nr/temp/ovrcr-gui-M7hcof",
+  "acceptance_revision": "dc9b49dd47fd0eaa690ec65efe1f9e2019a4aec9",
+  "product_revision": "abd4793993c1b3d38951309c5e93ece078b0a42e"
+}

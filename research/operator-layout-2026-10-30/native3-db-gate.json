@@ -1,0 +1,14 @@
+{
+  "pid": 18932,
+  "max_hold_seconds": 3,
+  "observed_hold_seconds": 0.6922256250400096,
+  "action": "BEGIN IMMEDIATE; ROLLBACK; no writes",
+  "rusqlite_default_busy_timeout_ms": 5000,
+  "original_wait_exit": 0,
+  "command": [
+    "rtk",
+    "proxy",
+    "python3",
+    "/tmp/operator-layout-native3-gate.py"
+  ]
+}

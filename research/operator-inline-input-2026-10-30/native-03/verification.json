@@ -1,0 +1,7 @@
+{
+  "result": "passed",
+  "captures": 11,
+  "pids_absent": 20,
+  "groups_absent": 18,
+  "source_revision": "8a141c71c0e3ccd6928b463ac24d6b9eb66ffff2"
+}

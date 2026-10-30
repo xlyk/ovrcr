@@ -215,7 +215,7 @@ exec '{}' --exact server::operator_tests::operator_worker_fixture --ignored --no
         let Response::Operator(OperatorResponse::Submitted(t)) =
             self.request(Request::Operator(OperatorRequest::Submit {
                 conversation: c.id,
-                expected_run: SessionRunId(0),
+                expected_run: c.run,
                 text: "fixture prompt".into(),
                 context: OperatorContext::default(),
             }))
@@ -1039,7 +1039,7 @@ fn operator_completed_control_handles_are_pruned_and_remain_bounded() {
 #[test]
 fn operator_request_lock_order_never_holds_dashboard_while_waiting_for_retained() {
     let mut inverted = Vec::new();
-    for operation in ["create", "list", "read", "submit"] {
+    for operation in ["create", "list", "read", "submit", "close"] {
         let root = tempfile::tempdir().unwrap();
         let (peer, stream) = UnixStream::pair().unwrap();
         let owner = Arc::new(());
@@ -1064,6 +1064,10 @@ fn operator_request_lock_order_never_holds_dashboard_while_waiting_for_retained(
                 conversation: c.id,
                 after: 0,
                 limit: 100,
+            },
+            "close" => OperatorRequest::Close {
+                conversation: c.id,
+                expected_run: c.run,
             },
             "submit" => OperatorRequest::Submit {
                 conversation: c.id,
@@ -1144,4 +1148,323 @@ fn operator_request_lock_order_never_holds_dashboard_while_waiting_for_retained(
         inverted.is_empty(),
         "Dashboard -> retained inversion in {inverted:?}"
     );
+}
+
+#[test]
+fn operator_close_archives_only_after_controlled_stop() {
+    let mut live = LiveOperator::new();
+    // Never-run conversations archive without inventing a turn.
+    let idle = live.create();
+    let Response::Operator(OperatorResponse::Closed(closed)) =
+        live.request(Request::Operator(OperatorRequest::Close {
+            conversation: idle.id,
+            expected_run: idle.run,
+        }))
+    else {
+        panic!("close idle")
+    };
+    assert!(closed.archived && closed.worker_stopped);
+    assert_eq!(closed.run, SessionRunId(1));
+    assert!(closed.current_turn.is_none());
+    assert!(live.history(&idle).messages.is_empty());
+    for completed in [false, true] {
+        let c = live.create();
+        let turn = live.submit(&c);
+        let auth = live.ready(&c);
+        if completed {
+            live.command(&c, "complete");
+            wait_until(|| live.root.path().join(format!("acked-{}", c.id.0)).exists());
+        }
+        let db =
+            rusqlite::Connection::open(crate::config::database_path(live.root.path())).unwrap();
+        let model_history = || {
+            db.query_row(
+                "SELECT history FROM operator_model_history WHERE conversation=?1",
+                [i64::try_from(c.id.0).unwrap()],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+        };
+        let saved_model = model_history();
+        if completed {
+            assert_eq!(
+                serde_json::from_str::<OperatorModelHistory>(saved_model.as_ref().unwrap())
+                    .unwrap()
+                    .json,
+                "[]"
+            );
+        }
+        let before = live.history(&c);
+        let owner = live.state.dashboard.snapshot().unwrap().identity;
+        assert!(
+            live.state
+                .close_operator_conversation(&Arc::new(()), c.id, turn.identity.run)
+                .is_err()
+        );
+        assert!(
+            live.state
+                .close_operator_conversation(&owner, c.id, c.run)
+                .is_err()
+        );
+        let Response::Operator(OperatorResponse::Closed(closed)) =
+            live.request(Request::Operator(OperatorRequest::Close {
+                conversation: c.id,
+                expected_run: turn.identity.run,
+            }))
+        else {
+            panic!("close running")
+        };
+        assert!(closed.archived && closed.worker_stopped);
+        assert_eq!(closed.run.0, turn.identity.run.0 + 1);
+        assert!(!live.state.sessions.lock().unwrap().contains_key(&c.session));
+        let after = live.history(&c);
+        assert_eq!(model_history(), saved_model);
+        if completed {
+            assert_eq!(after.messages, before.messages);
+        } else {
+            assert_eq!(&after.messages[..before.messages.len()], before.messages);
+            assert_eq!(
+                after.messages.last().unwrap().content,
+                OperatorMessageContent::Interrupted
+            );
+        }
+        assert!(matches!(
+            live.control(Request::OperatorExchange(OperatorExchange {
+                auth,
+                batch: OperatorEventBatch {
+                    identity: turn.identity,
+                    sequence: 3,
+                    events: vec![OperatorWorkerEvent::AssistantDelta("late".into())]
+                }
+            })),
+            Response::Error { .. }
+        ));
+        assert!(
+            live.state
+                .close_operator_conversation(&owner, c.id, turn.identity.run)
+                .is_err()
+        );
+        assert!(
+            live.state
+                .delete_archived_session(c.session, closed.run)
+                .is_err()
+        );
+        assert_eq!(live.history(&c).messages, after.messages);
+        if completed {
+            live.state.unarchive_session(c.session, closed.run).unwrap();
+            let restored = live.history(&c).conversation;
+            assert!(!restored.archived && restored.worker_stopped);
+            assert_eq!(restored.run.0, closed.run.0 + 1);
+            assert!(!live.state.sessions.lock().unwrap().contains_key(&c.session));
+            assert!(matches!(
+                live.request(Request::Operator(OperatorRequest::Submit {
+                    conversation: c.id,
+                    expected_run: turn.identity.run,
+                    text: "stale".into(),
+                    context: OperatorContext::default()
+                })),
+                Response::Error { .. }
+            ));
+            let fresh = live.submit(&restored);
+            assert_eq!(fresh.identity.run.0, restored.run.0 + 1);
+            wait_until(|| {
+                live.state
+                    .retained
+                    .lock()
+                    .operator_conversation(c.id)
+                    .unwrap()
+                    .current_turn
+                    .is_some_and(|turn| turn.identity == fresh.identity && turn.sequence >= 1)
+            });
+        }
+    }
+}
+
+#[test]
+fn operator_close_failure_leaves_unarchived_history_observable() {
+    let mut live = LiveOperator::new();
+    let c = live.create();
+    let t = live.submit(&c);
+    live.ready(&c);
+    let db = rusqlite::Connection::open(crate::config::database_path(live.root.path())).unwrap();
+    db.execute_batch("CREATE TRIGGER reject_interrupt BEFORE INSERT ON operator_messages BEGIN SELECT RAISE(ABORT,'fixture journal failure'); END;").unwrap();
+    let close = || {
+        Request::Operator(OperatorRequest::Close {
+            conversation: c.id,
+            expected_run: t.identity.run,
+        })
+    };
+    assert!(matches!(live.request(close()), Response::Error { .. }));
+    let h = live.history(&c);
+    assert!(!h.conversation.archived && !h.conversation.worker_stopped);
+    assert_eq!(
+        h.conversation.current_turn.unwrap().state,
+        OperatorTurnState::Running
+    );
+    db.execute_batch("DROP TRIGGER reject_interrupt; CREATE TRIGGER reject_archive BEFORE UPDATE OF disposition ON retained_sessions BEGIN SELECT RAISE(ABORT,'fixture archive failure'); END;").unwrap();
+    assert!(matches!(live.request(close()), Response::Error { .. }));
+    let h = live.history(&c);
+    assert!(!h.conversation.archived && h.conversation.worker_stopped);
+    assert_eq!(h.conversation.run, t.identity.run);
+    db.execute_batch("DROP TRIGGER reject_archive").unwrap();
+    assert!(matches!(
+        live.request(close()),
+        Response::Operator(OperatorResponse::Closed(_))
+    ));
+}
+
+#[test]
+fn operator_close_serializes_submit_and_revalidates_replaced_owner() {
+    let mut live = LiveOperator::new();
+    let c = live.create();
+    let turn = live.submit(&c);
+    live.ready(&c);
+    let owner = live.state.dashboard.snapshot().unwrap().identity;
+    let (arrived_tx, arrived_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    *live.state.operator.before_stop.lock().unwrap() = Some(Arc::new(move || {
+        arrived_tx.send(()).unwrap();
+        release_rx
+            .lock()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+    }));
+    assert!(matches!(
+        super::operator::dispatch_control(
+            &live.state,
+            &owner,
+            1000,
+            OperatorRequest::Close {
+                conversation: c.id,
+                expected_run: turn.identity.run
+            }
+        ),
+        Some(Response::Ok)
+    ));
+    arrived_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(matches!(
+        super::operator::dispatch_control(
+            &live.state,
+            &owner,
+            1001,
+            OperatorRequest::Submit {
+                conversation: c.id,
+                expected_run: turn.identity.run,
+                text: "must not submit".into(),
+                context: OperatorContext::default()
+            }
+        ),
+        Some(Response::Error { .. })
+    ));
+    assert!(matches!(
+        super::operator::dispatch_control(
+            &live.state,
+            &owner,
+            1002,
+            OperatorRequest::Close {
+                conversation: c.id,
+                expected_run: turn.identity.run
+            }
+        ),
+        Some(Response::Error { .. })
+    ));
+    let (peer, stream) = UnixStream::pair().unwrap();
+    live.state
+        .dashboard
+        .claim_with_identity(DashboardSink::new(), Arc::new(()), stream);
+    release_tx.send(()).unwrap();
+    wait_until(|| live.state.operator.control_snapshot().0 == 0);
+    let h = live
+        .state
+        .retained
+        .lock()
+        .read_operator_history(c.id, 0, 100)
+        .unwrap();
+    assert!(!h.conversation.archived && !h.conversation.worker_stopped);
+    assert_eq!(
+        h.conversation.current_turn.unwrap().state,
+        OperatorTurnState::Running
+    );
+    assert_eq!(h.messages.len(), 2);
+    drop(peer);
+}
+
+#[test]
+fn operator_close_without_owned_worker_keeps_stop_uncertainty() {
+    let mut live = LiveOperator::new();
+    let c = live.create();
+    let t = live
+        .state
+        .retained
+        .lock()
+        .submit_operator_turn(c.id, c.run, "fixture prompt", OperatorContext::default())
+        .unwrap();
+    assert!(matches!(
+        live.request(Request::Operator(OperatorRequest::Close {
+            conversation: c.id,
+            expected_run: t.identity.run
+        })),
+        Response::Error { .. }
+    ));
+    let h = live.history(&c);
+    assert!(!h.conversation.archived && !h.conversation.worker_stopped);
+    assert_eq!(h.conversation.run, t.identity.run);
+    assert_eq!(
+        h.conversation.current_turn.unwrap().state,
+        OperatorTurnState::Interrupted
+    );
+}
+
+#[test]
+fn operator_close_stopped_turn_preserves_journal_and_model_history() {
+    let mut live = LiveOperator::new();
+    let c = live.create();
+    let t = live.submit(&c);
+    live.ready(&c);
+    assert!(matches!(
+        live.request(Request::Operator(OperatorRequest::Stop {
+            identity: t.identity
+        })),
+        Response::Operator(OperatorResponse::Stopped(_))
+    ));
+    let before = live.history(&c);
+    let Response::Operator(OperatorResponse::Closed(closed)) =
+        live.request(Request::Operator(OperatorRequest::Close {
+            conversation: c.id,
+            expected_run: t.identity.run,
+        }))
+    else {
+        panic!("close stopped")
+    };
+    assert!(closed.archived && closed.worker_stopped);
+    assert_eq!(live.history(&c).messages, before.messages);
+}
+
+#[test]
+fn operator_archive_restore_publish_durable_changes() {
+    let root = tempfile::tempdir().unwrap();
+    let (peer, stream) = UnixStream::pair().unwrap();
+    let owner = Arc::new(());
+    let sink = DashboardSink::new();
+    let state = tests::test_state(Some(sink.clone()), Some((owner.clone(), stream)));
+    let c = state
+        .retained
+        .lock()
+        .create_operator_conversation(OperatorProvider::ChatGpt, "fixture", root.path())
+        .unwrap();
+    let closed = state
+        .close_operator_conversation(&owner, c.id, c.run)
+        .unwrap();
+    assert!(closed.archived && closed.worker_stopped);
+    assert!(
+        matches!(sink.next(), Some(DashboardDelivery::Message(DashboardOutbound { message: ServerMessage::Event(ServerEvent::OperatorChanged(id)), .. })) if id == c.id)
+    );
+    state.unarchive_session(c.session, closed.run).unwrap();
+    assert!(
+        matches!(sink.next(), Some(DashboardDelivery::Message(DashboardOutbound { message: ServerMessage::Event(ServerEvent::OperatorChanged(id)), .. })) if id == c.id)
+    );
+    assert!(state.sessions.lock().unwrap().is_empty());
+    drop(peer);
 }

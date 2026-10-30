@@ -1,0 +1,27 @@
+{
+  "original_revision": "e27a4ff174431e2ba7a89b869585c9ca76350456",
+  "manifest": "research/operator-layout-2026-10-30/raw-artifacts-manifest.json",
+  "raw_file_count": 73,
+  "ax_count": 27,
+  "log_count": 46,
+  "original_bytes": 1326617,
+  "stored_bytes": 168098,
+  "verified_against_git_original": true,
+  "deterministic_recompression_equal": true,
+  "decompression_exact_and_original_sha256_verified_before_removal": true,
+  "existing_json_files_unchanged": 89,
+  "new_dependencies": 0,
+  "check_exemptions": 0,
+  "readme_decompression_self_check": {
+    "command": [
+      "rtk",
+      "proxy",
+      "python3",
+      "-",
+      "research/operator-layout-2026-10-30/native2-01-wide-original.ax.txt"
+    ],
+    "exit": 0,
+    "stdout_sha256": "d24f1851cf603991c6befb729a7be82b26a89917fac5de41407c9c0c95ae5cc0",
+    "exact_original_stdout": true
+  }
+}
