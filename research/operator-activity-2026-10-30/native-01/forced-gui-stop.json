@@ -1,0 +1,7 @@
+{
+  "unix_ms": 1793381287548,
+  "pid": 32953,
+  "verified_command": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui",
+  "signal": "SIGTERM",
+  "reason": "Mac remained locked; CUA normal window close unavailable; private server shutdown already returned exit 0"
+}

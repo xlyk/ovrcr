@@ -1,0 +1,34 @@
+{
+  "unix_ms": 1793380906699,
+  "control_markers": [
+    "auth-ready.json",
+    "base.json",
+    "demo-instance"
+  ],
+  "operator_conversations": [
+    {
+      "id": 1,
+      "session": 13,
+      "provider": "\"grok\"",
+      "model": "fixture-activity",
+      "title": "ACTIVITY hold one actual Bash result"
+    }
+  ],
+  "operator_turns": [
+    {
+      "id": 1,
+      "conversation": 1,
+      "run": 1,
+      "state": "Running",
+      "sequence": 0
+    }
+  ],
+  "operator_messages": [
+    {
+      "ordinal": 1,
+      "conversation": 1,
+      "turn": 1,
+      "content": "{\"User\":{\"text\":\"ACTIVITY hold one actual Bash result\",\"context\":{\"project\":\"consigint\",\"workspace\":\"main\",\"workspace_id\":\"2064b4b0be6b00f6df3ac5a330ecca91\",\"cwd\":\"/private/tmp/ovrcr-activity-native-c2dyqojc/temp/ovrcr-gui-iiBKQn/repositories/consigint\",\"session\":1,\"run\":1}}}"
+    }
+  ]
+}

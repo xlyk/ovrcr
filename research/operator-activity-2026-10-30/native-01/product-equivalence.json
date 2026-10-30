@@ -1,0 +1,16 @@
+{
+  "frozen_product_revision": "ace3077b0c6743648b96b6986c3cac9ce50e7a07",
+  "command": [
+    "git",
+    "diff",
+    "--exit-code",
+    "ace3077b0c6743648b96b6986c3cac9ce50e7a07",
+    "--",
+    "crates",
+    "tests"
+  ],
+  "exit": 0,
+  "source_sha256_match": true,
+  "scope": "All crates and tests byte-equivalent to frozen product; later changes are evidence and testing-guide link.",
+  "evidence_hash_checks": 20
+}

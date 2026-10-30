@@ -1,0 +1,13 @@
+{
+  "command": [
+    "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr",
+    "shutdown",
+    "--kill"
+  ],
+  "socket": "/private/tmp/ovrcr-activity-native-c2dyqojc/temp/ovrcr-gui-iiBKQn/server.sock",
+  "started_unix_ms": 1793381279756,
+  "ended_unix_ms": 1793381280623,
+  "exit": 0,
+  "raw_bytes": 0,
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

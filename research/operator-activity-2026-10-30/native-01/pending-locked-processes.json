@@ -1,0 +1,116 @@
+[
+  {
+    "pid": 32199,
+    "ppid": 32198,
+    "pgid": 32197,
+    "command": "/private/tmp/ovrcr-activity-native-c2dyqojc/operator_e2e --exact compiled_worker::native_provider_holder --ignored --nocapture --test-threads=1"
+  },
+  {
+    "pid": 32953,
+    "ppid": 32952,
+    "pgid": 32949,
+    "command": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+  },
+  {
+    "pid": 32972,
+    "ppid": 32953,
+    "pgid": 32949,
+    "command": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+  },
+  {
+    "pid": 33386,
+    "ppid": 32972,
+    "pgid": 33386,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 33457,
+    "ppid": 32972,
+    "pgid": 33457,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 33516,
+    "ppid": 32972,
+    "pgid": 33516,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 33579,
+    "ppid": 32972,
+    "pgid": 33579,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 33644,
+    "ppid": 32972,
+    "pgid": 33644,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 33714,
+    "ppid": 32972,
+    "pgid": 33714,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 33806,
+    "ppid": 32972,
+    "pgid": 33806,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 33911,
+    "ppid": 32972,
+    "pgid": 33911,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 34004,
+    "ppid": 32972,
+    "pgid": 34004,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 34258,
+    "ppid": 32972,
+    "pgid": 34258,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 34558,
+    "ppid": 32972,
+    "pgid": 34558,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 34632,
+    "ppid": 32972,
+    "pgid": 34632,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 34675,
+    "ppid": 32953,
+    "pgid": 34675,
+    "command": "/private/tmp/ovrcr-activity-native-c2dyqojc/temp/ovrcr-gui-iiBKQn/dashboard-client/ovrcr"
+  },
+  {
+    "pid": 5866,
+    "ppid": 41681,
+    "pgid": 41681,
+    "command": "/bin/bash --noprofile --norc -c printf 'started\\012' >> '/private/tmp/ovrcr-activity-native-c2dyqojc/control/fixture-activity.executions'; printf '%s\\012' \"$$\" > '/private/tmp/ovrcr-activity-native-c2dyqojc/control/fixture-activity.pid'; while [ ! -e '/private/tmp/ovrcr-activity-native-c2dyqojc/control/fixture-activity.bash-release' ]; do /bin/sleep 0.01; done; printf 'CLOSE_%s\\012' BASH_OK"
+  },
+  {
+    "pid": 5877,
+    "ppid": 5866,
+    "pgid": 41681,
+    "command": "(sleep)"
+  },
+  {
+    "pid": 41681,
+    "ppid": 32972,
+    "pgid": 41681,
+    "command": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr operator worker --conversation 1 --turn 1 --session 13 --run 1"
+  }
+]

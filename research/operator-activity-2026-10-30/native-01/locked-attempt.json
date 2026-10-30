@@ -1,0 +1,6 @@
+{
+  "unix_ms": 1793380931328,
+  "call": "await app.drag([534,352],[930,562]); await app.getAXStateAndScreenshot();",
+  "error": "The Mac is locked and automatic unlock could not unlock it. Ask the user to unlock the Mac manually before continuing.",
+  "no_capture_returned": true
+}

@@ -95,6 +95,9 @@ receipt, a silent acknowledged model request and an actual Bash result, then
 releases each gate once through private synthetic OAuth and loopback inference.
 Native no-message frame pairs separately prove idle redraw; fixed TestBackend
 timestamps alone cannot prove event-loop animation.
+The [activity check record](../../research/operator-activity-2026-10-30/native-01/README.md)
+proves silent native animation on its recorded revision. Its pending-tool and
+completion visual gates remain open because macOS locked during that run.
 
 For Rust changes, choose the owning package and add a focused test filter as appropriate:
 
