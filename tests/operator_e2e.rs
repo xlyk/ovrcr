@@ -452,6 +452,94 @@ mod compiled_worker {
     }
 
     #[test]
+    fn siwc_missing_content_type_preserves_completed_success_and_validation_failures() {
+        use sha2::{Digest, Sha256};
+        use std::{fs::OpenOptions, io::Write, os::unix::fs::OpenOptionsExt};
+        let live = live::Live::idle().bounded();
+        let provider = Provider::new(live.root.path(), BUDGET);
+        provider.sign_in(&live.config);
+        let mut credential = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(
+                live.config
+                    .join("operator-auth")
+                    .join(format!("chatgpt-{:x}.json", Sha256::digest(b"default"))),
+            )
+            .unwrap();
+        write!(credential, "{}", serde_json::json!({"client_id":"fixture","subject":"fixture","issuer":"https://auth.openai.com","access_token":"operator-e2e-oauth-only","expires_at":4102444800u64,"scopes":["chatgpt.tokens.use.direct"]})).unwrap();
+        drop(credential);
+        start(&live, &provider);
+        let mut ui = DashboardClient::connect(&live);
+        for (index, (provider_kind, model, success)) in [
+            (OperatorProvider::ChatGpt, "fixture-siwc-missing", true),
+            (OperatorProvider::ChatGpt, "fixture-siwc-wrong", false),
+            (OperatorProvider::ChatGpt, "fixture-siwc-malformed", false),
+            (OperatorProvider::ChatGpt, "fixture-siwc-incomplete", false),
+            (OperatorProvider::ChatGpt, "fixture-siwc-error", false),
+            (OperatorProvider::Grok, "fixture-siwc-grok-missing", false),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let conversation = ui.create_provider(provider_kind, model, index == 0);
+            ui.submit("Complete the isolated header fixture once");
+            let group = own_worker(&live, &conversation);
+            provider.release(model);
+            let history = ui.wait_history(&provider, conversation.id, |history| {
+                history.conversation.worker_stopped
+            });
+            assert_retired(&live, &history, group);
+            assert_eq!(
+                history.conversation.current_turn.as_ref().unwrap().state,
+                if success {
+                    OperatorTurnState::Complete
+                } else {
+                    OperatorTurnState::Error
+                },
+                "headerless subscription completion must work while counterexamples remain failures"
+            );
+            let database = rusqlite::Connection::open_with_flags(
+                ovrcr::config::database_path(&live.config),
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )
+            .unwrap();
+            let saved: i64 = database
+                .query_row(
+                    "SELECT count(*) FROM operator_model_history WHERE conversation=?1",
+                    [i64::try_from(conversation.id.0).unwrap()],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(saved, i64::from(success));
+            assert!(!history.messages.iter().any(|message| matches!(
+                message.content,
+                OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall { .. })
+            )));
+            if success {
+                assert!(
+                    has_text(&history, "HEADERLESS_E2E_OK")
+                        && ui.rendered().contains("HEADERLESS_E2E_OK")
+                );
+            } else {
+                assert!(history.messages.iter().any(|message| matches!(
+                    message.content,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::Failed(_))
+                )));
+            }
+            if model == "fixture-siwc-error" {
+                assert!(history.messages.iter().any(|message| matches!(&message.content, OperatorMessageContent::Worker(OperatorWorkerEvent::Failed(text)) if text.contains("HTTP 400"))));
+            }
+            assert_eq!(provider.requests(model).len(), 1);
+        }
+        provider.assert_healthy();
+        assert_eq!(ui.request(Request::Shutdown { kill: false }), Response::Ok);
+        drop(ui);
+        assert!(live.join_within(BUDGET).is_finished());
+    }
+
+    #[test]
     fn diagnostic_real_worker_classifies_provider_failures_without_retaining_remote_secrets() {
         let live = live::Live::idle().bounded();
         let provider = Provider::new(live.root.path(), BUDGET);

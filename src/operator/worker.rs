@@ -36,6 +36,8 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot};
 
+mod chatgpt_http;
+
 const BATCH_BYTES: usize = 64 * 1024;
 type SharedReporter = Arc<Mutex<Reporter>>;
 
@@ -203,6 +205,10 @@ fn make_agent(
     })
     .ok_or_else(|| anyhow!("operator provider unavailable"))?;
     let spec = ModelSpec::new(provider_id, model).with_tools(true);
+    let http = match provider {
+        OperatorProvider::ChatGpt => chatgpt_http::client(&base),
+        OperatorProvider::Grok => rig::rig_reqwest::shared(),
+    };
     let model = SignedInModel::new(
         spec,
         Credentials {
@@ -210,7 +216,7 @@ fn make_agent(
             provider,
             base,
         },
-        rig::rig_reqwest::shared(),
+        http,
     )
     .map_err(|_| anyhow!("operator model unavailable"))?;
     let handlers = Handlers::default();
@@ -1332,5 +1338,73 @@ mod tests {
             );
             assert!(!message.contains("FAKE_REMOTE_BEARER_AND_PROMPT"));
         }
+    }
+    #[tokio::test]
+    async fn siwc_missing_content_type_completes_current_public_responses_wire() {
+        use serde_json::json;
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let (_, body) = request(&mut socket).await;
+            assert_eq!(body["tools"][0]["type"], "namespace");
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            let output = json!({"type":"message","id":"msg-headerless","role":"assistant","status":"completed","content":[{"type":"output_text","text":"HEADERLESS_OK","annotations":[]}]});
+            event(&mut socket, json!({"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg-headerless","role":"assistant","content":[]}})).await;
+            event(&mut socket, json!({"type":"response.output_text.delta","output_index":0,"item_id":"msg-headerless","content_index":0,"delta":"HEADERLESS_OK"})).await;
+            event(
+                &mut socket,
+                json!({"type":"response.output_item.done","output_index":0,"item":output}),
+            )
+            .await;
+            event(&mut socket, json!({"type":"response.completed","response":{"id":"resp-headerless","status":"completed","output":[output],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}})).await;
+        });
+        let root = tempfile::tempdir().unwrap();
+        let auth = AuthManager::new(root.path()).unwrap();
+        seed(
+            root.path(),
+            OperatorProvider::ChatGpt,
+            "synthetic-headerless",
+        );
+        let (sender, _receiver) = mpsc::channel(4);
+        let host = Host {
+            sender,
+            call: Arc::new(Mutex::new(None)),
+        };
+        let agent = make_agent(
+            auth,
+            OperatorProvider::ChatGpt,
+            "fixture-headerless",
+            base,
+            Bash::new(root.path().into(), std::env::current_exe().unwrap()),
+            host,
+        )
+        .unwrap();
+        let mut stream = agent
+            .prompt("Headerless subscription stream")
+            .tool_concurrency(1)
+            .stream();
+        let mut completed = false;
+        while let Some(item) = tokio::time::timeout(Duration::from_secs(5), stream.next())
+            .await
+            .unwrap()
+        {
+            if let Err(error) = &item {
+                panic!(
+                    "headerless successful subscription response was rejected: {}",
+                    provider_failure(error)
+                );
+            }
+            if let Ok(MultiTurnStreamItem::FinalResponse(response)) = item {
+                assert_eq!(response.output(), "HEADERLESS_OK");
+                completed = true;
+            }
+        }
+        assert!(completed);
+        server.await.unwrap();
     }
 }

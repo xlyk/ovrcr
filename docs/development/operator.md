@@ -48,7 +48,11 @@ The token grant must include `chatgpt.tokens.use.direct`.
 uses `GET https://api.openai.com/v1/models` with the selected OAuth bearer token.
 Only `visibility:list` choices are displayed, preserving server order and slugs.
 ChatGPT inference must use `POST https://api.openai.com/v1/responses`, `store:false`
-and `stream:true`; successful completion requires `response.completed`. The worker
+and `stream:true`; successful completion requires `response.completed`. The public
+subscription route can omit Content-Type on successful SSE. Only ChatGPT's exact
+configured Responses POST with `stream:true` supplies the missing SSE header for
+HTTP200; explicit content types, non-200 replies, other routes and Grok are untouched.
+The original stream and completion validation remain intact. The worker
 uses Rig's public OpenAI Responses provider rather than its legacy ChatGPT preset.
 It sends the complete saved SDK history on each HTTP request, including encrypted
 reasoning continuation metadata. A narrow outbound transformation groups Bash

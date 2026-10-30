@@ -254,7 +254,8 @@ fn serve(
         );
     }
     shared.0.lock().unwrap().inference_attempts += 1;
-    if path != "/v1/responses" || !headers.contains("authorization: bearer operator-e2e-oauth-only")
+    if !matches!(path.as_str(), "/v1/responses" | "/responses")
+        || !headers.contains("authorization: bearer operator-e2e-oauth-only")
     {
         return Err(io::Error::other("unexpected inference path or bearer"));
     }
@@ -267,9 +268,13 @@ fn serve(
         model.as_str(),
         "fixture-a" | "fixture-b" | "fixture-timeout" | "fixture-incomplete" | "fixture-lifecycle"
     ) && !model.starts_with("fixture-error-")
+        && !model.starts_with("fixture-siwc-")
         || request["stream"] != true
     {
         return Err(io::Error::other("unexpected model or nonstreaming request"));
+    }
+    if !model.starts_with("fixture-siwc-") && path != "/v1/responses" {
+        return Err(io::Error::other("unexpected fixture route"));
     }
     let ordinal = {
         let mut state = shared.0.lock().unwrap();
@@ -277,7 +282,64 @@ fn serve(
         requests.push(request.clone());
         requests.len()
     };
-    if model.starts_with("fixture-error-") {
+    if model.starts_with("fixture-siwc-") {
+        if !wait_release(shared, &model, gate_budget)? {
+            return Ok(());
+        }
+        if model == "fixture-siwc-error" {
+            stream.write_all(b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n{\"error\":{\"code\":\"invalid_request_error\"}}")?;
+            return Ok(());
+        }
+        let result = (|| {
+            let content_type = if model == "fixture-siwc-wrong" {
+                "Content-Type: application/json\r\n"
+            } else {
+                ""
+            };
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\n{content_type}Connection: close\r\n\r\n"
+            )?;
+            if model == "fixture-siwc-malformed" {
+                return stream.write_all(b"this is not SSE\n");
+            }
+            let output = message("siwc-headerless", "HEADERLESS_E2E_OK");
+            event(
+                &mut stream,
+                json!({"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg-siwc-headerless","role":"assistant","content":[]}}),
+            )?;
+            event(
+                &mut stream,
+                json!({"type":"response.output_text.delta","output_index":0,"item_id":"msg-siwc-headerless","content_index":0,"delta":"HEADERLESS_E2E_OK"}),
+            )?;
+            event(
+                &mut stream,
+                json!({"type":"response.output_item.done","output_index":0,"item":output}),
+            )?;
+            if model == "fixture-siwc-incomplete" {
+                event(
+                    &mut stream,
+                    json!({"type":"response.incomplete","response":{"id":"resp-siwc-incomplete","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[output]}}),
+                )
+            } else {
+                complete(&mut stream, &model, vec![output])
+            }
+        })();
+        return match result {
+            Err(error)
+                if matches!(
+                    model.as_str(),
+                    "fixture-siwc-wrong" | "fixture-siwc-grok-missing"
+                ) && matches!(
+                    error.kind(),
+                    io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
+                ) =>
+            {
+                Ok(())
+            }
+            other => other,
+        };
+    } else if model.starts_with("fixture-error-") {
         const HOSTILE: &str = "FAKE_BEARER_PRIVATE_TOKEN_AND_PROMPT";
         if !wait_release(shared, &model, gate_budget)? {
             return Ok(());
