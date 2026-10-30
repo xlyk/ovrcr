@@ -4169,3 +4169,40 @@ fn assigned_human_input_requires_current_binding_evidence_as_well_as_owner() {
             .is_none()
     );
 }
+
+#[test]
+fn operator_hub_opens_without_terminal_input_and_paste_never_submits() {
+    use super::DashboardAction;
+    use crossterm::event::Event;
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 120,
+    });
+    let action = dashboard.key(KeyCode::Char('o'));
+    assert_ne!(
+        action,
+        DashboardAction::None,
+        "o must open the native Operator hub"
+    );
+    let action = dashboard.event_action(Event::Paste("first\nsecond".into()));
+    assert!(
+        !matches!(
+            action,
+            DashboardAction::PtyBytes(_) | DashboardAction::Request(_)
+        ),
+        "paste only edits a native draft"
+    );
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+    dashboard.draw(&mut terminal).unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(
+        text.contains("New Conversation"),
+        "native creation form must be visible: {text}"
+    );
+}

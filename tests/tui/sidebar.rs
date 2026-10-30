@@ -54,7 +54,7 @@ fn dashboard_layout() {
         .collect::<Vec<_>>();
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
     assert_eq!(buffer[(0, 4)].symbol(), "▌");
-    assert!(rendered[0].contains("OVRCR  agent runtime"));
+    assert!(rendered[0].contains("OVRCR Operator [o]"));
     assert!(
         rendered
             .iter()
@@ -97,8 +97,8 @@ fn sidebar_glyphs_and_columns_match_the_reference_tree() {
     let buffer = terminal.backend().buffer();
     let row = |y| (0..39).map(|x| buffer[(x, y)].symbol()).collect::<String>();
     let rule = |used: usize| "─".repeat(39 - used);
-    // The title band is unchanged; mauve there is the one place it is not selection.
-    assert_eq!(row(0).trim_end(), "󰚩 OVRCR  agent runtime");
+    // The title band pins Operator above projects; the brand keeps its mauve band.
+    assert_eq!(row(0).trim_end(), "󰚩 OVRCR Operator [o]");
     assert_eq!(buffer[(1, 0)].bg, Color::Rgb(203, 166, 247));
     // Project section header: upper case, blue bold, rule to the edge, no chevron.
     assert_eq!(row(1), format!(" CONSIGINT {}", rule(11)));

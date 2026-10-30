@@ -564,6 +564,7 @@ pub(super) struct AgentTyping {
 impl Dashboard {
     pub fn new(size: TerminalSize) -> Self {
         Self {
+            operator: Default::default(),
             tasks: None,
             desktop: super::desktop::DesktopNotifications::default(),
             unread: Default::default(),
@@ -978,7 +979,7 @@ impl Dashboard {
     }
 
     pub(super) fn action_session(&self) -> Option<SessionId> {
-        if self.selected_container.is_some() {
+        if self.operator.visible || self.selected_container.is_some() {
             None
         } else {
             self.focused_session()
@@ -1059,6 +1060,13 @@ impl Dashboard {
     }
 
     fn desired_view(&self) -> RequestedView {
+        if self.operator.visible {
+            return RequestedView {
+                revision: self.handshake.revision(),
+                targets: Vec::new(),
+                focused: None,
+            };
+        }
         let rects = self.pane_rects(self.outer_area);
         let mut targets = Vec::new();
         for rect in rects {
@@ -1367,6 +1375,7 @@ impl Dashboard {
     }
 
     pub(crate) fn select_session(&mut self, id: SessionId) {
+        self.operator.visible = false;
         self.selected_container = None;
         if let Some(index) = self.panes.iter().position(|pane| pane.session == Some(id)) {
             self.focus_pane(index);
@@ -1519,8 +1528,16 @@ impl Dashboard {
         if self.palette.is_some() {
             return self.palette_key(key);
         }
-        if let Some(action) = self.whichkey_key(key) {
+        if (self.whichkey.is_some() || !self.operator_is_editing())
+            && let Some(action) = self.whichkey_key(key)
+        {
             return action;
+        }
+        if self.operator_is_editing() {
+            return self.operator_key(key);
+        }
+        if self.operator.visible && key.code == KeyCode::Enter {
+            return self.open_operator();
         }
         match self.mode {
             InputMode::Browse => {
@@ -2015,6 +2032,9 @@ impl Dashboard {
             self.set_error("Agent switch cancelled: view changed");
         }
         use PaneChange::*;
+        if matches!(change, Select | Container | Split | Close | Cleared) {
+            self.operator.visible = false;
+        }
         let discard_pending_parser = !matches!(change, Focus | Resize);
         let release_capture = !matches!(
             change,
@@ -2260,6 +2280,8 @@ impl Dashboard {
                 self.agent_typing.as_mut().unwrap().rejected = Some("paste");
                 DashboardAction::Redraw
             }
+            Event::Paste(text) if self.operator_is_editing() => self.operator_paste(&text),
+            Event::Paste(_) if self.operator.visible => DashboardAction::None,
             Event::Paste(text) if self.mode == InputMode::Terminal => {
                 if !self.input_is_allowed() {
                     self.refuse_input()
@@ -2334,6 +2356,9 @@ impl Dashboard {
         if matches!(self.mode, InputMode::Copy | InputMode::History) {
             return self.capture_mouse_action(mouse, area);
         }
+        if let Some(action) = self.operator_mouse(mouse, area) {
+            return action;
+        }
         if let Some(action) = self.pane_mouse_action(mouse, area) {
             return action;
         }
@@ -2360,6 +2385,9 @@ impl Dashboard {
     }
 
     pub(crate) fn mouse_capture_required(&self) -> bool {
+        if self.operator.visible {
+            return true;
+        }
         if self.details.is_some() {
             return true;
         }
@@ -2692,6 +2720,7 @@ impl Dashboard {
     }
 
     pub(super) fn select_container(&mut self, row: TreeRow) {
+        self.operator.visible = false;
         if self.selected_container.as_ref() == Some(&row) {
             return;
         }
@@ -3202,6 +3231,14 @@ impl Dashboard {
             request_id,
             response,
         } = &message
+            && self.operator_response(*request_id, response)
+        {
+            return self.drain_outbox();
+        }
+        if let ServerMessage::Response {
+            request_id,
+            response,
+        } = &message
             && self.events_response(*request_id, response)
         {
             return self.drain_outbox();
@@ -3472,8 +3509,8 @@ impl Dashboard {
             ServerMessage::Event(event) => match event {
                 ServerEvent::BridgeContext(_)
                 | ServerEvent::NotificationNavigation(_)
-                | ServerEvent::ITermFocus(_)
-                | ServerEvent::OperatorChanged(_) => {}
+                | ServerEvent::ITermFocus(_) => {}
+                ServerEvent::OperatorChanged(id) => self.operator_changed(id),
                 ServerEvent::HierarchyChanged(hierarchy) => {
                     for request in self.update_hierarchy(hierarchy) {
                         self.push_request(request);
@@ -3803,7 +3840,8 @@ impl Dashboard {
                 self.panes.push(super::PaneState::new(self.focused_size()));
             }
             self.focused_pane = self.focused_pane.min(self.panes.len() - 1);
-            if self.panes.iter().all(|pane| pane.session.is_none())
+            if !self.operator.visible
+                && self.panes.iter().all(|pane| pane.session.is_none())
                 && let Some(id) = self.visible_rows().iter().find_map(|row| match row {
                     TreeRow::Session { id } => Some(*id),
                     TreeRow::Project { .. }
@@ -3983,6 +4021,9 @@ impl Dashboard {
     }
 
     pub(super) fn input_is_allowed(&self) -> bool {
+        if self.operator.visible {
+            return false;
+        }
         let Some(session) = self.action_session() else {
             return false;
         };

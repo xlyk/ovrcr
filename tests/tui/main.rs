@@ -39,6 +39,7 @@ mod bridge_navigation;
 mod copy_history;
 mod events;
 mod mouse;
+mod operator;
 mod palette;
 mod quota;
 mod settings;
