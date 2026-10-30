@@ -79,10 +79,14 @@ Both message inputs support these editing commands:
 
 Word commands treat punctuation as part of a word and never cross a newline.
 Home/End still move to the start/end of the whole draft; Up/Down move between
-logical lines. Holding Ctrl+C never turns a clear into Stop. Empty Quick Message
-Ctrl+C does nothing and never stops the underlying chat. Pending Quick creation or
-submission stays frozen; retry edits keep their original target. These commands
-apply only to message inputs; terminal Ctrl+C keeps its usual interrupt behavior.
+logical lines. The native GUI ignores held Ctrl+C repeats, so holding the key
+cannot turn a clear into Stop there. Legacy external terminals may report repeats
+as fresh presses; in those terminals a held Ctrl+C can clear and then stop.
+Empty Quick Message Ctrl+C does nothing and never stops the underlying chat.
+Pending Quick creation or submission stays frozen; retry edits keep their original
+target. These editing commands apply only to message inputs. Terminal Ctrl+C keeps
+its usual interrupt byte; the native GUI sends one initial interrupt per hold.
+Other control keys and ordinary key repetition remain unchanged.
 The full composer's existing key menu and palette list the editing actions;
 Ctrl+X remains the explicit Stop shortcut.
 
