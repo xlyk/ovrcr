@@ -1,0 +1,40 @@
+󰚩 OVRCR Operator [o]                                                                                                        [Actions] [Menu]
+ OPERATOR ───────────────────────── [+]│chat-1 · chat_gpt / fixture · complete
+▌  chat-1                              │You
+   chat-2                              │▸ Context · global
+                                       │Review this workspace.
+                                       │
+                                       │Operator
+                                       │I will inspect its sessions.
+                                       │
+                                       │▸ succeeded · (no output) · Output [inspect]
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+ QUOTA LEFT ───────────────────────────│
+Claude · checking                      │
+Codex · usage off                      │
+Grok · usage off                       │Managing global
+Cursor · usage off                     │> ▏
+                                       │
+OPERATOR  Enter Send  Ctrl-g Browse  Tab Chats  Ctrl-n New Conversation  Shift-Enter Newline  PageUp Earlier  PageDown Later

@@ -52,10 +52,22 @@ priority; spaces and punctuation in an active composer remain ordinary text.
 
 `dashboard::operator` owns per-conversation drafts, context, grapheme cursor,
 scroll/follow-tail and completion Unread state. Selecting a saved conversation never
-recaptures the last terminal's context. Scrolled transcripts keep a logical text
-anchor across streaming, conversation switches and resize. Successful completion
+recaptures the last terminal's context. Scrolled transcripts keep a durable message
+ordinal, logical part and byte anchor
+across streaming, receipt expansion, conversation switches and resize. Styled
+graphemes survive wrapping; prose is bounded to 88 cells while command/output
+details use the available width. Successful completion
 Unread comes from the exact durable turn summary; SDK model history stays private.
-`Tab` or `Ctrl-l` moves focus between the conversation sidebar and composer.
+`Tab` cycles sidebar, transcript and composer; `Ctrl-l` toggles sidebar/composer.
+Transcript Up/Down selects a user-context/tool entry; Enter expands its full details.
+The borderless composer uses `clamp(wrapped_draft_rows, 2, min(6, body_height / 3).max(2))`
+text rows and scrolls around the real cursor. `OperatorLayout` owns header,
+transcript, context and composer rectangles for rendering, hit-testing and review.
+At widths below 100, the same combined sidebar opens on demand without changing the
+saved preference. Below 60×16, Operator shows resize guidance and preserves work.
+Unread review requires an unobscured, actually drawn, adequately sized transcript
+at its confirmed durable tail; empty, new, too-small and sidebar-only views cannot
+acknowledge it.
 `Ctrl-n` opens creation, Enter sends, Shift-Enter inserts a newline, paste only edits,
 Ctrl-g returns to Browse retaining drafts, and Ctrl-x stops only the selected exact
 current turn. A pending submission clears only its captured draft after acceptance;

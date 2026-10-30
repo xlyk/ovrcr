@@ -49,10 +49,12 @@ pub(super) fn footer(dashboard: &Dashboard, width: u16) -> String {
         &[
             "Enter",
             "Ctrl-g",
-            "Ctrl-l",
+            "Tab",
             "Ctrl-n",
             "Ctrl-x",
             "Shift-Enter",
+            "PageUp",
+            "PageDown",
         ]
     } else if dashboard.mode == InputMode::Browse {
         &["Space", ":", "?"]

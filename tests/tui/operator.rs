@@ -187,10 +187,34 @@ fn operator_public_navigation_retains_each_draft_context_and_terminal_assignment
             current_turn: None,
         })
         .collect();
-    d.handle_server_message(ServerMessage::Response {
+    let reads = d.handle_server_message(ServerMessage::Response {
         request_id: list.request_id,
-        response: Response::Operator(OperatorResponse::Conversations(summaries)),
+        response: Response::Operator(OperatorResponse::Conversations(summaries.clone())),
     });
+    for request in reads {
+        if let Request::Operator(OperatorRequest::Read { conversation, .. }) = request.request {
+            d.handle_server_message(ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::Operator(OperatorResponse::History(
+                    ovrcr_protocol::OperatorHistory {
+                        conversation: summaries[conversation.0 as usize - 1].clone(),
+                        messages: vec![ovrcr_protocol::OperatorMessage {
+                            ordinal: 1,
+                            turn: ovrcr_protocol::OperatorTurnId(1),
+                            content: ovrcr_protocol::OperatorMessageContent::Worker(
+                                ovrcr_protocol::OperatorWorkerEvent::AssistantDelta(
+                                    (0..60)
+                                        .map(|n| format!("CHAT_{}_ROW_{n:02}\n", conversation.0))
+                                        .collect(),
+                                ),
+                            ),
+                        }],
+                        next_after: None,
+                    },
+                )),
+            });
+        }
+    }
     d.drain_outbox();
     let area = Rect::new(0, 0, 120, 24);
     d.install_area(area);
@@ -206,6 +230,10 @@ fn operator_public_navigation_retains_each_draft_context_and_terminal_assignment
         );
         d.key(KeyCode::Enter);
         d.event_action(Event::Paste(draft.into()));
+        d.key(KeyCode::PageUp);
+        if row == 3 {
+            d.key(KeyCode::PageUp);
+        }
     }
     d.install_focus(SessionId(3));
     d.mouse_action(
@@ -231,6 +259,39 @@ fn operator_public_navigation_retains_each_draft_context_and_terminal_assignment
         visible.contains("draft A") && !visible.contains("draft B"),
         "{visible}"
     );
+    assert!(
+        visible.contains("CHAT_1_ROW_34"),
+        "first chat anchor: {visible}"
+    );
+    assert_eq!(
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .filter(|cell| cell.symbol() == "▌")
+            .count(),
+        1,
+        "only the conversation has a selected row"
+    );
+    d.ctrl('l');
+    d.key(KeyCode::Down);
+    d.key(KeyCode::Enter);
+    d.draw(&mut terminal).unwrap();
+    let second: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(
+        second.contains("draft B") && second.contains("CHAT_2_ROW_24"),
+        "independent second chat anchor: {second}"
+    );
+    d.ctrl('l');
+    d.key(KeyCode::Up);
+    d.key(KeyCode::Enter);
     d.key(KeyCode::Enter);
     let submit = d
         .drain_outbox()

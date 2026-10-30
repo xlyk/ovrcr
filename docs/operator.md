@@ -32,8 +32,10 @@ Use the global `--json` flag for status, models or logout, for example
    identifier if needed. Press Enter to create it.
 3. Type your request and press Enter. The operator executes requested Bash and
    OVRCR CLI actions without per-command approval dialogs; existing CLI guards apply.
-4. Use `Ctrl-l` or Tab to focus the conversation sidebar, then Up/Down and Enter
-   to choose a conversation. Click a row to open it, or use `[+]` / `Ctrl-n` for
+4. Use `Ctrl-l` to switch between the composer and conversation sidebar, then
+   Up/Down and Enter to choose a conversation. Tab cycles the sidebar, transcript
+   and composer; Enter expands a focused context or tool receipt in the transcript.
+   Click a row to open it, or use `[+]` / `Ctrl-n` for
    manual provider/model creation while another conversation continues streaming.
 
 The sidebar shows up to five one-line conversations. Scroll to browse longer lists;
@@ -46,11 +48,19 @@ position and status. Provider and model stay fixed after creation. Selecting a
 different chat or returning to a terminal does not pause active work.
 
 `Shift-Enter` inserts a newline; paste edits the draft without submitting.
-`PageUp` and `PageDown` scroll the transcript. `Ctrl-g` returns to Browse while
-preserving the draft. Completed background replies stay Unread until their
+`PageUp` and `PageDown` scroll the transcript. Tool receipts stay compact until
+expanded; failures, timeouts and truncation remain visible in their summary.
+Expanded details retain the full command, cwd, captured context and output.
+`Ctrl-g` returns to Browse while preserving the draft. Completed background replies stay Unread until their
 loaded tail is actually shown.
 
-The target shown beside the composer is captured with each submitted message.
+The borderless prompt starts at two text rows and grows with the draft, up to six
+rows or one third of the body. The real terminal cursor follows the focused input.
+At widths below 100 columns, the conversation uses the full width; `Ctrl-l` or Tab
+opens the same combined sidebar on demand. At 100 columns and above, the configured
+sidebar width is used. Below 60×16, resize guidance preserves drafts and active work.
+
+The target shown above the composer is captured with each submitted message.
 Check it before asking about "this workspace" or "this session". Later navigation
 does not change a running turn's captured target.
 

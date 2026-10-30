@@ -447,7 +447,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         layout.title,
     );
 
-    if !dashboard.sidebar_hidden {
+    if dashboard.sidebar_preference() != Some(0) {
         frame.render_widget(
             Block::default()
                 .borders(Borders::RIGHT)
@@ -461,7 +461,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     let width = usize::from(tree.width);
     let heights = tree_row_heights(dashboard, &rows, width);
     let stacked = heights.contains(&2);
-    let viewport_height = if dashboard.sidebar_hidden {
+    let viewport_height = if dashboard.sidebar_preference() == Some(0) {
         0
     } else {
         usize::from(tree.height)

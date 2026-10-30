@@ -20,7 +20,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use unicode_width::UnicodeWidthStr;
 
 #[derive(Default)]
@@ -28,6 +28,8 @@ pub(super) struct Hub {
     pub visible: bool,
     editing: bool,
     list_focus: bool,
+    transcript_focus: bool,
+    sidebar_open: bool,
     pub(super) collapsed: bool,
     list_offset: usize,
     hovered: Option<Id>,
@@ -55,7 +57,9 @@ struct Chat {
     stopping: bool,
     closing: bool,
     scroll: usize,
-    anchor: Option<(usize, usize)>,
+    anchor: Option<(u64, usize, usize)>,
+    expanded: BTreeSet<u64>,
+    entry_focus: Option<u64>,
     follow: bool,
     unread: Option<OperatorTurnId>,
     reviewed: Option<OperatorTurnId>,
@@ -78,6 +82,8 @@ impl Chat {
             closing: false,
             scroll: 0,
             anchor: None,
+            expanded: BTreeSet::new(),
+            entry_focus: None,
             follow: true,
             unread: None,
             reviewed: None,
@@ -185,141 +191,10 @@ fn stop_rect(right: Rect) -> Rect {
         right.height.min(1),
     )
 }
-fn transcript_lines(chat: &Chat) -> Vec<Line<'static>> {
-    let mut text = String::new();
-    let mut assistant = false;
-    for message in &chat.messages {
-        match &message.content {
-            OperatorMessageContent::User {
-                text: user,
-                context,
-            } => {
-                text.push_str(&format!(
-                    "\nYou · {}\ncwd: {}\n{}\n",
-                    context_label(context),
-                    context.cwd.as_ref().map_or_else(
-                        || "operator workdir".into(),
-                        |cwd| display_text(&cwd.to_string_lossy())
-                    ),
-                    display_text(user)
-                ));
-                assistant = false;
-            }
-            OperatorMessageContent::Worker(event) => match event {
-                OperatorWorkerEvent::AssistantDelta(delta) => {
-                    if !assistant {
-                        text.push_str("\nOperator\n");
-                        assistant = true;
-                    }
-                    text.push_str(&display_text(delta));
-                }
-                OperatorWorkerEvent::ToolCall {
-                    id,
-                    name,
-                    arguments,
-                } => {
-                    text.push_str(&format!(
-                        "\n\nTool {} [{}]\n{}\n",
-                        display_text(name),
-                        display_text(id),
-                        display_text(arguments)
-                    ));
-                    assistant = false;
-                }
-                OperatorWorkerEvent::ToolOutput {
-                    id,
-                    output,
-                    truncated,
-                    status,
-                } => {
-                    let status = match status {
-                        OperatorToolStatus::Succeeded => "succeeded".into(),
-                        OperatorToolStatus::Failed { exit_code } => format!(
-                            "failed (exit {})",
-                            exit_code.map_or_else(|| "unknown".into(), |code| code.to_string())
-                        ),
-                        OperatorToolStatus::TimedOut => "timed out".into(),
-                    };
-                    text.push_str(&format!(
-                        "\nOutput [{}] · {status}{}\n{}\n",
-                        display_text(id),
-                        if *truncated {
-                            " · truncated at 64 KiB"
-                        } else {
-                            ""
-                        },
-                        if output.is_empty() {
-                            "(no output)".into()
-                        } else {
-                            display_text(output)
-                        }
-                    ));
-                    assistant = false;
-                }
-                OperatorWorkerEvent::Completed(_) => {
-                    text.push_str("\n\nTurn complete\n");
-                    assistant = false;
-                }
-                OperatorWorkerEvent::Failed(error) => {
-                    text.push_str(&format!("\n\nError: {}\n", display_text(error)));
-                    assistant = false;
-                }
-            },
-            OperatorMessageContent::Interrupted => {
-                text.push_str("\n\nInterrupted · accepted operations may finish; no rollback.\n");
-                assistant = false;
-            }
-        }
-    }
-    text.lines()
-        .map(|line| Line::raw(line.to_owned()))
-        .collect()
-}
-fn wrapped_lines(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
-    wrapped_rows(lines, width)
-        .into_iter()
-        .map(|(line, _)| line)
-        .collect()
-}
-// Logical line/byte anchors survive appended output and width changes.
-fn wrapped_rows(lines: Vec<Line<'static>>, width: u16) -> Vec<(Line<'static>, (usize, usize))> {
-    let width = usize::from(width.max(1));
-    let mut rows = Vec::new();
-    for (index, line) in lines.into_iter().enumerate() {
-        let text = line.to_string();
-        let span = Span::raw(text);
-        let mut row = String::new();
-        let mut used = 0;
-        let mut byte = 0;
-        let mut start = 0;
-        for grapheme in span.styled_graphemes(Style::default()) {
-            let cells = grapheme.symbol.width();
-            if used + cells > width && !row.is_empty() {
-                rows.push((Line::raw(std::mem::take(&mut row)), (index, start)));
-                used = 0;
-                start = byte;
-            }
-            row.push_str(grapheme.symbol);
-            used += cells;
-            byte += grapheme.symbol.len();
-        }
-        rows.push((Line::raw(row), (index, start)));
-    }
-    rows
-}
-fn transcript_offset(chat: &Chat, rows: &[(Line<'_>, (usize, usize))], height: usize) -> usize {
-    if !chat.follow
-        && let Some(anchor) = chat.anchor
-    {
-        rows.iter()
-            .rposition(|(_, start)| *start <= anchor)
-            .unwrap_or(0)
-    } else {
-        rows.len()
-            .saturating_sub(height)
-            .saturating_sub(chat.scroll)
-    }
-}
+#[cfg(test)]
+use render::{transcript_lines, wrapped_lines};
+use render::{transcript_offset, transcript_rows};
+
 fn context_label(context: &OperatorContext) -> String {
     let mut label = context.project.clone().unwrap_or_else(|| "global".into());
     if let Some(workspace) = &context.workspace {
@@ -352,9 +227,49 @@ fn status(chat: &Chat) -> &'static str {
     }
 }
 
+fn expandable(message: &OperatorMessage) -> bool {
+    matches!(
+        message.content,
+        OperatorMessageContent::User { .. }
+            | OperatorMessageContent::Worker(
+                OperatorWorkerEvent::ToolCall { .. } | OperatorWorkerEvent::ToolOutput { .. }
+            )
+    )
+}
 impl Dashboard {
+    pub(super) fn operator_clear_hover(&mut self) {
+        self.operator.hovered = None;
+    }
+    pub(super) fn operator_sidebar_requested(&self) -> bool {
+        self.operator.visible && self.operator.sidebar_open
+    }
+    pub(super) fn operator_sidebar_on_demand(&self) -> bool {
+        self.operator.visible && self.outer_area.width < 100 && !self.operator.sidebar_open
+    }
+    pub(super) fn operator_has_form(&self) -> bool {
+        self.operator.new.is_some()
+    }
+    pub(super) fn operator_transcript_focused(&self) -> bool {
+        self.operator.visible && self.operator.transcript_focus
+    }
+    pub(super) fn operator_stop_available(&self) -> bool {
+        self.operator.new.is_none()
+            && self
+                .operator
+                .selected
+                .and_then(|id| self.operator.chats.get(&id.0))
+                .is_some_and(|chat| {
+                    !chat.summary.worker_stopped
+                        || chat
+                            .summary
+                            .current_turn
+                            .as_ref()
+                            .is_some_and(|turn| turn.state == OperatorTurnState::Running)
+                })
+    }
     pub(super) fn operator_header_rect(&self, area: Rect) -> Rect {
-        let sidebar = super::sidebar_width_for(area, self.sidebar_preference());
+        let sidebar =
+            super::sidebar_width_for(area, self.sidebar_preference()).max(area.width.min(35));
         let indent = sidebar.min(7);
         Rect::new(
             area.x.saturating_add(indent),
@@ -407,6 +322,7 @@ impl Dashboard {
             provider_focus: false,
         });
         self.operator.list_focus = false;
+        self.operator.transcript_focus = false;
         self.operator.editing = true;
         self.operator.error = None;
     }
@@ -468,6 +384,8 @@ impl Dashboard {
             self.operator.new = None;
             self.operator.error = None;
             self.operator.list_focus = false;
+            self.operator.transcript_focus = false;
+            self.operator.sidebar_open = false;
             self.operator.editing = true;
             self.operator_ensure_visible();
             self.operator_catch_up();
@@ -588,6 +506,8 @@ impl Dashboard {
                 KeyCode::Char('x') => self.operator_stop(),
                 KeyCode::Char('l') => {
                     self.operator.list_focus = !self.operator.list_focus;
+                    self.operator.transcript_focus = false;
+                    self.operator.sidebar_open = self.operator.list_focus;
                     if self.operator.selected.is_none() {
                         self.operator.selected = self.operator_ids().first().copied();
                     }
@@ -601,8 +521,103 @@ impl Dashboard {
             }
             return DashboardAction::Redraw;
         }
-        if self.operator.list_focus && matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
-            self.operator.list_focus = false;
+        if self.operator.new.is_none() && matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
+            let focus = if self.operator.list_focus {
+                0
+            } else if self.operator.transcript_focus {
+                1
+            } else {
+                2
+            };
+            let next = (focus + if key.code == KeyCode::BackTab { 2 } else { 1 }) % 3;
+            self.operator.list_focus = next == 0;
+            self.operator.transcript_focus = next == 1;
+            self.operator.sidebar_open = self.operator.list_focus;
+            self.operator_clear_hover();
+            let layout = self.operator_layout(self.outer_area);
+            if next == 1
+                && let Some(chat) = self
+                    .operator
+                    .selected
+                    .and_then(|id| self.operator.chats.get_mut(&id.0))
+            {
+                let rows = transcript_rows(chat, layout.transcript.width);
+                let offset = transcript_offset(chat, &rows, layout.transcript.height as usize);
+                let visible = &rows[offset.min(rows.len())
+                    ..rows.len().min(offset + layout.transcript.height as usize)];
+                if !visible
+                    .iter()
+                    .any(|(_, anchor)| Some(anchor.0) == chat.entry_focus)
+                {
+                    chat.entry_focus = visible.first().map(|(_, anchor)| anchor.0);
+                }
+            }
+            self.operator_ensure_visible();
+            return DashboardAction::Redraw;
+        }
+        if self.operator.transcript_focus {
+            if matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
+                self.operator_scroll(if key.code == KeyCode::PageUp { -10 } else { 10 });
+                return DashboardAction::Redraw;
+            }
+            let layout = self.operator_layout(self.outer_area);
+            if let Some(chat) = self
+                .operator
+                .selected
+                .and_then(|id| self.operator.chats.get_mut(&id.0))
+            {
+                let entries: Vec<_> = chat
+                    .messages
+                    .iter()
+                    .filter(|m| expandable(m))
+                    .map(|m| m.ordinal)
+                    .collect();
+                let index = entries
+                    .iter()
+                    .position(|id| Some(*id) == chat.entry_focus)
+                    .unwrap_or(0);
+                match key.code {
+                    KeyCode::Enter => {
+                        if let Some(id) = chat.entry_focus
+                            && chat
+                                .messages
+                                .iter()
+                                .any(|message| message.ordinal == id && expandable(message))
+                            && !chat.expanded.remove(&id)
+                        {
+                            chat.expanded.insert(id);
+                        }
+                    }
+                    KeyCode::Home => chat.entry_focus = entries.first().copied(),
+                    KeyCode::End => chat.entry_focus = entries.last().copied(),
+                    KeyCode::Up => chat.entry_focus = entries.get(index.saturating_sub(1)).copied(),
+                    KeyCode::Down => {
+                        chat.entry_focus = entries
+                            .get((index + 1).min(entries.len().saturating_sub(1)))
+                            .copied()
+                    }
+                    _ => {}
+                }
+                if matches!(
+                    key.code,
+                    KeyCode::Up | KeyCode::Down | KeyCode::Home | KeyCode::End
+                ) {
+                    let rows = transcript_rows(chat, layout.transcript.width);
+                    let offset = transcript_offset(chat, &rows, layout.transcript.height as usize);
+                    if let Some(target) = rows
+                        .iter()
+                        .position(|(_, anchor)| Some(anchor.0) == chat.entry_focus)
+                        && (target < offset || target >= offset + layout.transcript.height as usize)
+                    {
+                        chat.follow = false;
+                        chat.anchor = Some(rows[target].1);
+                        chat.scroll = rows
+                            .len()
+                            .saturating_sub(layout.transcript.height as usize)
+                            .saturating_sub(target);
+                    }
+                }
+            }
             return DashboardAction::Redraw;
         }
         if self.operator.list_focus {
@@ -689,10 +704,6 @@ impl Dashboard {
             }
             return DashboardAction::Redraw;
         }
-        if key.code == KeyCode::Tab || key.code == KeyCode::BackTab {
-            self.operator.list_focus = !self.operator.list_focus;
-            return DashboardAction::Redraw;
-        }
         if self
             .operator
             .selected
@@ -749,7 +760,7 @@ impl Dashboard {
         }
     }
     pub(super) fn operator_paste(&mut self, text: &str) -> DashboardAction {
-        if self.operator.list_focus {
+        if self.operator.list_focus || self.operator.transcript_focus {
             return DashboardAction::None;
         }
         let text = paste_text(text);
@@ -764,17 +775,14 @@ impl Dashboard {
         DashboardAction::Redraw
     }
     fn operator_scroll(&mut self, delta: isize) {
-        let right = content_area(self, self.outer_area);
-        let height = right
-            .height
-            .saturating_sub(right.height.min(7))
-            .saturating_sub(2) as usize;
+        let layout = self.operator_layout(self.outer_area);
+        let height = layout.transcript.height as usize;
         if let Some(chat) = self
             .operator
             .selected
             .and_then(|id| self.operator.chats.get_mut(&id.0))
         {
-            let rows = wrapped_rows(transcript_lines(chat), right.width.saturating_sub(2));
+            let rows = transcript_rows(chat, layout.transcript.width);
             let offset = transcript_offset(chat, &rows, height);
             let target = if delta < 0 {
                 chat.follow = false;
@@ -799,8 +807,7 @@ impl Dashboard {
         if let Some(action) = self.operator_sidebar_mouse(mouse, area) {
             return Some(action);
         }
-        if !self.sidebar_hidden
-            && self.operator_header_rect(area).contains(point)
+        if self.operator_header_rect(area).contains(point)
             && mouse.kind == MouseEventKind::Down(MouseButton::Left)
         {
             return Some(self.open_operator());
@@ -812,14 +819,39 @@ impl Dashboard {
         if !content.contains(point) {
             return None;
         }
-        let transcript = content;
+        let layout = self.operator_layout(area);
+        let transcript = layout.transcript;
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) if !transcript.is_empty() => {
-                if stop_rect(transcript).contains(point) && self.operator.new.is_none() {
+                if stop_rect(layout.header).contains(point) && self.operator.new.is_none() {
                     self.operator_stop();
                 } else {
                     self.operator.editing = true;
                     self.operator.list_focus = false;
+                    self.operator.sidebar_open = false;
+                    self.operator.transcript_focus = transcript.contains(point);
+                    if self.operator.transcript_focus
+                        && let Some(chat) = self
+                            .operator
+                            .selected
+                            .and_then(|id| self.operator.chats.get_mut(&id.0))
+                    {
+                        let rows = transcript_rows(chat, transcript.width);
+                        let offset = transcript_offset(chat, &rows, transcript.height as usize);
+                        chat.entry_focus = rows
+                            .get(offset + usize::from(mouse.row - transcript.y))
+                            .map(|(_, anchor)| anchor.0)
+                            .filter(|id| {
+                                chat.messages
+                                    .iter()
+                                    .any(|m| m.ordinal == *id && expandable(m))
+                            });
+                        if let Some(id) = chat.entry_focus
+                            && !chat.expanded.remove(&id)
+                        {
+                            chat.expanded.insert(id);
+                        }
+                    }
                 }
             }
             MouseEventKind::ScrollUp => self.operator_scroll(-3),
@@ -1097,17 +1129,27 @@ impl Dashboard {
         }
     }
     pub(super) fn operator_commit_presented(&mut self) {
-        if !self.operator.visible || self.operator.new.is_some() || self.operator.list_focus {
+        if !self.operator.visible
+            || !self.operator.editing
+            || self.operator.new.is_some()
+            || self.operator.list_focus
+        {
             return;
         }
-        let content = content_area(self, self.outer_area);
-        if content.height.saturating_sub(content.height.min(7)) < 3 || content.width < 6 {
+        let layout = self.operator_layout(self.outer_area);
+        if self.outer_area.width < 60
+            || self.outer_area.height < 16
+            || layout.transcript.height < 3
+            || layout.transcript.width < 6
+            || (self.outer_area.width < 100 && self.operator.sidebar_open)
+        {
             return;
         }
         if let Some(chat) = self
             .operator
             .selected
             .and_then(|id| self.operator.chats.get_mut(&id.0))
+            && !chat.messages.is_empty()
             && chat.follow
             && !chat.reading
             && !chat.dirty
@@ -1118,9 +1160,6 @@ impl Dashboard {
         }
     }
     pub(super) fn draw_operator_header(&self, frame: &mut Frame<'_>) {
-        if self.sidebar_hidden {
-            return;
-        }
         let unread = self
             .operator
             .chats
@@ -1158,6 +1197,14 @@ impl Dashboard {
             area,
         );
         let right = area;
+        if frame.area().width < 60 || frame.area().height < 16 {
+            frame.render_widget(
+                Paragraph::new(format!("Operator needs 60×16 · current {}×{}\nResize to continue · Esc / Ctrl-g Browse", frame.area().width, frame.area().height))
+                    .wrap(Wrap { trim: false }),
+                area,
+            );
+            return;
+        }
         if right.is_empty() {
             return;
         }
@@ -1192,94 +1239,7 @@ impl Dashboard {
         else {
             return;
         };
-        let composer_height = right.height.min(7);
-        let transcript = Rect::new(
-            right.x,
-            right.y,
-            right.width,
-            right.height.saturating_sub(composer_height),
-        );
-        let composer = Rect::new(right.x, transcript.bottom(), right.width, composer_height);
-        let title = format!(
-            "{} · {} · {} / {}",
-            status(chat),
-            display_text(&chat.summary.title),
-            chat.summary.provider.as_str(),
-            display_text(&chat.summary.model)
-        );
-        let rows = wrapped_rows(transcript_lines(chat), transcript.width.saturating_sub(2));
-        let height = transcript.height.saturating_sub(2) as usize;
-        let offset = transcript_offset(chat, &rows, height);
-        let visible = rows
-            .into_iter()
-            .skip(offset)
-            .take(height)
-            .map(|(line, _)| line)
-            .collect::<Vec<_>>();
-        frame.render_widget(
-            Paragraph::new(visible).block(Block::default().borders(Borders::ALL).title(title)),
-            transcript,
-        );
-        frame.render_widget(
-            Paragraph::new("[Stop Ctrl-x]").style(
-                Style::default()
-                    .fg(super::render::MAUVE())
-                    .bg(super::render::BASE()),
-            ),
-            stop_rect(transcript),
-        );
-        let cursor = chat.cursor.position(&chat.draft);
-        let cursor_visible = self.operator.editing && !self.operator.list_focus;
-        let mut draft = chat.draft.clone();
-        if cursor_visible {
-            draft.insert(cursor, '▏');
-        }
-        let draft = display_text(&draft);
-        let title = format!(
-            "{} · Enter send · Shift-Enter newline · Tab/Ctrl-l chats · Ctrl-n new · Ctrl-g Browse",
-            context_label(&chat.context)
-        );
-        let footer = chat
-            .error
-            .as_deref()
-            .or(self.operator.error.as_deref())
-            .unwrap_or(if chat.can_submit() {
-                ""
-            } else {
-                "Busy / stop unconfirmed · draft retained"
-            });
-        let text = format!("{draft}\n{footer}");
-        let lines = wrapped_lines(
-            text.lines()
-                .map(|line| Line::raw(line.to_owned()))
-                .collect(),
-            composer.width.saturating_sub(2),
-        );
-        let mut through_cursor = chat.draft[..cursor].to_owned();
-        if cursor_visible {
-            through_cursor.push('▏');
-        }
-        let through_cursor = display_text(&through_cursor);
-        let cursor_row = wrapped_lines(
-            through_cursor
-                .split('\n')
-                .map(|line| Line::raw(line.to_owned()))
-                .collect(),
-            composer.width.saturating_sub(2),
-        )
-        .len()
-        .saturating_sub(1);
-        let height = composer.height.saturating_sub(2) as usize;
-        let offset = cursor_row.saturating_add(1).saturating_sub(height);
-        let visible = lines
-            .into_iter()
-            .skip(offset)
-            .take(height)
-            .collect::<Vec<_>>();
-        frame.render_widget(
-            Paragraph::new(visible).block(Block::default().borders(Borders::ALL).title(title)),
-            composer,
-        );
+        self.draw_operator_conversation(frame, chat);
     }
 }
 
@@ -1402,6 +1362,396 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect()
+    }
+    #[test]
+    fn operator_original_typed_event_matrix_and_context_details() {
+        let (mut d, _) = setup();
+        let context = OperatorContext {
+            project: Some("project".repeat(14)),
+            workspace: Some("workspace".repeat(14)),
+            workspace_id: Some("stable-workspace".into()),
+            cwd: Some(std::path::PathBuf::from("/private/a/very/long/path")),
+            session: Some(SessionId(11)),
+            run: Some(SessionRunId(7)),
+        };
+        let chat = d.operator.chats.get_mut(&1).unwrap();
+        chat.context = context.clone();
+        chat.summary.title = "long-title-".repeat(80);
+        chat.summary.model = "long-model-".repeat(80);
+        chat.messages = vec![
+            message(
+                1,
+                OperatorMessageContent::User {
+                    text: "hello\n\n界é🙂".into(),
+                    context: context.clone(),
+                },
+            ),
+            message(
+                2,
+                OperatorMessageContent::User {
+                    text: "same context".into(),
+                    context: context.clone(),
+                },
+            ),
+            message(
+                3,
+                OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
+                    id: "bash".into(),
+                    name: "Bash".into(),
+                    arguments: "{\"command\":\"pwd\",\"cwd\":\"/private\"}".into(),
+                }),
+            ),
+        ];
+        for (i, status) in [
+            OperatorToolStatus::Succeeded,
+            OperatorToolStatus::Failed { exit_code: Some(9) },
+            OperatorToolStatus::TimedOut,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            chat.messages.push(message(
+                4 + i as u64,
+                OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput {
+                    id: "bash".into(),
+                    output: if i == 0 {
+                        String::new()
+                    } else {
+                        "\u{1b}[31munsafe\u{202e}\n\nlast".into()
+                    },
+                    truncated: i == 2,
+                    status,
+                }),
+            ));
+        }
+        chat.messages.push(message(
+            7,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed(OperatorModelHistory {
+                version: 1,
+                json: "[\"PRIVATE_MODEL_HISTORY\"]".into(),
+            })),
+        ));
+        let compact = transcript_lines(chat)
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(compact.matches("Context ·").count(), 1);
+        for status in [
+            "succeeded",
+            "(no output)",
+            "failed (exit 9)",
+            "timed out",
+            "truncated at 64 KiB",
+        ] {
+            assert!(compact.contains(status), "{compact}");
+        }
+        assert!(!compact.contains("PRIVATE_MODEL_HISTORY") && !compact.contains("\"command\""));
+        chat.expanded.extend([1, 3, 5, 6]);
+        let expanded = transcript_lines(chat)
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        for value in [
+            "stable-workspace",
+            "/private/a/very/long/path",
+            "session: 11 · run: 7",
+            "\"command\":\"pwd\"",
+            "\\u{1b}",
+            "\\u{202e}",
+            "\n  \n  last",
+            "hello\n\n界é🙂",
+        ] {
+            assert!(expanded.contains(value), "missing {value}: {expanded}");
+        }
+        assert!(
+            !expanded.contains('\u{1b}')
+                && !expanded.contains('\u{202e}')
+                && !expanded.contains("PRIVATE_MODEL_HISTORY")
+        );
+        // Rendered failure uses semantic error styling independently of snapshots.
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 40)).unwrap();
+        d.install_area(Rect::new(0, 0, 140, 40));
+        d.operator.chats.get_mut(&1).unwrap().expanded.clear();
+        d.draw(&mut terminal).unwrap();
+        let buffer = terminal.backend().buffer();
+        let header: String = (40..140).map(|x| buffer[(x, 1)].symbol()).collect();
+        assert!(
+            header.contains("chat_gpt")
+                && header.contains("running")
+                && header.contains("Stop Ctrl-x"),
+            "long header: {header}"
+        );
+        assert!(
+            buffer
+                .content()
+                .iter()
+                .any(|cell| cell.symbol() == "f" && cell.fg == super::super::render::RED())
+        );
+        assert!(
+            buffer
+                .content()
+                .iter()
+                .any(|cell| cell.symbol() == "▌" && cell.bg == super::super::render::SURFACE0())
+        );
+        let caption: String = (0..140)
+            .map(|x| buffer[(x, d.operator_layout(d.outer_area).context.y)].symbol())
+            .collect();
+        assert!(caption.contains("#11 run 7"), "context suffix: {caption}");
+    }
+    #[test]
+    fn operator_original_composer_geometry_focus_and_unread_guards() {
+        let (mut d, reads) = setup();
+        history(
+            &mut d,
+            request_id(&reads, 1),
+            summary(1, 1, OperatorTurnState::Complete, true),
+            vec![delta(1, "answer"), completed(2)],
+            None,
+        );
+        d.install_area(Rect::new(0, 0, 60, 16));
+        assert_eq!(d.operator_layout(d.outer_area).composer.height, 2);
+        assert_eq!(content_area(&d, d.outer_area).width, 60);
+        d.operator_insert(&"line\n".repeat(20));
+        assert_eq!(d.operator_layout(d.outer_area).composer.height, 4);
+        d.key(KeyCode::Tab);
+        assert!(d.operator.list_focus && !d.operator.transcript_focus);
+        assert!(content_area(&d, d.outer_area).width < 60);
+        draw(&mut d, 60, 16);
+        assert!(d.operator.chats[&1].unread.is_some());
+        d.key(KeyCode::Tab);
+        assert!(d.operator.transcript_focus && !d.operator.list_focus);
+        let draft = d.operator.chats[&1].draft.clone();
+        d.key(KeyCode::Char('x'));
+        d.event_action(Event::Paste("ignored".into()));
+        assert_eq!(d.operator.chats[&1].draft, draft);
+        d.key(KeyCode::Tab);
+        assert!(!d.operator.transcript_focus && !d.operator.list_focus);
+        d.key(KeyCode::Char('x'));
+        assert!(d.operator.chats[&1].draft.ends_with('x'));
+        draw(&mut d, 60, 15);
+        assert!(d.operator.chats[&1].unread.is_some());
+        draw(&mut d, 60, 16);
+        assert!(d.operator.chats[&1].unread.is_none());
+        assert!(!draw(&mut d, 100, 24).contains("[Stop Ctrl-x]"));
+        assert_eq!(
+            d.sidebar_width, None,
+            "responsive hiding cannot alter saved width"
+        );
+        d.operator.hovered = Some(Id(1));
+        d.event_action(Event::FocusLost);
+        assert_eq!(d.operator.hovered, None);
+        d.operator.hovered = Some(Id(1));
+        d.toggle_sidebar();
+        assert_eq!(d.operator.hovered, None);
+        d.ctrl('l');
+        assert!(d.operator.list_focus);
+        assert!(
+            content_area(&d, d.outer_area).width < d.outer_area.width,
+            "on-demand sidebar opens even with a saved hidden preference"
+        );
+        assert!(
+            d.sidebar_hidden,
+            "opening on demand cannot overwrite hidden preference"
+        );
+        d.ctrl('l');
+        assert_eq!(content_area(&d, d.outer_area).width, d.outer_area.width);
+        assert!(d.sidebar_hidden);
+    }
+    #[test]
+    fn operator_original_keyboard_expands_a_visible_focused_receipt() {
+        let (mut d, _) = setup();
+        let chat = d.operator.chats.get_mut(&1).unwrap();
+        chat.messages = vec![message(
+            1,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
+                id: "call".into(),
+                name: "Bash".into(),
+                arguments: "FULL_COMMAND_CWD".into(),
+            }),
+        )];
+        d.key(KeyCode::Tab);
+        d.key(KeyCode::Tab);
+        d.key(KeyCode::Home);
+        assert!(d.operator.transcript_focus);
+        d.key(KeyCode::Enter);
+        assert!(draw(&mut d, 140, 24).contains("FULL_COMMAND_CWD"));
+        d.key(KeyCode::Enter);
+        assert!(!draw(&mut d, 140, 24).contains("FULL_COMMAND_CWD"));
+    }
+    #[test]
+    fn operator_user_context_expansion_keeps_its_own_prose_anchor() {
+        let (mut d, _) = setup();
+        let chat = d.operator.chats.get_mut(&1).unwrap();
+        chat.messages = vec![message(
+            1,
+            OperatorMessageContent::User {
+                text: (0..50).map(|i| format!("PROSE_{i:02}\n")).collect(),
+                context: OperatorContext::default(),
+            },
+        )];
+        draw(&mut d, 140, 24);
+        d.operator_scroll(-10);
+        let before = draw(&mut d, 140, 24);
+        let marker = (0..50)
+            .find(|i| before.contains(&format!("PROSE_{i:02}")))
+            .unwrap();
+        d.operator.chats.get_mut(&1).unwrap().expanded.insert(1);
+        let after = draw(&mut d, 80, 24);
+        assert!(after.contains(&format!("PROSE_{marker:02}")), "{after}");
+    }
+    #[test]
+    fn operator_original_layout_floor_frames() {
+        for (cols, rows) in [(140, 40), (100, 24), (80, 24), (60, 24), (60, 16)] {
+            let (mut d, _) = setup();
+            d.operator_summary(summary(1, 1, OperatorTurnState::Complete, true));
+            d.operator_summary(summary(2, 1, OperatorTurnState::Complete, true));
+            d.operator.chats.get_mut(&1).unwrap().messages = vec![
+                message(
+                    1,
+                    OperatorMessageContent::User {
+                        text: "Review this workspace.".into(),
+                        context: OperatorContext::default(),
+                    },
+                ),
+                delta(2, "I will inspect its sessions."),
+                message(
+                    3,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput {
+                        id: "inspect".into(),
+                        output: String::new(),
+                        truncated: false,
+                        status: OperatorToolStatus::Succeeded,
+                    }),
+                ),
+            ];
+            let screen = draw(&mut d, cols, rows);
+            let content = content_area(&d, d.outer_area);
+            let lines = screen.chars().collect::<Vec<_>>();
+            let main: String = lines
+                .chunks(cols as usize)
+                .skip(content.y as usize)
+                .take(content.height as usize)
+                .flat_map(|row| row[content.x as usize..].iter())
+                .collect();
+            assert!(
+                !main.contains('┌') && !main.contains('┐'),
+                "full frames at {cols}x{rows}: {main}"
+            );
+            let snapshot = lines
+                .chunks(cols as usize)
+                .map(|line| line.iter().collect::<String>().trim_end().to_owned())
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n";
+            let expected = match (cols, rows) {
+                (140, 40) => include_str!("operator/snapshots/original-140x40.txt"),
+                (100, 24) => include_str!("operator/snapshots/original-100x24.txt"),
+                (80, 24) => include_str!("operator/snapshots/original-80x24.txt"),
+                (60, 24) => include_str!("operator/snapshots/original-60x24.txt"),
+                (60, 16) => include_str!("operator/snapshots/original-60x16.txt"),
+                _ => unreachable!(),
+            };
+            assert_eq!(snapshot, expected, "Original frame {cols}x{rows}");
+            assert_eq!(d.operator_layout(d.outer_area).composer.height, 2);
+            if cols < 100 {
+                assert_eq!(content.x, 0, "conversation wins at {cols}");
+            }
+        }
+        let (mut d, _) = setup();
+        d.operator_insert("preserve draft");
+        assert!(draw(&mut d, 59, 16).contains("60×16"));
+        assert!(draw(&mut d, 60, 15).contains("60×16"));
+        assert_eq!(d.operator.chats[&1].draft, "preserve draft");
+    }
+    #[test]
+    fn operator_original_styled_wrapping_retains_spans() {
+        let style = Style::default().fg(super::super::render::RED());
+        let rows = wrapped_lines(vec![Line::from(vec![Span::styled("界é界", style)])], 3);
+        assert_eq!(
+            rows.iter().map(Line::to_string).collect::<Vec<_>>(),
+            ["界é", "界"]
+        );
+        assert!(
+            rows.iter()
+                .all(|line| line.spans.iter().all(|span| span.style.fg == style.fg))
+        );
+    }
+    #[test]
+    fn operator_original_cursor_keeps_wide_graphemes_visible() {
+        let (mut d, _) = setup();
+        d.operator_insert(&format!("{}é🙂", "界".repeat(160)));
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 16)).unwrap();
+        d.install_area(Rect::new(0, 0, 60, 16));
+        d.draw(&mut terminal).unwrap();
+        let cursor =
+            ratatui::backend::Backend::get_cursor_position(terminal.backend_mut()).unwrap();
+        assert!(
+            cursor.y >= 10 && cursor.y < 15 && cursor.x < 60,
+            "real cursor {cursor:?}"
+        );
+        assert!(
+            terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .any(|cell| cell.symbol() == "🙂")
+        );
+    }
+    #[test]
+    fn operator_receipt_resize_preserves_message_anchor() {
+        let (mut d, reads) = setup();
+        let mut messages = vec![message(
+            1,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
+                id: "cmd".into(),
+                name: "bash".into(),
+                arguments: "very long command ".repeat(80),
+            }),
+        )];
+        messages.extend((2..30).map(|n| delta(n, &format!("MESSAGE_{n:02}\n"))));
+        messages.push(completed(30));
+        history(
+            &mut d,
+            request_id(&reads, 1),
+            summary(1, 1, OperatorTurnState::Complete, true),
+            messages,
+            None,
+        );
+        assert!(
+            !transcript_lines(&d.operator.chats[&1])
+                .iter()
+                .any(|line| line.to_string().contains("very long command")),
+            "receipt must start compact"
+        );
+        d.operator_scroll(-12);
+        let before = draw(&mut d, 140, 24);
+        let marker = (2..30)
+            .find(|n| before.contains(&format!("MESSAGE_{n:02}")))
+            .unwrap();
+        // Expanding a receipt before the viewport must not move its durable anchor.
+        d.operator.chats.get_mut(&1).unwrap().expanded.insert(1);
+        assert!(
+            transcript_lines(&d.operator.chats[&1])
+                .iter()
+                .any(|line| line.to_string().contains("very long command")),
+            "expanded receipt retains full command details"
+        );
+        let resized = draw(&mut d, 80, 24);
+        assert!(
+            resized.contains(&format!("MESSAGE_{marker:02}")),
+            "anchor lost: {resized}"
+        );
+        assert!(!d.operator.chats[&1].follow);
+        assert_eq!(
+            d.operator.chats[&1].unread,
+            Some(OperatorTurnId(1)),
+            "unseen durable tail must remain Unread"
+        );
     }
     #[test]
     fn operator_sidebar_rows_share_render_and_hit_geometry() {
@@ -1965,6 +2315,8 @@ mod tests {
             ],
             None,
         );
+        // Original starts compact; expansion preserves the complete command/cwd.
+        d.operator.chats.get_mut(&1).unwrap().expanded.insert(1);
         let lines = transcript_lines(&d.operator.chats[&1]);
         let text = lines
             .iter()
@@ -1999,7 +2351,10 @@ mod tests {
         assert!(list.contains("chat-1") && list.contains("chat-2"));
         d.key(KeyCode::Tab);
         let chat = draw(&mut d, 55, 15);
-        assert!(chat.contains("running"));
+        assert!(
+            chat.contains("60×16"),
+            "undersized conversation keeps work and draft"
+        );
     }
     #[test]
     fn native_keys_and_paste_obey_existing_overlay_priority() {
@@ -2344,7 +2699,7 @@ mod tests {
     }
     #[test]
     fn operator_review_round1_exact_width_multiline_draft_keeps_cursor_visible() {
-        for cols in [55, 140] {
+        for cols in [60, 140] {
             let (mut d, _) = setup();
             d.install_area(Rect::new(0, 0, cols, 24));
             let right = content_area(&d, d.outer_area);

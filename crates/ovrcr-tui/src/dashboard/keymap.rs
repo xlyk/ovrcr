@@ -417,6 +417,31 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                 Action::OperatorKey(code, modifiers),
             )
         };
+        if dashboard.operator_has_form() && !dashboard.operator_sidebar_focused() {
+            return vec![KeyGroup {
+                title: "New Operator conversation".into(),
+                keys: vec![
+                    native("Enter", "Create", Enter, KeyModifiers::NONE),
+                    native("Tab", "Provider/model", Tab, KeyModifiers::NONE),
+                    native("←/→", "Choose provider", KeyCode::Right, KeyModifiers::NONE),
+                    native("Ctrl-l", "Chats", Char('l'), KeyModifiers::CONTROL),
+                    native("Ctrl-g", "Browse", Char('g'), KeyModifiers::CONTROL),
+                ],
+            }];
+        }
+        if dashboard.operator_transcript_focused() {
+            return vec![KeyGroup {
+                title: "Operator transcript".into(),
+                keys: vec![
+                    native("Enter", "Expand details", Enter, KeyModifiers::NONE),
+                    native("↑/↓", "Select entry", KeyCode::Down, KeyModifiers::NONE),
+                    native("PageUp", "Earlier", PageUp, KeyModifiers::NONE),
+                    native("PageDown", "Later", PageDown, KeyModifiers::NONE),
+                    native("Tab", "Composer", Tab, KeyModifiers::NONE),
+                    native("Ctrl-g", "Browse", Char('g'), KeyModifiers::CONTROL),
+                ],
+            }];
+        }
         if dashboard.operator_sidebar_focused() {
             return vec![KeyGroup {
                 title: "Operator conversations".into(),
@@ -431,6 +456,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                     native("x", "Close conversation", Char('x'), KeyModifiers::NONE),
                     native("←", "Collapse", KeyCode::Left, KeyModifiers::NONE),
                     native("→", "Expand", KeyCode::Right, KeyModifiers::NONE),
+                    native("Tab", "Transcript", Tab, KeyModifiers::NONE),
                     native("Ctrl-l", "Composer", Char('l'), KeyModifiers::CONTROL),
                     native(
                         "Ctrl-n",
@@ -442,31 +468,32 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                 ],
             }];
         }
+        let mut keys = vec![
+            native("Enter", "Send", Enter, KeyModifiers::NONE),
+            native("Shift-Enter", "Newline", Enter, KeyModifiers::SHIFT),
+            native("Ctrl-l", "Chats", Char('l'), KeyModifiers::CONTROL),
+            native(
+                "Ctrl-n",
+                "New Conversation",
+                Char('n'),
+                KeyModifiers::CONTROL,
+            ),
+            native("Tab", "Chats", Tab, KeyModifiers::NONE),
+            native("PageUp", "Earlier", PageUp, KeyModifiers::NONE),
+            native("PageDown", "Later", PageDown, KeyModifiers::NONE),
+            native("Ctrl-g", "Browse", Char('g'), KeyModifiers::CONTROL),
+        ];
+        if dashboard.operator_stop_available() {
+            keys.push(native(
+                "Ctrl-x",
+                "Stop selected turn",
+                Char('x'),
+                KeyModifiers::CONTROL,
+            ));
+        }
         return vec![KeyGroup {
             title: "Operator".into(),
-            keys: vec![
-                native("Enter", "Send / create", Enter, KeyModifiers::NONE),
-                native("Shift-Enter", "Newline", Enter, KeyModifiers::SHIFT),
-                native(
-                    "Ctrl-l",
-                    "Conversation sidebar",
-                    Char('l'),
-                    KeyModifiers::CONTROL,
-                ),
-                native(
-                    "Ctrl-n",
-                    "New Conversation",
-                    Char('n'),
-                    KeyModifiers::CONTROL,
-                ),
-                native(
-                    "Ctrl-x",
-                    "Stop selected turn",
-                    Char('x'),
-                    KeyModifiers::CONTROL,
-                ),
-                native("Ctrl-g", "Browse", Char('g'), KeyModifiers::CONTROL),
-            ],
+            keys,
         }];
     }
     if dashboard.mode == InputMode::Terminal {

@@ -69,7 +69,7 @@ impl Dashboard {
         }
     }
     pub(in crate::dashboard) fn operator_sidebar_busy(&self) -> bool {
-        if self.sidebar_hidden || self.operator.collapsed {
+        if self.sidebar_preference() == Some(0) || self.operator.collapsed {
             return false;
         }
         let height = self
@@ -92,7 +92,7 @@ impl Dashboard {
                     && self.operator.selected == Some(id))
     }
     pub(in crate::dashboard) fn draw_operator_sidebar(&self, frame: &mut Frame<'_>, now: u64) {
-        if self.sidebar_hidden {
+        if self.sidebar_preference() == Some(0) {
             return;
         }
         let area = self.sidebar_rects(frame.area()).operator;
@@ -170,7 +170,7 @@ impl Dashboard {
         mouse: MouseEvent,
         area: Rect,
     ) -> Option<DashboardAction> {
-        if self.sidebar_hidden {
+        if self.sidebar_preference() == Some(0) {
             return None;
         }
         let rect = self.sidebar_rects(area).operator;
@@ -216,7 +216,8 @@ impl Dashboard {
                         return Some(self.open_close_operator_for(id));
                     }
                     self.open_operator_conversation(id);
-                    self.operator.list_focus = true;
+                    self.operator.list_focus = area.width >= 100;
+                    self.operator.sidebar_open = self.operator.list_focus;
                 }
             }
             MouseEventKind::ScrollUp if rect.height > 1 => {
@@ -231,5 +232,508 @@ impl Dashboard {
             _ => {}
         }
         Some(DashboardAction::Redraw)
+    }
+}
+
+/// One source for draw, input, cursor and review geometry.
+#[derive(Clone, Copy)]
+pub(super) struct OperatorLayout {
+    pub header: Rect,
+    pub transcript: Rect,
+    pub context: Rect,
+    pub composer: Rect,
+}
+
+type Anchor = (u64, usize, usize);
+struct TranscriptLine {
+    line: Line<'static>,
+    ordinal: u64,
+    part: usize,
+    byte: usize,
+    prose: bool,
+}
+fn push_lines(
+    lines: &mut Vec<TranscriptLine>,
+    ordinal: u64,
+    part: usize,
+    text: String,
+    style: Style,
+    prose: bool,
+) {
+    let mut byte = 0;
+    for text in text.split('\n') {
+        lines.push(TranscriptLine {
+            line: Line::styled(text.to_owned(), style),
+            ordinal,
+            part,
+            byte,
+            prose,
+        });
+        byte += text.len() + 1;
+    }
+}
+fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
+    let mut lines = Vec::new();
+    let mut previous_context = None;
+    let mut index = 0;
+    while index < chat.messages.len() {
+        let message = &chat.messages[index];
+        let mut ordinal = message.ordinal;
+        let expanded = chat.expanded.contains(&ordinal);
+        let disclosure = if expanded { "▾" } else { "▸" };
+        let quiet = Style::default().fg(super::super::render::SUBTEXT());
+        let normal = Style::default().fg(TEXT());
+        let error = Style::default().fg(super::super::render::RED());
+        match &message.content {
+            OperatorMessageContent::User { text, context } => {
+                push_lines(&mut lines, ordinal, 0, "You".into(), quiet, true);
+                if previous_context != Some(context) {
+                    push_lines(
+                        &mut lines,
+                        ordinal,
+                        1,
+                        format!("{disclosure} Context · {}", context_label(context)),
+                        quiet,
+                        true,
+                    );
+                    previous_context = Some(context);
+                } else if expanded {
+                    push_lines(
+                        &mut lines,
+                        ordinal,
+                        1,
+                        "▾ Captured context".into(),
+                        quiet,
+                        true,
+                    );
+                }
+                if expanded {
+                    let detail = format!(
+                        "  project: {}\n  workspace: {}\n  workspace id: {}\n  cwd: {}\n  session: {} · run: {}",
+                        context.project.as_deref().unwrap_or("global"),
+                        context.workspace.as_deref().unwrap_or("none"),
+                        context.workspace_id.as_deref().unwrap_or("none"),
+                        context.cwd.as_ref().map_or_else(
+                            || "operator workdir".into(),
+                            |cwd| cwd.to_string_lossy().into_owned()
+                        ),
+                        context
+                            .session
+                            .map_or_else(|| "none".into(), |id| id.0.to_string()),
+                        context
+                            .run
+                            .map_or_else(|| "none".into(), |id| id.0.to_string())
+                    );
+                    push_lines(&mut lines, ordinal, 2, display_text(&detail), quiet, false);
+                }
+                push_lines(&mut lines, ordinal, 3, display_text(text), normal, true);
+            }
+            OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(_)) => {
+                push_lines(&mut lines, ordinal, 0, "Operator".into(), quiet, true);
+                let mut text = String::new();
+                while let Some(OperatorMessage {
+                    content:
+                        OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(delta)),
+                    ..
+                }) = chat.messages.get(index)
+                {
+                    text.push_str(delta);
+                    index += 1;
+                }
+                push_lines(&mut lines, ordinal, 3, display_text(&text), normal, true);
+                index -= 1;
+                ordinal = chat.messages[index].ordinal;
+            }
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
+                id,
+                name,
+                arguments,
+            }) => {
+                push_lines(
+                    &mut lines,
+                    ordinal,
+                    0,
+                    format!("{disclosure} {} [{}]", display_text(name), display_text(id)),
+                    quiet,
+                    false,
+                );
+                if expanded {
+                    push_lines(
+                        &mut lines,
+                        ordinal,
+                        1,
+                        format!(
+                            "  {} [{}]\n  {}",
+                            display_text(name),
+                            display_text(id),
+                            display_text(arguments).replace('\n', "\n  ")
+                        ),
+                        normal,
+                        false,
+                    );
+                }
+            }
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput {
+                id,
+                output,
+                truncated,
+                status,
+            }) => {
+                let (status, style) = match status {
+                    OperatorToolStatus::Succeeded => ("succeeded".into(), quiet),
+                    OperatorToolStatus::Failed { exit_code } => (
+                        format!(
+                            "failed (exit {})",
+                            exit_code.map_or_else(|| "unknown".into(), |code| code.to_string())
+                        ),
+                        error,
+                    ),
+                    OperatorToolStatus::TimedOut => ("timed out".into(), error),
+                };
+                push_lines(
+                    &mut lines,
+                    ordinal,
+                    0,
+                    format!(
+                        "{disclosure} {status}{}{} · Output [{}]",
+                        if *truncated {
+                            " · truncated at 64 KiB"
+                        } else {
+                            ""
+                        },
+                        if output.is_empty() {
+                            " · (no output)"
+                        } else {
+                            ""
+                        },
+                        display_text(id)
+                    ),
+                    style,
+                    false,
+                );
+                if expanded {
+                    push_lines(
+                        &mut lines,
+                        ordinal,
+                        1,
+                        format!(
+                            "  Output [{}]\n  {}",
+                            display_text(id),
+                            display_text(output).replace('\n', "\n  ")
+                        ),
+                        normal,
+                        false,
+                    );
+                }
+            }
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed(_)) => {
+                push_lines(&mut lines, ordinal, 0, "Turn complete".into(), quiet, true);
+            }
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Failed(message)) => {
+                push_lines(
+                    &mut lines,
+                    ordinal,
+                    0,
+                    format!("Error: {}", display_text(message)),
+                    error,
+                    true,
+                );
+            }
+            OperatorMessageContent::Interrupted => {
+                push_lines(
+                    &mut lines,
+                    ordinal,
+                    0,
+                    "Interrupted · accepted operations may finish; no rollback.".into(),
+                    error,
+                    true,
+                );
+            }
+        }
+        push_lines(&mut lines, ordinal, 4, String::new(), normal, true);
+        index += 1;
+    }
+    lines
+}
+#[cfg(test)]
+pub(super) fn transcript_lines(chat: &Chat) -> Vec<Line<'static>> {
+    logical_lines(chat)
+        .into_iter()
+        .map(|line| line.line)
+        .collect()
+}
+// Retain each grapheme's style and logical byte position through wrapping.
+fn wrapped_rows(lines: Vec<Line<'static>>, width: u16) -> Vec<(Line<'static>, (usize, usize))> {
+    let width = usize::from(width.max(1));
+    let mut rows = Vec::new();
+    for (index, line) in lines.into_iter().enumerate() {
+        let mut spans = Vec::new();
+        let mut used = 0;
+        let mut byte = 0;
+        let mut start = 0;
+        for span in &line.spans {
+            for grapheme in span.styled_graphemes(line.style) {
+                let cells = grapheme.symbol.width();
+                if used + cells > width && !spans.is_empty() {
+                    rows.push((Line::from(std::mem::take(&mut spans)), (index, start)));
+                    used = 0;
+                    start = byte;
+                }
+                spans.push(Span::styled(grapheme.symbol.to_owned(), grapheme.style));
+                used += cells;
+                byte += grapheme.symbol.len();
+            }
+        }
+        rows.push((Line::from(spans), (index, start)));
+    }
+    rows
+}
+pub(super) fn wrapped_lines(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
+    wrapped_rows(lines, width)
+        .into_iter()
+        .map(|(line, _)| line)
+        .collect()
+}
+pub(super) fn transcript_rows(chat: &Chat, width: u16) -> Vec<(Line<'static>, Anchor)> {
+    // Deltas share visual paragraphs, but their anchors keep the actual durable source.
+    let mut sources: HashMap<u64, Vec<(usize, u64)>> = HashMap::new();
+    let mut first = None;
+    let mut byte = 0;
+    for message in &chat.messages {
+        if let OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(text)) =
+            &message.content
+        {
+            let start = *first.get_or_insert(message.ordinal);
+            sources
+                .entry(start)
+                .or_default()
+                .push((byte, message.ordinal));
+            byte += display_text(text).len();
+        } else {
+            first = None;
+            byte = 0;
+        }
+    }
+    logical_lines(chat)
+        .into_iter()
+        .flat_map(|entry| {
+            let limit = if entry.prose { width.min(88) } else { width };
+            let line = if !entry.prose && entry.part == 0 {
+                Line::styled(
+                    clip_text(&entry.line.to_string(), usize::from(limit)),
+                    entry.line.style,
+                )
+            } else {
+                entry.line
+            };
+            let source = (entry.part == 3)
+                .then(|| sources.get(&entry.ordinal))
+                .flatten();
+            wrapped_rows(vec![line], limit)
+                .into_iter()
+                .map(move |(line, (_, byte))| {
+                    let byte = entry.byte + byte;
+                    let (start, ordinal) = source
+                        .and_then(|sources| sources.iter().rev().find(|(start, _)| *start <= byte))
+                        .copied()
+                        .unwrap_or((0, entry.ordinal));
+                    (line, (ordinal, entry.part, byte - start))
+                })
+        })
+        .collect()
+}
+pub(super) fn transcript_offset(chat: &Chat, rows: &[(Line<'_>, Anchor)], height: usize) -> usize {
+    if !chat.follow
+        && let Some(anchor) = chat.anchor
+    {
+        rows.iter()
+            .rposition(|(_, start)| *start <= anchor)
+            .unwrap_or(0)
+    } else {
+        rows.len()
+            .saturating_sub(height)
+            .saturating_sub(chat.scroll)
+    }
+}
+fn context_caption(context: &OperatorContext, width: u16) -> String {
+    let suffix = match (context.session, context.run) {
+        (Some(session), Some(run)) => format!(" / #{} run {}", session.0, run.0),
+        _ => String::new(),
+    };
+    let mut label = context.clone();
+    label.session = None;
+    label.run = None;
+    format!(
+        "{}{}",
+        clip_text(
+            &format!("Managing {}", context_label(&label)),
+            usize::from(width).saturating_sub(suffix.width())
+        ),
+        suffix
+    )
+}
+impl Dashboard {
+    pub(super) fn operator_layout(&self, area: Rect) -> OperatorLayout {
+        let body = content_area(self, area);
+        let draft = self
+            .operator
+            .selected
+            .and_then(|id| self.operator.chats.get(&id.0))
+            .map_or("", |chat| chat.draft.as_str());
+        // Reserve the cursor cell too, so an exactly full final row remains editable.
+        let draft_rows = wrapped_lines(
+            display_text(&format!("{draft} "))
+                .split('\n')
+                .map(|line| Line::raw(line.to_owned()))
+                .collect(),
+            body.width.saturating_sub(2),
+        )
+        .len();
+        let height = (draft_rows as u16)
+            .clamp(2, (body.height / 3).clamp(2, 6))
+            .min(body.height.saturating_sub(2));
+        let header = Rect::new(body.x, body.y, body.width, body.height.min(1));
+        let composer = Rect::new(
+            body.x.saturating_add(2),
+            body.bottom().saturating_sub(height),
+            body.width.saturating_sub(2),
+            height,
+        );
+        let context = Rect::new(
+            body.x,
+            composer.y.saturating_sub(1),
+            body.width,
+            1.min(body.height),
+        );
+        let transcript = Rect::new(
+            body.x,
+            header.bottom(),
+            body.width,
+            context.y.saturating_sub(header.bottom()),
+        );
+        OperatorLayout {
+            header,
+            transcript,
+            context,
+            composer,
+        }
+    }
+    pub(super) fn draw_operator_conversation(&self, frame: &mut Frame<'_>, chat: &Chat) {
+        let layout = self.operator_layout(frame.area());
+        let stop = !chat.summary.worker_stopped
+            || chat
+                .summary
+                .current_turn
+                .as_ref()
+                .is_some_and(|turn| turn.state == OperatorTurnState::Running);
+        let title_width = layout
+            .header
+            .width
+            .saturating_sub(if stop { 13 } else { 0 });
+        let width = usize::from(title_width);
+        let provider = chat.summary.provider.as_str();
+        let state = status(chat);
+        let model = clip_text(
+            &display_text(&chat.summary.model),
+            width.saturating_sub(width / 3 + provider.width() + state.width() + 9),
+        );
+        let metadata = format!("{provider} / {model} · {state}");
+        let title = format!(
+            "{} · {metadata}",
+            clip_text(
+                &display_text(&chat.summary.title),
+                width.saturating_sub(metadata.width() + 3)
+            )
+        );
+        frame.render_widget(
+            Paragraph::new(clip_text(&title, title_width as usize))
+                .style(Style::default().fg(super::super::render::SUBTEXT())),
+            layout.header,
+        );
+        if stop {
+            frame.render_widget(
+                Paragraph::new("[Stop Ctrl-x]").style(Style::default().fg(MAUVE())),
+                stop_rect(layout.header),
+            );
+        }
+        let rows = transcript_rows(chat, layout.transcript.width);
+        let height = layout.transcript.height as usize;
+        let offset = transcript_offset(chat, &rows, height);
+        let lines: Vec<_> = rows
+            .into_iter()
+            .skip(offset)
+            .take(height)
+            .map(|(line, anchor)| {
+                if self.operator.transcript_focus && chat.entry_focus == Some(anchor.0) {
+                    line.style(Style::default().bg(SURFACE0()))
+                } else {
+                    line
+                }
+            })
+            .collect();
+        frame.render_widget(Paragraph::new(lines), layout.transcript);
+        let error = chat.error.as_deref().or(self.operator.error.as_deref());
+        let caption = error.map_or_else(
+            || context_caption(&chat.context, layout.context.width),
+            display_text,
+        );
+        frame.render_widget(
+            Paragraph::new(caption).style(Style::default().fg(if error.is_some() {
+                super::super::render::RED()
+            } else {
+                super::super::render::SUBTEXT()
+            })),
+            layout.context,
+        );
+        let focused =
+            self.operator.editing && !self.operator.list_focus && !self.operator.transcript_focus;
+        frame.render_widget(
+            Paragraph::new(if focused { ">" } else { "·" }).style(Style::default().fg(MAUVE())),
+            Rect::new(layout.composer.x.saturating_sub(2), layout.composer.y, 1, 1),
+        );
+        let position = chat.cursor.position(&chat.draft);
+        let prefix = display_text(&chat.draft[..position]);
+        let mut draft = display_text(&chat.draft);
+        // A styled visible caret complements the real terminal cursor for headless capture.
+        if focused {
+            draft.insert(prefix.len(), '▏');
+        }
+        let lines = wrapped_lines(
+            draft
+                .split('\n')
+                .map(|line| Line::raw(line.to_owned()))
+                .collect(),
+            layout.composer.width,
+        );
+        let through_cursor = wrapped_lines(
+            format!("{prefix}▏")
+                .split('\n')
+                .map(|line| Line::raw(line.to_owned()))
+                .collect(),
+            layout.composer.width,
+        );
+        let row = through_cursor.len().saturating_sub(1);
+        let column = through_cursor
+            .last()
+            .map_or(0, |line| line.width().saturating_sub(1));
+        let offset = row
+            .saturating_add(1)
+            .saturating_sub(layout.composer.height as usize);
+        frame.render_widget(
+            Paragraph::new(
+                lines
+                    .into_iter()
+                    .skip(offset)
+                    .take(layout.composer.height as usize)
+                    .collect::<Vec<_>>(),
+            ),
+            layout.composer,
+        );
+        if focused && !layout.composer.is_empty() {
+            frame.set_cursor_position((
+                layout.composer.x + column as u16,
+                layout.composer.y + row.saturating_sub(offset) as u16,
+            ));
+        }
     }
 }
