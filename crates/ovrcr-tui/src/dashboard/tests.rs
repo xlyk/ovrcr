@@ -105,6 +105,7 @@ fn hints_name_targets_and_explain_disabled_session_actions() {
             warning: None,
             path: "/tmp/auth-handoff".into(),
             sessions: vec![SessionSummary {
+                scope: ovrcr_protocol::SessionScope::Workspace,
                 archived: false,
                 cwd: "/work".into(),
                 id: SessionId(12),
@@ -1085,6 +1086,7 @@ fn pending_history_copy_survives_unfocused_hierarchy_removal() {
     other.run = Some(crate::protocol::SessionRunId(1));
     dashboard.panes.push(other);
     let summary = |id| SessionSummary {
+        scope: ovrcr_protocol::SessionScope::Workspace,
         cwd: "/work".into(),
         archived: false,
         id: SessionId(id),
@@ -1232,6 +1234,7 @@ fn mouse_release_precedes_the_replacement_view_request() {
     };
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     let summary = |id: u64| SessionSummary {
+        scope: ovrcr_protocol::SessionScope::Workspace,
         cwd: "/work".into(),
         archived: false,
         id: SessionId(id),
@@ -1375,6 +1378,7 @@ fn hierarchy_removal_clears_a_parked_wheel_deferral() {
     };
     use crossterm::event::MouseEventKind;
     let summary = |id: u64| SessionSummary {
+        scope: ovrcr_protocol::SessionScope::Workspace,
         cwd: "/work".into(),
         archived: false,
         id: SessionId(id),
@@ -1622,6 +1626,7 @@ fn provider_metrics_label_stale_past_five_minutes_and_narrow_to_tok() {
             warning: None,
             path: "/tmp/w".into(),
             sessions: vec![SessionSummary {
+                scope: ovrcr_protocol::SessionScope::Workspace,
                 archived: false,
                 id: SessionId(1),
                 run: crate::protocol::SessionRunId(1),
@@ -1785,6 +1790,7 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
             warning: None,
             path: "/tmp/w".into(),
             sessions: vec![SessionSummary {
+                scope: ovrcr_protocol::SessionScope::Workspace,
                 archived: false,
                 id: SessionId(1),
                 run: crate::protocol::SessionRunId(1),
@@ -2692,6 +2698,7 @@ fn session_hierarchy(ids: &[u64]) -> crate::protocol::HierarchySnapshot {
                 sessions: ids
                     .iter()
                     .map(|id| SessionSummary {
+                        scope: ovrcr_protocol::SessionScope::Workspace,
                         archived: false,
                         cwd: "/work".into(),
                         id: SessionId(*id),
@@ -2898,6 +2905,7 @@ fn keymap_session(
 ) -> crate::protocol::SessionSummary {
     use crate::protocol::{AgentActivity, SessionSummary};
     SessionSummary {
+        scope: ovrcr_protocol::SessionScope::Workspace,
         cwd: "/work".into(),
         archived: false,
         id: SessionId(id),
@@ -4159,5 +4167,42 @@ fn assigned_human_input_requires_current_binding_evidence_as_well_as_owner() {
         dashboard
             .input_request(b"FORBIDDEN".to_vec(), 700)
             .is_none()
+    );
+}
+
+#[test]
+fn operator_hub_opens_without_terminal_input_and_paste_never_submits() {
+    use super::DashboardAction;
+    use crossterm::event::Event;
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 120,
+    });
+    let action = dashboard.key(KeyCode::Char('o'));
+    assert_ne!(
+        action,
+        DashboardAction::None,
+        "o must open the native Operator hub"
+    );
+    let action = dashboard.event_action(Event::Paste("first\nsecond".into()));
+    assert!(
+        !matches!(
+            action,
+            DashboardAction::PtyBytes(_) | DashboardAction::Request(_)
+        ),
+        "paste only edits a native draft"
+    );
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+    dashboard.draw(&mut terminal).unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(
+        text.contains("New Conversation"),
+        "native creation form must be visible: {text}"
     );
 }

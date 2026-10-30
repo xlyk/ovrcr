@@ -579,3 +579,136 @@ fn polling_never_promotes_pending_retention_to_a_replacement_generation() {
         );
     }
 }
+
+#[test]
+fn operator_uses_watched_lease_and_validates_exact_journal_receipts() {
+    use ovrcr_protocol::{
+        AgentSecret, ClientMessage, OperatorConversationId, OperatorEventBatch,
+        OperatorExchangeResult, OperatorProvider, OperatorTurnId, OperatorTurnIdentity,
+        OperatorWorkerCommand, OperatorWorkerResult, OperatorWorkerStart, ServerMessage, SessionId,
+        SessionRunId, SupervisorAuth, read_frame, write_frame,
+    };
+    use std::os::unix::net::UnixStream;
+    let identity = OperatorTurnIdentity {
+        conversation: OperatorConversationId(2),
+        turn: OperatorTurnId(3),
+        session: SessionId(4),
+        run: SessionRunId(5),
+    };
+    let auth = SupervisorAuth {
+        session: identity.session,
+        lease: AgentSecret([7; 32]),
+    };
+    let expected = auth.clone();
+    let (client, mut server) = UnixStream::pair().unwrap();
+    client.set_nonblocking(true).unwrap();
+    server
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let thread = std::thread::spawn(move || {
+        let mut observed = Vec::new();
+        while let Ok(ClientMessage {
+            request_id: id,
+            request,
+        }) = read_frame::<ClientMessage>(&mut server)
+        {
+            let response = match request {
+                ovrcr_protocol::Request::OperatorWorker(request) => {
+                    assert_eq!(request.auth, expected);
+                    observed.push(request.command.clone());
+                    match request.command {
+                        OperatorWorkerCommand::Start { identity: i } => {
+                            assert_eq!(i, identity);
+                            Response::OperatorWorker(OperatorWorkerResult::Start(Box::new(
+                                OperatorWorkerStart {
+                                    identity,
+                                    provider: OperatorProvider::Grok,
+                                    model: "fixture".into(),
+                                    text: "prompt".into(),
+                                    context: Default::default(),
+                                    history: None,
+                                },
+                            )))
+                        }
+                        OperatorWorkerCommand::Retire { .. } => Response::Error {
+                            code: ovrcr_protocol::ErrorCode::Conflict,
+                            message: "refused".into(),
+                        },
+                        OperatorWorkerCommand::Stop { identity } => {
+                            Response::OperatorWorker(OperatorWorkerResult::Retired { identity })
+                        }
+                    }
+                }
+                ovrcr_protocol::Request::OperatorExchange(exchange) => {
+                    assert_eq!(exchange.auth, expected);
+                    assert_eq!(exchange.batch.identity, identity);
+                    Response::OperatorExchange(OperatorExchangeResult {
+                        identity,
+                        sequence: exchange.batch.sequence + 1,
+                        duplicate: false,
+                    })
+                }
+                ovrcr_protocol::Request::Supervisor(_) => Response::Ok,
+                _ => panic!("unexpected reporter request"),
+            };
+            write_frame(
+                &mut server,
+                &ServerMessage::Response {
+                    request_id: id,
+                    response,
+                },
+            )
+            .unwrap();
+        }
+        observed
+    });
+    let lease = crate::report::InvocationLease {
+        stream: client,
+        auth,
+        socket: "/unused".into(),
+        binding: None,
+        next_request: 1,
+        capability: [0; 32],
+    };
+    let mut reporter = Reporter::new(AgentProvider::Operator, Some(lease), None);
+    assert_eq!(
+        reporter
+            .operator_start(identity, deadline())
+            .unwrap()
+            .identity,
+        identity
+    );
+    assert!(
+        reporter
+            .operator_batch(
+                OperatorEventBatch {
+                    identity,
+                    sequence: 1,
+                    events: vec![ovrcr_protocol::OperatorWorkerEvent::AssistantDelta(
+                        "partial".into()
+                    )]
+                },
+                deadline()
+            )
+            .is_err(),
+        "wrong sequence is not commit proof"
+    );
+    assert!(
+        reporter
+            .operator_retire(identity, false, deadline())
+            .is_err(),
+        "refusal is not stop proof"
+    );
+    reporter
+        .operator_retire(identity, true, deadline())
+        .unwrap();
+    drop(reporter);
+    assert_eq!(
+        thread.join().unwrap(),
+        vec![
+            OperatorWorkerCommand::Start { identity },
+            OperatorWorkerCommand::Retire { identity },
+            OperatorWorkerCommand::Stop { identity }
+        ]
+    );
+}

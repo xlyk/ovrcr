@@ -1610,6 +1610,48 @@ sys.exit(result)
         self.assertLess(report["elapsed_seconds"], 3.2)
 
 
+class TokenCleanupTests(unittest.TestCase):
+    def test_reused_token_inode_does_not_allow_symlink_cleanup(self):
+        api = runpy.run_path(str(CLIENT))
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "private"
+            root.mkdir(mode=0o700)
+            for name in ("workspace", "state", "home", "github-config", "tmp"):
+                (root / name).mkdir(mode=0o700)
+            directory = root / "tmp" / "cursor-sdk-bridge-owned"
+            directory.mkdir(mode=0o700)
+            path = directory / "auth-token"
+            path.write_text("OFFLINE-TOKEN-SENTINEL")
+            path.chmod(0o600)
+            token, identity = api["identify_token"]({"authTokenFile": str(path)}, root)
+            unrelated = base / "unrelated-token"
+            unrelated.write_text("UNRELATED-SENTINEL")
+            path.unlink()
+            path.symlink_to(unrelated)
+            replacement = path.lstat()
+            # Model inode reuse deterministically, retaining the actual symlink mode.
+            identity = (path, replacement.st_dev, replacement.st_ino, *identity[3:])
+            process = subprocess.Popen([sys.executable, "-c", "pass"], stderr=subprocess.PIPE)
+            try:
+                process.wait(timeout=3)
+                resources = {"launch_attempted": True}
+                api["cleanup"](process, root, identity, None, token, api["Deadlines"](), resources)
+                self.assertEqual(resources["process_exit"], "CONFIRMED")
+                self.assertEqual(resources["exit_status"], 0)
+                self.assertTrue(process.stderr.closed)
+                self.assertEqual(resources["token_cleanup"], "UNRESOLVED")
+                self.assertIn("RETAINED", resources["private_root_cleanup"])
+                self.assertTrue(path.is_symlink())
+                self.assertEqual(path.readlink(), unrelated)
+                self.assertEqual(unrelated.read_text(), "UNRELATED-SENTINEL")
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=3)
+                process.stderr.close()
+
+
 class ConnectReadTests(unittest.TestCase):
     """Small framing checks complement the normal-entry transport matrix."""
     def test_short_reads_preserve_exact_frame_bytes(self):

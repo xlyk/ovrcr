@@ -88,6 +88,7 @@ pub(super) fn terminal_value(
         ovrcr::protocol::SessionKind::Agent { name } => json!({"agent": name}),
     };
     json!({
+        "scope": session.scope,
         "id": session.id.0,
         "archived": session.archived,
         "run": session.run.0,
@@ -371,6 +372,12 @@ fn legacy_terminal_value(
 }
 
 fn workspace_label(registry: Option<&ovrcr::config::Registry>, session: &SessionSummary) -> String {
+    if matches!(
+        session.scope,
+        ovrcr::protocol::SessionScope::OperatorConversation { .. }
+    ) {
+        return session.workspace.clone();
+    }
     registry
         .and_then(|registry| {
             registry
@@ -390,4 +397,75 @@ fn workspace_label(registry: Option<&ovrcr::config::Registry>, session: &Session
 
 fn path_text(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ovrcr::protocol::{
+        OperatorConversationId, SessionId, SessionKind, SessionRunId, SessionScope,
+    };
+
+    fn summary(scope: SessionScope) -> SessionSummary {
+        SessionSummary {
+            scope,
+            id: SessionId(3),
+            archived: false,
+            cwd: "/fixture".into(),
+            run: SessionRunId(2),
+            kind: SessionKind::Terminal,
+            recovery: None,
+            project: "fixture".into(),
+            workspace: "work".into(),
+            name: "local".into(),
+            label: "label".into(),
+            pid: None,
+            started_unix_ms: None,
+            phase: SessionPhase::Stopped,
+            activity: AgentActivity::Idle,
+            agent: None,
+            agent_epoch: 0,
+            unread: None,
+            context_usage: None,
+            title: None,
+            manual_title: None,
+            assignment_control: None,
+        }
+    }
+
+    #[test]
+    fn terminal_value_exposes_workspace_scope_and_preserves_legacy_fields() {
+        let value = terminal_value(&summary(SessionScope::Workspace), 0, None);
+        assert_eq!(
+            value,
+            json!({
+                "scope": "Workspace",
+                "id": 3, "archived": false, "run": 2, "kind": "terminal",
+                "project": "fixture", "workspace": "unavailable @ /fixture",
+                "cwd": "/fixture", "name": "local", "title": null,
+                "display_name": "local", "label": "label", "pid": null,
+                "started_unix_ms": null, "phase": "stopped", "activity": "idle",
+                "exit_code": null, "exit_signal": null, "agent": null,
+                "agent_epoch": 0, "unread": null, "recovery": null,
+                "reporting_unavailable": null, "measurement_age_ms": null,
+                "context_usage": null, "context_stale": null,
+            })
+        );
+    }
+
+    #[test]
+    fn terminal_value_exposes_operator_conversation_scope() {
+        let mut session = summary(SessionScope::OperatorConversation {
+            conversation: OperatorConversationId(7),
+        });
+        session.project.clear();
+        session.workspace.clear();
+        let value = terminal_value(&session, 0, None);
+        assert_eq!(value["project"], "");
+        assert_eq!(value["workspace"], "");
+        assert_eq!(
+            value["scope"],
+            json!({"OperatorConversation": {"conversation": 7}})
+        );
+    }
 }

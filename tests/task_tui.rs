@@ -55,6 +55,7 @@ fn task_hierarchy() -> HierarchySnapshot {
                 name: "workspace".into(),
                 path: PathBuf::from("/tmp/workspace"),
                 sessions: vec![SessionSummary {
+                    scope: ovrcr_protocol::SessionScope::Workspace,
                     archived: false,
                     cwd: "/work".into(),
                     title: None,

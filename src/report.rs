@@ -461,6 +461,38 @@ pub struct InvocationLease {
     capability: [u8; 32],
 }
 impl InvocationLease {
+    fn operator_request(
+        &mut self,
+        command: ovrcr_protocol::OperatorWorkerCommand,
+        deadline: Instant,
+    ) -> Result<Response> {
+        self.next_request += 1;
+        agent_exchange(
+            &mut self.stream,
+            self.next_request,
+            Request::OperatorWorker(ovrcr_protocol::OperatorWorkerRequest {
+                auth: self.auth.clone(),
+                command,
+            }),
+            deadline,
+        )
+    }
+    fn operator_batch(
+        &mut self,
+        batch: ovrcr_protocol::OperatorEventBatch,
+        deadline: Instant,
+    ) -> Result<Response> {
+        self.next_request += 1;
+        agent_exchange(
+            &mut self.stream,
+            self.next_request,
+            Request::OperatorExchange(ovrcr_protocol::OperatorExchange {
+                auth: self.auth.clone(),
+                batch,
+            }),
+            deadline,
+        )
+    }
     fn publish_observation(
         &self,
         report: ovrcr_protocol::ProviderReport,

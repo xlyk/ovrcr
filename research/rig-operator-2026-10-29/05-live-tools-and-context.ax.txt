@@ -1,0 +1,88 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]                                                                                                                                  [Actions] [Menu]
+ CONSIGINT ────────────────────────────│New Conversation [Ctrl-n]       ┌complete · Say exactly: OVRCR_CHATGPT_OK. Do not use tools. · chat_gpt / gpt-6.1[Stop Ctrl-x]
+  󰘬 main                          root │›  Say exactly: OVRCR_CHATGPT_OK│:null,"reporting_unavailable":null,"measurement_age_ms":null,"context_usage":null,"context_s│
+     $ lo
+		3 text (settable) 󰚩 OVRCR Operator [o]                                                                                                                                  [Actions] [Menu]
+		4 text (settable)  CONSIGINT ────────────────────────────│New Conversation [Ctrl-n]       ┌complete · Say exactly: OVRCR_CHATGPT_OK. Do not use tools. · chat_gpt / gpt-6.1[Stop Ctrl-x]
+		5 text (settable)   󰘬 main                          root │›  Say exactly: OVRCR_CHATGPT_OK│:null,"reporting_unavailable":null,"measurement_age_ms":null,"context_usage":null,"context_s│
+		6 text (settable)      $ local                           │                                │tale":null},{"scope":"Workspace","id":7,"archived":false,"run":1,"kind":"terminal","project"│
+		7 text (settable)   󰘬 gui-consigint-auth-handoff         │                                │:"consigint","workspace":"gui-consigint-worktree-lifecycle","cwd":"/private/tmp/ovrcr-rig-na│
+		8 text (settable)      $ local                           │                                │tive-wub3bd7s/demo-parent/ovrcr-gui-DNu8IF/workspaces/consigint/5b41a909c47fa1fb27328db7d814│
+		9 text (settable)      - review auth handoff    grok:4.6 │                                │c829","name":"implement lifecycle cleanup","title":"implement lifecycle cleanup","display_na│
+		10 text (settable)   󰘬 gui-consigint-worktree-lifecycle   │                                │me":"implement lifecycle cleanup","label":"claude / sonnet-4","pid":41965,"started_unix_ms":│
+		11 text (settable)      $ local                           │                                │1793342929151,"phase":"running","activity":"unknown","exit_code":null,"exit_signal":null,"ag│
+		12 text (settable)      - implement lif…  claude:sonnet-4 │                                │ent":null,"agent_epoch":0,"unread":null,"recovery":null,"reporting_unavailable":null,"measur│
+		13 text (settable)      - review websocke…  codex:gpt-5.4 │                                │ement_age_ms":null,"context_usage":null,"context_stale":null},{"scope":"Workspace","id":8,"a│
+		14 text (settable)      - plan snapshot res…  pi:grok-4.6 │                                │rchived":false,"run":1,"kind":"terminal","project":"consigint","workspace":"gui-consigint-wo│
+		15 text (settable)                                        │                                │rktree-lifecycle","cwd":"/private/tmp/ovrcr-rig-native-wub3bd7s/demo-parent/ovrcr-gui-DNu8IF│
+		16 text (settable)  SPACELIFT-AGENT ──────────────────────│                                │/workspaces/consigint/5b41a909c47fa1fb27328db7d814c829","name":"review websocket shutdown","│
+		17 text (settable)   󰘬 main                          root │                                │title":"review websocket shutdown","display_name":"review websocket shutdown","label":"codex│
+		18 text (settable)      $ local                           │                                │ / gpt-5.4","pid":42153,"started_unix_ms":1793342929435,"phase":"running","activity":"unknow│
+		19 text (settable)   󰘬 gui-spacelift-agent-pipeline-progr…│                                │n","exit_code":null,"exit_signal":null,"agent":null,"agent_epoch":0,"unread":null,"recovery"│
+		20 text (settable)      $ local                           │                                │:null,"reporting_unavailable":null,"measurement_age_ms":null,"context_usage":null,"context_s│
+		21 text (settable)      - build pipeline …  claude:opus-4 │                                │tale":null},{"scope":"Workspace","id":9,"archived":false,"run":1,"kind":"terminal","project"│
+		22 text (settable)   󰘬 gui-spacelift-agent-scope-quality  │                                │:"consigint","workspace":"gui-consigint-worktree-lifecycle","cwd":"/private/tmp/ovrcr-rig-na│
+		23 text (settable)      $ local                           │                                │tive-wub3bd7s/demo-parent/ovrcr-gui-DNu8IF/workspaces/consigint/5b41a909c47fa1fb27328db7d814│
+		24 text (settable)      - review scope qu…  codex:gpt-5.4 │                                │c829","name":"plan snapshot restore","title":"plan snapshot restore","display_name":"plan sn│
+		25 text (settable)                                        │                                │apshot restore","label":"pi / grok-4.6","pid":42493,"started_unix_ms":1793342929707,"phase":│
+		26 text (settable)                                        │                                │"running","activity":"unknown","exit_code":null,"exit_signal":null,"agent":null,"agent_epoch│
+		27 text (settable)                                        │                                │":0,"unread":null,"recovery":null,"reporting_unavailable":null,"measurement_age_ms":null,"co│
+		28 text (settable)                                        │                                │ntext_usage":null,"context_stale":null},{"scope":"Workspace","id":10,"archived":false,"run":│
+		29 text (settable)                                        │                                │1,"kind":"terminal","project":"consigint","workspace":"gui-consigint-auth-handoff","cwd":"/p│
+		30 text (settable)                                        │                                │rivate/tmp/ovrcr-rig-native-wub3bd7s/demo-parent/ovrcr-gui-DNu8IF/workspaces/consigint/b21cc│
+		31 text (settable)                                        │                                │18561302a052112b7cc9555fcd6","name":"review auth handoff","title":"review auth handoff","dis│
+		32 text (settable)                                        │                                │play_name":"review auth handoff","label":"grok / grok-4.6","pid":42756,"started_unix_ms":179│
+		33 text (settable)                                        │                                │3342929976,"phase":"running","activity":"unknown","exit_code":null,"exit_signal":null,"agent│
+		34 text (settable)                                        │                                │":null,"agent_epoch":0,"unread":null,"recovery":null,"reporting_unavailable":null,"measureme│
+		35 text (settable)                                        │                                │nt_age_ms":null,"context_usage":null,"context_stale":null},{"scope":"Workspace","id":11,"arc│
+		36 text (settable)                                        │                                │hived":false,"run":1,"kind":"terminal","project":"spacelift-agent","workspace":"gui-spacelif│
+		37 text (settable)                                        │                                │t-agent-pipeline-progress-v2","cwd":"/private/tmp/ovrcr-rig-native-wub3bd7s/demo-parent/ovrc│
+		38 text (settable)                                        │                                │r-gui-DNu8IF/workspaces/spacelift-agent/0538268c866d8bbf65e7b59c9d90efc4","name":"build pipe│
+		39 text (settable)                                        │                                │line progress","title":"build pipeline progress","display_name":"build pipeline progress","l│
+		40 text (settable)                                        │                                │abel":"claude / opus-4","pid":42896,"started_unix_ms":1793342930247,"phase":"running","activ│
+		41 text (settable)                                        │                                │ity":"unknown","exit_code":null,"exit_signal":null,"agent":null,"agent_epoch":0,"unread":nul│
+		42 text (settable)                                        │                                │l,"recovery":null,"reporting_unavailable":null,"measurement_age_ms":null,"context_usage":nul│
+		43 text (settable)                                        │                                │l,"context_stale":null},{"scope":"Workspace","id":12,"archived":false,"run":1,"kind":"termin│
+		44 text (settable)                                        │                                │al","project":"spacelift-agent","workspace":"gui-spacelift-agent-scope-quality","cwd":"/priv│
+		45 text (settable)                                        │                                │ate/tmp/ovrcr-rig-native-wub3bd7s/demo-parent/ovrcr-gui-DNu8IF/workspaces/spacelift-agent/70│
+		46 text (settable)                                        │                                │2202794a243e6a2a15410f28c6f299","name":"review scope quality","title":"review scope quality"│
+		47 text (settable)                                        │                                │,"display_name":"review scope quality","label":"codex / gpt-5.4","pid":43057,"started_unix_m│
+		48 text (settable)                                        │                                │s":1793342930523,"phase":"running","activity":"unknown","exit_code":null,"exit_signal":null,│
+		49 text (settable)                                        │                                │"agent":null,"agent_epoch":0,"unread":null,"recovery":null,"reporting_unavailable":null,"mea│
+		50 text (settable)                                        │                                │surement_age_ms":null,"context_usage":null,"context_stale":null},{"scope":{"OperatorConversa│
+		51 text (settable)                                        │                                │tion":{"conversation":1}},"id":13,"archived":false,"run":2,"kind":{"agent":"operator"},"proj│
+		52 text (settable)                                        │                                │ect":"","workspace":"","cwd":"/private/tmp/ovrcr-rig-native-wub3bd7s/demo-parent/ovrcr-gui-D│
+		53 text (settable)                                        │                                │Nu8IF/operator-workdir","name":"operator-1","title":null,"display_name":"operator-1","label"│
+		54 text (settable)                                        │                                │:"Operator","pid":37239,"started_unix_ms":1793343367848,"phase":"running","activity":"unknow│
+		55 text (settable)                                        │                                │n","exit_code":null,"exit_signal":null,"agent":null,"agent_epoch":1,"unread":null,"recovery"│
+		56 text (settable)                                        │                                │:null,"reporting_unavailable":null,"measurement_age_ms":null,"context_usage":null,"context_s│
+		57 text (settable)                                        │                                │tale":null}]                                                                                │
+		58 text (settable)                                        │                                │                                                                                            │
+		59 text (settable)                                        │                                │                                                                                            │
+		60 text (settable)                                        │                                │Operator                                                                                    │
+		61 text (settable)                                        │                                │Previous exact reply: `OVRCR_CHATGPT_OK`                                                    │
+		62 text (settable)                                        │                                │Command succeeded (exit code 0).                                                            │
+		63 text (settable)                                        │                                │Input check: 界🙂.                                                                          │
+		64 text (settable)                                        │                                └────────────────────────────────────────────────────────────────────────────────────────────┘
+		65 text (settable)                                        │                                ┌consigint / main / #1 run 1 · Enter send · Shift-Enter newline · Tab/Ctrl-l chats · Ctrl-n n┐
+		66 text (settable)  QUOTA LEFT ───────────────────────────│                                │▏                                                                                           │
+		67 text (settable) Claude · not signed in                 │                                │                                                                                            │
+		68 text (settable) Codex · usage off                      │                                │                                                                                            │
+		69 text (settable) Grok · usage off                       │                                │                                                                                            │
+		70 text (settable) Cursor · usage off                     │                                │                                                                                            │
+		71 text (settable)                                        │                                └────────────────────────────────────────────────────────────────────────────────────────────┘
+		72 text (settable) OPERATOR  Enter Send / create  Ctrl-g Browse  Ctrl-l Conversations  Ctrl-n New Conversation  Ctrl-x Stop selected turn  Shift-Enter Newline
+	73 close button
+	74 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	75 minimize button
+	76 text OVRCR GUI
+77 menu bar
+	78 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]                                                                                                                                  [Actions] [Menu]
+ CONSIGINT ────────────────────────────│New Conversation [Ctrl-n]       ┌complete · Say exactly: OVRCR_CHATGPT_OK. Do not use tools. · chat_gpt / gpt-6.1[Stop Ctrl-x]
+  󰘬 main                          root │›  Say exactly: OVRCR_CHATGPT_OK│:null,"reporting_unavailable":null,"measurement_age_ms":null,"context_usage":null,"context_s│
+     $ lo

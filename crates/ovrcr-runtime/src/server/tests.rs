@@ -2657,6 +2657,7 @@ fn test_state_with_dispatch(
             observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
             lifecycle: lifecycle::Lifecycle::default(),
+            operator: operator::OperatorRuntime::default(),
             dispatch,
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
@@ -2680,7 +2681,7 @@ fn test_state_with_dispatch(
     (state, receiver)
 }
 
-fn test_state_with_socket(
+pub(super) fn test_state_with_socket(
     socket: PathBuf,
     registry: Registry,
 ) -> (
@@ -2708,6 +2709,7 @@ fn test_state_with_socket(
             observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
             lifecycle: lifecycle::Lifecycle::default(),
+            operator: operator::OperatorRuntime::default(),
             dispatch,
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
@@ -2749,6 +2751,7 @@ fn spawn_live_test_session_with_hook(
     let session = Session::spawn_registered(
         id,
         SessionSpec {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
@@ -2784,6 +2787,7 @@ fn spawn_exiting_test_session(
     let session = Session::spawn_registered(
         id,
         SessionSpec {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
@@ -4174,6 +4178,7 @@ fn control_and_refresh_failures_preserve_both_causes() {
         let session = Session::spawn_registered(
             id,
             SessionSpec {
+                scope: ovrcr_protocol::SessionScope::Workspace,
                 restore_command: None,
                 run: ovrcr_protocol::SessionRunId(1),
                 kind: ovrcr_protocol::SessionKind::Terminal,
@@ -4519,6 +4524,7 @@ fn shutdown_termination_failure_is_partial_and_server_remains_available() {
     let session = Session::spawn_registered(
         SessionId(7),
         crate::session::SessionSpec {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
             kind: ovrcr_protocol::SessionKind::Terminal,
             run: ovrcr_protocol::SessionRunId(1),
@@ -4596,6 +4602,7 @@ fn kill_session_termination_failure_revokes_and_retains_session() {
     let session = Session::spawn_with_test_hooks(
         SessionId(71),
         SessionSpec {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
@@ -4694,7 +4701,7 @@ fn kill_failure_cleanup_retains_original_group_after_leader_exit() {
     let (events, receiver) = event_channel(None);
     let session = Session::spawn_with_test_hooks(
             SessionId(72),
-            SessionSpec { restore_command: None, run: ovrcr_protocol::SessionRunId(1), kind: ovrcr_protocol::SessionKind::Terminal, project: "p".into(),
+            SessionSpec { scope: ovrcr_protocol::SessionScope::Workspace, restore_command: None, run: ovrcr_protocol::SessionRunId(1), kind: ovrcr_protocol::SessionKind::Terminal, project: "p".into(),
             workspace: "w".into(),
             name: "exited-leader".into(),
             label: "sh".into(),
@@ -4786,6 +4793,7 @@ fn shutdown_without_kill_rejects_paused_session() {
     let session = Session::spawn_registered(
         SessionId(8),
         crate::session::SessionSpec {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
             kind: ovrcr_protocol::SessionKind::Terminal,
             run: ovrcr_protocol::SessionRunId(1),
@@ -4834,6 +4842,7 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
     let session = Session::spawn_registered(
         id,
         crate::session::SessionSpec {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
             kind: ovrcr_protocol::SessionKind::Terminal,
             run: ovrcr_protocol::SessionRunId(1),
@@ -5212,6 +5221,7 @@ fn close_of_captured_live_target_that_exits_before_terminate_does_not_certify() 
     let session = Session::spawn_with_test_hooks(
         id,
         SessionSpec {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
@@ -5357,6 +5367,7 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        operator: operator::OperatorRuntime::default(),
         dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
@@ -5541,6 +5552,7 @@ fn session_output_flows_while_another_session_spawns() {
     let live = Session::spawn_registered(
         live_id,
         SessionSpec {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
@@ -5578,6 +5590,7 @@ fn session_output_flows_while_another_session_spawns() {
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        operator: operator::OperatorRuntime::default(),
         dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
@@ -6271,6 +6284,9 @@ fn startup_preserves_stale_socket_replaced_during_executable_hash() {
     let socket = root.path().join("server.sock");
     let stale = UnixListener::bind(&socket).unwrap();
     drop(stale);
+    let original = std::fs::symlink_metadata(&socket).unwrap();
+    let original_identity = (original.dev(), original.ino());
+    let pinned_socket = root.path().join("stale.sock");
 
     let registry = root.path().join("instance");
     std::fs::create_dir(&registry).unwrap();
@@ -6286,10 +6302,13 @@ fn startup_preserves_stale_socket_replaced_during_executable_hash() {
     *startup::AFTER_EXECUTABLE_BUILD_HOOK.lock().unwrap() = Some((
         socket.clone(),
         Box::new(move || {
-            std::fs::remove_file(&hook_socket).unwrap();
+            // Keep the old inode allocated so this tests a distinct replacement.
+            std::fs::rename(&hook_socket, &pinned_socket).unwrap();
             let replacement = UnixListener::bind(&hook_socket).unwrap();
             let metadata = std::fs::symlink_metadata(&hook_socket).unwrap();
-            *hook_identity.lock().unwrap() = Some((metadata.dev(), metadata.ino()));
+            let identity = (metadata.dev(), metadata.ino());
+            assert_ne!(identity, original_identity);
+            *hook_identity.lock().unwrap() = Some(identity);
             drop(replacement);
         }),
     ));
@@ -8589,6 +8608,7 @@ fn failed_root_shell_keeps_setup_pending_and_does_not_duplicate_launch() {
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        operator: operator::OperatorRuntime::default(),
         dispatch,
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
@@ -8606,6 +8626,7 @@ fn failed_root_shell_keeps_setup_pending_and_does_not_duplicate_launch() {
         .retained
         .lock()
         .create(SessionMetadata {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             project: "fixture".into(),
             workspace: root_id.into(),
             name: "local".into(),
@@ -9011,6 +9032,7 @@ fn automatic_local_terminals_default_branch_only_skips_feature_workspaces() {
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        operator: operator::OperatorRuntime::default(),
         dispatch,
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
@@ -9110,6 +9132,7 @@ fn automatic_local_terminals_on_and_off_cover_root_and_feature() {
             observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
             lifecycle: lifecycle::Lifecycle::default(),
+            operator: operator::OperatorRuntime::default(),
             dispatch,
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
@@ -9214,6 +9237,7 @@ fn changing_automatic_local_policy_leaves_existing_terminals() {
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        operator: operator::OperatorRuntime::default(),
         dispatch,
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
@@ -9480,4 +9504,35 @@ fn expect_settings_reading(stream: &mut UnixStream, state: &ServerState) {
         ),
         "expected the settings reading after hello: {message:?}"
     );
+}
+
+#[test]
+fn operator_global_history_stays_in_inventory_without_fake_workspaces_or_recovery_spawn() {
+    let state = test_state(None, None);
+    let conversation = state
+        .retained
+        .lock()
+        .create_operator_conversation(
+            ovrcr_protocol::OperatorProvider::ChatGpt,
+            "fixture-model",
+            Path::new("/tmp/operator-fixture"),
+        )
+        .unwrap();
+    let (registry, sessions) = state.inventory();
+    assert!(registry.projects.is_empty());
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(
+        sessions[0].scope,
+        ovrcr_protocol::SessionScope::OperatorConversation {
+            conversation: conversation.id
+        }
+    );
+    assert!(!sessions[0].can_auto_recover());
+    assert!(state.hierarchy().projects.is_empty());
+    assert!(
+        state
+            .reopen_session(conversation.session, ovrcr_protocol::SessionRunId(0), false)
+            .is_err()
+    );
+    assert!(state.sessions.lock().unwrap().is_empty());
 }

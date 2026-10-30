@@ -1450,6 +1450,7 @@ fn created_session_enters_terminal_mode() {
         panic!("wrong request");
     };
     let session = SessionSummary {
+        scope: ovrcr_protocol::SessionScope::Workspace,
         cwd: "/work".into(),
         archived: false,
         id: SessionId(99),
@@ -2508,6 +2509,7 @@ fn ownership_uncertain_create_does_not_create_another_row_on_enter() {
         panic!("wrong request");
     };
     let retained = SessionSummary {
+        scope: ovrcr_protocol::SessionScope::Workspace,
         cwd: "/work".into(),
         archived: false,
         id: SessionId(99),
@@ -2621,6 +2623,7 @@ fn ownership_uncertain_create_does_not_guess_among_two_rows() {
         .expect("create form must target a fixture workspace");
     for id in [98, 99] {
         workspace.sessions.push(SessionSummary {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             cwd: "/work".into(),
             archived: false,
             id: SessionId(id),

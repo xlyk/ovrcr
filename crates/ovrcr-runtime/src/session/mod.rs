@@ -153,6 +153,7 @@ mod tests;
 
 #[derive(Clone, Debug)]
 pub struct SessionSpec {
+    pub scope: ovrcr_protocol::SessionScope,
     /// Transient shell input for a long resume command; never retained on disk.
     pub restore_command: Option<String>,
     pub project: String,
@@ -613,6 +614,7 @@ impl Session {
             #[cfg(test)]
             initial_cwd,
             summary: SessionSummary {
+                scope: spec.scope,
                 cwd: spec.cwd.clone(),
                 archived: false,
                 title: None,

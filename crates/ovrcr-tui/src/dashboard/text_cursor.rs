@@ -8,16 +8,25 @@ use unicode_width::UnicodeWidthStr;
 pub(crate) struct TextCursor(Option<usize>);
 
 fn boundaries(text: &str) -> Vec<usize> {
-    let span = Span::raw(text);
-    span.styled_graphemes(Style::default())
-        .scan(0, |offset, grapheme| {
-            let start = *offset;
-            *offset += grapheme.symbol.len();
-            Some(start)
-        })
-        .chain(std::iter::once(text.len()))
-        .collect()
+    let mut points = Vec::new();
+    let mut offset = 0;
+    for segment in text.split_inclusive(char::is_control) {
+        let body = segment.trim_end_matches(char::is_control);
+        let span = Span::raw(body);
+        let mut used = 0;
+        for grapheme in span.styled_graphemes(Style::default()) {
+            points.push(offset + used);
+            used += grapheme.symbol.len();
+        }
+        for (index, _) in segment[body.len()..].char_indices() {
+            points.push(offset + body.len() + index);
+        }
+        offset += segment.len();
+    }
+    points.push(text.len());
+    points
 }
+
 impl TextCursor {
     /// Place a byte cursor on a rendered grapheme, including wide/combining cells.
     pub(crate) fn byte_at_column(text: &str, column: usize) -> usize {
@@ -32,7 +41,7 @@ impl TextCursor {
         text.len()
     }
 
-    fn position(self, text: &str) -> usize {
+    pub(crate) fn position(self, text: &str) -> usize {
         let requested = self.0.unwrap_or(text.len()).min(text.len());
         boundaries(text)
             .into_iter()
@@ -44,6 +53,29 @@ impl TextCursor {
         let position = self.position(text);
         text.insert_str(position, value);
         self.0 = Some(position + value.len());
+    }
+    pub(crate) fn vertical(&mut self, text: &str, down: bool) {
+        let position = self.position(text);
+        let start = text[..position].rfind('\n').map_or(0, |index| index + 1);
+        let column = text[start..position].width();
+        let target = if down {
+            let Some(end) = text[position..]
+                .find('\n')
+                .map(|index| position + index + 1)
+            else {
+                return;
+            };
+            end
+        } else {
+            if start == 0 {
+                return;
+            }
+            text[..start - 1].rfind('\n').map_or(0, |index| index + 1)
+        };
+        let end = text[target..]
+            .find('\n')
+            .map_or(text.len(), |index| target + index);
+        self.0 = Some(target + Self::byte_at_column(&text[target..end], column));
     }
     pub(crate) fn key(&mut self, text: &mut String, key: KeyCode) {
         let position = self.position(text);

@@ -1,0 +1,14 @@
+{
+  "revision": "c9b8227cccae53d34f2bd4fa44964ab82d17fcd6",
+  "features": [
+    "gui",
+    "acceptance-diagnostics"
+  ],
+  "build_target": "/Users/xlyk/.codex/worktrees/rig-operator/ovrcr/target/provider-acceptance/debug",
+  "bundle": "/Users/xlyk/.codex/worktrees/rig-operator/ovrcr/target/OVRCR GUI.app",
+  "sha256": {
+    "ovrcr": "3070888da62c11ad823507ce922641a92cd906a70fb2110e1e606a84e8b7f7f9",
+    "ovrcr-gui": "b8f72b767efd86ebe3bcc19b981040631b909e0a329bc9dd02f8d4053c7cecc6"
+  },
+  "workflow": "scripts/gui.sh equivalent; replace frozen binaries only after prior owners exited"
+}

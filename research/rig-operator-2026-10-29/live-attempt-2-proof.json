@@ -1,0 +1,40 @@
+{
+  "revision": "c9b8227cccae53d34f2bd4fa44964ab82d17fcd6",
+  "event_counts": {
+    "AssistantDelta": 20,
+    "ToolCall": 1,
+    "ToolOutput": 1
+  },
+  "tool_status": "Succeeded",
+  "tool_output_marker_present": true,
+  "cli_json_rows": 13,
+  "global_operator_rows": 1,
+  "bash_pid": 38789,
+  "bash_pid_absent": true,
+  "first_exact_marker": true,
+  "followup_recalls_previous_marker": true,
+  "followup_confirms_success": true,
+  "turns": [
+    [
+      1,
+      1,
+      1,
+      "Complete",
+      4
+    ],
+    [
+      2,
+      1,
+      2,
+      "Complete",
+      20
+    ]
+  ],
+  "stored_context": [
+    [
+      1,
+      2,
+      15062
+    ]
+  ]
+}

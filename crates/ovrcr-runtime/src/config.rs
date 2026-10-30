@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 25;
+const SCHEMA_VERSION: i64 = 26;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -415,6 +415,10 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
         // Older writers discard exclusive cloud observation progress.
         transaction.pragma_update(None, "user_version", 25)?;
     }
+    if schema_identity(&transaction)?.1 < 26 {
+        crate::retained::operator::create_schema(&transaction)?;
+        transaction.pragma_update(None, "user_version", 26)?;
+    }
     transaction.commit().context("commit registry migration")?;
     Ok(connection)
 }
@@ -466,6 +470,7 @@ pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
                 | 22
                 | 23
                 | 24
+                | 25
                 | SCHEMA_VERSION
         )
     {
@@ -1376,6 +1381,7 @@ mod tests {
         let path = dir.path().to_path_buf() /* instance home */;
         let database = database_path(&path);
         let connection = Connection::open(&database).unwrap();
+        crate::retained::create_schema(&connection).unwrap();
         connection
             .pragma_update(None, "application_id", APPLICATION_ID)
             .unwrap();
@@ -1490,6 +1496,7 @@ mod tests {
     ) {
         use std::os::unix::ffi::OsStrExt;
         let connection = Connection::open(database).unwrap();
+        crate::retained::create_schema(&connection).unwrap();
         connection
             .pragma_update(None, "application_id", APPLICATION_ID)
             .unwrap();

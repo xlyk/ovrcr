@@ -20,6 +20,13 @@ use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+fn dashboard_header_visible(screen: &str) -> bool {
+    screen
+        .lines()
+        .next()
+        .is_some_and(|header| header.contains("OVRCR") && header.contains("Operator [o]"))
+}
+
 /// A live server hosted by the compiled `ovrcr` binary, plus the CLI and
 /// terminal helpers this suite drives it with.
 struct AcceptanceFixture {
@@ -448,7 +455,7 @@ impl OuterDashboard {
             let screen = self.parser.screen();
             // Startup notices also name OVRCR; only the alternate-screen
             // Dashboard header establishes readiness for test input.
-            if screen.alternate_screen() && screen.contents().contains("OVRCR") {
+            if screen.alternate_screen() && dashboard_header_visible(&screen.contents()) {
                 return Ok(());
             }
             if Instant::now() >= deadline {
@@ -1703,8 +1710,8 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
         },
     )?;
     dashboard
-        .wait_until(|screen| screen.contains("agent runtime"), wait_deadline())
-        .context("history dashboard initial runtime header")?;
+        .wait_until(dashboard_header_visible, wait_deadline())
+        .context("history dashboard initial dashboard header")?;
     dashboard
         .wait_for_screen(|screen| screen.contains("history"), wait_deadline())
         .context("history dashboard hierarchy")?;
@@ -1896,7 +1903,7 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
     let outer_pgid = outer_pid.map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) });
     eprintln!("historical copy outer dashboard pid/pgid while alive: {outer_pid:?}/{outer_pgid:?}");
     dashboard.wait_until(
-        |screen| screen.contains("mouse") && screen.contains("agent runtime"),
+        |screen| screen.contains("mouse") && dashboard_header_visible(screen),
         wait_deadline(),
     )?;
     dashboard.click_visible_text("history-copy")?;
@@ -2028,7 +2035,7 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
         },
     )?;
     dashboard.wait_until(
-        |screen| screen.contains("mouse") && screen.contains("agent runtime"),
+        |screen| screen.contains("mouse") && dashboard_header_visible(screen),
         wait_deadline(),
     )?;
     dashboard.click_visible_text("     - mouse")?;
@@ -2137,7 +2144,14 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
         "rendered resized pane geometry changed unexpectedly"
     );
     dashboard.send(b"\x07")?;
-    dashboard.wait_for(b"agent runtime", wait_deadline())?;
+    dashboard.wait_for_screen(
+        |screen| {
+            dashboard_header_visible(screen)
+                && screen.contains("BROWSE  Space Menu")
+                && !screen.contains("Terminal mode")
+        },
+        wait_deadline(),
+    )?;
     dashboard.detach()?;
 
     let mut reattached = OuterDashboard::start(
@@ -2150,7 +2164,7 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
         },
     )?;
     reattached.wait_until(
-        |screen| screen.contains("mouse") && screen.contains("agent runtime"),
+        |screen| screen.contains("mouse") && dashboard_header_visible(screen),
         wait_deadline(),
     )?;
     reattached.click_visible_text("waiting")?;
@@ -2238,7 +2252,7 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     let outer_pgid = outer_pid.map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) });
     eprintln!("copy acceptance outer dashboard pid/pgid while alive: {outer_pid:?}/{outer_pgid:?}");
     dashboard.wait_until(
-        |screen| screen.contains("mouse") && screen.contains("agent runtime"),
+        |screen| screen.contains("mouse") && dashboard_header_visible(screen),
         wait_deadline(),
     )?;
     dashboard.click_visible_text("     - mouse")?;
@@ -2261,7 +2275,14 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     dashboard.send(b"?")?;
     dashboard.wait_for_screen(|screen| screen.contains("Which key"), wait_deadline())?;
     dashboard.send(b"\x1b")?;
-    dashboard.wait_for_screen(|screen| !screen.contains("Which key"), wait_deadline())?;
+    dashboard.wait_for_screen(
+        |screen| {
+            dashboard_header_visible(screen)
+                && screen.contains("BROWSE  Space Menu")
+                && !screen.contains("Which key")
+        },
+        wait_deadline(),
+    )?;
     dashboard.send(b" wn")?;
     dashboard.wait_for_screen(
         |screen| {
@@ -2273,7 +2294,11 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     )?;
     dashboard.send(b"\x1b")?;
     dashboard.wait_for_screen(
-        |screen| !screen.contains("┌ Create terminal"),
+        |screen| {
+            dashboard_header_visible(screen)
+                && screen.contains("BROWSE  Space Menu")
+                && !screen.contains("┌ Create terminal")
+        },
         wait_deadline(),
     )?;
     dashboard.send(b" tx")?;
@@ -2286,7 +2311,11 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     )?;
     dashboard.send(b"\x1b")?;
     dashboard.wait_for_screen(
-        |screen| !screen.contains("Close terminal?"),
+        |screen| {
+            dashboard_header_visible(screen)
+                && screen.contains("BROWSE  Space Menu")
+                && !screen.contains("Close terminal?")
+        },
         wait_deadline(),
     )?;
     assert_eq!(
@@ -2338,7 +2367,7 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
         "copy acceptance reattached dashboard pid/pgid while alive: {reattached_pid:?}/{reattached_pgid:?}"
     );
     reattached.wait_until(
-        |screen| screen.contains("mouse") && screen.contains("agent runtime"),
+        |screen| screen.contains("mouse") && dashboard_header_visible(screen),
         wait_deadline(),
     )?;
     reattached.wait_for_screen(
@@ -2392,7 +2421,7 @@ fn pause_resume_dashboard_round_trip() -> Result<()> {
         },
     )?;
     dashboard.wait_until(
-        |screen| screen.contains("mouse") && screen.contains("agent runtime"),
+        |screen| screen.contains("mouse") && dashboard_header_visible(screen),
         wait_deadline(),
     )?;
     dashboard.click_visible_text("     - mouse")?;
@@ -2424,11 +2453,18 @@ fn pause_resume_dashboard_round_trip() -> Result<()> {
             pixel_height: 0,
         },
     )?;
-    reattached.wait_until(|screen| screen.contains("agent runtime"), wait_deadline())?;
+    reattached.wait_until(dashboard_header_visible, wait_deadline())?;
     reattached.click_visible_text("waiting")?;
     reattached.wait_until(|screen| screen.contains("paused"), wait_deadline())?;
     reattached.send(b"r")?;
-    reattached.wait_for_screen(|screen| !screen.contains("paused"), wait_deadline())?;
+    reattached.wait_for_screen(
+        |screen| {
+            dashboard_header_visible(screen)
+                && screen.contains("BROWSE  Space Menu")
+                && !screen.contains("paused")
+        },
+        wait_deadline(),
+    )?;
     reattached.send(b"\r")?;
     reattached.wait_for(b"Terminal mode", wait_deadline())?;
     reattached.send(b"PAUSE_RESUME_TOKEN\r")?;
@@ -2452,7 +2488,7 @@ fn external_pause_resume_and_exit_redraw_the_live_dashboard() -> Result<()> {
         },
     )?;
     dashboard.wait_until(
-        |screen| screen.contains("mouse") && screen.contains("agent runtime"),
+        |screen| screen.contains("mouse") && dashboard_header_visible(screen),
         wait_deadline(),
     )?;
     dashboard.click_visible_text("     - mouse")?;
@@ -2478,7 +2514,14 @@ fn external_pause_resume_and_exit_redraw_the_live_dashboard() -> Result<()> {
 
     let resumed = fixture.cli(&["resume", &id])?;
     require_success(resumed, "external resume")?;
-    dashboard.wait_for_screen(|screen| !screen.contains("paused"), Duration::from_secs(3))?;
+    dashboard.wait_for_screen(
+        |screen| {
+            dashboard_header_visible(screen)
+                && screen.contains("BROWSE  Space Menu")
+                && !screen.contains("paused")
+        },
+        Duration::from_secs(3),
+    )?;
 
     let killed = fixture.cli(&["kill", &id])?;
     require_success(killed, "external kill")?;

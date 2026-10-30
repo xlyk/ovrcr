@@ -1130,7 +1130,7 @@ def cleanup(process, root, token_identity, port, token, deadlines, resources, jo
                 deadlines.remaining()
                 current = path.lstat()
                 parent = path.parent.lstat()
-                if (current.st_dev, current.st_ino, parent.st_dev, parent.st_ino) != (dev, ino, parent_dev, parent_ino):
+                if not stat.S_ISREG(current.st_mode) or (current.st_dev, current.st_ino, parent.st_dev, parent.st_ino) != (dev, ino, parent_dev, parent_ino):
                     raise Failure("token-file identity changed")
                 path.unlink()
                 path.parent.rmdir()

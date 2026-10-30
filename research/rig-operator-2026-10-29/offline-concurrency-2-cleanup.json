@@ -1,0 +1,145 @@
+{
+  "groups": [
+    {
+      "pid": 78501,
+      "pgid": 78501,
+      "birth": "Fri Oct 30 00:27:05 2026",
+      "session": 1,
+      "run": 1,
+      "scope": "Workspace",
+      "status": "absent"
+    },
+    {
+      "pid": 78907,
+      "pgid": 78907,
+      "birth": "Fri Oct 30 00:27:05 2026",
+      "session": 2,
+      "run": 1,
+      "scope": "Workspace",
+      "status": "absent"
+    },
+    {
+      "pid": 79360,
+      "pgid": 79360,
+      "birth": "Fri Oct 30 00:27:05 2026",
+      "session": 3,
+      "run": 1,
+      "scope": "Workspace",
+      "status": "absent"
+    },
+    {
+      "pid": 79592,
+      "pgid": 79592,
+      "birth": "Fri Oct 30 00:27:06 2026",
+      "session": 4,
+      "run": 1,
+      "scope": "Workspace",
+      "status": "absent"
+    },
+    {
+      "pid": 79836,
+      "pgid": 79836,
+      "birth": "Fri Oct 30 00:27:06 2026",
+      "session": 5,
+      "run": 1,
+      "scope": "Workspace",
+      "status": "absent"
+    },
+    {
+      "pid": 80093,
+      "pgid": 80093,
+      "birth": "Fri Oct 30 00:27:06 2026",
+      "session": 6,
+      "run": 1,
+      "scope": "Workspace",
+      "status": "absent"
+    },
+    {
+      "pid": 80383,
+      "pgid": 80383,
+      "birth": "Fri Oct 30 00:27:07 2026",
+      "session": 7,
+      "run": 1,
+      "scope": "Workspace",
+      "status": "absent"
+    },
+    {
+      "pid": 80673,
+      "pgid": 80673,
+      "birth": "Fri Oct 30 00:27:07 2026",
+      "session": 8,
+      "run": 1,
+      "scope": "Workspace",
+      "status": "absent"
+    },
+    {
+      "pid": 80964,
+      "pgid": 80964,
+      "birth": "Fri Oct 30 00:27:07 2026",
+      "session": 9,
+      "run": 1,
+      "scope": "Workspace",
+      "status": "absent"
+    },
+    {
+      "pid": 81255,
+      "pgid": 81255,
+      "birth": "Fri Oct 30 00:27:07 2026",
+      "session": 10,
+      "run": 1,
+      "scope": "Workspace",
+      "status": "absent"
+    },
+    {
+      "pid": 81693,
+      "pgid": 81693,
+      "birth": "Fri Oct 30 00:27:08 2026",
+      "session": 11,
+      "run": 1,
+      "scope": "Workspace",
+      "status": "absent"
+    },
+    {
+      "pid": 82205,
+      "pgid": 82205,
+      "birth": "Fri Oct 30 00:27:08 2026",
+      "session": 12,
+      "run": 1,
+      "scope": "Workspace",
+      "status": "absent"
+    },
+    {
+      "pid": 91428,
+      "pgid": 91428,
+      "birth": "Fri Oct 30 00:27:54 2026",
+      "session": 13,
+      "run": 1,
+      "scope": {
+        "OperatorConversation": {
+          "conversation": 1
+        }
+      },
+      "status": "absent"
+    },
+    {
+      "pid": 97245,
+      "pgid": 97245,
+      "birth": "Fri Oct 30 00:28:20 2026",
+      "session": 14,
+      "run": 1,
+      "scope": {
+        "OperatorConversation": {
+          "conversation": 2
+        }
+      },
+      "status": "absent"
+    }
+  ],
+  "owners": {
+    "78277": "absent",
+    "78341": "absent",
+    "82379": "absent"
+  },
+  "root_absent": true,
+  "socket_absent": true
+}

@@ -13,6 +13,7 @@ One Reporter (`src/report/reporter.rs`) owns every managed invocation's reportin
 - Settings follow [ADR 0007](../adr/0007-one-settings-document-read-by-the-server.md): `ovrcr_runtime::settings` is the one loader of the settings document, and its typed `Settings` and `SettingsReport` live in `ovrcr-protocol` so the CLI and the Dashboard share them. Add a setting there, never a second parser.
 - Runtime and TUI depend on protocol/terminal primitives, not on each other. Keep root facades thin; put implementations in the owning crate.
 - Keep modules focused and exports small. Reuse existing helpers and dependencies before adding abstractions or libraries. Do not introduce Tokio, an agent SDK, or a new crate without a concrete requirement in the approved design. SQLite is already approved for project and workspace metadata (#112 / #113).
+- The approved built-in Operator uses Rig and Tokio only in root application workers; the Server remains synchronous. See the [Operator runtime reference](operator.md) and [approved design](../superpowers/specs/2026-10-29-rig-operator-design.md).
 - Update constructors, exhaustive matches, public re-exports, CLI output, and optional-feature callers together when shared types change. Which providers may produce Ready, Unread, review targets and alerts is decided once by `AgentProvider::supports_readiness`; never compare a provider literal at a consumer.
 
 Root `src/` and control-role tests speak to the server through `ovrcr_protocol::client` for request/response round trips; dashboard-role code that consumes events reads frames directly. Do not hand-roll `ClientMessage` frames for a plain request.
@@ -94,8 +95,8 @@ Current process runs remain `Arc<Session>` values; inactive rows allocate no PTY
 or terminal parser. The existing mutation lock reserves one of fifty live slots
 from admission through spawn publication. Reopening retires the prior run's
 capability, view and history; run-tagged events and snapshots cannot affect its
-replacement. No raw argv, environments, output, prompts, live activity or timing are
-stored. Recovery stores only validated nonsecret references and options. Provider
+replacement. Ordinary session metadata stores no raw argv, environments, output, prompts,
+live activity or timing. Recovery stores only validated nonsecret references and options. Provider
 recovery uses the [shared recovery contract](recovery.md); adapters never own
 processes or a separate persistence path. Archive disposition is separate from
 process-stop proof. Archive and unarchive invalidate the previous run identity,
@@ -122,3 +123,22 @@ choices with explicit managed argv, independent of PATH discovery. Protocol 65 a
 appends `AgentProvider::CursorCloud`; local Cursor remains `Cursor`. Readiness uses exact verified run observations; titles and active conversation
 recovery remain unavailable. See
 [Cursor cloud](../cursor-cloud.md) and [published source](../adr/0011-cursor-cloud-published-source.md).
+
+Schema version 26 adds explicit `SessionScope::Workspace` or
+`OperatorConversation` metadata. Existing rows remain Workspace sessions. Global
+Operator sessions stay in inventory and never synthesize registered projects or
+workspaces. The same SessionStore connection owns dedicated Operator conversation,
+turn, message, completed model-history and batch-receipt tables. History-only rows
+are stopped and allocate no process. Journal submission atomically records the
+user message/captured stable context and advances retained run intent; the caller
+still owns live-slot admission and process publication. Ordered worker batches
+commit before acknowledgment, deduplicate exact retries, and reject stale runs,
+sequence gaps and conflicting replays. Restart interrupts unfinished turns without
+claiming process exit or replaying commands. Raw chat lives only in these journal
+tables, never in content-free Events. Completed SDK history is versioned JSON and
+is loaded separately from byte-bounded visible history pages; shared crates have
+no Rig SDK dependency.
+
+Operator defaults are typed `Settings.operator` values in the same settings
+catalog, loader, editor and snapshots. Provider defaults to `chat_gpt`; provider
+model choices are optional until selected. Settings never contain credentials.

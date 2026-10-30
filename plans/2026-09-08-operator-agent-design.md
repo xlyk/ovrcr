@@ -1,5 +1,9 @@
 # OVRCR Operator Agent Design
 
+> Historical unimplemented Pi design. The approved Rig implementation uses native
+> concurrent conversations; see [current Operator usage](../docs/operator.md) and
+> [2026-10-29 design](../docs/superpowers/specs/2026-10-29-rig-operator-design.md).
+
 ## Purpose
 
 OVRCR gets a native agent that manages and operates its terminals and agents. It appears as a pinned entry at the top of the dashboard sidebar, behaves like any other terminal session, and runs Pi's interactive mode inside a PTY with an OVRCR-specific extension. The user selects it, types requests such as "start codex in cleanup and ask it to run the tests" or "what is waiting for input", and the operator acts through OVRCR's own control commands.

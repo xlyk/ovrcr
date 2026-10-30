@@ -3,7 +3,7 @@
 **Yet another place to run coding agents. This one is Rust, so it’s fast and you get to feel smug about it.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.95%2B-orange.svg?style=flat-square)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.97.1%2B-orange.svg?style=flat-square)](https://www.rust-lang.org/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg?style=flat-square)](#requirements)
 
 ## About
@@ -79,6 +79,7 @@ Dashboard: `j`/`k` select, `Enter` focus, `Ctrl-g` browse, `q` detach.
 ## Features
 
 - One or two panes; Browse, Terminal, Copy, and History modes.
+- [Built-in Operator](docs/operator.md): native saved conversations, concurrent token streaming, ChatGPT/Grok subscription sign-in, and Bash/CLI control.
 - After server restart, retained rows reopen a fresh shell in place; certified Claude conversations can resume by UUID. Terminal output is not restored across server restart.
 - 512 rows of scrollback; keyboard selection; OSC52 clipboard copy.
 - Pause / resume via SIGSTOP / SIGCONT on the session process group.
@@ -89,13 +90,14 @@ Dashboard: `j`/`k` select, `Enter` focus, `Ctrl-g` browse, `q` detach.
 ## Requirements
 
 - macOS or Linux
-- Rust 1.95 or newer (edition 2024; optional GUI helper’s `eframe` sets the floor)
+- Rust 1.97.1 or newer (edition 2024; the built-in operator’s Rig dependency sets the floor)
 - Git
 - Optional: [Pi](docs/scheduled-tasks.md) for scheduled tasks; macOS [Bridge](native/bridge/README.md) for notifications
 
 ## Docs
 
 - [Dashboard](docs/dashboard.md) — modes, keys, notifications, quota, events
+- [Built-in Operator](docs/operator.md) — subscription setup, concurrent chats, history and Stop
 - [CLI reference](docs/cli-reference.md)
 - [Agent reporting](docs/agent-reporting.md) · [Claude setup](docs/claude-code-setup.md) · [Support matrix](docs/agent-reporting-support.md)
 - [Scheduled tasks](docs/scheduled-tasks.md) · [Provider quota](docs/provider-quota.md)
