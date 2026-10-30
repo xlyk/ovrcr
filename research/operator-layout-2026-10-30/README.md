@@ -154,8 +154,10 @@ PY
 ```
 
 The `c9207e2` whitespace failure remains a retained historical attempt. Archive
-conversion and the current feature-range diff check are recorded separately;
-none of the application-test failures below is relabeled.
+conversion and the current feature-range diff check are recorded separately in
+[conversion results](archive-conversion.json) and [diff-check results](archive-diff-check.json).
+The intended staged check and `git diff --check aef3e7f0..HEAD` at archive commit
+`7c227357` both exit 0. None of the application-test failures below is relabeled.
 
 ## Command results
 
