@@ -1,0 +1,19 @@
+{
+  "command": [
+    "rtk",
+    "proxy",
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--test",
+    "operator_e2e",
+    "--features",
+    "gui,acceptance-diagnostics",
+    "--no-run",
+    "--message-format=json"
+  ],
+  "exit": 0,
+  "raw_bytes": 412459,
+  "raw_sha256": "1827f669f7a19d8e5bac0835cf3b7568a2556bca148a3647f88cc0e5ccd6dedc"
+}

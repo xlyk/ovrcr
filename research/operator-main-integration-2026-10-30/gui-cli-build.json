@@ -1,0 +1,17 @@
+{
+  "command": [
+    "rtk",
+    "proxy",
+    "cargo",
+    "build",
+    "--features",
+    "gui,acceptance-diagnostics",
+    "--bin",
+    "ovrcr",
+    "--bin",
+    "ovrcr-gui"
+  ],
+  "exit": 0,
+  "raw_bytes": 72,
+  "sha256": "1f5852af1ed7025b5728e842e3c3c2f5d2f720d25557d84c38f1ffda99719c59"
+}

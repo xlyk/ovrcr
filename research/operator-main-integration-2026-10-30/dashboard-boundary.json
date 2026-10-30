@@ -1,0 +1,15 @@
+{
+  "unix_ms": 1793401581500,
+  "control_markers": [
+    "auth-ready.json",
+    "base.json",
+    "demo-instance"
+  ],
+  "operator_conversations": [],
+  "operator_turns": [],
+  "operator_messages": [],
+  "frozen_sha256": {
+    "ovrcr": "c267cebf552bc34e76c1f0ec95214fcbd0fcafa750cc69d0bffc5c21007123ee",
+    "ovrcr-gui": "120842a4d098914f5633a4268a236ccc7cf492afe7ff3b1db6374ad5f60fea5e"
+  }
+}
