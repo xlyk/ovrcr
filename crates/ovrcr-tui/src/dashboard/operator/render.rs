@@ -661,7 +661,11 @@ pub(super) fn wrapped_lines(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'
         .map(|(line, _)| line)
         .collect()
 }
-pub(super) fn transcript_rows(chat: &Chat, width: u16) -> Vec<(Line<'static>, Anchor)> {
+pub(super) fn transcript_rows(
+    chat: &Chat,
+    width: u16,
+    now_unix_ms: u64,
+) -> Vec<(Line<'static>, Option<Anchor>)> {
     // Deltas share visual paragraphs, but their anchors keep the actual durable source.
     let mut sources: HashMap<u64, Vec<(usize, u64)>> = HashMap::new();
     let mut first = None;
@@ -681,7 +685,7 @@ pub(super) fn transcript_rows(chat: &Chat, width: u16) -> Vec<(Line<'static>, An
             byte = 0;
         }
     }
-    logical_lines(chat)
+    let mut rows: Vec<_> = logical_lines(chat)
         .into_iter()
         .flat_map(|entry| {
             let width = width.saturating_sub(2).max(1);
@@ -714,17 +718,51 @@ pub(super) fn transcript_rows(chat: &Chat, width: u16) -> Vec<(Line<'static>, An
                     };
                     let mut spans = vec![Span::styled(gutter, Style::default().fg(color))];
                     spans.extend(line.spans);
-                    (Line::from(spans), (ordinal, entry.part, byte - start))
+                    (Line::from(spans), Some((ordinal, entry.part, byte - start)))
                 })
         })
-        .collect()
+        .collect();
+    if let Some(activity) = conversation_activity(chat) {
+        if rows
+            .last()
+            .is_some_and(|(_, anchor)| anchor.is_some_and(|a| a.1 == 4))
+        {
+            rows.pop();
+        }
+        let (glyph, color) =
+            super::super::status::sidebar_activity_glyph(AgentActivity::Busy, false, now_unix_ms);
+        let label = if activity.animated {
+            format!("{glyph} {}", activity.label)
+        } else {
+            activity.label
+        };
+        rows.push((
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    clip_text(&label, usize::from(width.saturating_sub(2))),
+                    Style::default().fg(if activity.animated {
+                        color
+                    } else {
+                        super::super::render::SUBTEXT()
+                    }),
+                ),
+            ]),
+            None,
+        ));
+    }
+    rows
 }
-pub(super) fn transcript_offset(chat: &Chat, rows: &[(Line<'_>, Anchor)], height: usize) -> usize {
+pub(super) fn transcript_offset(
+    chat: &Chat,
+    rows: &[(Line<'_>, Option<Anchor>)],
+    height: usize,
+) -> usize {
     if !chat.follow
         && let Some(anchor) = chat.anchor
     {
         rows.iter()
-            .rposition(|(_, start)| *start <= anchor)
+            .rposition(|(_, start)| start.is_some_and(|start| start <= anchor))
             .unwrap_or(0)
     } else {
         rows.len()
@@ -862,7 +900,7 @@ impl Dashboard {
                 stop_rect(layout.header),
             );
         }
-        let rows = transcript_rows(chat, layout.transcript.width);
+        let rows = transcript_rows(chat, layout.transcript.width, now_unix_ms);
         let height = layout.transcript.height as usize;
         let offset = transcript_offset(chat, &rows, height);
         let lines: Vec<_> = rows
@@ -870,7 +908,9 @@ impl Dashboard {
             .skip(offset)
             .take(height)
             .map(|(line, anchor)| {
-                if self.operator.transcript_focus && chat.entry_focus == Some(anchor.0) {
+                if self.operator.transcript_focus
+                    && anchor.is_some_and(|anchor| chat.entry_focus == Some(anchor.0))
+                {
                     line.style(Style::default().bg(SURFACE0()))
                 } else {
                     line
@@ -879,40 +919,7 @@ impl Dashboard {
             .collect();
         frame.render_widget(Paragraph::new(lines), layout.transcript);
         let error = chat.error.as_deref().or(self.operator.error.as_deref());
-        let mut context = layout.context;
-        if let Some(activity) = conversation_activity(chat) {
-            let (glyph, color) = super::super::status::sidebar_activity_glyph(
-                AgentActivity::Busy,
-                false,
-                now_unix_ms,
-            );
-            let label = if activity.animated {
-                format!("{glyph} {}", activity.label)
-            } else {
-                activity.label
-            };
-            // Keep room for the target or retained error beside even a long tool name.
-            let width = label
-                .width()
-                .min(usize::from(context.width.saturating_sub(12))) as u16;
-            let area = Rect::new(
-                context.right().saturating_sub(width),
-                context.y,
-                width,
-                context.height,
-            );
-            context.width = context.width.saturating_sub(width + 1);
-            frame.render_widget(
-                Paragraph::new(clip_text(&label, width as usize)).style(Style::default().fg(
-                    if activity.animated {
-                        color
-                    } else {
-                        super::super::render::SUBTEXT()
-                    },
-                )),
-                area,
-            );
-        }
+        let context = layout.context;
         let caption = error.map_or_else(
             || context_caption(&chat.context, context.width),
             display_text,

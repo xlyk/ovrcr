@@ -40,10 +40,14 @@ fn operator_activity_draw_tracks_real_responses_and_clock() {
                 title: "activity".into(),
                 current_turn: None,
             };
-            d.handle_server_message(ServerMessage::Response {
+            let created_requests = d.handle_server_message(ServerMessage::Response {
                 request_id: create.request_id,
                 response: Response::Operator(OperatorResponse::Created(summary.clone())),
             });
+            let read = created_requests
+                .into_iter()
+                .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Read { .. })))
+                .unwrap();
             d.drain_outbox();
             d.event_action(Event::Paste("submitted".into()));
             d.key(KeyCode::Enter);
@@ -75,6 +79,44 @@ fn operator_activity_draw_tracks_real_responses_and_clock() {
                 request_id: submit.request_id,
                 response: Response::Operator(OperatorResponse::Submitted(turn.clone())),
             });
+            summary.run = turn.identity.run;
+            summary.worker_stopped = false;
+            summary.current_turn = Some(turn.clone());
+            let mut history_requests = d.handle_server_message(ServerMessage::Response {
+                request_id: read.request_id,
+                response: Response::Operator(OperatorResponse::History(
+                    ovrcr_protocol::OperatorHistory {
+                        conversation: summary.clone(),
+                        messages: vec![ovrcr_protocol::OperatorMessage {
+                            ordinal: 1,
+                            turn: OperatorTurnId(1),
+                            content: ovrcr_protocol::OperatorMessageContent::Worker(
+                                ovrcr_protocol::OperatorWorkerEvent::AssistantDelta(format!(
+                                    "{}LATEST_DURABLE",
+                                    "older history 界\n".repeat(50)
+                                )),
+                            ),
+                        }],
+                        next_after: None,
+                    },
+                )),
+            });
+            // Submission dirtied the in-flight read; acknowledge its ordinary catch-up too.
+            if let Some(next) = history_requests
+                .drain(..)
+                .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Read { .. })))
+            {
+                d.handle_server_message(ServerMessage::Response {
+                    request_id: next.request_id,
+                    response: Response::Operator(OperatorResponse::History(
+                        ovrcr_protocol::OperatorHistory {
+                            conversation: summary.clone(),
+                            messages: vec![],
+                            next_after: None,
+                        },
+                    )),
+                });
+            }
             d.event_action(Event::Paste("retained 界🙂 draft".into()));
             d.drain_outbox();
             let first = render(&d, &mut terminal, 0);
@@ -85,6 +127,34 @@ fn operator_activity_draw_tracks_real_responses_and_clock() {
                 "{cols}×{rows}: {first_text}"
             );
             let context_y = rows - 6;
+            let activity_y = (1..context_y)
+                .find(|&y| {
+                    (0..cols)
+                        .map(|x| first[(x, y)].symbol())
+                        .collect::<String>()
+                        .contains("Responding")
+                })
+                .expect("activity must be inside the transcript");
+            assert!(activity_y < context_y);
+            let preceding: String = (0..cols)
+                .map(|x| first[(x, activity_y - 1)].symbol())
+                .collect();
+            assert!(preceding.contains("LATEST_DURABLE"), "{preceding}");
+            assert_eq!(
+                (0..context_y)
+                    .filter(|&y| (0..cols)
+                        .map(|x| first[(x, y)].symbol())
+                        .collect::<String>()
+                        .contains("Responding"))
+                    .count(),
+                1
+            );
+            assert!(
+                !(0..cols)
+                    .map(|x| first[(x, context_y)].symbol())
+                    .collect::<String>()
+                    .contains("Responding")
+            );
             let changes: Vec<_> = first
                 .content()
                 .iter()
@@ -94,7 +164,7 @@ fn operator_activity_draw_tracks_real_responses_and_clock() {
                 .map(|(i, _)| (i % cols as usize, i / cols as usize))
                 .collect();
             assert!(
-                changes.iter().any(|&(x, y)| y == context_y as usize
+                changes.iter().any(|&(x, y)| y == activity_y as usize
                     && first[(x as u16, y as u16)].symbol() == "⠋"),
                 "clock did not move journal spinner: {changes:?}"
             );
@@ -102,12 +172,53 @@ fn operator_activity_draw_tracks_real_responses_and_clock() {
             assert!(
                 changes
                     .iter()
-                    .all(|&(x, y)| y == context_y as usize || (cols >= 100 && x < 39)),
+                    .all(|&(x, y)| y == activity_y as usize || (cols >= 100 && x < 39)),
                 "clock changed content: {changes:?}"
             );
             assert!(
                 d.drain_outbox().is_empty(),
                 "draw cannot send requests or PTY input"
+            );
+            let area = Rect::new(0, 0, cols, rows);
+            d.install_area(area);
+            let journal_x = if cols >= 100 { 42 } else { 2 };
+            for kind in [
+                MouseEventKind::Down(MouseButton::Left),
+                MouseEventKind::ScrollUp,
+            ] {
+                assert!(!matches!(
+                    d.mouse_action(
+                        MouseEvent {
+                            kind,
+                            column: journal_x,
+                            row: activity_y,
+                            modifiers: KeyModifiers::NONE,
+                        },
+                        area
+                    ),
+                    DashboardAction::PtyBytes(_)
+                ));
+            }
+            assert!(!text(&render(&d, &mut terminal, 100)).contains("Responding"));
+            d.key(KeyCode::PageUp);
+            assert!(!text(&render(&d, &mut terminal, 100)).contains("Responding"));
+            for _ in 0..10 {
+                d.key(KeyCode::PageDown);
+            }
+            assert!(text(&render(&d, &mut terminal, 100)).contains("Responding"));
+            d.mouse_action(
+                MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    column: journal_x,
+                    row: activity_y,
+                    modifiers: KeyModifiers::NONE,
+                },
+                area,
+            );
+            d.key(KeyCode::Enter);
+            assert!(
+                d.drain_outbox().is_empty(),
+                "transient click/Enter cannot create requests"
             );
             summary.run = turn.identity.run;
             summary.worker_stopped = true;

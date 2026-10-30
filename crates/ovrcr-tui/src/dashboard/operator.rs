@@ -869,15 +869,16 @@ impl Dashboard {
                     .selected
                     .and_then(|id| self.operator.chats.get_mut(&id.0))
             {
-                let rows = transcript_rows(chat, layout.transcript.width);
+                let rows = transcript_rows(chat, layout.transcript.width, 0);
                 let offset = transcript_offset(chat, &rows, layout.transcript.height as usize);
                 let visible = &rows[offset.min(rows.len())
                     ..rows.len().min(offset + layout.transcript.height as usize)];
-                if !visible
-                    .iter()
-                    .any(|(_, anchor)| Some(anchor.0) == chat.entry_focus)
-                {
-                    chat.entry_focus = visible.first().map(|(_, anchor)| anchor.0);
+                if !visible.iter().any(|(_, anchor)| {
+                    anchor.is_some_and(|anchor| Some(anchor.0) == chat.entry_focus)
+                }) {
+                    chat.entry_focus = visible
+                        .iter()
+                        .find_map(|(_, anchor)| anchor.map(|anchor| anchor.0));
                 }
             }
             self.operator_ensure_visible();
@@ -932,15 +933,15 @@ impl Dashboard {
                     key.code,
                     KeyCode::Up | KeyCode::Down | KeyCode::Home | KeyCode::End
                 ) {
-                    let rows = transcript_rows(chat, layout.transcript.width);
+                    let rows = transcript_rows(chat, layout.transcript.width, 0);
                     let offset = transcript_offset(chat, &rows, layout.transcript.height as usize);
-                    if let Some(target) = rows
-                        .iter()
-                        .position(|(_, anchor)| Some(anchor.0) == chat.entry_focus)
-                        && (target < offset || target >= offset + layout.transcript.height as usize)
+                    if let Some(target) = rows.iter().position(|(_, anchor)| {
+                        anchor.is_some_and(|anchor| Some(anchor.0) == chat.entry_focus)
+                    }) && (target < offset
+                        || target >= offset + layout.transcript.height as usize)
                     {
                         chat.follow = false;
-                        chat.anchor = Some(rows[target].1);
+                        chat.anchor = rows[target].1;
                         chat.scroll = rows
                             .len()
                             .saturating_sub(layout.transcript.height as usize)
@@ -1115,7 +1116,7 @@ impl Dashboard {
             .selected
             .and_then(|id| self.operator.chats.get_mut(&id.0))
         {
-            let rows = transcript_rows(chat, layout.transcript.width);
+            let rows = transcript_rows(chat, layout.transcript.width, 0);
             let offset = transcript_offset(chat, &rows, height);
             let target = if delta < 0 {
                 chat.follow = false;
@@ -1128,7 +1129,7 @@ impl Dashboard {
                 chat.follow = target == bottom;
                 target
             };
-            chat.anchor = rows.get(target).map(|(_, start)| *start);
+            chat.anchor = rows.get(target).and_then(|(_, start)| *start);
         }
     }
     pub(super) fn operator_mouse(
@@ -1169,11 +1170,11 @@ impl Dashboard {
                             .selected
                             .and_then(|id| self.operator.chats.get_mut(&id.0))
                     {
-                        let rows = transcript_rows(chat, transcript.width);
+                        let rows = transcript_rows(chat, transcript.width, 0);
                         let offset = transcript_offset(chat, &rows, transcript.height as usize);
                         chat.entry_focus = rows
                             .get(offset + usize::from(mouse.row - transcript.y))
-                            .map(|(_, anchor)| anchor.0)
+                            .and_then(|(_, anchor)| anchor.map(|anchor| anchor.0))
                             .filter(|id| {
                                 chat.messages
                                     .iter()
@@ -1588,9 +1589,16 @@ impl Dashboard {
             return;
         }
         let layout = self.operator_layout(self.outer_area);
+        let activity_rows = u16::from(
+            self.operator
+                .selected
+                .and_then(|id| self.operator.chats.get(&id.0))
+                .and_then(conversation_activity)
+                .is_some(),
+        );
         if self.outer_area.width < 60
             || self.outer_area.height < 16
-            || layout.transcript.height < 3
+            || layout.transcript.height < 3 + activity_rows
             || layout.transcript.width < 6
             || (self.outer_area.width < 100 && self.operator.sidebar_open)
         {
@@ -2479,7 +2487,7 @@ mod tests {
                 b[(layout.composer.x, layout.composer.bottom())].fg,
                 tokens.surface2
             );
-            let rows = transcript_rows(&d.operator.chats[&1], layout.transcript.width);
+            let rows = transcript_rows(&d.operator.chats[&1], layout.transcript.width, 0);
             assert!(
                 rows.iter()
                     .any(|(line, _)| line.to_string().starts_with("❯ "))
@@ -2500,7 +2508,7 @@ mod tests {
             ] {
                 let row = rows
                     .iter()
-                    .position(|(_, source)| *source == anchor)
+                    .position(|(_, source)| *source == Some(anchor))
                     .unwrap();
                 let cell = &b[(layout.transcript.x + 2, layout.transcript.y + row as u16)];
                 assert_eq!(cell.fg, color);
@@ -2517,8 +2525,14 @@ mod tests {
                     && compact.contains("(no output)")
                     && compact.contains("truncated")
             );
-            let call = rows.iter().position(|(_, a)| a.0 == 3).unwrap();
-            let output = rows.iter().position(|(_, a)| a.0 == 4).unwrap();
+            let call = rows
+                .iter()
+                .position(|(_, a)| a.is_some_and(|a| a.0 == 3))
+                .unwrap();
+            let output = rows
+                .iter()
+                .position(|(_, a)| a.is_some_and(|a| a.0 == 4))
+                .unwrap();
             assert_eq!(output, call + 1, "adjacent independent receipts");
             d.key(KeyCode::Tab);
             d.key(KeyCode::Tab);
@@ -2528,12 +2542,13 @@ mod tests {
             assert_eq!(d.operator.chats[&1].entry_focus, Some(3));
             assert!(d.operator.chats[&1].expanded.contains(&3));
             assert!(!d.operator.chats[&1].expanded.contains(&4));
-            let rows = transcript_rows(&d.operator.chats[&1], layout.transcript.width);
-            assert!(
-                rows.iter()
-                    .any(|(line, a)| a.0 == 3 && line.to_string().contains("FULL_CALL_ID"))
-            );
-            let row = rows.iter().position(|(_, a)| a.0 == 4).unwrap();
+            let rows = transcript_rows(&d.operator.chats[&1], layout.transcript.width, 0);
+            assert!(rows.iter().any(|(line, a)| a.is_some_and(|a| a.0 == 3)
+                && line.to_string().contains("FULL_CALL_ID")));
+            let row = rows
+                .iter()
+                .position(|(_, a)| a.is_some_and(|a| a.0 == 4))
+                .unwrap();
             d.mouse_action(
                 MouseEvent {
                     kind: MouseEventKind::Down(MouseButton::Left),
@@ -2545,9 +2560,10 @@ mod tests {
             );
             assert!(d.operator.chats[&1].expanded.contains(&4));
             assert!(
-                transcript_rows(&d.operator.chats[&1], layout.transcript.width)
+                transcript_rows(&d.operator.chats[&1], layout.transcript.width, 0)
                     .iter()
-                    .any(|(line, a)| a.0 == 4 && line.to_string().contains("FULL_CALL_ID"))
+                    .any(|(line, a)| a.is_some_and(|a| a.0 == 4)
+                        && line.to_string().contains("FULL_CALL_ID"))
             );
             d.operator.visible = false;
             d.draw(&mut terminal).unwrap();
@@ -3128,16 +3144,172 @@ mod tests {
         assert_eq!(d.redraw_interval(), super::super::status::SPINNER_INTERVAL);
     }
     #[test]
+    fn operator_inline_activity_scrolls_with_history_and_has_no_durable_actions() {
+        let (mut d, reads) = setup();
+        d.sidebar_width = Some(0);
+        let mut messages = vec![message(
+            1,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
+                id: "receipt".into(),
+                name: "Bash".into(),
+                arguments: "wrapped receipt ".repeat(40),
+            }),
+        )];
+        messages.push(message(
+            2,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput {
+                id: "receipt".into(),
+                output: String::new(),
+                truncated: false,
+                status: OperatorToolStatus::Succeeded,
+            }),
+        ));
+        messages.extend(
+            (3..32).map(|n| delta(n, &format!("ROW_{n:02} 界é🙂 {}\n", "wrapped ".repeat(12)))),
+        );
+        messages.push(delta(32, "LATEST_DURABLE"));
+        history(
+            &mut d,
+            request_id(&reads, 1),
+            summary(1, 1, OperatorTurnState::Running, false),
+            messages,
+            None,
+        );
+        assert!(draw(&mut d, 80, 24).contains("Responding"));
+        let layout = d.operator_layout(d.outer_area);
+        let rows = transcript_rows(&d.operator.chats[&1], layout.transcript.width, 0);
+        assert_eq!(rows.iter().filter(|(_, a)| a.is_none()).count(), 1);
+        assert!(
+            rows.last()
+                .unwrap()
+                .0
+                .to_string()
+                .starts_with("  ⠋ Responding")
+        );
+        assert!(
+            rows[rows.len() - 2]
+                .0
+                .to_string()
+                .contains("LATEST_DURABLE")
+        );
+        assert!(rows[rows.len() - 2].1.is_some_and(|a| a.1 != 4));
+        assert!(
+            !transcript_lines(&d.operator.chats[&1])
+                .iter()
+                .any(|l| l.to_string().contains("Responding"))
+        );
+
+        // Clicking the transient row cannot expand the previous durable receipt.
+        let activity_y = layout.transcript.bottom() - 1;
+        d.drain_outbox();
+        click(
+            &mut d,
+            layout.transcript.x + 2,
+            activity_y,
+            MouseEventKind::Down(MouseButton::Left),
+        );
+        d.key(KeyCode::Enter);
+        assert_eq!(d.operator.chats[&1].entry_focus, None);
+        assert!(d.operator.chats[&1].expanded.is_empty());
+        assert!(d.drain_outbox().is_empty());
+
+        d.key(KeyCode::PageUp);
+        assert!(!draw(&mut d, 80, 24).contains("Responding"));
+        click(
+            &mut d,
+            layout.transcript.x + 2,
+            layout.transcript.y,
+            MouseEventKind::ScrollUp,
+        );
+        assert!(!draw(&mut d, 80, 24).contains("Responding"));
+        let anchor = d.operator.chats[&1]
+            .anchor
+            .expect("scroll stores a durable anchor");
+        let chat = d.operator.chats.get_mut(&1).unwrap();
+        chat.messages.push(delta(33, "more stream\n"));
+        chat.ordinal = 33;
+        chat.confirmed_tail = Some(33);
+        chat.expanded.insert(1);
+        let resized = draw(&mut d, 60, 24);
+        assert!(!resized.contains("Responding"));
+        assert!(!d.operator.chats[&1].follow);
+        assert_eq!(d.operator.chats[&1].anchor, Some(anchor));
+        let layout = d.operator_layout(d.outer_area);
+        let rows = transcript_rows(&d.operator.chats[&1], layout.transcript.width, 100);
+        let offset = transcript_offset(
+            &d.operator.chats[&1],
+            &rows,
+            layout.transcript.height as usize,
+        );
+        assert!(
+            rows[offset]
+                .1
+                .is_some_and(|a| a <= anchor && a.0 == anchor.0)
+        );
+
+        for _ in 0..20 {
+            d.key(KeyCode::PageDown);
+        }
+        assert!(d.operator.chats[&1].follow);
+        assert!(draw(&mut d, 60, 24).contains("Responding"));
+        d.key(KeyCode::PageUp);
+        let anchor = d.operator.chats[&1].anchor;
+        d.operator_summary(summary(1, 1, OperatorTurnState::Complete, true));
+        assert!(!draw(&mut d, 80, 24).contains("Responding"));
+        assert_eq!(d.operator.chats[&1].anchor, anchor);
+        assert!(!d.operator.chats[&1].follow);
+        let rows = transcript_rows(&d.operator.chats[&1], 80, 0);
+        assert!(rows.iter().all(|(_, a)| a.is_some()));
+        assert!(rows.last().unwrap().1.is_some_and(|a| a.1 == 4));
+
+        // An empty running journal has one row and never acquires focus/ordinal authority.
+        d.operator_select(Id(2));
+        d.operator.chats.get_mut(&2).unwrap().reading = false;
+        d.operator.chats.get_mut(&2).unwrap().confirmed_tail = Some(0);
+        d.operator.list_focus = true;
+        d.key(KeyCode::Tab);
+        assert!(d.operator.transcript_focus);
+        assert_eq!(d.operator.chats[&2].entry_focus, None);
+        let rows = transcript_rows(&d.operator.chats[&2], 60, 0);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1, None);
+        d.drain_outbox();
+        d.key(KeyCode::Enter);
+        let layout = d.operator_layout(d.outer_area);
+        click(
+            &mut d,
+            layout.transcript.x + 2,
+            layout.transcript.y,
+            MouseEventKind::Down(MouseButton::Left),
+        );
+        d.key(KeyCode::Enter);
+        assert_eq!(d.operator.chats[&2].entry_focus, None);
+        assert!(d.operator.chats[&2].expanded.is_empty());
+        assert!(d.operator.chats[&2].messages.is_empty());
+        assert!(d.drain_outbox().is_empty());
+        d.operator.chats.get_mut(&2).unwrap().draft = "long draft 界🙂 ".repeat(80);
+        draw(&mut d, 60, 16);
+        let layout = d.operator_layout(d.outer_area);
+        assert!(
+            layout.transcript.height >= 4,
+            "three durable rows plus activity"
+        );
+        assert!(layout.composer.height >= 2);
+    }
+    #[test]
     fn operator_activity_state_and_cadence() {
         let (mut d, _) = setup();
         d.sidebar_width = Some(0);
         let assert_label = |d: &mut Dashboard, expected: &str| {
             let screen = draw(d, 140, 40);
-            let context = d.operator_layout(d.outer_area).context;
-            let row: String = screen
-                .chars()
-                .skip(usize::from(context.y * 140 + context.x))
-                .take(context.width as usize)
+            let transcript = d.operator_layout(d.outer_area).transcript;
+            let row: String = (transcript.y..transcript.bottom())
+                .flat_map(|y| {
+                    screen
+                        .chars()
+                        .skip(usize::from(y * 140 + transcript.x))
+                        .take(transcript.width as usize)
+                })
                 .collect();
             assert!(row.contains(expected), "expected {expected}: {row}");
         };
@@ -3333,7 +3505,11 @@ mod tests {
                     ratatui::Terminal::new(ratatui::backend::TestBackend::new(cols, height))
                         .unwrap();
                 let mut before = None;
-                for error in [None, Some("RETAINED_ERROR 界".repeat(20))] {
+                for error in [
+                    None,
+                    Some("RETAINED_ERROR ".repeat(20)),
+                    Some("RETAINED_ERROR 界".repeat(20)),
+                ] {
                     d.operator.chats.get_mut(&1).unwrap().error = error.clone();
                     for time in [0, 100] {
                         terminal
@@ -3343,14 +3519,26 @@ mod tests {
                         let row: String = (layout.context.x..layout.context.right())
                             .map(|x| b[(x, layout.context.y)].symbol())
                             .collect();
-                        assert!(
-                            row.contains("Waiting for bash\\u{1b}"),
-                            "{cols}×{height}: {row}"
-                        );
-                        assert!(row.contains(" result"), "{row}");
-                        assert!(!row.contains('\u{1b}'));
-                        if error.is_some() {
+                        let activity: Vec<_> = (layout.transcript.y..layout.transcript.bottom())
+                            .filter_map(|y| {
+                                let line: String = (layout.transcript.x..layout.transcript.right())
+                                    .map(|x| b[(x, y)].symbol())
+                                    .collect();
+                                line.contains("Waiting for").then_some((y, line))
+                            })
+                            .collect();
+                        assert_eq!(activity.len(), 1, "{cols}×{height}: {b:?}");
+                        assert!(activity[0].1.starts_with("  "));
+                        assert!(activity[0].1.contains("Waiting for bash\\u{1b}"));
+                        assert!(!activity[0].1.contains('\u{1b}'));
+                        assert!(!row.contains("Waiting for"));
+                        if let Some(error) = &error {
                             assert!(row.starts_with("RETAINED_ERROR"), "{row}");
+                            if error.is_ascii() {
+                                assert_eq!(row, error[..layout.context.width as usize]);
+                            } else {
+                                assert!(row.contains('界'), "retained Unicode error: {row}");
+                            }
                             assert_eq!(
                                 b[(layout.context.x, layout.context.y)].fg,
                                 crate::theme::ThemeTokens::for_id(theme).red
@@ -3373,7 +3561,7 @@ mod tests {
                                 .map(|(i, _)| i)
                                 .collect();
                             assert_eq!(changed.len(), 1, "only the clock glyph may change");
-                            assert_eq!(changed[0] / cols as usize, layout.context.y as usize);
+                            assert_eq!(changed[0] / cols as usize, activity[0].0 as usize);
                         }
                     }
                 }

@@ -83,15 +83,21 @@ text rows and scrolls around the real cursor. One-cell edge padding, a mauve top
 rule and muted bottom rule define the editor. `OperatorLayout` owns header,
 transcript, context, writable composer and both rule rectangles for rendering,
 hit-testing and review. The target uses the context row above the top rule.
-That same row reserves a right-hand activity label: Sending before submission
-acceptance, Responding throughout Running (including silence), or Waiting for a
-recorded current-turn tool result. Tool waits require caught-up history and match
+A single transient journal row follows the latest durable message or receipt,
+aligned after the same two-cell gutter: Sending before submission acceptance,
+Responding throughout Running (including silence), or Waiting for a recorded
+current-turn tool result. Tool waits require caught-up history and match
 call IDs within the current turn; paging/dirty history falls back to Responding.
 Stopping/Closing remain explicit and terminal work without stop proof says static
 Stop unconfirmed. Confirmed terminal work removes the indicator. The private
 derived activity decision also requests the shared 100 ms spinner cadence while
 the journal is visible, independent of sidebar visibility. Rendering uses the
-shared draw timestamp and leaves transcript geometry, anchors and input untouched.
+shared draw timestamp. Canonical visual rows carry optional durable anchors; the
+activity row has none and replaces only the final durable blank separator. It
+occupies one clipped row before viewport slicing, so older history scrolls it away
+and returning to the tail reveals it. Focus, disclosure and durable scroll anchors
+ignore unanchored rows. The context/error row keeps its full width, and review
+requires three durable viewport rows in addition to any activity row.
 The local header shows Operator/provider/model/state only when the selected chat's
 row is rendered in the shared sidebar. Collapsed, offscreen or absent rows retain
 the clipped chat title, shortening model metadata first. Only visible Operator
