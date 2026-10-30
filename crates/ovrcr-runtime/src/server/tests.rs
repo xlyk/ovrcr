@@ -6284,6 +6284,9 @@ fn startup_preserves_stale_socket_replaced_during_executable_hash() {
     let socket = root.path().join("server.sock");
     let stale = UnixListener::bind(&socket).unwrap();
     drop(stale);
+    let original = std::fs::symlink_metadata(&socket).unwrap();
+    let original_identity = (original.dev(), original.ino());
+    let pinned_socket = root.path().join("stale.sock");
 
     let registry = root.path().join("instance");
     std::fs::create_dir(&registry).unwrap();
@@ -6299,10 +6302,13 @@ fn startup_preserves_stale_socket_replaced_during_executable_hash() {
     *startup::AFTER_EXECUTABLE_BUILD_HOOK.lock().unwrap() = Some((
         socket.clone(),
         Box::new(move || {
-            std::fs::remove_file(&hook_socket).unwrap();
+            // Keep the old inode allocated so this tests a distinct replacement.
+            std::fs::rename(&hook_socket, &pinned_socket).unwrap();
             let replacement = UnixListener::bind(&hook_socket).unwrap();
             let metadata = std::fs::symlink_metadata(&hook_socket).unwrap();
-            *hook_identity.lock().unwrap() = Some((metadata.dev(), metadata.ino()));
+            let identity = (metadata.dev(), metadata.ino());
+            assert_ne!(identity, original_identity);
+            *hook_identity.lock().unwrap() = Some(identity);
             drop(replacement);
         }),
     ));
