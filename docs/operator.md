@@ -26,13 +26,20 @@ Use the global `--json` flag for status, models or logout, for example
 ## Run concurrent conversations
 
 1. In the Dashboard, press `Ctrl-g` to reach Browse, then `o`, or click the
-   pinned **Operator** control above the project sidebar.
+   **Operator** control in the title bar. Saved conversations load above Projects
+   in the existing sidebar before you open Operator.
 2. Create a conversation with `Ctrl-n`. Choose ChatGPT or Grok and edit the model
    identifier if needed. Press Enter to create it.
 3. Type your request and press Enter. The operator executes requested Bash and
    OVRCR CLI actions without per-command approval dialogs; existing CLI guards apply.
-4. Use `Ctrl-l` or Tab to open conversation history. Open another conversation,
-   or create one, while the first continues streaming.
+4. Use `Ctrl-l` or Tab to focus the conversation sidebar, then Up/Down and Enter
+   to choose a conversation. Click a row to open it, or use `[+]` / `Ctrl-n` for
+   manual provider/model creation while another conversation continues streaming.
+
+The sidebar shows up to five one-line conversations. Scroll to browse longer lists;
+click the Operator heading or use Left/Right with sidebar focus to collapse/expand.
+The collapsed heading retains the conversation count. Provider/model details stay
+in the conversation view.
 
 Each conversation keeps its own draft, captured workspace/session context, scroll
 position and status. Provider and model stay fixed after creation. Selecting a
@@ -76,6 +83,13 @@ Select the conversation and use its **Stop** control or `Ctrl-x`. Stop affects
 that turn's model and Bash work; an OVRCR operation already accepted may finish.
 Visible partial text and command outcomes remain in history. Generic
 `terminal kill` and `terminal close` refuse Operator conversations; use native Stop.
+
+To close a conversation, focus its sidebar row and press `x`, or hover and click
+`[x]`. Confirming stops its exact retained run and archives the conversation while
+preserving model history and the journal. A nonempty draft is discarded only after
+archive is acknowledged. Cancellation or failure retains it. Closing one chat leaves
+other conversations usable. Ordinary `x` in the message or model field remains text.
+Archived sessions offers Unarchive for saved Operator conversations.
 
 Wait for confirmed worker stop before submitting again. **Finishing / stop
 unconfirmed** is not confirmation. After a crash, inspect the Operator rows with

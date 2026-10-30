@@ -85,6 +85,9 @@ pub fn run_dashboard(
         )?;
     }
 
+    dashboard.operator_start_listing();
+    flush(&mut stream, &mut dashboard)?;
+
     let mut guard = TerminalGuard::enter()?;
     let mut mouse_enabled = guard.mouse;
     let backend = CrosstermBackend::new(guard.writer_mut());

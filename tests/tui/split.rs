@@ -184,7 +184,7 @@ fn sidebar_border_drag_resizes_the_sidebar_and_the_pane() {
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     let review = (0..49)
-        .map(|x| terminal.backend().buffer()[(x, 4)].symbol())
+        .map(|x| terminal.backend().buffer()[(x, 5)].symbol())
         .collect::<String>();
     assert_eq!(review, format!("▌    - review{}claude ", " ".repeat(29)));
 

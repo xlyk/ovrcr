@@ -417,12 +417,42 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                 Action::OperatorKey(code, modifiers),
             )
         };
+        if dashboard.operator_sidebar_focused() {
+            return vec![KeyGroup {
+                title: "Operator conversations".into(),
+                keys: vec![
+                    native(
+                        "j/k",
+                        "Select conversation",
+                        KeyCode::Down,
+                        KeyModifiers::NONE,
+                    ),
+                    native("Enter", "Open composer", Enter, KeyModifiers::NONE),
+                    native("x", "Close conversation", Char('x'), KeyModifiers::NONE),
+                    native("←", "Collapse", KeyCode::Left, KeyModifiers::NONE),
+                    native("→", "Expand", KeyCode::Right, KeyModifiers::NONE),
+                    native("Ctrl-l", "Composer", Char('l'), KeyModifiers::CONTROL),
+                    native(
+                        "Ctrl-n",
+                        "New Conversation",
+                        Char('n'),
+                        KeyModifiers::CONTROL,
+                    ),
+                    native("Ctrl-g", "Browse", Char('g'), KeyModifiers::CONTROL),
+                ],
+            }];
+        }
         return vec![KeyGroup {
             title: "Operator".into(),
             keys: vec![
                 native("Enter", "Send / create", Enter, KeyModifiers::NONE),
                 native("Shift-Enter", "Newline", Enter, KeyModifiers::SHIFT),
-                native("Ctrl-l", "Conversations", Char('l'), KeyModifiers::CONTROL),
+                native(
+                    "Ctrl-l",
+                    "Conversation sidebar",
+                    Char('l'),
+                    KeyModifiers::CONTROL,
+                ),
                 native(
                     "Ctrl-n",
                     "New Conversation",

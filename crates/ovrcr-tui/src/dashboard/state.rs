@@ -696,6 +696,7 @@ impl Dashboard {
 
     pub fn install_area(&mut self, area: Rect) {
         self.outer_area = area;
+        self.operator_ensure_visible();
         for rect in self.pane_rects(area) {
             if let Some(pane) = self.panes.get_mut(rect.pane_index) {
                 pane.desired_size = TerminalSize {
@@ -1125,6 +1126,9 @@ impl Dashboard {
             self.cancel_copy(Some("Copy cancelled: terminal resized"));
         }
         self.outer_area = area;
+        if geometry_changed {
+            self.operator_ensure_visible();
+        }
         let desired = self.desired_view();
         let current_runs: HashSet<_> = self
             .hierarchy
@@ -1239,14 +1243,16 @@ impl Dashboard {
         if self.tasks.is_some() {
             return Duration::from_millis(50);
         }
-        if self.hierarchy.projects.iter().any(|project| {
-            project.workspaces.iter().any(|workspace| {
-                workspace
-                    .sessions
-                    .iter()
-                    .any(|session| self.session_is_busy(session.id))
+        if self.operator_sidebar_busy()
+            || self.hierarchy.projects.iter().any(|project| {
+                project.workspaces.iter().any(|workspace| {
+                    workspace
+                        .sessions
+                        .iter()
+                        .any(|session| self.session_is_busy(session.id))
+                })
             })
-        }) {
+        {
             SPINNER_INTERVAL
         } else {
             DASHBOARD_IDLE_REDRAW_INTERVAL
@@ -1397,7 +1403,7 @@ impl Dashboard {
     }
 
     pub(super) fn tree_viewport_height(&self) -> usize {
-        usize::from(self.sidebar_rects(self.outer_area).0.height)
+        usize::from(self.sidebar_rects(self.outer_area).tree.height)
     }
 
     fn visible_selection_index(&self, rows: &[TreeRow]) -> Option<usize> {
@@ -1431,7 +1437,7 @@ impl Dashboard {
 
     /// Lines each visible row takes in the sidebar drawn for `self.outer_area`.
     fn tree_heights(&self, rows: &[TreeRow]) -> Vec<usize> {
-        let width = self.sidebar_rects(self.outer_area).0.width;
+        let width = self.sidebar_rects(self.outer_area).tree.width;
         tree_row_heights(self, rows, usize::from(width))
     }
 
@@ -2485,7 +2491,7 @@ impl Dashboard {
         if !matches!(self.mode, InputMode::Browse | InputMode::Terminal) || self.sidebar_hidden {
             return None;
         }
-        let sidebar = self.sidebar_rects(area).0;
+        let sidebar = self.sidebar_rects(area).tree;
         if mouse.kind == MouseEventKind::Moved {
             let inside = point_in_rect(mouse, sidebar);
             let next = inside

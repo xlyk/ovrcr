@@ -35,24 +35,39 @@ processes have stopped. Agent rows without a conversation reference open the sup
 resume picker. Unknown providers and invalidated references remain unavailable.
 
 
-The pinned Operator control sits in the existing title bar above the project
-sidebar, preserving project row geometry; its shared
-rectangle drives drawing and mouse selection. Browse `o` and the palette's
-Operator action open the same native hub. Terminal pane assignments survive,
-but the desired terminal view is empty while the hub is visible and native
-composer input never produces PTY bytes. Existing overlays retain input priority;
-spaces and punctuation in an active composer remain ordinary text.
+Operator conversations occupy one-line rows above Projects in the existing sidebar.
+`SidebarRects` supplies Operator, project-tree and quota rectangles to rendering,
+mouse input and viewport calculations. The quota ladder reserves the Operator
+heading and three project-tree lines; up to five conversation rows use remaining
+space and shrink first. Collapsing keeps the heading and active-conversation count.
+Rows share the session activity glyphs, selected background/bar and hover close mark,
+and omit provider/model metadata. Archived chats remain cached as authority tombstones
+but never appear in the active list. Saved summaries load asynchronously after the
+production handshake and initial terminal attachment, without opening Operator.
+
+Browse `o` and the clickable title-bar control open the native hub. Terminal pane
+assignments survive, but the desired terminal view is empty while the hub is visible
+and native composer input never produces PTY bytes. Existing overlays retain input
+priority; spaces and punctuation in an active composer remain ordinary text.
 
 `dashboard::operator` owns per-conversation drafts, context, grapheme cursor,
-scroll/follow-tail and completion Unread state. Scrolled transcripts keep a logical
-text anchor across streaming, conversation switches and resize. Successful completion
+scroll/follow-tail and completion Unread state. Selecting a saved conversation never
+recaptures the last terminal's context. Scrolled transcripts keep a logical text
+anchor across streaming, conversation switches and resize. Successful completion
 Unread comes from the exact durable turn summary; SDK model history stays private.
-`Tab` or `Ctrl-l` toggles history;
-narrow layouts display history or transcript, with `Ctrl-l` also available from
-New Conversation. `Ctrl-n` opens creation, Enter sends, Shift-Enter inserts a
-newline, paste only edits, Ctrl-g returns to Browse retaining drafts, and Ctrl-x
-stops only the selected exact current turn. A pending submission clears only its
-captured draft after acceptance; refusal or later typing preserves the draft.
+`Tab` or `Ctrl-l` moves focus between the conversation sidebar and composer.
+`Ctrl-n` opens creation, Enter sends, Shift-Enter inserts a newline, paste only edits,
+Ctrl-g returns to Browse retaining drafts, and Ctrl-x stops only the selected exact
+current turn. A pending submission clears only its captured draft after acceptance;
+refusal or later typing preserves the draft.
+
+Sidebar `x` and `[x]` open the native confirmation for that conversation's retained
+run. Confirmation explains uncertain/live work and draft discard, then sends the
+Operator Close request rather than workspace WIP-save. Only that chat is frozen
+while close is pending. Cancel or error retains its draft and row; acknowledged
+archive clears the confirmed draft and removes its active row without stealing a
+newer selection. Ordinary `x` in either composer remains text. Sidebar focus,
+collapse and viewport movement never acknowledge completion Unread.
 
 OperatorChanged is a coalescible dirty signal, never transcript content. Tracked
 requests load durable summaries and ordinal-paged history independently of focus,

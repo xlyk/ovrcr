@@ -1109,6 +1109,43 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
+    pub(super) fn open_close_operator_for(
+        &mut self,
+        id: ovrcr_protocol::OperatorConversationId,
+    ) -> DashboardAction {
+        let Some((session, run, title, busy, draft)) = self.operator_close_target(id) else {
+            return DashboardAction::None;
+        };
+        self.whichkey = None;
+        self.palette = Some(Palette {
+            page: Page::Confirm {
+                request: Some(Request::Operator(ovrcr_protocol::OperatorRequest::Close {
+                    conversation: id,
+                    expected_run: run,
+                })),
+                target: format!(
+                    "Close Operator {} (#{} / session {} / run {}). {}Archive its history.{}",
+                    title,
+                    id.0,
+                    session.0,
+                    run.0,
+                    if busy {
+                        "Stop its live or unconfirmed work, then "
+                    } else {
+                        ""
+                    },
+                    if draft {
+                        " The draft will be discarded."
+                    } else {
+                        ""
+                    }
+                ),
+            },
+            ..Palette::new()
+        });
+        DashboardAction::Redraw
+    }
+
     pub(super) fn dismiss_close_confirm_for(&mut self, session: SessionId) {
         let matches_close = matches!(
             self.palette.as_ref().map(|palette| &palette.page),
@@ -2532,6 +2569,15 @@ impl Dashboard {
                 }
                 Page::Confirm { request, .. } => {
                     if let Some(request) = request.clone() {
+                        if let Request::Operator(ovrcr_protocol::OperatorRequest::Close {
+                            conversation,
+                            expected_run,
+                        }) = request
+                        {
+                            self.operator_close(conversation, expected_run);
+                            self.palette = None;
+                            return DashboardAction::Redraw;
+                        }
                         action = self.palette_submit(&mut palette, request);
                     } else {
                         self.palette = None;
@@ -5685,7 +5731,7 @@ mod launch_tests {
     }
 
     #[test]
-    fn operator_delete_refused_preserves_journal() {
+    fn operator_archive_palette_omits_delete() {
         let d = dashboard();
         let mut row = summary(9);
         row.archived = true;

@@ -457,7 +457,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         );
     }
     let rows = dashboard.visible_rows();
-    let (tree, _) = dashboard.sidebar_rects(frame.area());
+    let tree = dashboard.sidebar_rects(frame.area()).tree;
     let width = usize::from(tree.width);
     let heights = tree_row_heights(dashboard, &rows, width);
     let stacked = heights.contains(&2);
@@ -480,6 +480,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     }
 
     dashboard.draw_operator_header(frame);
+    dashboard.draw_operator_sidebar(frame, now_unix_ms);
     dashboard.draw_quota(frame, now_unix_ms);
 
     let rects = dashboard.pane_rects(frame.area());
@@ -1046,16 +1047,19 @@ fn tree_line_text(
     width: usize,
     now_unix_ms: u64,
 ) -> (Line<'static>, Style) {
-    let selected = match row {
-        TreeRow::Session { id } => dashboard
-            .close_confirm_session()
-            .map(|closing| closing == *id)
-            .unwrap_or_else(|| dashboard.action_session() == Some(*id)),
-        TreeRow::Project { .. }
-        | TreeRow::Workspace { .. }
-        | TreeRow::ProvisionalWorkspace { .. }
-        | TreeRow::ProvisionalSession { .. } => dashboard.selected_container.as_ref() == Some(row),
-    };
+    let selected = !dashboard.operator.visible
+        && match row {
+            TreeRow::Session { id } => dashboard
+                .close_confirm_session()
+                .map(|closing| closing == *id)
+                .unwrap_or_else(|| dashboard.action_session() == Some(*id)),
+            TreeRow::Project { .. }
+            | TreeRow::Workspace { .. }
+            | TreeRow::ProvisionalWorkspace { .. }
+            | TreeRow::ProvisionalSession { .. } => {
+                dashboard.selected_container.as_ref() == Some(row)
+            }
+        };
     let style = Style::default()
         .fg(TEXT())
         .bg(if selected { SURFACE0() } else { BASE() });

@@ -1,4 +1,6 @@
 //! Native chat is durable protocol data, never a terminal parser or PTY input target.
+mod render;
+
 use super::text_cursor::TextCursor;
 use super::{Dashboard, DashboardAction, InputMode};
 use crossterm::event::{
@@ -26,6 +28,9 @@ pub(super) struct Hub {
     pub visible: bool,
     editing: bool,
     list_focus: bool,
+    pub(super) collapsed: bool,
+    list_offset: usize,
+    hovered: Option<Id>,
     selected: Option<Id>,
     chats: BTreeMap<u64, Chat>,
     pending: HashMap<u64, Pending>,
@@ -48,6 +53,7 @@ struct Chat {
     dirty: bool,
     submitting: bool,
     stopping: bool,
+    closing: bool,
     scroll: usize,
     anchor: Option<(usize, usize)>,
     follow: bool,
@@ -69,6 +75,7 @@ impl Chat {
             dirty: true,
             submitting: false,
             stopping: false,
+            closing: false,
             scroll: 0,
             anchor: None,
             follow: true,
@@ -77,7 +84,8 @@ impl Chat {
         }
     }
     fn can_submit(&self) -> bool {
-        !self.summary.archived
+        !self.closing
+            && !self.summary.archived
             && !self.submitting
             && self.summary.worker_stopped
             && self
@@ -99,7 +107,14 @@ enum Pending {
         id: Id,
         after: u64,
     },
-    Create,
+    Create {
+        context: OperatorContext,
+    },
+    Close {
+        id: Id,
+        session: ovrcr_protocol::SessionId,
+        expected_run: SessionRunId,
+    },
     Submit {
         id: Id,
         text: String,
@@ -159,20 +174,6 @@ fn content_area(dashboard: &Dashboard, area: Rect) -> Rect {
         area.y.saturating_add(1),
         area.width.saturating_sub(sidebar),
         area.height.saturating_sub(2),
-    )
-}
-fn split(area: Rect, list_focus: bool) -> (Rect, Rect) {
-    if area.width < 72 {
-        return if list_focus {
-            (area, Rect::default())
-        } else {
-            (Rect::default(), area)
-        };
-    }
-    let width = (area.width / 3).clamp(20, 32);
-    (
-        Rect::new(area.x, area.y, width, area.height),
-        Rect::new(area.x + width, area.y, area.width - width, area.height),
     )
 }
 fn stop_rect(right: Rect) -> Rect {
@@ -381,20 +382,8 @@ impl Dashboard {
     }
     pub(super) fn open_operator(&mut self) -> DashboardAction {
         if !self.operator.visible {
-            let context = self.capture_operator_context();
+            self.operator.context = self.capture_operator_context();
             self.retarget(super::state::PaneChange::Focus);
-            let has_context = context != OperatorContext::default();
-            if has_context {
-                self.operator.context = context.clone();
-            }
-            if has_context
-                && let Some(chat) = self
-                    .operator
-                    .selected
-                    .and_then(|id| self.operator.chats.get_mut(&id.0))
-            {
-                chat.context = context;
-            }
         }
         self.operator.visible = true;
         self.operator.editing = true;
@@ -405,6 +394,9 @@ impl Dashboard {
         self.operator_list(0);
         self.operator_catch_up();
         DashboardAction::Redraw
+    }
+    pub(super) fn operator_start_listing(&mut self) {
+        self.operator_list(0);
     }
     fn operator_new(&mut self) {
         let provider = self.settings.operator.provider;
@@ -466,14 +458,56 @@ impl Dashboard {
         self.operator_catch_up();
     }
     fn operator_select(&mut self, id: Id) {
-        if self.operator.chats.contains_key(&id.0) {
+        if self
+            .operator
+            .chats
+            .get(&id.0)
+            .is_some_and(|chat| !chat.summary.archived)
+        {
             self.operator.selected = Some(id);
             self.operator.new = None;
             self.operator.error = None;
             self.operator.list_focus = false;
             self.operator.editing = true;
+            self.operator_ensure_visible();
             self.operator_catch_up();
         }
+    }
+    pub(super) fn operator_close_target(
+        &self,
+        id: Id,
+    ) -> Option<(ovrcr_protocol::SessionId, SessionRunId, String, bool, bool)> {
+        let chat = self.operator.chats.get(&id.0)?;
+        (!chat.summary.archived && !chat.closing).then(|| {
+            (
+                chat.summary.session,
+                chat.summary.run,
+                display_text(&chat.summary.title),
+                !chat.summary.worker_stopped,
+                !chat.draft.is_empty(),
+            )
+        })
+    }
+    pub(super) fn operator_close(&mut self, id: Id, expected_run: SessionRunId) {
+        let Some(chat) = self.operator.chats.get_mut(&id.0) else {
+            return;
+        };
+        if chat.summary.archived || chat.closing || chat.summary.run != expected_run {
+            return;
+        }
+        let session = chat.summary.session;
+        chat.closing = true;
+        self.operator_request(
+            Pending::Close {
+                id,
+                session,
+                expected_run,
+            },
+            OperatorRequest::Close {
+                conversation: id,
+                expected_run,
+            },
+        );
     }
     fn operator_submit(&mut self) {
         let Some(id) = self.operator.selected else {
@@ -555,7 +589,12 @@ impl Dashboard {
                 KeyCode::Char('l') => {
                     self.operator.list_focus = !self.operator.list_focus;
                     if self.operator.selected.is_none() {
-                        self.operator.selected = self.operator.chats.keys().next().copied().map(Id);
+                        self.operator.selected = self.operator_ids().first().copied();
+                    }
+                    if self.operator.list_focus && self.operator.selected.is_some() {
+                        self.operator.new = None;
+                        self.operator.collapsed = false;
+                        self.operator_ensure_visible();
                     }
                 }
                 _ => {}
@@ -567,7 +606,7 @@ impl Dashboard {
             return DashboardAction::Redraw;
         }
         if self.operator.list_focus {
-            let ids: Vec<_> = self.operator.chats.keys().copied().map(Id).collect();
+            let ids = self.operator_ids();
             let current = ids
                 .iter()
                 .position(|id| Some(*id) == self.operator.selected)
@@ -576,6 +615,20 @@ impl Dashboard {
                 KeyCode::Up | KeyCode::Char('k') => current.saturating_sub(1),
                 KeyCode::Down | KeyCode::Char('j') => {
                     (current + 1).min(ids.len().saturating_sub(1))
+                }
+                KeyCode::Char('x') => {
+                    if let Some(id) = self.operator.selected {
+                        return self.open_close_operator_for(id);
+                    }
+                    return DashboardAction::None;
+                }
+                KeyCode::Left => {
+                    self.operator.collapsed = true;
+                    return DashboardAction::Redraw;
+                }
+                KeyCode::Right => {
+                    self.operator.collapsed = false;
+                    return DashboardAction::Redraw;
                 }
                 KeyCode::Enter => {
                     if let Some(id) = self.operator.selected.or_else(|| ids.first().copied()) {
@@ -587,6 +640,9 @@ impl Dashboard {
             };
             if let Some(id) = ids.get(next) {
                 self.operator.selected = Some(*id);
+                self.operator.collapsed = false;
+                self.operator.new = None;
+                self.operator_ensure_visible();
             }
             return DashboardAction::Redraw;
         }
@@ -614,11 +670,13 @@ impl Dashboard {
                         .operator
                         .pending
                         .values()
-                        .any(|pending| matches!(pending, Pending::Create))
+                        .any(|pending| matches!(pending, Pending::Create { .. }))
                     {
                         let provider = form.provider;
                         self.operator_request(
-                            Pending::Create,
+                            Pending::Create {
+                                context: self.operator.context.clone(),
+                            },
                             OperatorRequest::Create { provider, model },
                         );
                     }
@@ -634,6 +692,14 @@ impl Dashboard {
         if key.code == KeyCode::Tab || key.code == KeyCode::BackTab {
             self.operator.list_focus = !self.operator.list_focus;
             return DashboardAction::Redraw;
+        }
+        if self
+            .operator
+            .selected
+            .and_then(|id| self.operator.chats.get(&id.0))
+            .is_some_and(|chat| chat.closing)
+        {
+            return DashboardAction::None;
         }
         match key.code {
             KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
@@ -664,6 +730,9 @@ impl Dashboard {
         }
         DashboardAction::Redraw
     }
+    pub(super) fn operator_sidebar_focused(&self) -> bool {
+        self.operator.visible && self.operator.list_focus
+    }
     pub(super) fn operator_is_editing(&self) -> bool {
         self.operator.visible && self.operator.editing
     }
@@ -674,7 +743,7 @@ impl Dashboard {
             .and_then(|id| self.operator.chats.get_mut(&id.0))
         {
             // Match the protocol's user-text bound without splitting UTF-8.
-            if chat.draft.len().saturating_add(text.len()) <= 64 * 1024 {
+            if !chat.closing && chat.draft.len().saturating_add(text.len()) <= 64 * 1024 {
                 chat.cursor.insert(&mut chat.draft, text);
             }
         }
@@ -695,10 +764,7 @@ impl Dashboard {
         DashboardAction::Redraw
     }
     fn operator_scroll(&mut self, delta: isize) {
-        let (_, right) = split(
-            content_area(self, self.outer_area),
-            self.operator.list_focus,
-        );
+        let right = content_area(self, self.outer_area);
         let height = right
             .height
             .saturating_sub(right.height.min(7))
@@ -730,6 +796,9 @@ impl Dashboard {
         area: Rect,
     ) -> Option<DashboardAction> {
         let point = ratatui::layout::Position::new(mouse.column, mouse.row);
+        if let Some(action) = self.operator_sidebar_mouse(mouse, area) {
+            return Some(action);
+        }
         if !self.sidebar_hidden
             && self.operator_header_rect(area).contains(point)
             && mouse.kind == MouseEventKind::Down(MouseButton::Left)
@@ -743,22 +812,14 @@ impl Dashboard {
         if !content.contains(point) {
             return None;
         }
-        let (list, transcript) = split(content, self.operator.list_focus);
+        let transcript = content;
         match mouse.kind {
-            MouseEventKind::Down(MouseButton::Left) if !list.is_empty() && list.contains(point) => {
-                let index = usize::from(mouse.row.saturating_sub(list.y + 1))
-                    + self.operator_list_offset(list.height);
-                if mouse.row == list.y {
-                    self.operator_new();
-                } else if let Some(id) = self.operator.chats.keys().nth(index).copied().map(Id) {
-                    self.operator_select(id);
-                }
-            }
             MouseEventKind::Down(MouseButton::Left) if !transcript.is_empty() => {
                 if stop_rect(transcript).contains(point) && self.operator.new.is_none() {
                     self.operator_stop();
                 } else {
                     self.operator.editing = true;
+                    self.operator.list_focus = false;
                 }
             }
             MouseEventKind::ScrollUp => self.operator_scroll(-3),
@@ -788,13 +849,20 @@ impl Dashboard {
                     chat.stopping = false;
                 }
             }
-            Pending::Create => {}
+            Pending::Close { id, .. } => {
+                if let Some(chat) = self.operator.chats.get_mut(&id.0) {
+                    chat.closing = false;
+                }
+            }
+            Pending::Create { .. } => {}
         }
         if let Response::Error { message, .. } = response {
             let id = match &pending {
-                Pending::Read { id, .. } | Pending::Submit { id, .. } => Some(*id),
+                Pending::Read { id, .. }
+                | Pending::Submit { id, .. }
+                | Pending::Close { id, .. } => Some(*id),
                 Pending::Stop { identity } => Some(identity.conversation),
-                Pending::List | Pending::Create => None,
+                Pending::List | Pending::Create { .. } => None,
             };
             if let Some(chat) = id.and_then(|id| self.operator.chats.get_mut(&id.0)) {
                 chat.error = Some(display_text(message));
@@ -805,6 +873,36 @@ impl Dashboard {
             return true;
         }
         match (pending, response) {
+            (
+                Pending::Close {
+                    id,
+                    session,
+                    expected_run,
+                },
+                Response::Operator(OperatorResponse::Closed(summary)),
+            ) if summary.id == id
+                && summary.session == session
+                && summary.archived
+                && summary.worker_stopped
+                && summary.run.0 == expected_run.0.saturating_add(1) =>
+            {
+                self.operator_summary(summary.clone());
+                if let Some(chat) = self.operator.chats.get_mut(&id.0)
+                    && chat.summary.archived
+                    && chat.summary.run == summary.run
+                {
+                    chat.draft.clear();
+                    chat.cursor = TextCursor::default();
+                }
+                if self.operator.selected == Some(id) && self.operator.chats[&id.0].summary.archived
+                {
+                    self.operator.selected = self.operator_ids().first().copied();
+                    if self.operator.selected.is_none() {
+                        self.operator_new();
+                    }
+                }
+                self.operator_ensure_visible();
+            }
             (Pending::List, Response::Operator(OperatorResponse::Conversations(summaries))) => {
                 for summary in summaries {
                     self.operator_summary(summary.clone());
@@ -825,9 +923,17 @@ impl Dashboard {
                 self.operator_history(id, after, history);
                 self.operator_catch_up();
             }
-            (Pending::Create, Response::Operator(OperatorResponse::Created(summary))) => {
+            (
+                Pending::Create { context },
+                Response::Operator(OperatorResponse::Created(summary)),
+            ) => {
                 self.operator_summary(summary.clone());
-                self.operator_select(summary.id);
+                if let Some(chat) = self.operator.chats.get_mut(&summary.id.0) {
+                    chat.context = context;
+                }
+                if self.operator.visible && self.operator.new.is_some() {
+                    self.operator_select(summary.id);
+                }
                 self.operator_catch_up();
             }
             (
@@ -922,9 +1028,12 @@ impl Dashboard {
         } else {
             self.operator
                 .chats
-                .insert(id.0, Chat::new(summary, self.operator.context.clone()));
+                .insert(id.0, Chat::new(summary, OperatorContext::default()));
         }
-        if self.operator.selected.is_none() && self.operator.new.is_none() {
+        if !self.operator.chats[&id.0].summary.archived
+            && self.operator.selected.is_none()
+            && self.operator.new.is_none()
+        {
             self.operator.selected = Some(id);
         }
     }
@@ -955,6 +1064,12 @@ impl Dashboard {
             return;
         }
         for message in &history.messages {
+            if let OperatorMessageContent::User { context, .. } = &message.content
+                && chat.draft.is_empty()
+                && !chat.submitting
+            {
+                chat.context = context.clone();
+            }
             if matches!(
                 message.content,
                 OperatorMessageContent::Worker(
@@ -980,10 +1095,7 @@ impl Dashboard {
         }
     }
     pub(super) fn operator_commit_presented(&mut self) {
-        if !self.operator.visible
-            || self.operator.new.is_some()
-            || self.operator.list_focus && content_area(self, self.outer_area).width < 72
-        {
+        if !self.operator.visible || self.operator.new.is_some() || self.operator.list_focus {
             return;
         }
         let content = content_area(self, self.outer_area);
@@ -1003,21 +1115,6 @@ impl Dashboard {
             chat.reviewed = chat.unread.take().or(chat.reviewed);
         }
     }
-    fn operator_list_offset(&self, height: u16) -> usize {
-        let index = self
-            .operator
-            .selected
-            .and_then(|id| {
-                self.operator
-                    .chats
-                    .keys()
-                    .position(|candidate| *candidate == id.0)
-            })
-            .unwrap_or(0);
-        index
-            .saturating_add(1)
-            .saturating_sub(height.saturating_sub(1) as usize)
-    }
     pub(super) fn draw_operator_header(&self, frame: &mut Frame<'_>) {
         if self.sidebar_hidden {
             return;
@@ -1026,7 +1123,7 @@ impl Dashboard {
             .operator
             .chats
             .values()
-            .filter(|chat| chat.unread.is_some())
+            .filter(|chat| !chat.summary.archived && chat.unread.is_some())
             .count();
         let label = if unread > 0 {
             format!(" Operator [o] · {unread} unread")
@@ -1058,48 +1155,7 @@ impl Dashboard {
             ),
             area,
         );
-        let (list, right) = split(area, self.operator.list_focus);
-        if !list.is_empty() {
-            frame.render_widget(
-                Paragraph::new("New Conversation [Ctrl-n]")
-                    .style(Style::default().fg(super::render::MAUVE())),
-                Rect::new(list.x, list.y, list.width, list.height.min(1)),
-            );
-            let offset = self.operator_list_offset(list.height);
-            let mut lines = Vec::new();
-            for (id, chat) in self.operator.chats.iter().skip(offset) {
-                let selected =
-                    self.operator.selected == Some(Id(*id)) && self.operator.new.is_none();
-                lines.push(Line::styled(
-                    format!(
-                        "{}{} {}",
-                        if selected { "›" } else { " " },
-                        if chat.error.is_some() {
-                            "!"
-                        } else if chat.unread.is_some() {
-                            "●"
-                        } else {
-                            " "
-                        },
-                        display_text(&chat.summary.title)
-                    ),
-                    Style::default().add_modifier(if selected {
-                        Modifier::BOLD
-                    } else {
-                        Modifier::empty()
-                    }),
-                ));
-            }
-            frame.render_widget(
-                Paragraph::new(lines),
-                Rect::new(
-                    list.x,
-                    list.y.saturating_add(1),
-                    list.width,
-                    list.height.saturating_sub(1),
-                ),
-            );
-        }
+        let right = area;
         if right.is_empty() {
             return;
         }
@@ -1344,6 +1400,260 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect()
+    }
+    #[test]
+    fn operator_sidebar_rows_share_render_and_hit_geometry() {
+        let (mut d, _) = setup();
+        d.operator_summary(summary(3, 1, OperatorTurnState::Complete, true));
+        d.operator.visible = false;
+        let rendered = draw(&mut d, 120, 24);
+        let sidebar: Vec<String> = rendered
+            .chars()
+            .collect::<Vec<_>>()
+            .chunks(120)
+            .map(|row| row[..39].iter().collect())
+            .collect();
+        assert!(sidebar[1].contains("OPERATOR"), "{sidebar:?}");
+        for id in 1..=3 {
+            assert!(
+                sidebar[id + 1].contains(&format!("chat-{id}")),
+                "{sidebar:?}"
+            );
+            assert!(!sidebar[id + 1].contains("fixture"));
+        }
+    }
+    #[test]
+    fn operator_sidebar_busy_without_project_activity_ticks() {
+        let (mut d, _) = setup();
+        d.operator.visible = false;
+        assert_eq!(d.redraw_interval(), super::super::status::SPINNER_INTERVAL);
+    }
+    fn click(d: &mut Dashboard, column: u16, row: u16, kind: MouseEventKind) {
+        d.mouse_action(
+            MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            },
+            d.outer_area,
+        );
+    }
+    #[test]
+    fn operator_sidebar_mouse_keyboard_scroll_and_close_share_ids() {
+        let (mut d, _) = setup();
+        for id in 3..=30 {
+            d.operator_summary(summary(id, 1, OperatorTurnState::Running, false));
+        }
+        d.install_area(Rect::new(0, 0, 120, 24));
+        d.operator_select(Id(30));
+        let rect = d.sidebar_rects(d.outer_area).operator;
+        assert_eq!(rect.height, 6);
+        let offset = d.operator.list_offset;
+        click(
+            &mut d,
+            rect.x + 3,
+            rect.y + 1,
+            MouseEventKind::Down(MouseButton::Left),
+        );
+        assert_eq!(d.operator.selected, Some(Id(offset as u64 + 1)));
+        d.key(KeyCode::Down);
+        assert_eq!(d.operator.selected, Some(Id(offset as u64 + 2)));
+        click(&mut d, rect.x + 3, rect.y + 1, MouseEventKind::ScrollUp);
+        let new_offset = d.operator.list_offset;
+        click(
+            &mut d,
+            rect.x + 3,
+            rect.y + 1,
+            MouseEventKind::Down(MouseButton::Left),
+        );
+        assert_eq!(d.operator.selected, Some(Id(new_offset as u64 + 1)));
+        click(&mut d, rect.right() - 1, rect.y + 1, MouseEventKind::Moved);
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+        d.draw(&mut terminal).unwrap();
+        let last: String = (rect.right() - 3..rect.right())
+            .map(|x| terminal.backend().buffer()[(x, rect.y + 1)].symbol())
+            .collect();
+        assert_eq!(last, "[x]");
+        d.key(KeyCode::Char('x'));
+        assert!(d.palette.is_some());
+        assert!(draw(&mut d, 120, 24).contains("unconfirmed"));
+        d.key(KeyCode::Esc);
+        assert!(d.palette.is_none());
+        assert_eq!(d.operator.selected, Some(Id(new_offset as u64 + 1)));
+    }
+    #[test]
+    fn operator_close_confirmation_preserves_cancel_error_and_another_selection() {
+        let (mut d, _) = setup();
+        d.operator_insert("discard this draft");
+        d.operator.chats.get_mut(&1).unwrap().summary.run = SessionRunId(5);
+        d.open_close_operator_for(Id(1));
+        let rendered = draw(&mut d, 140, 24);
+        assert!(rendered.contains("draft will be discarded"));
+        d.key(KeyCode::Esc);
+        assert_eq!(d.operator.chats[&1].draft, "discard this draft");
+        d.open_close_operator_for(Id(1));
+        d.key(KeyCode::Enter);
+        let close = d
+            .drain_outbox()
+            .into_iter()
+            .find(|request| {
+                matches!(
+                    request.request,
+                    Request::Operator(OperatorRequest::Close { .. })
+                )
+            })
+            .unwrap();
+        assert_eq!(
+            close.request,
+            Request::Operator(OperatorRequest::Close {
+                conversation: Id(1),
+                expected_run: SessionRunId(5)
+            })
+        );
+        assert!(d.operator.chats[&1].closing);
+        d.operator_insert("blocked");
+        assert_eq!(d.operator.chats[&1].draft, "discard this draft");
+        d.handle_server_message(ServerMessage::Response {
+            request_id: close.request_id,
+            response: Response::Error {
+                code: ovrcr_protocol::ErrorCode::Conflict,
+                message: "stop uncertain".into(),
+            },
+        });
+        assert!(!d.operator.chats[&1].closing);
+        assert_eq!(d.operator.chats[&1].draft, "discard this draft");
+        d.open_close_operator_for(Id(1));
+        d.key(KeyCode::Enter);
+        let close = d
+            .drain_outbox()
+            .into_iter()
+            .find(|request| {
+                matches!(
+                    request.request,
+                    Request::Operator(OperatorRequest::Close { .. })
+                )
+            })
+            .unwrap();
+        d.open_operator_conversation(Id(2));
+        d.operator_insert("keep B");
+        let mut closed = d.operator.chats[&1].summary.clone();
+        closed.run = SessionRunId(6);
+        closed.archived = true;
+        closed.worker_stopped = true;
+        d.handle_server_message(ServerMessage::Response {
+            request_id: close.request_id,
+            response: Response::Operator(OperatorResponse::Closed(closed)),
+        });
+        assert!(d.operator.chats[&1].draft.is_empty());
+        assert_eq!(d.operator_ids(), vec![Id(2)]);
+        assert_eq!(d.operator.selected, Some(Id(2)));
+        assert_eq!(d.operator.chats[&2].draft, "keep B");
+        assert!(
+            d.operator.chats.contains_key(&1),
+            "archive retains the authority tombstone"
+        );
+    }
+    #[test]
+    fn operator_sidebar_focus_reveals_a_selected_row_from_new_conversation() {
+        let (mut d, _) = setup();
+        d.operator_new();
+        d.operator.collapsed = true;
+        d.ctrl('l');
+        assert!(d.operator_sidebar_focused());
+        assert!(!d.operator.collapsed);
+        assert!(d.operator.new.is_none());
+        assert!(d.operator.selected.is_some());
+    }
+    #[test]
+    fn operator_close_rejects_a_receipt_for_another_retained_run() {
+        let (mut d, _) = setup();
+        d.operator_insert("keep");
+        d.open_close_operator_for(Id(1));
+        d.key(KeyCode::Enter);
+        let close = d
+            .drain_outbox()
+            .into_iter()
+            .find(|request| {
+                matches!(
+                    request.request,
+                    Request::Operator(OperatorRequest::Close { .. })
+                )
+            })
+            .unwrap();
+        let mut wrong = summary(1, 99, OperatorTurnState::Interrupted, true);
+        wrong.archived = true;
+        d.handle_server_message(ServerMessage::Response {
+            request_id: close.request_id,
+            response: Response::Operator(OperatorResponse::Closed(wrong)),
+        });
+        assert_eq!(d.operator.chats[&1].draft, "keep");
+        assert!(!d.operator.chats[&1].summary.archived);
+        assert_eq!(d.operator_ids(), vec![Id(1), Id(2)]);
+    }
+    #[test]
+    fn operator_composer_x_is_text_and_collapsing_or_scrolling_keeps_background_unread() {
+        let (mut d, _) = setup();
+        d.operator.chats.get_mut(&2).unwrap().unread = Some(OperatorTurnId(1));
+        d.key(KeyCode::Char('x'));
+        assert_eq!(d.operator.chats[&1].draft, "x");
+        assert!(d.palette.is_none());
+        let rect = d.sidebar_rects(d.outer_area).operator;
+        click(
+            &mut d,
+            rect.right() - 1,
+            rect.y + 1,
+            MouseEventKind::Down(MouseButton::Left),
+        );
+        assert!(
+            d.palette.is_none(),
+            "undrawn close marks are not hit targets"
+        );
+        click(
+            &mut d,
+            rect.x + 1,
+            rect.y,
+            MouseEventKind::Down(MouseButton::Left),
+        );
+        assert_eq!(d.sidebar_rects(d.outer_area).operator.height, 1);
+        assert!(draw(&mut d, 140, 24).contains("▸ 2"));
+        assert!(d.operator.chats[&2].unread.is_some());
+        click(
+            &mut d,
+            rect.x + 1,
+            rect.y,
+            MouseEventKind::Down(MouseButton::Left),
+        );
+        click(&mut d, rect.x + 1, rect.y + 1, MouseEventKind::ScrollDown);
+        draw(&mut d, 140, 24);
+        assert!(d.operator.chats[&2].unread.is_some());
+    }
+    #[test]
+    fn operator_sidebar_geometry_preserves_quota_and_tiny_rectangles() {
+        let (mut d, _) = setup();
+        for id in 3..=30 {
+            d.operator_summary(summary(id, 1, OperatorTurnState::Running, false));
+        }
+        for width in [0, 1, 6, 60, 80, 120] {
+            for height in 0..=25 {
+                let area = Rect::new(2, 3, width, height);
+                let rects = d.sidebar_rects(area);
+                assert!(rects.operator.bottom() <= rects.tree.y);
+                assert!(rects.tree.bottom() <= rects.quota.y);
+                assert!(rects.quota.bottom() <= area.bottom());
+                if height >= 6 {
+                    assert!(rects.tree.height >= 3);
+                }
+                assert!(rects.operator.height <= 6);
+                d.install_area(area);
+            }
+        }
+        d.operator.collapsed = true;
+        assert!(!d.operator_sidebar_busy());
+        d.operator.collapsed = false;
+        d.sidebar_hidden = true;
+        assert!(!d.operator_sidebar_busy());
     }
     #[test]
     fn concurrent_histories_follow_ids_through_a_terminal_b_a_navigation() {
@@ -1811,7 +2121,7 @@ mod tests {
     #[test]
     fn clicking_transcript_title_does_not_stop_without_the_explicit_control() {
         let (mut d, _) = setup();
-        let (_, right) = split(content_area(&d, d.outer_area), false);
+        let right = content_area(&d, d.outer_area);
         d.operator_mouse(
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
@@ -1870,10 +2180,11 @@ mod tests {
             d.operator_summary(summary(id, 1, OperatorTurnState::Running, false));
         }
         d.operator_select(Id(30));
-        let area = Rect::new(0, 0, 140, 12);
+        let area = Rect::new(0, 0, 140, 24);
         d.install_area(area);
-        let (list, _) = split(content_area(&d, area), false);
-        let offset = d.operator_list_offset(list.height);
+        d.operator_ensure_visible();
+        let list = d.sidebar_rects(area).operator;
+        let offset = d.operator.list_offset;
         d.operator_mouse(
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
@@ -1884,12 +2195,12 @@ mod tests {
             area,
         );
         assert_eq!(d.operator.selected, Some(Id(offset as u64 + 1)));
-        assert!(draw(&mut d, 140, 12).contains("New Conversation"));
+        assert!(draw(&mut d, 140, 24).contains("OPERATOR"));
     }
     #[test]
     fn explicit_mouse_stop_targets_only_selected_turn() {
         let (mut d, _) = setup();
-        let (_, right) = split(content_area(&d, d.outer_area), false);
+        let right = content_area(&d, d.outer_area);
         let button = stop_rect(right);
         d.operator_mouse(
             MouseEvent {
@@ -2034,7 +2345,7 @@ mod tests {
         for cols in [55, 140] {
             let (mut d, _) = setup();
             d.install_area(Rect::new(0, 0, cols, 24));
-            let (_, right) = split(content_area(&d, d.outer_area), false);
+            let right = content_area(&d, d.outer_area);
             let width = right.width.saturating_sub(2) as usize;
             let line = "界".repeat(width / 2) + &"x".repeat(width % 2);
             let draft = std::iter::repeat_n(line, 5).collect::<Vec<_>>().join("\n");

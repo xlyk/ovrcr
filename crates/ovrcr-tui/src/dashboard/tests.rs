@@ -1944,7 +1944,7 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
             .unwrap();
         // The sidebar shows Ready as a glyph, muted while the reporter is unavailable;
         // the literal state and health text live on the metadata line.
-        let cell = &terminal.backend().buffer()[(5, 3)];
+        let cell = &terminal.backend().buffer()[(5, 4)];
         assert_eq!(
             cell.symbol(),
             "✓",
@@ -1958,14 +1958,14 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
         };
         // A label too long to share the name's line is kept on the line under it.
         assert!(
-            row(4).contains("long Codex label"),
+            row(5).contains("long Codex label"),
             "the background label follows its name: {}",
-            row(4)
+            row(5)
         );
         assert!(
-            row(5).contains(&original.name),
+            row(6).contains(&original.name),
             "the next session follows the background row: {}",
-            row(5)
+            row(6)
         );
     }
     dashboard.hierarchy.projects[0].workspaces[0].sessions.pop();
