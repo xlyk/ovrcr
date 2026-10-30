@@ -98,7 +98,8 @@ fn sidebar_glyphs_and_columns_match_the_reference_tree() {
     let row = |y| (0..39).map(|x| buffer[(x, y)].symbol()).collect::<String>();
     let rule = |used: usize| "─".repeat(39 - used);
     // The title band pins Operator above projects; the brand keeps its mauve band.
-    assert_eq!(row(0).trim_end(), "󰚩 OVRCR Operator [o]");
+    let title = (0..40).map(|x| buffer[(x, 0)].symbol()).collect::<String>();
+    assert_eq!(title.trim_end(), "󰚩 OVRCR Operator [o]            [Ctrl-o]");
     assert_eq!(buffer[(1, 0)].bg, Color::Rgb(203, 166, 247));
     // Project section header: upper case, blue bold, rule to the edge, no chevron.
     assert_eq!(row(2), format!(" CONSIGINT {}", rule(11)));

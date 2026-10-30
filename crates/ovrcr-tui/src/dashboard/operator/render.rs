@@ -17,6 +17,114 @@ fn activity(chat: &Chat) -> AgentActivity {
     }
 }
 impl Dashboard {
+    pub(in crate::dashboard) fn draw_operator_quick_message(&self, frame: &mut Frame<'_>) {
+        let Some(quick) = self.operator.quick.as_ref().filter(|quick| quick.visible) else {
+            return;
+        };
+        let outer = frame.area();
+        let width = outer.width.min(80);
+        let height = outer.height.min(16);
+        let area = Rect::new(
+            outer.x + (outer.width - width) / 2,
+            outer.y + (outer.height - height) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(Clear, area);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Quick message · Ctrl-o ")
+            .style(Style::default().fg(TEXT()).bg(BASE()))
+            .border_style(Style::default().fg(MAUVE()));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        if !inner.is_empty() {
+            frame.set_cursor_position((inner.x, inner.y));
+        }
+        if outer.width < 60 || outer.height < 16 {
+            frame.render_widget(
+                Paragraph::new("Resize to 60×16 · Esc dismisses; work retained"),
+                inner,
+            );
+            return;
+        }
+        let caption = format!(
+            "{} / {} · {}",
+            quick.provider.as_str(),
+            display_text(&quick.model),
+            context_label(&quick.context)
+        );
+        frame.render_widget(
+            Paragraph::new(clip_text(&caption, usize::from(inner.width)))
+                .style(Style::default().fg(super::super::render::SUBTEXT())),
+            Rect::new(inner.x, inner.y, inner.width, 1),
+        );
+        let editor = Rect::new(
+            inner.x,
+            inner.y + 2,
+            inner.width,
+            inner.height.saturating_sub(5),
+        );
+        let position = quick.cursor.position(&quick.text);
+        let prefix = display_text(&quick.text[..position]);
+        let mut text = display_text(&quick.text);
+        let editing = quick.phase == QuickPhase::Editing;
+        if editing {
+            text.insert(prefix.len(), '▏');
+        }
+        let lines = wrapped_lines(
+            text.split('\n')
+                .map(|line| Line::raw(line.to_owned()))
+                .collect(),
+            editor.width,
+        );
+        let through_cursor = wrapped_lines(
+            format!("{prefix}▏")
+                .split('\n')
+                .map(|line| Line::raw(line.to_owned()))
+                .collect(),
+            editor.width,
+        );
+        let row = through_cursor.len().saturating_sub(1);
+        let column = through_cursor
+            .last()
+            .map_or(0, |line| line.width().saturating_sub(1));
+        let offset = row
+            .saturating_add(1)
+            .saturating_sub(usize::from(editor.height));
+        frame.render_widget(
+            Paragraph::new(
+                lines
+                    .into_iter()
+                    .skip(offset)
+                    .take(usize::from(editor.height))
+                    .collect::<Vec<_>>(),
+            ),
+            editor,
+        );
+        if editing && !editor.is_empty() {
+            frame.set_cursor_position((
+                editor.x + (column as u16).min(editor.width.saturating_sub(1)),
+                editor.y + (row - offset) as u16,
+            ));
+        }
+        if let Some(error) = &quick.error {
+            frame.render_widget(
+                Paragraph::new(clip_text(error, usize::from(inner.width)))
+                    .style(Style::default().fg(super::super::render::RED())),
+                Rect::new(inner.x, inner.bottom() - 2, inner.width, 1),
+            );
+        }
+        let hint = match quick.phase {
+            QuickPhase::Editing => "Enter Send · Shift-Enter Newline · Esc Dismiss",
+            QuickPhase::Creating => "Creating conversation… · Esc Dismiss",
+            QuickPhase::Submitting => "Sending first message… · Esc Dismiss",
+        };
+        frame.render_widget(
+            Paragraph::new(hint).style(Style::default().fg(MAUVE())),
+            Rect::new(inner.x, inner.bottom() - 1, inner.width, 1),
+        );
+    }
     pub(in crate::dashboard) fn operator_ids(&self) -> Vec<Id> {
         self.operator
             .chats
@@ -196,6 +304,13 @@ impl Dashboard {
         if !inside {
             return None;
         }
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+            && mouse.row == rect.y
+            && rect.width >= 3
+            && mouse.column >= rect.right() - 3
+        {
+            return Some(self.open_operator_quick_message());
+        }
         let close_visible = id.is_some_and(|id| self.operator_row_close(id, rect.width));
         if self.operator.visible {
             self.operator.list_focus = true;
@@ -203,12 +318,7 @@ impl Dashboard {
         self.mouse.hovered = None;
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) if mouse.row == rect.y => {
-                if rect.width >= 3 && mouse.column >= rect.right() - 3 {
-                    self.open_operator();
-                    self.operator_new();
-                } else {
-                    self.operator_set_collapsed(!self.operator.collapsed);
-                }
+                self.operator_set_collapsed(!self.operator.collapsed);
             }
             MouseEventKind::Down(MouseButton::Left) => {
                 if let Some(id) = id {
@@ -589,8 +699,7 @@ impl Dashboard {
             body.width.saturating_sub(2),
         )
         .len();
-        let height = (draft_rows as u16)
-            .clamp(2, (body.height / 3).clamp(2, 6))
+        let height = (draft_rows.clamp(2, usize::from((body.height / 3).clamp(2, 6))) as u16)
             .min(body.height.saturating_sub(2));
         let header = Rect::new(body.x, body.y, body.width, body.height.min(1));
         let composer = Rect::new(

@@ -25,6 +25,21 @@ Use the global `--json` flag for status, models or logout, for example
 
 ## Run concurrent conversations
 
+Press `Ctrl-o` from any Dashboard view, including a terminal, Tasks or another
+dialog, to open **Quick message**. The title-bar `[Ctrl-o]` control, sidebar `[+]`
+and Quick message palette action open the same form. It captures the current
+workspace/session run (or selected chat context) and configured provider/model
+defaults when opened. Type a message and press Enter to create and send once.
+`Shift-Enter` adds a newline; paste only edits. Empty messages cannot send.
+
+Esc before sending discards only the quick draft and restores the underlying view.
+Esc after sending dismisses the form while creation/submission continues; its late
+receipt cannot switch your view. `Ctrl-o` reopens that transaction's progress or
+retained error. A failed first submission keeps the message, and an explicit retry
+reuses the created chat. After submission is accepted, another quick conversation
+can start while earlier conversations keep running. Below 60×16, resize guidance
+preserves the form and active work.
+
 1. In the Dashboard, press `Ctrl-g` to reach Browse, then `o`, or click the
    **Operator** control in the title bar. Saved conversations load above Projects
    in the existing sidebar before you open Operator.
@@ -35,8 +50,8 @@ Use the global `--json` flag for status, models or logout, for example
 4. Use `Ctrl-l` to switch between the composer and conversation sidebar, then
    Up/Down and Enter to choose a conversation. Tab cycles the sidebar, transcript
    and composer; Enter expands a focused context or tool receipt in the transcript.
-   Click a row to open it, or use `[+]` / `Ctrl-n` for
-   manual provider/model creation while another conversation continues streaming.
+   Click a row to open it. Use `Ctrl-n` for manual provider/model creation while
+   another conversation continues streaming.
 
 The sidebar shows up to five one-line conversations. Scroll to browse longer lists;
 click the Operator heading or use Left/Right with sidebar focus to collapse/expand.

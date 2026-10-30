@@ -2265,6 +2265,10 @@ impl Dashboard {
                                     .command_hint(&entry.command)
                                     .is_some_and(|h| h.enabled())
                                 {
+                                    if action == Action::OperatorQuick {
+                                        self.palette = Some(palette);
+                                        return self.run(action);
+                                    }
                                     if let Some(request_id) = palette.suggestions.inspect {
                                         self.ignored_responses.insert(request_id);
                                     }

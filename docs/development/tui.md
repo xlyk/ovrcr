@@ -27,6 +27,17 @@ that blocks shutdown.
 Readiness is derived by `ViewHandshake::is_ready`; pane changes go through `retarget(PaneChange)`; outbound requests go through the outbox and are drained by `drain_outbox`. Session status — the glyph and the process, paused, activity, Unread and elapsed clauses, with an Unread replacing a header line outright — is decided once by `dashboard::status::SessionStatus`, which the sidebar row, both pane headers and the spinner redraw cadence read; each surface still arranges and clips the clauses for its own width, and readiness itself is still decided in `dashboard::ready`. The Ready checkmark is drawn only while that response is Unread; after review the glyph is blank and the activity clause may still say ready. The sidebar agent label appends the current model after a colon when one is known. A session row is one or two sidebar lines: `render::tree_row_heights` decides, for the whole visible tree at the current sidebar width, whether every agent label fits inline or every one takes a second line, and rendering, scrolling, selection visibility and mouse hit-testing all read those heights through `tree_line_at`, `tree_line_count` and `tree_row_start`, so the extra line always resolves to the same session.
 Key bindings live in one table, `dashboard::keymap`: it holds each key's label, action and the reason it is unavailable, and `key_action`, the footer, the key popup and the palette all read it rather than repeating a guard.
 
+`Ctrl-o` is reserved globally by `keymap::is_operator_quick_key`. Key dispatch,
+event dispatch before Tasks, and the production mouse path give the Hub-owned
+quick form priority. The form layers above existing views without taking their
+state; Repeat/Release and all modal mouse events are consumed. Its frozen
+generation/context/defaults follow a request-owned Create → Submit continuation,
+using the acknowledged conversation's retained `summary.run`. Esc hides submitted
+work, and only a still-visible matching generation may navigate on acceptance.
+Failures retain the message; retries after Create target that chat. Notification
+retarget cancels an unsent form or hides its pending continuation. Quick visibility
+also blocks durable-tail review acknowledgement.
+
 Retained rows stay selectable without allocating a parser on the server or
 inventing live timing. Reopen targets the existing row and expected run; Retry
 never implies ownership acknowledgement. Same-boot or unverifiable recovery

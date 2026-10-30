@@ -3025,9 +3025,10 @@ fn agent_confirmation_enters_terminal_only_after_complete_acknowledgement() {
 #[test]
 fn keymap_gives_each_key_in_a_mode_exactly_one_binding() {
     use super::keymap::{Action, KeyBinding, keymap};
-    // Ctrl-g is the one binding whose key carries a modifier.
+    // Global shortcuts carry their modifiers when checking unique bindings.
     let event = |binding: &KeyBinding| match binding.action {
         Action::Browse => KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
+        Action::OperatorQuick => KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
         _ => KeyEvent::new(binding.code, KeyModifiers::NONE),
     };
     let mut dashboard = keymap_dashboard(crate::protocol::SessionPhase::Running);

@@ -5,6 +5,98 @@ use ovrcr_protocol::{
 };
 
 #[test]
+fn operator_quick_opens_over_every_input_mode_without_pty_bytes() {
+    for mode in [
+        "Browse",
+        "Terminal",
+        "History",
+        "Copy",
+        "Tasks",
+        "Palette",
+        "Which-key",
+        "Operator",
+        "Form",
+        "Details",
+    ] {
+        let mut d = dashboard_fixture();
+        match mode {
+            "Terminal" => {
+                d.key(KeyCode::Enter);
+            }
+            "History" => {
+                let request = d.key(KeyCode::PageUp);
+                if let DashboardAction::Request(request) = request {
+                    d.handle_server_message(ServerMessage::Response {
+                        request_id: request.request_id,
+                        response: Response::HistoryOpened(history_opened(20)),
+                    });
+                }
+            }
+            "Copy" => {
+                d.key(KeyCode::Char('['));
+            }
+            "Tasks" => {
+                d.ctrl('t');
+            }
+            "Palette" => {
+                d.key(KeyCode::Char(':'));
+            }
+            "Which-key" => {
+                d.key(KeyCode::Char(' '));
+            }
+            "Operator" => {
+                d.key(KeyCode::Char('o'));
+            }
+            "Form" => {
+                d.key(KeyCode::Char('a'));
+            }
+            "Details" => {
+                d.key(KeyCode::Char('u'));
+            }
+            _ => {}
+        }
+        d.drain_outbox();
+        let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        d.draw(&mut terminal).unwrap();
+        let before = terminal.backend().buffer().clone();
+        for event in [
+            Event::Key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL)),
+            Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+            Event::Paste("popup\n界".into()),
+        ] {
+            assert!(
+                !matches!(d.event_action(event), DashboardAction::PtyBytes(_)),
+                "mode {mode:?}"
+            );
+        }
+        d.draw(&mut terminal).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(
+            text.contains("Quick message") && text.contains("popup"),
+            "mode {mode:?}: {text}"
+        );
+        assert_eq!(d.focused_session(), Some(SessionId(1)));
+        assert!(!d.drain_outbox().iter().any(|m| matches!(
+            m.request,
+            Request::Input { .. } | Request::AssignedHumanInput { .. }
+        )));
+        d.key(KeyCode::Esc);
+        d.draw(&mut terminal).unwrap();
+        assert_eq!(
+            terminal.backend().buffer(),
+            &before,
+            "underlying {mode} changed"
+        );
+    }
+}
+
+#[test]
 fn native_operator_submission_captures_stable_context_and_never_pty_input() {
     let mut dashboard = Dashboard::new(TerminalSize {
         rows: 24,

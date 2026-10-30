@@ -393,6 +393,7 @@ impl Dashboard {
         let area = terminal.draw(|frame| draw_dashboard(frame, self))?.area;
         // Overlays may obscure the response; keep the last unobscured Presented Unread.
         if self.tasks.is_none()
+            && !self.operator_quick_visible()
             && self.palette.is_none()
             && self.whichkey.is_none()
             && self.details.is_none()
@@ -428,6 +429,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     let _theme = crate::theme::ThemeScope::enter(dashboard.theme_tokens());
     if let Some(tasks) = &dashboard.tasks {
         draw_tasks(frame, tasks);
+        dashboard.draw_operator_quick_message(frame);
         return;
     }
     let layout = dashboard_layout(frame.area(), dashboard.sidebar_preference());
@@ -737,6 +739,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     dashboard.draw_palette(frame);
     dashboard.draw_whichkey(frame);
     dashboard.draw_details(frame, now_unix_ms);
+    dashboard.draw_operator_quick_message(frame);
 }
 
 impl Dashboard {

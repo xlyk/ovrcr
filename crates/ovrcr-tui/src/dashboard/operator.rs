@@ -7,7 +7,7 @@ use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ovrcr_protocol::{
-    ClientMessage, OperatorContext, OperatorConversationId as Id,
+    ClientMessage, MAX_OPERATOR_TEXT_BYTES, OperatorContext, OperatorConversationId as Id,
     OperatorConversationSummary as Summary, OperatorHistory, OperatorMessage,
     OperatorMessageContent, OperatorProvider, OperatorRequest, OperatorResponse,
     OperatorToolStatus, OperatorTurnId, OperatorTurnIdentity, OperatorTurnState,
@@ -41,6 +41,42 @@ pub(super) struct Hub {
     new: Option<NewChat>,
     context: OperatorContext,
     error: Option<String>,
+    quick: Option<QuickMessage>,
+    quick_generation: u64,
+}
+struct QuickMessage {
+    generation: u64,
+    visible: bool,
+    text: String,
+    cursor: TextCursor,
+    context: OperatorContext,
+    provider: OperatorProvider,
+    model: String,
+    error: Option<String>,
+    phase: QuickPhase,
+    conversation: Option<Id>,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QuickPhase {
+    Editing,
+    Creating,
+    Submitting,
+}
+struct QuickSubmission {
+    generation: u64,
+    text: String,
+    context: OperatorContext,
+    provider: OperatorProvider,
+    model: String,
+}
+enum CreateOrigin {
+    Manual,
+    Quick(QuickSubmission),
+}
+#[derive(Clone, Copy)]
+enum SubmitOrigin {
+    Composer,
+    Quick { generation: u64 },
 }
 struct Chat {
     summary: Summary,
@@ -114,7 +150,8 @@ enum Pending {
         after: u64,
     },
     Create {
-        context: OperatorContext,
+        context: Box<OperatorContext>,
+        origin: CreateOrigin,
     },
     Close {
         id: Id,
@@ -126,6 +163,7 @@ enum Pending {
         text: String,
         session: ovrcr_protocol::SessionId,
         expected_run: SessionRunId,
+        origin: SubmitOrigin,
     },
     Stop {
         identity: OperatorTurnIdentity,
@@ -237,6 +275,172 @@ fn expandable(message: &OperatorMessage) -> bool {
     )
 }
 impl Dashboard {
+    pub(super) fn operator_quick_visible(&self) -> bool {
+        self.operator
+            .quick
+            .as_ref()
+            .is_some_and(|quick| quick.visible)
+    }
+    pub(super) fn open_operator_quick_message(&mut self) -> DashboardAction {
+        if let Some(quick) = &mut self.operator.quick {
+            quick.visible = true;
+            if quick.phase == QuickPhase::Editing
+                && let Some(id) = quick.conversation
+                && let Some(chat) = self.operator.chats.get(&id.0)
+            {
+                quick.text = chat.draft.clone();
+                quick.cursor = chat.cursor;
+            }
+        } else {
+            let context = if self.operator.visible {
+                self.operator
+                    .selected
+                    .and_then(|id| self.operator.chats.get(&id.0))
+                    .map(|chat| chat.context.clone())
+                    .unwrap_or_else(|| self.operator.context.clone())
+            } else {
+                self.capture_operator_context()
+            };
+            let provider = self.settings.operator.provider;
+            self.operator.quick_generation = self.operator.quick_generation.wrapping_add(1);
+            self.operator.quick = Some(QuickMessage {
+                generation: self.operator.quick_generation,
+                visible: true,
+                text: String::new(),
+                cursor: TextCursor::default(),
+                context,
+                provider,
+                model: default_model(self, provider),
+                error: None,
+                phase: QuickPhase::Editing,
+                conversation: None,
+            });
+        }
+        DashboardAction::Redraw
+    }
+    pub(super) fn operator_dismiss_quick(&mut self) {
+        if self.operator.quick.as_ref().is_some_and(|q| {
+            q.phase == QuickPhase::Editing && q.error.is_none() && q.conversation.is_none()
+        }) {
+            self.operator.quick = None;
+        } else if let Some(quick) = &mut self.operator.quick {
+            quick.visible = false;
+        }
+    }
+    pub(super) fn operator_quick_key(&mut self, key: KeyEvent) -> DashboardAction {
+        if key.kind != KeyEventKind::Press {
+            return DashboardAction::None;
+        }
+        if key.code == KeyCode::Esc {
+            self.operator_dismiss_quick();
+            return DashboardAction::Redraw;
+        }
+        let Some(quick) = &mut self.operator.quick else {
+            return DashboardAction::None;
+        };
+        if quick.phase != QuickPhase::Editing {
+            return DashboardAction::None;
+        }
+        if key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+        {
+            return DashboardAction::None;
+        }
+        match key.code {
+            KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                return self.operator_quick_paste("\n");
+            }
+            KeyCode::Enter => {
+                if quick.text.trim().is_empty() {
+                    return DashboardAction::None;
+                }
+                quick.error = None;
+                let generation = quick.generation;
+                if let Some(id) = quick.conversation {
+                    quick.phase = QuickPhase::Submitting;
+                    // A recovered form must not overwrite text edited in the created chat.
+                    if let Some(chat) = self.operator.chats.get_mut(&id.0)
+                        && chat.draft != quick.text
+                    {
+                        quick.text = chat.draft.clone();
+                        quick.cursor = chat.cursor;
+                    }
+                    self.operator_submit_to(id, SubmitOrigin::Quick { generation });
+                } else {
+                    let submission = QuickSubmission {
+                        generation,
+                        text: quick.text.clone(),
+                        context: quick.context.clone(),
+                        provider: quick.provider,
+                        model: quick.model.clone(),
+                    };
+                    let context = submission.context.clone();
+                    let request = OperatorRequest::Create {
+                        provider: submission.provider,
+                        model: submission.model.clone(),
+                    };
+                    quick.phase = QuickPhase::Creating;
+                    self.operator_request(
+                        Pending::Create {
+                            context: Box::new(context),
+                            origin: CreateOrigin::Quick(submission),
+                        },
+                        request,
+                    );
+                }
+            }
+            KeyCode::Char(ch) if !ch.is_control() => {
+                return self.operator_quick_paste(&ch.to_string());
+            }
+            KeyCode::Up | KeyCode::Down => quick
+                .cursor
+                .vertical(&quick.text, key.code == KeyCode::Down),
+            code => quick.cursor.key(&mut quick.text, code),
+        }
+        if let Some(quick) = &self.operator.quick
+            && quick.phase == QuickPhase::Editing
+            && let Some(id) = quick.conversation
+            && let Some(chat) = self.operator.chats.get_mut(&id.0)
+        {
+            chat.draft = quick.text.clone();
+            chat.cursor = quick.cursor;
+        }
+        DashboardAction::Redraw
+    }
+    pub(super) fn operator_quick_paste(&mut self, text: &str) -> DashboardAction {
+        if let Some(quick) = &mut self.operator.quick
+            && quick.phase == QuickPhase::Editing
+        {
+            let text = paste_text(text);
+            if quick.text.len().saturating_add(text.len()) <= MAX_OPERATOR_TEXT_BYTES {
+                quick.cursor.insert(&mut quick.text, &text);
+                if let Some(id) = quick.conversation
+                    && let Some(chat) = self.operator.chats.get_mut(&id.0)
+                {
+                    chat.draft = quick.text.clone();
+                    chat.cursor = quick.cursor;
+                }
+            }
+        }
+        DashboardAction::Redraw
+    }
+    pub(super) fn operator_quick_mouse(
+        &mut self,
+        _event: MouseEvent,
+        _area: Rect,
+    ) -> Option<DashboardAction> {
+        self.operator_quick_visible()
+            .then_some(DashboardAction::None)
+    }
+    fn operator_quick_failed(&mut self, generation: u64, error: &str) {
+        if let Some(quick) = &mut self.operator.quick
+            && quick.generation == generation
+        {
+            quick.phase = QuickPhase::Editing;
+            quick.error = Some(display_text(error));
+        }
+    }
     pub(super) fn operator_clear_hover(&mut self) {
         self.operator.hovered = None;
     }
@@ -276,6 +480,16 @@ impl Dashboard {
             area.y,
             sidebar.saturating_sub(indent),
             area.height.min(1),
+        )
+    }
+    pub(super) fn operator_quick_header_rect(&self, area: Rect) -> Rect {
+        let header = self.operator_header_rect(area);
+        let width = header.width.min(8);
+        Rect::new(
+            header.right().saturating_sub(width),
+            header.y,
+            width,
+            header.height,
         )
     }
     fn capture_operator_context(&self) -> OperatorContext {
@@ -431,6 +645,9 @@ impl Dashboard {
         let Some(id) = self.operator.selected else {
             return;
         };
+        self.operator_submit_to(id, SubmitOrigin::Composer);
+    }
+    fn operator_submit_to(&mut self, id: Id, origin: SubmitOrigin) {
         let Some(chat) = self.operator.chats.get_mut(&id.0) else {
             return;
         };
@@ -439,6 +656,12 @@ impl Dashboard {
                 "This conversation is busy or its worker stop is unconfirmed; draft retained."
                     .into(),
             );
+            if let SubmitOrigin::Quick { generation } = origin {
+                self.operator_quick_failed(
+                    generation,
+                    "This conversation is busy or its worker stop is unconfirmed; draft retained.",
+                );
+            }
             return;
         }
         if chat.draft.trim().is_empty() {
@@ -456,6 +679,7 @@ impl Dashboard {
                 text: text.clone(),
                 session,
                 expected_run,
+                origin,
             },
             OperatorRequest::Submit {
                 conversation: id,
@@ -572,10 +796,7 @@ impl Dashboard {
                     .filter(|m| expandable(m))
                     .map(|m| m.ordinal)
                     .collect();
-                let index = entries
-                    .iter()
-                    .position(|id| Some(*id) == chat.entry_focus)
-                    .unwrap_or(0);
+                let index = entries.iter().position(|id| Some(*id) == chat.entry_focus);
                 match key.code {
                     KeyCode::Enter => {
                         if let Some(id) = chat.entry_focus
@@ -590,10 +811,15 @@ impl Dashboard {
                     }
                     KeyCode::Home => chat.entry_focus = entries.first().copied(),
                     KeyCode::End => chat.entry_focus = entries.last().copied(),
-                    KeyCode::Up => chat.entry_focus = entries.get(index.saturating_sub(1)).copied(),
+                    KeyCode::Up => {
+                        chat.entry_focus =
+                            entries.get(index.unwrap_or(0).saturating_sub(1)).copied()
+                    }
                     KeyCode::Down => {
                         chat.entry_focus = entries
-                            .get((index + 1).min(entries.len().saturating_sub(1)))
+                            .get(index.map_or(0, |index| {
+                                (index + 1).min(entries.len().saturating_sub(1))
+                            }))
                             .copied()
                     }
                     _ => {}
@@ -690,7 +916,8 @@ impl Dashboard {
                         let provider = form.provider;
                         self.operator_request(
                             Pending::Create {
-                                context: self.operator.context.clone(),
+                                context: Box::new(self.operator.context.clone()),
+                                origin: CreateOrigin::Manual,
                             },
                             OperatorRequest::Create { provider, model },
                         );
@@ -754,7 +981,9 @@ impl Dashboard {
             .and_then(|id| self.operator.chats.get_mut(&id.0))
         {
             // Match the protocol's user-text bound without splitting UTF-8.
-            if !chat.closing && chat.draft.len().saturating_add(text.len()) <= 64 * 1024 {
+            if !chat.closing
+                && chat.draft.len().saturating_add(text.len()) <= MAX_OPERATOR_TEXT_BYTES
+            {
                 chat.cursor.insert(&mut chat.draft, text);
             }
         }
@@ -889,6 +1118,17 @@ impl Dashboard {
             Pending::Create { .. } => {}
         }
         if let Response::Error { message, .. } = response {
+            match &pending {
+                Pending::Create {
+                    origin: CreateOrigin::Quick(submission),
+                    ..
+                } => self.operator_quick_failed(submission.generation, message),
+                Pending::Submit {
+                    origin: SubmitOrigin::Quick { generation },
+                    ..
+                } => self.operator_quick_failed(*generation, message),
+                _ => {}
+            }
             let id = match &pending {
                 Pending::Read { id, .. }
                 | Pending::Submit { id, .. }
@@ -956,15 +1196,64 @@ impl Dashboard {
                 self.operator_catch_up();
             }
             (
-                Pending::Create { context },
+                Pending::Create { context, origin },
                 Response::Operator(OperatorResponse::Created(summary)),
             ) => {
-                self.operator_summary(summary.clone());
-                if let Some(chat) = self.operator.chats.get_mut(&summary.id.0) {
-                    chat.context = context;
+                if let CreateOrigin::Quick(submission) = &origin
+                    && (summary.provider != submission.provider
+                        || summary.model != submission.model
+                        || summary.archived
+                        || !summary.worker_stopped)
+                {
+                    self.operator_quick_failed(submission.generation, "Operator Create receipt did not match the captured provider/model or live conversation; message retained.");
+                    return true;
                 }
-                if self.operator.visible && self.operator.new.is_some() {
-                    self.operator_select(summary.id);
+                let selected = self.operator.selected;
+                self.operator_summary(summary.clone());
+                match origin {
+                    CreateOrigin::Manual => {
+                        if let Some(chat) = self.operator.chats.get_mut(&summary.id.0) {
+                            chat.context = *context;
+                        }
+                        if self.operator.visible
+                            && self.operator.new.is_some()
+                            && !self.operator_quick_visible()
+                        {
+                            self.operator_select(summary.id);
+                        }
+                    }
+                    CreateOrigin::Quick(submission) => {
+                        self.operator.selected = selected;
+                        let id = summary.id;
+                        if !self
+                            .operator
+                            .chats
+                            .get(&id.0)
+                            .is_some_and(|chat| chat.summary == *summary && chat.can_submit())
+                        {
+                            self.operator_quick_failed(
+                                submission.generation,
+                                "Created conversation authority changed; message retained.",
+                            );
+                            return true;
+                        }
+                        let chat = self.operator.chats.get_mut(&id.0).unwrap();
+                        chat.context = submission.context;
+                        chat.draft = submission.text;
+                        chat.cursor = TextCursor::default();
+                        if let Some(quick) = &mut self.operator.quick
+                            && quick.generation == submission.generation
+                        {
+                            quick.conversation = Some(id);
+                            quick.phase = QuickPhase::Submitting;
+                        }
+                        self.operator_submit_to(
+                            id,
+                            SubmitOrigin::Quick {
+                                generation: submission.generation,
+                            },
+                        );
+                    }
                 }
                 self.operator_catch_up();
             }
@@ -974,6 +1263,7 @@ impl Dashboard {
                     text,
                     session,
                     expected_run,
+                    origin,
                 },
                 Response::Operator(OperatorResponse::Submitted(turn)),
             ) if turn.identity.conversation == id
@@ -982,12 +1272,16 @@ impl Dashboard {
                 && turn.identity.validate().is_ok() =>
             {
                 if let Some(chat) = self.operator.chats.get_mut(&id.0) {
-                    if chat.draft == text {
+                    if !chat.summary.archived
+                        && chat.summary.run.0 <= turn.identity.run.0
+                        && chat.draft == text
+                    {
                         chat.draft.clear();
                         chat.cursor = TextCursor::default();
                     }
                     let current = chat.summary.current_turn.as_ref();
-                    if chat.summary.run.0 <= turn.identity.run.0
+                    if !chat.summary.archived
+                        && chat.summary.run.0 <= turn.identity.run.0
                         && current.is_none_or(|current| {
                             current.identity.run.0 < turn.identity.run.0
                                 || (current.identity == turn.identity
@@ -1004,6 +1298,24 @@ impl Dashboard {
                     chat.scroll = 0;
                     chat.anchor = None;
                 }
+                if let SubmitOrigin::Quick { generation } = origin
+                    && self
+                        .operator
+                        .quick
+                        .as_ref()
+                        .is_some_and(|quick| quick.generation == generation)
+                {
+                    let quick = self.operator.quick.take().unwrap();
+                    if quick.visible
+                        && self
+                            .operator
+                            .chats
+                            .get(&id.0)
+                            .is_some_and(|chat| !chat.summary.archived)
+                    {
+                        self.open_operator_conversation(id);
+                    }
+                }
                 self.operator_list(0);
                 self.operator_catch_up();
             }
@@ -1017,7 +1329,12 @@ impl Dashboard {
                 self.operator_list(0);
                 self.operator_catch_up();
             }
-            _ => {
+            (pending, _) => {
+                match pending {
+                    Pending::Create { origin: CreateOrigin::Quick(submission), .. } => self.operator_quick_failed(submission.generation, "Operator response did not match its request; message retained."),
+                    Pending::Submit { origin: SubmitOrigin::Quick { generation }, .. } => self.operator_quick_failed(generation, "Operator response did not match its requested conversation/session/run; message retained."),
+                    _ => {}
+                }
                 self.operator.error =
                     Some("Operator response did not match its requested conversation.".into());
             }
@@ -1171,6 +1488,9 @@ impl Dashboard {
         } else {
             " Operator [o]".into()
         };
+        let mut header = self.operator_header_rect(frame.area());
+        let quick = self.operator_quick_header_rect(frame.area());
+        header.width = quick.x.saturating_sub(header.x);
         frame.render_widget(
             Paragraph::new(label).style(Style::default().fg(super::render::MAUVE()).bg(
                 if self.operator.visible {
@@ -1179,7 +1499,11 @@ impl Dashboard {
                     super::render::BASE()
                 },
             )),
-            self.operator_header_rect(frame.area()),
+            header,
+        );
+        frame.render_widget(
+            Paragraph::new("[Ctrl-o]").style(Style::default().fg(super::render::MAUVE())),
+            quick,
         );
     }
     pub(super) fn draw_operator(&self, frame: &mut Frame<'_>) {
@@ -1311,6 +1635,435 @@ mod tests {
         });
         d.operator_select(Id(1));
         (d, reads)
+    }
+    fn quick_create(d: &mut Dashboard) -> ClientMessage {
+        d.ctrl('o');
+        d.event_action(Event::Paste("first message".into()));
+        assert!(
+            d.drain_outbox().is_empty(),
+            "opening and paste cannot send requests"
+        );
+        d.key(KeyCode::Enter);
+        d.drain_outbox()
+            .into_iter()
+            .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Create { .. })))
+            .expect("Enter creates a quick conversation")
+    }
+    #[test]
+    fn operator_quick_cancel_restores_underlying_state() {
+        let (mut d, _) = setup();
+        d.operator_insert("underlying draft");
+        d.operator_scroll(-10);
+        let cursor = d.operator.chats[&1].cursor;
+        let scroll = d.operator.chats[&1].scroll;
+        d.drain_outbox();
+        d.ctrl('o');
+        d.event_action(Event::Paste("popup text".into()));
+        assert!(draw(&mut d, 140, 24).contains("Quick message"));
+        d.key(KeyCode::Esc);
+        assert_eq!(d.operator.selected, Some(Id(1)));
+        assert_eq!(d.operator.chats[&1].draft, "underlying draft");
+        assert_eq!(
+            d.operator.chats[&1].cursor.position("underlying draft"),
+            cursor.position("underlying draft")
+        );
+        assert_eq!(d.operator.chats[&1].scroll, scroll);
+        assert!(d.operator_is_editing());
+        assert!(d.drain_outbox().is_empty());
+        let heading = d.sidebar_rects(d.outer_area).operator;
+        d.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: heading.right() - 2,
+                row: heading.y,
+                modifiers: KeyModifiers::NONE,
+            },
+            d.outer_area,
+        );
+        assert!(d.operator_quick_visible());
+        d.key(KeyCode::Esc);
+        assert!(!d.operator.list_focus);
+        assert_eq!(d.operator.chats[&1].draft, "underlying draft");
+        assert!(d.drain_outbox().is_empty());
+    }
+    #[test]
+    fn operator_quick_creates_then_submits_once() {
+        let mut d = Dashboard::new(TerminalSize {
+            rows: 24,
+            cols: 140,
+        });
+        let create = quick_create(&mut d);
+        for kind in [
+            KeyEventKind::Repeat,
+            KeyEventKind::Release,
+            KeyEventKind::Press,
+        ] {
+            d.key_action(KeyEvent::new_with_kind(
+                KeyCode::Enter,
+                KeyModifiers::NONE,
+                kind,
+            ));
+        }
+        assert!(d.drain_outbox().is_empty());
+        let mut created = summary(7, 4, OperatorTurnState::Complete, true);
+        created.model = "gpt-6.1-sol".into();
+        created.current_turn.as_mut().unwrap().identity.run = SessionRunId(2);
+        let outgoing = d.handle_server_message(ServerMessage::Response {
+            request_id: create.request_id,
+            response: Response::Operator(OperatorResponse::Created(created.clone())),
+        });
+        let submit = outgoing
+            .iter()
+            .filter(|m| matches!(m.request, Request::Operator(OperatorRequest::Submit { .. })))
+            .collect::<Vec<_>>();
+        assert_eq!(submit.len(), 1);
+        assert!(
+            matches!(&submit[0].request, Request::Operator(OperatorRequest::Submit { conversation: Id(7), expected_run: SessionRunId(4), text, .. }) if text == "first message")
+        );
+        assert!(
+            d.handle_server_message(ServerMessage::Response {
+                request_id: create.request_id,
+                response: Response::Operator(OperatorResponse::Created(created)),
+            })
+            .is_empty()
+        );
+    }
+    #[test]
+    fn operator_quick_late_receipt_does_not_steal_focus() {
+        let (mut d, _) = setup();
+        d.drain_outbox();
+        let create = quick_create(&mut d);
+        d.key(KeyCode::Esc);
+        d.operator_select(Id(2));
+        let outgoing = d.handle_server_message(ServerMessage::Response {
+            request_id: create.request_id,
+            response: Response::Operator(OperatorResponse::Created({
+                let mut created = summary(7, 0, OperatorTurnState::Complete, true);
+                created.model = "gpt-6.1-sol".into();
+                created.current_turn = None;
+                created
+            })),
+        });
+        assert_eq!(d.operator.selected, Some(Id(2)));
+        assert_eq!(
+            outgoing
+                .iter()
+                .filter(|m| matches!(m.request, Request::Operator(OperatorRequest::Submit { .. })))
+                .count(),
+            1
+        );
+    }
+    #[test]
+    fn operator_quick_failure_retains_first_message() {
+        let mut d = Dashboard::new(TerminalSize {
+            rows: 24,
+            cols: 140,
+        });
+        let create = quick_create(&mut d);
+        d.key(KeyCode::Esc);
+        d.handle_server_message(ServerMessage::Response {
+            request_id: create.request_id,
+            response: Response::Error {
+                code: ovrcr_protocol::ErrorCode::Conflict,
+                message: "fixture refusal".into(),
+            },
+        });
+        d.ctrl('o');
+        let screen = draw(&mut d, 140, 24);
+        assert!(
+            screen.contains("first message") && screen.contains("fixture refusal"),
+            "{screen}"
+        );
+        assert!(d.drain_outbox().is_empty());
+    }
+    fn quick_summary(id: u64) -> Summary {
+        let mut created = summary(id, 0, OperatorTurnState::Complete, true);
+        created.current_turn = None;
+        created.model = "gpt-6.1-sol".into();
+        created
+    }
+    fn quick_ack_create(d: &mut Dashboard, create: ClientMessage, id: u64) -> ClientMessage {
+        d.handle_server_message(ServerMessage::Response {
+            request_id: create.request_id,
+            response: Response::Operator(OperatorResponse::Created(quick_summary(id))),
+        })
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Submit { .. })))
+        .unwrap()
+    }
+    #[test]
+    fn operator_quick_wrong_identity_retains_message_and_explicit_retry_reuses_chat() {
+        for wrong in 0..4 {
+            let mut d = Dashboard::new(TerminalSize {
+                rows: 24,
+                cols: 140,
+            });
+            let create = quick_create(&mut d);
+            let submit = quick_ack_create(&mut d, create, 7);
+            let mut turn = summary(7, 1, OperatorTurnState::Running, false)
+                .current_turn
+                .unwrap();
+            match wrong {
+                0 => turn.identity.conversation = Id(8),
+                1 => turn.identity.session = SessionId(999),
+                2 => turn.identity.run = SessionRunId(2),
+                _ => turn.identity.turn = OperatorTurnId(0),
+            }
+            assert!(
+                d.handle_server_message(ServerMessage::Response {
+                    request_id: submit.request_id,
+                    response: Response::Operator(OperatorResponse::Submitted(turn))
+                })
+                .is_empty()
+            );
+            assert_eq!(d.operator.chats[&7].draft, "first message");
+            assert_eq!(d.operator.chats[&7].summary.run, SessionRunId(0));
+            assert!(d.operator.quick.as_ref().unwrap().error.is_some());
+            d.key(KeyCode::Enter);
+            let outgoing = d.drain_outbox();
+            assert_eq!(outgoing.len(), 1);
+            assert!(matches!(
+                outgoing[0].request,
+                Request::Operator(OperatorRequest::Submit {
+                    conversation: Id(7),
+                    ..
+                })
+            ));
+        }
+    }
+    #[test]
+    fn operator_quick_dismissed_submit_error_reopens_and_preserves_newer_chat_draft() {
+        let (mut d, _) = setup();
+        d.drain_outbox();
+        let create = quick_create(&mut d);
+        let submit = quick_ack_create(&mut d, create, 7);
+        d.key(KeyCode::Esc);
+        d.operator_select(Id(2));
+        d.handle_server_message(ServerMessage::Response {
+            request_id: submit.request_id,
+            response: Response::Error {
+                code: ovrcr_protocol::ErrorCode::Conflict,
+                message: "submit refused".into(),
+            },
+        });
+        assert_eq!(d.operator.chats[&7].draft, "first message");
+        assert_eq!(d.operator.selected, Some(Id(2)));
+        d.operator.chats.get_mut(&7).unwrap().draft = "newer chat draft".into();
+        d.ctrl('o');
+        assert_eq!(d.operator.quick.as_ref().unwrap().text, "newer chat draft");
+        d.key(KeyCode::Backspace);
+        d.key(KeyCode::Char('!'));
+        d.key(KeyCode::Enter);
+        let outgoing = d.drain_outbox();
+        assert_eq!(outgoing.len(), 1);
+        assert!(
+            matches!(&outgoing[0].request, Request::Operator(OperatorRequest::Submit { conversation: Id(7), text, .. }) if text == "newer chat draf!")
+        );
+    }
+    #[test]
+    fn operator_quick_slot_frees_on_acceptance_and_old_receipts_cannot_touch_new_generation() {
+        let mut d = Dashboard::new(TerminalSize {
+            rows: 24,
+            cols: 140,
+        });
+        let create = quick_create(&mut d);
+        let generation = d.operator.quick.as_ref().unwrap().generation;
+        let submit = quick_ack_create(&mut d, create, 7);
+        let response = Response::Operator(OperatorResponse::Submitted(
+            summary(7, 1, OperatorTurnState::Running, false)
+                .current_turn
+                .unwrap(),
+        ));
+        d.handle_server_message(ServerMessage::Response {
+            request_id: submit.request_id,
+            response: response.clone(),
+        });
+        assert!(d.operator.quick.is_none());
+        assert!(d.operator.chats[&7].draft.is_empty());
+        assert!(!d.operator.chats[&7].summary.worker_stopped);
+        d.drain_outbox();
+        d.ctrl('o');
+        assert!(d.operator.quick.as_ref().unwrap().generation > generation);
+        d.event_action(Event::Paste("second".into()));
+        d.handle_server_message(ServerMessage::Response {
+            request_id: submit.request_id,
+            response,
+        });
+        assert_eq!(d.operator.quick.as_ref().unwrap().text, "second");
+        d.key(KeyCode::Enter);
+        assert_eq!(
+            d.drain_outbox()
+                .iter()
+                .filter(|m| matches!(m.request, Request::Operator(OperatorRequest::Create { .. })))
+                .count(),
+            1
+        );
+    }
+    #[test]
+    fn operator_quick_freezes_selected_chat_context_defaults_and_ignores_manual_create() {
+        let (mut d, _) = setup();
+        d.operator.chats.get_mut(&1).unwrap().context = OperatorContext {
+            session: Some(SessionId(55)),
+            run: Some(SessionRunId(8)),
+            ..OperatorContext::default()
+        };
+        d.ctrl('n');
+        d.key(KeyCode::Enter);
+        let manual = d
+            .drain_outbox()
+            .into_iter()
+            .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Create { .. })))
+            .unwrap();
+        let quick = quick_create(&mut d);
+        d.settings.operator.provider = OperatorProvider::Grok;
+        d.settings.operator.chat_gpt_model = Some("changed".into());
+        d.handle_server_message(ServerMessage::Response {
+            request_id: manual.request_id,
+            response: Response::Operator(OperatorResponse::Created(quick_summary(8))),
+        });
+        assert_eq!(d.operator.selected, Some(Id(1)));
+        assert!(d.operator.new.is_some());
+        d.drain_outbox();
+        let submit = quick_ack_create(&mut d, quick, 7);
+        assert!(matches!(
+            submit.request,
+            Request::Operator(OperatorRequest::Submit {
+                context: OperatorContext {
+                    session: Some(SessionId(55)),
+                    run: Some(SessionRunId(8)),
+                    ..
+                },
+                ..
+            })
+        ));
+    }
+    #[test]
+    fn operator_quick_empty_text_controls_graphemes_and_byte_limit() {
+        let mut d = Dashboard::new(TerminalSize {
+            rows: 24,
+            cols: 140,
+        });
+        for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
+            d.key_action(KeyEvent::new_with_kind(
+                KeyCode::Char('o'),
+                KeyModifiers::CONTROL,
+                kind,
+            ));
+            assert!(d.operator.quick.is_none());
+        }
+        d.ctrl('o');
+        d.event_action(Event::Paste(" \r\n\u{1b}\0".into()));
+        d.key(KeyCode::Enter);
+        assert!(d.drain_outbox().is_empty());
+        d.key(KeyCode::Esc);
+        d.ctrl('o');
+        d.event_action(Event::Paste("e\u{301}界".into()));
+        d.key(KeyCode::Left);
+        d.key(KeyCode::Backspace);
+        d.key_action(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        assert_eq!(d.operator.quick.as_ref().unwrap().text, "\n界");
+        d.key(KeyCode::Esc);
+        d.ctrl('o');
+        d.event_action(Event::Paste("x".repeat(MAX_OPERATOR_TEXT_BYTES)));
+        d.key(KeyCode::Char('界'));
+        assert_eq!(
+            d.operator.quick.as_ref().unwrap().text.len(),
+            MAX_OPERATOR_TEXT_BYTES
+        );
+    }
+    #[test]
+    fn operator_quick_reopen_tracks_progress_and_late_acceptance_preserves_newer_draft_and_archive()
+    {
+        for archive in [false, true] {
+            let (mut d, _) = setup();
+            d.drain_outbox();
+            let create = quick_create(&mut d);
+            d.key(KeyCode::Esc);
+            d.ctrl('o');
+            assert!(d.operator.quick.as_ref().unwrap().phase == QuickPhase::Creating);
+            assert!(d.drain_outbox().is_empty());
+            let submit = quick_ack_create(&mut d, create, 7);
+            d.key(KeyCode::Esc);
+            d.ctrl('o');
+            assert!(d.operator.quick.as_ref().unwrap().phase == QuickPhase::Submitting);
+            d.key(KeyCode::Enter);
+            assert!(d.drain_outbox().is_empty());
+            d.key(KeyCode::Esc);
+            d.operator_select(Id(2));
+            d.operator.chats.get_mut(&7).unwrap().draft = "a newer draft".into();
+            let mut retained = quick_summary(7);
+            retained.run = SessionRunId(3);
+            retained.archived = archive;
+            d.operator_summary(retained.clone());
+            d.handle_server_message(ServerMessage::Response {
+                request_id: submit.request_id,
+                response: Response::Operator(OperatorResponse::Submitted(
+                    summary(7, 1, OperatorTurnState::Running, false)
+                        .current_turn
+                        .unwrap(),
+                )),
+            });
+            assert_eq!(d.operator.chats[&7].summary, retained);
+            assert_eq!(d.operator.chats[&7].draft, "a newer draft");
+            assert_eq!(d.operator.selected, Some(Id(2)));
+            assert!(d.operator.quick.is_none());
+        }
+    }
+    #[test]
+    fn operator_quick_obscures_unread_tail_and_preserves_cursor_at_floor_sizes() {
+        let (mut d, reads) = setup();
+        history(
+            &mut d,
+            request_id(&reads, 1),
+            summary(1, 1, OperatorTurnState::Complete, true),
+            vec![completed(1)],
+            None,
+        );
+        d.ctrl('o');
+        for (cols, rows) in [(140, 24), (80, 24), (60, 16), (59, 15), (1, 1), (0, 0)] {
+            draw(&mut d, cols, rows);
+            assert_eq!(d.operator.chats[&1].unread, Some(OperatorTurnId(1)));
+        }
+        d.key(KeyCode::Esc);
+        draw(&mut d, 140, 24);
+        assert!(d.operator.chats[&1].unread.is_none());
+    }
+    #[test]
+    fn operator_original_maximum_newlines_keeps_six_composer_rows() {
+        let (mut d, _) = setup();
+        d.operator_insert(&"\n".repeat(65535));
+        assert_eq!(d.operator.chats[&1].draft.len(), 65535);
+        assert_eq!(d.operator_layout(d.outer_area).composer.height, 6);
+    }
+    #[test]
+    fn operator_original_first_down_selects_first_expandable_receipt() {
+        let (mut d, reads) = setup();
+        history(
+            &mut d,
+            request_id(&reads, 1),
+            summary(1, 1, OperatorTurnState::Complete, true),
+            vec![
+                message(
+                    1,
+                    OperatorMessageContent::User {
+                        text: "first".into(),
+                        context: OperatorContext::default(),
+                    },
+                ),
+                message(
+                    2,
+                    OperatorMessageContent::User {
+                        text: "second".into(),
+                        context: OperatorContext::default(),
+                    },
+                ),
+            ],
+            None,
+        );
+        d.operator.transcript_focus = true;
+        d.operator.chats.get_mut(&1).unwrap().entry_focus = None;
+        d.key(KeyCode::Down);
+        assert_eq!(d.operator.chats[&1].entry_focus, Some(1));
     }
     fn message(ordinal: u64, content: OperatorMessageContent) -> OperatorMessage {
         OperatorMessage {

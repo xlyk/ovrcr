@@ -1,4 +1,4 @@
-󰚩 OVRCR Operator [o]                                                                                                        [Actions] [Menu]
+󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                    [Actions] [Menu]
  OPERATOR ───────────────────────── [+]│chat-1 · chat_gpt / fixture · complete
 ▌  chat-1                              │You
    chat-2                              │▸ Context · global

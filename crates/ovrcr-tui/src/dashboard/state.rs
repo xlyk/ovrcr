@@ -1494,6 +1494,16 @@ impl Dashboard {
     }
 
     fn dispatch_key(&mut self, key: KeyEvent) -> DashboardAction {
+        if super::keymap::is_operator_quick_key(key) {
+            return if key.kind == KeyEventKind::Press {
+                self.open_operator_quick_message()
+            } else {
+                DashboardAction::None
+            };
+        }
+        if self.operator_quick_visible() {
+            return self.operator_quick_key(key);
+        }
         if key.kind == KeyEventKind::Press {
             self.desktop.notice = None;
         }
@@ -2261,6 +2271,21 @@ impl Dashboard {
         if self.navigation.discard_input {
             return DashboardAction::None;
         }
+        if let Event::Key(key) = event
+            && (super::keymap::is_operator_quick_key(key) || self.operator_quick_visible())
+        {
+            return self.key_action(key);
+        }
+        if self.operator_quick_visible() {
+            match &event {
+                Event::Paste(text) => return self.operator_quick_paste(text),
+                Event::Mouse(mouse) => {
+                    return self.operator_quick_mouse(*mouse, self.outer_area).unwrap();
+                }
+                Event::Resize(_, _) => return DashboardAction::Redraw,
+                _ => {}
+            }
+        }
         if let Some(tasks) = &mut self.tasks {
             if tasks.event(event) {
                 self.tasks = None;
@@ -2329,6 +2354,9 @@ impl Dashboard {
     }
 
     pub fn mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
+        if let Some(action) = self.operator_quick_mouse(mouse, area) {
+            return action;
+        }
         if self.details.is_some() {
             return self.details_mouse(mouse);
         }
@@ -2346,6 +2374,13 @@ impl Dashboard {
         }
         if !self.mouse_focused {
             return DashboardAction::None;
+        }
+        if self
+            .operator_quick_header_rect(area)
+            .contains(ratatui::layout::Position::new(mouse.column, mouse.row))
+            && mouse.kind == MouseEventKind::Down(MouseButton::Left)
+        {
+            return self.open_operator_quick_message();
         }
         if matches!(self.mode, InputMode::Browse | InputMode::Terminal)
             && mouse.kind == MouseEventKind::Down(MouseButton::Left)
@@ -2396,7 +2431,7 @@ impl Dashboard {
     }
 
     pub(crate) fn mouse_capture_required(&self) -> bool {
-        if self.operator.visible {
+        if self.operator.visible || self.operator_quick_visible() {
             return true;
         }
         if self.details.is_some() {

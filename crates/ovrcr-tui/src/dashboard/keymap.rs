@@ -17,6 +17,7 @@ pub(super) enum Action {
     Palette,
     Agents,
     Operator,
+    OperatorQuick,
     OperatorKey(KeyCode, KeyModifiers),
     CreateTerminal,
     CreateWorkspace,
@@ -215,6 +216,7 @@ impl KeyBinding {
             return false;
         }
         match self.action {
+            Action::OperatorQuick => return is_operator_quick_key(key),
             Action::OperatorKey(code, modifiers) => {
                 return key.code == code && key.modifiers == modifiers;
             }
@@ -259,6 +261,9 @@ impl Dashboard {
     /// Run a binding's action. The key popup and the palette reach the same
     /// handlers as a bare key press.
     pub(super) fn run(&mut self, action: Action) -> DashboardAction {
+        if action == Action::OperatorQuick {
+            return self.open_operator_quick_message();
+        }
         self.agent_typing = None;
         // Opening a group stays inside the popup: it neither closes the popup
         // nor clears the notice, so it answers before the shared preamble.
@@ -276,6 +281,7 @@ impl Dashboard {
             Action::Palette => self.open_palette(),
             Action::Agents => self.open_agent_search(),
             Action::Operator => self.open_operator(),
+            Action::OperatorQuick => unreachable!(),
             Action::OperatorKey(code, modifiers) => {
                 self.operator_key(KeyEvent::new(code, modifiers))
             }
@@ -405,7 +411,27 @@ pub(super) fn agents_binding() -> KeyBinding {
     .group('v', "s")
 }
 
+pub(super) fn is_operator_quick_key(key: KeyEvent) -> bool {
+    key.code == KeyCode::Char('o') && key.modifiers == KeyModifiers::CONTROL
+}
 pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
+    let mut groups = mode_keymap(dashboard);
+    groups.push(KeyGroup {
+        title: "Global".into(),
+        keys: vec![
+            key_binding(
+                "Ctrl-o",
+                "Quick message",
+                "Start an Operator conversation with configured defaults".into(),
+                KeyCode::Char('o'),
+                Action::OperatorQuick,
+            )
+            .once(),
+        ],
+    });
+    groups
+}
+fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
     use KeyCode::{Char, Enter, Esc, PageDown, PageUp, Tab};
     if dashboard.operator_is_editing() {
         let native = |label, name, code, modifiers| {

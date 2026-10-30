@@ -527,10 +527,23 @@ fn process_dashboard_input<W: Write>(
     mouse_enabled: &mut bool,
 ) -> Result<bool> {
     let event = event::read()?;
+    dispatch_dashboard_event(terminal, stream, dashboard, mouse_enabled, event)
+}
+
+fn dispatch_dashboard_event<W: Write>(
+    terminal: &mut Terminal<CrosstermBackend<&mut W>>,
+    stream: &mut UnixStream,
+    dashboard: &mut Dashboard,
+    mouse_enabled: &mut bool,
+    event: Event,
+) -> Result<bool> {
     if dashboard.navigation.discard_input {
         return Ok(false);
     }
     let action = match event {
+        Event::Mouse(mouse) if dashboard.operator_quick_visible() => {
+            dashboard.mouse_action(mouse, dashboard.outer_area)
+        }
         Event::Mouse(mouse) => {
             let area = terminal.size()?.into();
             dashboard.mouse_action(mouse, area)
@@ -1403,6 +1416,147 @@ mod operator_loop_tests {
         let mut byte = [0];
         wake.read_exact(&mut byte).unwrap();
         assert!(next_dashboard_messages(messages, d, stream).unwrap());
+    }
+    #[test]
+    fn operator_quick_production_dispatch_keeps_key_paste_mouse_resize_off_pty() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        let (mut d, _) = super::unread_review_tests::fixture();
+        let area = Rect::new(0, 0, 140, 24);
+        d.install_area(area);
+        d.install_screen(SessionId(1), &[]);
+        d.key(KeyCode::Enter);
+        assert_eq!(
+            d.key(KeyCode::Char('p')),
+            DashboardAction::PtyBytes(b"p".to_vec())
+        );
+        d.drain_outbox();
+        let (mut stream, mut peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let (sender, messages) = dashboard_message_channel();
+        let (mut wake, reader_wake) = UnixStream::pair().unwrap();
+        wake.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let reader_stream = stream.try_clone().unwrap();
+        let reader = thread::spawn(move || read_messages(reader_stream, sender, reader_wake));
+        let bytes = Arc::new(Mutex::new(Vec::new()));
+        let parser = Arc::new(Mutex::new(ovrcr_terminal::vt100::Parser::new(24, 140, 0)));
+        let mut writer = ScreenWriter {
+            bytes,
+            parser: parser.clone(),
+        };
+        let mut terminal = Terminal::with_options(
+            CrosstermBackend::new(&mut writer),
+            TerminalOptions {
+                viewport: Viewport::Fixed(area),
+            },
+        )
+        .unwrap();
+        let mut mouse = false;
+        let events = [
+            Event::Key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL)),
+            Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+            Event::Paste("first\r\n界\u{1b}]52;c;INJECTED\u{7}".into()),
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 1,
+                row: 1,
+                modifiers: KeyModifiers::NONE,
+            }),
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 100,
+                row: 12,
+                modifiers: KeyModifiers::NONE,
+            }),
+            Event::Resize(60, 16),
+        ];
+        for event in events {
+            dispatch_dashboard_event(&mut terminal, &mut stream, &mut d, &mut mouse, event)
+                .unwrap();
+        }
+        d.draw(&mut terminal).unwrap();
+        let visible = parser.lock().unwrap().screen().contents();
+        assert!(
+            visible.contains("Quick message") && visible.contains("xfirst"),
+            "{visible}"
+        );
+        assert!(
+            crate::protocol::read_frame::<ClientMessage>(&mut peer).is_err(),
+            "editing cannot emit any socket request"
+        );
+        dispatch_dashboard_event(
+            &mut terminal,
+            &mut stream,
+            &mut d,
+            &mut mouse,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        )
+        .unwrap();
+        let create: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+        assert!(matches!(
+            create.request,
+            Request::Operator(OperatorRequest::Create { .. })
+        ));
+        assert!(
+            crate::protocol::read_frame::<ClientMessage>(&mut peer).is_err(),
+            "one Enter emits exactly one Create, no PTY input"
+        );
+        dispatch_dashboard_event(
+            &mut terminal,
+            &mut stream,
+            &mut d,
+            &mut mouse,
+            Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+        )
+        .unwrap();
+        let mut created = summary(7);
+        created.model = "gpt-6.1-sol".into();
+        created.run = SessionRunId(0);
+        created.current_turn = None;
+        created.worker_stopped = true;
+        inbound(
+            &mut peer,
+            &mut wake,
+            &messages,
+            &mut d,
+            &mut stream,
+            ServerMessage::Response {
+                request_id: create.request_id,
+                response: Response::Operator(OperatorResponse::Created(created)),
+            },
+        );
+        let mut requests = Vec::new();
+        while let Ok(request) = crate::protocol::read_frame::<ClientMessage>(&mut peer) {
+            requests.push(request);
+        }
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|m| matches!(
+                    m.request,
+                    Request::Operator(OperatorRequest::Submit {
+                        conversation: OperatorConversationId(7),
+                        expected_run: SessionRunId(0),
+                        ..
+                    })
+                ))
+                .count(),
+            1
+        );
+        assert!(!requests.iter().any(|m| matches!(
+            m.request,
+            Request::Input { .. } | Request::AssignedHumanInput { .. }
+        )));
+        assert!(
+            !d.operator.visible,
+            "dismissed continuation cannot open Operator"
+        );
+        assert_eq!(
+            d.key(KeyCode::Char('p')),
+            DashboardAction::PtyBytes(b"p".to_vec())
+        );
+        peer.shutdown(std::net::Shutdown::Both).unwrap();
+        reader.join().unwrap();
     }
     #[test]
     fn operator_real_socket_reader_keeps_streams_and_terminal_input_independent() {
