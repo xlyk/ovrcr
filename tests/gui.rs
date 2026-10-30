@@ -46,7 +46,7 @@ fn wait_dashboard(terminal: &mut Terminal) -> Result<()> {
             && text
                 .lines()
                 .next()
-                .is_some_and(|header| header.contains("OVRCR") && header.contains("agent runtime"))
+                .is_some_and(|header| header.contains("OVRCR") && header.contains("Operator [o]"))
         {
             return Ok(());
         }

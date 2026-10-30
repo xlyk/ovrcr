@@ -74,7 +74,8 @@ the normal controls, then retry the preserved draft.
 
 Select the conversation and use its **Stop** control or `Ctrl-x`. Stop affects
 that turn's model and Bash work; an OVRCR operation already accepted may finish.
-Visible partial text and command outcomes remain in history.
+Visible partial text and command outcomes remain in history. Generic
+`terminal kill` and `terminal close` refuse Operator conversations; use native Stop.
 
 Wait for confirmed worker stop before submitting again. **Finishing / stop
 unconfirmed** is not confirmation. After a crash, inspect the Operator rows with
@@ -87,7 +88,8 @@ stopped, acknowledge its retained session:
 ovrcr terminal acknowledge-stopped SESSION_ID
 ```
 
-Then submit fresh instructions. Interrupted or uncertain commands are never
+Acknowledgement also marks an unfinished turn Interrupted. Then submit fresh
+instructions. Interrupted or uncertain commands are never
 automatically replayed.
 
 See the [runtime and authentication reference](development/operator.md) for Bash

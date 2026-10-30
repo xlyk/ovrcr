@@ -444,6 +444,263 @@ mod compiled_worker {
     }
 
     #[test]
+    fn final_review_public_terminal_lifecycle_refuses_operator_then_native_stop_allows_next_turn() {
+        let live = live::Live::idle().bounded();
+        let provider = Provider::new(live.root.path(), BUDGET);
+        provider.sign_in(&live.config);
+        start(&live, &provider);
+        let mut ui = DashboardClient::connect(&live);
+        let conversation = ui.create("fixture-lifecycle", true);
+        let turn = ui.submit("A exercise public lifecycle refusal");
+        let group = own_worker(&live, &conversation);
+        ui.wait_history(&provider, conversation.id, |history| {
+            has_text(history, "LIFECYCLE waiting")
+        });
+        for action in ["kill", "close"] {
+            let output = live
+                .command()
+                .args([
+                    "--json",
+                    "terminal",
+                    action,
+                    &conversation.session.0.to_string(),
+                ])
+                .output()
+                .unwrap();
+            assert!(
+                !output.status.success(),
+                "generic terminal {action} must refuse an Operator conversation"
+            );
+            let error = format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                error.contains("Operator") && error.contains("Stop"),
+                "{error}"
+            );
+            let history = ui.history(conversation.id);
+            assert_eq!(
+                history.conversation.current_turn.as_ref().unwrap().state,
+                OperatorTurnState::Running
+            );
+            assert!(!history.conversation.worker_stopped && live::group_exists(group));
+            assert!(!inventory(&live, &conversation).archived);
+        }
+        ui.ctrl('x');
+        ui.flush();
+        let stopped = ui.wait_history(&provider, conversation.id, |history| {
+            history.conversation.worker_stopped
+        });
+        assert_eq!(
+            stopped.conversation.current_turn.as_ref().unwrap().state,
+            OperatorTurnState::Interrupted
+        );
+        assert_retired(&live, &stopped, group);
+        let next = ui.submit("A supported next turn");
+        assert_eq!(next.identity.run.0, turn.identity.run.0 + 1);
+        let next_group = own_worker(&live, &conversation);
+        ui.wait_history(&provider, conversation.id, |history| {
+            history.messages.iter().any(|message| message.turn == next.identity.turn && matches!(&message.content, OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(text)) if text.contains("LIFECYCLE waiting")))
+        });
+        ui.ctrl('x');
+        ui.flush();
+        let stopped = ui.wait_history(&provider, conversation.id, |history| {
+            history.conversation.worker_stopped
+        });
+        assert_retired(&live, &stopped, next_group);
+        provider.assert_healthy();
+        assert_eq!(ui.request(Request::Shutdown { kill: false }), Response::Ok);
+        drop(ui);
+        assert!(live.join_within(BUDGET).is_finished());
+    }
+
+    #[test]
+    fn final_review_acknowledged_unexpected_worker_exit_interrupts_exact_turn_and_allows_next() {
+        let live = live::Live::idle().bounded();
+        let provider = Provider::new(live.root.path(), BUDGET);
+        provider.sign_in(&live.config);
+        start(&live, &provider);
+        let mut ui = DashboardClient::connect(&live);
+        let conversation = ui.create("fixture-lifecycle", true);
+        let turn = ui.submit("Independently confirm fixture worker exit");
+        let group = own_worker(&live, &conversation);
+        ui.wait_history(&provider, conversation.id, |history| {
+            has_text(history, "LIFECYCLE waiting")
+        });
+        assert!(
+            matches!(
+                ui.request(Request::AcknowledgeSessionStopped {
+                    session: conversation.session,
+                    expected_run: turn.identity.run
+                }),
+                Response::Error {
+                    code: protocol::ErrorCode::SessionRunning,
+                    ..
+                }
+            ),
+            "live worker cannot be acknowledged stopped"
+        );
+        assert_eq!(unsafe { libc::kill(-group, libc::SIGKILL) }, 0);
+        assert!(
+            live::wait_group_absent(group, BUDGET),
+            "owned fixture group is not independently confirmed absent"
+        );
+        live.forget_group(group);
+        let deadline = Instant::now() + BUDGET;
+        while inventory(&live, &conversation).phase.is_live() {
+            assert!(
+                Instant::now() < deadline,
+                "Server did not observe its worker exit"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        let before = ui.history(conversation.id);
+        assert!(
+            !before.conversation.worker_stopped,
+            "unexpected exit must retain ownership uncertainty before explicit acknowledgement"
+        );
+        assert_eq!(
+            before.conversation.current_turn.as_ref().unwrap().state,
+            OperatorTurnState::Running
+        );
+        assert!(
+            matches!(
+                ui.request(Request::AcknowledgeSessionStopped {
+                    session: conversation.session,
+                    expected_run: protocol::SessionRunId(turn.identity.run.0 + 1)
+                }),
+                Response::Error {
+                    code: protocol::ErrorCode::Conflict,
+                    ..
+                }
+            ),
+            "stale run cannot reconcile or acknowledge the current turn"
+        );
+        let output = live
+            .command()
+            .args([
+                "--json",
+                "terminal",
+                "acknowledge-stopped",
+                &conversation.session.0.to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let acknowledged = ui.history(conversation.id);
+        assert!(acknowledged.conversation.worker_stopped);
+        let closed = acknowledged.conversation.current_turn.as_ref().unwrap();
+        assert_eq!(closed.identity, turn.identity);
+        assert_eq!(
+            closed.state,
+            OperatorTurnState::Interrupted,
+            "acknowledged dead worker must not wedge the journal in Running"
+        );
+        assert_eq!(
+            acknowledged
+                .messages
+                .iter()
+                .filter(|message| message.turn == turn.identity.turn
+                    && matches!(message.content, OperatorMessageContent::Interrupted))
+                .count(),
+            1
+        );
+        let next = ui.submit("Explicit next instructions after independent stop confirmation");
+        assert_eq!(next.identity.run.0, turn.identity.run.0 + 1);
+        let group = own_worker(&live, &conversation);
+        ui.wait_history(&provider, conversation.id, |history| history.messages.iter().any(|message| message.turn == next.identity.turn && matches!(&message.content, OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(text)) if text.contains("LIFECYCLE waiting"))));
+        ui.ctrl('x');
+        ui.flush();
+        let stopped = ui.wait_history(&provider, conversation.id, |history| {
+            history.conversation.worker_stopped
+        });
+        assert_retired(&live, &stopped, group);
+        provider.assert_healthy();
+        assert_eq!(ui.request(Request::Shutdown { kill: false }), Response::Ok);
+        drop(ui);
+        assert!(live.join_within(BUDGET).is_finished());
+    }
+
+    #[test]
+    fn final_review_real_journal_success_is_unread_until_paginated_tail_is_presented() {
+        let live = live::Live::idle().bounded();
+        let provider = Provider::new(live.root.path(), BUDGET);
+        provider.sign_in(&live.config);
+        start(&live, &provider);
+        let mut ui = DashboardClient::connect(&live);
+        let conversation = ui.create("fixture-a", true);
+        ui.submit("A durable success pagination");
+        let group = own_worker(&live, &conversation);
+        ui.wait_history(&provider, conversation.id, |history| {
+            has_text(history, "A partial waiting")
+        });
+        ui.create("fixture-b", false);
+        provider.release("fixture-a");
+        let done = ui.wait_history(&provider, conversation.id, |history| {
+            history.conversation.worker_stopped
+        });
+        assert_eq!(
+            done.conversation.current_turn.as_ref().unwrap().state,
+            OperatorTurnState::Complete
+        );
+        assert!(!done.messages.iter().any(|message| matches!(
+            message.content,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed(_))
+        )));
+        assert_retired(&live, &done, group);
+        assert!(
+            ui.rendered().contains("● A durable success pagination"),
+            "background successful journal reply has no Unread marker"
+        );
+        drop(ui);
+        let mut ui = DashboardClient::connect(&live);
+        ui.key(KeyCode::Char('o'));
+        ui.pending.extend(ui.dashboard.drain_outbox());
+        let mut pages = 0;
+        while let Some(mut request) = ui.pending.pop_front() {
+            if let Request::Operator(OperatorRequest::Read { limit, .. }) = &mut request.request {
+                *limit = 1;
+            }
+            let response = ui.exchange(request);
+            if matches!(
+                &response,
+                Response::Operator(OperatorResponse::Conversations(_))
+            ) {
+                ui.ctrl('l');
+                ui.key(KeyCode::Enter);
+            }
+            if let Response::Operator(OperatorResponse::History(history)) = response
+                && history.conversation.id == conversation.id
+            {
+                pages += 1;
+                let screen = ui.rendered();
+                if history.next_after.is_some() {
+                    assert!(
+                        screen.contains("● A durable success pagination"),
+                        "intermediate durable page cleared Unread"
+                    );
+                }
+            }
+        }
+        assert!(pages > 2, "real journal pagination must run");
+        assert!(
+            !ui.rendered().contains("● A durable success pagination"),
+            "presented confirmed tail retained Unread"
+        );
+        provider.assert_healthy();
+        assert_eq!(ui.request(Request::Shutdown { kill: false }), Response::Ok);
+        drop(ui);
+        assert!(live.join_within(BUDGET).is_finished());
+    }
+
+    #[test]
     fn compiled_incomplete_response_preserves_partial_but_never_saves_completed_context() {
         let live = live::Live::idle().bounded();
         let provider = Provider::new(live.root.path(), BUDGET);

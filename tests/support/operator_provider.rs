@@ -265,7 +265,7 @@ fn serve(
         .to_owned();
     if !matches!(
         model.as_str(),
-        "fixture-a" | "fixture-b" | "fixture-timeout" | "fixture-incomplete"
+        "fixture-a" | "fixture-b" | "fixture-timeout" | "fixture-incomplete" | "fixture-lifecycle"
     ) || request["stream"] != true
     {
         return Err(io::Error::other("unexpected model or nonstreaming request"));
@@ -281,7 +281,25 @@ fn serve(
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
     )?;
     let label = model.strip_prefix("fixture-").unwrap().to_ascii_uppercase();
-    if model == "fixture-incomplete" {
+    if model == "fixture-lifecycle" {
+        let text = message(&model, "LIFECYCLE waiting");
+        event(
+            &mut stream,
+            json!({"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg-lifecycle","role":"assistant","content":[]}}),
+        )?;
+        event(
+            &mut stream,
+            json!({"type":"response.output_text.delta","output_index":0,"item_id":"msg-lifecycle","content_index":0,"delta":"LIFECYCLE waiting"}),
+        )?;
+        if !wait_release(shared, &format!("fixture-lifecycle-{ordinal}"), gate_budget)? {
+            return Ok(());
+        }
+        event(
+            &mut stream,
+            json!({"type":"response.output_item.done","output_index":0,"item":text}),
+        )?;
+        complete(&mut stream, &model, vec![text])
+    } else if model == "fixture-incomplete" {
         if ordinal != 1 {
             return Err(io::Error::other("incomplete response retried"));
         }

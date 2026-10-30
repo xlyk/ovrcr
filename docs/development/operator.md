@@ -123,7 +123,13 @@ OperatorConversation sessions without registering a project or workspace.
 
 CLI terminal JSON includes the canonical serialized session scope: `"Workspace"`
 or `{"OperatorConversation":{"conversation":1}}`. Global operator rows have
-empty project/workspace fields. Their original working directory is still `cwd`.
+empty project/workspace fields. Their original working directory is still
+`cwd`. Generic `terminal kill` and
+`terminal close` refuse Operator rows; open the Operator conversation and use native
+Stop (`Ctrl-x`) to interrupt its exact turn without archiving conversation history.
+After independent process-stop confirmation, exact-run `acknowledge-stopped`
+interrupts any unfinished turn before recording ownership proof. Live workers and
+stale runs remain refused.
 
 The Dashboard receives coalesced dirty notifications and reads durable history.
 A summary's `worker_stopped` comes from retained controlled-stop proof. Natural

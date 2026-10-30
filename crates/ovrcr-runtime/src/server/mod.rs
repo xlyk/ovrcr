@@ -615,6 +615,15 @@ impl ServerState {
             let summary = self
                 .session_summary(id)
                 .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+            if matches!(
+                summary.scope,
+                ovrcr_protocol::SessionScope::OperatorConversation { .. }
+            ) {
+                return Err(lifecycle_error(
+                    ErrorCode::Conflict,
+                    "Operator conversations use native Stop (Ctrl-x); terminal close is unavailable",
+                ));
+            }
             if summary.run != expected_run || summary.archived {
                 return Err(lifecycle_error(
                     ErrorCode::Conflict,
@@ -713,6 +722,15 @@ impl ServerState {
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+        if matches!(
+            summary.scope,
+            ovrcr_protocol::SessionScope::OperatorConversation { .. }
+        ) {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "Operator conversations use native Stop (Ctrl-x); terminal kill/close is unavailable",
+            ));
+        }
         if expected_run.is_some_and(|expected| summary.run != expected) {
             return Err(lifecycle_error(
                 ErrorCode::Conflict,
@@ -1242,7 +1260,19 @@ impl ServerState {
                 "the currently owned process is still live",
             ));
         }
-        self.retained.lock().mark_stopped(id, expected_run)?;
+        let mut retained = self.retained.lock();
+        if let ovrcr_protocol::SessionScope::OperatorConversation { conversation } = summary.scope
+            && let Some(turn) = retained.operator_conversation(conversation)?.current_turn
+        {
+            if turn.identity.session != id || turn.identity.run != expected_run {
+                return Err(lifecycle_error(
+                    ErrorCode::Conflict,
+                    "operator turn changed; refresh inventory",
+                ));
+            }
+            retained.interrupt_operator_turn(turn.identity)?;
+        }
+        retained.mark_stopped(id, expected_run)?;
         Ok(())
     }
 

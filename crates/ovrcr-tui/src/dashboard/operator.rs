@@ -49,6 +49,7 @@ struct Chat {
     submitting: bool,
     stopping: bool,
     scroll: usize,
+    anchor: Option<(usize, usize)>,
     follow: bool,
     unread: Option<OperatorTurnId>,
     reviewed: Option<OperatorTurnId>,
@@ -69,6 +70,7 @@ impl Chat {
             submitting: false,
             stopping: false,
             scroll: 0,
+            anchor: None,
             follow: true,
             unread: None,
             reviewed: None,
@@ -275,25 +277,49 @@ fn transcript_lines(chat: &Chat) -> Vec<Line<'static>> {
         .collect()
 }
 fn wrapped_lines(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
+    wrapped_rows(lines, width)
+        .into_iter()
+        .map(|(line, _)| line)
+        .collect()
+}
+// Logical line/byte anchors survive appended output and width changes.
+fn wrapped_rows(lines: Vec<Line<'static>>, width: u16) -> Vec<(Line<'static>, (usize, usize))> {
     let width = usize::from(width.max(1));
     let mut rows = Vec::new();
-    for line in lines {
+    for (index, line) in lines.into_iter().enumerate() {
         let text = line.to_string();
         let span = Span::raw(text);
         let mut row = String::new();
         let mut used = 0;
+        let mut byte = 0;
+        let mut start = 0;
         for grapheme in span.styled_graphemes(Style::default()) {
             let cells = grapheme.symbol.width();
             if used + cells > width && !row.is_empty() {
-                rows.push(Line::raw(std::mem::take(&mut row)));
+                rows.push((Line::raw(std::mem::take(&mut row)), (index, start)));
                 used = 0;
+                start = byte;
             }
             row.push_str(grapheme.symbol);
             used += cells;
+            byte += grapheme.symbol.len();
         }
-        rows.push(Line::raw(row));
+        rows.push((Line::raw(row), (index, start)));
     }
     rows
+}
+fn transcript_offset(chat: &Chat, rows: &[(Line<'_>, (usize, usize))], height: usize) -> usize {
+    if !chat.follow
+        && let Some(anchor) = chat.anchor
+    {
+        rows.iter()
+            .rposition(|(_, start)| *start <= anchor)
+            .unwrap_or(0)
+    } else {
+        rows.len()
+            .saturating_sub(height)
+            .saturating_sub(chat.scroll)
+    }
 }
 fn context_label(context: &OperatorContext) -> String {
     let mut label = context.project.clone().unwrap_or_else(|| "global".into());
@@ -675,18 +701,33 @@ impl Dashboard {
         DashboardAction::Redraw
     }
     fn operator_scroll(&mut self, delta: isize) {
+        let (_, right) = split(
+            content_area(self, self.outer_area),
+            self.operator.list_focus,
+        );
+        let height = right
+            .height
+            .saturating_sub(right.height.min(7))
+            .saturating_sub(2) as usize;
         if let Some(chat) = self
             .operator
             .selected
             .and_then(|id| self.operator.chats.get_mut(&id.0))
         {
-            if delta < 0 {
+            let rows = wrapped_rows(transcript_lines(chat), right.width.saturating_sub(2));
+            let offset = transcript_offset(chat, &rows, height);
+            let target = if delta < 0 {
                 chat.follow = false;
                 chat.scroll = chat.scroll.saturating_add(delta.unsigned_abs());
+                offset.saturating_sub(delta.unsigned_abs())
             } else {
-                chat.scroll = chat.scroll.saturating_sub(delta as usize);
-                chat.follow = chat.scroll == 0;
-            }
+                let bottom = rows.len().saturating_sub(height);
+                let target = offset.saturating_add(delta as usize).min(bottom);
+                chat.scroll = bottom.saturating_sub(target);
+                chat.follow = target == bottom;
+                target
+            };
+            chat.anchor = rows.get(target).map(|(_, start)| *start);
         }
     }
     pub(super) fn operator_mouse(
@@ -826,6 +867,7 @@ impl Dashboard {
                     chat.dirty = true;
                     chat.follow = true;
                     chat.scroll = 0;
+                    chat.anchor = None;
                 }
                 self.operator_list(0);
                 self.operator_catch_up();
@@ -923,6 +965,12 @@ impl Dashboard {
             }
             chat.messages.push(message.clone());
             chat.ordinal = message.ordinal;
+        }
+        if let Some(turn) = &chat.summary.current_turn
+            && turn.state == OperatorTurnState::Complete
+            && chat.reviewed != Some(turn.identity.turn)
+        {
+            chat.unread = Some(turn.identity.turn);
         }
         if history.next_after.is_some() {
             chat.dirty = true;
@@ -1061,9 +1109,13 @@ impl Dashboard {
             }
             let model = display_text(&model);
             let text = format!(
-                "New Conversation\n\nProvider: {} {}\nModel: {model}\n\nTab: provider/model · ←/→: choose provider\nCtrl-l: conversations\nEnter: create · Ctrl-g: Browse\nSubscription sign-in: ovrcr operator auth\n\n{}",
+                "New Conversation\n\nProvider: {} {}\nModel: {model}\n\nTab: provider/model · ←/→: choose provider\nCtrl-l: conversations\nEnter: create · Ctrl-g: Browse\nSubscription sign-in: ovrcr operator login {}\n\n{}",
                 form.provider.as_str(),
                 if form.provider_focus { "◀" } else { "" },
+                match form.provider {
+                    OperatorProvider::ChatGpt => "chatgpt",
+                    OperatorProvider::Grok => "grok",
+                },
                 self.operator.error.as_deref().unwrap_or("")
             );
             frame.render_widget(
@@ -1096,16 +1148,14 @@ impl Dashboard {
             chat.summary.provider.as_str(),
             display_text(&chat.summary.model)
         );
-        let lines = wrapped_lines(transcript_lines(chat), transcript.width.saturating_sub(2));
+        let rows = wrapped_rows(transcript_lines(chat), transcript.width.saturating_sub(2));
         let height = transcript.height.saturating_sub(2) as usize;
-        let offset = lines
-            .len()
-            .saturating_sub(height)
-            .saturating_sub(chat.scroll);
-        let visible = lines
+        let offset = transcript_offset(chat, &rows, height);
+        let visible = rows
             .into_iter()
             .skip(offset)
             .take(height)
+            .map(|(line, _)| line)
             .collect::<Vec<_>>();
         frame.render_widget(
             Paragraph::new(visible).block(Block::default().borders(Borders::ALL).title(title)),
@@ -1941,5 +1991,108 @@ mod tests {
                 "cursor must remain visible after five full composer rows at width {cols}"
             );
         }
+    }
+    #[test]
+    fn final_review_success_summary_marks_unread_without_sdk_history_message() {
+        let (mut d, reads) = setup();
+        let next = history(
+            &mut d,
+            request_id(&reads, 1),
+            summary(1, 1, OperatorTurnState::Complete, true),
+            vec![delta(1, "durable answer")],
+            Some(1),
+        );
+        assert_eq!(d.operator.chats[&1].unread, Some(OperatorTurnId(1)));
+        draw(&mut d, 140, 24);
+        assert_eq!(d.operator.chats[&1].unread, Some(OperatorTurnId(1)));
+        history(
+            &mut d,
+            request_id(&next, 1),
+            summary(1, 1, OperatorTurnState::Complete, true),
+            vec![],
+            None,
+        );
+        draw(&mut d, 140, 24);
+        assert_eq!(d.operator.chats[&1].unread, None);
+        assert_eq!(d.operator.chats[&1].reviewed, Some(OperatorTurnId(1)));
+    }
+    #[test]
+    fn final_review_older_interrupted_page_does_not_replace_successful_current_turn_unread() {
+        let (mut d, reads) = setup();
+        let mut old = message(1, OperatorMessageContent::Interrupted);
+        old.turn = OperatorTurnId(1);
+        history(
+            &mut d,
+            request_id(&reads, 1),
+            summary(1, 2, OperatorTurnState::Complete, true),
+            vec![old],
+            Some(1),
+        );
+        assert_eq!(
+            d.operator.chats[&1].unread,
+            Some(OperatorTurnId(2)),
+            "older journal pages must preserve the exact successful current turn marker"
+        );
+    }
+    #[test]
+    fn final_review_scrolled_wrapped_transcript_stays_anchored_across_stream_switch_and_resize() {
+        let (mut d, reads) = setup();
+        let text = (0..45)
+            .map(|n| format!("ROW_{n:02} {}\n", "界".repeat(50)))
+            .collect::<String>();
+        history(
+            &mut d,
+            request_id(&reads, 1),
+            summary(1, 1, OperatorTurnState::Running, false),
+            vec![delta(1, &text)],
+            None,
+        );
+        draw(&mut d, 140, 24);
+        d.operator_scroll(-16);
+        let before = draw(&mut d, 140, 24);
+        let visible_rows = |screen: &str| {
+            (0..45)
+                .filter(|n| screen.contains(&format!("ROW_{n:02}")))
+                .collect::<Vec<_>>()
+        };
+        let rows = visible_rows(&before);
+        assert!(!rows.is_empty());
+        d.operator_select(Id(2));
+        let requests =
+            d.handle_server_message(ServerMessage::Event(ServerEvent::OperatorChanged(Id(1))));
+        history(
+            &mut d,
+            request_id(&requests, 1),
+            summary(1, 1, OperatorTurnState::Running, false),
+            vec![delta(2, &"STREAMED wrapped continuation ".repeat(80))],
+            None,
+        );
+        d.operator_select(Id(1));
+        assert_eq!(
+            visible_rows(&draw(&mut d, 140, 24)),
+            rows,
+            "streaming moved the historical viewport"
+        );
+        let resized = draw(&mut d, 110, 24);
+        assert!(
+            resized.contains(&format!("ROW_{:02}", rows[0])),
+            "resize lost the top logical text anchor: {resized}"
+        );
+        assert_eq!(
+            visible_rows(&draw(&mut d, 140, 24)),
+            rows,
+            "resize round trip lost the anchor"
+        );
+        d.operator_scroll(isize::MAX);
+        assert!(d.operator.chats[&1].follow);
+        assert!(draw(&mut d, 140, 24).contains("STREAMED wrapped continuation"));
+    }
+    #[test]
+    fn final_review_new_conversation_names_the_selected_provider_login_command() {
+        let (mut d, _) = setup();
+        d.ctrl('n');
+        assert!(draw(&mut d, 180, 32).contains("ovrcr operator login chatgpt"));
+        d.operator.new.as_mut().unwrap().provider = OperatorProvider::Grok;
+        assert!(draw(&mut d, 180, 32).contains("ovrcr operator login grok"));
     }
 }

@@ -44,7 +44,10 @@ composer input never produces PTY bytes. Existing overlays retain input priority
 spaces and punctuation in an active composer remain ordinary text.
 
 `dashboard::operator` owns per-conversation drafts, context, grapheme cursor,
-scroll/follow-tail and completion Unread state. `Tab` or `Ctrl-l` toggles history;
+scroll/follow-tail and completion Unread state. Scrolled transcripts keep a logical
+text anchor across streaming, conversation switches and resize. Successful completion
+Unread comes from the exact durable turn summary; SDK model history stays private.
+`Tab` or `Ctrl-l` toggles history;
 narrow layouts display history or transcript, with `Ctrl-l` also available from
 New Conversation. `Ctrl-n` opens creation, Enter sends, Shift-Enter inserts a
 newline, paste only edits, Ctrl-g returns to Browse retaining drafts, and Ctrl-x
