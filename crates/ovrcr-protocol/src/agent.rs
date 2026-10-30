@@ -1030,7 +1030,8 @@ pub(crate) mod tests {
                 run_id: "run-376".into(),
                 origin: "e".repeat(64),
                 observe: true,
-                offset: 4,
+                offset: "0".into(),
+                revision: 1,
             },
         ] {
             requests.push(Request::Supervisor(SupervisorRequest {

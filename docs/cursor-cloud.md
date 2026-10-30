@@ -86,8 +86,22 @@ already-applied occurrences, preserving repeated equal-content output.
 Replayed completion cannot create another Ready/Unread. Invalid identity, malformed evidence,
 missing/changed offsets or failed progress persistence stop observation. No Send is
 replayed, and no fresh bridge is started for this bounded recovery. Prose never
-creates an input/approval request. Terminal responses, uncertain CreateAgent/Send Retry and active
-reattachment remain blocked. Exact known-run recovery is described below.
+creates a cloud terminal request. Correlated terminal questions/approvals, uncertain
+CreateAgent/Send Retry, and fresh-process active restoration are unavailable and
+not planned under the current scope. Exact known-run recovery is described below.
+
+Send and ObserveRun offsets are opaque exclusive strings scoped to their stream
+origin and retained separately. Preserve each token exactly; do not parse or order
+it as a number. A valid empty frame with no event or offset is a keepalive: it
+does not create a run receipt, advance either cursor, or produce Ready/Unread.
+Informational `task`/`usage` events and future informational SDK events do not
+establish agent or run identity. Before a receipt, they cannot mint a receipt or
+cursor or trigger GetAgent/ObserveRun/Ready/Unread; after a run is known, any
+agent/run identifiers carried by metadata are checked against that run before the
+metadata advances its own stream cursor.
+Foreign metadata identity fails closed. Unknown future outer frames are skipped
+without progress; malformed or unrecognized evidence that could affect source,
+run or result identity still fails closed.
 
 Busy prompts are rejected visibly and the latest rejected prompt stays in local
 adapter memory for manual `/resubmit` when idle. It is never a future-prompt queue
@@ -163,8 +177,10 @@ it does not claim remote cancellation or resolve an escaped effect. Local row
 deletion requires that Discard, including after an exact handle acknowledgement. An authenticated
 late exact receipt may enrich the existing closed operation, without reopening
 it. Missing rows and stale owners cannot be recreated by a receipt. Once the
-owned bridge exits, restoring the same pre-Send handle is unavailable on this
-pin, so recovery fails closed. No automatic Retry is implemented.
+owned bridge exits, restoring the same prepared pre-Send handle is unavailable on
+this pin, so that unresolved creation fails closed. Fresh-process active restoration
+is also unavailable and not planned. CreateAgent/Send Retry is unavailable and not
+planned; exact completed-run GetRun reconciliation remains supported.
 
 ## Cancel and Discard
 
@@ -254,9 +270,11 @@ qualification does not independently attest the agent's claimed tests.
 The first Send asks for a correlated `git rev-parse HEAD` tool before other tools.
 Only recorded pinned shell/run_terminal_cmd success shapes can confirm the selected
 published SHA; assistant claims alone cannot. Later follow-ups retain that source
-provenance while allowing the same conversation's work to advance. Unknown SDK
-shapes fail closed. Live/paid Cursor behavior, native Keychain and packaged runtime
-acceptance remain separate release gates; local fixture success proves wiring only.
+provenance while allowing the same conversation's work to advance. Unknown shapes
+that could affect source/run/result identity fail closed; informational events are
+handled as described above. Live/paid Cursor behavior, native Keychain and packaged
+runtime acceptance remain separate release gates; local fixture success proves
+wiring only.
 
 Send diagnostic controls mirror creation: cloud-fixture.json `send_crash_at` or
 `send_pause_at` accepts before_dispatch, after_claim, after_reply, after_ack;
@@ -293,9 +311,10 @@ existing operation controls; no resume picker or newest-run discovery is used.
 
 A terminal snapshot is retained as historical reconciliation, without a new Ready,
 Unread or input alert. Active runs visibly say **Active reattachment unavailable**.
-Fresh active observation preserving another controller's options is unproved, so
-recovery sends no ObserveRun, ResumeAgent, CreateAgent, Send or option mutation.
-No Send or ObserveRun offsets are reused: no fresh observation stream is opened.
+Fresh-process active restoration is unavailable and not planned under the current
+scope. Recovery sends no ObserveRun, ResumeAgent, CreateAgent, Send or option
+mutation. Fresh-handle reuse of prior Send/ObserveRun offsets is unavailable and not
+planned; no fresh observation stream is opened.
 
 For an active exact run, type `/retry-cancel` explicitly. A fresh credentialed exact
 GetRun registers the selected-key handle before the same SQLite owner commits
@@ -316,10 +335,10 @@ attachment and archive transitions. Recovery authority is subordinate metadata i
 the same SessionStore row; only its current managed invocation can reconcile or
 claim cancellation. An exact conversation already owned by another retained Session
 is refused with that Session's ID. Discard and stale-owner fences remain authoritative;
-recovery never grants CreateAgent/Send dispatch. Uncertain retries stay unavailable
-until upstream scope, expiry, body-match and replay-identity guarantees are proven.
-Completed lookup and fixture success do not close the active-restoration or uncertain
-replay release gates.
+recovery never grants CreateAgent/Send dispatch. CreateAgent/Send Retry is
+unavailable and not planned under the current scope. Completed lookup supports
+historical reconciliation only; fixture success does not establish live behavior
+or replace the remaining native, live, packaging and CI acceptance.
 
 Recovery diagnostics support `credential_changed` in cloud-fixture.json (a second
 fixed fake key, never real credentials), and `recovery_runs` in bridge.json, mapping
@@ -330,13 +349,29 @@ prove local wiring only.
 ## Packaging acceptance remains open
 
 The installed dependency and passive checks do not establish native release
-readiness. #378 still requires current-head packaged Dashboard/provider acceptance,
-separately approved concurrent two-account cloud proofs, required macOS/Linux CI
-and process cleanup receipts. Terminal correlated responses (#377), safe uncertain
-CreateAgent/Send Retry, and active option-preserving recovery remain blocked.
-#376 remains partial: same-owned-bridge Observe progress/replay is implemented;
-fresh-bridge active restoration and fresh-handle replay stability remain unproved.
-The full official upstream local-agent smoke includes credentialed account access
-and a model Send and needs separate concrete approval. Passive checks or the
-zero-model local control subset cannot count as that full smoke. Existing fixture
-results and the standalone cloud POC retain their original scope.
+readiness. [#378](https://github.com/xlyk/ovrcr/issues/378) still requires
+current-head packaged Dashboard/provider acceptance, separately approved
+concurrent two-account cloud proofs, required macOS CI and process cleanup
+receipts. The unsupported #374/#376/#377 remainders are unavailable and not
+planned, not release gates or feature passes. Retain the implemented same-owned-
+bridge ObserveRun path and completed exact-run GetRun reconciliation; fresh-process
+active restoration, fresh-handle old-offset reuse and CreateAgent/Send Retry
+remain excluded.
+The current upstream [v1.2.0 local-agent smoke procedure](https://github.com/cursor/sdk-bridge/blob/v1.2.0/docs/smoke-test.md)
+uses a Cursor API key for account/catalog access and sends a model prompt through
+a local agent; it is not credential-free or offline and may incur charges. OVRCR
+remains pinned to SDK 1.0.40, so this upstream documentation is a separate smoke
+reference, not runtime evidence for the packaged OVRCR provider. It needs separate
+concrete approval. Passive checks or the zero-model local control subset cannot
+count as that full smoke. Its `composer-2` sample is stale/redirected and is not
+evidence that the model is currently available. Existing fixture results and the
+standalone cloud POC retain their original scope.
+
+## Stream conformance evidence
+
+Focused managed synthetic regressions now cover opaque nonconsecutive Send and
+ObserveRun tokens, empty keepalives on both paths, `task`/`usage` and future
+informational events, future outer frames, exact metadata identity checks, and
+receipt/cursor/Ready/Unread ordering. Capability-list forward compatibility does
+not by itself establish event-envelope behavior. These fixtures do not prove real
+Bridge/provider behavior or packaged native Dashboard acceptance.

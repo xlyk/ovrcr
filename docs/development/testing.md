@@ -56,13 +56,24 @@ cannot extend names itself in the matrix's failure and needs one table entry.
 
 ## Hosted CI schedule
 
-Pull requests and pushes to `main` run the macOS `checks` job automatically.
+Pull requests and pushes to `main` run `macOS checks` and
+`macOS offline Cursor preflight` on separate macOS runners. Each acceptance job
+keeps its 45-minute limit; the standalone offline Cursor suite no longer shares
+the Rust, packaging and installed-Pi job's budget.
+
+The required `checks` job waits for both acceptance jobs. Its shell guard requires
+both results to be `success`; a final step fails if the workflow was cancelled.
+Failed, cancelled or skipped dependencies cannot satisfy it. This one-minute
+macOS aggregate has no checkout or tools. Its job and guards use `always()` to
+evaluate failures and cancellation; the acceptance jobs remain cancellable, so a
+superseded pull-request run releases its expensive work normally.
+
 The `linux`, `linux capacity` and `linux memory high-water` jobs run only on
 manual dispatch: GitHub **Actions → CI → Run workflow**, then select the branch.
 Manual dispatch also runs the macOS checks. Linux jobs and their assertions remain
 intact; a skipped job is not evidence of passing Linux acceptance.
 
-The `checks` and `linux` test steps run under `cargo nextest` with the `ci`
+The `macOS checks` and `linux` test steps run under `cargo nextest` with the `ci`
 profile from `.config/nextest.toml`: a failing test is retried twice and
 reported as `FLAKY` instead of failing the job, and a test that hangs is
 terminated after five minutes. A test that fails every attempt still fails the

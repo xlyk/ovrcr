@@ -28,7 +28,7 @@ impl std::fmt::Display for CloudLaunchPreview {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Cursor cloud validated preview\nAccount: {} (selected profile; billing identity not attested)\nRepository: {}\nPublished commit: {}\nModel: {}\nLocal edits are excluded; nothing is uploaded, committed or pushed.\nCreateAgent: explicit prepare required. Send: available after prepare. Terminal responses, Retry and active reattachment remain blocked.\nType prepare then Enter to retain a cloud handle (no prompt or Send).\nPress Enter to close preview.",
+            "Cursor cloud validated preview\nAccount: {} (selected profile; billing identity not attested)\nRepository: {}\nPublished commit: {}\nModel: {}\nLocal edits are excluded; nothing is uploaded, committed or pushed.\nCreateAgent: explicit prepare required. Send: available after prepare. Terminal responses use exact-run verification. Active reattachment after bridge exit and uncertain CreateAgent/Send retries are not planned.\nType prepare then Enter to retain a cloud handle (no prompt or Send).\nPress Enter to close preview.",
             self.account, self.repository, self.source_sha, self.model
         )
     }

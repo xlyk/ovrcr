@@ -159,8 +159,11 @@ identity but refuse a second attachment and identify the first Session.
 
 The original live Cursor cloud attachment may recover an interrupted transport
 through at most two ObserveRun attempts on its still-owned bridge. Shared SQLite
-stores separate Send/Observe progress fenced to the immutable operation, exact
-account/conversation/run and original stream origin. Starting Observe never uses
-a Send offset. Replayed envelopes cannot publish fresh terminal cycles. These
-cursors are not carried into freshly hydrated run handles; active reopen remains
-unavailable pending its separate preservation/replay acceptance gate.
+stores separate opaque Send/Observe cursors and local acceptance revisions, fenced
+to the immutable operation, exact account/conversation/run and original stream
+origin. Revisions enforce local command order; provider cursors are never compared
+or ordered. Starting Observe never uses a Send cursor. Legacy numeric cursors are
+retained as history and cannot be continued. Replayed envelopes cannot publish
+fresh terminal cycles. These cursors are not carried into freshly hydrated run
+handles; active reopen remains unavailable and is not planned under the current
+scope.

@@ -15,8 +15,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  checks:
-    name: checks
+  macos_checks:
+    name: macOS checks
     # macOS covers the GUI feature as well as the headless workspace.
     runs-on: macos-latest
     timeout-minutes: 45
@@ -44,8 +44,6 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       # nextest retries timing-sensitive failures and reports them as FLAKY;
       # see .config/nextest.toml. Doc tests stay on cargo test below.
-      - name: Offline Cursor cloud preflight
-        run: python3 -I -m unittest discover -s experiments/cursor-cloud -p test_client.py -v
       - name: Test
         run: cargo nextest run --workspace --all-targets --all-features --profile ci -E 'not test(partial_resize_connection_delivers_error_before_owner_close)'
       - name: Doc tests
@@ -102,6 +100,41 @@ jobs:
           path: ${{ runner.temp }}/ovrcr-pi-package-evidence/
           if-no-files-found: error
           retention-days: 14
+
+  offline_cursor:
+    name: macOS offline Cursor preflight
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure git identity
+        run: |
+          git config --global user.name "OVRCR CI"
+          git config --global user.email "ci@ovrcr.invalid"
+      - name: Offline Cursor cloud preflight
+        run: python3 -I -m unittest discover -s experiments/cursor-cloud -p test_client.py -v
+
+  checks:
+    name: checks
+    needs: [macos_checks, offline_cursor]
+    # Only this short aggregate survives cancellation; the acceptance jobs remain cancellable.
+    if: ${{ always() }}
+    runs-on: macos-latest
+    timeout-minutes: 1
+    steps:
+      - name: Require every macOS acceptance job
+        if: ${{ always() }}
+        shell: bash
+        env:
+          MACOS_RESULT: ${{ needs.macos_checks.result }}
+          CURSOR_RESULT: ${{ needs.offline_cursor.result }}
+        run: |
+          test "$MACOS_RESULT" = success
+          test "$CURSOR_RESULT" = success
+      - name: Reject workflow cancellation
+        if: ${{ always() && cancelled() }}
+        shell: bash
+        run: exit 1
 
   linux:
     name: linux

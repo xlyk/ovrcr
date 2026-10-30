@@ -27,6 +27,23 @@ def event(value):
     with log.open('a') as out:
         out.write(json.dumps(value) + '\n')
 
+def with_offsets(events, stream):
+    if not config.get('opaque_offsets'):
+        return [dict(value, offset=str(index + 1)) for index, value in enumerate(events)]
+    tokens = {
+        'send': ['send/zeta', '0', 'send/alpha', 'send/late', 'send/result', 'send/done',
+                 'send/extra-a', 'send/extra-b', 'send/extra-c', 'send/extra-d'],
+        'observe': ['observe/zeta', 'observe/gamma', 'observe/alpha', '0', 'observe/done',
+                    'observe/result', 'observe/extra-a', 'observe/extra-b', 'observe/extra-c', 'observe/extra-d'],
+    }[stream]
+    assert len(events) <= len(tokens), 'opaque-offset fixture token table exhausted'
+    return [dict(value, offset=tokens[index]) for index, value in enumerate(events)]
+
+def after_event(events, token):
+    matches = [index for index, value in enumerate(events) if value.get('offset') == token]
+    assert len(matches) == 1, 'afterOffset must identify one exact fixture event'
+    return matches[0] + 1
+
 assert os.environ['CURSOR_API_KEY'] == 'ovrcr-fixture-not-a-credential'
 assert not any(k.startswith('OVRCR_') for k in os.environ)
 event({'event': 'started', 'pid': os.getpid(), 'adapter_pid': os.getppid(), 'root': str(root), 'environment_isolated': True})
@@ -71,8 +88,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_error(404)
                 return
             assert body['runId'] in self.server.streams
-            offset = int(body.get('afterOffset', '0'))
-            event({'event':'observe_request','run':body['runId'],'after':offset})
+            after_supplied = 'afterOffset' in body
+            after_token = body.get('afterOffset')
+            legacy_after = int(after_token) if after_supplied and not config.get('opaque_offsets') else (0 if not after_supplied else None)
+            event({'event':'observe_request','run':body['runId'],
+                   'after':after_token if config.get('opaque_offsets') else legacy_after})
             marker = config.get('observe_pause_file')
             if marker:
                 marker = Path(marker)
@@ -81,15 +101,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 while not marker.with_suffix('.release').exists():
                     assert time.monotonic() < until
                     time.sleep(0.01)
-            events = self.server.streams[body['runId']][offset:]
+            stored = self.server.observe_streams[body['runId']]
+            events = stored[after_event(stored, after_token):] if after_supplied else list(stored)
             scenario = config.get('observe_scenario')
             if scenario == 'wrong_run': events = [dict(offset='1',sdkMessage={'type':'thinking','message':{'agent_id':'fixture-agent-373','run_id':'foreign-run'}})]
             if scenario == 'changed_offset': events = events[:1] + [dict(events[1], offset='1')]
             if scenario == 'missing_offset': events = [{k:v for k,v in events[0].items() if k!='offset'}]
             if scenario == 'replayed_completion': events = events + events[-2:]
-            if scenario == 'gap': events = [dict(events[0],offset='2')]
-            drop = config.get('drop_observe_after') if offset == 0 or scenario == 'disconnect_forever' else None
-            encoded = b''.join(struct.pack('>BI',0,len(item))+item for item in [json.dumps(v).encode() for v in events[:drop]])
+            drop = config.get('drop_observe_after') if not after_supplied or scenario == 'disconnect_forever' else None
+            wire_events = events[:drop] if drop is not None else events
+            if config.get('empty_keepalive_observe') and not after_supplied:
+                wire_events = [{}] + wire_events
+            encoded = b''.join(struct.pack('>BI',0,len(item))+item for item in [json.dumps(v).encode() for v in wire_events])
             if drop is None: encoded += struct.pack('>BI',2,2)+b'{}'
             self.send_response(200)
             self.send_header('Content-Type','application/connect+json')
@@ -158,16 +181,52 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if scenario == 'bad_success': events[2]['sdkMessage']['message']['result']['success']['exitCode'] = 1
             if scenario == 'missing_done': events.pop()
             if scenario == 'terminal_replay': events.append(events[-2])
+            if scenario == 'informational':
+                before = [
+                    {'sdkMessage': {'type':'task', 'message': {'task_id':'task-before', 'title':'fixture task'}}},
+                    {'sdkMessage': {'type':'usage', 'message': {'input_tokens':1, 'output_tokens':1}}},
+                    {'sdkMessage': {'type':'future_informational', 'message': {'detail':'ignored before exact receipt'}}},
+                    {'futureInformational': {'detail':'ignored before exact receipt'}},
+                ]
+                after = [
+                    sdk('task', task_id='task-after', title='fixture task'),
+                    sdk('usage', input_tokens=1, output_tokens=1),
+                    sdk('future_informational', detail='ignored after exact receipt'),
+                    {'futureInformational': {'detail':'ignored after exact receipt'}},
+                ]
+                events = before + [events[0]] + after + events[1:]
+                events.append({'futureInformational': {'detail':'ignored after done'}})
+            if scenario == 'foreign_metadata':
+                foreign = sdk('usage', input_tokens=1)
+                foreign['sdkMessage']['message']['run_id'] = 'foreign-run'
+                events = [events[0], foreign] + events[1:]
+            if scenario == 'metadata_before_receipt_disconnect':
+                task = {'agent_id':'fixture-agent-373', 'run_id':run, 'task_id':'task-before'}
+                usage = {'agent_id':'fixture-agent-373', 'run_id':run, 'input_tokens':1}
+                events = [
+                    {'sdkMessage': {'type':'task', 'message':task}},
+                    {'sdkMessage': {'type':'usage', 'message':usage}},
+                    events[0],
+                ]
             if config.get('result_branch'):
                 result['git'] = {'branches':[{'repoUrl':'https://github.com/acme/app','branch':'fixture-result','prUrl':'https://github.com/acme/app/pull/17' if config.get('result_pr') else ''}]}
             if config.get('equal_content_events'): events.insert(4,events[3])
-            self.server.streams[run] = [dict(v, offset=str(i+1)) for i,v in enumerate(events)]
+            send_events = with_offsets(events, 'send')
+            observe_events = with_offsets(events, 'observe') if config.get('opaque_offsets') else send_events
+            self.server.streams[run] = send_events
+            self.server.observe_streams[run] = observe_events
             if scenario == 'duplicate':
-                events = list(self.server.streams[run])
+                events = list(send_events)
                 events.insert(4,events[3])
+            else:
+                events = list(send_events)
             drop = config.get('drop_send_after')
             if drop is not None:
-                events = [dict(v, offset=str(100+i)) for i,v in enumerate(events[:drop])]
+                events = events[:drop]
+                if not config.get('opaque_offsets'):
+                    events = [dict(v, offset=str(100+i)) for i,v in enumerate(events)]
+            if config.get('empty_keepalive_send'):
+                events = [{}] + events
             encoded = b''.join(struct.pack('>BI',0,len(item))+item for item in [json.dumps(v).encode() for v in events])
             if drop is None: encoded += struct.pack('>BI',2,2)+b'{}'
             if not config.get('pause_after_identity'):
@@ -213,6 +272,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
 server.streams = {}
+server.observe_streams = {}
 server.send_keys = set()
 server.sends = 0
 server.run_ids = set()
