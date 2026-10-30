@@ -29,6 +29,10 @@ inline Codex preview. `index.html` is its standalone export.
   muted rule and collapsed `▸ count` used by project headings.
 - Omit the conversation's model from the sidebar. Preserve drafts, targets,
   scroll state and background work when changing the active view.
+- `[x]` follows normal session close: confirm active work, stop only this
+  conversation's owned work, then archive it while preserving history. An unsent
+  draft also requires confirmation before it is discarded. Failed closure keeps
+  the conversation and draft available. Restore through Archived sessions.
 
 ## Conversation area
 
@@ -36,8 +40,8 @@ Use a text-first transcript, compact activity summaries and a prompt that grows
 with its draft. Show the captured workspace/session near the composer. Keep
 paths and shortcuts out of repeated message boilerplate.
 
-The original layout is the reference; the alternatives remain available for
-selection. No final alternative beyond the shared requirements is selected here.
+Kyle selected **Original layout** for implementation on 2026-10-30. The other
+layouts remain comparison material.
 
 | Layout | Main distinction |
 | --- | --- |
@@ -66,15 +70,20 @@ binding.** It would become reserved for OVRCR while a child terminal has focus.
 - Use the configured Operator provider/model defaults, without a setup step.
 - Enter creates the conversation and sends its first message; Shift+Enter adds
   a newline. Whitespace alone cannot submit.
-- Esc cancels without creating an empty conversation and restores the previous
-  view and its draft. Other conversations keep running.
+- Before submission, Esc cancels without creating an empty conversation and
+  restores the previous view and its draft. After Enter, Esc dismisses the dialog
+  while the accepted create-and-send operation continues once. Late replies do
+  not steal focus. Other conversations keep running.
 - Insert the submitted conversation as one busy sidebar row and open its view.
 
 Native implementation must preserve underlying dialogs and confirmation state.
 It must retain the first message and captured context through Create, submit
 once after the acknowledged conversation identity arrives, and retain input on
 failure. The preview's close controls only remove local simulated rows; native
-Operator close behavior still needs the existing lifecycle/history guards.
+close/archive must use the existing lifecycle/history guards.
+
+The [implementation plan](../../../superpowers/plans/2026-10-30-operator-layout.md)
+maps these requirements to the native code and acceptance checks.
 
 ## Verification
 
