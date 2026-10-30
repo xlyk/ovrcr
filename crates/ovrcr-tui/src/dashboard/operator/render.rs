@@ -1,6 +1,8 @@
 //! The shared sidebar is the sole conversation list and hit-test geometry.
 use super::*;
-use crate::dashboard::render::{BASE, MAUVE, SURFACE0, SURFACE2, TEXT, clip_text, compose_row};
+use crate::dashboard::render::{
+    BASE, BLUE, MAUVE, SURFACE0, SURFACE2, TEXT, clip_text, compose_row,
+};
 use ovrcr_protocol::AgentActivity;
 
 fn activity(chat: &Chat) -> AgentActivity {
@@ -216,7 +218,7 @@ impl Dashboard {
         let heading = compose_row(
             vec![Span::styled(
                 clip_text(" OPERATOR ", width.saturating_sub(suffix.len())),
-                Style::default().fg(MAUVE()).add_modifier(Modifier::BOLD),
+                Style::default().fg(BLUE()).add_modifier(Modifier::BOLD),
             )],
             Span::styled("─", Style::default().fg(SURFACE2())),
             vec![Span::styled(suffix, Style::default().fg(MAUVE()))],

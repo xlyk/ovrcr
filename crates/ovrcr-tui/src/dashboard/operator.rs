@@ -1552,7 +1552,11 @@ impl Dashboard {
             header,
         );
         frame.render_widget(
-            Paragraph::new("[Ctrl-o]").style(Style::default().fg(super::render::MAUVE())),
+            Paragraph::new("[Ctrl-o]").style(
+                Style::default()
+                    .fg(super::render::MAUVE())
+                    .bg(super::render::CRUST()),
+            ),
             quick,
         );
     }
@@ -2716,6 +2720,72 @@ mod tests {
             d.operator.chats[&1].unread,
             Some(OperatorTurnId(1)),
             "unseen durable tail must remain Unread"
+        );
+    }
+    #[test]
+    fn operator_native_quick_header_control_has_action_control_contrast() {
+        for visible in [false, true] {
+            let (mut d, _) = setup();
+            d.operator.visible = visible;
+            let area = Rect::new(0, 0, 120, 24);
+            d.install_area(area);
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+            d.draw(&mut terminal).unwrap();
+            let buffer = terminal.backend().buffer();
+            let quick = d.operator_quick_header_rect(area);
+            let (actions, _) = super::super::render::action_controls(area);
+            let reference = &buffer[(actions.x, actions.y)];
+            for column in quick.x..quick.right() {
+                let cell = &buffer[(column, quick.y)];
+                assert_ne!(
+                    cell.fg, cell.bg,
+                    "quick control must contrast with its background"
+                );
+                assert_eq!(
+                    (cell.fg, cell.bg),
+                    (reference.fg, reference.bg),
+                    "quick control must match adjacent action controls"
+                );
+            }
+        }
+    }
+    #[test]
+    fn operator_native_sidebar_heading_matches_project_blue_and_muted_rule() {
+        let (mut d, _) = setup();
+        d.install_hierarchy(ovrcr_protocol::HierarchySnapshot {
+            projects: vec![ovrcr_protocol::ProjectSummary {
+                name: "style-project".into(),
+                workspaces: vec![],
+            }],
+        });
+        let area = Rect::new(0, 0, 120, 24);
+        d.install_area(area);
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+        d.draw(&mut terminal).unwrap();
+        let buffer = terminal.backend().buffer();
+        let sidebar = d.sidebar_rects(area);
+        let operator = &buffer[(sidebar.operator.x + 1, sidebar.operator.y)];
+        let project = &buffer[(sidebar.tree.x + 1, sidebar.tree.y)];
+        assert_eq!(operator.symbol(), "O");
+        assert_eq!(project.symbol(), "S");
+        assert_eq!(
+            operator.fg, project.fg,
+            "section headings share the blue token"
+        );
+        assert_eq!(operator.fg, super::super::render::BLUE());
+        assert!(operator.modifier.contains(Modifier::BOLD));
+        let rule = &buffer[(sidebar.operator.x + 20, sidebar.operator.y)];
+        assert_eq!(rule.symbol(), "─");
+        assert_eq!(rule.fg, super::super::render::SURFACE2());
+        assert_eq!(
+            buffer[(sidebar.operator.right() - 2, sidebar.operator.y)].fg,
+            super::super::render::MAUVE()
+        );
+        assert_eq!(
+            buffer[(sidebar.operator.x, sidebar.operator.y + 1)].fg,
+            super::super::render::MAUVE()
         );
     }
     #[test]
