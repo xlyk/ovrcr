@@ -660,10 +660,13 @@ impl Dashboard {
                 else {
                     return;
                 };
-                if quick.conversation != Some((id, chat.summary.session)) {
+                if quick.conversation != Some((id, chat.summary.session))
+                    || quick.provider != chat.summary.provider
+                    || quick.model != chat.summary.model
+                {
                     self.operator_quick_failed(
                         generation,
-                        "Created conversation session changed; message retained.",
+                        "Created conversation identity changed; message retained.",
                     );
                     return;
                 }
@@ -1955,15 +1958,12 @@ mod tests {
             assert_eq!(d.operator.chats[&7].context, other_context);
         }
     }
-    #[test]
-    fn operator_quick_created_session_conflict_cannot_retarget_explicit_retry() {
+    fn quick_created_conflict_refuses_retry(retained: Summary) {
         let mut d = Dashboard::new(TerminalSize {
             rows: 24,
             cols: 140,
         });
         let create = quick_create(&mut d);
-        let mut retained = quick_summary(7);
-        retained.session = SessionId(999);
         d.operator_summary(retained.clone());
         let outgoing = d.handle_server_message(ServerMessage::Response {
             request_id: create.request_id,
@@ -1977,9 +1977,31 @@ mod tests {
         d.key(KeyCode::Enter);
         assert!(
             d.drain_outbox().is_empty(),
-            "retry cannot adopt another retained session or create again"
+            "retry cannot adopt conflicting authority or create again: {retained:?}"
         );
+        assert_eq!(d.operator.chats[&7].summary, retained);
+        assert!(d.operator.quick.as_ref().unwrap().error.is_some());
+        assert!(d.operator.quick.as_ref().unwrap().phase == QuickPhase::Editing);
+        assert_eq!(d.operator.quick.as_ref().unwrap().text, "first message");
         assert!(d.operator.chats[&7].draft.is_empty());
+    }
+    #[test]
+    fn operator_quick_created_session_conflict_cannot_retarget_explicit_retry() {
+        let mut retained = quick_summary(7);
+        retained.session = SessionId(999);
+        quick_created_conflict_refuses_retry(retained);
+    }
+    #[test]
+    fn operator_quick_created_provider_conflict_cannot_retarget_explicit_retry() {
+        let mut retained = quick_summary(7);
+        retained.provider = OperatorProvider::Grok;
+        quick_created_conflict_refuses_retry(retained);
+    }
+    #[test]
+    fn operator_quick_created_model_conflict_cannot_retarget_explicit_retry() {
+        let mut retained = quick_summary(7);
+        retained.model = "conflicting-model".into();
+        quick_created_conflict_refuses_retry(retained);
     }
     #[test]
     fn operator_quick_wrong_identity_retains_message_and_explicit_retry_reuses_chat() {
