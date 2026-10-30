@@ -96,6 +96,8 @@ pub struct OperatorTurn {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperatorConversationSummary {
+    /// Derived only from the retained exact-run controlled-stop proof.
+    pub worker_stopped: bool,
     pub id: OperatorConversationId,
     pub session: SessionId,
     pub provider: OperatorProvider,
@@ -360,8 +362,16 @@ pub struct OperatorWorkerStart {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorWorkerCommand {
-    Start { identity: OperatorTurnIdentity },
-    Retire { identity: OperatorTurnIdentity },
+    Start {
+        identity: OperatorTurnIdentity,
+    },
+    Retire {
+        identity: OperatorTurnIdentity,
+    },
+    /// Authenticated timeout cancellation uses the same exact-turn Stop path.
+    Stop {
+        identity: OperatorTurnIdentity,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperatorWorkerRequest {

@@ -2657,6 +2657,7 @@ fn test_state_with_dispatch(
             observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
             lifecycle: lifecycle::Lifecycle::default(),
+            operator: operator::OperatorRuntime::default(),
             dispatch,
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
@@ -2680,7 +2681,7 @@ fn test_state_with_dispatch(
     (state, receiver)
 }
 
-fn test_state_with_socket(
+pub(super) fn test_state_with_socket(
     socket: PathBuf,
     registry: Registry,
 ) -> (
@@ -2708,6 +2709,7 @@ fn test_state_with_socket(
             observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
             lifecycle: lifecycle::Lifecycle::default(),
+            operator: operator::OperatorRuntime::default(),
             dispatch,
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
@@ -5365,6 +5367,7 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        operator: operator::OperatorRuntime::default(),
         dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
@@ -5587,6 +5590,7 @@ fn session_output_flows_while_another_session_spawns() {
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        operator: operator::OperatorRuntime::default(),
         dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
@@ -8598,6 +8602,7 @@ fn failed_root_shell_keeps_setup_pending_and_does_not_duplicate_launch() {
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        operator: operator::OperatorRuntime::default(),
         dispatch,
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
@@ -9021,6 +9026,7 @@ fn automatic_local_terminals_default_branch_only_skips_feature_workspaces() {
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        operator: operator::OperatorRuntime::default(),
         dispatch,
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
@@ -9120,6 +9126,7 @@ fn automatic_local_terminals_on_and_off_cover_root_and_feature() {
             observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
             lifecycle: lifecycle::Lifecycle::default(),
+            operator: operator::OperatorRuntime::default(),
             dispatch,
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
@@ -9224,6 +9231,7 @@ fn changing_automatic_local_policy_leaves_existing_terminals() {
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        operator: operator::OperatorRuntime::default(),
         dispatch,
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),

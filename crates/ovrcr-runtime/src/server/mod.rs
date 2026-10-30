@@ -44,6 +44,9 @@ mod event_log;
 mod lifecycle;
 mod navigation;
 pub use navigation::bridge_executable_sha256;
+pub mod operator;
+#[cfg(test)]
+mod operator_tests;
 mod outbound;
 mod quota;
 mod quota_probe;
@@ -259,6 +262,7 @@ pub struct ServerState {
     observations: parking_lot::Mutex<HashMap<(String, String), CheckoutObservation>>,
     pub mutation_lock: Mutex<()>,
     pub(crate) lifecycle: lifecycle::Lifecycle,
+    operator: operator::OperatorRuntime,
     pub dispatch: ReportingSender<DispatchMessage>,
     pub shutdown: AtomicBool,
     pub stopping: AtomicBool,
@@ -958,6 +962,18 @@ impl ServerState {
         ready: Option<Arc<dyn Fn() + Send + Sync>>,
         restore_command: Option<String>,
     ) -> Result<SessionSummary> {
+        self.spawn_prepared_record_locked(id, expected_run, argv, ready, restore_command, false)
+    }
+
+    fn spawn_prepared_record_locked(
+        &self,
+        id: SessionId,
+        expected_run: SessionRunId,
+        argv: Vec<std::ffi::OsString>,
+        ready: Option<Arc<dyn Fn() + Send + Sync>>,
+        restore_command: Option<String>,
+        prepared: bool,
+    ) -> Result<SessionSummary> {
         // Every failure in this preparation is provably before native spawn.
         // Keep that proof across allocation; later row/process absence proves nothing.
         let (record, socket, capability, events, assigned_input) = (|| -> Result<_> {
@@ -979,7 +995,16 @@ impl ServerState {
                 .as_ref()
                 .context("server event channel closed")?
                 .clone();
-            let record = self.retained.lock().begin_run(id, expected_run)?;
+            let record = if prepared {
+                let retained = self.retained.lock();
+                let record = retained.get(id).context("prepared session missing")?;
+                if record.run != expected_run || record.stopped {
+                    bail!("prepared session run changed");
+                }
+                record.clone()
+            } else {
+                self.retained.lock().begin_run(id, expected_run)?
+            };
             if let Some(old) = self.sessions.lock().unwrap().remove(&id) {
                 old.revoke_hook_capability();
             }
@@ -1190,7 +1215,14 @@ impl ServerState {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
         self.acknowledge_stopped_locked(id, expected_run)?;
-        self.refresh_session_locked(id)
+        self.refresh_session_locked(id)?;
+        if let Some(record) = self.retained.lock().get(id)
+            && let ovrcr_protocol::SessionScope::OperatorConversation { conversation } =
+                record.metadata.scope
+        {
+            self.operator_changed(conversation);
+        }
+        Ok(())
     }
 
     fn acknowledge_stopped_locked(&self, id: SessionId, expected_run: SessionRunId) -> Result<()> {
@@ -1546,6 +1578,7 @@ impl ServerState {
             observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
             lifecycle: lifecycle::Lifecycle::default(),
+            operator: operator::OperatorRuntime::default(),
             dispatch,
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),

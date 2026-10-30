@@ -161,6 +161,11 @@ impl SessionStore {
         Ok(OperatorConversationSummary {
             id,
             session: SessionId(session),
+            worker_stopped: self
+                .records
+                .get(&SessionId(session))
+                .context("retained operator session missing")?
+                .stopped,
             provider: serde_json::from_str(&provider)?,
             model,
             title,

@@ -2116,6 +2116,7 @@ mod wire_snapshot {
             sequence: 0,
         };
         let summary = OperatorConversationSummary {
+            worker_stopped: false,
             id: identity.conversation,
             session: identity.session,
             provider: OperatorProvider::ChatGpt,
@@ -2215,6 +2216,7 @@ mod wire_snapshot {
         for (name, command) in [
             ("Start", OperatorWorkerCommand::Start { identity }),
             ("Retire", OperatorWorkerCommand::Retire { identity }),
+            ("Stop", OperatorWorkerCommand::Stop { identity }),
         ] {
             all.push((
                 format!("Request::OperatorWorker::{name}"),
@@ -3368,13 +3370,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0442017301630168016c0104",
+            "2a0443017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0442017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0443017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -3405,18 +3407,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04420000"),
+        ("Response::NotificationNavigation", "0d04430000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0442017301630168016c0104",
+            "0e01016e0443017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010442017301630168016c0164",
+            "0f0107080901016901010443017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004420107080901016901010442017301630168016c0164",
+            "1004430107080901016901010443017301630168016c0164",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -3440,7 +3442,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0442017301630168016c0104",
+            "08016e0443017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -3922,16 +3924,20 @@ mod wire_snapshot {
             "3b0307070707070707070707070707070707070707070707070707070707070707070101020304",
         ),
         (
+            "Request::OperatorWorker::Stop",
+            "3b0307070707070707070707070707070707070707070707070707070707070707070201020304",
+        ),
+        (
             "Response::Operator::Created",
-            "1900010300056d6f64656c0568656c6c6f01010203040000",
+            "190000010300056d6f64656c0568656c6c6f01010203040000",
         ),
         (
             "Response::Operator::Conversations",
-            "190101010300056d6f64656c0568656c6c6f01010203040000",
+            "19010100010300056d6f64656c0568656c6c6f01010203040000",
         ),
         (
             "Response::Operator::History",
-            "1902010300056d6f64656c0568656c6c6f01010203040000010102000568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060101",
+            "190200010300056d6f64656c0568656c6c6f01010203040000010102000568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060101",
         ),
         ("Response::Operator::Submitted", "1903010203040000"),
         ("Response::Operator::Stopped", "1904010203040200"),

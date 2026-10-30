@@ -260,6 +260,7 @@ fn run_server_inner(
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        operator: operator::OperatorRuntime::default(),
         dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
@@ -425,6 +426,7 @@ fn run_server_inner(
     // Drop the Lifecycle job sender so the worker exits its recv loop.
     state.lifecycle.detach();
     let _ = lifecycle_thread.join();
+    let operator_shutdown = state.operator.join_controls();
     let _ = dispatch.send(DispatchMessage::Stop);
     dispatcher
         .join()
@@ -447,6 +449,7 @@ fn run_server_inner(
         Err(error) => eprintln!("ovrcr server stopped with task shutdown error: {error:#}"),
     }
     task_shutdown?;
+    operator_shutdown?;
     #[cfg(feature = "acceptance-diagnostics")]
     git_diagnostics?;
     Ok(())
