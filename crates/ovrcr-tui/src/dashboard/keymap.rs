@@ -209,6 +209,9 @@ impl KeyBinding {
         if self.press_only && key.kind != KeyEventKind::Press {
             return false;
         }
+        if let Action::OperatorKey(code, modifiers) = self.action {
+            return key.code == code && key.modifiers == modifiers;
+        }
         if key
             .modifiers
             .intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
@@ -217,9 +220,6 @@ impl KeyBinding {
         }
         match self.action {
             Action::OperatorQuick => return is_operator_quick_key(key),
-            Action::OperatorKey(code, modifiers) => {
-                return key.code == code && key.modifiers == modifiers;
-            }
             // Tasks answers to the bare key and to Ctrl-t.
             Action::Tasks => {
                 return key.code == KeyCode::Char('t')
@@ -250,11 +250,14 @@ impl Dashboard {
             .into_iter()
             .flat_map(|group| group.keys)
             .find(|binding| {
-                binding.matches(if browse && !binding.bare {
-                    browse_modifiers(key)
-                } else {
-                    key
-                })
+                binding.matches(
+                    if browse && !binding.bare && !matches!(binding.action, Action::OperatorKey(..))
+                    {
+                        browse_modifiers(key)
+                    } else {
+                        key
+                    },
+                )
             })
     }
 
@@ -511,6 +514,35 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             native("PageDown", "Later", PageDown, KeyModifiers::NONE),
             native("Ctrl-g", "Browse", Char('g'), KeyModifiers::CONTROL),
         ];
+        keys.push(
+            native(
+                "Ctrl-c",
+                "Clear draft / Stop if empty",
+                Char('c'),
+                KeyModifiers::CONTROL,
+            )
+            .once(),
+        );
+        for (label, name, ch, modifiers) in [
+            ("Ctrl-a", "Line start", 'a', KeyModifiers::CONTROL),
+            ("Ctrl-e", "Line end", 'e', KeyModifiers::CONTROL),
+            ("Ctrl-b", "Previous grapheme", 'b', KeyModifiers::CONTROL),
+            ("Ctrl-f", "Next grapheme", 'f', KeyModifiers::CONTROL),
+            (
+                "Ctrl-h",
+                "Delete previous grapheme",
+                'h',
+                KeyModifiers::CONTROL,
+            ),
+            ("Ctrl-d", "Delete next grapheme", 'd', KeyModifiers::CONTROL),
+            ("Ctrl-u", "Delete line prefix", 'u', KeyModifiers::CONTROL),
+            ("Ctrl-k", "Delete line suffix", 'k', KeyModifiers::CONTROL),
+            ("Ctrl-w", "Delete previous word", 'w', KeyModifiers::CONTROL),
+            ("Alt-b", "Previous word", 'b', KeyModifiers::ALT),
+            ("Alt-f", "Next word", 'f', KeyModifiers::ALT),
+        ] {
+            keys.push(native(label, name, Char(ch), modifiers));
+        }
         if dashboard.operator_stop_available() {
             keys.push(native(
                 "Ctrl-x",

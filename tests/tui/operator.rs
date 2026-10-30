@@ -307,6 +307,23 @@ fn operator_quick_opens_over_every_input_mode_without_pty_bytes() {
                 "mode {mode:?}"
             );
         }
+        for event in [
+            Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Event::Paste("xpopup\n界".into()),
+            Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)),
+            Event::Key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)),
+            Event::Paste("界".into()),
+            Event::Key(KeyEvent::new(
+                KeyCode::Char('b'),
+                KeyModifiers::CONTROL | KeyModifiers::ALT,
+            )),
+        ] {
+            assert!(!matches!(
+                d.event_action(event),
+                DashboardAction::PtyBytes(_) | DashboardAction::Detach
+            ));
+        }
         d.draw(&mut terminal).unwrap();
         let text: String = terminal
             .backend()
@@ -410,6 +427,40 @@ fn native_operator_submission_captures_stable_context_and_never_pty_input() {
         dashboard.event_action(Event::Paste("hello\n界".into())),
         DashboardAction::PtyBytes(_)
     ));
+    for event in [
+        Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)),
+        Event::Key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)),
+        Event::Key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL)),
+        Event::Key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)),
+        Event::Key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT)),
+        Event::Paste("界".into()),
+        Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+    ] {
+        assert!(!matches!(
+            dashboard.event_action(event),
+            DashboardAction::PtyBytes(_) | DashboardAction::Detach
+        ));
+    }
+    for kind in [
+        crossterm::event::KeyEventKind::Repeat,
+        crossterm::event::KeyEventKind::Release,
+    ] {
+        dashboard.event_action(Event::Key(KeyEvent::new_with_kind(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL,
+            kind,
+        )));
+    }
+    assert!(
+        dashboard.drain_outbox().is_empty(),
+        "draft clear and held Ctrl+C cannot send"
+    );
+    dashboard.ctrl('c');
+    assert!(
+        dashboard.drain_outbox().is_empty(),
+        "empty idle Ctrl+C cannot send"
+    );
+    dashboard.event_action(Event::Paste("hello\n界".into()));
     assert!(dashboard.drain_outbox().is_empty(), "paste cannot submit");
     dashboard.key(KeyCode::Enter);
     let requests = dashboard.drain_outbox();

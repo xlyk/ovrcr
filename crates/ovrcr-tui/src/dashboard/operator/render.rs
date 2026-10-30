@@ -129,7 +129,7 @@ impl Dashboard {
             );
         }
         let hint = match quick.phase {
-            QuickPhase::Editing => "Enter Send · Shift-Enter Newline · Esc Dismiss",
+            QuickPhase::Editing => "Enter Send  Shift-Enter Newline  Ctrl-c Clear  Esc Dismiss",
             QuickPhase::Creating => "Creating conversation… · Esc Dismiss",
             QuickPhase::Submitting => "Sending first message… · Esc Dismiss",
         };

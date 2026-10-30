@@ -41,6 +41,19 @@ Failures retain the message; retries after Create target that chat. Notification
 retarget cancels an unsent form or hides its pending continuation. Quick visibility
 also blocks durable-tail review acknowledgement.
 
+Full Operator message input and editable Quick Message call
+`TextCursor::edit_key(KeyEvent)` for line/grapheme/word editing; other fields keep
+`TextCursor::key(KeyCode)` unchanged. Ctrl+A/E and Ctrl+U/K use logical line edges,
+Ctrl+W and Alt+B/F use whitespace-delimited words without crossing newlines.
+Home/End remain whole-buffer. Modifiers match exactly; unsupported combinations
+are consumed without inserting letters. Full input repeats ordinary edits, while
+Quick retains Press-only editing. Each owner handles Ctrl+C itself: a Press clears
+literal nonempty text and resets the cursor; a separate empty full Press calls the
+existing exact selected Stop. Repeat/Release do neither, empty Quick is a no-op,
+and pending Quick/closing chats stay frozen. Quick edits must reach the existing
+seeded-retry synchronization without changing unseeded chat drafts or captured
+Submit/Create payloads. No global interception or PTY encoding changes apply.
+
 Retained rows stay selectable without allocating a parser on the server or
 inventing live timing. Reopen targets the existing row and expected run; Retry
 never implies ownership acknowledgement. Same-boot or unverifiable recovery

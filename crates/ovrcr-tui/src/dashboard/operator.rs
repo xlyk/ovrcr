@@ -422,55 +422,58 @@ impl Dashboard {
         if quick.phase != QuickPhase::Editing {
             return DashboardAction::None;
         }
-        if key
-            .modifiers
-            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
-        {
-            return DashboardAction::None;
-        }
-        match key.code {
-            KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                return self.operator_quick_paste("\n");
-            }
-            KeyCode::Enter => {
-                if quick.text.trim().is_empty() {
-                    return DashboardAction::None;
+        let edited = if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
+            quick.text.clear();
+            quick.cursor = TextCursor::default();
+            true
+        } else {
+            quick.cursor.edit_key(&mut quick.text, key)
+        };
+        if !edited {
+            match key.code {
+                KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                    return self.operator_quick_paste("\n");
                 }
-                quick.error = None;
-                let generation = quick.generation;
-                if let Some((id, _)) = quick.conversation {
-                    quick.phase = QuickPhase::Submitting;
-                    self.operator_submit_to(id, SubmitOrigin::Quick { generation });
-                } else {
-                    let submission = QuickSubmission {
-                        generation,
-                        text: quick.text.clone(),
-                        context: quick.context.clone(),
-                        provider: quick.provider,
-                        model: quick.model.clone(),
-                    };
-                    let context = submission.context.clone();
-                    let request = OperatorRequest::Create {
-                        provider: submission.provider,
-                        model: submission.model.clone(),
-                    };
-                    quick.phase = QuickPhase::Creating;
-                    self.operator_request(
-                        Pending::Create {
-                            context: Box::new(context),
-                            origin: CreateOrigin::Quick(submission),
-                        },
-                        request,
-                    );
+                KeyCode::Enter => {
+                    if quick.text.trim().is_empty() {
+                        return DashboardAction::None;
+                    }
+                    quick.error = None;
+                    let generation = quick.generation;
+                    if let Some((id, _)) = quick.conversation {
+                        quick.phase = QuickPhase::Submitting;
+                        self.operator_submit_to(id, SubmitOrigin::Quick { generation });
+                    } else {
+                        let submission = QuickSubmission {
+                            generation,
+                            text: quick.text.clone(),
+                            context: quick.context.clone(),
+                            provider: quick.provider,
+                            model: quick.model.clone(),
+                        };
+                        let context = submission.context.clone();
+                        let request = OperatorRequest::Create {
+                            provider: submission.provider,
+                            model: submission.model.clone(),
+                        };
+                        quick.phase = QuickPhase::Creating;
+                        self.operator_request(
+                            Pending::Create {
+                                context: Box::new(context),
+                                origin: CreateOrigin::Quick(submission),
+                            },
+                            request,
+                        );
+                    }
                 }
+                KeyCode::Char(ch) if !ch.is_control() => {
+                    return self.operator_quick_paste(&ch.to_string());
+                }
+                KeyCode::Up | KeyCode::Down => quick
+                    .cursor
+                    .vertical(&quick.text, key.code == KeyCode::Down),
+                code => quick.cursor.key(&mut quick.text, code),
             }
-            KeyCode::Char(ch) if !ch.is_control() => {
-                return self.operator_quick_paste(&ch.to_string());
-            }
-            KeyCode::Up | KeyCode::Down => quick
-                .cursor
-                .vertical(&quick.text, key.code == KeyCode::Down),
-            code => quick.cursor.key(&mut quick.text, code),
         }
         if let Some(quick) = &self.operator.quick
             && quick.phase == QuickPhase::Editing
@@ -823,10 +826,48 @@ impl Dashboard {
         if key.kind == KeyEventKind::Release {
             return DashboardAction::None;
         }
+        if self.operator.new.is_none()
+            && !self.operator.list_focus
+            && !self.operator.transcript_focus
+            && key.modifiers != KeyModifiers::NONE
+            && key.modifiers != KeyModifiers::SHIFT
+            && key.modifiers != KeyModifiers::CONTROL
+            && key.modifiers != KeyModifiers::ALT
+        {
+            return DashboardAction::None;
+        }
         if super::input::is_browse_key(key) || key.code == KeyCode::Esc {
             self.operator.editing = false;
             self.mode = InputMode::Browse;
             return DashboardAction::EnterBrowse;
+        }
+        if self.operator.new.is_none()
+            && !self.operator.list_focus
+            && !self.operator.transcript_focus
+            && let Some(chat) = self
+                .operator
+                .selected
+                .and_then(|id| self.operator.chats.get_mut(&id.0))
+            && !chat.closing
+        {
+            if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
+                if key.kind == KeyEventKind::Press {
+                    if chat.draft.is_empty() {
+                        self.operator_stop();
+                    } else {
+                        chat.draft.clear();
+                        chat.cursor = TextCursor::default();
+                    }
+                }
+                return DashboardAction::Redraw;
+            }
+            // Existing application commands still belong to the owner below.
+            if !(key.modifiers == KeyModifiers::CONTROL
+                && matches!(key.code, KeyCode::Char('n' | 'x' | 'l')))
+                && chat.cursor.edit_key(&mut chat.draft, key)
+            {
+                return DashboardAction::Redraw;
+            }
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
@@ -2014,6 +2055,14 @@ mod tests {
             d.key(KeyCode::Esc);
             d.ctrl('o');
             assert_eq!(d.operator.quick.as_ref().unwrap().text, "first message");
+            d.ctrl('c');
+            assert!(d.operator.quick.as_ref().unwrap().text.is_empty());
+            assert_eq!(d.operator.chats[&7].draft, other_draft);
+            d.event_action(Event::Paste("first message".into()));
+            d.ctrl('w');
+            assert_eq!(d.operator.quick.as_ref().unwrap().text, "first ");
+            assert_eq!(d.operator.chats[&7].draft, other_draft);
+            d.event_action(Event::Paste("message".into()));
             d.event_action(Event::Paste("!".into()));
             d.key(KeyCode::Backspace);
             assert_eq!(d.operator.chats[&7].draft, other_draft);
@@ -2632,6 +2681,11 @@ mod tests {
             assert_eq!(d.operator.chats[&1].draft, "underlying draft");
             assert!(d.drain_outbox().is_empty());
         }
+        let minimum = draw(&mut d, 60, 16);
+        assert!(
+            minimum.contains("Ctrl-c Clear") && minimum.contains("Esc Dismiss"),
+            "{minimum}"
+        );
     }
     #[test]
     fn operator_original_typed_event_matrix_and_context_details() {
@@ -3860,6 +3914,288 @@ mod tests {
         assert_eq!(d.operator.chats[&1].messages, vec![delta(1, "A token")]);
     }
     #[test]
+    fn operator_input_commands_edit_only_message_graphemes_and_logical_lines() {
+        use KeyModifiers as M;
+        // Byte positions deliberately include CJK, combining and ZWJ graphemes.
+        let cases = [
+            ("", 0, 'a', M::CONTROL, "", 0),
+            ("", 0, 'd', M::CONTROL, "", 0),
+            (
+                "one\n界e\u{301}🙂 end\ntail",
+                16,
+                'a',
+                M::CONTROL,
+                "one\n界e\u{301}🙂 end\ntail",
+                4,
+            ),
+            (
+                "one\n界e\u{301}🙂 end\ntail",
+                4,
+                'e',
+                M::CONTROL,
+                "one\n界e\u{301}🙂 end\ntail",
+                18,
+            ),
+            ("界e\u{301}👩‍💻", 17, 'b', M::CONTROL, "界e\u{301}👩‍💻", 6),
+            ("界e\u{301}👩‍💻", 3, 'f', M::CONTROL, "界e\u{301}👩‍💻", 6),
+            ("界e\u{301}👩‍💻", 6, 'h', M::CONTROL, "界👩‍💻", 3),
+            ("界e\u{301}👩‍💻", 6, 'd', M::CONTROL, "界e\u{301}", 6),
+            (
+                "a\n界e\u{301}🙂 end\nz",
+                8,
+                'u',
+                M::CONTROL,
+                "a\n🙂 end\nz",
+                2,
+            ),
+            (
+                "a\n界e\u{301}🙂 end\nz",
+                8,
+                'k',
+                M::CONTROL,
+                "a\n界e\u{301}\nz",
+                8,
+            ),
+            ("a\nword  \nz", 8, 'w', M::CONTROL, "a\n\nz", 2),
+            (
+                "a\n界e\u{301}🙂,  tail\nz",
+                14,
+                'w',
+                M::CONTROL,
+                "a\n tail\nz",
+                2,
+            ),
+            ("a\nword  tail\nz", 12, 'w', M::CONTROL, "a\nword  \nz", 8),
+            ("a\nword  tail\nz", 8, 'b', M::ALT, "a\nword  tail\nz", 2),
+            ("a\nword  tail\nz", 3, 'f', M::ALT, "a\nword  tail\nz", 6),
+            ("a\nword  tail\nz", 6, 'f', M::ALT, "a\nword  tail\nz", 12),
+            ("a\n界　🙂\nz", 12, 'b', M::ALT, "a\n界　🙂\nz", 8),
+            ("a\n界　🙂\nz", 5, 'f', M::ALT, "a\n界　🙂\nz", 12),
+            ("a\nb\nz", 2, 'u', M::CONTROL, "a\nb\nz", 2),
+            ("a\nb\nz", 3, 'k', M::CONTROL, "a\nb\nz", 3),
+            ("a\nb\nz", 2, 'w', M::CONTROL, "a\nb\nz", 2),
+            ("a\nb\nz", 2, 'b', M::ALT, "a\nb\nz", 2),
+            ("a\nb\nz", 3, 'f', M::ALT, "a\nb\nz", 3),
+            ("a\nb", 2, 'h', M::CONTROL, "ab", 1),
+            ("a\nb", 1, 'd', M::CONTROL, "ab", 1),
+            ("a\n  \tb\nz", 5, 'w', M::CONTROL, "a\nb\nz", 2),
+            ("a\n\nz", 2, 'e', M::CONTROL, "a\n\nz", 2),
+            ("界", 0, 'h', M::CONTROL, "界", 0),
+            ("界", 3, 'd', M::CONTROL, "界", 3),
+            ("界", 0, 'b', M::CONTROL, "界", 0),
+            ("界", 3, 'f', M::CONTROL, "界", 3),
+            ("keep", 2, 'a', M::CONTROL | M::ALT, "keep", 2),
+            ("keep", 2, 'b', M::ALT | M::SHIFT, "keep", 2),
+            ("keep", 2, 'q', M::ALT, "keep", 2),
+            ("keep", 2, 'e', M::SUPER, "keep", 2),
+        ];
+        for quick in [false, true] {
+            for (text, position, ch, modifiers, expected, target) in cases {
+                let (mut d, _) = setup();
+                d.drain_outbox();
+                let mut cursor = TextCursor::default();
+                cursor.key(&mut String::new(), KeyCode::Home);
+                let mut initial = text.to_owned();
+                while cursor.position(&initial) < position {
+                    cursor.key(&mut initial, KeyCode::Right);
+                }
+                assert_eq!(cursor.position(&initial), position);
+                if quick {
+                    d.ctrl('o');
+                    let q = d.operator.quick.as_mut().unwrap();
+                    q.text = text.into();
+                    q.cursor = cursor;
+                } else {
+                    let chat = d.operator.chats.get_mut(&1).unwrap();
+                    chat.draft = text.into();
+                    chat.cursor = cursor;
+                }
+                let action = d.key_action(KeyEvent::new(KeyCode::Char(ch), modifiers));
+                assert!(!matches!(
+                    action,
+                    DashboardAction::PtyBytes(_) | DashboardAction::Detach
+                ));
+                let (actual, cursor) = if quick {
+                    let q = d.operator.quick.as_ref().unwrap();
+                    (&q.text, q.cursor)
+                } else {
+                    let chat = &d.operator.chats[&1];
+                    (&chat.draft, chat.cursor)
+                };
+                assert_eq!(
+                    actual, expected,
+                    "quick={quick} {ch:?} {modifiers:?} at {position}"
+                );
+                assert_eq!(
+                    cursor.position(actual),
+                    target,
+                    "quick={quick} {ch:?} {modifiers:?} at {position}"
+                );
+                assert!(d.drain_outbox().is_empty());
+                assert!(d.operator.chats[&2].draft.is_empty());
+            }
+        }
+    }
+    #[test]
+    fn operator_input_commands_preserve_home_end_and_repeat_policy() {
+        for quick in [false, true] {
+            let (mut d, _) = setup();
+            d.drain_outbox();
+            if quick {
+                d.ctrl('o');
+            }
+            d.event_action(Event::Paste("first\n界e\u{301}🙂".into()));
+            d.key(KeyCode::Home);
+            d.key(KeyCode::Char('>'));
+            d.key(KeyCode::End);
+            d.key(KeyCode::Char('<'));
+            for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
+                d.key_action(KeyEvent::new_with_kind(
+                    KeyCode::Char('h'),
+                    KeyModifiers::CONTROL,
+                    kind,
+                ));
+            }
+            let expected = if quick {
+                ">first\n界e\u{301}🙂<"
+            } else {
+                ">first\n界e\u{301}🙂"
+            };
+            let actual = if quick {
+                &d.operator.quick.as_ref().unwrap().text
+            } else {
+                &d.operator.chats[&1].draft
+            };
+            assert_eq!(actual, expected);
+            assert!(d.drain_outbox().is_empty());
+        }
+    }
+    #[test]
+    fn operator_quick_commands_freeze_pending_payloads_and_sync_seeded_retry_only() {
+        let (mut d, _) = setup();
+        d.drain_outbox();
+        let create = quick_create(&mut d);
+        for ch in ['c', 'u', 'w'] {
+            d.ctrl(ch);
+        }
+        assert_eq!(d.operator.quick.as_ref().unwrap().text, "first message");
+        assert!(d.drain_outbox().is_empty());
+        let submit = quick_ack_create(&mut d, create, 7);
+        for ch in ['c', 'u', 'w'] {
+            d.ctrl(ch);
+        }
+        assert_eq!(d.operator.quick.as_ref().unwrap().text, "first message");
+        assert!(d.drain_outbox().is_empty());
+        assert!(
+            matches!(&submit.request, Request::Operator(OperatorRequest::Submit { text, .. }) if text == "first message")
+        );
+        d.handle_server_message(ServerMessage::Response {
+            request_id: submit.request_id,
+            response: Response::Error {
+                code: ovrcr_protocol::ErrorCode::Conflict,
+                message: "retry".into(),
+            },
+        });
+        d.ctrl('w');
+        assert_eq!(d.operator.quick.as_ref().unwrap().text, "first ");
+        assert_eq!(d.operator.chats[&7].draft, "first ");
+        for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
+            d.key_action(KeyEvent::new_with_kind(
+                KeyCode::Char('c'),
+                KeyModifiers::CONTROL,
+                kind,
+            ));
+            assert_eq!(d.operator.quick.as_ref().unwrap().text, "first ");
+        }
+        d.ctrl('c');
+        d.ctrl('c');
+        assert!(d.operator_quick_visible());
+        assert!(d.operator.quick.as_ref().unwrap().text.is_empty());
+        assert!(d.operator.chats[&7].draft.is_empty());
+        assert!(!d.operator.chats[&1].stopping && !d.operator.chats[&2].stopping);
+        assert!(d.drain_outbox().is_empty());
+    }
+    #[test]
+    fn operator_ctrl_c_clears_before_press_only_exact_stop_and_respects_focus() {
+        let (mut d, _) = setup();
+        d.drain_outbox();
+        d.operator_insert(" \n\t");
+        for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
+            d.key_action(KeyEvent::new_with_kind(
+                KeyCode::Char('c'),
+                KeyModifiers::CONTROL,
+                kind,
+            ));
+            assert_eq!(d.operator.chats[&1].draft, " \n\t");
+            assert!(d.drain_outbox().is_empty());
+        }
+        d.ctrl('c');
+        assert!(d.operator.chats[&1].draft.is_empty());
+        assert!(d.drain_outbox().is_empty());
+        for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
+            d.key_action(KeyEvent::new_with_kind(
+                KeyCode::Char('c'),
+                KeyModifiers::CONTROL,
+                kind,
+            ));
+        }
+        assert!(d.drain_outbox().is_empty());
+        d.ctrl('c');
+        d.ctrl('c');
+        let requests = d.drain_outbox();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].request,
+            Request::Operator(OperatorRequest::Stop {
+                identity: d.operator.chats[&1]
+                    .summary
+                    .current_turn
+                    .as_ref()
+                    .unwrap()
+                    .identity,
+            })
+        );
+        assert!(!d.operator.chats[&2].stopping);
+        d.operator_select(Id(2));
+        d.operator_insert("other usable");
+        assert_eq!(d.operator.chats[&2].draft, "other usable");
+        for focus in 0..4 {
+            let (mut d, _) = setup();
+            d.drain_outbox();
+            d.operator_insert("preserved");
+            match focus {
+                0 => d.operator.list_focus = true,
+                1 => d.operator.transcript_focus = true,
+                2 => d.operator_new(),
+                _ => d.operator.chats.get_mut(&1).unwrap().closing = true,
+            }
+            let model = d.operator.new.as_ref().map(|form| form.model.clone());
+            for ch in ['a', 'c', 'u', 'w'] {
+                d.ctrl(ch);
+            }
+            assert_eq!(
+                d.operator.new.as_ref().map(|form| form.model.clone()),
+                model
+            );
+            d.key_action(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT));
+            assert_eq!(
+                d.operator.new.as_ref().map(|form| form.model.clone()),
+                model.map(|model| model + "b"),
+                "the separate model field retains its original Alt-key handling"
+            );
+
+            assert_eq!(d.operator.chats[&1].draft, "preserved");
+            assert!(d.drain_outbox().is_empty());
+        }
+        d.operator_summary(summary(2, 1, OperatorTurnState::Complete, true));
+        d.operator.chats.get_mut(&2).unwrap().draft.clear();
+        d.ctrl('c');
+        assert!(
+            d.drain_outbox().is_empty(),
+            "empty idle composer is a no-op"
+        );
+    }
+    #[test]
     fn paste_unicode_and_shift_enter_only_edit_native_draft_even_while_busy() {
         let (mut d, _) = setup();
         assert!(!matches!(
@@ -3926,7 +4262,19 @@ mod tests {
                 )
             })
             .unwrap();
-        d.operator_insert(" plus draft");
+        d.ctrl('u');
+        assert!(d.operator.chats[&1].draft.is_empty());
+        d.operator_insert("throw away");
+        d.ctrl('c');
+        assert!(d.operator.chats[&1].draft.is_empty());
+        assert!(!d.operator.chats[&1].stopping);
+        assert!(
+            matches!(&submit.request, Request::Operator(OperatorRequest::Submit { text, .. }) if text == "send")
+        );
+        assert!(
+            matches!(&d.operator.pending[&submit.request_id], Pending::Submit { text, .. } if text == "send")
+        );
+        d.operator_insert("send plus draft");
         d.handle_server_message(ServerMessage::Response {
             request_id: submit.request_id,
             response: Response::Operator(OperatorResponse::Submitted(
@@ -4176,6 +4524,12 @@ mod tests {
         d.key(KeyCode::Char(':'));
         assert!(d.palette.is_some());
         d.event_action(Event::Paste("palette filter".into()));
+        for ch in ['a', 'c', 'u', 'w'] {
+            d.ctrl(ch);
+        }
+        d.key_action(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT));
+        assert!(d.palette.is_some());
+        assert!(!d.operator.chats[&1].stopping);
         assert_eq!(d.operator.chats[&1].draft, "");
         d.key(KeyCode::Esc);
         d.key(KeyCode::Enter);
@@ -4624,6 +4978,49 @@ mod tests {
             "{footer}"
         );
         assert!(!footer.contains("Space Menu"));
+        for (ch, modifiers) in [
+            ('a', KeyModifiers::CONTROL),
+            ('e', KeyModifiers::CONTROL),
+            ('u', KeyModifiers::CONTROL),
+            ('k', KeyModifiers::CONTROL),
+            ('w', KeyModifiers::CONTROL),
+            ('b', KeyModifiers::ALT),
+            ('f', KeyModifiers::ALT),
+            ('c', KeyModifiers::CONTROL),
+        ] {
+            let binding = d
+                .key_binding_for(KeyEvent::new(KeyCode::Char(ch), modifiers))
+                .unwrap();
+            assert!(binding.enabled());
+            assert!(!binding.matches(KeyEvent::new(
+                KeyCode::Char(ch),
+                modifiers | KeyModifiers::SUPER
+            )));
+            if ch == 'c' {
+                assert!(!binding.matches(KeyEvent::new_with_kind(
+                    KeyCode::Char(ch),
+                    modifiers,
+                    KeyEventKind::Repeat
+                )));
+            }
+        }
+        d.operator_insert("one two");
+        let word = d
+            .key_binding_for(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT))
+            .unwrap();
+        d.run(word.action);
+        assert_eq!(
+            d.operator.chats[&1]
+                .cursor
+                .position(&d.operator.chats[&1].draft),
+            4
+        );
+        let clear = d
+            .key_binding_for(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
+            .unwrap();
+        d.run(clear.action);
+        assert!(d.operator.chats[&1].draft.is_empty());
+        assert!(d.drain_outbox().is_empty());
         let binding = d
             .key_binding_for(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL))
             .unwrap();

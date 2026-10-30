@@ -65,6 +65,27 @@ position and status. Provider and model stay fixed after creation. Selecting a
 different chat or returning to a terminal does not pause active work.
 
 `Shift-Enter` inserts a newline; paste edits the draft without submitting.
+Both message inputs support these editing commands:
+
+| Keys | Action |
+| --- | --- |
+| Ctrl+A / Ctrl+E | Start / end of the current logical line |
+| Ctrl+B / Ctrl+F | Previous / next grapheme |
+| Ctrl+H / Ctrl+D | Delete previous / next grapheme; empty Ctrl+D does nothing |
+| Ctrl+U / Ctrl+K | Delete the line prefix / suffix, retaining newlines |
+| Ctrl+W | Delete preceding whitespace and the preceding word within the line |
+| Alt+B / Alt+F | Previous / next whitespace-delimited word boundary within the line |
+| Ctrl+C | Clear the draft, including whitespace; a separate press in an empty full composer stops the selected response |
+
+Word commands treat punctuation as part of a word and never cross a newline.
+Home/End still move to the start/end of the whole draft; Up/Down move between
+logical lines. Holding Ctrl+C never turns a clear into Stop. Empty Quick Message
+Ctrl+C does nothing and never stops the underlying chat. Pending Quick creation or
+submission stays frozen; retry edits keep their original target. These commands
+apply only to message inputs; terminal Ctrl+C keeps its usual interrupt behavior.
+The full composer's existing key menu and palette list the editing actions;
+Ctrl+X remains the explicit Stop shortcut.
+
 Send is offered only for a nonempty draft when the selected conversation can accept
 it; running, pending and unconfirmed-worker-stop states keep the draft.
 A single activity row follows the latest message or tool receipt in the journal.

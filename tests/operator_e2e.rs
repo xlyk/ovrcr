@@ -1174,6 +1174,12 @@ mod compiled_worker {
         settings.operator.grok_model = Some("fixture-quick".into());
         ui.dashboard.install_settings(settings);
         ui.ctrl('o');
+        ui.ctrl('c');
+        ui.paste("discard 界e\u{301}🙂");
+        ui.ctrl('w');
+        ui.ctrl('c');
+        assert!(!ui.rendered().contains("discard"));
+        assert!(ui.dashboard.drain_outbox().is_empty());
         ui.paste("Frozen first\nmessage 界🙂");
         ui.key(KeyCode::Enter);
         let create = ui.take_operator_request();
@@ -1190,6 +1196,11 @@ mod compiled_worker {
             panic!("create receipt")
         };
         let conversation = summary.clone();
+        for ch in ['c', 'u', 'w'] {
+            ui.ctrl(ch);
+        }
+        assert!(ui.rendered().contains("Frozen first"));
+        assert!(ui.dashboard.drain_outbox().is_empty());
         ui.key(KeyCode::Esc);
         assert!(!ui.rendered().contains("Quick message · Ctrl-o"));
         ui.dashboard.install_focus(other.id);
@@ -1226,6 +1237,10 @@ mod compiled_worker {
         let submitted = ui.hold(submit);
         let group = own_worker(&live, &conversation);
         ui.ctrl('o');
+        for ch in ['c', 'u', 'w'] {
+            ui.ctrl(ch);
+        }
+        assert!(ui.rendered().contains("Frozen first"));
         ui.key(KeyCode::Enter);
         ui.key(KeyCode::Esc);
         assert!(
@@ -1723,7 +1738,15 @@ mod compiled_worker {
             "A transcript/draft lost: {a_view}"
         );
         assert!(!a_view.contains("B partial waiting"));
-        ui.ctrl('x');
+        ui.ctrl('c');
+        assert!(!ui.rendered().contains("A retained draft"));
+        assert!(
+            ui.flush()
+                .iter()
+                .all(|reply| !matches!(reply, Response::Operator(OperatorResponse::Stopped(_))))
+        );
+        assert!(live::group_exists(a_group) && live::group_exists(b_group));
+        ui.ctrl('c');
         let stopped = ui.flush();
         assert!(stopped.iter().any(|reply| matches!(reply,
             Response::Operator(OperatorResponse::Stopped(turn)) if turn.identity == turn_a.identity)));
@@ -1749,6 +1772,56 @@ mod compiled_worker {
             OperatorTurnState::Running
         );
         assert!(!still_b.conversation.worker_stopped && live::group_exists(b_group));
+        live.ready("feature/stop");
+        let Response::Hierarchy(hierarchy) = live.request(Request::List) else {
+            panic!("hierarchy")
+        };
+        let terminal = hierarchy
+            .projects
+            .iter()
+            .flat_map(|p| &p.workspaces)
+            .flat_map(|w| &w.sessions)
+            .find(|s| s.name == "local")
+            .unwrap()
+            .id;
+        let output = live
+            .command()
+            .args([
+                "terminal",
+                "send",
+                &terminal.0.to_string(),
+                "--text",
+                "printf 'STOP_%s\n' TERMINAL_OK\n",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "unrelated terminal input refused: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let deadline = std::time::Instant::now() + BUDGET;
+        loop {
+            let Response::TerminalText { text, .. } = live.request(Request::ReadTerminal {
+                session: terminal,
+                max_lines: None,
+            }) else {
+                panic!("terminal read")
+            };
+            if text.lines().any(|line| line.trim() == "STOP_TERMINAL_OK") {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "unrelated terminal did not answer: {text}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(live::group_exists(b_group), "terminal use cannot retire B");
+        assert_eq!(
+            live.request(Request::KillSession { session: terminal }),
+            Response::Ok
+        );
         provider.release("fixture-b");
         let b_done = ui.wait_history(&provider, b.id, |history| {
             history.conversation.worker_stopped

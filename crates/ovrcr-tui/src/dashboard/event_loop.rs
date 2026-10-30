@@ -1452,6 +1452,39 @@ mod operator_loop_tests {
         )
         .unwrap();
         let mut mouse = false;
+        for event in [
+            Event::Key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL)),
+            Event::Paste("discard 界e\u{301}🙂\n ".into()),
+            Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)),
+            Event::Key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT)),
+            Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        ] {
+            assert!(
+                !dispatch_dashboard_event(&mut terminal, &mut stream, &mut d, &mut mouse, event)
+                    .unwrap()
+            );
+        }
+        d.draw(&mut terminal).unwrap();
+        assert!(
+            !parser
+                .lock()
+                .unwrap()
+                .screen()
+                .contents()
+                .contains("discard"),
+            "Quick Ctrl+C must clear only its draft"
+        );
+        assert!(crate::protocol::read_frame::<ClientMessage>(&mut peer).is_err());
+        // Close the empty form so the original modal/key/paste coverage starts fresh.
+        dispatch_dashboard_event(
+            &mut terminal,
+            &mut stream,
+            &mut d,
+            &mut mouse,
+            Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+        )
+        .unwrap();
         let events = [
             Event::Key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL)),
             Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
@@ -1501,6 +1534,18 @@ mod operator_loop_tests {
             crate::protocol::read_frame::<ClientMessage>(&mut peer).is_err(),
             "one Enter emits exactly one Create, no PTY input"
         );
+        for ch in ['c', 'u', 'w'] {
+            assert!(
+                !dispatch_dashboard_event(
+                    &mut terminal,
+                    &mut stream,
+                    &mut d,
+                    &mut mouse,
+                    Event::Key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::CONTROL))
+                )
+                .unwrap()
+            );
+        }
         dispatch_dashboard_event(
             &mut terminal,
             &mut stream,
@@ -1537,8 +1582,9 @@ mod operator_loop_tests {
                     Request::Operator(OperatorRequest::Submit {
                         conversation: OperatorConversationId(7),
                         expected_run: SessionRunId(0),
+                        ref text,
                         ..
-                    })
+                    }) if text == "xfirst\n界]52;c;INJECTED"
                 ))
                 .count(),
             1
@@ -1652,6 +1698,100 @@ mod operator_loop_tests {
             crate::protocol::read_frame::<ClientMessage>(&mut peer).is_err(),
             "native draft editing cannot send Input or Submit"
         );
+        for kind in [
+            crossterm::event::KeyEventKind::Repeat,
+            crossterm::event::KeyEventKind::Release,
+        ] {
+            assert!(
+                !dispatch_dashboard_event(
+                    &mut terminal,
+                    &mut stream,
+                    &mut d,
+                    &mut mouse,
+                    Event::Key(KeyEvent::new_with_kind(
+                        KeyCode::Char('c'),
+                        KeyModifiers::CONTROL,
+                        kind
+                    ))
+                )
+                .unwrap()
+            );
+        }
+        d.draw(&mut terminal).unwrap();
+        assert!(
+            parser
+                .lock()
+                .unwrap()
+                .screen()
+                .contents()
+                .contains("DRAFT_A")
+        );
+        for kind in [
+            crossterm::event::KeyEventKind::Press,
+            crossterm::event::KeyEventKind::Repeat,
+            crossterm::event::KeyEventKind::Release,
+        ] {
+            assert!(
+                !dispatch_dashboard_event(
+                    &mut terminal,
+                    &mut stream,
+                    &mut d,
+                    &mut mouse,
+                    Event::Key(KeyEvent::new_with_kind(
+                        KeyCode::Char('c'),
+                        KeyModifiers::CONTROL,
+                        kind
+                    ))
+                )
+                .unwrap()
+            );
+        }
+        d.draw(&mut terminal).unwrap();
+        assert!(
+            !parser
+                .lock()
+                .unwrap()
+                .screen()
+                .contents()
+                .contains("DRAFT_A")
+        );
+        assert!(
+            crate::protocol::read_frame::<ClientMessage>(&mut peer).is_err(),
+            "clear/repeat/release cannot send Stop or PTY requests"
+        );
+        for _ in 0..2 {
+            assert!(
+                !dispatch_dashboard_event(
+                    &mut terminal,
+                    &mut stream,
+                    &mut d,
+                    &mut mouse,
+                    Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
+                )
+                .unwrap()
+            );
+        }
+        let stop: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+        assert_eq!(
+            stop.request,
+            Request::Operator(OperatorRequest::Stop {
+                identity: summary(1).current_turn.unwrap().identity,
+            })
+        );
+        assert!(
+            crate::protocol::read_frame::<ClientMessage>(&mut peer).is_err(),
+            "exact selected Stop is emitted once"
+        );
+        assert!(
+            !dispatch_dashboard_event(
+                &mut terminal,
+                &mut stream,
+                &mut d,
+                &mut mouse,
+                Event::Paste("DRAFT_A\n界".into())
+            )
+            .unwrap()
+        );
         d.install_focus(SessionId(1));
         emit_view_request(&mut stream, &mut d, area).unwrap();
         let view: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
@@ -1701,6 +1841,20 @@ mod operator_loop_tests {
                 ..
             }
         ));
+        assert!(
+            !dispatch_dashboard_event(
+                &mut terminal,
+                &mut stream,
+                &mut d,
+                &mut mouse,
+                Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
+            )
+            .unwrap()
+        );
+        let interrupt: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+        assert!(
+            matches!(interrupt.request, Request::Input { session: SessionId(1), ref bytes, .. } if bytes == &[3])
+        );
         inbound(
             &mut peer,
             &mut wake,
