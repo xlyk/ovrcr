@@ -6,8 +6,8 @@ resolver = "3"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-# Edition 2024 with let-chains needs 1.88; the GUI helper's eframe needs 1.95.
-rust-version = "1.95"
+# Rig 0.45 requires Rust 1.97.1.
+rust-version = "1.97.1"
 license = "MIT"
 
 [workspace.dependencies]
@@ -63,6 +63,12 @@ path = "src/bin/ovrcr-gui.rs"
 required-features = ["gui"]
 
 [dependencies]
+rig = { version = "=0.45.0", default-features = false, features = ["agent", "reqwest", "rustls"] }
+tokio = { version = "1", features = ["rt", "time", "net", "io-util", "sync", "macros"] }
+futures = "0.3"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "form"] }
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
+base64 = { workspace = true }
 toml = { workspace = true }
 toml_edit = { workspace = true }
 anyhow = { workspace = true }

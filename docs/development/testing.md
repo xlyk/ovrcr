@@ -76,7 +76,7 @@ Linux agents (Cursor Cloud, CI runners) are headless. The GUI feature has no
 Linux windowing backend, so match the `linux` job in `.github/workflows/ci.yml`
 and omit `--all-features`.
 
-- Rust stable, at least the workspace `rust-version` (1.95), plus rustfmt and
+- Rust stable, at least the workspace `rust-version` (1.97.1), plus rustfmt and
   clippy. A default cloud image may be older.
 - `zsh` is required. Shell integration tests invoke `/bin/zsh`.
 - Node 22 runs `node --test tests/pi_reporting_extension.mjs

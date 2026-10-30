@@ -3,7 +3,7 @@
 **Yet another place to run coding agents. This one is Rust, so it’s fast and you get to feel smug about it.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.95%2B-orange.svg?style=flat-square)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.97.1%2B-orange.svg?style=flat-square)](https://www.rust-lang.org/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg?style=flat-square)](#requirements)
 
 ## About
@@ -89,7 +89,7 @@ Dashboard: `j`/`k` select, `Enter` focus, `Ctrl-g` browse, `q` detach.
 ## Requirements
 
 - macOS or Linux
-- Rust 1.95 or newer (edition 2024; optional GUI helper’s `eframe` sets the floor)
+- Rust 1.97.1 or newer (edition 2024; the built-in operator’s Rig dependency sets the floor)
 - Git
 - Optional: [Pi](docs/scheduled-tasks.md) for scheduled tasks; macOS [Bridge](native/bridge/README.md) for notifications
 
