@@ -1,0 +1,20 @@
+{
+  "frozen_product_revision": "ace3077b0c6743648b96b6986c3cac9ce50e7a07",
+  "command": [
+    "git",
+    "diff",
+    "--exit-code",
+    "ace3077b0c6743648b96b6986c3cac9ce50e7a07",
+    "--",
+    "crates",
+    "tests"
+  ],
+  "exit": 0,
+  "source_sha256_match": true,
+  "frozen_binary_sha256_match": true,
+  "native01_files_preserved": 37,
+  "pending_before_after_turn_history_and_gates_equal": true,
+  "verified_new_capture_count": 3,
+  "original_owner_logs_verified": 2,
+  "scope": "Evidence/docs only; no product/tests changed or suites rerun."
+}

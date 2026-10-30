@@ -1,0 +1,8 @@
+{
+  "call": "await app2.click(73)",
+  "fresh_control": "73 close button from immediately preceding full AX",
+  "started_unix_ms": 1793381879550,
+  "ended_unix_ms": 1793381880574,
+  "returned_successfully": true,
+  "no_closed_app_query": true
+}

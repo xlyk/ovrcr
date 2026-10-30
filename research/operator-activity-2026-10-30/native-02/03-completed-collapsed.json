@@ -1,0 +1,15 @@
+{
+  "call": "app2.getAXStateAndScreenshot({disableDiffing:true,emit:false})",
+  "started_unix_ms": 1793381852821,
+  "ended_unix_ms": 1793381852932,
+  "source_revision": "ace3077b0c6743648b96b6986c3cac9ce50e7a07",
+  "screenshot_bytes": 269603,
+  "screenshot_sha256": "26f6fcb1a4371aaeec5b9f7c58a5d2d95876ed5479b4ef6cbf86aaba085bc8ea",
+  "ax_sha256": "179c78c52462ecea0f2334b6b6fb2a822d36883a2827465561cc7f9d4e56fabd",
+  "activity_lines": [
+    " OPERATOR ───────────────────── ▸ 1 [+]│ACTIVITY hold the pending result for native proof · grok / fixture-activity · complete                                        ",
+    "\t\t4 text (settable)  OPERATOR ───────────────────── ▸ 1 [+]│ACTIVITY hold the pending result for native proof · grok / fixture-activity · complete                                        ",
+    "\t\t67 text (settable) Claude · unavailable                   │ Managing consigint / main / #1 run 1                                                                                         ",
+    " OPERATOR ───────────────────── ▸ 1 [+]│ACTIVITY hold the pending result for native proof · grok / fixture-activity · complete                                        "
+  ]
+}

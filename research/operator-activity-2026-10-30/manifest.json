@@ -1,8 +1,8 @@
 {
   "files": {
     "README.md": {
-      "bytes": 1539,
-      "sha256": "ff826ec0a356bef5850e2528018aee4f68288b9382877342d12a8e44ee30b403"
+      "bytes": 1721,
+      "sha256": "cd9939ff1a17e36980c2c10c1a3e64d4ffe818b438b76491182f0bdf65d8e8ab"
     },
     "check.py": {
       "bytes": 1706,
@@ -287,6 +287,158 @@
     "native-01/state.json": {
       "bytes": 1478,
       "sha256": "4a2ceaaca88caa1ed88ad82c2891c85fab170ce7bd286b5b3ac73242b19c2de5"
+    },
+    "native-02/01-pending-collapsed-a.ax.txt.gz": {
+      "bytes": 1325,
+      "sha256": "f0d52a9586a2ee348dd53b88eb7762048ae5f8c526790ea6123b22be289c4c8d"
+    },
+    "native-02/01-pending-collapsed-a.jpg": {
+      "bytes": 272398,
+      "sha256": "e7e230c4ced6990c8cd5b5f7d30f27a9c1aa0a170f0133a2c3010594059baff6"
+    },
+    "native-02/01-pending-collapsed-a.json": {
+      "bytes": 1334,
+      "sha256": "29d0e247916dc049433436e4b365100386e6a80f51d52b5be0d95df77c73c9c5"
+    },
+    "native-02/02-pending-collapsed-b.ax.txt.gz": {
+      "bytes": 1326,
+      "sha256": "bf4250d7d2f305e693b41aa16e8e3c171ae7db8ed4bb03b5ed9d9a4d65d8d804"
+    },
+    "native-02/02-pending-collapsed-b.jpg": {
+      "bytes": 272401,
+      "sha256": "75c99c13c6e9812a7f5a8888691779244dc76a5ccb5cb296c69f2e5e2fbcdc42"
+    },
+    "native-02/02-pending-collapsed-b.json": {
+      "bytes": 1334,
+      "sha256": "74d65f7c9cec80899a1568e28517b62ef504c5a32625f80454e75d2dcd775544"
+    },
+    "native-02/03-completed-collapsed.ax.txt.gz": {
+      "bytes": 1308,
+      "sha256": "76d7ef9469fc68f6445ed01e4bb305f6611fbf20de9aee48b6a2d405df4e56ff"
+    },
+    "native-02/03-completed-collapsed.jpg": {
+      "bytes": 269603,
+      "sha256": "26f6fcb1a4371aaeec5b9f7c58a5d2d95876ed5479b4ef6cbf86aaba085bc8ea"
+    },
+    "native-02/03-completed-collapsed.json": {
+      "bytes": 1332,
+      "sha256": "4590a1736d9b26d5cdd255a03950b2d34aff5511b2426306c3f3981cdef3524d"
+    },
+    "native-02/README.md": {
+      "bytes": 6010,
+      "sha256": "ce9ab1fdf6a60175513ad9e8a7c9ecacb1f3b2691fce1583a60c91f2d73b8304"
+    },
+    "native-02/capture-calls.js": {
+      "bytes": 2043,
+      "sha256": "70277a1ede02b7132c5a6b135cba41f09167d512c3e1530f3d7eaf027bc47b59"
+    },
+    "native-02/cleanup.json": {
+      "bytes": 1389,
+      "sha256": "8d9a916fbc6c729196c224a4c715db71a997959a8f70147b9fe97c1bb56034c5"
+    },
+    "native-02/completed-after-boundary.json": {
+      "bytes": 2501,
+      "sha256": "65bc6669d604f6b4fd766fd98617d4bd310de6c9b05d64ee2bbaee6a3d2b5666"
+    },
+    "native-02/completed-after-processes.json": {
+      "bytes": 1881,
+      "sha256": "fbfb1802509f8113fd1342055ab66a8beebbc597f985295ecbbca33968d2d9c9"
+    },
+    "native-02/completed-before-boundary.json": {
+      "bytes": 2501,
+      "sha256": "28bcd11705af7fac18ecbd331f89f326c2de54561cbd69fa95d3822fe590dee8"
+    },
+    "native-02/completed-before-processes.json": {
+      "bytes": 1881,
+      "sha256": "fbfb1802509f8113fd1342055ab66a8beebbc597f985295ecbbca33968d2d9c9"
+    },
+    "native-02/gui-exit.json": {
+      "bytes": 30,
+      "sha256": "c3270b24526367821425e8fdfab750152588c1cbd70f8ff4bc3a2914a340140b"
+    },
+    "native-02/gui-log-meta.json": {
+      "bytes": 115,
+      "sha256": "998da9a9df14a58ffee032a3ff81fb555bb509e6bca62633ff8ff1b7e0cb33c0"
+    },
+    "native-02/gui-owner.json": {
+      "bytes": 207,
+      "sha256": "b1f77c18c31f0eb21949b053390b64350da2839e198f2bcd3b41e3963e45eeaf"
+    },
+    "native-02/gui.log.gz": {
+      "bytes": 20,
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+    },
+    "native-02/holder-exit.json": {
+      "bytes": 30,
+      "sha256": "c3270b24526367821425e8fdfab750152588c1cbd70f8ff4bc3a2914a340140b"
+    },
+    "native-02/holder-log-meta.json": {
+      "bytes": 117,
+      "sha256": "f56ef6a15f35c717bb13f515e9ebc72241f4de58739c0b28976e0c26f948d3d0"
+    },
+    "native-02/holder-owner.json": {
+      "bytes": 283,
+      "sha256": "753a117c6751acbd3d3dafa2e1bf9fe316b552c35915f3bf0995e69ab2e69e64"
+    },
+    "native-02/holder.log.gz": {
+      "bytes": 148,
+      "sha256": "5f3685a367d1c1e554a194544f93fc6026e3d1bbeb17bdb63b1321fb6e8a36b0"
+    },
+    "native-02/launch.py": {
+      "bytes": 1914,
+      "sha256": "1fe83f7fb095d2ff1cc33ff3a64c221327e5f6aa0e698978493ececbab8b8809"
+    },
+    "native-02/normal-close-call.json": {
+      "bytes": 244,
+      "sha256": "bc8d7637a21d746d02db0fe7e942704d281314655a6c8fce36f59c961a0be677"
+    },
+    "native-02/pending-after-boundary.json": {
+      "bytes": 2056,
+      "sha256": "3a73385f5340d4e54e38403c19acde2ab3e8439cf62b0d1b925f42fdb805e6c4"
+    },
+    "native-02/pending-after-processes.json": {
+      "bytes": 2699,
+      "sha256": "fc0ffd896755d33af251e0a4cdc599dd415bb7534ca735534ad61ed7cd8a6ca0"
+    },
+    "native-02/pending-before-boundary.json": {
+      "bytes": 2056,
+      "sha256": "a72e71c4239ac7af0b2d2582c3b601d3325be23c6a35f2dab14a0076c4243532"
+    },
+    "native-02/pending-before-processes.json": {
+      "bytes": 2699,
+      "sha256": "ed75798108aa4383918118c4125d248c3b63e1330dee64a0495838d1e2d1447b"
+    },
+    "native-02/prepare.py": {
+      "bytes": 1839,
+      "sha256": "9bf7a1f175eb8501238c0bb46b751aa8cf1073c94e6988b439659b932cc439c6"
+    },
+    "native-02/product-equivalence.json": {
+      "bytes": 547,
+      "sha256": "fd9bf86a40a3817ed7d92488b790f8219f1f5542183e55d1a8834a4b4e8a8e98"
+    },
+    "native-02/provider-auth-ready.json": {
+      "bytes": 116,
+      "sha256": "07d9030f38fc7fd0ae552ac8249c08629327577812e847d58cee09871f328f38"
+    },
+    "native-02/provider-base.json": {
+      "bytes": 79,
+      "sha256": "0cbd4c959a223b47653e19bea2c34180a8b330a0154062a0461f1da338ff4879"
+    },
+    "native-02/provider-finished.json": {
+      "bytes": 86,
+      "sha256": "c638026cb3276472436aee2788c6a0531dfe5959604d592c418cd1d11f77b30b"
+    },
+    "native-02/record.py": {
+      "bytes": 1856,
+      "sha256": "d8828ab2a82cef67c1fa38cc374193f8ad245ff9027f107998da0f35fc8bb7d0"
+    },
+    "native-02/release-receipt.json": {
+      "bytes": 199,
+      "sha256": "f2b1d2e9ae52b7029b3168effb9b0252f526dfb8707b2cd06bdf340b7743f4dd"
+    },
+    "native-02/state.json": {
+      "bytes": 1578,
+      "sha256": "6e602cfb2a763ba8c2b83c24a5996d01b92e2bd20336b3d8a02959368ea2aa7e"
     }
   }
 }
