@@ -128,7 +128,8 @@ Node 22.23.2 and Rust 1.98.0 meet the project prerequisites.
 
 | Gate | Revision | Actual result |
 | --- | --- | --- |
-| fmt, Clippy `-D warnings`, check, diff check | dc9b49d | all exit 0; original command logs/metadata have `-final` names |
+| fmt, Clippy `-D warnings`, check, source/prose diff check | dc9b49d | all exit 0; original command logs/metadata have `-final` names |
+| evidence commit diff check | c9207e2 | exit 2; raw AX right-padding and raw log EOF/trailing whitespace; exact captures preserved; no check disabled |
 | full workspace, all targets/features, attempt 1 | abd4793 | exit 101; 366 passed, 1 failed, 6 ignored before Cargo stopped at `client_startup_server`; later suites unrun |
 | full workspace, all targets/features, attempt 2 | abd4793 | exit 101; same executed counts, different startup-copy test failed; no full-gate pass |
 | first startup failure focused rerun | abd4793 | exit 0; 1 passed, 21 filtered; does not qualify the failed full gate |
@@ -149,7 +150,9 @@ CARGO_HOME/RUSTUP_HOME for the existing compiler cache, offline Cargo mode,
 `SHELL=/bin/zsh`, loopback proxy exclusions and a synthetic private Git identity.
 Every other inherited variable was absent. The copied Server fixture discards
 child stdout/stderr in unchanged `Live::start_binary`, so neither failed copied
-child has retained stderr or a qualified successful wait. The exact failures
+child has retained stderr or a qualified successful wait. The evidence commit has an additional artifact-only whitespace check failure,
+recorded in `artifact-diff-check.json`. Source/prose checks passed before staging
+raw captures. The exact application-test failures
 remain unexplained; no timing/contention or permission cause is asserted.
 
 Attempt 2 failed `accepted_restart_runs_changed_binary_with_same_protocol_and_package_version`.
