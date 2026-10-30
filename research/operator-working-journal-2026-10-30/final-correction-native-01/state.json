@@ -1,0 +1,20 @@
+{
+  "source_revision": "9bbfb9d505793ecca76bfceb52bb6ee2bce49fb4",
+  "root": "/private/tmp/ovrcr-journal-final-leuqyl3n",
+  "bundle": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app",
+  "holder": "/private/tmp/ovrcr-journal-final-leuqyl3n/operator_e2e",
+  "features": [
+    "gui",
+    "acceptance-diagnostics"
+  ],
+  "sha256": {
+    "ovrcr": "d79fa8784c77c184cab4d3e030391affa97edce3df23605ad2479de1d7736b2e",
+    "ovrcr-gui": "cf5ecc4a24a30d1bb9cd450ef0bea377dbfadfb1042a12ec328f97f7cf44a5de"
+  },
+  "holder_sha256": "139e1f6ee022f78bb5f95dac06f2a69c7909fbb6433494df372ac3fc4c02428e",
+  "demo": "/private/tmp/ovrcr-journal-final-leuqyl3n/temp/ovrcr-gui-44iCnX",
+  "owner_tool_sessions": {
+    "holder": 34790,
+    "gui": 50005
+  }
+}

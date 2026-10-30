@@ -1,0 +1,12 @@
+{
+  "pid": 70230,
+  "command": [
+    "/private/tmp/ovrcr-journal-final-leuqyl3n/operator_e2e",
+    "--exact",
+    "compiled_worker::native_provider_holder",
+    "--ignored",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "root": "/private/tmp/ovrcr-journal-final-leuqyl3n"
+}

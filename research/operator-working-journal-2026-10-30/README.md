@@ -51,3 +51,12 @@ Current-source assigned gates and their exact original waits/counts are recorded
 The named workspace failures are `captured_build_survives_atomic_executable_replacement_and_decline` and `accepted_restart_runs_changed_binary_with_same_protocol_and_package_version`. Both fail at `tests/support/live.rs:520` in `copied_fixture()` → `start_binary()` socket admission, before their binary replacement or decline/restart assertions. Original logs say `fixture server socket did not appear`, shutdown response `None`, server stop `TimedOut`, cleanup incomplete. The fixture's later fallback calls kill/wait but does not log its result. Subsequent PID absence is inventory, **not an original successful cleanup wait**. No failure cause is established; no sandbox, contention, timing, pre-existing-flake or journal-exoneration claim, no assertion/timeout changes and no rerun.
 
 The two preserved failed roots are `tmp/.tmphszYEy` (server 16934) and `tmp/.tmpnWT7Ns` (server 16946). [File inventory](workspace-failed-fixtures.json) and [subsequent process inventory](workspace-failed-process-inventory.json) retain their observed state. No further startup investigation or product changes were made. Final-head hosted macOS/Linux/capacity/memory outcomes and independent review remain controller-owned and pending here. These local results do not make the branch fully accepted.
+
+## Corrected-source follow-up
+
+The [bounded final-correction native record](final-correction-native-01/README.md)
+tests product revision `9bbfb9d5`: busy/ready Send availability and selected-title
+fallback for collapsed/offscreen sidebar rows. Its five pixel/AX pairs and original
+owner waits are separate from the historical `271a1d6b` record above; the sources
+are not equivalent across the product correction. Current hosted acceptance belongs
+to Draft PR382 and the controller CI record referenced there.

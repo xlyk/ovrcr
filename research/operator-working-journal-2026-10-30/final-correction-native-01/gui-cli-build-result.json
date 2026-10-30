@@ -1,0 +1,8 @@
+{
+  "command": "rtk proxy cargo build -p ovrcr --features gui,acceptance-diagnostics --bins",
+  "original_tool_session": 8871,
+  "original_exit": 0,
+  "provenance": "exact stdout chunks retained from original tool transcript, not a rerun",
+  "raw_bytes": 265,
+  "raw_sha256": "05d4b31a876c457a1987c9809970fd35375036e1a5940ffed8860debe8b7f0f0"
+}
