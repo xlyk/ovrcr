@@ -392,7 +392,9 @@ fn serve(
     )?;
     let label = model.strip_prefix("fixture-").unwrap().to_ascii_uppercase();
     if model == "fixture-quick" || (model.starts_with("fixture-close-") && ordinal > 1) {
-        if model == "fixture-quick" && ordinal != 1 {
+        if (model == "fixture-quick" && ordinal != 1)
+            || (model.starts_with("fixture-close-") && ordinal != 2)
+        {
             return Err(io::Error::other("quick first message retried"));
         }
         let text = message(&model, "QUICK final");
@@ -459,9 +461,10 @@ fn serve(
         let closing = model.starts_with("fixture-close-");
         let command = if closing {
             format!(
-                "printf 'started\n' >> {}; printf '%s\n' \"$$\" > {}; exec /bin/sleep 30",
+                "printf 'started\n' >> {}; printf '%s\n' \"$$\" > {}; while [ ! -e {} ]; do /bin/sleep 0.01; done; printf 'CLOSE_%s\n' BASH_OK",
                 shell_quote(&workdir.join(format!("{model}.executions"))),
-                shell_quote(&workdir.join(format!("{model}.pid")))
+                shell_quote(&workdir.join(format!("{model}.pid"))),
+                shell_quote(&workdir.join(format!("{model}.bash-release")))
             )
         } else if timeout {
             format!(

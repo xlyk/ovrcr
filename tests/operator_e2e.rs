@@ -1376,15 +1376,31 @@ mod compiled_worker {
             );
             thread::yield_now();
         }
-        let current_b = ui.history(b.id).conversation.current_turn.unwrap();
-        assert!(matches!(
-            ui.request(Request::Operator(OperatorRequest::Stop {
-                identity: current_b.identity
-            })),
-            Response::Operator(OperatorResponse::Stopped(_))
-        ));
-        let stopped_b = ui.wait_history(&provider, b.id, |h| h.conversation.worker_stopped);
-        assert_retired(&live, &stopped_b, b_group);
+        std::fs::write(
+            live.root.path().join("fixture-close-b.bash-release"),
+            b"release",
+        )
+        .unwrap();
+        provider.release("fixture-close-b");
+        let completed_b = ui.wait_history(&provider, b.id, |h| h.conversation.worker_stopped);
+        assert_eq!(
+            completed_b
+                .conversation
+                .current_turn
+                .as_ref()
+                .unwrap()
+                .state,
+            OperatorTurnState::Complete,
+            "B did not continue after A close: {completed_b:?}"
+        );
+        assert!(completed_b.messages.iter().any(|m| matches!(&m.content, OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput { output, status: OperatorToolStatus::Succeeded, .. }) if output.contains("CLOSE_BASH_OK"))), "actual B Bash result was not committed");
+        assert_eq!(provider.requests("fixture-close-b").len(), 2);
+        assert_retired(&live, &completed_b, b_group);
+        assert_eq!(unsafe { libc::kill(children[1], 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
         assert_eq!(ui.request(Request::Shutdown { kill: true }), Response::Ok);
         drop(ui);
         assert!(live.join_within(BUDGET).is_finished());
