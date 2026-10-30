@@ -103,9 +103,12 @@ process-stop proof. Archive and unarchive invalidate the previous run identity,
 so delayed recovery requests and process callbacks cannot cross these transitions.
 Returned rows are stopped without launching; unresolved ownership still requires
 acknowledgement before reopening.
-Schema version 25 protects separate Send/Observe exclusive progress and original
-stream origin inside the same Send record; a retained cursor never authorizes
-fresh-bridge active restoration.
+Schema version 27 protects separate Send/Observe opaque cursor slots, per-stream
+local progress revisions, and the original stream origin inside the same Send
+record. It also ensures Operator tables and session scope exist for both earlier
+schema-26 development variants, preserving existing Operator journals and cloud
+authority. Legacy numeric cursors remain historical-only and cannot be continued;
+a retained cursor never authorizes fresh-bridge active restoration.
 Schema version 24 protects subordinate cloud recovery controller/claims without changing original operation identity.
 Schema version 23 protects durable cancellation intent/claims from older writers;
 no new owner or table is introduced.
@@ -119,12 +122,12 @@ later Send/run receipt boundary. See [Cursor cloud](../cursor-cloud.md).
 
 Cursor cloud profiles are typed `Settings.cursor_cloud_accounts` values in the
 same settings document. Ordinary Agent creation generates `cursor-cloud:ACCOUNT`
-choices with explicit managed argv, independent of PATH discovery. Protocol 65 appends original-attachment observation progress; protocol 64 adds exact recovery/reconciliation and explicit recovery cancellation; protocol 63 adds explicit cancellation commands; protocol 62 includes immutable Send commands; protocol 60
+choices with explicit managed argv, independent of PATH discovery. Protocol 69 carries opaque original-attachment cursors with locally ordered progress revisions; protocol 65 appended original-attachment observation progress; protocol 64 adds exact recovery/reconciliation and explicit recovery cancellation; protocol 63 adds explicit cancellation commands; protocol 62 includes immutable Send commands; protocol 60
 appends `AgentProvider::CursorCloud`; local Cursor remains `Cursor`. Readiness uses exact verified run observations; titles and active conversation
 recovery remain unavailable. See
 [Cursor cloud](../cursor-cloud.md) and [published source](../adr/0011-cursor-cloud-published-source.md).
 
-Schema version 26 adds explicit `SessionScope::Workspace` or
+Schema version 27 preserves the schema-26 Operator addition of explicit `SessionScope::Workspace` or
 `OperatorConversation` metadata. Existing rows remain Workspace sessions. Global
 Operator sessions stay in inventory and never synthesize registered projects or
 workspaces. The same SessionStore connection owns dedicated Operator conversation,

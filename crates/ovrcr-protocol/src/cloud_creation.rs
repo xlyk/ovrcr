@@ -174,14 +174,16 @@ pub enum CloudCreationCommand {
     },
     /// Explicit durable fresh-handle cancellation claim; never automatic.
     RetryCancel(CloudRecovery),
-    /// Exclusive progress on the original owned bridge/run-object stream only.
+    /// Opaque progress on the original owned bridge/run-object stream only.
+    /// `revision` is the local acceptance order; `offset` is never ordered.
     ObservationProgress {
         key: String,
         agent_id: String,
         run_id: String,
         origin: String,
         observe: bool,
-        offset: u64,
+        offset: String,
+        revision: u64,
     },
 }
 

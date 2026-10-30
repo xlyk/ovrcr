@@ -16,10 +16,77 @@ pub(crate) struct SendRecord {
     progress: Option<Progress>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum StreamProgress {
+    /// Numeric offsets from earlier writers are readable history,
+    /// never a cursor or revision that a new writer may continue.
+    Legacy(u64),
+    Current {
+        token: String,
+        revision: u64,
+    },
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct Progress {
     origin: String,
-    send: u64,
-    observe: u64,
+    #[serde(default)]
+    send: Option<StreamProgress>,
+    #[serde(default)]
+    observe: Option<StreamProgress>,
+}
+impl Progress {
+    fn valid(&self) -> bool {
+        let historical = match (&self.send, &self.observe) {
+            (Some(StreamProgress::Legacy(send)), Some(StreamProgress::Legacy(observe))) => {
+                *send != 0 || *observe != 0
+            }
+            _ => false,
+        };
+        let valid_current = |slot: &Option<StreamProgress>| match slot {
+            None => true,
+            Some(StreamProgress::Current { token, revision }) => {
+                !token.is_empty() && token.len() <= ovrcr_protocol::MAX_FRAME_BYTES && *revision > 0
+            }
+            Some(StreamProgress::Legacy(_)) => false,
+        };
+        let current = valid_current(&self.send)
+            && valid_current(&self.observe)
+            && (matches!(&self.send, Some(StreamProgress::Current { .. }))
+                || matches!(&self.observe, Some(StreamProgress::Current { .. })));
+        (historical || current)
+            && self.origin.len() == 64
+            && self
+                .origin
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    }
+}
+
+fn advance_stream_progress(
+    slot: &mut Option<StreamProgress>,
+    token: &str,
+    revision: u64,
+) -> Result<()> {
+    if token.is_empty() || token.len() > ovrcr_protocol::MAX_FRAME_BYTES || revision == 0 {
+        bail!("invalid opaque observation cursor or local revision");
+    }
+    let expected = match slot {
+        None => 1,
+        Some(StreamProgress::Legacy(_)) => {
+            bail!("legacy observation cursor is historical-only")
+        }
+        Some(StreamProgress::Current { revision, .. }) => revision
+            .checked_add(1)
+            .context("observation revision exhausted")?,
+    };
+    if revision != expected {
+        bail!("observation progress revision is stale or out of order");
+    }
+    *slot = Some(StreamProgress::Current {
+        token: token.to_owned(),
+        revision,
+    });
+    Ok(())
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Record {
@@ -75,15 +142,10 @@ impl Record {
                                 .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c))
                     })
                     || (send.terminal.is_some() && send.run_id.is_none())
-                    || send.progress.as_ref().is_some_and(|p| {
-                        send.run_id.is_none()
-                            || p.origin.len() != 64
-                            || !p
-                                .origin
-                                .bytes()
-                                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-                            || (p.send == 0 && p.observe == 0)
-                    })
+                    || send
+                        .progress
+                        .as_ref()
+                        .is_some_and(|p| send.run_id.is_none() || !p.valid())
             })
         {
             bail!("invalid retained Send authority");
@@ -538,13 +600,16 @@ impl SessionStore {
                         origin,
                         observe,
                         offset,
+                        revision,
                         ..
                     } => {
                         if (record.closed && (!record.cancel_requested || record.discarded))
                             || agent_id != agent
                             || record.sends[index].run_id.as_ref() != Some(run_id)
                             || record.sends[index].terminal.is_some()
-                            || *offset == 0
+                            || offset.is_empty()
+                            || offset.len() > ovrcr_protocol::MAX_FRAME_BYTES
+                            || *revision == 0
                         {
                             bail!("observation progress identity mismatch or closed");
                         }
@@ -553,23 +618,18 @@ impl SessionStore {
                                 .progress
                                 .get_or_insert_with(|| Progress {
                                     origin: origin.clone(),
-                                    send: 0,
-                                    observe: 0,
+                                    send: None,
+                                    observe: None,
                                 });
                         if &progress.origin != origin {
                             bail!("observation stream origin changed");
                         }
-                        let previous = if *observe {
+                        let slot = if *observe {
                             &mut progress.observe
                         } else {
                             &mut progress.send
                         };
-                        if *offset <= *previous || (*observe && *offset != *previous + 1) {
-                            bail!(
-                                "observation progress must advance exclusively without Observe gaps"
-                            );
-                        }
-                        *previous = *offset;
+                        advance_stream_progress(slot, offset, *revision)?;
                     }
                     CloudCreationCommand::CompleteSend {
                         agent_id,
@@ -728,5 +788,215 @@ impl SessionStore {
             );
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::{Progress, Record, SendRecord, StreamProgress, advance_stream_progress};
+    use serde_json::json;
+
+    fn record(progress: Progress) -> Record {
+        Record {
+            intent: ovrcr_protocol::CloudCreationIntent {
+                key: "a".repeat(64),
+                account: ovrcr_protocol::CursorCloudAccount {
+                    name: "work".into(),
+                    keychain_service: "cursor".into(),
+                    keychain_account: "work".into(),
+                    model: "composer-2.5".into(),
+                    repositories: vec!["https://github.com/acme/app".into()],
+                    owners: vec![],
+                    bridge_archive: "/sdk.tar.gz".into(),
+                },
+                credential_generation: "b".repeat(64),
+                repository: "https://github.com/acme/app".into(),
+                source_sha: "c".repeat(40),
+            },
+            run: ovrcr_protocol::SessionRunId(7),
+            lifetime: "lifetime-1".into(),
+            invocation: "invocation-1".into(),
+            claimed: true,
+            closed: true,
+            discarded: false,
+            cancel_requested: false,
+            cancel_claimed: false,
+            receipt: Some(ovrcr_protocol::CloudCreationReceipt {
+                agent_id: "agent-1".into(),
+                model: "composer-2.5".into(),
+            }),
+            sends: vec![SendRecord {
+                key: "d".repeat(64),
+                digest: "e".repeat(64),
+                claimed: true,
+                run_id: Some("run-1".into()),
+                terminal: None,
+                progress: Some(progress),
+            }],
+            recovery_owner: None,
+            recovery_cancel_claimed: false,
+            controller_conflict: None,
+        }
+    }
+
+    #[test]
+    fn legacy_numeric_progress_is_historical_and_zero_string_is_an_opaque_token() {
+        let origin = "f".repeat(64);
+        let old: Progress = serde_json::from_value(json!({
+            "origin": origin,
+            "send": 0,
+            "observe": 17
+        }))
+        .unwrap();
+        assert!(matches!(&old.send, Some(StreamProgress::Legacy(0))));
+        assert!(matches!(&old.observe, Some(StreamProgress::Legacy(17))));
+        let old_json = serde_json::to_value(&old).unwrap();
+        assert_eq!(old_json["send"], json!(0));
+        assert_eq!(old_json["observe"], json!(17));
+
+        let mut legacy_zero = old.send;
+        assert!(advance_stream_progress(&mut legacy_zero, "next", 1).is_err());
+        let mut legacy_offset = old.observe;
+        assert!(advance_stream_progress(&mut legacy_offset, "next", 1).is_err());
+
+        let mut current = None;
+        advance_stream_progress(&mut current, "cursor-z", 1).unwrap();
+        // Provider tokens are opaque; a lower-looking token still follows the
+        // next local acceptance revision.
+        advance_stream_progress(&mut current, "0", 2).unwrap();
+        assert!(matches!(
+            current,
+            Some(StreamProgress::Current { token, revision: 2 }) if token == "0"
+        ));
+    }
+
+    #[test]
+    fn progress_requires_nonempty_bounded_token_and_exact_local_successor() {
+        let mut current = None;
+        assert!(advance_stream_progress(&mut current, "", 1).is_err());
+        assert!(advance_stream_progress(&mut current, "cursor", 2).is_err());
+        advance_stream_progress(&mut current, "cursor", 1).unwrap();
+        assert!(advance_stream_progress(&mut current, "next", 1).is_err());
+        assert!(advance_stream_progress(&mut current, "next", 3).is_err());
+        assert!(advance_stream_progress(&mut current, "next", 0).is_err());
+        let oversized = "x".repeat(ovrcr_protocol::MAX_FRAME_BYTES + 1);
+        assert!(advance_stream_progress(&mut current, &oversized, 2).is_err());
+    }
+
+    #[test]
+    fn record_validation_preserves_only_complete_legacy_or_current_progress() {
+        let origin = "f".repeat(64);
+        let legacy = |send, observe| Progress {
+            origin: origin.clone(),
+            send: Some(StreamProgress::Legacy(send)),
+            observe: Some(StreamProgress::Legacy(observe)),
+        };
+        assert!(record(legacy(17, 0)).validate().is_ok());
+        assert!(record(legacy(0, 0)).validate().is_err());
+
+        let partial_legacy = Progress {
+            origin: origin.clone(),
+            send: Some(StreamProgress::Legacy(17)),
+            observe: None,
+        };
+        assert!(record(partial_legacy).validate().is_err());
+
+        let mixed = Progress {
+            origin: origin.clone(),
+            send: Some(StreamProgress::Legacy(17)),
+            observe: Some(StreamProgress::Current {
+                token: "cursor".into(),
+                revision: 1,
+            }),
+        };
+        assert!(record(mixed).validate().is_err());
+
+        let current = Progress {
+            origin,
+            send: Some(StreamProgress::Current {
+                token: "0".into(),
+                revision: 1,
+            }),
+            observe: None,
+        };
+        assert!(record(current).validate().is_ok());
+    }
+
+    #[test]
+    fn persisted_invalid_current_progress_fails_before_payload_cleanup() {
+        let cases = [
+            ("zero revision", "cursor".to_owned(), 0),
+            ("empty token", String::new(), 1),
+            (
+                "oversized token",
+                "x".repeat(ovrcr_protocol::MAX_FRAME_BYTES + 1),
+                1,
+            ),
+        ];
+        for (case, token, revision) in cases {
+            let root = tempfile::tempdir().unwrap();
+            let config = root.path().join("instance");
+            crate::config::initialize_registry(&config).unwrap();
+            let metadata = serde_json::to_string(&record(Progress {
+                origin: "f".repeat(64),
+                send: Some(StreamProgress::Current { token, revision }),
+                observe: None,
+            }))
+            .unwrap();
+
+            let database = crate::config::database_path(&config);
+            let connection = rusqlite::Connection::open(&database).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO retained_sessions(id,run,project,workspace,name,label,cwd,kind,title_revision,stopped) VALUES(42,7,'demo','root','cloud','cloud',X'2f746d70','\"Terminal\"',0,1)",
+                    [],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO cloud_creations(session,metadata) VALUES(42,?1)",
+                    [&metadata],
+                )
+                .unwrap();
+            drop(connection);
+
+            let payload_directory = config.join("cloud-creations");
+            std::fs::create_dir_all(&payload_directory).unwrap();
+            let creation_payload = payload_directory.join("a".repeat(64));
+            let send_payload = payload_directory.join("d".repeat(64));
+            std::fs::write(&creation_payload, b"creation payload sentinel").unwrap();
+            std::fs::write(&send_payload, b"send payload sentinel").unwrap();
+
+            let error = match crate::retained::SessionStore::open(&config) {
+                Ok(_) => panic!("{case} persisted observation progress was accepted"),
+                Err(error) => error,
+            };
+            assert!(
+                error
+                    .to_string()
+                    .contains("invalid retained Send authority"),
+                "{case}: {error:#}"
+            );
+
+            let connection = rusqlite::Connection::open(&database).unwrap();
+            let stored: String = connection
+                .query_row(
+                    "SELECT metadata FROM cloud_creations WHERE session=42",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(stored, metadata, "{case} metadata changed");
+            assert_eq!(
+                std::fs::read(&creation_payload).unwrap(),
+                b"creation payload sentinel",
+                "{case} creation payload changed"
+            );
+            assert_eq!(
+                std::fs::read(&send_payload).unwrap(),
+                b"send payload sentinel",
+                "{case} Send payload changed"
+            );
+        }
     }
 }

@@ -46,7 +46,7 @@ Stop release all retained/Session/mutation guards before the ordinary owned-grou
 termination chain. Stop first durably interrupts the turn, then revokes its lease.
 Only controlled stop or the existing explicit acknowledgment sets retained stopped
 proof; natural exit remains uncertain. `worker_stopped` derives directly from that
-proof, so Complete with false means finishing or stop-unconfirmed. Protocol 67
+proof, so Complete with false means finishing or stop-unconfirmed. Protocol 69
 coalesces per-conversation `OperatorChanged` notifications on the sole writer;
 paged durable history supplies catch-up. Retirement, Stop and acknowledgment
 publish the proof change as well as batch updates. Restart never launches or
@@ -172,8 +172,11 @@ Discard, including for acknowledged handles. The original Session owns the opera
 reconciliation uses the shared reopen path; active observation stays unavailable. Send requires the
 original durable creation receipt, immutable body/options and a distinct key/claim;
 exact run retention precedes payload retirement. Busy input is rejected for manual
-resubmission. Exact run observations use the existing Reporter/revisions; stream
-loss remains unknown and no newest-run lookup supplies identity. The
+resubmission. Exact run observations use the existing Reporter/revisions; progress
+carries bounded opaque per-stream tokens and locally ordered revisions, never a
+provider-token ordering. Legacy numeric progress remains historical-only, and a
+Send token never resumes ObserveRun. Stream loss remains unknown and no newest-run
+lookup supplies identity. The
 accepted pending-submission exception permits immutable request bytes only in
 confined owner-only plaintext files, readable by same-user programs and backups;
 credentials stay outside them. Creation payload retirement follows durable exact
@@ -196,8 +199,8 @@ temporary alias sweeps run only during startup/explicit Discard, not each check.
 
 Cloud recovery adds no process/store owner: the shared retained reopen path starts
 its managed invocation and unique bridge scratch tree. Original operation identity
-is immutable; schema 24 protects subordinate recovery-owner and cancellation-claim
-metadata from older writers. Read-only historical reconciliation bypasses response
+is immutable; schema 27 protects subordinate recovery-owner, cancellation-claim,
+opaque observation-cursor and local-revision metadata from older writers. Read-only historical reconciliation bypasses response
 cycles. Exact fresh GetRun registers a selected-key handle only; active observation
 remains unproved and no ResumeAgent/options replay is allowed.
 

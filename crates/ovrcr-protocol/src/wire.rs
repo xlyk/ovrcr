@@ -3370,13 +3370,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0443017301630168016c0104",
+            "2a0445017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0443017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0445017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -3407,18 +3407,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04430000"),
+        ("Response::NotificationNavigation", "0d04450000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0443017301630168016c0104",
+            "0e01016e0445017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010443017301630168016c0164",
+            "0f0107080901016901010445017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004430107080901016901010443017301630168016c0164",
+            "1004450107080901016901010445017301630168016c0164",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -3442,7 +3442,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0443017301630168016c0104",
+            "08016e0445017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -3569,7 +3569,7 @@ mod wire_snapshot {
         ),
         (
             "AgentRequest::23",
-            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e080f4064646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464096167656e742d3337360772756e2d33373640656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565650104",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e080f4064646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464096167656e742d3337360772756e2d333736406565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656501013001",
         ),
         (
             "AgentResponse::0",
