@@ -823,10 +823,19 @@ impl Dashboard {
         let width = usize::from(title_width);
         let provider = chat.summary.provider.as_str();
         let state = status(chat);
-        let identity = if layout.header.x == frame.area().x {
-            display_text(&chat.summary.title)
-        } else {
+        let sidebar = self.sidebar_rects(frame.area()).operator;
+        let selected_visible = self.sidebar_preference() != Some(0)
+            && !sidebar.is_empty()
+            && self
+                .operator_ids()
+                .into_iter()
+                .skip(self.operator.list_offset)
+                .take(sidebar.height.saturating_sub(1) as usize)
+                .any(|id| id == chat.summary.id);
+        let identity = if selected_visible {
             "Operator".into()
+        } else {
+            display_text(&chat.summary.title)
         };
         let identity = clip_text(
             &identity,

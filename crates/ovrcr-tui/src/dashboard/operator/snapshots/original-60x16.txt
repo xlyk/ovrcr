@@ -13,4 +13,4 @@ chat-1 · chat_gpt / fixture · complete
  > ▏
 
  ──────────────────────────────────────────────────────────
-OPERATOR  Enter Send  Shift-Enter Newline  Ctrl-g Browse
+OPERATOR  Shift-Enter Newline  Ctrl-g Browse

@@ -540,6 +540,26 @@ fn operator_working_journal_input_geometry_preserves_context() {
     };
     assert_eq!(conversation, OperatorConversationId(1));
     assert_eq!(text, "draft A\n界é🙂");
+    d.draw(&mut terminal).unwrap();
+    let pending_footer: String = (0..120)
+        .map(|x| terminal.backend().buffer()[(x, 23)].symbol())
+        .collect();
+    assert!(
+        !pending_footer.contains("Enter Send"),
+        "pending submit cannot offer Send: {pending_footer}"
+    );
+    let pending_screen = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(
+        pending_screen.contains("draft A"),
+        "pending receipt retains the draft"
+    );
+
     assert_eq!(
         context,
         ovrcr_protocol::OperatorContext::default(),

@@ -65,13 +65,16 @@ position and status. Provider and model stay fixed after creation. Selecting a
 different chat or returning to a terminal does not pause active work.
 
 `Shift-Enter` inserts a newline; paste edits the draft without submitting.
+Send is offered only for a nonempty draft when the selected conversation can accept
+it; running, pending and unconfirmed-worker-stop states keep the draft.
 `PageUp` and `PageDown` scroll the transcript. The Working journal marks user
 prompts and joins assistant/tool activity with a fine guide in the current theme.
 Tool call and output receipts remain independently expandable, with adjacent rows
 and raw IDs hidden until expanded. Failures, timeouts, truncation and empty output
 remain explicit. Expanded details retain full IDs, command, cwd, captured context
 and output. With the sidebar hidden, the local header retains the selected chat's
-title; the visible sidebar already supplies that identity at wider sizes.
+title. This also applies when its sidebar row is collapsed or scrolled out of view;
+a rendered selected row supplies that identity at wider sizes.
 `Ctrl-g` returns to Browse while preserving the draft. Completed background replies stay Unread until their
 loaded tail is actually shown.
 

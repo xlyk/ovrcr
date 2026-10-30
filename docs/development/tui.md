@@ -83,11 +83,14 @@ text rows and scrolls around the real cursor. One-cell edge padding, a mauve top
 rule and muted bottom rule define the editor. `OperatorLayout` owns header,
 transcript, context, writable composer and both rule rectangles for rendering,
 hit-testing and review. The target uses the context row above the top rule.
-The local header shows Operator/provider/model/state when the sidebar identifies
-the chat; with the sidebar hidden it retains the clipped chat title, shortening
-model metadata first. Only visible Operator quiets the global title fill.
-The keymap-derived footer prioritizes Send, Newline, Browse and applicable Stop;
-secondary actions remain in navigation and menus.
+The local header shows Operator/provider/model/state only when the selected chat's
+row is rendered in the shared sidebar. Collapsed, offscreen or absent rows retain
+the clipped chat title, shortening model metadata first. Only visible Operator
+quiets the global title fill. The keymap-derived footer prioritizes eligible Send,
+Newline, Browse and applicable Stop. Send is disabled in the shared keymap/menu
+while the draft is empty or the selected chat cannot submit (including running,
+pending and unconfirmed-worker-stop states). Secondary actions remain in navigation
+and menus.
 At widths below 100, the same combined sidebar opens on demand without changing the
 saved preference. Below 60×16, Operator shows resize guidance and preserves work.
 Unread review requires an unobscured, actually drawn, adequately sized transcript

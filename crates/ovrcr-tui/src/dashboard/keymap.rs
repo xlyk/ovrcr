@@ -495,7 +495,9 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             }];
         }
         let mut keys = vec![
-            native("Enter", "Send", Enter, KeyModifiers::NONE),
+            native("Enter", "Send", Enter, KeyModifiers::NONE).unless(
+                (!dashboard.operator_submit_available()).then_some("conversation cannot submit"),
+            ),
             native("Shift-Enter", "Newline", Enter, KeyModifiers::SHIFT),
             native("Ctrl-l", "Chats", Char('l'), KeyModifiers::CONTROL),
             native(

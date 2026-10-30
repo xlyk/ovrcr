@@ -21,4 +21,4 @@ Codex · usage off                      │ ────────────
 Grok · usage off                       │ > ▏
 Cursor · usage off                     │
                                        │ ──────────────────────────────────────────────────────────
-OPERATOR  Enter Send  Shift-Enter Newline  Ctrl-g Browse
+OPERATOR  Shift-Enter Newline  Ctrl-g Browse

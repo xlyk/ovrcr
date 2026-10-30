@@ -454,6 +454,12 @@ impl Dashboard {
     pub(super) fn operator_transcript_focused(&self) -> bool {
         self.operator.visible && self.operator.transcript_focus
     }
+    pub(super) fn operator_submit_available(&self) -> bool {
+        self.operator
+            .selected
+            .and_then(|id| self.operator.chats.get(&id.0))
+            .is_some_and(|chat| chat.can_submit() && !chat.draft.trim().is_empty())
+    }
     pub(super) fn operator_stop_available(&self) -> bool {
         self.operator.new.is_none()
             && self
@@ -3863,11 +3869,214 @@ mod tests {
         assert!(draw(&mut d, 140, 24).contains("A_REFUSAL"));
     }
     #[test]
+    fn operator_journal_final_send_offer_tracks_submission_eligibility() {
+        let (mut d, _) = setup();
+        d.operator_insert("retained message");
+        d.drain_outbox();
+        for (name, state, stopped, pending, closing, archived, available) in [
+            (
+                "eligible",
+                OperatorTurnState::Complete,
+                true,
+                false,
+                false,
+                false,
+                true,
+            ),
+            (
+                "running",
+                OperatorTurnState::Running,
+                false,
+                false,
+                false,
+                false,
+                false,
+            ),
+            (
+                "pending submit",
+                OperatorTurnState::Complete,
+                true,
+                true,
+                false,
+                false,
+                false,
+            ),
+            (
+                "unconfirmed stop",
+                OperatorTurnState::Complete,
+                false,
+                false,
+                false,
+                false,
+                false,
+            ),
+            (
+                "closing",
+                OperatorTurnState::Complete,
+                true,
+                false,
+                true,
+                false,
+                false,
+            ),
+            (
+                "archived",
+                OperatorTurnState::Complete,
+                true,
+                false,
+                false,
+                true,
+                false,
+            ),
+            (
+                "eligible again",
+                OperatorTurnState::Complete,
+                true,
+                false,
+                false,
+                false,
+                true,
+            ),
+        ] {
+            let chat = d.operator.chats.get_mut(&1).unwrap();
+            chat.summary = summary(1, 1, state, stopped);
+            chat.summary.archived = archived;
+            chat.submitting = pending;
+            chat.closing = closing;
+            let binding = d
+                .key_binding_for(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+                .unwrap();
+            assert_eq!(binding.enabled(), available, "Send binding in {name}");
+            let screen = draw(&mut d, 140, 24);
+            let footer: String = screen.chars().skip(140 * 23).collect();
+            assert_eq!(
+                footer.contains("Enter Send"),
+                available,
+                "footer in {name}: {footer}"
+            );
+            let groups = super::super::keymap::keymap(&d);
+            let send = groups
+                .iter()
+                .flat_map(|group| &group.keys)
+                .find(|key| key.name == "Send")
+                .unwrap();
+            assert_eq!(
+                send.enabled(),
+                available,
+                "menu shares Send guard in {name}"
+            );
+            if !available {
+                d.key(KeyCode::Enter);
+                assert!(!d.drain_outbox().iter().any(|request| matches!(
+                    request.request,
+                    Request::Operator(OperatorRequest::Submit { .. })
+                )));
+                assert_eq!(d.operator.chats[&1].draft, "retained message");
+            }
+        }
+        d.operator.chats.get_mut(&1).unwrap().draft.clear();
+        assert!(
+            !d.key_binding_for(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+                .unwrap()
+                .enabled(),
+            "empty draft cannot Send"
+        );
+        d.operator_insert("eligible again");
+        d.key(KeyCode::Enter);
+        let requests = d.drain_outbox();
+        assert_eq!(requests.iter().filter(|request| matches!(&request.request, Request::Operator(OperatorRequest::Submit { text, .. }) if text == "eligible again")).count(), 1);
+        assert_eq!(
+            d.operator.chats[&1].draft, "eligible again",
+            "pending acceptance retains draft"
+        );
+    }
+    #[test]
+    fn operator_journal_final_selected_title_tracks_actual_sidebar_row() {
+        let (mut d, reads) = setup();
+        history(
+            &mut d,
+            request_id(&reads, 1),
+            summary(1, 1, OperatorTurnState::Complete, true),
+            vec![delta(1, &"retained history\n".repeat(50)), completed(2)],
+            None,
+        );
+        for id in 3..=8 {
+            d.operator_summary(summary(id, 1, OperatorTurnState::Complete, true));
+        }
+        d.operator_insert("retained draft");
+        d.key(KeyCode::PageUp);
+        let anchor = d.operator.chats[&1].anchor;
+        let area = Rect::new(0, 0, 140, 24);
+        d.install_area(area);
+        let header = |d: &mut Dashboard| {
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 24)).unwrap();
+            d.draw(&mut terminal).unwrap();
+            let rect = d.operator_layout(area).header;
+            (rect.x..rect.right())
+                .map(|x| terminal.backend().buffer()[(x, rect.y)].symbol())
+                .collect::<String>()
+        };
+        assert!(header(&mut d).starts_with("Operator ·"));
+        let sidebar = d.sidebar_rects(area).operator;
+        click(
+            &mut d,
+            sidebar.x + 2,
+            sidebar.y,
+            MouseEventKind::Down(MouseButton::Left),
+        );
+        d.ctrl('l');
+        assert!(d.operator.collapsed);
+        assert!(
+            header(&mut d).starts_with("chat-1 ·"),
+            "collapsed heading does not identify selected chat"
+        );
+        click(
+            &mut d,
+            sidebar.x + 2,
+            sidebar.y,
+            MouseEventKind::Down(MouseButton::Left),
+        );
+        d.ctrl('l');
+        assert!(
+            header(&mut d).starts_with("Operator ·"),
+            "visible selected row restores quiet identity"
+        );
+        click(
+            &mut d,
+            sidebar.x + 2,
+            sidebar.y + 1,
+            MouseEventKind::ScrollDown,
+        );
+        d.ctrl('l');
+        assert!(d.operator.list_offset > 0);
+        assert!(
+            header(&mut d).starts_with("chat-1 ·"),
+            "offscreen selected row needs identity fallback"
+        );
+        click(
+            &mut d,
+            sidebar.x + 2,
+            sidebar.y + 1,
+            MouseEventKind::ScrollUp,
+        );
+        d.ctrl('l');
+        assert!(header(&mut d).starts_with("Operator ·"));
+        assert_eq!(d.operator.selected, Some(Id(1)));
+        assert_eq!(d.operator.chats[&1].draft, "retained draft");
+        assert_eq!(d.operator.chats[&1].anchor, anchor);
+        assert_eq!(d.operator.chats[&1].unread, Some(OperatorTurnId(1)));
+        assert!(!d.operator.chats[&1].follow);
+    }
+    #[test]
     fn native_footer_and_palette_bindings_describe_the_actual_composer_keys() {
         let (mut d, _) = setup();
         let footer = super::super::hints::footer(&d, 140);
         assert!(
-            footer.starts_with("OPERATOR") && footer.contains("Enter") && footer.contains("Ctrl-g"),
+            footer.starts_with("OPERATOR")
+                && !footer.contains("Enter Send")
+                && footer.contains("Shift-Enter")
+                && footer.contains("Ctrl-g"),
             "{footer}"
         );
         assert!(!footer.contains("Space Menu"));

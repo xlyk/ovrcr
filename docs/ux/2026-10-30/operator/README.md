@@ -47,8 +47,9 @@ renderer now reserves a two-cell transcript gutter, guides assistant/tool activi
 marks user prompts, and gives the borderless editor quiet rules. Adjacent call and
 output receipts retain independent disclosures and full expanded details; the
 prototype's exploratory single combined receipt is deferred. The local header
-avoids repeating the request while the sidebar is visible and retains a clipped
-chat title when hidden. Only Operator quiets the global title fill.
+avoids repeating the request while the selected sidebar row is rendered and
+retains a clipped chat title when that row is collapsed, offscreen or absent.
+Only Operator quiets the global title fill.
 
 The [selected refinement spec](../../../superpowers/specs/2026-10-30-operator-working-journal-design.md)
 is the native target. The other layouts remain comparison material. The original
