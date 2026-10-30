@@ -377,6 +377,7 @@ fn service_install_refuses_when_sessions_exist() {
                             name: "main".into(),
                             path: "/tmp/demo-main".into(),
                             sessions: vec![SessionSummary {
+                                scope: ovrcr_protocol::SessionScope::Workspace,
                                 archived: false,
                                 cwd: "/work".into(),
                                 title: None,

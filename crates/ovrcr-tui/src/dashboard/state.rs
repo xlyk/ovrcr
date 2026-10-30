@@ -3358,7 +3358,10 @@ impl Dashboard {
                 | Response::Delegation(_)
                 | Response::DelegationObservation(_)
                 | Response::DelegationCapabilities(_)
-                | Response::AssignedRead(_) => {}
+                | Response::AssignedRead(_)
+                | Response::Operator(_)
+                | Response::OperatorExchange(_)
+                | Response::OperatorWorker(_) => {}
                 Response::HistoryOpened(opened) => {
                     self.accept_history_opened(request_id, opened);
                 }
@@ -3469,7 +3472,8 @@ impl Dashboard {
             ServerMessage::Event(event) => match event {
                 ServerEvent::BridgeContext(_)
                 | ServerEvent::NotificationNavigation(_)
-                | ServerEvent::ITermFocus(_) => {}
+                | ServerEvent::ITermFocus(_)
+                | ServerEvent::OperatorChanged(_) => {}
                 ServerEvent::HierarchyChanged(hierarchy) => {
                     for request in self.update_hierarchy(hierarchy) {
                         self.push_request(request);
@@ -4229,6 +4233,7 @@ mod tests {
                     warning: None,
                     path: "/tmp/unused".into(),
                     sessions: vec![SessionSummary {
+                        scope: ovrcr_protocol::SessionScope::Workspace,
                         archived: false,
                         cwd: "/work".into(),
                         id: crate::session::SessionId(id),

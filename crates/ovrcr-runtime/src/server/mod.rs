@@ -889,6 +889,7 @@ impl ServerState {
             self.check_live_capacity()?;
             let label = default_session_label(&request.kind, request.label, &request.argv);
             let record = self.retained.lock().create(SessionMetadata {
+                scope: ovrcr_protocol::SessionScope::Workspace,
                 project: request.project,
                 workspace: request.workspace,
                 name: request.name,
@@ -989,6 +990,7 @@ impl ServerState {
         .map_err(crate::session::NoProcessStarted::context)?;
         let metadata = &record.metadata;
         let spec = SessionSpec {
+            scope: metadata.scope,
             restore_command,
             run: record.run,
             kind: metadata.kind.clone(),
@@ -1272,6 +1274,12 @@ impl ServerState {
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+        if summary.scope != ovrcr_protocol::SessionScope::Workspace {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "Operator sessions require a conversation submission",
+            ));
+        }
         if summary.archived {
             return Err(lifecycle_error(
                 ErrorCode::Conflict,
@@ -2951,7 +2959,9 @@ fn snapshot_from_state(state: &ServerState) -> HierarchySnapshot {
     let registry = state.registry.lock().unwrap().clone();
     let observations = state.observations.lock().clone();
     let mut sessions = state.session_summaries();
-    sessions.retain(|session| !session.archived);
+    sessions.retain(|session| {
+        !session.archived && session.scope == ovrcr_protocol::SessionScope::Workspace
+    });
     let mut projects = registry
         .projects
         .iter()

@@ -94,8 +94,8 @@ Current process runs remain `Arc<Session>` values; inactive rows allocate no PTY
 or terminal parser. The existing mutation lock reserves one of fifty live slots
 from admission through spawn publication. Reopening retires the prior run's
 capability, view and history; run-tagged events and snapshots cannot affect its
-replacement. No raw argv, environments, output, prompts, live activity or timing are
-stored. Recovery stores only validated nonsecret references and options. Provider
+replacement. Ordinary session metadata stores no raw argv, environments, output, prompts,
+live activity or timing. Recovery stores only validated nonsecret references and options. Provider
 recovery uses the [shared recovery contract](recovery.md); adapters never own
 processes or a separate persistence path. Archive disposition is separate from
 process-stop proof. Archive and unarchive invalidate the previous run identity,
@@ -122,3 +122,22 @@ choices with explicit managed argv, independent of PATH discovery. Protocol 65 a
 appends `AgentProvider::CursorCloud`; local Cursor remains `Cursor`. Readiness uses exact verified run observations; titles and active conversation
 recovery remain unavailable. See
 [Cursor cloud](../cursor-cloud.md) and [published source](../adr/0011-cursor-cloud-published-source.md).
+
+Schema version 26 adds explicit `SessionScope::Workspace` or
+`OperatorConversation` metadata. Existing rows remain Workspace sessions. Global
+Operator sessions stay in inventory and never synthesize registered projects or
+workspaces. The same SessionStore connection owns dedicated Operator conversation,
+turn, message, completed model-history and batch-receipt tables. History-only rows
+are stopped and allocate no process. Journal submission atomically records the
+user message/captured stable context and advances retained run intent; the caller
+still owns live-slot admission and process publication. Ordered worker batches
+commit before acknowledgment, deduplicate exact retries, and reject stale runs,
+sequence gaps and conflicting replays. Restart interrupts unfinished turns without
+claiming process exit or replaying commands. Raw chat lives only in these journal
+tables, never in content-free Events. Completed SDK history is versioned JSON and
+is loaded separately from byte-bounded visible history pages; shared crates have
+no Rig SDK dependency.
+
+Operator defaults are typed `Settings.operator` values in the same settings
+catalog, loader, editor and snapshots. Provider defaults to `chat_gpt`; provider
+model choices are optional until selected. Settings never contain credentials.

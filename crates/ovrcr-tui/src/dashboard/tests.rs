@@ -105,6 +105,7 @@ fn hints_name_targets_and_explain_disabled_session_actions() {
             warning: None,
             path: "/tmp/auth-handoff".into(),
             sessions: vec![SessionSummary {
+                scope: ovrcr_protocol::SessionScope::Workspace,
                 archived: false,
                 cwd: "/work".into(),
                 id: SessionId(12),
@@ -1085,6 +1086,7 @@ fn pending_history_copy_survives_unfocused_hierarchy_removal() {
     other.run = Some(crate::protocol::SessionRunId(1));
     dashboard.panes.push(other);
     let summary = |id| SessionSummary {
+        scope: ovrcr_protocol::SessionScope::Workspace,
         cwd: "/work".into(),
         archived: false,
         id: SessionId(id),
@@ -1232,6 +1234,7 @@ fn mouse_release_precedes_the_replacement_view_request() {
     };
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     let summary = |id: u64| SessionSummary {
+        scope: ovrcr_protocol::SessionScope::Workspace,
         cwd: "/work".into(),
         archived: false,
         id: SessionId(id),
@@ -1375,6 +1378,7 @@ fn hierarchy_removal_clears_a_parked_wheel_deferral() {
     };
     use crossterm::event::MouseEventKind;
     let summary = |id: u64| SessionSummary {
+        scope: ovrcr_protocol::SessionScope::Workspace,
         cwd: "/work".into(),
         archived: false,
         id: SessionId(id),
@@ -1622,6 +1626,7 @@ fn provider_metrics_label_stale_past_five_minutes_and_narrow_to_tok() {
             warning: None,
             path: "/tmp/w".into(),
             sessions: vec![SessionSummary {
+                scope: ovrcr_protocol::SessionScope::Workspace,
                 archived: false,
                 id: SessionId(1),
                 run: crate::protocol::SessionRunId(1),
@@ -1785,6 +1790,7 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
             warning: None,
             path: "/tmp/w".into(),
             sessions: vec![SessionSummary {
+                scope: ovrcr_protocol::SessionScope::Workspace,
                 archived: false,
                 id: SessionId(1),
                 run: crate::protocol::SessionRunId(1),
@@ -2692,6 +2698,7 @@ fn session_hierarchy(ids: &[u64]) -> crate::protocol::HierarchySnapshot {
                 sessions: ids
                     .iter()
                     .map(|id| SessionSummary {
+                        scope: ovrcr_protocol::SessionScope::Workspace,
                         archived: false,
                         cwd: "/work".into(),
                         id: SessionId(*id),
@@ -2898,6 +2905,7 @@ fn keymap_session(
 ) -> crate::protocol::SessionSummary {
     use crate::protocol::{AgentActivity, SessionSummary};
     SessionSummary {
+        scope: ovrcr_protocol::SessionScope::Workspace,
         cwd: "/work".into(),
         archived: false,
         id: SessionId(id),

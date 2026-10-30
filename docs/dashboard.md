@@ -735,7 +735,9 @@ every setting in one scrolling list under the group headers **Alerts**
 (`automatic_local_terminals`, `save_uncommitted_work`, `branch_prefix`,
 `picker_roots`), **Titles**
 (`title_model`), **Usage** (`quota.*`), **Agents** (`[[agents]]`) and
-**Remembered launches** (`launch_choices`, one row per project).
+**Remembered launches** (`launch_choices`, one row per project), **Operator**
+(`operator.provider`, `operator.chat_gpt_model`, `operator.grok_model`) and
+**Delegation** (`delegation.*`).
 
 Each row shows its label, effective value (`unset` for an empty optional value)
 and source badge, `default` or `set`; a value the document sets also shows the
@@ -823,6 +825,11 @@ command = "grok"
 [quota.cursor]
 dashboard = false                 # opt in: experimental personal Cursor dashboard reader
 # state_db = "/absolute/path/to/state.vscdb" # omit for the Cursor desktop default
+
+[operator]                           # defaults for new conversations
+provider = "chat_gpt"                # chat_gpt | grok
+# chat_gpt_model = "model-id"        # optional; choose a subscription model
+# grok_model = "model-id"            # optional; choose a subscription model
 ```
 
 Every setting takes effect without a restart: the Server checks the file every

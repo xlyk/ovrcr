@@ -56,6 +56,7 @@ fn session_summary(
     started_unix_ms: u64,
 ) -> SessionSummary {
     SessionSummary {
+        scope: ovrcr_protocol::SessionScope::Workspace,
         archived: false,
         cwd: "/work".into(),
         id: SessionId(id),

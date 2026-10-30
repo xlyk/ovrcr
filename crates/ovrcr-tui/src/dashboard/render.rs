@@ -1609,6 +1609,7 @@ mod harness_agent_label_tests {
 
     fn session(kind: SessionKind, name: &str, label: &str) -> SessionSummary {
         SessionSummary {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             id: SessionId(1),
             archived: false,
             cwd: "/work".into(),

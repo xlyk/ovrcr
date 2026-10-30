@@ -4416,6 +4416,7 @@ mod launch_tests {
     }
     fn summary(id: u64) -> SessionSummary {
         SessionSummary {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             archived: false,
             cwd: "/work".into(),
             id: SessionId(id),
@@ -5744,6 +5745,7 @@ mod close_confirm_tests {
                 warning: None,
                 path: "/tmp/unused".into(),
                 sessions: vec![SessionSummary {
+                    scope: ovrcr_protocol::SessionScope::Workspace,
                     archived: false,
                     cwd: "/work".into(),
                     id: SessionId(1),

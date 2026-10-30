@@ -876,7 +876,9 @@ fn excerpt(candidate: &Candidate) -> Result<Option<String>> {
         AgentProvider::Hermes => {
             return hermes_title(&candidate.history, &candidate.conversation);
         }
-        AgentProvider::Cursor | AgentProvider::CursorCloud => return Ok(None),
+        AgentProvider::Cursor | AgentProvider::CursorCloud | AgentProvider::Operator => {
+            return Ok(None);
+        }
     }
     let tail = read_tail(&candidate.history)?;
     let mut messages = Vec::new();
@@ -1385,6 +1387,7 @@ while IFS= read -r line; do :; done
                 id: SessionId(1),
                 run: ovrcr_protocol::SessionRunId(1),
                 metadata: SessionMetadata {
+                    scope: ovrcr_protocol::SessionScope::Workspace,
                     project: "p".into(),
                     workspace: "w".into(),
                     name: "n".into(),
@@ -1437,6 +1440,7 @@ while IFS= read -r line; do :; done
             let mut retained = state.retained.lock();
             let created = retained
                 .create(SessionMetadata {
+                    scope: ovrcr_protocol::SessionScope::Workspace,
                     project: "p".into(),
                     workspace: "w".into(),
                     name: "n".into(),
@@ -1550,6 +1554,7 @@ while IFS= read -r line; do :; done
             let mut retained = state.retained.lock();
             let created = retained
                 .create(SessionMetadata {
+                    scope: ovrcr_protocol::SessionScope::Workspace,
                     project: "p".into(),
                     workspace: "w".into(),
                     name: "hermes-ready".into(),

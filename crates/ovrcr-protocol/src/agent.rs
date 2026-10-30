@@ -16,6 +16,8 @@ pub enum AgentProvider {
     Cursor,
     /// Native cloud preview; remote delivery is unavailable until later gates.
     CursorCloud,
+    /// Native Rig Operator worker. Appended to preserve existing wire indices.
+    Operator,
 }
 
 impl AgentProvider {
@@ -30,6 +32,7 @@ impl AgentProvider {
             Self::Omp => "omp",
             Self::Cursor => "cursor-agent",
             Self::CursorCloud => "cursor-cloud",
+            Self::Operator => "operator",
         }
     }
 
@@ -44,6 +47,7 @@ impl AgentProvider {
             "omp" => Self::Omp,
             "cursor-agent" => Self::Cursor,
             "cursor-cloud" => Self::CursorCloud,
+            "operator" => Self::Operator,
             _ => return None,
         })
     }
@@ -59,6 +63,7 @@ impl AgentProvider {
                 | AgentProvider::Claude
                 | AgentProvider::Hermes
                 | AgentProvider::CursorCloud
+                | AgentProvider::Operator
         )
     }
 }
@@ -772,6 +777,7 @@ pub(crate) mod tests {
             (AgentProvider::Omp, "omp"),
             (AgentProvider::Cursor, "cursor-agent"),
             (AgentProvider::CursorCloud, "cursor-cloud"),
+            (AgentProvider::Operator, "operator"),
         ] {
             assert_eq!(provider.name(), name);
             assert_eq!(AgentProvider::from_name(name), Some(provider));
@@ -791,6 +797,7 @@ pub(crate) mod tests {
             (AgentProvider::Grok, false),
             (AgentProvider::Cursor, false),
             (AgentProvider::CursorCloud, true),
+            (AgentProvider::Operator, true),
         ] {
             assert_eq!(provider.supports_readiness(), expected, "{provider:?}");
         }

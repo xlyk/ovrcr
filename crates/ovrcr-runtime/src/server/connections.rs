@@ -404,6 +404,9 @@ pub(super) fn handle_request_with_id(
 ) -> Response {
     let dashboard = matches!(role, ClientRole::Dashboard);
     match request {
+        Request::Operator(_) | Request::OperatorExchange(_) | Request::OperatorWorker(_) => {
+            error_response(ErrorCode::InvalidRequest, "operator runtime is unavailable")
+        }
         Request::NavigateNotification { ticket } if !dashboard && owner.is_none() => {
             state.navigate_notification(ticket)
         }

@@ -858,6 +858,7 @@ mod unread_review_tests {
 
     fn fixture() -> (Dashboard, SessionSummary) {
         let summary = SessionSummary {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             archived: false,
             cwd: "/work".into(),
             id: SessionId(1),

@@ -1380,6 +1380,7 @@ mod tests {
                     warning: None,
                     path: "/private/path-must-not-leak".into(),
                     sessions: vec![SessionSummary {
+                        scope: ovrcr_protocol::SessionScope::Workspace,
                         archived: false,
                         cwd: "/work".into(),
                         id: SessionId(1),
