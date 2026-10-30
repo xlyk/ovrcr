@@ -79,6 +79,7 @@ Dashboard: `j`/`k` select, `Enter` focus, `Ctrl-g` browse, `q` detach.
 ## Features
 
 - One or two panes; Browse, Terminal, Copy, and History modes.
+- [Built-in Operator](docs/operator.md): native saved conversations, concurrent token streaming, ChatGPT/Grok subscription sign-in, and Bash/CLI control.
 - After server restart, retained rows reopen a fresh shell in place; certified Claude conversations can resume by UUID. Terminal output is not restored across server restart.
 - 512 rows of scrollback; keyboard selection; OSC52 clipboard copy.
 - Pause / resume via SIGSTOP / SIGCONT on the session process group.
@@ -96,6 +97,7 @@ Dashboard: `j`/`k` select, `Enter` focus, `Ctrl-g` browse, `q` detach.
 ## Docs
 
 - [Dashboard](docs/dashboard.md) — modes, keys, notifications, quota, events
+- [Built-in Operator](docs/operator.md) — subscription setup, concurrent chats, history and Stop
 - [CLI reference](docs/cli-reference.md)
 - [Agent reporting](docs/agent-reporting.md) · [Claude setup](docs/claude-code-setup.md) · [Support matrix](docs/agent-reporting-support.md)
 - [Scheduled tasks](docs/scheduled-tasks.md) · [Provider quota](docs/provider-quota.md)

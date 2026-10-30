@@ -6,7 +6,7 @@ the full contract.
 
 ## Modes
 
-The dashboard has four input modes. The footer names the current one. In
+The terminal workspace view has four input modes. The footer names the current one. In
 Browse it shows only the three keys that open everything else, `Space Menu`,
 `: Search` and `? Help`; every other action is listed in the menu and the
 palette. Copy and History show their own prioritized shortcuts, and hints that
@@ -23,6 +23,13 @@ copy` while a copy is pending and `Esc Back` otherwise.
 Terminal mode is the only mode that sends input to the PTY, and `Ctrl-g` is the
 only key it intercepts. Click the title bar's Actions control to open the palette
 or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts.
+
+## Operator chat
+
+Browse `o` or the pinned Operator title-bar control opens native chat. It has its
+own multiline composer and conversation history, independent of terminal panes.
+Conversations stream concurrently and continue while another view is selected.
+See [Operator setup and controls](operator.md).
 
 ## Browse keys
 

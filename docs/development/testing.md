@@ -174,3 +174,25 @@ must have drained/reaped all clients and native owners first; it must not admit
 new Git work after that boundary. Late begin or duplicate finalization is
 unhealthy, even when failed persistence leaves prior healthy seal bytes.
 This fixture prerequisite does not add joins or general client containment.
+
+## Built-in Operator acceptance
+
+The [Operator reference](operator.md) documents its feature-gated loopback model
+endpoint. The fixture signs in through a local OAuth server and normal credential
+storage; it neither imports personal accounts nor bypasses authentication.
+
+```sh
+rtk cargo test -p ovrcr --test operator_auth
+rtk cargo test -p ovrcr --test operator_worker
+rtk cargo test -p ovrcr --test operator_e2e --features acceptance-diagnostics
+rtk cargo test -p ovrcr --test operator_scope
+```
+
+The E2E fixture executes the compiled worker, real Bash/CLI, authenticated framing,
+Server journal and native Dashboard actions. It asserts concurrent streams,
+independent Stop, context resume without command replay, real timeout-child
+termination, missing-auth retirement and incomplete-response rejection. Explicit
+ignored fixture entrypoints are invoked and checked by their owning parent or
+native acceptance; they are not passing product cases merely because ignored.
+Keep actual native screenshots/accessibility and live subscription acceptance
+separate from loopback evidence.

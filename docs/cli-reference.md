@@ -14,6 +14,7 @@ contract scripts can rely on. Every command accepts `--help`.
 | `task` (`tasks`), `run` (`runs`) | Scheduled Pi tasks; see [scheduled tasks](scheduled-tasks.md) |
 | `service` | Install, start, stop, or remove the background service |
 | `agent` | Supervise Claude Code, print setup, and inspect integration health |
+| `operator` | Connect ChatGPT/Grok subscriptions and inspect models for native Operator chat |
 | `report` | Report agent activity, context, or status-line metrics from a provider hook |
 | `session` | Inspect or remove a session record |
 | `server` | Run the server in the foreground |
@@ -327,6 +328,19 @@ exited row does not prove that background jobs stopped: ownership acknowledgemen
 may still be required before reopening an unarchived row. Agent suggestions alone
 do not close sessions.
 
+## Operator account commands
+
+| Command | Behaviour |
+| --- | --- |
+| `operator login chatgpt\|grok` | Explicit browser/device sign-in for the selected instance; does not start a Server. |
+| `operator status chatgpt\|grok` | Print connection/grant state without tokens; supports global `--json`. |
+| `operator models chatgpt\|grok` | List signed-in ChatGPT models or Grok's supported catalog; supports global `--json`. Availability still requires actual account access. |
+| `operator logout chatgpt\|grok` | Clear local tokens and report whether remote revocation was confirmed; supports global `--json`. |
+
+The Dashboard owns conversation creation and execution. Internal worker launch is
+not a public CLI control. See [Operator usage](operator.md) and the
+[authentication reference](development/operator.md).
+
 ## Agent reporting commands
 
 | Command | Contract |
@@ -445,7 +459,7 @@ legacy hierarchy as an array of projects with nested `workspaces`, each containi
 | --- | --- |
 | Project | `name`, `repo`, `workspace_root`, `workspace_count` |
 | Workspace | `project`, `name`, `path`, `branch`, `terminal_count` |
-| Terminal | `id`, `run`, `kind`, `project`, `workspace`, `name`, `title`, `display_name`, `label`, `pid`, `started_unix_ms`, `phase`, `activity`, `exit_code`, `exit_signal`, `recovery`, `context_usage`, `context_stale` |
+| Terminal | `id`, `run`, `kind`, `scope`, `project`, `workspace`, `name`, `title`, `display_name`, `label`, `pid`, `started_unix_ms`, `phase`, `activity`, `exit_code`, `exit_signal`, `recovery`, `context_usage`, `context_stale` |
 | Screen read | `id`, `rows`, `cols`, `text` |
 
 `name` is the stable session name. `title` is its nullable effective title;
