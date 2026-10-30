@@ -12,7 +12,10 @@ use ovrcr_protocol::{
 };
 use rig::{
     Agent, AgentBuilder,
-    agent::{AgentHook, DispatchAction, DispatchEvent, HookContext, MultiTurnStreamItem},
+    agent::{
+        AgentHook, DispatchAction, DispatchEvent, HookContext, ModelTurnAction, ModelTurnFinished,
+        MultiTurnStreamItem,
+    },
     catalog::ModelSpec,
     client::signed_in::{CredentialSource, SignedInModel},
     effect::{EffectKind, HandlerKey},
@@ -220,6 +223,7 @@ fn make_agent(
             .default_max_turns(20)
             .record_content_telemetry(false)
             .additional_params(serde_json::json!({"store": false}))
+            .add_hook(CompletedTurnGuard)
             .add_hook(ToolBoundary {
                 host: host.clone(),
                 namespace: provider == OperatorProvider::ChatGpt,
@@ -267,6 +271,23 @@ impl Host {
         }
     }
 }
+struct CompletedTurnGuard;
+impl AgentHook for CompletedTurnGuard {
+    async fn on_model_turn_finished(
+        &self,
+        _: &HookContext,
+        event: ModelTurnFinished<'_>,
+    ) -> ModelTurnAction {
+        // Rig can accept nonempty truncated output, including calls. Reject before effects/history.
+        match event.finish_reason {
+            Some(
+                rig::completion::FinishReason::Stop | rig::completion::FinishReason::ToolCalls,
+            ) => ModelTurnAction::Continue,
+            _ => ModelTurnAction::stop("operator provider did not complete this model turn"),
+        }
+    }
+}
+
 struct ToolBoundary {
     host: Host,
     namespace: bool,
@@ -939,5 +960,158 @@ mod tests {
         assert!(
             matches!(&events[1],OperatorWorkerEvent::ToolOutput {output,status:OperatorToolStatus::Succeeded,..} if output=="namespaced-bash")
         );
+    }
+    async fn assert_incomplete_rejected(provider: OperatorProvider, with_tool: bool, reason: &str) {
+        use serde_json::json;
+        use tokio::io::AsyncWriteExt;
+        let root = tempfile::tempdir().unwrap();
+        let marker = root.path().join("bash-ran");
+        let command = format!("printf performed > '{}'", marker.display());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let reason = reason.to_owned();
+        let (finished, mut stop) = oneshot::channel();
+        let server = tokio::spawn(async move {
+            let mut requests = 0;
+            loop {
+                let accepted = tokio::select! {
+                    _ = &mut stop => break,
+                    accepted = listener.accept() => accepted.unwrap(),
+                };
+                let (mut socket, _) = accepted;
+                request(&mut socket).await;
+                requests += 1;
+                socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n").await.unwrap();
+                let text = json!({"type":"message","id":"msg-incomplete","role":"assistant","status":"completed","content":[{"type":"output_text","text":"visible partial output","annotations":[]}]});
+                event(&mut socket,json!({"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg-incomplete","role":"assistant","content":[]}})).await;
+                event(&mut socket,json!({"type":"response.output_text.delta","output_index":0,"content_index":0,"item_id":"msg-incomplete","delta":"visible partial output"})).await;
+                event(
+                    &mut socket,
+                    json!({"type":"response.output_item.done","output_index":0,"item":text}),
+                )
+                .await;
+                let mut output = vec![text];
+                if with_tool && requests == 1 {
+                    let args = json!({"command":command}).to_string();
+                    let call = json!({"type":"function_call","id":"fc-incomplete","call_id":"incomplete-call","namespace":"ovrcr","name":"bash","arguments":args,"status":"completed"});
+                    event(&mut socket,json!({"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"fc-incomplete","call_id":"incomplete-call","namespace":"ovrcr","name":"bash","arguments":""}})).await;
+                    event(&mut socket,json!({"type":"response.function_call_arguments.delta","output_index":1,"delta":args})).await;
+                    event(
+                        &mut socket,
+                        json!({"type":"response.output_item.done","output_index":1,"item":call}),
+                    )
+                    .await;
+                    output.push(call);
+                }
+                if requests == 1 {
+                    event(&mut socket,json!({"type":"response.incomplete","response":{"id":"resp-incomplete","status":"incomplete","incomplete_details":{"reason":reason},"output":output}})).await;
+                } else {
+                    // A buggy implementation may execute the incomplete call and ask again.
+                    event(&mut socket,json!({"type":"response.completed","response":{"id":"resp-unexpected-retry","status":"completed","output":output}})).await;
+                }
+            }
+            requests
+        });
+        let auth = AuthManager::new(root.path()).unwrap();
+        seed(root.path(), provider, "synthetic-incomplete");
+        let (sender, mut receiver) = mpsc::channel(32);
+        let host = Host {
+            sender,
+            call: Arc::new(Mutex::new(None)),
+        };
+        let pump = tokio::spawn(async move {
+            let mut events = Vec::new();
+            while let Some(event) = receiver.recv().await {
+                if let HostEvent::Boundary(event, ack) = event {
+                    events.push(event);
+                    ack.send(true).unwrap();
+                }
+            }
+            events
+        });
+        let agent = make_agent(
+            auth,
+            provider,
+            "fixture-incomplete",
+            base,
+            Bash::new(root.path().into(), std::env::current_exe().unwrap()),
+            host,
+        )
+        .unwrap();
+        let mut stream = agent
+            .prompt("do not accept incomplete output")
+            .tool_concurrency(1)
+            .max_invalid_tool_call_retries(0)
+            .stream();
+        let mut partial = String::new();
+        let mut completed = false;
+        let mut failed = false;
+        while let Some(item) = tokio::time::timeout(Duration::from_secs(5), stream.next())
+            .await
+            .unwrap()
+        {
+            match item {
+                Ok(MultiTurnStreamItem::StreamAssistantItem(Item::Event(StreamEvent::Text {
+                    text,
+                    ..
+                }))) => partial.push_str(&text),
+                Ok(MultiTurnStreamItem::FinalResponse(_)) => completed = true,
+                Err(_) => failed = true,
+                _ => {}
+            }
+        }
+        finished.send(()).unwrap();
+        let requests = server.await.unwrap();
+        drop(stream);
+        drop(agent);
+        let events = pump.await.unwrap();
+        assert!(
+            partial.contains("visible partial output"),
+            "partial text remains observable"
+        );
+        assert!(
+            !marker.exists(),
+            "an incomplete model turn must never execute Bash"
+        );
+        assert_eq!(
+            requests, 1,
+            "an incomplete model turn must never be retried"
+        );
+        assert!(
+            events.is_empty(),
+            "no tool-dispatch boundaries are accepted for an incomplete model turn"
+        );
+        assert!(
+            !completed,
+            "nonempty incomplete output is not completed model context"
+        );
+        assert!(
+            failed,
+            "an incomplete model turn must fail the worker stream"
+        );
+    }
+    #[tokio::test]
+    async fn chatgpt_incomplete_text_is_not_completed_history() {
+        assert_incomplete_rejected(OperatorProvider::ChatGpt, false, "max_output_tokens").await;
+    }
+    #[tokio::test]
+    async fn grok_incomplete_text_is_not_completed_history() {
+        assert_incomplete_rejected(OperatorProvider::Grok, false, "max_output_tokens").await;
+    }
+    #[tokio::test]
+    async fn chatgpt_incomplete_tool_call_never_executes_bash_or_retries() {
+        assert_incomplete_rejected(OperatorProvider::ChatGpt, true, "max_output_tokens").await;
+    }
+    #[tokio::test]
+    async fn grok_incomplete_tool_call_never_executes_bash_or_retries() {
+        assert_incomplete_rejected(OperatorProvider::Grok, true, "max_output_tokens").await;
+    }
+    #[tokio::test]
+    async fn both_providers_reject_filtered_and_unknown_terminal_outcomes() {
+        for provider in [OperatorProvider::ChatGpt, OperatorProvider::Grok] {
+            for reason in ["content_filter", "unknown_fixture_reason"] {
+                assert_incomplete_rejected(provider, false, reason).await;
+            }
+        }
     }
 }
