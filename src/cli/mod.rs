@@ -10,6 +10,7 @@ mod delegation;
 mod delegation_publisher;
 mod hermes;
 mod managed;
+mod operator;
 mod output;
 mod report;
 mod resources;
@@ -78,6 +79,7 @@ fn run(cli: Cli) -> AppResult<()> {
         .map_err(RuntimeError::internal);
     };
     match command {
+        Command::Operator { command } => operator::run(command, json_output),
         Command::Bridge {
             command: BridgeCommand::Navigate { .. },
         } => bridge::navigate(),

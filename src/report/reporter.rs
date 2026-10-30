@@ -165,6 +165,72 @@ impl Reporter {
         }
     }
 
+    /// Native Operator uses this same watched lease without a provider-native binding.
+    pub fn operator_start(
+        &mut self,
+        identity: ovrcr_protocol::OperatorTurnIdentity,
+        deadline: Instant,
+    ) -> anyhow::Result<ovrcr_protocol::OperatorWorkerStart> {
+        let lease = self
+            .lease
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("operator lease unavailable"))?;
+        match lease.operator_request(
+            ovrcr_protocol::OperatorWorkerCommand::Start { identity },
+            deadline,
+        )? {
+            Response::OperatorWorker(ovrcr_protocol::OperatorWorkerResult::Start(start))
+                if start.identity == identity =>
+            {
+                Ok(*start)
+            }
+            _ => anyhow::bail!("operator bootstrap refused"),
+        }
+    }
+    pub fn operator_batch(
+        &mut self,
+        batch: ovrcr_protocol::OperatorEventBatch,
+        deadline: Instant,
+    ) -> anyhow::Result<()> {
+        batch.validate().map_err(anyhow::Error::msg)?;
+        let identity = batch.identity;
+        let sequence = batch.sequence;
+        let lease = self
+            .lease
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("operator lease unavailable"))?;
+        match lease.operator_batch(batch, deadline)? {
+            Response::OperatorExchange(receipt)
+                if receipt.identity == identity && receipt.sequence == sequence =>
+            {
+                Ok(())
+            }
+            _ => anyhow::bail!("operator journal commit refused"),
+        }
+    }
+    pub fn operator_retire(
+        &mut self,
+        identity: ovrcr_protocol::OperatorTurnIdentity,
+        stop: bool,
+        deadline: Instant,
+    ) -> anyhow::Result<()> {
+        let lease = self
+            .lease
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("operator lease unavailable"))?;
+        let command = if stop {
+            ovrcr_protocol::OperatorWorkerCommand::Stop { identity }
+        } else {
+            ovrcr_protocol::OperatorWorkerCommand::Retire { identity }
+        };
+        match lease.operator_request(command, deadline)? {
+            Response::OperatorWorker(ovrcr_protocol::OperatorWorkerResult::Retired {
+                identity: retired,
+            }) if retired == identity => Ok(()),
+            _ => anyhow::bail!("operator controlled retirement unconfirmed"),
+        }
+    }
+
     /// The `HookHandler` `src/cli/agent.rs` installs and `ovrcr_runtime::agent_runner`
     /// drives: this lifecycle in front of one provider's `Frames`.
     pub fn handler(mut self, mut frames: impl Frames) -> HookHandler {

@@ -1,5 +1,46 @@
 # Built-in operator
 
+## Sign in and choose a model
+
+Use the same instance configuration as your Dashboard:
+
+```sh
+ovrcr operator login chatgpt
+ovrcr operator status chatgpt
+ovrcr operator models chatgpt
+ovrcr operator logout chatgpt
+```
+
+Replace `chatgpt` with `grok` for a Grok subscription. Each instance connects one
+account per provider. `--json` is available for status, models and logout. Login
+opens the system browser only when explicitly requested; ChatGPT reauthorization
+URLs stay inside a short-lived loopback redirect and never enter launcher arguments
+or terminal output. Grok prints the public device code and verification address.
+
+## Worker and Bash behavior
+
+Each submitted turn runs a separate managed worker, with at most twenty model
+calls and one Bash tool at a time. The Server saves streaming text and tool
+boundaries before acknowledging them. Completed model context is retained for
+the next turn; interrupted commands are never replayed. Stop affects the selected
+turn only. OVRCR operations that were already accepted may finish afterward.
+
+The Bash tool accepts `command`, optional absolute `cwd`, and optional
+`timeout_seconds` (120 by default, at most 600). It runs
+`bash --noprofile --norc -c`, retains at most 64 KiB of combined stdout/stderr,
+and records exit status and truncation. It defaults to the captured workspace
+or the instance's `operator-workdir`. `$OVRCR_EXECUTABLE` names the matching
+absolute CLI; public instance socket/configuration variables are preserved.
+Provider and private reporting credentials are removed from the Bash environment;
+unrelated user tool credentials remain available. Startup-file environment hooks
+are disabled.
+
+Timeout first records the observed partial output and timeout status, then asks
+the Server to stop that exact turn and its owned worker/Bash group. The worker
+cannot continue or retry an uncertain command. A completed response or worker
+socket closure alone is not process-stop proof; the Server's confirmed controlled
+stop frees the conversation for another turn.
+
 ## Subscription authentication
 
 Operator credentials belong to one OVRCR instance. The operator never imports
@@ -24,6 +65,12 @@ Only `visibility:list` choices are displayed, preserving server order and slugs.
 ChatGPT inference must use `POST https://api.openai.com/v1/responses`, `store:false`
 and `stream:true`; successful completion requires `response.completed`. The worker
 uses Rig's public OpenAI Responses provider rather than its legacy ChatGPT preset.
+It sends the complete saved SDK history on each HTTP request, including encrypted
+reasoning continuation metadata. A narrow outbound transformation groups Bash
+under the `ovrcr` tool namespace required by the
+[SIWC preview contract](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations).
+It omits unsupported sampling, output-limit and persistent-conversation fields.
+Grok retains the normal xAI function-tool encoding.
 
 Grok uses the device authorization and refresh flow from
 [Pi at f09d01b85e0384647fcab6779d35ab9dabe04be3](https://github.com/earendil-works/pi/tree/f09d01b85e0384647fcab6779d35ab9dabe04be3/packages/ai/src/auth/oauth).
@@ -68,3 +115,12 @@ Its released MSRV is Rust 1.97.1. Rig types remain in the root application; shar
 protocol/runtime/TUI crates do not depend on Rig. Workers create a Tokio
 current-thread runtime with I/O/time enabled. Auth uses that runtime and does not
 create its own runtime or background owner.
+
+## Offline acceptance endpoint
+
+Only builds with `acceptance-diagnostics` accept `OVRCR_OPERATOR_TEST_API_BASE`.
+The value must be an HTTP URL with a literal loopback IP and no credentials,
+query or fragment. Supplying it to a normal build, or supplying an invalid value,
+fails the turn before inference. There is no credential bypass: fixtures sign in
+through the real AuthManager and use protected synthetic OAuth records. Normal
+builds use the fixed production endpoints above.

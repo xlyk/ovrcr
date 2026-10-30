@@ -55,6 +55,11 @@ pub(super) enum SettingsCommand {
 
 #[derive(Subcommand)]
 pub(super) enum Command {
+    /// Subscription sign-in and account setup for the built-in Operator.
+    Operator {
+        #[command(subcommand)]
+        command: OperatorCommand,
+    },
     /// Connect-only Bridge navigation and current-owner validation. Never starts a Server.
     Bridge {
         #[command(subcommand)]
@@ -154,6 +159,42 @@ pub(super) enum Command {
     Report {
         #[command(subcommand)]
         command: ReportCommand,
+    },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub(super) enum OperatorProviderArg {
+    Chatgpt,
+    Grok,
+}
+impl From<OperatorProviderArg> for ovrcr::protocol::OperatorProvider {
+    fn from(value: OperatorProviderArg) -> Self {
+        match value {
+            OperatorProviderArg::Chatgpt => Self::ChatGpt,
+            OperatorProviderArg::Grok => Self::Grok,
+        }
+    }
+}
+#[derive(Subcommand)]
+pub(super) enum OperatorCommand {
+    /// Sign in to the subscription account, opening your system browser.
+    Login { provider: OperatorProviderArg },
+    /// Show this instance's subscription sign-in state without refreshing it.
+    Status { provider: OperatorProviderArg },
+    /// List available ChatGPT models or the supported Grok catalog.
+    Models { provider: OperatorProviderArg },
+    /// Remove this instance's provider credential; report remote revocation separately.
+    Logout { provider: OperatorProviderArg },
+    #[command(hide = true)]
+    Worker {
+        #[arg(long)]
+        conversation: u64,
+        #[arg(long)]
+        turn: u64,
+        #[arg(long)]
+        session: u64,
+        #[arg(long)]
+        run: u64,
     },
 }
 
