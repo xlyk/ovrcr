@@ -15,7 +15,7 @@ pub const MAX_FRAME_BYTES: usize = 1_048_576;
 /// exchange it in an 8-byte preamble before the first frame so a client and
 /// a long-running server built from different sources fail with a clear
 /// message instead of decoding one request as another.
-pub const PROTOCOL_VERSION: u32 = 68;
+pub const PROTOCOL_VERSION: u32 = 69;
 
 const PREAMBLE_MAGIC: [u8; 4] = *b"OVRC";
 
@@ -185,11 +185,8 @@ mod tests {
         let error = read_preamble(&mut right).unwrap_err().to_string();
         assert!(error.contains("bad preamble magic"), "{error}");
 
-        for version in [
-            PROTOCOL_VERSION - 2,
-            PROTOCOL_VERSION - 1,
-            PROTOCOL_VERSION + 1,
-        ] {
+        // These earlier builds have incompatible Cursor or Operator message shapes.
+        for version in [66, 67, 68, PROTOCOL_VERSION + 1] {
             let (mut left, mut right) = UnixStream::pair().unwrap();
             let mut preamble = Vec::from(*b"OVRC");
             preamble.extend_from_slice(&version.to_be_bytes());

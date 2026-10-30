@@ -122,7 +122,7 @@ later Send/run receipt boundary. See [Cursor cloud](../cursor-cloud.md).
 
 Cursor cloud profiles are typed `Settings.cursor_cloud_accounts` values in the
 same settings document. Ordinary Agent creation generates `cursor-cloud:ACCOUNT`
-choices with explicit managed argv, independent of PATH discovery. Protocol 68 carries opaque original-attachment cursors with locally ordered progress revisions; protocol 65 appended original-attachment observation progress; protocol 64 adds exact recovery/reconciliation and explicit recovery cancellation; protocol 63 adds explicit cancellation commands; protocol 62 includes immutable Send commands; protocol 60
+choices with explicit managed argv, independent of PATH discovery. Protocol 69 carries opaque original-attachment cursors with locally ordered progress revisions; protocol 65 appended original-attachment observation progress; protocol 64 adds exact recovery/reconciliation and explicit recovery cancellation; protocol 63 adds explicit cancellation commands; protocol 62 includes immutable Send commands; protocol 60
 appends `AgentProvider::CursorCloud`; local Cursor remains `Cursor`. Readiness uses exact verified run observations; titles and active conversation
 recovery remain unavailable. See
 [Cursor cloud](../cursor-cloud.md) and [published source](../adr/0011-cursor-cloud-published-source.md).

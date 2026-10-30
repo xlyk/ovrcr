@@ -126,7 +126,7 @@ builds use the fixed production endpoints above.
 ## Ownership and wire identity
 
 The existing SessionStore owns conversation rows, turns, visible messages and
-versioned completed model context. Protocol 68 carries conversation/turn/session/run
+versioned completed model context. Protocol 69 carries conversation/turn/session/run
 identities and bounded sequenced worker batches. Schema 27 retains global
 OperatorConversation sessions without registering a project or workspace.
 
