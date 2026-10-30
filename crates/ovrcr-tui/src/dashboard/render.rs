@@ -397,6 +397,7 @@ impl Dashboard {
             && self.whichkey.is_none()
             && self.details.is_none()
         {
+            self.operator_commit_presented();
             self.unread
                 .commit_presented(self.action_session().and_then(|session| {
                     let visible = self.pane_rects(area).iter().any(|rect| {
@@ -441,10 +442,6 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 "OVRCR",
                 Style::default().fg(CRUST()).add_modifier(Modifier::BOLD),
             ),
-            Span::styled(
-                "  agent runtime",
-                Style::default().fg(CRUST()).add_modifier(Modifier::DIM),
-            ),
         ]))
         .style(Style::default().bg(MAUVE())),
         layout.title,
@@ -482,6 +479,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         frame.render_widget(Paragraph::new(line).style(style), line_area);
     }
 
+    dashboard.draw_operator_header(frame);
     dashboard.draw_quota(frame, now_unix_ms);
 
     let rects = dashboard.pane_rects(frame.area());
@@ -731,7 +729,10 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
             close,
         );
     }
-    dashboard.draw_start_screen(frame);
+    if !dashboard.operator.visible {
+        dashboard.draw_start_screen(frame);
+    }
+    dashboard.draw_operator(frame);
     dashboard.draw_palette(frame);
     dashboard.draw_whichkey(frame);
     dashboard.draw_details(frame, now_unix_ms);
@@ -1609,6 +1610,7 @@ mod harness_agent_label_tests {
 
     fn session(kind: SessionKind, name: &str, label: &str) -> SessionSummary {
         SessionSummary {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             id: SessionId(1),
             archived: false,
             cwd: "/work".into(),

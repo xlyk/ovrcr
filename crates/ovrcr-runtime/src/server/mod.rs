@@ -1,7 +1,7 @@
 pub(crate) mod delegation;
 mod delegation_coding;
 mod delegation_fallback;
-mod delegation_files;
+pub(crate) mod delegation_files;
 mod delegation_observation;
 pub(crate) mod delegation_recovery;
 use crate::config::{
@@ -44,6 +44,9 @@ mod event_log;
 mod lifecycle;
 mod navigation;
 pub use navigation::bridge_executable_sha256;
+pub mod operator;
+#[cfg(test)]
+mod operator_tests;
 mod outbound;
 mod quota;
 mod quota_probe;
@@ -259,6 +262,7 @@ pub struct ServerState {
     observations: parking_lot::Mutex<HashMap<(String, String), CheckoutObservation>>,
     pub mutation_lock: Mutex<()>,
     pub(crate) lifecycle: lifecycle::Lifecycle,
+    operator: operator::OperatorRuntime,
     pub dispatch: ReportingSender<DispatchMessage>,
     pub shutdown: AtomicBool,
     pub stopping: AtomicBool,
@@ -419,10 +423,16 @@ impl ServerState {
             let mut summary = session.summary();
             summary.title = record.effective_title();
             summary.manual_title = record.metadata.pinned_title.clone();
-            if !summary.phase.is_live() || record.conversation.is_some() || record.identity_invalid
+            if !summary.phase.is_live()
+                || record.conversation.is_some()
+                || record.identity_invalid
+                || record.cloud_creation.is_some()
             {
                 let mut recovery = record.recovery(boot_id);
                 if summary.phase.is_live() {
+                    if let Some(operation) = &record.cloud_creation {
+                        recovery.unavailable = Some(operation.description());
+                    }
                     recovery.requires_ack = false;
                     recovery.attached = !record.identity_invalid
                         && summary.agent.as_ref().is_some_and(|agent| {
@@ -605,12 +615,22 @@ impl ServerState {
             let summary = self
                 .session_summary(id)
                 .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+            if matches!(
+                summary.scope,
+                ovrcr_protocol::SessionScope::OperatorConversation { .. }
+            ) {
+                return Err(lifecycle_error(
+                    ErrorCode::Conflict,
+                    "Operator conversations use native Stop (Ctrl-x); terminal close is unavailable",
+                ));
+            }
             if summary.run != expected_run || summary.archived {
                 return Err(lifecycle_error(
                     ErrorCode::Conflict,
                     "session changed; refresh inventory",
                 ));
             }
+            self.retained.lock().close_creation(id, expected_run)?;
             if !summary.phase.is_live() {
                 return self.archive_session_locked(id, expected_run);
             }
@@ -638,6 +658,20 @@ impl ServerState {
         Ok(())
     }
 
+    pub fn cancel_cloud_creation(&self, id: SessionId, expected: SessionRunId) -> Result<()> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        self.retained.lock().cancel_creation(id, expected)
+    }
+
+    pub fn discard_cloud_creation(&self, id: SessionId, expected: SessionRunId) -> Result<()> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        self.retained
+            .lock()
+            .discard_creation(id, expected, &self.registry_path)
+    }
+
     pub fn delete_archived_session(&self, id: SessionId, expected: SessionRunId) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
@@ -651,7 +685,11 @@ impl ServerState {
                 "session archive state changed; refresh inventory",
             ));
         }
-        self.retained.lock().remove(id, expected)?;
+        {
+            let mut retained = self.retained.lock();
+            retained.cleanup_creation_payloads(&self.registry_path)?;
+            retained.remove(id, expected)?;
+        }
         Ok(())
     }
 
@@ -684,6 +722,15 @@ impl ServerState {
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+        if matches!(
+            summary.scope,
+            ovrcr_protocol::SessionScope::OperatorConversation { .. }
+        ) {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "Operator conversations use native Stop (Ctrl-x); terminal kill/close is unavailable",
+            ));
+        }
         if expected_run.is_some_and(|expected| summary.run != expected) {
             return Err(lifecycle_error(
                 ErrorCode::Conflict,
@@ -707,6 +754,7 @@ impl ServerState {
             .get(&id)
             .filter(|session| session.run() == summary.run)
             .cloned();
+        self.retained.lock().close_creation(id, summary.run)?;
         if let Some(session) = &session {
             session.revoke_hook_capability();
         }
@@ -863,6 +911,7 @@ impl ServerState {
             self.check_live_capacity()?;
             let label = default_session_label(&request.kind, request.label, &request.argv);
             let record = self.retained.lock().create(SessionMetadata {
+                scope: ovrcr_protocol::SessionScope::Workspace,
                 project: request.project,
                 workspace: request.workspace,
                 name: request.name,
@@ -931,6 +980,18 @@ impl ServerState {
         ready: Option<Arc<dyn Fn() + Send + Sync>>,
         restore_command: Option<String>,
     ) -> Result<SessionSummary> {
+        self.spawn_prepared_record_locked(id, expected_run, argv, ready, restore_command, false)
+    }
+
+    fn spawn_prepared_record_locked(
+        &self,
+        id: SessionId,
+        expected_run: SessionRunId,
+        argv: Vec<std::ffi::OsString>,
+        ready: Option<Arc<dyn Fn() + Send + Sync>>,
+        restore_command: Option<String>,
+        prepared: bool,
+    ) -> Result<SessionSummary> {
         // Every failure in this preparation is provably before native spawn.
         // Keep that proof across allocation; later row/process absence proves nothing.
         let (record, socket, capability, events, assigned_input) = (|| -> Result<_> {
@@ -952,7 +1013,16 @@ impl ServerState {
                 .as_ref()
                 .context("server event channel closed")?
                 .clone();
-            let record = self.retained.lock().begin_run(id, expected_run)?;
+            let record = if prepared {
+                let retained = self.retained.lock();
+                let record = retained.get(id).context("prepared session missing")?;
+                if record.run != expected_run || record.stopped {
+                    bail!("prepared session run changed");
+                }
+                record.clone()
+            } else {
+                self.retained.lock().begin_run(id, expected_run)?
+            };
             if let Some(old) = self.sessions.lock().unwrap().remove(&id) {
                 old.revoke_hook_capability();
             }
@@ -963,6 +1033,7 @@ impl ServerState {
         .map_err(crate::session::NoProcessStarted::context)?;
         let metadata = &record.metadata;
         let spec = SessionSpec {
+            scope: metadata.scope,
             restore_command,
             run: record.run,
             kind: metadata.kind.clone(),
@@ -1162,7 +1233,14 @@ impl ServerState {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
         self.acknowledge_stopped_locked(id, expected_run)?;
-        self.refresh_session_locked(id)
+        self.refresh_session_locked(id)?;
+        if let Some(record) = self.retained.lock().get(id)
+            && let ovrcr_protocol::SessionScope::OperatorConversation { conversation } =
+                record.metadata.scope
+        {
+            self.operator_changed(conversation);
+        }
+        Ok(())
     }
 
     fn acknowledge_stopped_locked(&self, id: SessionId, expected_run: SessionRunId) -> Result<()> {
@@ -1182,7 +1260,19 @@ impl ServerState {
                 "the currently owned process is still live",
             ));
         }
-        self.retained.lock().mark_stopped(id, expected_run)?;
+        let mut retained = self.retained.lock();
+        if let ovrcr_protocol::SessionScope::OperatorConversation { conversation } = summary.scope
+            && let Some(turn) = retained.operator_conversation(conversation)?.current_turn
+        {
+            if turn.identity.session != id || turn.identity.run != expected_run {
+                return Err(lifecycle_error(
+                    ErrorCode::Conflict,
+                    "operator turn changed; refresh inventory",
+                ));
+            }
+            retained.interrupt_operator_turn(turn.identity)?;
+        }
+        retained.mark_stopped(id, expected_run)?;
         Ok(())
     }
 
@@ -1246,6 +1336,12 @@ impl ServerState {
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+        if summary.scope != ovrcr_protocol::SessionScope::Workspace {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "Operator sessions require a conversation submission",
+            ));
+        }
         if summary.archived {
             return Err(lifecycle_error(
                 ErrorCode::Conflict,
@@ -1323,11 +1419,27 @@ impl ServerState {
             })?;
         let command = match &record.metadata.kind {
             SessionKind::Agent { name } => {
-                let command = match record.conversation.as_ref() {
-                    Some(reference) => crate::recovery::resume_argv(name, reference),
-                    None => crate::recovery::picker_argv(name),
-                }
-                .and_then(|argv| crate::recovery::terminal_command(&argv));
+                let command = if let Some(target) = record
+                    .cloud_creation
+                    .as_ref()
+                    .and_then(|r| r.recovery_target())
+                {
+                    crate::recovery::terminal_command(&[
+                        std::env::current_exe()?.into_os_string(),
+                        "agent".into(),
+                        "run".into(),
+                        "cursor-cloud".into(),
+                        "--".into(),
+                        target.intent.account.name.clone().into(),
+                        serde_json::to_string(&target)?.into(),
+                    ])
+                } else {
+                    match record.conversation.as_ref() {
+                        Some(reference) => crate::recovery::resume_argv(name, reference),
+                        None => crate::recovery::picker_argv(name),
+                    }
+                    .and_then(|argv| crate::recovery::terminal_command(&argv))
+                };
                 match command {
                     Ok(command) => Some(command),
                     Err(error) => {
@@ -1459,7 +1571,11 @@ impl ServerState {
                 "use terminal acknowledge-stopped before removing an ownership-uncertain record",
             ));
         }
-        self.retained.lock().remove(id, summary.run)?;
+        {
+            let mut retained = self.retained.lock();
+            retained.cleanup_creation_payloads(&self.registry_path)?;
+            retained.remove(id, summary.run)?;
+        }
         if let Some(session) = self.sessions.lock().unwrap().remove(&id) {
             session.revoke_hook_capability();
         }
@@ -1492,6 +1608,7 @@ impl ServerState {
             observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
             lifecycle: lifecycle::Lifecycle::default(),
+            operator: operator::OperatorRuntime::default(),
             dispatch,
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
@@ -2905,7 +3022,9 @@ fn snapshot_from_state(state: &ServerState) -> HierarchySnapshot {
     let registry = state.registry.lock().unwrap().clone();
     let observations = state.observations.lock().clone();
     let mut sessions = state.session_summaries();
-    sessions.retain(|session| !session.archived);
+    sessions.retain(|session| {
+        !session.archived && session.scope == ovrcr_protocol::SessionScope::Workspace
+    });
     let mut projects = registry
         .projects
         .iter()

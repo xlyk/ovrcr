@@ -17,12 +17,18 @@ fn provider(name: &str) -> AgentProvider {
 
 pub(super) fn run(command: AgentCommand) -> AppResult<()> {
     let (name, argv) = match command {
+        AgentCommand::CloudPreview { account, recovery } => {
+            return super::cursor_cloud::preview(&account, recovery.as_deref());
+        }
+        AgentCommand::CloudAdmission => return super::cursor_cloud::admission(),
+        AgentCommand::CloudCreation => return super::cursor_cloud::creation(),
         AgentCommand::Setup {
             provider,
             print: _,
             settings,
         } => {
             return match provider.as_str() {
+                "cursor-cloud" => super::cursor_cloud::setup(settings.as_deref()),
                 "cursor-agent" => super::cursor::setup(settings.as_deref()),
                 "hermes" => super::hermes::setup(settings.as_deref()),
                 "grok" => Err(grok_needs_no_setup()),
@@ -41,6 +47,7 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
         } => {
             let executable = executable.unwrap_or_else(|| provider.clone().into());
             return match provider.as_str() {
+                "cursor-cloud" => super::cursor_cloud::doctor(settings.as_deref()),
                 "cursor-agent" => super::cursor::doctor(settings.as_deref(), session, &executable),
                 "hermes" => super::hermes::doctor(settings.as_deref(), session, &executable),
                 "grok" => Err(grok_needs_no_setup()),
@@ -62,6 +69,9 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
             argv,
         ),
     };
+    if name == "cursor-cloud" {
+        return super::cursor_cloud::launch(&argv);
+    }
     let mut argv = argv;
     let assigned_claude = name == "claude" && super::claude_delegation::prepare(&argv)?;
     if name == "codex" {

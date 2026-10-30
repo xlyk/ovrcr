@@ -139,13 +139,17 @@ pub fn policy_files(
     helper_model: Option<&str>,
 ) -> Result<PolicyFiles> {
     let helper = helper.canonicalize()?;
-    let mut value = crate::claude_recovery::reporter_settings(
-        helper.to_str().context("non-UTF8 Reporter executable")?,
-    );
-    value
-        .as_object_mut()
+    // Match the launch composer's insertion order even when another workspace
+    // dependency enables serde_json's preserve_order feature. The byte seal stays exact.
+    let mut value = helper_settings(helper_model);
+    value.as_object_mut().unwrap().extend(
+        crate::claude_recovery::reporter_settings(
+            helper.to_str().context("non-UTF8 Reporter executable")?,
+        )
+        .as_object()
         .unwrap()
-        .extend(helper_settings(helper_model).as_object().unwrap().clone());
+        .clone(),
+    );
     let settings = format!("{}\n", serde_json::to_string_pretty(&value)?).into_bytes();
     let mut mcp = serde_json::json!({"mcpServers":{"ovrcr_child":{
         "type":"stdio","command":helper,"args":["delegation-publisher","--read-handle",handle]

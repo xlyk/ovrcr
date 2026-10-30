@@ -151,6 +151,17 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: ReportingReceiver<Dispa
                             // authenticated operation persists before publishing its receipt.
                             let mut retained = state.retained.lock();
                             session.agent_command(&request, owner.as_ref(), |action| match action {
+                                crate::session::AgentPersistence::CloudCreation(
+                                    command,
+                                    invocation,
+                                ) => retained.creation_command(
+                                    id,
+                                    session.run(),
+                                    invocation,
+                                    &state.server_lifetime,
+                                    &state.registry_path,
+                                    command,
+                                ),
                                 crate::session::AgentPersistence::Reservation(reserve) => retained
                                     .admit_workflow_resume(
                                         id,

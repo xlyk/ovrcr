@@ -1450,6 +1450,7 @@ fn created_session_enters_terminal_mode() {
         panic!("wrong request");
     };
     let session = SessionSummary {
+        scope: ovrcr_protocol::SessionScope::Workspace,
         cwd: "/work".into(),
         archived: false,
         id: SessionId(99),
@@ -2508,6 +2509,7 @@ fn ownership_uncertain_create_does_not_create_another_row_on_enter() {
         panic!("wrong request");
     };
     let retained = SessionSummary {
+        scope: ovrcr_protocol::SessionScope::Workspace,
         cwd: "/work".into(),
         archived: false,
         id: SessionId(99),
@@ -2621,6 +2623,7 @@ fn ownership_uncertain_create_does_not_guess_among_two_rows() {
         .expect("create form must target a fixture workspace");
     for id in [98, 99] {
         workspace.sessions.push(SessionSummary {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             cwd: "/work".into(),
             archived: false,
             id: SessionId(id),
@@ -3800,4 +3803,62 @@ fn relabeled_workspace_filter_requires_reselection_before_retargeting() {
     };
     assert_eq!(request.project, "consigint");
     assert_eq!(request.workspace, "lifecycle");
+}
+
+#[test]
+fn cloud_close_warns_before_archiving_live_and_exited_rows_from_key_and_palette() {
+    for live in [true, false] {
+        for palette in [false, true] {
+            let mut hierarchy = fixture_hierarchy();
+            let row = hierarchy
+                .projects
+                .iter_mut()
+                .flat_map(|p| &mut p.workspaces)
+                .flat_map(|w| &mut w.sessions)
+                .find(|s| s.id == SessionId(1))
+                .unwrap();
+            row.kind = ovrcr::protocol::SessionKind::Agent {
+                name: "cursor-cloud:work".into(),
+            };
+            if !live {
+                row.phase = SessionPhase::Exited {
+                    code: Some(0),
+                    signal: None,
+                };
+            }
+            let id = row.id;
+            let run = row.run;
+            let mut dashboard = dashboard_fixture();
+            dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                hierarchy,
+            )));
+            let action = if palette {
+                dashboard.key(KeyCode::Char(':'));
+                dashboard.event_action(Event::Paste("Close terminal".into()));
+                dashboard.key(KeyCode::Enter)
+            } else {
+                dashboard.key(KeyCode::Char('X'))
+            };
+            assert!(
+                !matches!(action, ovrcr::tui::DashboardAction::Request(_)),
+                "cloud close requires visible warning before dispatch"
+            );
+            let text = palette_text(&dashboard);
+            assert!(
+                text.contains("Remote work and charges may continue"),
+                "{text}"
+            );
+            let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter)
+            else {
+                panic!("confirm close")
+            };
+            assert_eq!(
+                message.request,
+                Request::CloseTerminal {
+                    session: id,
+                    expected_run: run
+                }
+            );
+        }
+    }
 }

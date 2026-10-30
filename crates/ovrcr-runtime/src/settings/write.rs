@@ -24,7 +24,11 @@ pub fn set(document: &Path, path: &str, value: Option<&str>) -> anyhow::Result<(
         .with_context(fail)?;
     // Findings the edited setting is judged by: the loader's key for it.
     let root = match segments.as_slice() {
-        [Segment::Key(group), ..] if group == "quota" || group == "delegation" => path.to_owned(),
+        [Segment::Key(group), ..]
+            if group == "quota" || group == "delegation" || group == "operator" =>
+        {
+            path.to_owned()
+        }
         [Segment::Key(name), ..] => name.clone(),
         _ => unreachable!("declared paths start with a key"),
     };

@@ -633,7 +633,7 @@ Requested limits cannot loosen Server policy. Native descendants are not separat
 inventoried OVRCR sessions. The Pi research launch advertises no native-helper capability because it restricts
 built-in tools and disables discovered extensions and skills. The Claude adapter's
 explicit `native_helpers` mandatory capability selects its sealed read-only native
-helper-v1 recipe, which gains no new native approvals. Default no-helper Claude Research uses the versioned v2 invocation-only permissions for its exact assigned read/publish/question tools; all existing Server authority checks remain in force, and old v1 proofs require fresh Prepare. See
+helper-v1 recipe, which gains no new native approvals. Default no-helper Claude Research uses the versioned v3 invocation-only permissions for its exact assigned read/publish/question tools; all existing Server authority checks remain in force, and old v1/v2 proofs require fresh Prepare. See
 [Claude helper boundaries and installed acceptance gap](pi-claude-delegation.md#explicit-native-research-helpers-unaccepted-source-candidate).
 This is provider-specific worker evidence, not independent review. Native helper
 use requires separate installed-provider acceptance; descendant accounting remains

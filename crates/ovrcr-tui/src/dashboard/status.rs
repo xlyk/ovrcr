@@ -420,6 +420,7 @@ mod tests {
 
     fn session(phase: SessionPhase, agent: Option<AgentSnapshot>) -> SessionSummary {
         SessionSummary {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             archived: false,
             cwd: "/work".into(),
             id: SessionId(1),

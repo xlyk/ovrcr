@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 /// Providers accepted by `agent run|setup|doctor`, shared so help text and
 /// value parsing cannot drift between the three subcommands.
-pub(super) const PROVIDERS: [&str; 7] = [
+pub(super) const PROVIDERS: [&str; 8] = [
     "claude",
     "codex",
     "pi",
@@ -13,6 +13,7 @@ pub(super) const PROVIDERS: [&str; 7] = [
     "grok",
     "hermes",
     "cursor-agent",
+    "cursor-cloud",
 ];
 
 /// `ovrcr --version` output: the package version plus the wire protocol
@@ -54,6 +55,11 @@ pub(super) enum SettingsCommand {
 
 #[derive(Subcommand)]
 pub(super) enum Command {
+    /// Subscription sign-in and account setup for the built-in Operator.
+    Operator {
+        #[command(subcommand)]
+        command: OperatorCommand,
+    },
     /// Connect-only Bridge navigation and current-owner validation. Never starts a Server.
     Bridge {
         #[command(subcommand)]
@@ -153,6 +159,42 @@ pub(super) enum Command {
     Report {
         #[command(subcommand)]
         command: ReportCommand,
+    },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub(super) enum OperatorProviderArg {
+    Chatgpt,
+    Grok,
+}
+impl From<OperatorProviderArg> for ovrcr::protocol::OperatorProvider {
+    fn from(value: OperatorProviderArg) -> Self {
+        match value {
+            OperatorProviderArg::Chatgpt => Self::ChatGpt,
+            OperatorProviderArg::Grok => Self::Grok,
+        }
+    }
+}
+#[derive(Subcommand)]
+pub(super) enum OperatorCommand {
+    /// Sign in to the subscription account, opening your system browser.
+    Login { provider: OperatorProviderArg },
+    /// Show this instance's subscription sign-in state without refreshing it.
+    Status { provider: OperatorProviderArg },
+    /// List available ChatGPT models or the supported Grok catalog.
+    Models { provider: OperatorProviderArg },
+    /// Remove this instance's provider credential; report remote revocation separately.
+    Logout { provider: OperatorProviderArg },
+    #[command(hide = true)]
+    Worker {
+        #[arg(long)]
+        conversation: u64,
+        #[arg(long)]
+        turn: u64,
+        #[arg(long)]
+        session: u64,
+        #[arg(long)]
+        run: u64,
     },
 }
 
@@ -269,6 +311,14 @@ pub(super) enum WorkspaceCommand {
 
 #[derive(Subcommand)]
 pub(super) enum TerminalCommand {
+    /// Persist cloud cancellation intent and close further delivery; remote cancellation remains unconfirmed.
+    CloudCancel {
+        id: u64,
+    },
+    /// Discard retained cloud creation locally; remote effects may remain unknown.
+    CloudDiscard {
+        id: u64,
+    },
     /// Mark one observed agent response reviewed. Changes unread only.
     MarkReviewed {
         id: u64,
@@ -287,7 +337,7 @@ pub(super) enum TerminalCommand {
         #[arg(long, alias = "automatic")]
         reset: bool,
     },
-    /// Reopen a terminal and execute the agent resume command, or open its native resume picker when no conversation is saved. Confirm uncertain previous processes stopped with --ack-stopped.
+    /// Reopen the retained terminal: resume a supported agent, reconcile an exact cloud run without replay, or open its native picker. Confirm uncertain previous processes stopped with --ack-stopped.
     Reopen {
         id: u64,
         #[arg(long)]
@@ -448,6 +498,16 @@ pub(super) fn parse_activity_state(value: &str) -> std::result::Result<AgentActi
 
 #[derive(Subcommand)]
 pub(super) enum AgentCommand {
+    #[command(hide = true)]
+    CloudPreview {
+        account: String,
+        #[arg(long)]
+        recovery: Option<String>,
+    },
+    #[command(hide = true)]
+    CloudAdmission,
+    #[command(hide = true)]
+    CloudCreation,
     /// Print a reviewed settings composition; never modify provider settings.
     Setup {
         #[arg(value_parser = PROVIDERS)]
@@ -469,7 +529,7 @@ pub(super) enum AgentCommand {
         executable: Option<OsString>,
     },
     #[command(
-        long_about = "Run a native command with invocation supervision. Codex reporting supports --no-daemon and --strict-config as safe retained options, and interactive Codex CLI fresh launches with synchronous direct-exec hooks configured through report codex --stdin. Claude, Codex, Pi, and Oh My Pi append one default auto-trust flag when argv has no permission-mode, approve, auto-approve, approve-for-me, full-auto, or dangerously-* flag: --dangerously-skip-permissions, --approve-for-me, --approve, or --auto-approve. An existing flag in that family is left untouched. Grok, Hermes, and Cursor keep native argv unchanged. Managed fresh root hooks retain exact conversation identity for terminal reopen; recovery executes codex resume UUID with no prompt and preserves the reference across restarts. Exact `codex resume UUID` admits reporting after matching SessionStart(source=resume) Root identity; process creation alone does not confirm attachment and historical responses are not replayed as Ready. Fork, picker-without-UUID, exec, remote and unknown options run with reporting unavailable. A root prompt establishes Busy; its Stop yields Ready once and Interrupt closes it without Ready. Missing ending hooks can leave Busy; no transcript or timeout implies completion. Initial conversation admission supports interactive Claude Code with a fresh startup or a separate-token --resume UUID or -r UUID. No harness version is required or refused: admission is decided by argv, hooks and conversation identity. Resume values must be canonical lowercase UUIDv4. Eligible options: --model, --permission-mode, --agent, --agents, --settings, --setting-sources, --system-prompt, --append-system-prompt, --name/-n, --strict-mcp-config, --verbose, and permission bypass flags. One prompt is supported only for fresh launches; use an explicit -- before a prompt matching a native subcommand. Unknown or ambiguous options, help/version, history selection, and other execution modes run with admission unavailable. Eligible fresh invocations receive a supervisor-selected --session-id; resume argv remains unchanged. Pi and Oh My Pi: interactive terminal launches are supervised and load the owned OVRCR reporting extension beside the user's own extensions; help, version, print, RPC, JSON, ACP, export and package commands run native with reporting unavailable. Grok: a fresh interactive launch in the current directory receives a supervisor-selected --session-id and retains the updates.jsonl that Grok's session store keeps for it, as a title source only; nothing is reported and resume stays unavailable. Resume, continue, fork, explicit session IDs, headless output, another working directory or worktree, and subcommands run with original argv. Hermes: process supervision only, with native argv unchanged and no OVRCR hooks/settings. Activity, readiness, Input requests, metrics, generated titles and recovery are unavailable; the installed native command runs without a version gate. Use agent doctor hermes for filesystem discovery and capability guidance without executing Hermes or validating its version, authentication or model; see docs/hermes-harness.md for recorded acceptance and its limits. Cursor CLI: fresh interactive cursor-agent or explicit agent alias, with no args or --model VALUE, checks the installed CLI for local plugin support and loads a temporary passive plugin for validated startup identity only. Activity, Ready/Unread, Input, metrics, titles and recovery are unavailable. Missing local plugin support, unsupported options and resume/continue remain native unchanged with reporting unavailable."
+        long_about = "Run a native command with invocation supervision. cursor-cloud requires one named account after --, positive managed admission and macOS Keychain; it validates a pinned SDK Bridge preview of the published workspace origin/HEAD and explicit model and excludes local edits. Explicit prepare retains a local handle, then prompts Send to that same conversation with durable claims and exact run receipts. Busy input requires manual resubmission. An interrupted known-run transport may make at most two ObserveRun attempts on the same owned bridge with separate durable progress; correlated cloud terminal questions/approvals, uncertain CreateAgent/Send Retry, fresh-process active restoration, and fresh-handle old-offset reuse are unavailable and not planned. Same-owned-bridge ObserveRun and completed exact-run GetRun reconciliation remain supported. Configure cursor_cloud_accounts in dashboard.toml and select cursor-cloud:ACCOUNT in ordinary Agent creation. Codex reporting supports --no-daemon and --strict-config as safe retained options, and interactive Codex CLI fresh launches with synchronous direct-exec hooks configured through report codex --stdin. Claude, Codex, Pi, and Oh My Pi append one default auto-trust flag when argv has no permission-mode, approve, auto-approve, approve-for-me, full-auto, or dangerously-* flag: --dangerously-skip-permissions, --approve-for-me, --approve, or --auto-approve. An existing flag in that family is left untouched. Grok, Hermes, and Cursor keep native argv unchanged. Managed fresh root hooks retain exact conversation identity for terminal reopen; recovery executes codex resume UUID with no prompt and preserves the reference across restarts. Exact `codex resume UUID` admits reporting after matching SessionStart(source=resume) Root identity; process creation alone does not confirm attachment and historical responses are not replayed as Ready. Fork, picker-without-UUID, exec, remote and unknown options run with reporting unavailable. A root prompt establishes Busy; its Stop yields Ready once and Interrupt closes it without Ready. Missing ending hooks can leave Busy; no transcript or timeout implies completion. Initial conversation admission supports interactive Claude Code with a fresh startup or a separate-token --resume UUID or -r UUID. No harness version is required or refused: admission is decided by argv, hooks and conversation identity. Resume values must be canonical lowercase UUIDv4. Eligible options: --model, --permission-mode, --agent, --agents, --settings, --setting-sources, --system-prompt, --append-system-prompt, --name/-n, --strict-mcp-config, --verbose, and permission bypass flags. One prompt is supported only for fresh launches; use an explicit -- before a prompt matching a native subcommand. Unknown or ambiguous options, help/version, history selection, and other execution modes run with admission unavailable. Eligible fresh invocations receive a supervisor-selected --session-id; resume argv remains unchanged. Pi and Oh My Pi: interactive terminal launches are supervised and load the owned OVRCR reporting extension beside the user's own extensions; help, version, print, RPC, JSON, ACP, export and package commands run native with reporting unavailable. Grok: a fresh interactive launch in the current directory receives a supervisor-selected --session-id and retains the updates.jsonl that Grok's session store keeps for it, as a title source only; nothing is reported and resume stays unavailable. Resume, continue, fork, explicit session IDs, headless output, another working directory or worktree, and subcommands run with original argv. Hermes: process supervision only, with native argv unchanged and no OVRCR hooks/settings. Activity, readiness, Input requests, metrics, generated titles and recovery are unavailable; the installed native command runs without a version gate. Use agent doctor hermes for filesystem discovery and capability guidance without executing Hermes or validating its version, authentication or model; see docs/hermes-harness.md for recorded acceptance and its limits. Cursor CLI: fresh interactive cursor-agent or explicit agent alias, with no args or --model VALUE, checks the installed CLI for local plugin support and loads a temporary passive plugin for validated startup identity only. Activity, Ready/Unread, Input, metrics, titles and recovery are unavailable. Missing local plugin support, unsupported options and resume/continue remain native unchanged with reporting unavailable."
     )]
     Run {
         #[arg(value_parser = PROVIDERS, required_unless_present = "legacy_provider")]

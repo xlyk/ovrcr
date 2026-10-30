@@ -24,6 +24,12 @@ profile paths; explicit child overrides can point to task-owned provider fixture
 The thread adapter shares the test process environment, so local regression runs
 also require a private process HOME and provider profiles.
 
+Concurrent `OuterDashboard` clients share one private executable copy while
+their children are alive, avoiding startup delays from concurrent fresh images.
+Each client keeps its fixture HOME, settings, socket and selected Server image;
+custom executable fixtures retain their own copies. The last child owner removes
+the shared image after reaping, and startup assets remain outside the Cargo target.
+
 `Live::request` blocks until the server answers; `Live::bounded` — which `Live::binary` applies
 to itself — gives every request a deadline instead, so a test fails rather than
 hangs when its server stops answering. `Live::ready` creates the fixture
@@ -50,13 +56,24 @@ cannot extend names itself in the matrix's failure and needs one table entry.
 
 ## Hosted CI schedule
 
-Pull requests and pushes to `main` run the macOS `checks` job automatically.
+Pull requests and pushes to `main` run `macOS checks` and
+`macOS offline Cursor preflight` on separate macOS runners. Each acceptance job
+keeps its 45-minute limit; the standalone offline Cursor suite no longer shares
+the Rust, packaging and installed-Pi job's budget.
+
+The required `checks` job waits for both acceptance jobs. Its shell guard requires
+both results to be `success`; a final step fails if the workflow was cancelled.
+Failed, cancelled or skipped dependencies cannot satisfy it. This one-minute
+macOS aggregate has no checkout or tools. Its job and guards use `always()` to
+evaluate failures and cancellation; the acceptance jobs remain cancellable, so a
+superseded pull-request run releases its expensive work normally.
+
 The `linux`, `linux capacity` and `linux memory high-water` jobs run only on
 manual dispatch: GitHub **Actions → CI → Run workflow**, then select the branch.
 Manual dispatch also runs the macOS checks. Linux jobs and their assertions remain
 intact; a skipped job is not evidence of passing Linux acceptance.
 
-The `checks` and `linux` test steps run under `cargo nextest` with the `ci`
+The `macOS checks` and `linux` test steps run under `cargo nextest` with the `ci`
 profile from `.config/nextest.toml`: a failing test is retried twice and
 reported as `FLAKY` instead of failing the job, and a test that hangs is
 terminated after five minutes. A test that fails every attempt still fails the
@@ -70,7 +87,7 @@ Linux agents (Cursor Cloud, CI runners) are headless. The GUI feature has no
 Linux windowing backend, so match the `linux` job in `.github/workflows/ci.yml`
 and omit `--all-features`.
 
-- Rust stable, at least the workspace `rust-version` (1.95), plus rustfmt and
+- Rust stable, at least the workspace `rust-version` (1.97.1), plus rustfmt and
   clippy. A default cloud image may be older.
 - `zsh` is required. Shell integration tests invoke `/bin/zsh`.
 - Node 22 runs `node --test tests/pi_reporting_extension.mjs
@@ -94,6 +111,19 @@ node --test tests/pi_reporting_extension.mjs
 
 Node 22; the Pi extension and its host run outside cargo.
 
+On macOS, the Cursor dependency packaging check exercises the real installer and
+a relocated CLI without executing the bridge or reading credentials. Supply the
+pinned host archive and the built CLI explicitly (CI downloads that exact official
+release into an isolated home first):
+
+```sh
+OVRCR_CURSOR_BRIDGE_ARCHIVE=/absolute/official/archive.tar.gz OVRCR_TEST_EXECUTABLE=/absolute/ovrcr python3 -I tests/cursor_bridge_install.py
+```
+
+This verifies passive setup/doctor and installation/refusal behavior only. It
+cannot close the upstream local-agent smoke, native cloud acceptance or capability
+gates in [Cursor cloud](../cursor-cloud.md).
+
 At the feature acceptance checkpoint, run the assigned gates and the workspace regression/lint checks; do not repeat them after every edit:
 
 ```sh
@@ -108,6 +138,17 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 - Never bypass a tool's access denial through another control channel or modify the user's live agent configuration to make an acceptance check pass.
 - Interactive Dashboard fixtures can encounter optional native-hook or Bridge setup offers. Decline recognized optional offers with `n`, leave unknown decisions unanswered, and wait for the actual alternate-screen Dashboard before sending test input. Preserve fresh-output assertions separately from waits for already-rendered state. The development GUI retains a single Cmd-K intent across dashboard restart; tests must not resend the shortcut to compensate for startup.
 - The shared initial-admission lifecycle cases can fail with `supervisor must select a fresh UUID` when a saturated host pushes the fixture's `/bin/sh` reply past the product's one-second probe budget; read a recurrence as contention unless its evidence says otherwise, per the [issue #62 diagnosis](../../research/issue-62-lifecycle-diagnosis/README.md).
+
+## Standalone Cursor cloud client
+
+The offline-only client suite uses synthetic credentials, a controlled external bridge
+process and real private files/sockets/Git repositories. It covers preflight, a
+coding run with exact-run observation recovery, same-conversation follow-up,
+third-run cancellation and optional read-only owned-bridge restart, including
+uncertain receipts, source/result verification, original deadlines and closure. It creates no cloud work and requires no
+OVRCR Server or live account. Run `python3 -I -m unittest discover -s experiments/cursor-cloud -p test_client.py -v`.
+See [invocation and acceptance mapping](../../experiments/cursor-cloud/README.md)
+for deadlines, ownership receipts and the separately gated live proof.
 
 ## Git owner acceptance receipts
 
@@ -144,3 +185,29 @@ must have drained/reaped all clients and native owners first; it must not admit
 new Git work after that boundary. Late begin or duplicate finalization is
 unhealthy, even when failed persistence leaves prior healthy seal bytes.
 This fixture prerequisite does not add joins or general client containment.
+
+## Built-in Operator acceptance
+
+The [Operator reference](operator.md) documents its feature-gated loopback model
+endpoint. The fixture signs in through a local OAuth server and normal credential
+storage; it neither imports personal accounts nor bypasses authentication.
+
+```sh
+rtk cargo test -p ovrcr --test operator_auth
+rtk cargo test -p ovrcr --test operator_worker
+rtk cargo test -p ovrcr --test operator_e2e --features acceptance-diagnostics
+rtk cargo test -p ovrcr --test operator_scope
+```
+
+The E2E fixture executes the compiled worker, real Bash/CLI, authenticated framing,
+Server journal and native Dashboard actions. It asserts concurrent streams,
+independent Stop, context resume without command replay, real timeout-child
+termination, missing-auth retirement and incomplete-response rejection. Explicit
+ignored fixture entrypoints are invoked and checked by their owning parent or
+native acceptance; they are not passing product cases merely because ignored.
+Keep actual native screenshots/accessibility and live subscription acceptance
+separate from loopback evidence.
+
+The [2026-10-29–30 Operator acceptance record](../../research/rig-operator-2026-10-29/README.md)
+contains real ChatGPT GUI turns and a separate controlled concurrent-chat run,
+with executable hashes, cleanup receipts and remaining gate limitations.

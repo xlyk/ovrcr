@@ -39,6 +39,7 @@ mod bridge_navigation;
 mod copy_history;
 mod events;
 mod mouse;
+mod operator;
 mod palette;
 mod quota;
 mod settings;
@@ -56,6 +57,7 @@ fn session_summary(
     started_unix_ms: u64,
 ) -> SessionSummary {
     SessionSummary {
+        scope: ovrcr_protocol::SessionScope::Workspace,
         archived: false,
         cwd: "/work".into(),
         id: SessionId(id),

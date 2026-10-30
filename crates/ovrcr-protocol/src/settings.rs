@@ -1431,6 +1431,90 @@ pub struct AgentOverride {
     pub argv: Vec<String>,
 }
 
+/// Nonsecret selection policy; this name does not attest a billing identity.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CursorCloudAccount {
+    pub name: String,
+    pub keychain_service: String,
+    pub keychain_account: String,
+    pub model: String,
+    pub repositories: Vec<String>,
+    pub owners: Vec<String>,
+    pub bridge_archive: PathBuf,
+}
+
+impl CursorCloudAccount {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.name.is_empty()
+                && self.name.len() <= 64
+                && self
+                    .name
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c)),
+            "invalid cloud account name"
+        );
+        for value in [&self.keychain_service, &self.keychain_account, &self.model] {
+            anyhow::ensure!(
+                !value.trim().is_empty()
+                    && value.len() <= 256
+                    && !value.chars().any(char::is_control),
+                "explicit Keychain reference and model required"
+            );
+        }
+        anyhow::ensure!(
+            !["auto", "default", "latest", "local"]
+                .contains(&self.model.to_ascii_lowercase().as_str()),
+            "explicit model required"
+        );
+        anyhow::ensure!(
+            self.bridge_archive.is_absolute(),
+            "bridge archive must be absolute"
+        );
+        anyhow::ensure!(
+            !self.repositories.is_empty() || !self.owners.is_empty(),
+            "repository or owner policy required"
+        );
+        anyhow::ensure!(
+            self.repositories
+                .iter()
+                .all(|r| canonical_cloud_repository(r).as_deref() == Some(r)),
+            "policy requires canonical GitHub repositories"
+        );
+        anyhow::ensure!(self.owners.iter().all(|o| !o.is_empty() && o.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')), "invalid repository owner");
+        Ok(())
+    }
+
+    pub fn permits(&self, repository: &str) -> bool {
+        self.repositories.iter().any(|r| r == repository)
+            || repository
+                .strip_prefix("https://github.com/")
+                .and_then(|r| r.split_once('/'))
+                .is_some_and(|(owner, _)| self.owners.iter().any(|o| o == owner))
+    }
+}
+
+/// Only public GitHub origins are accepted; embedded credentials never reach preview.
+pub fn canonical_cloud_repository(origin: &str) -> Option<String> {
+    let path = origin
+        .strip_prefix("https://github.com/")
+        .or_else(|| origin.strip_prefix("git@github.com:"))?;
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let (owner, repo) = path.split_once('/')?;
+    if [owner, repo].iter().any(|s| {
+        s.is_empty()
+            || *s == "."
+            || *s == ".."
+            || !s
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"_.-".contains(&c))
+    }) {
+        return None;
+    }
+    Some(format!("https://github.com/{owner}/{repo}"))
+}
+
 /// A plain enum on the wire: bincode cannot decode serde-tagged enums. The
 /// settings loader reads the document's `kind`/`preset` form itself.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1569,6 +1653,8 @@ impl DelegationSettings {
 /// Every effective value. `picker_roots` is already `~`-expanded.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
+    #[serde(default)]
+    pub operator: crate::OperatorSettings,
     pub desktop_notifications: bool,
     pub ready_sound: bool,
     /// Absent document choice is `Some(Default)`; an explicit invalid value is
@@ -1585,6 +1671,7 @@ pub struct Settings {
     pub branch_prefix: String,
     pub picker_roots: Vec<PathBuf>,
     pub agents: Vec<AgentOverride>,
+    pub cursor_cloud_accounts: Vec<CursorCloudAccount>,
     pub launch_choices: BTreeMap<String, LaunchChoice>,
     pub quota: QuotaSettings,
     #[serde(default)]
@@ -1615,6 +1702,7 @@ pub const TITLES_OFF: &str =
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            operator: crate::OperatorSettings::default(),
             desktop_notifications: false,
             ready_sound: false,
             ready_sound_choice: Some(ReadySoundChoice::Default),
@@ -1625,6 +1713,7 @@ impl Default for Settings {
             branch_prefix: "feature/".into(),
             picker_roots: Vec::new(),
             agents: Vec::new(),
+            cursor_cloud_accounts: Vec::new(),
             launch_choices: BTreeMap::new(),
             quota: QuotaSettings::default(),
             delegation: DelegationSettings::default(),

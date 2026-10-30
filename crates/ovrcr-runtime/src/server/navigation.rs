@@ -470,6 +470,7 @@ mod tests {
             .retained
             .lock()
             .create(crate::retained::SessionMetadata {
+                scope: ovrcr_protocol::SessionScope::Workspace,
                 project: "p".into(),
                 workspace: "w".into(),
                 name: "n".into(),

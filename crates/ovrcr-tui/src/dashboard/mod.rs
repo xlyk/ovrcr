@@ -12,6 +12,7 @@ mod iterm;
 mod keymap;
 mod lifecycle_ui;
 mod navigation;
+mod operator;
 mod outbox;
 mod palette;
 pub(crate) mod picker;
@@ -253,6 +254,7 @@ pub(super) enum HoveredRow {
 }
 
 pub struct Dashboard {
+    operator: operator::Hub,
     desktop: desktop::DesktopNotifications,
     tasks: Option<TasksView>,
     hierarchy: HierarchySnapshot,

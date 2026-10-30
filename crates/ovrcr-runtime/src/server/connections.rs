@@ -168,7 +168,10 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
         if supervisor.is_some()
             && !matches!(
                 message.request,
-                Request::Supervisor(_) | Request::AgentStatus { .. }
+                Request::Supervisor(_)
+                    | Request::AgentStatus { .. }
+                    | Request::OperatorExchange(_)
+                    | Request::OperatorWorker(_)
             )
         {
             let _ = send_direct(
@@ -277,6 +280,25 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
             }
             break;
         }
+        if let Request::Operator(request) = &message.request
+            && let Some(owned) = &ownership
+            && let Some(response) = operator::dispatch_control(
+                &state,
+                &owned.identity,
+                message.request_id,
+                request.clone(),
+            )
+        {
+            if !matches!(response, Response::Ok)
+                && !state.dashboard.send_owner(
+                    &owned.identity,
+                    response_message(message.request_id, response),
+                )
+            {
+                break;
+            }
+            continue;
+        }
         let shutdown = matches!(message.request, Request::Shutdown { .. });
         let deferred_view = matches!(
             message.request,
@@ -306,7 +328,10 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                 &mut role,
                 message.request.clone(),
                 message.request_id,
-                ownership.as_ref().map(|owned| &owned.identity),
+                ownership
+                    .as_ref()
+                    .map(|owned| &owned.identity)
+                    .or_else(|| supervisor.as_ref().map(|owned| &owned.identity)),
             )
         };
         let successful_shutdown = shutdown && state.stopping.load(Ordering::Acquire);
@@ -404,6 +429,25 @@ pub(super) fn handle_request_with_id(
 ) -> Response {
     let dashboard = matches!(role, ClientRole::Dashboard);
     match request {
+        Request::Operator(request) => owner.filter(|_| dashboard).map_or_else(
+            || {
+                error_response(
+                    ErrorCode::InvalidRequest,
+                    "operator requires the current Dashboard",
+                )
+            },
+            |owner| {
+                state
+                    .operator_request(owner, request)
+                    .map_or_else(error_for_lifecycle, Response::Operator)
+            },
+        ),
+        Request::OperatorExchange(exchange) => state
+            .operator_exchange(exchange, owner)
+            .map_or_else(error_for_lifecycle, Response::OperatorExchange),
+        Request::OperatorWorker(request) => state
+            .operator_worker(request, owner)
+            .map_or_else(error_for_lifecycle, Response::OperatorWorker),
         Request::NavigateNotification { ticket } if !dashboard && owner.is_none() => {
             state.navigate_notification(ticket)
         }
@@ -467,6 +511,18 @@ pub(super) fn handle_request_with_id(
             key,
         } => state
             .keystroke(session, expected_run, &key)
+            .map_or_else(error_for_lifecycle, |_| Response::Ok),
+        Request::CancelCloudCreation {
+            session,
+            expected_run,
+        } => state
+            .cancel_cloud_creation(session, expected_run)
+            .map_or_else(error_for_lifecycle, |_| Response::Ok),
+        Request::DiscardCloudCreation {
+            session,
+            expected_run,
+        } => state
+            .discard_cloud_creation(session, expected_run)
             .map_or_else(error_for_lifecycle, |_| Response::Ok),
         Request::DeleteArchivedSession {
             session,

@@ -239,7 +239,7 @@ fn path_text(path: &std::path::Path) -> Option<String> {
     Some(path.display().to_string())
 }
 
-const CATALOG: [Entry; 28] = [
+const CATALOG: [Entry; 32] = [
     Entry {
         path: "desktop_notifications",
         shape: Shape::Toggle,
@@ -470,6 +470,19 @@ const CATALOG: [Entry; 28] = [
         show_off: |_| false,
     },
     Entry {
+        path: "cursor_cloud_accounts",
+        shape: Shape::Typed("an array of named cloud account policies"),
+        owner: SettingOwner::Server,
+        group: "Agents",
+        label: "Cursor cloud accounts",
+        off_state: None,
+        about: &[
+            "Named Keychain references, explicit model and repository/owner policy; selection is not billing identity attestation. macOS only.",
+        ],
+        value: |settings| display(&settings.cursor_cloud_accounts),
+        show_off: |_| false,
+    },
+    Entry {
         path: "launch_choices",
         shape: Shape::Launches,
         owner: SettingOwner::Dashboard,
@@ -478,6 +491,42 @@ const CATALOG: [Entry; 28] = [
         off_state: None,
         about: &[],
         value: |settings| display_choices(&settings.launch_choices),
+        show_off: |_| false,
+    },
+    Entry {
+        path: "operator.provider",
+        shape: Shape::Pick {
+            options: &["chat_gpt", "grok"],
+            expected: "chat_gpt or grok",
+        },
+        owner: SettingOwner::Server,
+        group: "Operator",
+        label: "Provider",
+        off_state: None,
+        about: &["Defaults for new conversations; subscription credentials are stored separately."],
+        value: |settings| Some(settings.operator.provider.as_str().into()),
+        show_off: |_| false,
+    },
+    Entry {
+        path: "operator.chat_gpt_model",
+        shape: Shape::Text("a model identifier"),
+        owner: SettingOwner::Server,
+        group: "Operator",
+        label: "ChatGPT model",
+        off_state: None,
+        about: &["Defaults for new conversations; subscription credentials are stored separately."],
+        value: |settings| settings.operator.chat_gpt_model.clone(),
+        show_off: |_| false,
+    },
+    Entry {
+        path: "operator.grok_model",
+        shape: Shape::Text("a model identifier"),
+        owner: SettingOwner::Server,
+        group: "Operator",
+        label: "Grok model",
+        off_state: None,
+        about: &["Defaults for new conversations; subscription credentials are stored separately."],
+        value: |settings| settings.operator.grok_model.clone(),
         show_off: |_| false,
     },
     Entry {
@@ -619,7 +668,11 @@ mod tests {
                 "quota.cursor.dashboard",
                 "quota.cursor.state_db",
                 "agents",
+                "cursor_cloud_accounts",
                 "launch_choices",
+                "operator.provider",
+                "operator.chat_gpt_model",
+                "operator.grok_model",
                 "delegation.progress_deadline_ms",
                 "delegation.enabled",
                 "delegation.allowed_harnesses",
@@ -643,6 +696,7 @@ mod tests {
                 "Usage",
                 "Agents",
                 "Remembered launches",
+                "Operator",
                 "Delegation"
             ]
         );
@@ -853,6 +907,11 @@ mod tests {
     fn every_entry_has_a_top_level_write_and_a_reader() {
         let settings = Settings {
             title_model: Some("pi/test".into()),
+            operator: crate::OperatorSettings {
+                chat_gpt_model: Some("chat".into()),
+                grok_model: Some("grok".into()),
+                ..Default::default()
+            },
             delegation: crate::DelegationSettings {
                 default_model: Some("test/model".into()),
                 max_execution_attempts: Some(2),

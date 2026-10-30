@@ -12,13 +12,25 @@ use std::{
     path::{Component, Path},
 };
 
-pub(super) struct Directory(File);
+pub(crate) struct Directory(File);
 impl Directory {
+    pub(crate) fn remove(&self, name: &str) -> Result<()> {
+        if name.contains('/') || name == "." || name == ".." {
+            bail!("invalid publication name");
+        }
+        let name = CString::new(name)?;
+        if unsafe { libc::unlinkat(self.0.as_raw_fd(), name.as_ptr(), 0) } != 0
+            && std::io::Error::last_os_error().kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        self.sync()
+    }
     pub(super) fn sync(&self) -> Result<()> {
         self.0.sync_all().map_err(Into::into)
     }
 
-    pub(super) fn open(path: &Path, create: bool) -> Result<Self> {
+    pub(crate) fn open(path: &Path, create: bool) -> Result<Self> {
         let directory = open_directory(path, create)?;
         let metadata = directory.metadata()?;
         if metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o077 != 0 {
@@ -26,7 +38,7 @@ impl Directory {
         }
         Ok(Self(directory))
     }
-    pub(super) fn read(&self, name: &str) -> Result<Vec<u8>> {
+    pub(crate) fn read(&self, name: &str) -> Result<Vec<u8>> {
         let name = CString::new(name)?;
         let fd = unsafe {
             libc::openat(
@@ -58,7 +70,7 @@ impl Directory {
     pub(super) fn replace(&self, name: &str, bytes: &[u8]) -> Result<()> {
         self.write(name, bytes, true)
     }
-    pub(super) fn publish(&self, name: &str, bytes: &[u8]) -> Result<()> {
+    pub(crate) fn publish(&self, name: &str, bytes: &[u8]) -> Result<()> {
         self.write(name, bytes, false)
     }
     fn write(&self, name: &str, bytes: &[u8], replace: bool) -> Result<()> {

@@ -228,6 +228,7 @@ mod tests;
 
 #[derive(Clone, Debug)]
 pub struct SessionSpec {
+    pub scope: ovrcr_protocol::SessionScope,
     /// Transient shell input for a long resume command; never retained on disk.
     pub restore_command: Option<String>,
     pub project: String,
@@ -444,6 +445,7 @@ fn write_delegated(
 pub struct Session {
     // Keep startup files alive until the shell has finished using them.
     _shell_startup: Option<tempfile::TempDir>,
+    cloud_scratch: Mutex<Option<tempfile::TempDir>>,
     summary: SessionSummary,
     #[cfg(test)]
     pub(crate) initial_cwd: PathBuf,
@@ -612,6 +614,21 @@ impl Session {
         if let Some(restore_command) = &spec.restore_command {
             command.env("OVRCR_RESTORE_COMMAND", restore_command);
         }
+        command.env_remove("OVRCR_CURSOR_CLOUD_ROOT");
+        let cloud_scratch = if matches!(&spec.kind, SessionKind::Agent { name } if name.starts_with("cursor-cloud:"))
+        {
+            let root = tempfile::Builder::new()
+                .prefix("ovrcr-cloud-")
+                .tempdir()
+                .map_err(|error| NoProcessStarted::context(error.into()))?;
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700))
+                .map_err(|error| NoProcessStarted::context(error.into()))?;
+            command.env("OVRCR_CURSOR_CLOUD_ROOT", root.path());
+            Some(root)
+        } else {
+            None
+        };
         let shell_startup =
             shell_prompt::configure(&mut command, &spec.argv).map_err(NoProcessStarted::context)?;
         command.env_remove("OVRCR_AGENT_SOCKET");
@@ -668,9 +685,11 @@ impl Session {
             .as_millis() as u64;
         let session = Arc::new(Self {
             _shell_startup: shell_startup,
+            cloud_scratch: Mutex::new(cloud_scratch),
             #[cfg(test)]
             initial_cwd,
             summary: SessionSummary {
+                scope: spec.scope,
                 cwd: spec.cwd.clone(),
                 archived: false,
                 title: None,

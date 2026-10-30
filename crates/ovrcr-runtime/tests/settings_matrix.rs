@@ -27,6 +27,8 @@ enum Kind {
 
 /// Settings whose default is unset have no value text to read a type from.
 const UNSET_KINDS: &[(&str, Kind)] = &[
+    ("operator.chat_gpt_model", Kind::Str),
+    ("operator.grok_model", Kind::Str),
     ("delegation.default_model", Kind::Str),
     ("delegation.max_execution_attempts", Kind::Integer),
     ("title_model", Kind::Str),
@@ -38,6 +40,7 @@ const UNSET_KINDS: &[(&str, Kind)] = &[
 /// Enum settings: how one spelling sits in the document, and the documented
 /// spellings. Near misses of each spelling are the unknown-spelling cases.
 const ENUMS: &[(&str, &str, &[&str])] = &[
+    ("operator.provider", "\"{}\"", &["chat_gpt", "grok"]),
     (
         "delegation.default_harness",
         "\"{}\"",
@@ -80,11 +83,17 @@ const ENUMS: &[(&str, &str, &[&str])] = &[
 /// A valid non-default value where the default's text cannot suggest one: an
 /// empty or home-dependent collection, or a string with its own format.
 const SAMPLES: &[(&str, &str)] = &[
+    ("operator.chat_gpt_model", "\"chat-model\""),
+    ("operator.grok_model", "\"grok-model\""),
     ("delegation.allowed_harnesses", "[\"pi\", \"codex\"]"),
     ("delegation.allowed_models", "[\"test/model\"]"),
     ("delegation.default_model", "\"test/model\""),
     ("title_model", "\"pi/matrix\""),
     ("picker_roots", "[\"/tmp/ovrcr-matrix\"]"),
+    (
+        "cursor_cloud_accounts",
+        "[{name = 'work', keychain_service = 'ovrcr', keychain_account = 'work', model = 'composer-2.5', repositories = ['https://github.com/acme/app'], owners = [], bridge_archive = '/tmp/sdk.tar.gz'}]",
+    ),
     ("agents", "[{ name = \"matrix\", argv = [\"matrix\"] }]"),
     ("launch_choices", "{ p = { kind = \"Terminal\" } }"),
 ];
@@ -386,7 +395,11 @@ fn matrix_covers_every_declared_setting() {
             "quota.cursor.dashboard",
             "quota.cursor.state_db",
             "agents",
+            "cursor_cloud_accounts",
             "launch_choices",
+            "operator.provider",
+            "operator.chat_gpt_model",
+            "operator.grok_model",
             "delegation.progress_deadline_ms",
             "delegation.enabled",
             "delegation.allowed_harnesses",
@@ -403,7 +416,8 @@ fn matrix_covers_every_declared_setting() {
         kinds,
         [
             Bool, Bool, Str, Bool, Str, Str, Bool, Str, Array, Str, Bool, Bool, Str, Str, Str, Str,
-            Bool, Str, Array, Table, Integer, Bool, Array, Array, Str, Str, Integer, Integer,
+            Bool, Str, Array, Array, Table, Str, Str, Str, Integer, Bool, Array, Array, Str, Str,
+            Integer, Integer,
         ]
     );
     // Every test-side table names a declared setting, so none goes stale.
@@ -890,4 +904,32 @@ fn delegation_policy_uses_catalog_writer_and_rejects_invalid_limits_without_chan
             .max_execution_attempts,
         None
     );
+}
+
+#[test]
+fn cloud_account_policy_roundtrips_through_shared_writer_without_changing_other_settings() {
+    let root = tempfile::tempdir().unwrap();
+    let document = root.path().join("dashboard.toml");
+    std::fs::write(&document, "# keep user settings\nbranch_prefix = 'kept/'\n").unwrap();
+    let value = lookup(SAMPLES, "cursor_cloud_accounts").unwrap();
+    settings::set(&document, "cursor_cloud_accounts", Some(value)).unwrap();
+    let report = settings::load_document(root.path(), &document);
+    assert!(report.findings.is_empty(), "{:?}", report.findings);
+    assert_eq!(report.settings.cursor_cloud_accounts[0].name, "work");
+    assert_eq!(
+        report.settings.cursor_cloud_accounts[0].model,
+        "composer-2.5"
+    );
+    assert_eq!(report.settings.branch_prefix, "kept/");
+    let before = std::fs::read_to_string(&document).unwrap();
+    assert!(before.contains("# keep user settings"));
+    assert!(
+        settings::set(
+            &document,
+            "cursor_cloud_accounts",
+            Some(&value.replace("composer-2.5", "auto"))
+        )
+        .is_err()
+    );
+    assert_eq!(std::fs::read_to_string(&document).unwrap(), before);
 }

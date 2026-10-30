@@ -262,6 +262,7 @@ impl MeasurementWatermarks {
 }
 
 pub(crate) enum AgentPersistence<'a> {
+    CloudCreation(&'a ovrcr_protocol::CloudCreationCommand, &'a str),
     Reservation(&'a ReserveAgent),
     Command(&'a AgentCommand),
 }
@@ -353,6 +354,46 @@ impl Session {
             quota.state = QuotaState::Unavailable;
         }
         Some(quota)
+    }
+
+    /// The retained owner is held by the caller; this is the final lease/run publication fence.
+    pub(crate) fn with_operator_authority<T>(
+        &self,
+        auth: &SupervisorAuth,
+        owner: Option<&Arc<()>>,
+        identity: ovrcr_protocol::OperatorTurnIdentity,
+        apply: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        let state = self.state.lock().unwrap();
+        if self.run() != identity.run
+            || self.summary.id != identity.session
+            || self.summary.scope
+                != (ovrcr_protocol::SessionScope::OperatorConversation {
+                    conversation: identity.conversation,
+                })
+            || !state.phase.is_live()
+            || state.hook_capability.is_none()
+        {
+            bail!("operator worker run is unavailable");
+        }
+        state.reporting.authenticate(auth)?;
+        if auth.session != identity.session
+            || state
+                .reporting
+                .reservation
+                .as_ref()
+                .is_none_or(|(r, _)| r.provider != AgentProvider::Operator)
+            || owner.is_some_and(|owner| {
+                state
+                    .reporting
+                    .owner
+                    .as_ref()
+                    .is_none_or(|current| !Arc::ptr_eq(owner, current))
+            })
+        {
+            bail!("operator supervisor owner changed");
+        }
+        apply()
     }
 
     pub(crate) fn agent_command(
@@ -464,6 +505,30 @@ impl Session {
             bail!("operation receipt is unavailable or stale");
         };
         let result = match &r.command {
+            AgentCommand::CloudCreation(command) => {
+                let reserve = &reporting
+                    .reservation
+                    .as_ref()
+                    .context("missing cloud reservation")?
+                    .0;
+                if reserve.provider != AgentProvider::CursorCloud {
+                    bail!("cloud creation requires selected managed provider");
+                }
+                persist(AgentPersistence::CloudCreation(
+                    command,
+                    &reserve.invocation,
+                ))?;
+                if matches!(command.as_ref(), CloudCreationCommand::ClaimSend { .. }) {
+                    // A durable new attempt retires prior response authority before any reply can escape.
+                    reporting.ready = None;
+                    if let Some(snapshot) = &mut reporting.snapshot {
+                        snapshot.activity = None;
+                        snapshot.native_control = None;
+                    }
+                }
+                AgentOperationResult::CloudCreationCommitted
+            }
+
             AgentCommand::WorkflowSource {
                 binding,
                 producer,

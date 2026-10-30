@@ -1,4 +1,6 @@
 //! Durable row identity and recovery metadata. Process handles and output stay in Session.
+pub(crate) mod cloud_creation;
+pub(crate) mod operator;
 use anyhow::{Context, Result, bail};
 use ovrcr_protocol::{
     AgentActivity, SessionId, SessionKind, SessionPhase, SessionRecovery, SessionRunId,
@@ -170,6 +172,7 @@ pub(crate) fn migrate_claude_conversations(connection: &Connection) -> Result<()
 
 #[derive(Clone, Debug)]
 pub(crate) struct SessionMetadata {
+    pub scope: ovrcr_protocol::SessionScope,
     pub project: String,
     pub workspace: String,
     pub name: String,
@@ -215,6 +218,7 @@ pub(crate) struct RetainedSession {
     pub failure: Option<String>,
     pub conversation: Option<ovrcr_protocol::ConversationReference>,
     pub identity_invalid: bool,
+    pub cloud_creation: Option<cloud_creation::Record>,
     pub subjects: HashMap<String, ConversationSubject>,
 }
 
@@ -231,13 +235,19 @@ impl RetainedSession {
                 .map(|reference| reference.identity().to_owned()),
             attached: false,
             requires_ack: self.requires_ack(current_boot),
-            unavailable: match &self.metadata.kind {
-                SessionKind::Terminal => None,
-                SessionKind::Agent { name } => crate::recovery::unavailable(
-                    name,
-                    self.conversation.as_ref(),
-                    self.identity_invalid,
-                ),
+            unavailable: match &self.cloud_creation {
+                Some(record) => record
+                    .recovery_target()
+                    .is_none()
+                    .then(|| record.description()),
+                None => match &self.metadata.kind {
+                    SessionKind::Terminal => None,
+                    SessionKind::Agent { name } => crate::recovery::unavailable(
+                        name,
+                        self.conversation.as_ref(),
+                        self.identity_invalid,
+                    ),
+                },
             },
             failure: self.failure.clone(),
         }
@@ -259,6 +269,7 @@ impl RetainedSession {
 
     pub fn summary(&self, current_boot: Option<&str>) -> SessionSummary {
         SessionSummary {
+            scope: self.metadata.scope,
             id: self.id,
             cwd: self.metadata.cwd.clone(),
             archived: self.disposition == Disposition::Archived,
@@ -296,10 +307,13 @@ pub(crate) struct SessionStore {
 
 impl SessionStore {
     pub fn open(config: &Path) -> Result<Self> {
-        Self::from_connection(crate::config::open_writable_registry(config)?)
+        let store = Self::from_connection(crate::config::open_writable_registry(config)?)?;
+        store.cleanup_creation_payloads(config)?;
+        Ok(store)
     }
 
     fn from_connection(connection: Connection) -> Result<Self> {
+        operator::interrupt_unfinished(&connection)?;
         let records = read_records(&connection, true)?;
         Ok(Self {
             connection,
@@ -313,8 +327,10 @@ impl SessionStore {
         let connection = Connection::open_in_memory().unwrap();
         create_schema(&connection).unwrap();
         create_delegation_schema(&connection).unwrap();
+        cloud_creation::create_schema(&connection).unwrap();
         create_conversation_schema(&connection).unwrap();
         create_conversation_subject_schema(&connection).unwrap();
+        operator::create_schema(&connection).unwrap();
         Self::from_connection(connection).unwrap()
     }
 
@@ -326,6 +342,7 @@ impl SessionStore {
             id: summary.id,
             run: summary.run,
             metadata: SessionMetadata {
+                scope: summary.scope,
                 project: summary.project,
                 workspace: summary.workspace,
                 name: summary.name,
@@ -341,6 +358,7 @@ impl SessionStore {
             failure: None,
             conversation: None,
             identity_invalid: false,
+            cloud_creation: None,
             disposition: Disposition::Active,
             subjects: HashMap::new(),
         };
@@ -348,14 +366,14 @@ impl SessionStore {
         self.connection.execute(
             "INSERT INTO retained_sessions
              (id, run, project, workspace, name, label, cwd, kind, pinned_title,
-              application_title, title_revision, boot_id, stopped, failure)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL)
+              application_title, title_revision, boot_id, stopped, failure, scope)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL, ?14)
              ON CONFLICT(id) DO UPDATE SET
              run=excluded.run, project=excluded.project, workspace=excluded.workspace,
              name=excluded.name, label=excluded.label, cwd=excluded.cwd, kind=excluded.kind,
              pinned_title=excluded.pinned_title, application_title=excluded.application_title,
              title_revision=excluded.title_revision, boot_id=excluded.boot_id,
-             stopped=excluded.stopped, failure=NULL",
+             stopped=excluded.stopped, failure=NULL, scope=excluded.scope",
             params![
                 sql_integer(record.id.0)?,
                 sql_integer(record.run.0)?,
@@ -370,6 +388,7 @@ impl SessionStore {
                 sql_integer(record.title_revision)?,
                 record.boot_id,
                 record.stopped,
+                serde_json::to_string(&metadata.scope)?,
             ],
         )?;
         self.records.insert(record.id, record);
@@ -544,6 +563,9 @@ impl SessionStore {
     }
 
     pub fn create(&mut self, metadata: SessionMetadata) -> Result<RetainedSession> {
+        if metadata.scope != ovrcr_protocol::SessionScope::Workspace {
+            bail!("global Operator sessions require conversation creation");
+        }
         self.connection
             .execute(
                 "INSERT INTO retained_sessions
@@ -573,6 +595,7 @@ impl SessionStore {
             failure: None,
             conversation: None,
             identity_invalid: false,
+            cloud_creation: None,
             disposition: Disposition::Active,
             subjects: HashMap::new(),
         };
@@ -880,6 +903,7 @@ impl SessionStore {
         expected: SessionRunId,
         archived: bool,
     ) -> Result<()> {
+        self.close_creation(id, expected)?;
         let record = self.records.get(&id).context("session not found")?;
         if record.run != expected || (record.disposition == Disposition::Archived) == archived {
             bail!("session archive state changed");
@@ -955,6 +979,7 @@ impl SessionStore {
     }
 
     pub fn remove(&mut self, id: SessionId, run: SessionRunId) -> Result<bool> {
+        self.refuse_creation_deletion(id)?;
         if self.records.get(&id).is_none_or(|record| record.run != run) {
             return Ok(false);
         }
@@ -1007,9 +1032,18 @@ fn read_records(
     has_disposition: bool,
 ) -> Result<HashMap<SessionId, RetainedSession>> {
     let disposition = if has_disposition { "disposition" } else { "0" };
+    let scope = if connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('retained_sessions') WHERE name='scope')",
+        [],
+        |row| row.get::<_, bool>(0),
+    )? {
+        "scope"
+    } else {
+        "'\"Workspace\"'"
+    };
     let mut query = connection.prepare(&format!(
         "SELECT id, run, project, workspace, name, label, cwd, kind, pinned_title,
-         application_title, title_revision, boot_id, stopped, failure, {disposition} FROM retained_sessions",
+         application_title, title_revision, boot_id, stopped, failure, {disposition}, {scope} FROM retained_sessions",
     ))?;
     let rows = query.query_map([], |row| {
         let kind: String = row.get(7)?;
@@ -1029,6 +1063,13 @@ fn read_records(
             id: SessionId(read_integer(row, 0)?),
             run: SessionRunId(read_integer(row, 1)?),
             metadata: SessionMetadata {
+                scope: serde_json::from_str(&row.get::<_, String>(15)?).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        15,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?,
                 project: row.get(2)?,
                 workspace: row.get(3)?,
                 name: row.get(4)?,
@@ -1044,6 +1085,7 @@ fn read_records(
             failure: row.get(13)?,
             conversation: None,
             identity_invalid: false,
+            cloud_creation: None,
             disposition: match row.get::<_, i64>(14)? {
                 0 => Disposition::Active,
                 1 => Disposition::Archived,
@@ -1059,8 +1101,20 @@ fn read_records(
         if record.id.0 == 0 || record.metadata.name.is_empty() {
             bail!("invalid retained session identity");
         }
-        ovrcr_protocol::validate_name(&record.metadata.project, "project")?;
-        ovrcr_protocol::validate_name(&record.metadata.workspace, "workspace")?;
+        match record.metadata.scope {
+            ovrcr_protocol::SessionScope::Workspace => {
+                ovrcr_protocol::validate_name(&record.metadata.project, "project")?;
+                ovrcr_protocol::validate_name(&record.metadata.workspace, "workspace")?;
+            }
+            ovrcr_protocol::SessionScope::OperatorConversation { conversation } => {
+                if conversation.0 == 0
+                    || !record.metadata.project.is_empty()
+                    || !record.metadata.workspace.is_empty()
+                {
+                    bail!("invalid global operator scope");
+                }
+            }
+        }
         records.insert(record.id, record);
     }
     let legacy = has_table(connection, "claude_conversations")?;
@@ -1122,6 +1176,20 @@ fn read_records(
             let (id, conversation, subject) = row?;
             if let Some(record) = records.get_mut(&SessionId(id)) {
                 record.subjects.insert(conversation, subject);
+            }
+        }
+    }
+    if has_table(connection, "cloud_creations")? {
+        let mut query = connection.prepare("SELECT session, metadata FROM cloud_creations")?;
+        let rows = query.query_map([], |row| {
+            Ok((read_integer(row, 0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (id, raw) = row?;
+            let creation: cloud_creation::Record = serde_json::from_str(&raw)?;
+            creation.validate()?;
+            if let Some(record) = records.get_mut(&SessionId(id)) {
+                record.cloud_creation = Some(creation);
             }
         }
     }
@@ -1216,6 +1284,7 @@ mod tests {
             records.push(
                 store
                     .create(SessionMetadata {
+                        scope: ovrcr_protocol::SessionScope::Workspace,
                         project: "p".into(),
                         workspace: workspace.into(),
                         name: name.into(),
@@ -1284,6 +1353,7 @@ mod tests {
         let mut store = SessionStore::open(&config).unwrap();
         let record = store
             .create(SessionMetadata {
+                scope: ovrcr_protocol::SessionScope::Workspace,
                 project: "p".into(),
                 workspace: "w".into(),
                 name: "saved".into(),
@@ -1329,6 +1399,7 @@ mod tests {
         let mut store = SessionStore::open(&config).unwrap();
         let record = store
             .create(SessionMetadata {
+                scope: ovrcr_protocol::SessionScope::Workspace,
                 project: "p".into(),
                 workspace: "w".into(),
                 name: "saved".into(),
@@ -1392,6 +1463,7 @@ mod tests {
     fn agent_record(store: &mut SessionStore, name: &str) -> RetainedSession {
         store
             .create(SessionMetadata {
+                scope: ovrcr_protocol::SessionScope::Workspace,
                 project: "p".into(),
                 workspace: "w".into(),
                 name: name.into(),
@@ -1846,5 +1918,26 @@ mod tests {
         );
         assert!(store.get(record.id).unwrap().subjects["conv-a"].dismissed);
         assert!(store.get(record.id).unwrap().effective_title().is_none());
+    }
+}
+
+#[cfg(test)]
+mod operator_schema_tests {
+    #[test]
+    fn registry_migration_adds_operator_journal_to_existing_owner() {
+        let root = tempfile::tempdir().unwrap();
+        let store = super::SessionStore::open(root.path()).unwrap();
+        for table in [
+            "operator_conversations",
+            "operator_turns",
+            "operator_messages",
+            "operator_model_history",
+            "operator_batches",
+        ] {
+            assert!(
+                super::has_table(&store.connection, table).unwrap(),
+                "missing {table}"
+            );
+        }
     }
 }

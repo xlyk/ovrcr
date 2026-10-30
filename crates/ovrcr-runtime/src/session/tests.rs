@@ -195,6 +195,7 @@ fn spawn_test_shell() -> Arc<Session> {
     let session = Session::spawn_registered(
         SessionId(1),
         SessionSpec {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
             run: SessionRunId(1),
             kind: SessionKind::Terminal,
@@ -237,7 +238,7 @@ fn retired_run_output_and_exit_cannot_mutate_a_live_replacement() {
     let (events, receiver) = crate::server::event_channel(None);
     let session = Session::spawn_registered(
         SessionId(44),
-        SessionSpec {
+        SessionSpec { scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
             run: SessionRunId(2), kind: SessionKind::Terminal,
             project: "p".into(), workspace: "w".into(), name: "replacement".into(),
@@ -322,6 +323,7 @@ fn spawn_term_race_session(reap_gate: Arc<ReapGate>) -> (Arc<Session>, JoinHandl
     let session = Session::spawn_with_test_hooks(
         SessionId(50),
         SessionSpec {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
             run: SessionRunId(1),
             kind: SessionKind::Terminal,
@@ -357,6 +359,7 @@ fn spawn_live_refusal_session(
     let session = Session::spawn_with_test_hooks(
         SessionId(51),
         SessionSpec {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
             run: SessionRunId(1),
             kind: SessionKind::Terminal,
@@ -424,6 +427,7 @@ fn agent_report_requires_capability_and_preserves_order_on_rejection() {
     let session = Session::spawn_registered(
         SessionId(700),
         SessionSpec {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
             run: SessionRunId(1),
             kind: SessionKind::Terminal,
@@ -514,7 +518,7 @@ fn pause_resume_terminate_runs_term_handler() {
     let (tx, rx) = crate::server::event_channel(None);
     let session = Session::spawn_registered(
             SessionId(5),
-            SessionSpec { restore_command: None, run: SessionRunId(1), kind: SessionKind::Terminal, project: "p".into(),
+            SessionSpec { scope: ovrcr_protocol::SessionScope::Workspace, restore_command: None, run: SessionRunId(1), kind: SessionKind::Terminal, project: "p".into(),
             workspace: "w".into(),
             name: "term-handler".into(),
             label: "sh".into(),
@@ -749,6 +753,7 @@ fn pause_resume_exit_event_cannot_be_overwritten() {
     let session = Session::spawn_registered(
         SessionId(4),
         SessionSpec {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
             run: SessionRunId(1),
             kind: SessionKind::Terminal,
@@ -859,6 +864,7 @@ fn shell_round_trip_updates_the_current_screen() {
     let session = Session::spawn_registered(
         SessionId(1),
         SessionSpec {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
             run: SessionRunId(1),
             kind: SessionKind::Terminal,
@@ -893,6 +899,7 @@ fn final_output_is_parsed_before_session_becomes_removable() {
     let session = Session::spawn_registered(
         SessionId(2),
         SessionSpec {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
             run: SessionRunId(1),
             kind: SessionKind::Terminal,
@@ -956,6 +963,7 @@ fn terminate_removes_the_whole_process_group() {
     let session = Session::spawn_registered(
         SessionId(3),
         SessionSpec {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
             run: SessionRunId(1),
             kind: SessionKind::Terminal,
@@ -1020,6 +1028,7 @@ fn terminate_listing_failure_does_not_certify_stop() {
     let session = Session::spawn_registered(
         SessionId(23),
         SessionSpec {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
             run: SessionRunId(1),
             kind: SessionKind::Terminal,
@@ -1143,6 +1152,7 @@ fn terminate_removes_job_control_subgroups() {
     let session = Session::spawn_registered(
         SessionId(4),
         SessionSpec {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
             run: SessionRunId(1),
             kind: SessionKind::Terminal,
@@ -1252,6 +1262,7 @@ fn group_leader_timeout_kills_the_child() {
     let spawned = Session::spawn_with_leader_wait(
         SessionId(70),
         SessionSpec {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
             run: SessionRunId(1),
             kind: SessionKind::Terminal,
@@ -1357,6 +1368,7 @@ fn compact_zsh_prompt_preserves_config_and_reports_failure() {
     let session = Session::spawn_registered(
         SessionId(1),
         SessionSpec {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
             run: SessionRunId(1),
             kind: SessionKind::Terminal,
@@ -1477,6 +1489,7 @@ fn delegation_rechecks_a_to_b_to_a_binding_at_the_pty_write_boundary() {
         let session = Session::spawn_registered(
             SessionId(id),
             SessionSpec {
+                scope: ovrcr_protocol::SessionScope::Workspace,
                 restore_command: None,
                 run: SessionRunId(1),
                 kind: SessionKind::Agent { name: "pi".into() },

@@ -16,6 +16,8 @@ use ovrcr_protocol::{SessionKind, SessionPhase};
 pub(super) enum Action {
     Palette,
     Agents,
+    Operator,
+    OperatorKey(KeyCode, KeyModifiers),
     CreateTerminal,
     CreateWorkspace,
     RegisterProject,
@@ -213,6 +215,9 @@ impl KeyBinding {
             return false;
         }
         match self.action {
+            Action::OperatorKey(code, modifiers) => {
+                return key.code == code && key.modifiers == modifiers;
+            }
             // Tasks answers to the bare key and to Ctrl-t.
             Action::Tasks => {
                 return key.code == KeyCode::Char('t')
@@ -270,6 +275,10 @@ impl Dashboard {
         let action = match action {
             Action::Palette => self.open_palette(),
             Action::Agents => self.open_agent_search(),
+            Action::Operator => self.open_operator(),
+            Action::OperatorKey(code, modifiers) => {
+                self.operator_key(KeyEvent::new(code, modifiers))
+            }
             Action::CreateTerminal => self.open_create_terminal(),
             Action::CreateWorkspace => self.open_create_workspace(),
             Action::RegisterProject => self.open_register_project(),
@@ -398,6 +407,38 @@ pub(super) fn agents_binding() -> KeyBinding {
 
 pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
     use KeyCode::{Char, Enter, Esc, PageDown, PageUp, Tab};
+    if dashboard.operator_is_editing() {
+        let native = |label, name, code, modifiers| {
+            key_binding(
+                label,
+                name,
+                format!("Operator: {name}"),
+                code,
+                Action::OperatorKey(code, modifiers),
+            )
+        };
+        return vec![KeyGroup {
+            title: "Operator".into(),
+            keys: vec![
+                native("Enter", "Send / create", Enter, KeyModifiers::NONE),
+                native("Shift-Enter", "Newline", Enter, KeyModifiers::SHIFT),
+                native("Ctrl-l", "Conversations", Char('l'), KeyModifiers::CONTROL),
+                native(
+                    "Ctrl-n",
+                    "New Conversation",
+                    Char('n'),
+                    KeyModifiers::CONTROL,
+                ),
+                native(
+                    "Ctrl-x",
+                    "Stop selected turn",
+                    Char('x'),
+                    KeyModifiers::CONTROL,
+                ),
+                native("Ctrl-g", "Browse", Char('g'), KeyModifiers::CONTROL),
+            ],
+        }];
+    }
     if dashboard.mode == InputMode::Terminal {
         return Vec::new();
     }
@@ -662,6 +703,15 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
     let paused = selected.is_some_and(|s| s.phase == SessionPhase::Paused);
     let mut view = vec![
         agents_binding(),
+        key_binding(
+            "o",
+            "Operator",
+            "Open concurrent Operator conversations".into(),
+            Char('o'),
+            Action::Operator,
+        )
+        .bare()
+        .group('v', "o"),
         key_binding(
             "u",
             "Quota details",

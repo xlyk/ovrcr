@@ -541,6 +541,7 @@ mod tests {
         let mut d =
             crate::dashboard::Dashboard::new(crate::session::TerminalSize { rows: 24, cols: 80 });
         let summary = SessionSummary {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             id: crate::protocol::SessionId(42),
             archived: false,
             cwd: PathBuf::from("/tmp"),

@@ -17,3 +17,5 @@ pub mod task_manager;
 pub mod task_paging;
 pub mod task_runner;
 pub mod tasks;
+
+pub mod cursor_cloud;

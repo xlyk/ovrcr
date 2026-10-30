@@ -1,0 +1,19 @@
+{
+  "final_turns": [
+    [
+      1,
+      "Interrupted",
+      1
+    ],
+    [
+      2,
+      "Complete",
+      1
+    ]
+  ],
+  "executions_each": 1,
+  "concurrent_running_receipt": "offline-concurrent-running.json",
+  "independent_stop_receipt": "offline-independent-stop.json",
+  "background_unread": "08-background-unread.ax.txt",
+  "opened_complete_unread_cleared": "09-background-complete.ax.txt"
+}

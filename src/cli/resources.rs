@@ -233,6 +233,26 @@ pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppRe
                 json_output,
             )
         }
+        TerminalCommand::CloudCancel { id } => {
+            let session = online_session(id)?;
+            mutate_without_start(
+                Request::CancelCloudCreation {
+                    session: session.id,
+                    expected_run: session.run,
+                },
+                json_output,
+            )
+        }
+        TerminalCommand::CloudDiscard { id } => {
+            let session = online_session(id)?;
+            mutate_without_start(
+                Request::DiscardCloudCreation {
+                    session: session.id,
+                    expected_run: session.run,
+                },
+                json_output,
+            )
+        }
         TerminalCommand::Unarchive { id } => {
             let session = online_session(id)?;
             mutate_without_start(
@@ -245,6 +265,9 @@ pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppRe
         }
         TerminalCommand::Close { id } => {
             let session = inventory_session(id)?;
+            if let Some(warning) = session.close_warning() {
+                eprintln!("{warning}");
+            }
             mutate_without_start(
                 Request::CloseTerminal {
                     session: SessionId(id),
@@ -346,13 +369,16 @@ fn managed_wrapper_kind(argv: &[std::ffi::OsString]) -> Option<SessionKind> {
                 AgentCommand::Run {
                     provider,
                     legacy_provider,
-                    ..
+                    argv,
                 },
         }) => {
-            let name = provider.or(legacy_provider)?;
-            AgentProvider::from_name(&name).map(|provider| SessionKind::Agent {
-                name: provider.name().to_string(),
-            })
+            let name = match AgentProvider::from_name(&provider.or(legacy_provider)?)? {
+                AgentProvider::CursorCloud => {
+                    format!("cursor-cloud:{}", argv.first()?.to_str()?)
+                }
+                provider => provider.name().to_string(),
+            };
+            Some(SessionKind::Agent { name })
         }
         _ => None,
     }
@@ -605,6 +631,46 @@ mod session_kind_tests {
                 name: "codex".into()
             }
         );
+    }
+
+    #[test]
+    fn managed_cursor_cloud_wrapper_keeps_named_account() {
+        for (args, account) in [
+            (
+                vec!["ovrcr", "agent", "run", "cursor-cloud", "--", "work"],
+                "work",
+            ),
+            (
+                vec![
+                    "/usr/local/bin/ovrcr",
+                    "--json",
+                    "agent",
+                    "run",
+                    "--provider",
+                    "cursor-cloud",
+                    "--",
+                    "personal-2",
+                ],
+                "personal-2",
+            ),
+        ] {
+            assert_eq!(
+                session_kind_from_argv(&argv(&args)),
+                SessionKind::Agent {
+                    name: format!("cursor-cloud:{account}")
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn managed_cursor_cloud_wrapper_without_utf8_account_stays_terminal() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let mut args = argv(&["ovrcr", "agent", "run", "cursor-cloud", "--"]);
+        assert_eq!(session_kind_from_argv(&args), SessionKind::Terminal);
+        args.push(OsString::from_vec(vec![0xff]));
+        assert_eq!(session_kind_from_argv(&args), SessionKind::Terminal);
     }
 
     #[test]

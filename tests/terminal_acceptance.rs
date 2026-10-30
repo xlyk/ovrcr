@@ -12,12 +12,20 @@ use live::{Live, Stop, group_exists, wait_deadline};
 use ovrcr::protocol::{HierarchySnapshot, Request, Response};
 use portable_pty::{Child as PtyChild, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::io::{Read, Write};
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::process::{Child, Command};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+
+fn dashboard_header_visible(screen: &str) -> bool {
+    screen
+        .lines()
+        .next()
+        .is_some_and(|header| header.contains("OVRCR") && header.contains("Operator [o]"))
+}
 
 /// A live server hosted by the compiled `ovrcr` binary, plus the CLI and
 /// terminal helpers this suite drives it with.
@@ -50,10 +58,10 @@ impl AcceptanceFixture {
     }
 
     fn cli_timeout(&self, args: &[&str], timeout: Duration) -> Result<std::process::Output> {
-        let child = Command::new(&self.executable)
+        let child = self
+            .live
+            .command()
             .args(args)
-            .env("OVRCR_SOCKET", &self.socket)
-            .env("OVRCR_HOME", &self.config)
             .spawn()
             .context("run OVRCR CLI")?;
         bounded_output(child, timeout)
@@ -283,6 +291,77 @@ fn require_success(output: std::process::Output, operation: &str) -> Result<Stri
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+#[test]
+fn acceptance_cli_uses_fixture_environment() -> Result<()> {
+    let mut live = Live::idle();
+    let executable = live.root.path().join("check-cli-environment");
+    std::fs::write(
+        &executable,
+        r#"#!/bin/sh
+[ "$HOME" = "${OVRCR_HOME%/instance}" ] || exit 24
+[ "$SHELL" = /bin/sh ] || exit 25
+case "$PATH" in "$HOME/claude-auth-fixture:"*) ;; *) exit 26 ;; esac
+for key in XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME PI_CODING_AGENT_DIR PI_CODING_AGENT_SESSION_DIR CODEX_HOME GROK_HOME CLAUDE_CONFIG_DIR; do
+    eval '[ -z "${'"$key"'+x}" ]' || exit 27
+done
+"#,
+    )?;
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))?;
+    live.executable = executable;
+    let fixture = AcceptanceFixture {
+        live,
+        managed_pgids: Vec::new(),
+    };
+    let output = fixture.cli(&[])?;
+    assert!(
+        output.status.success(),
+        "fixture environment rejected: {:?}",
+        output.status
+    );
+    Ok(())
+}
+
+#[test]
+fn outer_dashboard_reports_early_child_exit_with_fixture_environment() -> Result<()> {
+    let mut live = Live::idle();
+    let executable = live.root.path().join("exit-dashboard");
+    std::fs::write(
+        &executable,
+        r#"#!/bin/sh
+[ "$HOME" = "${OVRCR_HOME%/instance}" ] || exit 24
+[ "$SHELL" = /bin/sh ] || exit 25
+case "$PATH" in "$HOME/claude-auth-fixture:"*) ;; *) exit 26 ;; esac
+for key in XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME PI_CODING_AGENT_DIR PI_CODING_AGENT_SESSION_DIR CODEX_HOME GROK_HOME CLAUDE_CONFIG_DIR; do
+    eval '[ -z "${'"$key"'+x}" ]' || exit 27
+done
+exec 0<&- 1>&- 2>&-
+/bin/sleep 0.2
+exit 23
+"#,
+    )?;
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))?;
+    live.executable = executable;
+    let fixture = AcceptanceFixture {
+        live,
+        managed_pgids: Vec::new(),
+    };
+    let error = match OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    ) {
+        Ok(_) => bail!("exited child must not establish Dashboard readiness"),
+        Err(error) => error.to_string(),
+    };
+    assert!(error.contains("closed its PTY"), "{error}");
+    assert!(error.contains("code: 23"), "{error}");
+    Ok(())
+}
+
 struct OuterDashboard {
     master: Option<Box<dyn MasterPty + Send>>,
     writer: Box<dyn Write + Send>,
@@ -290,7 +369,10 @@ struct OuterDashboard {
     received: Receiver<Vec<u8>>,
     reader: Option<JoinHandle<()>>,
     parser: vt100::Parser,
+    image: Option<Arc<tempfile::TempDir>>,
 }
+
+static DASHBOARD_IMAGE: Mutex<Weak<tempfile::TempDir>> = Mutex::new(Weak::new());
 
 impl OuterDashboard {
     fn start(fixture: &AcceptanceFixture, size: PtySize) -> Result<Self> {
@@ -304,23 +386,47 @@ impl OuterDashboard {
     ) -> Result<Self> {
         let pty = native_pty_system();
         let pair = pty.openpty(size)?;
-        // Isolate startup asset discovery from the shared Cargo target, while
-        // preserving the selected Server image and all real PTY behavior.
-        let directory = fixture.root.path().join("dashboard-client");
+        // Concurrent Dashboards reuse one private image to avoid startup delays
+        // from concurrent fresh executable copies; assets stay isolated.
+        let image = if fixture.executable == Path::new(env!("CARGO_BIN_EXE_ovrcr")) {
+            let mut cached = DASHBOARD_IMAGE.lock().unwrap();
+            Some(match cached.upgrade() {
+                Some(image) => image,
+                None => {
+                    let image = Arc::new(tempfile::tempdir()?);
+                    let directory = image.path().join("bin");
+                    std::fs::create_dir(&directory)?;
+                    std::fs::copy(&fixture.executable, directory.join("ovrcr"))?;
+                    *cached = Arc::downgrade(&image);
+                    image
+                }
+            })
+        } else {
+            None
+        };
+        let directory = image.as_ref().map_or_else(
+            || fixture.root.path().join("dashboard-client"),
+            |image| image.path().join("bin"),
+        );
         std::fs::create_dir_all(&directory)?;
         let executable = directory.join("ovrcr");
         if !executable.exists() {
             std::fs::copy(&fixture.executable, &executable)?;
         }
         let mut command = CommandBuilder::new(&executable);
-        command.env("OVRCR_SOCKET", &fixture.socket);
-        command.env("OVRCR_HOME", &fixture.config);
+        for (key, value) in fixture.command().get_envs() {
+            match value {
+                Some(value) => command.env(key, value),
+                None => command.env_remove(key),
+            }
+        }
         command.env("OVRCR_SERVER_EXECUTABLE", server_executable);
         command.env(
             "OVRCR_DASHBOARD_CONFIG",
             fixture.config.join("dashboard.toml"),
         );
         let child = pair.slave.spawn_command(command)?;
+        drop(pair.slave);
         let reader = pair.master.try_clone_reader()?;
         let writer = pair.master.take_writer()?;
         let (sender, received) = mpsc::channel();
@@ -332,6 +438,7 @@ impl OuterDashboard {
             received,
             reader: Some(reader_handle),
             parser: vt100::Parser::new(size.rows, size.cols, 0),
+            image,
         };
         dashboard.wait_for_startup(wait_deadline())?;
         Ok(dashboard)
@@ -348,7 +455,7 @@ impl OuterDashboard {
             let screen = self.parser.screen();
             // Startup notices also name OVRCR; only the alternate-screen
             // Dashboard header establishes readiness for test input.
-            if screen.alternate_screen() && screen.contents().contains("OVRCR") {
+            if screen.alternate_screen() && dashboard_header_visible(&screen.contents()) {
                 return Ok(());
             }
             if Instant::now() >= deadline {
@@ -398,8 +505,21 @@ impl OuterDashboard {
             self.send(b"n\r")?;
             declined_prompt = Some(before.len());
         };
+        let mut child_status = self.child.as_mut().map(|child| child.try_wait());
+        // PTY closure can precede the original child's wait status.
+        while reason == "closed its PTY"
+            && matches!(child_status, Some(Ok(None)))
+            && Instant::now() < deadline
+        {
+            thread::park_timeout(
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(5)),
+            );
+            child_status = self.child.as_mut().map(|child| child.try_wait());
+        }
         bail!(
-            "outer dashboard {reason} before readiness; size={:?}, alternate_screen={}; screen: {}; startup output: {}",
+            "outer dashboard {reason} before readiness; child_status={child_status:?}; size={:?}, alternate_screen={}; screen: {}; startup output: {}",
             self.parser.screen().size(),
             self.parser.screen().alternate_screen(),
             self.rendered(),
@@ -618,7 +738,9 @@ impl OuterDashboard {
         let child = self.child.take().context("outer child already detached")?;
         let pid = child.process_id().context("outer child has no PID")? as libc::pid_t;
         let (sender, receiver) = mpsc::sync_channel(1);
+        let image = self.image.clone();
         let waiter = thread::spawn(move || {
+            let _image = image;
             let mut child = child;
             let _ = sender.send(child.wait());
         });
@@ -659,11 +781,13 @@ impl Drop for OuterDashboard {
             Box::new(std::io::sink()),
         ));
         self.master.take();
-        if let Some(child) = self.child.take() {
-            if let Ok(pid) = child.process_id().ok_or(()) {
+        if let Some(mut child) = self.child.take() {
+            if !matches!(child.try_wait(), Ok(Some(_)))
+                && let Some(pid) = child.process_id()
+            {
                 unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
             }
-            let _ = wait_pty_child(child, Duration::from_secs(2));
+            let _ = wait_pty_child(child, Duration::from_secs(2), self.image.clone());
         }
         if let Some(reader) = self.reader.take() {
             let _ = join_reader(reader, Duration::from_secs(2));
@@ -674,9 +798,11 @@ impl Drop for OuterDashboard {
 fn wait_pty_child(
     child: Box<dyn PtyChild + Send + Sync>,
     timeout: Duration,
+    image: Option<Arc<tempfile::TempDir>>,
 ) -> Result<portable_pty::ExitStatus> {
     let (sender, receiver) = mpsc::sync_channel(1);
     let waiter = thread::spawn(move || {
+        let _image = image;
         let mut child = child;
         let _ = sender.send(child.wait());
     });
@@ -1584,8 +1710,8 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
         },
     )?;
     dashboard
-        .wait_until(|screen| screen.contains("agent runtime"), wait_deadline())
-        .context("history dashboard initial runtime header")?;
+        .wait_until(dashboard_header_visible, wait_deadline())
+        .context("history dashboard initial dashboard header")?;
     dashboard
         .wait_for_screen(|screen| screen.contains("history"), wait_deadline())
         .context("history dashboard hierarchy")?;
@@ -1777,7 +1903,7 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
     let outer_pgid = outer_pid.map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) });
     eprintln!("historical copy outer dashboard pid/pgid while alive: {outer_pid:?}/{outer_pgid:?}");
     dashboard.wait_until(
-        |screen| screen.contains("mouse") && screen.contains("agent runtime"),
+        |screen| screen.contains("mouse") && dashboard_header_visible(screen),
         wait_deadline(),
     )?;
     dashboard.click_visible_text("history-copy")?;
@@ -1909,7 +2035,7 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
         },
     )?;
     dashboard.wait_until(
-        |screen| screen.contains("mouse") && screen.contains("agent runtime"),
+        |screen| screen.contains("mouse") && dashboard_header_visible(screen),
         wait_deadline(),
     )?;
     dashboard.click_visible_text("     - mouse")?;
@@ -2018,7 +2144,14 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
         "rendered resized pane geometry changed unexpectedly"
     );
     dashboard.send(b"\x07")?;
-    dashboard.wait_for(b"agent runtime", wait_deadline())?;
+    dashboard.wait_for_screen(
+        |screen| {
+            dashboard_header_visible(screen)
+                && screen.contains("BROWSE  Space Menu")
+                && !screen.contains("Terminal mode")
+        },
+        wait_deadline(),
+    )?;
     dashboard.detach()?;
 
     let mut reattached = OuterDashboard::start(
@@ -2031,7 +2164,7 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
         },
     )?;
     reattached.wait_until(
-        |screen| screen.contains("mouse") && screen.contains("agent runtime"),
+        |screen| screen.contains("mouse") && dashboard_header_visible(screen),
         wait_deadline(),
     )?;
     reattached.click_visible_text("waiting")?;
@@ -2119,7 +2252,7 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     let outer_pgid = outer_pid.map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) });
     eprintln!("copy acceptance outer dashboard pid/pgid while alive: {outer_pid:?}/{outer_pgid:?}");
     dashboard.wait_until(
-        |screen| screen.contains("mouse") && screen.contains("agent runtime"),
+        |screen| screen.contains("mouse") && dashboard_header_visible(screen),
         wait_deadline(),
     )?;
     dashboard.click_visible_text("     - mouse")?;
@@ -2142,7 +2275,14 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     dashboard.send(b"?")?;
     dashboard.wait_for_screen(|screen| screen.contains("Which key"), wait_deadline())?;
     dashboard.send(b"\x1b")?;
-    dashboard.wait_for_screen(|screen| !screen.contains("Which key"), wait_deadline())?;
+    dashboard.wait_for_screen(
+        |screen| {
+            dashboard_header_visible(screen)
+                && screen.contains("BROWSE  Space Menu")
+                && !screen.contains("Which key")
+        },
+        wait_deadline(),
+    )?;
     dashboard.send(b" wn")?;
     dashboard.wait_for_screen(
         |screen| {
@@ -2154,7 +2294,11 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     )?;
     dashboard.send(b"\x1b")?;
     dashboard.wait_for_screen(
-        |screen| !screen.contains("┌ Create terminal"),
+        |screen| {
+            dashboard_header_visible(screen)
+                && screen.contains("BROWSE  Space Menu")
+                && !screen.contains("┌ Create terminal")
+        },
         wait_deadline(),
     )?;
     dashboard.send(b" tx")?;
@@ -2167,7 +2311,11 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     )?;
     dashboard.send(b"\x1b")?;
     dashboard.wait_for_screen(
-        |screen| !screen.contains("Close terminal?"),
+        |screen| {
+            dashboard_header_visible(screen)
+                && screen.contains("BROWSE  Space Menu")
+                && !screen.contains("Close terminal?")
+        },
         wait_deadline(),
     )?;
     assert_eq!(
@@ -2219,7 +2367,7 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
         "copy acceptance reattached dashboard pid/pgid while alive: {reattached_pid:?}/{reattached_pgid:?}"
     );
     reattached.wait_until(
-        |screen| screen.contains("mouse") && screen.contains("agent runtime"),
+        |screen| screen.contains("mouse") && dashboard_header_visible(screen),
         wait_deadline(),
     )?;
     reattached.wait_for_screen(
@@ -2273,7 +2421,7 @@ fn pause_resume_dashboard_round_trip() -> Result<()> {
         },
     )?;
     dashboard.wait_until(
-        |screen| screen.contains("mouse") && screen.contains("agent runtime"),
+        |screen| screen.contains("mouse") && dashboard_header_visible(screen),
         wait_deadline(),
     )?;
     dashboard.click_visible_text("     - mouse")?;
@@ -2305,11 +2453,18 @@ fn pause_resume_dashboard_round_trip() -> Result<()> {
             pixel_height: 0,
         },
     )?;
-    reattached.wait_until(|screen| screen.contains("agent runtime"), wait_deadline())?;
+    reattached.wait_until(dashboard_header_visible, wait_deadline())?;
     reattached.click_visible_text("waiting")?;
     reattached.wait_until(|screen| screen.contains("paused"), wait_deadline())?;
     reattached.send(b"r")?;
-    reattached.wait_for_screen(|screen| !screen.contains("paused"), wait_deadline())?;
+    reattached.wait_for_screen(
+        |screen| {
+            dashboard_header_visible(screen)
+                && screen.contains("BROWSE  Space Menu")
+                && !screen.contains("paused")
+        },
+        wait_deadline(),
+    )?;
     reattached.send(b"\r")?;
     reattached.wait_for(b"Terminal mode", wait_deadline())?;
     reattached.send(b"PAUSE_RESUME_TOKEN\r")?;
@@ -2333,7 +2488,7 @@ fn external_pause_resume_and_exit_redraw_the_live_dashboard() -> Result<()> {
         },
     )?;
     dashboard.wait_until(
-        |screen| screen.contains("mouse") && screen.contains("agent runtime"),
+        |screen| screen.contains("mouse") && dashboard_header_visible(screen),
         wait_deadline(),
     )?;
     dashboard.click_visible_text("     - mouse")?;
@@ -2359,7 +2514,14 @@ fn external_pause_resume_and_exit_redraw_the_live_dashboard() -> Result<()> {
 
     let resumed = fixture.cli(&["resume", &id])?;
     require_success(resumed, "external resume")?;
-    dashboard.wait_for_screen(|screen| !screen.contains("paused"), Duration::from_secs(3))?;
+    dashboard.wait_for_screen(
+        |screen| {
+            dashboard_header_visible(screen)
+                && screen.contains("BROWSE  Space Menu")
+                && !screen.contains("paused")
+        },
+        Duration::from_secs(3),
+    )?;
 
     let killed = fixture.cli(&["kill", &id])?;
     require_success(killed, "external kill")?;

@@ -17,6 +17,7 @@ pub(super) fn footer(dashboard: &Dashboard, width: u16) -> String {
         .as_ref()
         .filter(|_| dashboard.mode == InputMode::History);
     let mode = match dashboard.mode {
+        InputMode::Browse if dashboard.operator_is_editing() => "OPERATOR",
         InputMode::Browse => "BROWSE",
         InputMode::Copy => "COPY",
         InputMode::History
@@ -44,7 +45,16 @@ pub(super) fn footer(dashboard: &Dashboard, width: u16) -> String {
     let hints: Vec<_> = groups.iter().flat_map(|g| &g.keys).collect();
     // Browse shows only the keys that open everything else; the menu and the
     // palette carry the per-action hints.
-    let priority: &[&str] = if dashboard.mode == InputMode::Browse {
+    let priority: &[&str] = if dashboard.operator_is_editing() {
+        &[
+            "Enter",
+            "Ctrl-g",
+            "Ctrl-l",
+            "Ctrl-n",
+            "Ctrl-x",
+            "Shift-Enter",
+        ]
+    } else if dashboard.mode == InputMode::Browse {
         &["Space", ":", "?"]
     } else {
         &[

@@ -14,6 +14,10 @@ pub enum AgentProvider {
     Omp,
     /// Cursor CLI. Appended: existing bincode discriminants stay unchanged.
     Cursor,
+    /// Native cloud preview; remote delivery is unavailable until later gates.
+    CursorCloud,
+    /// Native Rig Operator worker. Appended to preserve existing wire indices.
+    Operator,
 }
 
 impl AgentProvider {
@@ -27,6 +31,8 @@ impl AgentProvider {
             Self::Hermes => "hermes",
             Self::Omp => "omp",
             Self::Cursor => "cursor-agent",
+            Self::CursorCloud => "cursor-cloud",
+            Self::Operator => "operator",
         }
     }
 
@@ -40,6 +46,8 @@ impl AgentProvider {
             "hermes" => Self::Hermes,
             "omp" => Self::Omp,
             "cursor-agent" => Self::Cursor,
+            "cursor-cloud" => Self::CursorCloud,
+            "operator" => Self::Operator,
             _ => return None,
         })
     }
@@ -54,6 +62,8 @@ impl AgentProvider {
                 | AgentProvider::Omp
                 | AgentProvider::Claude
                 | AgentProvider::Hermes
+                | AgentProvider::CursorCloud
+                | AgentProvider::Operator
         )
     }
 }
@@ -349,6 +359,7 @@ pub enum AgentCommand {
         reference: Box<ConversationReference>,
     },
     InvalidateConversation,
+    CloudCreation(Box<crate::CloudCreationCommand>),
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SupervisorRequest {
@@ -365,6 +376,7 @@ pub enum AgentOperationResult {
     HealthUpdated,
     ConversationRetained,
     ConversationInvalidated,
+    CloudCreationCommitted,
 }
 
 /// Exact provider-owned history and non-secret launch configuration references.
@@ -764,6 +776,8 @@ pub(crate) mod tests {
             (AgentProvider::Hermes, "hermes"),
             (AgentProvider::Omp, "omp"),
             (AgentProvider::Cursor, "cursor-agent"),
+            (AgentProvider::CursorCloud, "cursor-cloud"),
+            (AgentProvider::Operator, "operator"),
         ] {
             assert_eq!(provider.name(), name);
             assert_eq!(AgentProvider::from_name(name), Some(provider));
@@ -782,6 +796,8 @@ pub(crate) mod tests {
             (AgentProvider::Hermes, true),
             (AgentProvider::Grok, false),
             (AgentProvider::Cursor, false),
+            (AgentProvider::CursorCloud, true),
+            (AgentProvider::Operator, true),
         ] {
             assert_eq!(provider.supports_readiness(), expected, "{provider:?}");
         }
@@ -969,6 +985,61 @@ pub(crate) mod tests {
                 }),
             }));
         }
+        let recovery = crate::CloudRecovery {
+            intent: crate::cloud_creation::fixture_intent(),
+            receipt: crate::CloudCreationReceipt {
+                agent_id: "agent-376".into(),
+                model: "composer-2.5".into(),
+            },
+            key: "d".repeat(64),
+            run_id: "run-376".into(),
+            cancel_requested: true,
+        };
+        for command in [
+            crate::CloudCreationCommand::Prepare(crate::cloud_creation::fixture_intent()),
+            crate::CloudCreationCommand::Claim {
+                key: "a".repeat(64),
+            },
+            crate::CloudCreationCommand::Acknowledge {
+                key: "a".repeat(64),
+                receipt: crate::CloudCreationReceipt {
+                    agent_id: "agent-373".into(),
+                    model: "composer-2.5".into(),
+                },
+            },
+            crate::CloudCreationCommand::Cancel,
+            crate::CloudCreationCommand::CheckCancel {
+                key: "a".repeat(64),
+                agent_id: "agent-375".into(),
+                run_id: "run-375".into(),
+            },
+            crate::CloudCreationCommand::ClaimCancel {
+                key: "a".repeat(64),
+                agent_id: "agent-375".into(),
+                run_id: "run-375".into(),
+            },
+            crate::CloudCreationCommand::Recover(recovery.clone()),
+            crate::CloudCreationCommand::Reconcile {
+                target: recovery.clone(),
+                status: crate::CloudRunStatus::Finished,
+            },
+            crate::CloudCreationCommand::RetryCancel(recovery),
+            crate::CloudCreationCommand::ObservationProgress {
+                key: "d".repeat(64),
+                agent_id: "agent-376".into(),
+                run_id: "run-376".into(),
+                origin: "e".repeat(64),
+                observe: true,
+                offset: "0".into(),
+                revision: 1,
+            },
+        ] {
+            requests.push(Request::Supervisor(SupervisorRequest {
+                auth: auth.clone(),
+                operation: "creation".into(),
+                command: AgentCommand::CloudCreation(Box::new(command)),
+            }));
+        }
         requests
     }
     pub(crate) fn response_fixtures() -> Vec<Response> {
@@ -992,6 +1063,7 @@ pub(crate) mod tests {
             AgentOperationResult::HealthUpdated,
             AgentOperationResult::ConversationRetained,
             AgentOperationResult::ConversationInvalidated,
+            AgentOperationResult::CloudCreationCommitted,
         ]
         .into_iter()
         .map(Response::AgentOperation)

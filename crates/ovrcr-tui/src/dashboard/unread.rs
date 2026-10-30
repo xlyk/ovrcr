@@ -108,6 +108,7 @@ mod tests {
 
     fn session(id: u64, open: &[(&str, InputKind)]) -> SessionSummary {
         SessionSummary {
+            scope: ovrcr_protocol::SessionScope::Workspace,
             archived: false,
             cwd: "/work".into(),
             id: SessionId(id),

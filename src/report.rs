@@ -4,6 +4,7 @@ pub mod claude_metrics;
 pub mod codex;
 pub mod collector;
 pub mod cursor;
+pub mod cursor_cloud;
 pub mod extension;
 pub mod grok;
 pub mod hermes;
@@ -460,6 +461,38 @@ pub struct InvocationLease {
     capability: [u8; 32],
 }
 impl InvocationLease {
+    fn operator_request(
+        &mut self,
+        command: ovrcr_protocol::OperatorWorkerCommand,
+        deadline: Instant,
+    ) -> Result<Response> {
+        self.next_request += 1;
+        agent_exchange(
+            &mut self.stream,
+            self.next_request,
+            Request::OperatorWorker(ovrcr_protocol::OperatorWorkerRequest {
+                auth: self.auth.clone(),
+                command,
+            }),
+            deadline,
+        )
+    }
+    fn operator_batch(
+        &mut self,
+        batch: ovrcr_protocol::OperatorEventBatch,
+        deadline: Instant,
+    ) -> Result<Response> {
+        self.next_request += 1;
+        agent_exchange(
+            &mut self.stream,
+            self.next_request,
+            Request::OperatorExchange(ovrcr_protocol::OperatorExchange {
+                auth: self.auth.clone(),
+                batch,
+            }),
+            deadline,
+        )
+    }
     fn publish_observation(
         &self,
         report: ovrcr_protocol::ProviderReport,
@@ -587,6 +620,32 @@ fn send_payload(
     origin: &str,
     deadline: Instant,
 ) -> Result<()> {
+    send_payload_accepted(input, provider, origin, deadline).map(|_| ())
+}
+
+pub fn send_cloud_creation(input: &[u8], deadline: Instant) -> Result<()> {
+    let _: ovrcr_protocol::CloudCreationCommand = serde_json::from_slice(input)?;
+    anyhow::ensure!(
+        send_payload_accepted(input, "cursor-cloud", "creation", deadline)?,
+        "durable cloud creation admission refused"
+    );
+    Ok(())
+}
+
+pub fn send_cloud_admission(deadline: Instant) -> Result<()> {
+    anyhow::ensure!(
+        send_payload_accepted(b"{}", "cursor-cloud", "preview-admission", deadline)?,
+        "cloud admission refused"
+    );
+    Ok(())
+}
+
+fn send_payload_accepted(
+    input: &[u8],
+    provider: &'static str,
+    origin: &str,
+    deadline: Instant,
+) -> Result<bool> {
     let path = std::env::var_os("OVRCR_AGENT_SOCKET").context("no private invocation channel")?;
     let token = std::env::var("OVRCR_AGENT_TOKEN")
         .ok()
@@ -615,7 +674,7 @@ fn send_payload(
     let mut response = Vec::new();
     io.take(64).read_to_end(&mut response)?;
     if response == b"admission-accepted\n" || response == b"admission-ignored\n" {
-        Ok(())
+        Ok(response == b"admission-accepted\n")
     } else {
         bail!("agent admission is unavailable")
     }

@@ -135,6 +135,30 @@ fn prepare_assigned(argv: &[OsString]) -> Result<()> {
 mod tests {
     use super::*;
     #[test]
+    fn assigned_helper_policy_matches_actual_reporter_composer() {
+        let binary = Path::new("/bin/sh").canonicalize().unwrap();
+        for model in [None, Some("claude-exact-1")] {
+            let reporter = super::super::agent_setup::compose(
+                &claude_delegation::helper_settings(model).to_string(),
+                binary.to_str().unwrap(),
+            )
+            .unwrap();
+            let files = claude_delegation::policy_files(&binary, "request", model).unwrap();
+            assert_eq!(
+                files.settings,
+                reporter.as_bytes(),
+                "sealed settings must match the actual launch composer for {model:?}"
+            );
+            use sha2::{Digest, Sha256};
+            let manifest: serde_json::Value = serde_json::from_slice(&files.manifest).unwrap();
+            assert_eq!(
+                manifest["settings"],
+                format!("{:x}", Sha256::digest(reporter.as_bytes()))
+            );
+        }
+    }
+
+    #[test]
     fn assigned_policy_replay_refuses_changed_or_symlinked_configuration() {
         let temp = tempfile::tempdir().unwrap();
         let policy = temp.path().join("settings");

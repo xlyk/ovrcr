@@ -387,6 +387,17 @@ pub enum Request {
         view_revision: u64,
         bytes: Vec<u8>,
     },
+    CancelCloudCreation {
+        session: SessionId,
+        expected_run: SessionRunId,
+    },
+    DiscardCloudCreation {
+        session: SessionId,
+        expected_run: SessionRunId,
+    },
+    Operator(crate::OperatorRequest),
+    OperatorExchange(crate::OperatorExchange),
+    OperatorWorker(crate::OperatorWorkerRequest),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -473,6 +484,9 @@ pub enum Response {
     WorkflowParents(Vec<crate::WorkflowParent>),
     WorkflowRecovery(Box<crate::WorkflowRecovery>),
     AssignedRead(Box<crate::AssignedReadResult>),
+    Operator(crate::OperatorResponse),
+    OperatorExchange(crate::OperatorExchangeResult),
+    OperatorWorker(crate::OperatorWorkerResult),
 }
 
 /// Which create/remove/close a Lifecycle job performed.
@@ -533,6 +547,7 @@ pub enum ServerEvent {
         op: LifecycleOp,
         outcome: LifecycleOutcome,
     },
+    OperatorChanged(crate::OperatorConversationId),
 }
 
 #[cfg(test)]
@@ -571,6 +586,15 @@ mod wire_snapshot {
         let mut settings = crate::Settings {
             title_model: Some("pi/m".into()),
             picker_roots: vec!["/c".into()],
+            cursor_cloud_accounts: vec![crate::CursorCloudAccount {
+                name: "work".into(),
+                keychain_service: "ovrcr".into(),
+                keychain_account: "work".into(),
+                model: "composer-2.5".into(),
+                repositories: vec!["https://github.com/acme/app".into()],
+                owners: vec![],
+                bridge_archive: "/sdk.tar.gz".into(),
+            }],
             agents: vec![crate::AgentOverride {
                 name: "a".into(),
                 argv: vec!["b".into()],
@@ -629,6 +653,7 @@ mod wire_snapshot {
 
     fn summary() -> SessionSummary {
         SessionSummary {
+            scope: crate::SessionScope::Workspace,
             archived: false,
             cwd: "/work".into(),
             id: SessionId(1),
@@ -920,6 +945,20 @@ mod wire_snapshot {
                     session: SessionId(1),
                     expected_run: SessionRunId(4),
                     acknowledge_stopped: false,
+                },
+            ),
+            (
+                "CancelCloudCreation",
+                Request::CancelCloudCreation {
+                    session: SessionId(1),
+                    expected_run: SessionRunId(4),
+                },
+            ),
+            (
+                "DiscardCloudCreation",
+                Request::DiscardCloudCreation {
+                    session: SessionId(1),
+                    expected_run: SessionRunId(4),
                 },
             ),
             (
@@ -1412,6 +1451,8 @@ mod wire_snapshot {
                 crate::AgentProvider::Hermes,
                 crate::AgentProvider::Omp,
                 crate::AgentProvider::Cursor,
+                crate::AgentProvider::CursorCloud,
+                crate::AgentProvider::Operator,
             ]
             .iter()
             .map(|provider| (format!("AgentProvider::{provider:?}"), encode(provider))),
@@ -2049,7 +2090,239 @@ mod wire_snapshot {
         fallback_cases(&mut all);
         review_cases(&mut all);
         native_read_cases(&mut all);
+        operator_cases(&mut all);
         all
+    }
+
+    fn operator_cases(all: &mut Vec<(String, String)>) {
+        use crate::operator::*;
+        let identity = OperatorTurnIdentity {
+            conversation: OperatorConversationId(1),
+            turn: OperatorTurnId(2),
+            session: SessionId(3),
+            run: SessionRunId(4),
+        };
+        let context = OperatorContext {
+            project: Some("p".into()),
+            workspace: Some("label".into()),
+            workspace_id: Some("stable".into()),
+            cwd: Some("/w".into()),
+            session: Some(SessionId(5)),
+            run: Some(SessionRunId(6)),
+        };
+        let turn = OperatorTurn {
+            identity,
+            state: OperatorTurnState::Running,
+            sequence: 0,
+        };
+        let summary = OperatorConversationSummary {
+            worker_stopped: false,
+            id: identity.conversation,
+            session: identity.session,
+            provider: OperatorProvider::ChatGpt,
+            model: "model".into(),
+            title: "hello".into(),
+            current_turn: Some(turn.clone()),
+        };
+        let history = OperatorModelHistory {
+            version: 1,
+            json: "[]".into(),
+        };
+        let auth = crate::SupervisorAuth {
+            session: identity.session,
+            lease: crate::AgentSecret([7; 32]),
+        };
+        let result = OperatorExchangeResult {
+            identity,
+            sequence: 1,
+            duplicate: false,
+        };
+        for (name, request) in [
+            (
+                "Create",
+                OperatorRequest::Create {
+                    provider: OperatorProvider::Grok,
+                    model: "model".into(),
+                },
+            ),
+            (
+                "List",
+                OperatorRequest::List {
+                    after: 1,
+                    limit: 10,
+                },
+            ),
+            (
+                "Read",
+                OperatorRequest::Read {
+                    conversation: identity.conversation,
+                    after: 1,
+                    limit: 10,
+                },
+            ),
+            (
+                "Submit",
+                OperatorRequest::Submit {
+                    conversation: identity.conversation,
+                    expected_run: SessionRunId(0),
+                    text: "hello".into(),
+                    context: context.clone(),
+                },
+            ),
+            ("Stop", OperatorRequest::Stop { identity }),
+        ] {
+            all.push((
+                format!("Request::Operator::{name}"),
+                encode(&Request::Operator(request)),
+            ));
+        }
+        for (name, event) in [
+            (
+                "AssistantDelta",
+                OperatorWorkerEvent::AssistantDelta("hello".into()),
+            ),
+            (
+                "ToolCall",
+                OperatorWorkerEvent::ToolCall {
+                    id: "call".into(),
+                    name: "bash".into(),
+                    arguments: "{}".into(),
+                },
+            ),
+            (
+                "ToolOutput",
+                OperatorWorkerEvent::ToolOutput {
+                    id: "call".into(),
+                    output: "output".into(),
+                    truncated: true,
+                    status: OperatorToolStatus::Succeeded,
+                },
+            ),
+            ("Completed", OperatorWorkerEvent::Completed(history.clone())),
+            ("Failed", OperatorWorkerEvent::Failed("error".into())),
+        ] {
+            all.push((
+                format!("Request::OperatorExchange::{name}"),
+                encode(&Request::OperatorExchange(OperatorExchange {
+                    auth: auth.clone(),
+                    batch: OperatorEventBatch {
+                        identity,
+                        sequence: 1,
+                        events: vec![event],
+                    },
+                })),
+            ));
+        }
+        for (name, command) in [
+            ("Start", OperatorWorkerCommand::Start { identity }),
+            ("Retire", OperatorWorkerCommand::Retire { identity }),
+            ("Stop", OperatorWorkerCommand::Stop { identity }),
+        ] {
+            all.push((
+                format!("Request::OperatorWorker::{name}"),
+                encode(&Request::OperatorWorker(OperatorWorkerRequest {
+                    auth: auth.clone(),
+                    command,
+                })),
+            ));
+        }
+        for (name, response) in [
+            ("Created", OperatorResponse::Created(summary.clone())),
+            (
+                "Conversations",
+                OperatorResponse::Conversations(vec![summary.clone()]),
+            ),
+            (
+                "History",
+                OperatorResponse::History(OperatorHistory {
+                    conversation: summary,
+                    messages: vec![OperatorMessage {
+                        ordinal: 1,
+                        turn: identity.turn,
+                        content: OperatorMessageContent::User {
+                            text: "hello".into(),
+                            context: context.clone(),
+                        },
+                    }],
+                    next_after: Some(1),
+                }),
+            ),
+            ("Submitted", OperatorResponse::Submitted(turn.clone())),
+            (
+                "Stopped",
+                OperatorResponse::Stopped(OperatorTurn {
+                    state: OperatorTurnState::Interrupted,
+                    ..turn
+                }),
+            ),
+        ] {
+            all.push((
+                format!("Response::Operator::{name}"),
+                encode(&Response::Operator(response)),
+            ));
+        }
+        all.push((
+            "Response::OperatorExchange".into(),
+            encode(&Response::OperatorExchange(result)),
+        ));
+        all.push((
+            "Response::OperatorWorker::Start".into(),
+            encode(&Response::OperatorWorker(OperatorWorkerResult::Start(
+                Box::new(OperatorWorkerStart {
+                    identity,
+                    provider: OperatorProvider::ChatGpt,
+                    model: "model".into(),
+                    text: "hello".into(),
+                    context,
+                    history: Some(history),
+                }),
+            ))),
+        ));
+        all.push((
+            "Response::OperatorWorker::Retired".into(),
+            encode(&Response::OperatorWorker(OperatorWorkerResult::Retired {
+                identity,
+            })),
+        ));
+        all.push((
+            "ServerEvent::OperatorChanged".into(),
+            encode(&ServerEvent::OperatorChanged(identity.conversation)),
+        ));
+        all.push((
+            "SessionScope::Workspace".into(),
+            encode(&crate::SessionScope::Workspace),
+        ));
+        all.push((
+            "SessionScope::OperatorConversation".into(),
+            encode(&crate::SessionScope::OperatorConversation {
+                conversation: identity.conversation,
+            }),
+        ));
+        for (name, status) in [
+            ("Succeeded", OperatorToolStatus::Succeeded),
+            ("Failed", OperatorToolStatus::Failed { exit_code: Some(7) }),
+            ("TimedOut", OperatorToolStatus::TimedOut),
+        ] {
+            all.push((format!("OperatorToolStatus::{name}"), encode(&status)));
+        }
+        for state in [
+            OperatorTurnState::Running,
+            OperatorTurnState::Complete,
+            OperatorTurnState::Interrupted,
+            OperatorTurnState::Error,
+        ] {
+            all.push((format!("OperatorTurnState::{state:?}"), encode(&state)));
+        }
+        all.push((
+            "OperatorMessageContent::Worker".into(),
+            encode(&OperatorMessageContent::Worker(
+                OperatorWorkerEvent::AssistantDelta("a".into()),
+            )),
+        ));
+        all.push((
+            "OperatorMessageContent::Interrupted".into(),
+            encode(&OperatorMessageContent::Interrupted),
+        ));
     }
 
     fn fallback_cases(all: &mut Vec<(String, String)>) {
@@ -3081,6 +3354,8 @@ mod wire_snapshot {
         ("Request::SetSessionTitle", "200101057469746c65"),
         ("Request::ResetSessionTitle", "200100"),
         ("Request::ReopenSession", "21010400"),
+        ("Request::CancelCloudCreation", "370104"),
+        ("Request::DiscardCloudCreation", "380104"),
         ("Request::UnarchiveSession", "230104"),
         ("Request::DeleteArchivedSession", "220104"),
         ("Request::RecoverSession", "250104"),
@@ -3095,13 +3370,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a043b017301630168016c0104",
+            "2a0445017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f043b017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0445017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -3112,13 +3387,13 @@ mod wire_snapshot {
         ("Response::Hierarchy", "0100"),
         (
             "Response::CreatedSession",
-            "020100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e02010000000104010506000000",
+            "02000100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e02010000000104010506000000",
         ),
         ("Response::Screen", "0301040301020107"),
         ("Response::Error", "0401016d"),
         (
             "Response::Inventory",
-            "0500010100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e02010000000104010506000000",
+            "050001000100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e02010000000104010506000000",
         ),
         ("Response::TerminalText", "060101020174"),
         ("Response::Task", "070601"),
@@ -3132,25 +3407,25 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d043b0000"),
+        ("Response::NotificationNavigation", "0d04450000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e043b017301630168016c0104",
+            "0e01016e0445017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f010708090101690101043b017301630168016c0164",
+            "0f0107080901016901010445017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "10043b010708090101690101043b017301630168016c0164",
+            "1004450107080901016901010445017301630168016c0164",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
         ("ServerEvent::ScreenDirty", "02010403"),
         (
             "ServerEvent::SessionChanged",
-            "030100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e02010000000104010506000000",
+            "03000100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e02010000000104010506000000",
         ),
         (
             "ServerEvent::QuotaChanged",
@@ -3158,7 +3433,7 @@ mod wire_snapshot {
         ),
         (
             "ServerEvent::SettingsChanged",
-            "05072f642e746f6d6c0500000100000002010470692f6d08666561747572652f01022f63010161010162020170010161017100000005636f64657801022f680467726f6b000000fce0930400010103000300320000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
+            "05072f642e746f6d6c0500000000000100000002010470692f6d08666561747572652f01022f630101610101620104776f726b056f7672637204776f726b0c636f6d706f7365722d322e35011b68747470733a2f2f6769746875622e636f6d2f61636d652f617070000b2f73646b2e7461722e677a020170010161017100000005636f64657801022f680467726f6b000000fce0930400010103000300320000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
         ),
         (
             "ServerEvent::Recorded",
@@ -3167,7 +3442,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e043b017301630168016c0104",
+            "08016e0445017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -3257,6 +3532,46 @@ mod wire_snapshot {
             "1501a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500020003696e7604636f6e7601010300",
         ),
         (
+            "AgentRequest::14",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e0800406161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616104776f726b06637572736f7204776f726b0c636f6d706f7365722d322e35011b68747470733a2f2f6769746875622e636f6d2f61636d652f617070000b2f73646b2e7461722e677a40626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262621b68747470733a2f2f6769746875622e636f6d2f61636d652f6170702863636363636363636363636363636363636363636363636363636363636363636363636363636363",
+        ),
+        (
+            "AgentRequest::15",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e08044061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161",
+        ),
+        (
+            "AgentRequest::16",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e08054061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161096167656e742d3337330c636f6d706f7365722d322e35",
+        ),
+        (
+            "AgentRequest::17",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e0801",
+        ),
+        (
+            "AgentRequest::18",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e08024061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161096167656e742d3337350772756e2d333735",
+        ),
+        (
+            "AgentRequest::19",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e08034061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161096167656e742d3337350772756e2d333735",
+        ),
+        (
+            "AgentRequest::20",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e080c406161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616104776f726b06637572736f7204776f726b0c636f6d706f7365722d322e35011b68747470733a2f2f6769746875622e636f6d2f61636d652f617070000b2f73646b2e7461722e677a40626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262621b68747470733a2f2f6769746875622e636f6d2f61636d652f6170702863636363636363636363636363636363636363636363636363636363636363636363636363636363096167656e742d3337360c636f6d706f7365722d322e3540646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464640772756e2d33373601",
+        ),
+        (
+            "AgentRequest::21",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e080d406161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616104776f726b06637572736f7204776f726b0c636f6d706f7365722d322e35011b68747470733a2f2f6769746875622e636f6d2f61636d652f617070000b2f73646b2e7461722e677a40626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262621b68747470733a2f2f6769746875622e636f6d2f61636d652f6170702863636363636363636363636363636363636363636363636363636363636363636363636363636363096167656e742d3337360c636f6d706f7365722d322e3540646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464640772756e2d3337360100",
+        ),
+        (
+            "AgentRequest::22",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e080e406161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616104776f726b06637572736f7204776f726b0c636f6d706f7365722d322e35011b68747470733a2f2f6769746875622e636f6d2f61636d652f617070000b2f73646b2e7461722e677a40626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262621b68747470733a2f2f6769746875622e636f6d2f61636d652f6170702863636363636363636363636363636363636363636363636363636363636363636363636363636363096167656e742d3337360c636f6d706f7365722d322e3540646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464640772756e2d33373601",
+        ),
+        (
+            "AgentRequest::23",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5086372656174696f6e080f4064646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464096167656e742d3337360772756e2d333736406565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656501013001",
+        ),
+        (
             "AgentResponse::0",
             "0a0101a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
         ),
@@ -3265,6 +3580,7 @@ mod wire_snapshot {
         ("AgentResponse::3", "0a04"),
         ("AgentResponse::4", "0a05"),
         ("AgentResponse::5", "0a06"),
+        ("AgentResponse::6", "0a07"),
         ("AgentActivity::Unknown", "00"),
         ("AgentActivity::Idle", "01"),
         ("AgentActivity::Busy", "02"),
@@ -3278,6 +3594,8 @@ mod wire_snapshot {
         ("AgentProvider::Hermes", "04"),
         ("AgentProvider::Omp", "05"),
         ("AgentProvider::Cursor", "06"),
+        ("AgentProvider::CursorCloud", "07"),
+        ("AgentProvider::Operator", "08"),
         ("ITermFocusStatus::Authorized", "00"),
         ("ITermFocusStatus::SelectionRequested", "01"),
         ("ITermFocusStatus::AuthorizationRequired", "02"),
@@ -3569,6 +3887,78 @@ mod wire_snapshot {
             "Response::AssignedRead",
             "18016901770163010174010101720102010303010004040472656164",
         ),
+        ("Request::Operator::Create", "390001056d6f64656c"),
+        ("Request::Operator::List", "3901010a"),
+        ("Request::Operator::Read", "390201010a"),
+        (
+            "Request::Operator::Submit",
+            "390301000568656c6c6f01017001056c6162656c0106737461626c6501022f7701050106",
+        ),
+        ("Request::Operator::Stop", "390401020304"),
+        (
+            "Request::OperatorExchange::AssistantDelta",
+            "3a030707070707070707070707070707070707070707070707070707070707070707010203040101000568656c6c6f",
+        ),
+        (
+            "Request::OperatorExchange::ToolCall",
+            "3a030707070707070707070707070707070707070707070707070707070707070707010203040101010463616c6c0462617368027b7d",
+        ),
+        (
+            "Request::OperatorExchange::ToolOutput",
+            "3a030707070707070707070707070707070707070707070707070707070707070707010203040101020463616c6c066f75747075740100",
+        ),
+        (
+            "Request::OperatorExchange::Completed",
+            "3a0307070707070707070707070707070707070707070707070707070707070707070102030401010301025b5d",
+        ),
+        (
+            "Request::OperatorExchange::Failed",
+            "3a03070707070707070707070707070707070707070707070707070707070707070701020304010104056572726f72",
+        ),
+        (
+            "Request::OperatorWorker::Start",
+            "3b0307070707070707070707070707070707070707070707070707070707070707070001020304",
+        ),
+        (
+            "Request::OperatorWorker::Retire",
+            "3b0307070707070707070707070707070707070707070707070707070707070707070101020304",
+        ),
+        (
+            "Request::OperatorWorker::Stop",
+            "3b0307070707070707070707070707070707070707070707070707070707070707070201020304",
+        ),
+        (
+            "Response::Operator::Created",
+            "190000010300056d6f64656c0568656c6c6f01010203040000",
+        ),
+        (
+            "Response::Operator::Conversations",
+            "19010100010300056d6f64656c0568656c6c6f01010203040000",
+        ),
+        (
+            "Response::Operator::History",
+            "190200010300056d6f64656c0568656c6c6f01010203040000010102000568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060101",
+        ),
+        ("Response::Operator::Submitted", "1903010203040000"),
+        ("Response::Operator::Stopped", "1904010203040200"),
+        ("Response::OperatorExchange", "1a010203040100"),
+        (
+            "Response::OperatorWorker::Start",
+            "1b000102030400056d6f64656c0568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060101025b5d",
+        ),
+        ("Response::OperatorWorker::Retired", "1b0101020304"),
+        ("ServerEvent::OperatorChanged", "0c01"),
+        ("SessionScope::Workspace", "00"),
+        ("SessionScope::OperatorConversation", "0101"),
+        ("OperatorToolStatus::Succeeded", "00"),
+        ("OperatorToolStatus::Failed", "01010e"),
+        ("OperatorToolStatus::TimedOut", "02"),
+        ("OperatorTurnState::Running", "00"),
+        ("OperatorTurnState::Complete", "01"),
+        ("OperatorTurnState::Interrupted", "02"),
+        ("OperatorTurnState::Error", "03"),
+        ("OperatorMessageContent::Worker", "01000161"),
+        ("OperatorMessageContent::Interrupted", "02"),
     ];
 
     #[test]

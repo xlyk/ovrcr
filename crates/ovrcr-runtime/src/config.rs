@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 20;
+const SCHEMA_VERSION: i64 = 27;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -395,6 +395,36 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
         // Older writers discard native resolved-model/profile/policy authority.
         transaction.pragma_update(None, "user_version", 20)?;
     }
+    if schema_identity(&transaction)?.1 < 21 {
+        crate::retained::cloud_creation::create_schema(&transaction)?;
+        transaction.pragma_update(None, "user_version", 21)?;
+    }
+    if schema_identity(&transaction)?.1 < 22 {
+        // Older writers discard distinct Send claims and exact run receipts.
+        transaction.pragma_update(None, "user_version", 22)?;
+    }
+    if schema_identity(&transaction)?.1 < 23 {
+        // Older writers discard cancellation intent and exact live claims.
+        transaction.pragma_update(None, "user_version", 23)?;
+    }
+    if schema_identity(&transaction)?.1 < 24 {
+        // Older writers discard retained cloud recovery controller authority.
+        transaction.pragma_update(None, "user_version", 24)?;
+    }
+    if schema_identity(&transaction)?.1 < 25 {
+        // Older writers discard exclusive cloud observation progress.
+        transaction.pragma_update(None, "user_version", 25)?;
+    }
+    if schema_identity(&transaction)?.1 < 26 {
+        crate::retained::operator::create_schema(&transaction)?;
+        transaction.pragma_update(None, "user_version", 26)?;
+    }
+    if schema_identity(&transaction)?.1 < 27 {
+        // Independent schema-26 development writers stored Operator journals or
+        // opaque cloud cursors. Preserve either variant and fence both writers.
+        crate::retained::operator::create_schema(&transaction)?;
+        transaction.pragma_update(None, "user_version", 27)?;
+    }
     transaction.commit().context("commit registry migration")?;
     Ok(connection)
 }
@@ -440,6 +470,14 @@ pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
                 | 16
                 | 17
                 | 18
+                | 19
+                | 20
+                | 21
+                | 22
+                | 23
+                | 24
+                | 25
+                | 26
                 | SCHEMA_VERSION
         )
     {
@@ -826,6 +864,127 @@ mod tests {
         assert!(
             table_has_column(&Connection::open(&database).unwrap(), "workspaces", "name").unwrap()
         );
+    }
+
+    #[test]
+    fn legacy_cloud_authority_survives_offline_read_and_upgrade() {
+        for version in [23, 24, 25, 26] {
+            let dir = tempfile::tempdir().unwrap();
+            let config = dir.path().join("instance");
+            initialize_registry(&config).unwrap();
+            let database = database_path(&config);
+            let connection = Connection::open(&database).unwrap();
+            connection
+                .pragma_update(None, "user_version", version)
+                .unwrap();
+            connection.execute("INSERT INTO retained_sessions(id,run,project,workspace,name,label,cwd,kind,title_revision,stopped) VALUES(42,7,'demo','root','cloud','cloud',X'2f746d70','\"Terminal\"',0,1)",[]).unwrap();
+            let metadata = if version >= 25 {
+                let record = serde_json::json!({
+                    "intent": {
+                        "key": "a".repeat(64),
+                        "account": {
+                            "name": "work",
+                            "keychain_service": "cursor",
+                            "keychain_account": "work",
+                            "model": "composer-2.5",
+                            "repositories": ["https://github.com/acme/app"],
+                            "owners": [],
+                            "bridge_archive": "/sdk.tar.gz"
+                        },
+                        "credential_generation": "b".repeat(64),
+                        "repository": "https://github.com/acme/app",
+                        "source_sha": "c".repeat(40)
+                    },
+                    "run": 7,
+                    "lifetime": "lifetime-1",
+                    "invocation": "invocation-1",
+                    "claimed": true,
+                    "closed": true,
+                    "discarded": false,
+                    "cancel_requested": false,
+                    "cancel_claimed": false,
+                    "receipt": {
+                        "agent_id": "agent-1",
+                        "model": "composer-2.5"
+                    },
+                    "sends": [{
+                        "key": "d".repeat(64),
+                        "digest": "e".repeat(64),
+                        "claimed": true,
+                        "run_id": "run-1",
+                        "terminal": null,
+                        "progress": {
+                            "origin": "f".repeat(64),
+                            "send": if version == 25 {
+                                serde_json::json!(17)
+                            } else {
+                                serde_json::json!({ "token": "opaque-send-0", "revision": 1 })
+                            },
+                            "observe": if version == 25 {
+                                serde_json::json!(0)
+                            } else {
+                                serde_json::Value::Null
+                            }
+                        }
+                    }],
+                    "recovery_owner": null,
+                    "recovery_cancel_claimed": false,
+                    "controller_conflict": null
+                });
+                let legacy: crate::retained::cloud_creation::Record =
+                    serde_json::from_value(record.clone()).unwrap();
+                legacy.validate().unwrap();
+                serde_json::to_string(&record).unwrap()
+            } else {
+                r#"{"original_intent":"unchanged","claimed":true,"cancel_requested":true,"cancel_claimed":true,"closed":true,"unresolved":"immutable"}"#.into()
+            };
+            connection
+                .execute(
+                    "INSERT INTO cloud_creations(session,metadata) VALUES(42,?1)",
+                    [metadata.as_str()],
+                )
+                .unwrap();
+            if version == 26 {
+                // The standalone opaque-cursor writer did not create Operator schema.
+                connection.execute_batch("DROP TABLE operator_batches;DROP TABLE operator_model_history;DROP TABLE operator_messages;DROP TABLE operator_turns;DROP TABLE operator_conversations;ALTER TABLE retained_sessions DROP COLUMN scope;").unwrap();
+            }
+            let private = config.join("cloud-creations");
+            std::fs::create_dir(&private).unwrap();
+            let payload = private.join("a".repeat(64));
+            std::fs::write(&payload, b"original immutable uncertain Send").unwrap();
+            drop(connection);
+            load_registry(&config).unwrap();
+            assert_eq!(
+                schema_version(&database),
+                version,
+                "offline read must not migrate"
+            );
+            initialize_registry(&config).unwrap();
+            assert_eq!(schema_version(&database), SCHEMA_VERSION);
+            let connection = Connection::open(&database).unwrap();
+            assert!(table_has_column(&connection, "retained_sessions", "scope").unwrap());
+            assert_eq!(
+                connection
+                    .query_row("SELECT count(*) FROM operator_conversations", [], |row| row
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT metadata FROM cloud_creations WHERE session=42",
+                        [],
+                        |row| row.get::<_, String>(0)
+                    )
+                    .unwrap(),
+                metadata
+            );
+            assert_eq!(
+                std::fs::read(payload).unwrap(),
+                b"original immutable uncertain Send"
+            );
+        }
     }
 
     #[test]
@@ -1300,6 +1459,7 @@ mod tests {
         let path = dir.path().to_path_buf() /* instance home */;
         let database = database_path(&path);
         let connection = Connection::open(&database).unwrap();
+        crate::retained::create_schema(&connection).unwrap();
         connection
             .pragma_update(None, "application_id", APPLICATION_ID)
             .unwrap();
@@ -1414,6 +1574,7 @@ mod tests {
     ) {
         use std::os::unix::ffi::OsStrExt;
         let connection = Connection::open(database).unwrap();
+        crate::retained::create_schema(&connection).unwrap();
         connection
             .pragma_update(None, "application_id", APPLICATION_ID)
             .unwrap();

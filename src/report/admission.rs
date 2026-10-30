@@ -100,7 +100,7 @@ fn eligible_launch(argv: &[OsString]) -> Option<EligibleLaunch> {
     if argv.first().and_then(|arg| Path::new(arg).file_name()) != Some(OsStr::new("claude")) {
         return None;
     }
-    // Assigned permissions are eligible only as the complete generated v2 recipe.
+    // Assigned permissions are eligible only as the complete generated v3 recipe.
     if argv.iter().any(|arg| {
         arg.to_str()
             .is_some_and(|value| value.split('=').next() == Some("--allowedTools"))
@@ -762,8 +762,9 @@ impl Hooks {
             }
             Ok(None) => false,
             Err(_) => {
-                self.stop_collector(deadline);
+                // Reaping may consume the deadline needed to publish the lost source.
                 self.source_health(reporter, Some("collector_unavailable"), deadline);
+                self.stop_collector(deadline);
                 false
             }
         }
