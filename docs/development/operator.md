@@ -88,7 +88,12 @@ Persistence failure returns an error and supplies no new bearer snapshot.
 Tokens, login URLs with ID-token hints, auth responses and remote error descriptions
 must never enter settings, the conversation journal, diagnostics, terminal commands
 or shell environments. Credential-bearing types have redacted `Debug`; errors
-contain fixed local messages. Worker code must pass bearer snapshots directly to
+contain fixed local messages. Provider failures retain only Rig's fixed classification,
+known numeric HTTP status, a fixed response-shape label, exact allowlisted public provider codes
+and known request parameter names. Other remote strings and request IDs remain private.
+Recovery guidance follows [SIWC errors and recovery](https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery);
+model discovery alone does not prove inference permission. Failures never automatically
+retry, change billing, clear credentials or create a conversation. Worker code must pass bearer snapshots directly to
 the SDK without serializing or logging them.
 
 ChatGPT logout attempts renewable-session revocation and clears local access,

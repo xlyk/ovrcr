@@ -266,7 +266,8 @@ fn serve(
     if !matches!(
         model.as_str(),
         "fixture-a" | "fixture-b" | "fixture-timeout" | "fixture-incomplete" | "fixture-lifecycle"
-    ) || request["stream"] != true
+    ) && !model.starts_with("fixture-error-")
+        || request["stream"] != true
     {
         return Err(io::Error::other("unexpected model or nonstreaming request"));
     }
@@ -276,6 +277,46 @@ fn serve(
         requests.push(request.clone());
         requests.len()
     };
+    if model.starts_with("fixture-error-") {
+        const HOSTILE: &str = "FAKE_BEARER_PRIVATE_TOKEN_AND_PROMPT";
+        if !wait_release(shared, &model, gate_budget)? {
+            return Ok(());
+        }
+        if model == "fixture-error-transport" {
+            return Ok(());
+        }
+        if let Some(status) = model.strip_prefix("fixture-error-http-") {
+            let status: u16 = status.parse().map_err(io::Error::other)?;
+            let body = match status {
+                401 | 503 => json!({"detail": HOSTILE}),
+                400 => json!({"error":{"code":"subscription_sharing_unsupported_capability","param":"tools","message":HOSTILE},"request_id":HOSTILE}),
+                429 => json!({"error":{"code":"subscription_sharing_usage_limit_exceeded","param":HOSTILE,"message":HOSTILE}}),
+                _ => json!({"error":{"code":HOSTILE,"param":HOSTILE,"message":HOSTILE}}),
+            }.to_string();
+            write!(
+                stream,
+                "HTTP/1.1 {status} Fixture failure\r\nContent-Type: application/json\r\nContent-Length: {}\r\nx-request-id: {HOSTILE}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )?;
+            return Ok(());
+        }
+        stream.write_all(
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
+        )?;
+        if model == "fixture-error-parse" {
+            return write!(stream, "event: response.created\ndata: {{{HOSTILE}\n\n");
+        }
+        let status = if model == "fixture-error-incomplete" {
+            "incomplete"
+        } else {
+            "failed"
+        };
+        event(
+            &mut stream,
+            json!({"type":format!("response.{status}"),"response":{"id":HOSTILE,"status":status,"incomplete_details":{"reason":"max_output_tokens"},"error":{"code":HOSTILE,"message":HOSTILE},"output":[]}}),
+        )?;
+        return Ok(());
+    }
     write!(
         stream,
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"

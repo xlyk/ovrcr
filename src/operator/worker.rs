@@ -18,6 +18,7 @@ use rig::{
     },
     catalog::ModelSpec,
     client::signed_in::{CredentialSource, SignedInModel},
+    completion::PromptError,
     effect::{EffectKind, HandlerKey},
     handlers::Handlers,
     http_client::DynHttpClient,
@@ -447,6 +448,186 @@ async fn flush_text(
     }
     Ok(())
 }
+// Remote descriptions, bodies, headers and source chains never cross into durable chat.
+fn provider_failure(error: &PromptError) -> String {
+    let kind = match error {
+        PromptError::Provider(error) => error.kind().code(),
+        PromptError::Report(report) => report.kind.code(),
+        PromptError::Cancelled { .. } => "cancelled",
+        PromptError::MaxTurns { .. } => "turn_limit",
+        PromptError::UnknownToolCall { .. } => "tool_unavailable",
+        PromptError::Memory { .. } => "memory",
+        _ => "other",
+    };
+    let status = error
+        .provider_response_status()
+        .map(|status| status.as_u16());
+    let body = error.provider_response_json().ok().flatten();
+    let envelope = body.as_ref().and_then(|body| {
+        body.get("error")
+            .or_else(|| body.pointer("/response/error"))
+    });
+    let remote_code = match error {
+        PromptError::Report(report) => report.code.as_deref(),
+        _ => None,
+    }
+    .or_else(|| {
+        envelope
+            .and_then(|error| error.get("code"))
+            .and_then(serde_json::Value::as_str)
+    });
+    // Exact public provider codes only; unknown provider strings remain private.
+    let code = [
+        "subscription_sharing_user_not_eligible",
+        "subscription_sharing_usage_limit_exceeded",
+        "subscription_sharing_usage_unavailable",
+        "subscription_sharing_unsupported_capability",
+        "subscription_sharing_route_not_supported",
+        "subscription_sharing_invalid_user",
+        "chatpass_v2_scope_not_authorized",
+        "chatpass_v2_invalid_authorization_context",
+        "subscription_sharing_user_unavailable",
+        "invalid_request_error",
+        "invalid_value",
+        "unsupported_parameter",
+        "unsupported_value",
+        "model_not_found",
+        "invalid_api_key",
+        "rate_limit_exceeded",
+        "insufficient_quota",
+    ]
+    .into_iter()
+    .find(|known| Some(*known) == remote_code);
+    let remote_param = envelope
+        .and_then(|error| error.get("param"))
+        .and_then(serde_json::Value::as_str);
+    let param = [
+        "model",
+        "input",
+        "instructions",
+        "tools",
+        "tools[0]",
+        "tools[0].type",
+        "tools[0].tools",
+        "tools[0].tools[0]",
+        "tools[0].tools[0].parameters",
+        "tools[0].tools[0].strict",
+        "reasoning",
+        "reasoning.effort",
+        "include",
+        "stream",
+        "store",
+        "service_tier",
+        "background",
+        "conversation",
+        "max_output_tokens",
+        "max_tool_calls",
+        "metadata",
+        "moderation",
+        "multi_agent",
+        "prompt",
+        "prompt_cache_retention",
+        "safety_identifier",
+        "temperature",
+        "top_logprobs",
+        "top_p",
+        "truncation",
+        "user",
+        "previous_response_id",
+    ]
+    .into_iter()
+    .find(|known| Some(*known) == remote_param);
+    let shape = if envelope.is_some() {
+        "error"
+    } else if body
+        .as_ref()
+        .is_some_and(|body| body.get("detail").is_some())
+    {
+        "detail"
+    } else if body.is_some() {
+        "other"
+    } else {
+        "unavailable"
+    };
+    let guidance = match code {
+        Some(
+            "subscription_sharing_usage_unavailable" | "subscription_sharing_user_unavailable",
+        ) => "Provider temporarily unavailable; credentials preserved. Try later.",
+        Some("model_not_found") => {
+            "Selected model is unavailable; verify model discovery before submitting again."
+        }
+        Some("invalid_api_key") => {
+            "Provider authorization rejected credentials; verify the selected account and grant."
+        }
+        Some("rate_limit_exceeded" | "insufficient_quota") => {
+            "Provider usage or request limit reached; check usage before submitting again."
+        }
+        Some("subscription_sharing_usage_limit_exceeded") => {
+            "Plan usage limit reached; check ChatGPT Settings > Usage before submitting again."
+        }
+        Some("subscription_sharing_user_not_eligible") => {
+            "Plan use is restricted by account eligibility or policy; verify provider permissions."
+        }
+        Some("subscription_sharing_unsupported_capability") => {
+            "Request capability was rejected; inspect the parameter and integration before submitting again."
+        }
+        Some("subscription_sharing_route_not_supported") => {
+            "Provider route was rejected; verify the integration endpoint."
+        }
+        Some("chatpass_v2_scope_not_authorized" | "chatpass_v2_invalid_authorization_context") => {
+            "Provider authorization does not permit this operation; verify client and grant configuration."
+        }
+        Some("subscription_sharing_invalid_user") => {
+            "Provider authorization context was rejected; verify the selected account and grant."
+        }
+        _ => match status {
+            Some(401) => {
+                "Provider authorization was rejected; verify the selected account and granted permissions."
+            }
+            Some(403) => {
+                "Provider permission or policy rejected this request; verify the account and integration."
+            }
+            Some(400) => {
+                "Provider rejected the request; inspect capabilities and parameters before submitting again."
+            }
+            Some(429) => {
+                "Provider usage or request limit reached; check usage before submitting again."
+            }
+            Some(500..=599) => {
+                "Provider temporarily unavailable; credentials preserved. Try later."
+            }
+            _ => match kind {
+                "http" | "timeout" => {
+                    "Provider connection failed; check connectivity before submitting again."
+                }
+                "cancelled" => {
+                    "Provider did not complete this turn; review partial history and accepted operations before resubmitting."
+                }
+                "json" | "response" => {
+                    "Provider response could not be decoded; verify the integration before submitting again."
+                }
+                "request" => {
+                    "Operator request could not be prepared; verify the integration before submitting again."
+                }
+                _ => {
+                    "Provider response failed; review partial history and this diagnostic before submitting again."
+                }
+            },
+        },
+    };
+    let mut diagnostic = format!("Operator request failed (kind={kind}");
+    if let Some(status) = status {
+        diagnostic.push_str(&format!(", HTTP {status}"));
+    }
+    diagnostic.push_str(&format!(", body={shape}"));
+    if let Some(code) = code {
+        diagnostic.push_str(&format!(", code={code}"));
+    }
+    if let Some(param) = param {
+        diagnostic.push_str(&format!(", param={param}"));
+    }
+    format!("{diagnostic}). {guidance}")
+}
 async fn run_turn(
     reporter: &SharedReporter,
     sequence: &mut u64,
@@ -532,10 +713,8 @@ async fn run_turn(
                     break Ok(());
                 }
                 Some(Ok(_)) => {}
-                Some(Err(_)) => {
-                    break Err(anyhow!(
-                        "operator provider request failed; check sign-in and model, then retry or start New Conversation"
-                    ));
+                Some(Err(error)) => {
+                    break Err(anyhow!(provider_failure(&error)));
                 }
                 None => {
                     break Err(anyhow!(
@@ -1112,6 +1291,46 @@ mod tests {
             for reason in ["content_filter", "unknown_fixture_reason"] {
                 assert_incomplete_rejected(provider, false, reason).await;
             }
+        }
+    }
+    #[test]
+    fn diagnostic_documented_unavailability_codes_preserve_credentials_without_http_status() {
+        for code in [
+            "subscription_sharing_usage_unavailable",
+            "subscription_sharing_user_unavailable",
+        ] {
+            let error = PromptError::Provider(rig::error::ProviderError::from_provider_body(serde_json::json!({"error":{"code":code,"message":"FAKE_REMOTE_BEARER_AND_PROMPT"}}).to_string()));
+            let message = provider_failure(&error);
+            assert!(
+                message.contains("temporarily unavailable")
+                    && message.contains("credentials preserved"),
+                "documented unavailability must not recommend reauthentication"
+            );
+            assert!(!message.contains("FAKE_REMOTE_BEARER_AND_PROMPT"));
+        }
+    }
+
+    #[test]
+    fn diagnostic_public_validation_codes_and_parameters_are_preserved_without_remote_descriptions()
+    {
+        for (code, param) in [
+            ("invalid_request_error", "metadata"),
+            ("invalid_value", "max_output_tokens"),
+            ("unsupported_parameter", "temperature"),
+            ("unsupported_value", "previous_response_id"),
+            ("model_not_found", "model"),
+            ("invalid_api_key", "user"),
+            ("rate_limit_exceeded", "top_p"),
+            ("insufficient_quota", "background"),
+        ] {
+            let error = PromptError::Provider(rig::error::ProviderError::from_provider_body(serde_json::json!({"error":{"code":code,"param":param,"message":"FAKE_REMOTE_BEARER_AND_PROMPT"}}).to_string()));
+            let message = provider_failure(&error);
+            assert!(
+                message.contains(&format!("code={code}"))
+                    && message.contains(&format!("param={param}")),
+                "documented public validation fields need fixed allowlist entries"
+            );
+            assert!(!message.contains("FAKE_REMOTE_BEARER_AND_PROMPT"));
         }
     }
 }

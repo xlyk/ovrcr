@@ -259,10 +259,7 @@ fn transcript_lines(chat: &Chat) -> Vec<Line<'static>> {
                     assistant = false;
                 }
                 OperatorWorkerEvent::Failed(error) => {
-                    text.push_str(&format!(
-                        "\n\nError: {}\nNew Conversation starts fresh context.\n",
-                        display_text(error)
-                    ));
+                    text.push_str(&format!("\n\nError: {}\n", display_text(error)));
                     assistant = false;
                 }
             },
@@ -348,7 +345,7 @@ fn status(chat: &Chat) -> &'static str {
         }
         Some(OperatorTurnState::Complete) => "complete",
         Some(OperatorTurnState::Interrupted) => "interrupted",
-        Some(OperatorTurnState::Error) => "error · New Conversation starts fresh context",
+        Some(OperatorTurnState::Error) => "error",
         None => "ready",
     }
 }

@@ -259,9 +259,12 @@ mod compiled_worker {
     }
 
     fn start(live: &live::Live, provider: &Provider) {
+        start_with_log(live, provider, None);
+    }
+    fn start_with_log(live: &live::Live, provider: &Provider, log: Option<&std::path::Path>) {
         // Empty every inherited provider credential/endpoint and proxy; HOME/profile paths are
         // private in Live. The only inference endpoint is the feature-gated loopback seam.
-        live.start_binary_env(&[
+        let environment = [
             ("OVRCR_OPERATOR_TEST_API_BASE", OsStr::new(&provider.base)),
             ("OPENAI_API_KEY", OsStr::new("")),
             ("XAI_API_KEY", OsStr::new("")),
@@ -288,7 +291,12 @@ mod compiled_worker {
             ("all_proxy", OsStr::new("")),
             ("NO_PROXY", OsStr::new("*")),
             ("no_proxy", OsStr::new("*")),
-        ]);
+        ];
+        if let Some(log) = log {
+            live.start_binary_logged(&environment, log);
+        } else {
+            live.start_binary_env(&environment);
+        }
     }
     fn has_text(history: &OperatorHistory, needle: &str) -> bool {
         history.messages.iter().any(|message| matches!(&message.content,
@@ -441,6 +449,178 @@ mod compiled_worker {
             thread::sleep(Duration::from_millis(25));
         }
         fs::write(control.join("finished.json"), serde_json::json!({"seeded":seeded,"a_requests":provider.requests("fixture-a").len(),"b_requests":provider.requests("fixture-b").len()}).to_string()).unwrap();
+    }
+
+    #[test]
+    fn diagnostic_real_worker_classifies_provider_failures_without_retaining_remote_secrets() {
+        let live = live::Live::idle().bounded();
+        let provider = Provider::new(live.root.path(), BUDGET);
+        provider.sign_in(&live.config);
+        let log = live.root.path().join("provider-errors.log");
+        start_with_log(&live, &provider, Some(&log));
+        let mut ui = DashboardClient::connect(&live);
+        for (index, (model, kind, status, guidance)) in [
+            (
+                "fixture-error-http-400",
+                "provider_response",
+                Some(400),
+                "request",
+            ),
+            (
+                "fixture-error-http-401",
+                "provider_response",
+                Some(401),
+                "authorization",
+            ),
+            (
+                "fixture-error-http-403",
+                "provider_response",
+                Some(403),
+                "permission",
+            ),
+            (
+                "fixture-error-http-429",
+                "provider_response",
+                Some(429),
+                "usage",
+            ),
+            (
+                "fixture-error-http-503",
+                "provider_response",
+                Some(503),
+                "temporarily",
+            ),
+            (
+                "fixture-error-failed",
+                "provider_response",
+                None,
+                "response",
+            ),
+            ("fixture-error-incomplete", "cancelled", None, "complete"),
+            ("fixture-error-parse", "json", None, "response"),
+            ("fixture-error-transport", "http", None, "connection"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let conversation = ui.create(model, index == 0);
+            ui.submit("Diagnose the isolated provider fixture once");
+            let group = own_worker(&live, &conversation);
+            provider.release(model);
+            let history = ui.wait_history(&provider, conversation.id, |history| {
+                history.conversation.worker_stopped
+            });
+            assert_retired(&live, &history, group);
+            assert_eq!(
+                history.conversation.current_turn.as_ref().unwrap().state,
+                OperatorTurnState::Error
+            );
+            let failure = history
+                .messages
+                .iter()
+                .find_map(|message| match &message.content {
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::Failed(message)) => {
+                        Some(message)
+                    }
+                    _ => None,
+                })
+                .expect("actual worker persisted its failure");
+            assert!(
+                failure.contains(&format!("kind={kind}")),
+                "missing fixed classification for {model}"
+            );
+            if let Some(status) = status {
+                assert!(
+                    failure.contains(&format!("HTTP {status}")),
+                    "missing actual HTTP status for {model}"
+                );
+            }
+            assert!(
+                failure.to_ascii_lowercase().contains(guidance),
+                "missing actionable fixed guidance for {model}"
+            );
+            assert!(
+                !failure.contains("New Conversation"),
+                "provider errors must not universally ask for a fresh conversation"
+            );
+            for message in &history.messages {
+                assert!(
+                    !serde_json::to_string(message)
+                        .unwrap()
+                        .contains("FAKE_BEARER_PRIVATE_TOKEN_AND_PROMPT"),
+                    "remote secret reached durable history"
+                );
+            }
+            let rendered = ui.rendered();
+            assert!(
+                !rendered.contains("starts fresh context"),
+                "native error surfaces must retain the failure-specific guidance"
+            );
+            assert!(
+                !rendered.contains("FAKE_BEARER_PRIVATE_TOKEN_AND_PROMPT"),
+                "remote secret reached native output"
+            );
+            if model == "fixture-error-http-400" {
+                assert!(
+                    failure.contains("code=subscription_sharing_unsupported_capability")
+                        && failure.contains("param=tools")
+                );
+            }
+            if model == "fixture-error-http-401" {
+                assert!(
+                    failure.contains("body=detail"),
+                    "admission detail bodies need a safe structural label"
+                );
+            }
+            let Response::TerminalText { session, text, .. } =
+                live.request(Request::ReadTerminal {
+                    session: conversation.session,
+                    max_lines: None,
+                })
+            else {
+                panic!("worker diagnostic PTY must remain readable");
+            };
+            assert_eq!(session, conversation.session);
+            assert!(
+                !text.contains("FAKE_BEARER_PRIVATE_TOKEN_AND_PROMPT"),
+                "remote secret reached worker diagnostic PTY"
+            );
+            assert!(
+                !std::fs::read_to_string(&log)
+                    .unwrap()
+                    .contains("FAKE_BEARER_PRIVATE_TOKEN_AND_PROMPT"),
+                "remote secret reached server logs"
+            );
+            assert_eq!(
+                provider.requests(model).len(),
+                1,
+                "failure must never retry inference"
+            );
+            assert!(!history.messages.iter().any(|message| matches!(
+                message.content,
+                OperatorMessageContent::Worker(
+                    OperatorWorkerEvent::ToolCall { .. } | OperatorWorkerEvent::Completed(_)
+                )
+            )));
+        }
+        let database = rusqlite::Connection::open_with_flags(
+            ovrcr::config::database_path(&live.config),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let saved: i64 = database
+            .query_row("SELECT count(*) FROM operator_model_history", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            saved, 0,
+            "failed requests must not save completed model context"
+        );
+        provider.assert_healthy();
+        assert_eq!(ui.request(Request::Shutdown { kill: false }), Response::Ok);
+        drop(ui);
+        assert!(live.join_within(BUDGET).is_finished());
     }
 
     #[test]
