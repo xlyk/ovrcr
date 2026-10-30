@@ -1,0 +1,17 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--test",
+    "operator_e2e",
+    "--features",
+    "gui,acceptance-diagnostics",
+    "--no-run",
+    "--message-format=json"
+  ],
+  "exit": 0,
+  "raw_bytes": 412546,
+  "raw_sha256": "e90516e17952058c64cc24b20d25fda2ba2c35fa30e5de6312dc477bbda33302"
+}

@@ -1,0 +1,12 @@
+{
+  "call": "app.getAXStateAndScreenshot({disableDiffing:true,emit:false})",
+  "start_unix_ms": 1793387276231,
+  "end_unix_ms": 1793387276675,
+  "source_revision": "6e560817477ed9993c5806da958e39dd239b1511",
+  "jpg_sha256": "3e91b0357b3c46157dff7bfb377579c50ae078e7f43a0ac72233cc366cc1f981",
+  "ax_sha256": "49520461cc4db144c5297007025ba6d66103689e566644addfe43689d9f5a56c",
+  "activity": [
+    "\t\t26 text (settable)  Managing consigint / main / #1 run 1                                                                        ",
+    "\t\t28 text (settable)  > Retained follow-up draft 界🙂; do not send.▏                                                              "
+  ]
+}

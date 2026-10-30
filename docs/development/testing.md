@@ -100,6 +100,12 @@ proves silent native animation; its later lock remains recorded. The
 [unlocked correction](../../research/operator-activity-2026-10-30/native-02/README.md)
 adds actual pending-tool movement with Operator collapsed, completed indicator
 absence and normal CUA close on the same frozen product revision.
+The [inline activity and message-input acceptance](../../research/operator-inline-input-2026-10-30/README.md)
+captures activity after message/tool entries, history scroll-away and retained
+viewport through completion, full/Quick Unicode edits, selected Ctrl+C Stop,
+independent response survival and ordinary terminal Ctrl+C on matching native
+artifacts. Known-repeat/frozen-receipt/overlay permutations remain explicitly
+separate automated evidence.
 
 For Rust changes, choose the owning package and add a focused test filter as appropriate:
 

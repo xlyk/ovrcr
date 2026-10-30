@@ -1,0 +1,42 @@
+{
+  "pids": {
+    "81219": "absent",
+    "81380": "absent",
+    "81445": "absent",
+    "81510": "absent",
+    "80359": "absent",
+    "81128": "absent",
+    "78759": "absent",
+    "82986": "absent",
+    "82762": "absent",
+    "82640": "absent",
+    "82871": "absent",
+    "80632": "absent",
+    "81754": "absent",
+    "82203": "absent",
+    "82556": "absent",
+    "83039": "absent"
+  },
+  "pgids": {
+    "82556": "absent",
+    "81219": "absent",
+    "78755": "absent",
+    "81380": "absent",
+    "81445": "absent",
+    "81510": "absent",
+    "81128": "absent",
+    "82986": "absent",
+    "82762": "absent",
+    "82640": "absent",
+    "82871": "absent",
+    "81754": "absent",
+    "82203": "absent",
+    "80348": "absent",
+    "83039": "absent"
+  },
+  "demo_exists": false,
+  "socket_exists": false,
+  "hashes_unchanged": true,
+  "interruption": "root source review identified physical Ctrl+C repeat encoding gap; no conversation submitted",
+  "root_removed": true
+}

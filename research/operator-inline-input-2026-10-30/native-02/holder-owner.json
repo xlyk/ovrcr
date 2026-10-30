@@ -1,0 +1,12 @@
+{
+  "pid": 40926,
+  "command": [
+    "/private/tmp/ovrcr-inline-native2-ukewk5au/operator_e2e",
+    "--exact",
+    "compiled_worker::native_provider_holder",
+    "--ignored",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "root": "/private/tmp/ovrcr-inline-native2-ukewk5au"
+}

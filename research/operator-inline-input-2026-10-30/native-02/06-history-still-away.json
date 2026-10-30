@@ -1,0 +1,12 @@
+{
+  "call": "app.getAXStateAndScreenshot({disableDiffing:true,emit:false})",
+  "start_unix_ms": 1793387265634,
+  "end_unix_ms": 1793387265739,
+  "source_revision": "6e560817477ed9993c5806da958e39dd239b1511",
+  "jpg_sha256": "acde8d462009f315d481584f49ef07cb7bc2b5c8ae585c4a08b8b9c2b5690ec6",
+  "ax_sha256": "125fe6f2ae4b7d22bc3b5131328ef1f0f0981a5e386dc61328b779a5aa9cfe73",
+  "activity": [
+    "\t\t41 text (settable) Claude · unavailable                   │ Managing consigint / main / #1 run 1                                                                                         ",
+    "\t\t43 text (settable) Grok · not signed in · retry 10m       │ > Retained follow-up draft 界🙂; do not send.▏                                                                               "
+  ]
+}
