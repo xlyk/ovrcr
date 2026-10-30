@@ -444,6 +444,68 @@ mod compiled_worker {
     }
 
     #[test]
+    fn compiled_incomplete_response_preserves_partial_but_never_saves_completed_context() {
+        let live = live::Live::idle().bounded();
+        let provider = Provider::new(live.root.path(), BUDGET);
+        provider.sign_in(&live.config);
+        start(&live, &provider);
+        let mut ui = DashboardClient::connect(&live);
+        let conversation = ui.create("fixture-incomplete", true);
+        let turn = ui.submit("Show the incomplete response once");
+        let group = own_worker(&live, &conversation);
+        ui.wait_history(&provider, conversation.id, |history| {
+            has_text(history, "INCOMPLETE partial visible")
+        });
+        assert!(ui.rendered().contains("INCOMPLETE partial visible"));
+        provider.release("fixture-incomplete");
+        let history = ui.wait_history(&provider, conversation.id, |history| {
+            history.conversation.worker_stopped
+        });
+        assert_retired(&live, &history, group);
+        let database = rusqlite::Connection::open_with_flags(
+            ovrcr::config::database_path(&live.config),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let saved: i64 = database
+            .query_row(
+                "SELECT count(*) FROM operator_model_history WHERE conversation=?1",
+                [i64::try_from(conversation.id.0).unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let terminal = history.conversation.current_turn.as_ref().unwrap();
+        eprintln!(
+            "INCOMPLETE_OUTCOME state={:?} completed_history_rows={saved}",
+            terminal.state
+        );
+        assert_eq!(terminal.identity, turn.identity);
+        assert_eq!(
+            terminal.state,
+            OperatorTurnState::Error,
+            "incomplete provider termination must not become Complete"
+        );
+        assert!(has_text(&history, "INCOMPLETE partial visible"));
+        assert!(history.messages.iter().any(|message| matches!(&message.content, OperatorMessageContent::Worker(OperatorWorkerEvent::Failed(text)) if !text.is_empty())));
+        assert!(!history.messages.iter().any(|message| matches!(
+            message.content,
+            OperatorMessageContent::Worker(
+                OperatorWorkerEvent::ToolCall { .. } | OperatorWorkerEvent::Completed(_)
+            )
+        )));
+        assert_eq!(
+            saved, 0,
+            "incomplete response must not become reusable completed model context"
+        );
+        assert_eq!(provider.requests("fixture-incomplete").len(), 1);
+        assert_eq!(provider.inference_attempts(), 1);
+        provider.assert_healthy();
+        assert_eq!(ui.request(Request::Shutdown { kill: false }), Response::Ok);
+        drop(ui);
+        assert!(live.join_within(BUDGET).is_finished());
+    }
+
+    #[test]
     fn compiled_missing_auth_is_visible_and_controlled_retired_without_provider_http() {
         use sha2::{Digest, Sha256};
         use std::{

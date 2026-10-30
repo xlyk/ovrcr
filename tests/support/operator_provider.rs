@@ -265,7 +265,7 @@ fn serve(
         .to_owned();
     if !matches!(
         model.as_str(),
-        "fixture-a" | "fixture-b" | "fixture-timeout"
+        "fixture-a" | "fixture-b" | "fixture-timeout" | "fixture-incomplete"
     ) || request["stream"] != true
     {
         return Err(io::Error::other("unexpected model or nonstreaming request"));
@@ -281,7 +281,31 @@ fn serve(
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
     )?;
     let label = model.strip_prefix("fixture-").unwrap().to_ascii_uppercase();
-    if ordinal == 1 {
+    if model == "fixture-incomplete" {
+        if ordinal != 1 {
+            return Err(io::Error::other("incomplete response retried"));
+        }
+        let text = message(&model, "INCOMPLETE partial visible");
+        event(
+            &mut stream,
+            json!({"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":format!("msg-{model}"),"role":"assistant","content":[]}}),
+        )?;
+        event(
+            &mut stream,
+            json!({"type":"response.output_text.delta","output_index":0,"item_id":format!("msg-{model}"),"content_index":0,"delta":"INCOMPLETE partial visible"}),
+        )?;
+        event(
+            &mut stream,
+            json!({"type":"response.output_item.done","output_index":0,"item":text}),
+        )?;
+        if !wait_release(shared, &model, gate_budget)? {
+            return Ok(());
+        }
+        event(
+            &mut stream,
+            json!({"type":"response.incomplete","response":{"id":"resp-incomplete","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[text],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}),
+        )
+    } else if ordinal == 1 {
         let timeout = model == "fixture-timeout";
         let command = if timeout {
             format!(
@@ -373,19 +397,9 @@ fn serve(
             json!({"type":"response.output_text.delta","output_index":0,"item_id":message_id,"content_index":0,"delta":partial}),
         )?;
         // A bounded barrier proves partial text reached the journal before final completion.
-        let deadline = Instant::now() + gate_budget;
-        let mut state = shared.0.lock().unwrap();
-        while !state.stopped && !state.released.contains(gate) {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return Err(io::Error::other("model gate was not released"));
-            }
-            state = shared.1.wait_timeout(state, remaining).unwrap().0;
-        }
-        if state.stopped {
+        if !wait_release(shared, gate, gate_budget)? {
             return Ok(());
         }
-        drop(state);
         // A stopped worker closes its socket; that is expected for the independently cancelled arm.
         let result = (|| {
             event(
@@ -419,6 +433,19 @@ fn serve(
             "unexpected replay or extra inference request",
         ))
     }
+}
+
+fn wait_release(shared: &Shared, gate: &str, budget: Duration) -> io::Result<bool> {
+    let deadline = Instant::now() + budget;
+    let mut state = shared.0.lock().unwrap();
+    while !state.stopped && !state.released.contains(gate) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::other("model gate was not released"));
+        }
+        state = shared.1.wait_timeout(state, remaining).unwrap().0;
+    }
+    Ok(!state.stopped)
 }
 
 /// The public CLI list is an array; delimiters separate it from the Bash evidence marker.
