@@ -351,7 +351,7 @@ prove local wiring only.
 The installed dependency and passive checks do not establish native release
 readiness. [#378](https://github.com/xlyk/ovrcr/issues/378) still requires
 current-head packaged Dashboard/provider acceptance, separately approved
-concurrent two-account cloud proofs, required macOS/Linux CI and process cleanup
+concurrent two-account cloud proofs, required macOS CI and process cleanup
 receipts. The unsupported #374/#376/#377 remainders are unavailable and not
 planned, not release gates or feature passes. Retain the implemented same-owned-
 bridge ObserveRun path and completed exact-run GetRun reconciliation; fresh-process

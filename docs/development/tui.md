@@ -33,3 +33,32 @@ never implies ownership acknowledgement. Same-boot or unverifiable recovery
 requires a separate explicit confirmation that old agents and background
 processes have stopped. Agent rows without a conversation reference open the supported provider's native
 resume picker. Unknown providers and invalidated references remain unavailable.
+
+
+The pinned Operator control sits in the existing title bar above the project
+sidebar, preserving project row geometry; its shared
+rectangle drives drawing and mouse selection. Browse `o` and the palette's
+Operator action open the same native hub. Terminal pane assignments survive,
+but the desired terminal view is empty while the hub is visible and native
+composer input never produces PTY bytes. Existing overlays retain input priority;
+spaces and punctuation in an active composer remain ordinary text.
+
+`dashboard::operator` owns per-conversation drafts, context, grapheme cursor,
+scroll/follow-tail and completion Unread state. Scrolled transcripts keep a logical
+text anchor across streaming, conversation switches and resize. Successful completion
+Unread comes from the exact durable turn summary; SDK model history stays private.
+`Tab` or `Ctrl-l` toggles history;
+narrow layouts display history or transcript, with `Ctrl-l` also available from
+New Conversation. `Ctrl-n` opens creation, Enter sends, Shift-Enter inserts a
+newline, paste only edits, Ctrl-g returns to Browse retaining drafts, and Ctrl-x
+stops only the selected exact current turn. A pending submission clears only its
+captured draft after acceptance; refusal or later typing preserves the draft.
+
+OperatorChanged is a coalescible dirty signal, never transcript content. Tracked
+requests load durable summaries and ordinal-paged history independently of focus,
+with one read per conversation in flight and a further catch-up when dirtied
+during a read. Only retained `worker_stopped` proof enables another submission;
+Complete without that proof displays finishing/stop-unconfirmed. History commits
+completion Unread only after a successful unobscured tail draw, with sufficient
+transcript geometry. Model/tool strings escape terminal and directional controls
+before rendering, including tool output with explicit empty-success results.

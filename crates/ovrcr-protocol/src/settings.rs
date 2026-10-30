@@ -1653,6 +1653,8 @@ impl DelegationSettings {
 /// Every effective value. `picker_roots` is already `~`-expanded.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
+    #[serde(default)]
+    pub operator: crate::OperatorSettings,
     pub desktop_notifications: bool,
     pub ready_sound: bool,
     /// Absent document choice is `Some(Default)`; an explicit invalid value is
@@ -1700,6 +1702,7 @@ pub const TITLES_OFF: &str =
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            operator: crate::OperatorSettings::default(),
             desktop_notifications: false,
             ready_sound: false,
             ready_sound_choice: Some(ReadySoundChoice::Default),

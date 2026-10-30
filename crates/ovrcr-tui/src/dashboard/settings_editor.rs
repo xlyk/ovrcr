@@ -1339,6 +1339,7 @@ mod tests {
                 "Usage",
                 "Agents",
                 "Remembered launches",
+                "Operator",
                 "Delegation"
             ]
         );

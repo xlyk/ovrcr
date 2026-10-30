@@ -310,13 +310,13 @@ fn kind(observation: &ovrcr_protocol::AgentObservation) -> usize {
 
 /// The runtime's `apply`: the report must name the binding in force and advance that
 /// observation kind's revision.
-fn apply(state: &mut State, report: &ProviderReport) -> Result<(), Response> {
+fn apply(state: &mut State, report: &ProviderReport) -> Result<(), &'static str> {
     if state.released || state.binding.as_ref() != Some(&report.binding) {
-        return Err(reject("agent binding changed"));
+        return Err("agent binding changed");
     }
     let watermark = &mut state.revisions[kind(&report.observation)];
     if report.revision <= *watermark {
-        return Err(reject("stale revision"));
+        return Err("stale revision");
     }
     *watermark = report.revision;
     Ok(())
@@ -362,7 +362,7 @@ fn respond(request: Request, answer: Answer, state: &mut State) -> Response {
             }
             match apply(state, &report) {
                 Ok(()) => Response::Ok,
-                Err(rejection) => rejection,
+                Err(reason) => reject(reason),
             }
         }
         Request::Supervisor(supervisor) => {
@@ -445,7 +445,7 @@ fn respond(request: Request, answer: Answer, state: &mut State) -> Response {
                     } else {
                         match apply(state, &report) {
                             Ok(()) => Response::AgentOperation(AgentOperationResult::HealthUpdated),
-                            Err(rejection) => rejection,
+                            Err(reason) => reject(reason),
                         }
                     }
                 }
@@ -468,7 +468,7 @@ fn respond(request: Request, answer: Answer, state: &mut State) -> Response {
                                 state.released = true;
                                 Response::AgentOperation(AgentOperationResult::Released)
                             }
-                            Err(rejection) => rejection,
+                            Err(reason) => reject(reason),
                         }
                     }
                 }

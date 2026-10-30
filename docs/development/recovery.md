@@ -165,5 +165,5 @@ origin. Revisions enforce local command order; provider cursors are never compar
 or ordered. Starting Observe never uses a Send cursor. Legacy numeric cursors are
 retained as history and cannot be continued. Replayed envelopes cannot publish
 fresh terminal cycles. These cursors are not carried into freshly hydrated run
-handles; active reopen remains unavailable pending its separate preservation/replay
-acceptance gate.
+handles; active reopen remains unavailable and is not planned under the current
+scope.

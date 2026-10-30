@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 26;
+const SCHEMA_VERSION: i64 = 27;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -416,8 +416,14 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
         transaction.pragma_update(None, "user_version", 25)?;
     }
     if schema_identity(&transaction)?.1 < 26 {
-        // Older writers discard opaque cloud cursors and their local progress revisions.
+        crate::retained::operator::create_schema(&transaction)?;
         transaction.pragma_update(None, "user_version", 26)?;
+    }
+    if schema_identity(&transaction)?.1 < 27 {
+        // Independent schema-26 development writers stored Operator journals or
+        // opaque cloud cursors. Preserve either variant and fence both writers.
+        crate::retained::operator::create_schema(&transaction)?;
+        transaction.pragma_update(None, "user_version", 27)?;
     }
     transaction.commit().context("commit registry migration")?;
     Ok(connection)
@@ -471,6 +477,7 @@ pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
                 | 23
                 | 24
                 | 25
+                | 26
                 | SCHEMA_VERSION
         )
     {
@@ -861,7 +868,7 @@ mod tests {
 
     #[test]
     fn legacy_cloud_authority_survives_offline_read_and_upgrade() {
-        for version in [23, 24, 25] {
+        for version in [23, 24, 25, 26] {
             let dir = tempfile::tempdir().unwrap();
             let config = dir.path().join("instance");
             initialize_registry(&config).unwrap();
@@ -871,7 +878,7 @@ mod tests {
                 .pragma_update(None, "user_version", version)
                 .unwrap();
             connection.execute("INSERT INTO retained_sessions(id,run,project,workspace,name,label,cwd,kind,title_revision,stopped) VALUES(42,7,'demo','root','cloud','cloud',X'2f746d70','\"Terminal\"',0,1)",[]).unwrap();
-            let metadata = if version == 25 {
+            let metadata = if version >= 25 {
                 let record = serde_json::json!({
                     "intent": {
                         "key": "a".repeat(64),
@@ -908,8 +915,16 @@ mod tests {
                         "terminal": null,
                         "progress": {
                             "origin": "f".repeat(64),
-                            "send": 17,
-                            "observe": 0
+                            "send": if version == 25 {
+                                serde_json::json!(17)
+                            } else {
+                                serde_json::json!({ "token": "opaque-send-0", "revision": 1 })
+                            },
+                            "observe": if version == 25 {
+                                serde_json::json!(0)
+                            } else {
+                                serde_json::Value::Null
+                            }
                         }
                     }],
                     "recovery_owner": null,
@@ -929,6 +944,10 @@ mod tests {
                     [metadata.as_str()],
                 )
                 .unwrap();
+            if version == 26 {
+                // The standalone opaque-cursor writer did not create Operator schema.
+                connection.execute_batch("DROP TABLE operator_batches;DROP TABLE operator_model_history;DROP TABLE operator_messages;DROP TABLE operator_turns;DROP TABLE operator_conversations;ALTER TABLE retained_sessions DROP COLUMN scope;").unwrap();
+            }
             let private = config.join("cloud-creations");
             std::fs::create_dir(&private).unwrap();
             let payload = private.join("a".repeat(64));
@@ -943,6 +962,14 @@ mod tests {
             initialize_registry(&config).unwrap();
             assert_eq!(schema_version(&database), SCHEMA_VERSION);
             let connection = Connection::open(&database).unwrap();
+            assert!(table_has_column(&connection, "retained_sessions", "scope").unwrap());
+            assert_eq!(
+                connection
+                    .query_row("SELECT count(*) FROM operator_conversations", [], |row| row
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
             assert_eq!(
                 connection
                     .query_row(
@@ -1432,6 +1459,7 @@ mod tests {
         let path = dir.path().to_path_buf() /* instance home */;
         let database = database_path(&path);
         let connection = Connection::open(&database).unwrap();
+        crate::retained::create_schema(&connection).unwrap();
         connection
             .pragma_update(None, "application_id", APPLICATION_ID)
             .unwrap();
@@ -1546,6 +1574,7 @@ mod tests {
     ) {
         use std::os::unix::ffi::OsStrExt;
         let connection = Connection::open(database).unwrap();
+        crate::retained::create_schema(&connection).unwrap();
         connection
             .pragma_update(None, "application_id", APPLICATION_ID)
             .unwrap();

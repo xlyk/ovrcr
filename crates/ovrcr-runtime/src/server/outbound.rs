@@ -194,6 +194,14 @@ impl DashboardSink {
             queue.record_rejected();
             return Enqueue::Draining;
         }
+        if let ServerMessage::Event(ServerEvent::OperatorChanged(conversation)) = &outbound.message
+            && queue.messages.iter().any(|queued| {
+                matches!(&queued.message,
+                ServerMessage::Event(ServerEvent::OperatorChanged(id)) if id == conversation)
+            })
+        {
+            return Enqueue::Queued;
+        }
         if let ServerMessage::Event(ServerEvent::Output {
             session,
             run,

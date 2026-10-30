@@ -60,8 +60,20 @@ pub enum AgentActivity {
     ResponseReady,
 }
 
+/// Workspace sessions belong to the registry; Operator conversations are global.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SessionScope {
+    #[default]
+    Workspace,
+    OperatorConversation {
+        conversation: crate::OperatorConversationId,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionSummary {
+    #[serde(default)]
+    pub scope: SessionScope,
     pub id: SessionId,
     pub archived: bool,
     /// Original working directory, retained even after workspace removal.
@@ -105,7 +117,8 @@ impl SessionSummary {
 
     /// Display may recover an interrupted agent, never acknowledge process ownership.
     pub fn can_auto_recover(&self) -> bool {
-        !self.archived
+        self.scope == SessionScope::Workspace
+            && !self.archived
             && matches!(self.kind, SessionKind::Agent { .. })
             && self.phase == SessionPhase::Interrupted
             && self.recovery.as_ref().is_some_and(|recovery| {

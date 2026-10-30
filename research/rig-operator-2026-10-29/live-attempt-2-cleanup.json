@@ -1,0 +1,130 @@
+{
+  "root_absent": true,
+  "socket_absent": true,
+  "copied_credential_absent": true,
+  "groups": [
+    {
+      "pid": 41300,
+      "pgid": 41300,
+      "run": 1,
+      "group_absent": true
+    },
+    {
+      "pid": 41431,
+      "pgid": 41431,
+      "run": 1,
+      "group_absent": true
+    },
+    {
+      "pid": 41552,
+      "pgid": 41552,
+      "run": 1,
+      "group_absent": true
+    },
+    {
+      "pid": 41678,
+      "pgid": 41678,
+      "run": 1,
+      "group_absent": true
+    },
+    {
+      "pid": 41764,
+      "pgid": 41764,
+      "run": 1,
+      "group_absent": true
+    },
+    {
+      "pid": 41852,
+      "pgid": 41852,
+      "run": 1,
+      "group_absent": true
+    },
+    {
+      "pid": 41965,
+      "pgid": 41965,
+      "run": 1,
+      "group_absent": true
+    },
+    {
+      "pid": 42153,
+      "pgid": 42153,
+      "run": 1,
+      "group_absent": true
+    },
+    {
+      "pid": 42493,
+      "pgid": 42493,
+      "run": 1,
+      "group_absent": true
+    },
+    {
+      "pid": 42756,
+      "pgid": 42756,
+      "run": 1,
+      "group_absent": true
+    },
+    {
+      "pid": 42896,
+      "pgid": 42896,
+      "run": 1,
+      "group_absent": true
+    },
+    {
+      "pid": 43057,
+      "pgid": 43057,
+      "run": 1,
+      "group_absent": true
+    },
+    {
+      "pid": 92113,
+      "pgid": 92113,
+      "run": 1,
+      "group_absent": true
+    },
+    {
+      "pid": 37239,
+      "pgid": 37239,
+      "run": 2,
+      "group_absent": true
+    }
+  ],
+  "owners": [
+    {
+      "pid": 40584,
+      "absent": true
+    },
+    {
+      "pid": 40703,
+      "absent": true
+    },
+    {
+      "pid": 43157,
+      "absent": true
+    }
+  ],
+  "retained_columns": [
+    "id",
+    "run",
+    "project",
+    "workspace",
+    "name",
+    "label",
+    "cwd",
+    "kind",
+    "pinned_title",
+    "application_title",
+    "title_revision",
+    "boot_id",
+    "stopped",
+    "failure",
+    "disposition",
+    "scope"
+  ],
+  "operator_stopped_proof": [
+    [
+      13,
+      2,
+      1
+    ]
+  ]
+}

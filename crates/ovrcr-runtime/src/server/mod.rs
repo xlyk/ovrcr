@@ -44,6 +44,9 @@ mod event_log;
 mod lifecycle;
 mod navigation;
 pub use navigation::bridge_executable_sha256;
+pub mod operator;
+#[cfg(test)]
+mod operator_tests;
 mod outbound;
 mod quota;
 mod quota_probe;
@@ -259,6 +262,7 @@ pub struct ServerState {
     observations: parking_lot::Mutex<HashMap<(String, String), CheckoutObservation>>,
     pub mutation_lock: Mutex<()>,
     pub(crate) lifecycle: lifecycle::Lifecycle,
+    operator: operator::OperatorRuntime,
     pub dispatch: ReportingSender<DispatchMessage>,
     pub shutdown: AtomicBool,
     pub stopping: AtomicBool,
@@ -611,6 +615,15 @@ impl ServerState {
             let summary = self
                 .session_summary(id)
                 .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+            if matches!(
+                summary.scope,
+                ovrcr_protocol::SessionScope::OperatorConversation { .. }
+            ) {
+                return Err(lifecycle_error(
+                    ErrorCode::Conflict,
+                    "Operator conversations use native Stop (Ctrl-x); terminal close is unavailable",
+                ));
+            }
             if summary.run != expected_run || summary.archived {
                 return Err(lifecycle_error(
                     ErrorCode::Conflict,
@@ -709,6 +722,15 @@ impl ServerState {
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+        if matches!(
+            summary.scope,
+            ovrcr_protocol::SessionScope::OperatorConversation { .. }
+        ) {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "Operator conversations use native Stop (Ctrl-x); terminal kill/close is unavailable",
+            ));
+        }
         if expected_run.is_some_and(|expected| summary.run != expected) {
             return Err(lifecycle_error(
                 ErrorCode::Conflict,
@@ -889,6 +911,7 @@ impl ServerState {
             self.check_live_capacity()?;
             let label = default_session_label(&request.kind, request.label, &request.argv);
             let record = self.retained.lock().create(SessionMetadata {
+                scope: ovrcr_protocol::SessionScope::Workspace,
                 project: request.project,
                 workspace: request.workspace,
                 name: request.name,
@@ -957,6 +980,18 @@ impl ServerState {
         ready: Option<Arc<dyn Fn() + Send + Sync>>,
         restore_command: Option<String>,
     ) -> Result<SessionSummary> {
+        self.spawn_prepared_record_locked(id, expected_run, argv, ready, restore_command, false)
+    }
+
+    fn spawn_prepared_record_locked(
+        &self,
+        id: SessionId,
+        expected_run: SessionRunId,
+        argv: Vec<std::ffi::OsString>,
+        ready: Option<Arc<dyn Fn() + Send + Sync>>,
+        restore_command: Option<String>,
+        prepared: bool,
+    ) -> Result<SessionSummary> {
         // Every failure in this preparation is provably before native spawn.
         // Keep that proof across allocation; later row/process absence proves nothing.
         let (record, socket, capability, events, assigned_input) = (|| -> Result<_> {
@@ -978,7 +1013,16 @@ impl ServerState {
                 .as_ref()
                 .context("server event channel closed")?
                 .clone();
-            let record = self.retained.lock().begin_run(id, expected_run)?;
+            let record = if prepared {
+                let retained = self.retained.lock();
+                let record = retained.get(id).context("prepared session missing")?;
+                if record.run != expected_run || record.stopped {
+                    bail!("prepared session run changed");
+                }
+                record.clone()
+            } else {
+                self.retained.lock().begin_run(id, expected_run)?
+            };
             if let Some(old) = self.sessions.lock().unwrap().remove(&id) {
                 old.revoke_hook_capability();
             }
@@ -989,6 +1033,7 @@ impl ServerState {
         .map_err(crate::session::NoProcessStarted::context)?;
         let metadata = &record.metadata;
         let spec = SessionSpec {
+            scope: metadata.scope,
             restore_command,
             run: record.run,
             kind: metadata.kind.clone(),
@@ -1188,7 +1233,14 @@ impl ServerState {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
         self.acknowledge_stopped_locked(id, expected_run)?;
-        self.refresh_session_locked(id)
+        self.refresh_session_locked(id)?;
+        if let Some(record) = self.retained.lock().get(id)
+            && let ovrcr_protocol::SessionScope::OperatorConversation { conversation } =
+                record.metadata.scope
+        {
+            self.operator_changed(conversation);
+        }
+        Ok(())
     }
 
     fn acknowledge_stopped_locked(&self, id: SessionId, expected_run: SessionRunId) -> Result<()> {
@@ -1208,7 +1260,19 @@ impl ServerState {
                 "the currently owned process is still live",
             ));
         }
-        self.retained.lock().mark_stopped(id, expected_run)?;
+        let mut retained = self.retained.lock();
+        if let ovrcr_protocol::SessionScope::OperatorConversation { conversation } = summary.scope
+            && let Some(turn) = retained.operator_conversation(conversation)?.current_turn
+        {
+            if turn.identity.session != id || turn.identity.run != expected_run {
+                return Err(lifecycle_error(
+                    ErrorCode::Conflict,
+                    "operator turn changed; refresh inventory",
+                ));
+            }
+            retained.interrupt_operator_turn(turn.identity)?;
+        }
+        retained.mark_stopped(id, expected_run)?;
         Ok(())
     }
 
@@ -1272,6 +1336,12 @@ impl ServerState {
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+        if summary.scope != ovrcr_protocol::SessionScope::Workspace {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "Operator sessions require a conversation submission",
+            ));
+        }
         if summary.archived {
             return Err(lifecycle_error(
                 ErrorCode::Conflict,
@@ -1538,6 +1608,7 @@ impl ServerState {
             observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
             lifecycle: lifecycle::Lifecycle::default(),
+            operator: operator::OperatorRuntime::default(),
             dispatch,
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
@@ -2951,7 +3022,9 @@ fn snapshot_from_state(state: &ServerState) -> HierarchySnapshot {
     let registry = state.registry.lock().unwrap().clone();
     let observations = state.observations.lock().clone();
     let mut sessions = state.session_summaries();
-    sessions.retain(|session| !session.archived);
+    sessions.retain(|session| {
+        !session.archived && session.scope == ovrcr_protocol::SessionScope::Workspace
+    });
     let mut projects = registry
         .projects
         .iter()

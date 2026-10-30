@@ -423,6 +423,32 @@ impl Loader<'_> {
             }
             self.unknown(delegation, "delegation.");
         }
+        if let Some(mut operator) = self.take::<toml::Table>(table, "operator") {
+            self.value(
+                &mut operator,
+                "operator.provider",
+                &mut settings.operator.provider,
+            );
+            for (key, slot) in [
+                (
+                    "operator.chat_gpt_model",
+                    &mut settings.operator.chat_gpt_model,
+                ),
+                ("operator.grok_model", &mut settings.operator.grok_model),
+            ] {
+                if let Some(value) = self.take::<String>(&mut operator, key) {
+                    if ovrcr_protocol::validate_operator_model(&value).is_ok() {
+                        self.accept(key, slot, Some(value));
+                    } else {
+                        self.finding(
+                            key,
+                            "expected a nonempty model identifier up to 256 bytes".into(),
+                        );
+                    }
+                }
+            }
+            self.unknown(operator, "operator.");
+        }
         self.unknown(std::mem::take(table), "");
     }
 
@@ -908,6 +934,11 @@ command = "/opt/grok"
 dashboard = true
 state_db = "/tmp/cursor/state.vscdb"
 
+[operator]
+provider = "grok"
+chat_gpt_model = "chat-model"
+grok_model = "grok-model"
+
 [delegation]
 progress_deadline_ms = 12345
 enabled = true
@@ -1106,6 +1137,9 @@ max_execution_attempts = 2
                 "agents",
                 "cursor_cloud_accounts",
                 "launch_choices",
+                "operator.provider",
+                "operator.chat_gpt_model",
+                "operator.grok_model",
                 "delegation.progress_deadline_ms",
                 "delegation.enabled",
                 "delegation.allowed_harnesses",
@@ -1455,5 +1489,62 @@ extra = 1
             serde_json::from_str::<SettingsReport>(&json).unwrap(),
             report
         );
+    }
+}
+
+#[cfg(test)]
+mod operator_tests {
+    use super::*;
+    #[test]
+    fn operator_settings_validate_independently_and_reject_credentials() {
+        let report = parse(
+            Path::new("/tmp/settings"),
+            "[operator]\nprovider='grok'\nchat_gpt_model='chat-model'\ngrok_model='grok-model'\n",
+        );
+        assert!(report.findings.is_empty(), "{:?}", report.findings);
+        assert_eq!(
+            report.settings.operator.provider,
+            ovrcr_protocol::OperatorProvider::Grok
+        );
+        assert_eq!(
+            report.settings.operator.grok_model.as_deref(),
+            Some("grok-model")
+        );
+        assert!(report.rows.iter().any(|row| row.key == "operator.provider"
+            && row.source == ovrcr_protocol::SettingSource::Document));
+        let report = parse(
+            Path::new("/tmp/settings"),
+            "[operator]\nprovider='invalid'\nchat_gpt_model=' ' \ngrok_model='valid'\napi_key='forbidden'\n",
+        );
+        assert_eq!(report.findings.len(), 3);
+        assert_eq!(
+            report.settings.operator,
+            ovrcr_protocol::OperatorSettings {
+                grok_model: Some("valid".into()),
+                ..Default::default()
+            }
+        );
+        for invalid in ["[]", "3", "true"] {
+            let report = parse(Path::new("/tmp/settings"), &format!("operator={invalid}"));
+            assert_eq!(report.findings.len(), 1);
+            assert_eq!(report.settings.operator, Default::default());
+        }
+    }
+    #[test]
+    fn operator_editor_uses_the_same_loader_validation() {
+        let root = tempfile::tempdir().unwrap();
+        let document = root.path().join("dashboard.toml");
+        std::fs::write(&document, "").unwrap();
+        set(&document, "operator.grok_model", Some("'valid'")).unwrap();
+        assert_eq!(
+            load_document(root.path(), &document)
+                .settings
+                .operator
+                .grok_model
+                .as_deref(),
+            Some("valid")
+        );
+        assert!(set(&document, "operator.grok_model", Some("' '")).is_err());
+        assert!(set(&document, "operator.api_key", Some("'forbidden'")).is_err());
     }
 }

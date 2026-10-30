@@ -18,7 +18,7 @@ pub(crate) struct SendRecord {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 enum StreamProgress {
-    /// Numeric offsets written by schema 25 and earlier are readable history,
+    /// Numeric offsets from earlier writers are readable history,
     /// never a cursor or revision that a new writer may continue.
     Legacy(u64),
     Current {
