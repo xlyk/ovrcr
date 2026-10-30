@@ -53,10 +53,13 @@ existing exact selected Stop. Repeat/Release do neither, empty Quick is a no-op,
 and pending Quick/closing chats stay frozen. Quick edits must reach the existing
 seeded-retry synchronization without changing unseeded chat drafts or captured
 Submit/Create payloads. The native GUI's `encode_event` suppresses known repeated
-Ctrl+C before raw byte 3 loses repeat identity; first Press still sends byte 3,
-other controls and ordinary repeat stay unchanged, and the shared terminal encoder
-is unchanged. Legacy external terminals without repeat metadata can report every
-held byte 3 as a fresh Press, so they cannot distinguish a hold from separate
+Ctrl+C before raw byte 3 loses repeat identity; first Press still sends byte 3.
+Control-only bytes and ordinary repeat stay unchanged. Alphabetic Control keys
+with Alt or Shift retain those bits using the existing CSI-u spelling (lowercase
+ASCII codepoint, modifier parameter 1 + Shift 1 + Alt 2 + Control 4), so unsupported
+composer chords cannot become destructive Control-only input. The shared terminal
+encoder remains unchanged. Legacy external terminals without repeat metadata can
+report every held byte 3 as a fresh Press, so they cannot distinguish a hold from separate
 presses. No timing heuristic or keyboard-protocol redesign is applied.
 
 Retained rows stay selectable without allocating a parser on the server or

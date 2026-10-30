@@ -77,6 +77,17 @@ pub fn encode_event(
                     return Vec::new();
                 }
                 let name = key.name();
+                if (modifiers.alt || modifiers.shift)
+                    && name.len() == 1
+                    && name.as_bytes()[0].is_ascii_alphabetic()
+                {
+                    return format!(
+                        "\x1b[{};{}u",
+                        name.as_bytes()[0].to_ascii_lowercase(),
+                        5 + u8::from(modifiers.shift) + 2 * u8::from(modifiers.alt)
+                    )
+                    .into_bytes();
+                }
                 let control = match key {
                     Key::Space | Key::Num2 => Some(0),
                     Key::OpenBracket => Some(27),
@@ -566,6 +577,30 @@ mod tests {
             ),
             b"\x1b[<0;4;2m"
         );
+    }
+
+    #[test]
+    fn mixed_alphabetic_controls_keep_alt_and_shift() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        for (alt, shift, parameter) in [(true, false, 7), (false, true, 6), (true, true, 8)] {
+            for key in [Key::C, Key::U, Key::K, Key::W] {
+                let modifiers = egui::Modifiers {
+                    ctrl: true,
+                    alt,
+                    shift,
+                    ..Default::default()
+                };
+                assert_eq!(
+                    encode(&press(key, modifiers), parser.screen()),
+                    format!(
+                        "\x1b[{};{parameter}u",
+                        key.name().as_bytes()[0].to_ascii_lowercase()
+                    )
+                    .as_bytes(),
+                    "{key:?} {modifiers:?}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -538,6 +538,23 @@ fn input_preserves_control_keys_terminal_modes_and_mouse_cells() {
         encode(key(Key::C, Modifiers::CTRL), parser.screen()),
         b"\x03"
     );
+    for (alt, shift, parameter) in [(true, false, 7), (false, true, 6), (true, true, 8)] {
+        assert_eq!(
+            encode(
+                key(
+                    Key::C,
+                    Modifiers {
+                        ctrl: true,
+                        alt,
+                        shift,
+                        ..Default::default()
+                    }
+                ),
+                parser.screen()
+            ),
+            format!("\x1b[99;{parameter}u").as_bytes()
+        );
+    }
     assert_eq!(
         encode(key(Key::ArrowUp, Modifiers::NONE), parser.screen()),
         b"\x1b[A"
@@ -595,6 +612,120 @@ fn input_preserves_control_keys_terminal_modes_and_mouse_cells() {
         encode(wheel(egui::vec2(0.0, -1.0)), parser.screen()),
         b"\x1b[<65;3;4M"
     );
+}
+
+#[test]
+fn operator_mixed_controls_cross_gui_bytes_and_real_dashboard_pty() -> Result<()> {
+    let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
+    let root = demo.root().to_owned();
+    let pgids = demo_session_groups(&root)?;
+    let mut terminal = demo.dashboard(40, 120, Default::default())?;
+    let send = |terminal: &mut Terminal, event: Event| -> Result<()> {
+        let bytes = encode_event(
+            &event,
+            &terminal.screen(),
+            egui::Rect::NOTHING,
+            egui::vec2(8.0, 16.0),
+            egui::pos2(0.0, 0.0),
+            &mut Mouse::default(),
+        );
+        terminal.send(&bytes)
+    };
+    let result = (|| -> Result<()> {
+        wait_dashboard(&mut terminal)?;
+        terminal.send(b"o")?;
+        wait_screen(&terminal, "New Conversation")?;
+        terminal.send(b"\r")?;
+        wait_screen(&terminal, "Managing")?;
+        for quick in [false, true] {
+            if quick {
+                send(&mut terminal, key(Key::O, Modifiers::CTRL))?;
+                wait_screen(&terminal, "Quick message")?;
+            }
+            send(
+                &mut terminal,
+                Event::Paste("SAFE 界🙂 tail\nsecond café".into()),
+            )?;
+            wait_screen(&terminal, "second café")?;
+            send(&mut terminal, key(Key::Home, Modifiers::NONE))?;
+            for _ in 0..5 {
+                send(&mut terminal, key(Key::ArrowRight, Modifiers::NONE))?;
+            }
+            // A text barrier proves each preceding chord was processed by crossterm
+            // and the real Dashboard before checking both draft and cursor placement.
+            for (alt, shift) in [(true, false), (false, true), (true, true)] {
+                for letter in [Key::C, Key::U, Key::K, Key::W] {
+                    send(
+                        &mut terminal,
+                        key(
+                            letter,
+                            Modifiers {
+                                ctrl: true,
+                                alt,
+                                shift,
+                                ..Default::default()
+                            },
+                        ),
+                    )?;
+                    send(&mut terminal, Event::Text("!".into()))?;
+                    wait_screen(&terminal, "SAFE !▏界🙂 tail")?;
+                    assert!(
+                        terminal.screen().contents().contains("second café"),
+                        "quick={quick} {letter:?}"
+                    );
+                    let marker_cursor = terminal.screen().cursor_position();
+                    send(&mut terminal, key(Key::Backspace, Modifiers::NONE))?;
+                    wait_screen(&terminal, "SAFE ▏界🙂 tail")?;
+                    let cursor = terminal.screen().cursor_position();
+                    assert_eq!(
+                        cursor,
+                        (marker_cursor.0, marker_cursor.1 - 1),
+                        "quick={quick} {letter:?}"
+                    );
+                }
+            }
+            send(&mut terminal, key(Key::C, Modifiers::CTRL))?;
+            send(&mut terminal, Event::Text("CLEARED".into()))?;
+            wait_screen(&terminal, "CLEARED")?;
+            assert!(!terminal.screen().contents().contains("second café"));
+            send(&mut terminal, key(Key::C, Modifiers::CTRL))?;
+            if quick {
+                send(&mut terminal, key(Key::C, Modifiers::CTRL))?;
+                send(&mut terminal, key(Key::Escape, Modifiers::NONE))?;
+            }
+        }
+        let database = rusqlite::Connection::open_with_flags(
+            root.join("registry.sqlite3"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        for table in [
+            "operator_conversations",
+            "operator_turns",
+            "operator_messages",
+        ] {
+            let count: i64 =
+                database.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })?;
+            assert_eq!(
+                count,
+                i64::from(table == "operator_conversations"),
+                "editing must neither submit nor create a Quick conversation: {table}"
+            );
+        }
+        Ok(())
+    })();
+    terminal.stop()?;
+    demo.shutdown()?;
+    assert!(!root.exists());
+    for pgid in pgids {
+        assert_eq!(unsafe { libc::kill(-pgid, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+    result
 }
 
 #[test]

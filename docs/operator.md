@@ -86,7 +86,9 @@ Empty Quick Message Ctrl+C does nothing and never stops the underlying chat.
 Pending Quick creation or submission stays frozen; retry edits keep their original
 target. These editing commands apply only to message inputs. Terminal Ctrl+C keeps
 its usual interrupt byte; the native GUI sends one initial interrupt per hold.
-Other control keys and ordinary key repetition remain unchanged.
+Control-only keys and ordinary key repetition remain unchanged. Native alphabetic
+Control keys retain Alt/Shift modifiers, so mixed chords such as Ctrl+Alt+C or
+Ctrl+Shift+U do not clear, stop or edit either message input.
 The full composer's existing key menu and palette list the editing actions;
 Ctrl+X remains the explicit Stop shortcut.
 

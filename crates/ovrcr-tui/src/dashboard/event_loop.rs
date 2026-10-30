@@ -1457,12 +1457,56 @@ mod operator_loop_tests {
             Event::Paste("discard 界e\u{301}🙂\n ".into()),
             Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)),
             Event::Key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT)),
-            Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
-            Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
         ] {
             assert!(
                 !dispatch_dashboard_event(&mut terminal, &mut stream, &mut d, &mut mouse, event)
                     .unwrap()
+            );
+        }
+        for extra in [
+            KeyModifiers::ALT,
+            KeyModifiers::SHIFT,
+            KeyModifiers::ALT | KeyModifiers::SHIFT,
+        ] {
+            for ch in ['c', 'u', 'k', 'w'] {
+                assert!(
+                    !dispatch_dashboard_event(
+                        &mut terminal,
+                        &mut stream,
+                        &mut d,
+                        &mut mouse,
+                        Event::Key(KeyEvent::new(
+                            KeyCode::Char(ch),
+                            KeyModifiers::CONTROL | extra
+                        ))
+                    )
+                    .unwrap()
+                );
+            }
+        }
+        d.draw(&mut terminal).unwrap();
+        assert!(
+            parser
+                .lock()
+                .unwrap()
+                .screen()
+                .contents()
+                .contains("discard")
+        );
+        assert!(
+            crate::protocol::read_frame::<ClientMessage>(&mut peer).is_err(),
+            "mixed Quick controls cannot emit any request"
+        );
+        for _ in 0..2 {
+            assert!(
+                !dispatch_dashboard_event(
+                    &mut terminal,
+                    &mut stream,
+                    &mut d,
+                    &mut mouse,
+                    Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
+                )
+                .unwrap()
             );
         }
         d.draw(&mut terminal).unwrap();
@@ -1697,6 +1741,40 @@ mod operator_loop_tests {
         assert!(
             crate::protocol::read_frame::<ClientMessage>(&mut peer).is_err(),
             "native draft editing cannot send Input or Submit"
+        );
+        for extra in [
+            KeyModifiers::ALT,
+            KeyModifiers::SHIFT,
+            KeyModifiers::ALT | KeyModifiers::SHIFT,
+        ] {
+            for ch in ['c', 'u', 'k', 'w'] {
+                assert!(
+                    !dispatch_dashboard_event(
+                        &mut terminal,
+                        &mut stream,
+                        &mut d,
+                        &mut mouse,
+                        Event::Key(KeyEvent::new(
+                            KeyCode::Char(ch),
+                            KeyModifiers::CONTROL | extra
+                        ))
+                    )
+                    .unwrap()
+                );
+            }
+        }
+        d.draw(&mut terminal).unwrap();
+        assert!(
+            parser
+                .lock()
+                .unwrap()
+                .screen()
+                .contents()
+                .contains("DRAFT_A")
+        );
+        assert!(
+            crate::protocol::read_frame::<ClientMessage>(&mut peer).is_err(),
+            "mixed full controls cannot emit any request"
         );
         for kind in [
             crossterm::event::KeyEventKind::Repeat,
