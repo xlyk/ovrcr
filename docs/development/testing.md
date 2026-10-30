@@ -207,6 +207,9 @@ paste through the compiled Dashboard, checks separate editor lines, dismisses to
 the original terminal, and verifies no conversation was created.
 See the [2026-10-30 layout acceptance record](../../research/operator-layout-2026-10-30/README.md)
 for exact revisions, native JPEG/AX evidence, commands, failures and platform gaps.
+The [Working journal native acceptance record](../../research/operator-working-journal-2026-10-30/README.md)
+adds matching-source journal/receipt/quick captures, the native 80×24 frame and
+kernel-confirmed nested 60×24/60×16 frames, with original owner waits and gate limits.
 
 The [2026-10-29–30 Operator acceptance record](../../research/rig-operator-2026-10-29/README.md)
 contains real ChatGPT GUI turns and a separate controlled concurrent-chat run,

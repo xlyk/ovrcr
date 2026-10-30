@@ -1,0 +1,14 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "--workspace",
+    "--all-targets",
+    "--all-features"
+  ],
+  "exit": 101,
+  "seconds": 193.05381608009338,
+  "raw_bytes": 36809,
+  "raw_sha256": "010fb96723d75bf7b435e0ec5dc40f6245261b54f75ee24fa59d3597fb7f1485",
+  "stored_sha256": "4e0eb787101bcca7cb18f4d51bb31f97d6fc3c20fda739f1f36a15c2cb150f9b"
+}

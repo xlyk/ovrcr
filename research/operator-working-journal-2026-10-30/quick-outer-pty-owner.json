@@ -1,0 +1,14 @@
+{
+  "pid": 97843,
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--test",
+    "terminal",
+    "operator_quick",
+    "--",
+    "--nocapture"
+  ]
+}

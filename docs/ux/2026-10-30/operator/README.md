@@ -106,3 +106,8 @@ The preview checks cover all nine layouts: session navigation, separate drafts
 and targets, unread handling, collapse/close, quick-dialog keyboard flow,
 cancellation, multiline submission and narrow browser widths down to 320px.
 They do not prove native TUI behavior or provider execution.
+
+Fresh native Working journal captures at product revision `271a1d6b` are in the
+[acceptance record](../../../../research/operator-working-journal-2026-10-30/README.md).
+It separates successful native observations, retained driver/size-limit attempts,
+controlled provider completion, original cleanup waits and automated gate results.

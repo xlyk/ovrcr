@@ -1,0 +1,153 @@
+{
+  "compiled-worker": {
+    "command": [
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--test",
+      "operator_e2e",
+      "--features",
+      "gui,acceptance-diagnostics",
+      "compiled_worker",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "seconds": 11.785015106201172,
+    "raw_bytes": 6040,
+    "raw_sha256": "26535d9fd2106b874e08ff30987e7f32847b25f4286edfd65792ccd83f5ff5fe",
+    "stored_sha256": "fc79d936c23db941231744c5f14ff5887eb76c024389469b684949f09574df03",
+    "test_summaries": [
+      "test result: ok. 12 passed; 0 failed; 2 ignored; 0 measured; 1 filtered out; finished in 10.21s"
+    ]
+  },
+  "diff": {
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit": 0,
+    "seconds": 0.01940608024597168,
+    "raw_bytes": 0,
+    "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stored_sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "test_summaries": []
+  },
+  "fmt": {
+    "command": [
+      "cargo",
+      "fmt",
+      "--all",
+      "--",
+      "--check"
+    ],
+    "exit": 0,
+    "seconds": 2.0844480991363525,
+    "raw_bytes": 0,
+    "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stored_sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "test_summaries": []
+  },
+  "quick-outer-pty-corrected": {
+    "command": [
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--test",
+      "terminal_acceptance",
+      "operator_quick",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "seconds": 10.46419095993042,
+    "raw_bytes": 547,
+    "raw_sha256": "5fc4b8acabfdbb00d824901d2646637a84e3a317dc0f4253dc6263b02e9fcd51",
+    "stored_sha256": "71783f33e51e88b005cd8ece5d6e70d94107e49cf3b693d631fc9d1f5a2a7c7d",
+    "test_summaries": [
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 7.69s"
+    ]
+  },
+  "quick-outer-pty": {
+    "command": [
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--test",
+      "terminal",
+      "operator_quick",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 101,
+    "seconds": 0.2814159393310547,
+    "raw_bytes": 825,
+    "raw_sha256": "23747bc7dbf9ceeb4a45e896d8e667bab5c736002bf367271850cc53eef384e3",
+    "stored_sha256": "f54db22a6b41967321c613a26fc20bc01db510003789a0ecdf98cb0b2e6d2b09",
+    "test_summaries": []
+  },
+  "workspace-check": {
+    "command": [
+      "cargo",
+      "check",
+      "--workspace",
+      "--all-targets",
+      "--all-features"
+    ],
+    "exit": 0,
+    "seconds": 5.270546913146973,
+    "raw_bytes": 265,
+    "raw_sha256": "d3890e929485299853cdbf48b08934ca3935e1a0c182be450ca699c9a30794cf",
+    "stored_sha256": "550bc9c1e8ab75215d3fd62179821f87b9cd1dc886fc1f26a26ac10f7bb72412",
+    "test_summaries": []
+  },
+  "workspace-clippy": {
+    "command": [
+      "cargo",
+      "clippy",
+      "--workspace",
+      "--all-targets",
+      "--all-features",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "exit": 0,
+    "seconds": 7.453207015991211,
+    "raw_bytes": 265,
+    "raw_sha256": "582c41918155b41c93cfb08ae809a1bed507b93b78f4fe21990f8548aad99625",
+    "stored_sha256": "5a9866787720d23b465e429a1eba2682b7353f0498bc954b5c89095c6bf06d91",
+    "test_summaries": []
+  },
+  "workspace-test": {
+    "command": [
+      "cargo",
+      "test",
+      "--workspace",
+      "--all-targets",
+      "--all-features"
+    ],
+    "exit": 101,
+    "seconds": 193.05381608009338,
+    "raw_bytes": 36809,
+    "raw_sha256": "010fb96723d75bf7b435e0ec5dc40f6245261b54f75ee24fa59d3597fb7f1485",
+    "stored_sha256": "4e0eb787101bcca7cb18f4d51bb31f97d6fc3c20fda739f1f36a15c2cb150f9b",
+    "test_summaries": [
+      "test result: ok. 139 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.56s",
+      "test result: ok. 65 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.04s",
+      "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.39s",
+      "test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.46s",
+      "test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 32.35s",
+      "test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 64.03s",
+      "test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.64s",
+      "test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 49 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 7.36s",
+      "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.77s",
+      "test result: FAILED. 18 passed; 2 failed; 2 ignored; 0 measured; 0 filtered out; finished in 21.87s"
+    ]
+  }
+}

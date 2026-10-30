@@ -1,0 +1,12 @@
+{
+  "pid": 39234,
+  "command": [
+    "/private/tmp/ovrcr-journal-native-cc6olqy2/operator_e2e",
+    "--exact",
+    "compiled_worker::native_provider_holder",
+    "--ignored",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "root": "/private/tmp/ovrcr-journal-native-cc6olqy2"
+}
