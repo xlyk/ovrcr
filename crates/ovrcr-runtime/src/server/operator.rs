@@ -10,6 +10,8 @@ pub(super) struct OperatorRuntime {
     controls: Mutex<Controls>,
     #[cfg(test)]
     pub(super) before_stop: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    #[cfg(test)]
+    pub(super) before_retained: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 #[derive(Default)]
 struct Controls {
@@ -50,6 +52,8 @@ impl Default for OperatorRuntime {
             controls: Mutex::default(),
             #[cfg(test)]
             before_stop: Mutex::default(),
+            #[cfg(test)]
+            before_retained: Mutex::default(),
         }
     }
 }
@@ -180,17 +184,24 @@ impl ServerState {
                 self.reject_if_stopping()?;
                 self.check_live_capacity()?;
                 self.validate_operator_context(&context)?;
-                let turn = self
-                    .dashboard
-                    .with_owned(owner, |_| {
-                        self.retained.lock().submit_operator_turn(
-                            conversation,
-                            expected_run,
-                            &text,
-                            context,
-                        )
-                    })
-                    .context("dashboard owner changed")??;
+                let turn = {
+                    #[cfg(test)]
+                    if let Some(hook) = self.operator.before_retained.lock().unwrap().clone() {
+                        hook();
+                    }
+                    // Assigned human input also acquires retained before the Dashboard slot.
+                    let mut retained = self.retained.lock();
+                    self.dashboard
+                        .with_owned(owner, |_| {
+                            retained.submit_operator_turn(
+                                conversation,
+                                expected_run,
+                                &text,
+                                context,
+                            )
+                        })
+                        .context("dashboard owner changed")??
+                };
                 let result = self.spawn_prepared_record_locked(
                     turn.identity.session,
                     turn.identity.run,
@@ -222,9 +233,13 @@ impl ServerState {
             request => {
                 let _mutation = self.mutation_lock.lock().unwrap();
                 self.reject_if_stopping()?;
+                #[cfg(test)]
+                if let Some(hook) = self.operator.before_retained.lock().unwrap().clone() {
+                    hook();
+                }
+                let mut retained = self.retained.lock();
                 self.dashboard
                     .with_owned(owner, |_| -> Result<_> {
-                        let mut retained = self.retained.lock();
                         match request {
                             OperatorRequest::Create { provider, model } => {
                                 let cwd = self.registry_path.join("operator-workdir");

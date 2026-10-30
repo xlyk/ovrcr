@@ -1035,3 +1035,113 @@ fn operator_completed_control_handles_are_pruned_and_remain_bounded() {
         "completed handles must be pruned before the next control"
     );
 }
+
+#[test]
+fn operator_request_lock_order_never_holds_dashboard_while_waiting_for_retained() {
+    let mut inverted = Vec::new();
+    for operation in ["create", "list", "read", "submit"] {
+        let root = tempfile::tempdir().unwrap();
+        let (peer, stream) = UnixStream::pair().unwrap();
+        let owner = Arc::new(());
+        let mut state =
+            tests::test_state(Some(DashboardSink::new()), Some((owner.clone(), stream)));
+        Arc::get_mut(&mut state).unwrap().registry_path = root.path().to_path_buf();
+        let c = state
+            .retained
+            .lock()
+            .create_operator_conversation(OperatorProvider::ChatGpt, "fixture", root.path())
+            .unwrap();
+        let request = match operation {
+            "create" => OperatorRequest::Create {
+                provider: OperatorProvider::ChatGpt,
+                model: "fixture".into(),
+            },
+            "list" => OperatorRequest::List {
+                after: 0,
+                limit: 100,
+            },
+            "read" => OperatorRequest::Read {
+                conversation: c.id,
+                after: 0,
+                limit: 100,
+            },
+            "submit" => OperatorRequest::Submit {
+                conversation: c.id,
+                expected_run: SessionRunId(42),
+                text: "keep draft".into(),
+                context: OperatorContext::default(),
+            },
+            _ => unreachable!(),
+        };
+        let (arrived_tx, arrived_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let release_rx = Mutex::new(release_rx);
+        *state.operator.before_retained.lock().unwrap() = Some(Arc::new(move || {
+            arrived_tx.send(()).unwrap();
+            let _ = release_rx
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(2));
+        }));
+        // Model the retained owner in assigned_human_input. Never wait for the
+        // Dashboard slot: observe with try_lock, release, then join every request.
+        let retained = state.retained.lock();
+        let worker_state = state.clone();
+        let worker = thread::spawn(move || worker_state.operator_request(&owner, request));
+        let arrived = arrived_rx.recv_timeout(Duration::from_secs(2)).is_ok();
+        let slot_held = arrived && state.dashboard.slot_is_locked_for_test();
+        let replacement = if arrived && !slot_held {
+            let (replacement_peer, replacement_stream) = UnixStream::pair().unwrap();
+            state.dashboard.claim_with_identity(
+                DashboardSink::new(),
+                Arc::new(()),
+                replacement_stream,
+            );
+            Some(replacement_peer)
+        } else {
+            None
+        };
+        release_tx.send(()).unwrap();
+        drop(retained);
+        let result = worker.join().unwrap();
+        assert!(
+            arrived,
+            "{operation} must reach the actual retained lock boundary"
+        );
+        if slot_held {
+            if operation == "submit" {
+                assert!(result.is_err(), "stale run must refuse before spawn");
+            } else {
+                assert!(
+                    result.is_ok(),
+                    "{operation} must complete after releasing retained"
+                );
+            }
+            inverted.push(operation);
+        } else {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("dashboard owner changed"),
+                "{operation} must retain its owner fence after waiting for retained"
+            );
+            assert_eq!(
+                state
+                    .retained
+                    .lock()
+                    .read_operator_history(c.id, 0, 100)
+                    .unwrap()
+                    .messages
+                    .len(),
+                0
+            );
+        }
+        drop(replacement);
+        drop(peer);
+    }
+    assert!(
+        inverted.is_empty(),
+        "Dashboard -> retained inversion in {inverted:?}"
+    );
+}
