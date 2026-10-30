@@ -1,0 +1,48 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]            [Ctrl-o]                         [Actions] [Menu]
+ OPERATOR ───────────────────────── [+]│pid: 81017  elapsed: 2m  agent unknown  l
+ ⠙ A native close fixture              │local (#4)                               
+ ⠙ B native background completion      │d52a8a1a1ba1c9b8ec64bf2aad69ad55 ›       
+┌ Quick message · Ctrl-o ──────────────────────────────────────────────────────┐ 
+│grok / fixture-quick · consigint / gui-consigint-auth-handoff / #4 run 1      │ 
+│                  
+		3 text (settable) 󰚩 OVRCR Operator [o]            [Ctrl-o]                         [Actions] [Menu]
+		4 text (settable)  OPERATOR ───────────────────────── [+]│pid: 81017  elapsed: 2m  agent unknown  l
+		5 text (settable)  ⠙ A native close fixture              │local (#4)                               
+		6 text (settable)  ⠙ B native background completion      │d52a8a1a1ba1c9b8ec64bf2aad69ad55 ›       
+		7 text (settable) ┌ Quick message · Ctrl-o ──────────────────────────────────────────────────────┐ 
+		8 text (settable) │grok / fixture-quick · consigint / gui-consigint-auth-handoff / #4 run 1      │ 
+		9 text (settable) │                                                                              │ 
+		10 text (settable) │Native first                                                                  │ 
+		11 text (settable) │second pasted                                                                 │ 
+		12 text (settable) │third 界🙂▏                                                                   │ 
+		13 text (settable) │                                                                              │ 
+		14 text (settable) │                                                                              │ 
+		15 text (settable) │                                                                              │ 
+		16 text (settable) │                                                                              │ 
+		17 text (settable) │                                                                              │ 
+		18 text (settable) │                                                                              │ 
+		19 text (settable) │                                                                              │ 
+		20 text (settable) │                                                                              │ 
+		21 text (settable) │Enter Send · Shift-Enter Newline · Esc Dismiss                                │ 
+		22 text (settable) └──────────────────────────────────────────────────────────────────────────────┘ 
+		23 text (settable) Grok · not signed in · retry 9m        │                                         
+		24 text (settable) Cursor · usage off                     │                                         
+		25 text (settable)                                        │                                         
+		26 text (settable) Terminal mode  Ctrl-g browse  then s Agents                                      
+	27 close button
+	28 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	29 minimize button
+	30 text OVRCR GUI
+31 menu bar
+	32 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]            [Ctrl-o]                         [Actions] [Menu]
+ OPERATOR ───────────────────────── [+]│pid: 81017  elapsed: 2m  agent unknown  l
+ ⠙ A native close fixture              │local (#4)                               
+ ⠙ B native background completion      │d52a8a1a1ba1c9b8ec64bf2aad69ad55 ›       
+┌ Quick message · Ctrl-o ──────────────────────────────────────────────────────┐ 
+│grok / fixture-quick · consigint / gui-consigint-auth-handoff / #4 run 1      │ 
+│                  

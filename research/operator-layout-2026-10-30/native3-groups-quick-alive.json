@@ -1,0 +1,84 @@
+[
+  {
+    "session": 1,
+    "pid": 8473,
+    "pgid": 8473,
+    "scope": "Workspace"
+  },
+  {
+    "session": 2,
+    "pid": 8716,
+    "pgid": 8716,
+    "scope": "Workspace"
+  },
+  {
+    "session": 3,
+    "pid": 8775,
+    "pgid": 8775,
+    "scope": "Workspace"
+  },
+  {
+    "session": 4,
+    "pid": 8837,
+    "pgid": 8837,
+    "scope": "Workspace"
+  },
+  {
+    "session": 5,
+    "pid": 8902,
+    "pgid": 8902,
+    "scope": "Workspace"
+  },
+  {
+    "session": 6,
+    "pid": 8970,
+    "pgid": 8970,
+    "scope": "Workspace"
+  },
+  {
+    "session": 7,
+    "pid": 9046,
+    "pgid": 9046,
+    "scope": "Workspace"
+  },
+  {
+    "session": 8,
+    "pid": 9186,
+    "pgid": 9186,
+    "scope": "Workspace"
+  },
+  {
+    "session": 9,
+    "pid": 9502,
+    "pgid": 9502,
+    "scope": "Workspace"
+  },
+  {
+    "session": 10,
+    "pid": 9631,
+    "pgid": 9631,
+    "scope": "Workspace"
+  },
+  {
+    "session": 11,
+    "pid": 9705,
+    "pgid": 9705,
+    "scope": "Workspace"
+  },
+  {
+    "session": 12,
+    "pid": 9783,
+    "pgid": 9783,
+    "scope": "Workspace"
+  },
+  {
+    "session": 13,
+    "pid": 29583,
+    "pgid": 29583,
+    "scope": {
+      "OperatorConversation": {
+        "conversation": 1
+      }
+    }
+  }
+]

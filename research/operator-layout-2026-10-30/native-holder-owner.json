@@ -1,0 +1,13 @@
+{
+  "pid": 79480,
+  "command": [
+    "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/debug/deps/operator_e2e-dabd65c9c03f9022",
+    "--exact",
+    "compiled_worker::native_provider_holder",
+    "--ignored",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "root": "/private/tmp/ovrcr-layout-native-6lbcvrzq",
+  "revision": "299c289"
+}

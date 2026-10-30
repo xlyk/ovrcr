@@ -1,0 +1,4 @@
+8033  8032  8031 /Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui
+8165  8033  8031 /Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr server
+9839  8033  9839 /private/tmp/ovrcr-layout-native3-0ikk77nr/temp/ovrcr-gui-M7hcof/dashboard-client/ovrcr
+29583  8165 29583 /Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr operator worker --conversation 1 --turn 1 --session 13 --run 1

@@ -1,0 +1,19 @@
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr)
+warning: output of `xcrun` while finding MacOSX.sdk
+  |
+  = note: 2026-10-30 04:32:12.966 xcodebuild[83638:138728384]  DVTFilePathFSEvents: Failed to start fs event stream.
+          2026-10-30 04:32:13.197 xcodebuild[83638:138728383] [MT] DVTDeveloperPaths: Failed to get length of DARWIN_USER_CACHE_DIR from confstr(3), error = Error Domain=NSPOSIXErrorDomain Code=5 "Input/output error". Using NSCachesDirectory instead.
+          2026-10-30 04:32:13.664 xcodebuild[83655:138728464]  DVTFilePathFSEvents: Failed to start fs event stream.
+          2026-10-30 04:32:13.799 xcodebuild[83655:138728455] [MT] DVTDeveloperPaths: Failed to get length of DARWIN_USER_CACHE_DIR from confstr(3), error = Error Domain=NSPOSIXErrorDomain Code=5 "Input/output error". Using NSCachesDirectory instead.
+
+warning: output of `xcrun` while finding MacOSX.sdk
+  |
+  = note: 2026-10-30 04:32:12.966 xcodebuild[83651:138728405]  DVTFilePathFSEvents: Failed to start fs event stream.
+          2026-10-30 04:32:13.197 xcodebuild[83651:138728402] [MT] DVTDeveloperPaths: Failed to get length of DARWIN_USER_CACHE_DIR from confstr(3), error = Error Domain=NSPOSIXErrorDomain Code=5 "Input/output error". Using NSCachesDirectory instead.
+          2026-10-30 04:32:13.664 xcodebuild[83654:138728465]  DVTFilePathFSEvents: Failed to start fs event stream.
+          2026-10-30 04:32:13.799 xcodebuild[83654:138728456] [MT] DVTDeveloperPaths: Failed to get length of DARWIN_USER_CACHE_DIR from confstr(3), error = Error Domain=NSPOSIXErrorDomain Code=5 "Input/output error". Using NSCachesDirectory instead.
+
+warning: `ovrcr` (bin "ovrcr-gui") generated 1 warning
+warning: `ovrcr` (bin "ovrcr") generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.78s

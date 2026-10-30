@@ -1,0 +1,646 @@
+TAP version 13
+# Subtest: session switches capture OMP's exact native file and ephemeral identity
+ok 1 - session switches capture OMP's exact native file and ephemeral identity
+  ---
+  duration_ms: 191.579416
+  type: 'test'
+  ...
+# Subtest: inert outside a managed invocation and outside the terminal UI
+ok 2 - inert outside a managed invocation and outside the terminal UI
+  ---
+  duration_ms: 3.226542
+  type: 'test'
+  ...
+# Subtest: registers OMP's lifecycle and switch events
+ok 3 - registers OMP's lifecycle and switch events
+  ---
+  duration_ms: 0.913625
+  type: 'test'
+  ...
+# Subtest: a switch names the conversation it left by id, never by its file path
+ok 4 - a switch names the conversation it left by id, never by its file path
+  ---
+  duration_ms: 612.221125
+  type: 'test'
+  ...
+# Subtest: a same-file reload is a switch that names the conversation it is already on
+ok 5 - a same-file reload is a switch that names the conversation it is already on
+  ---
+  duration_ms: 661.716
+  type: 'test'
+  ...
+# Subtest: tree navigation invalidates the response cycle and carries only idleness
+ok 6 - tree navigation invalidates the response cycle and carries only idleness
+  ---
+  duration_ms: 479.161959
+  type: 'test'
+  ...
+# Subtest: the reattach command re-announces this producer once and says so
+ok 7 - the reattach command re-announces this producer once and says so
+  ---
+  duration_ms: 453.648833
+  type: 'test'
+  ...
+# Subtest: a print-mode reattach delivers nothing, spawns no helper, and says it is unavailable
+ok 8 - a print-mode reattach delivers nothing, spawns no helper, and says it is unavailable
+  ---
+  duration_ms: 1.151542
+  type: 'test'
+  ...
+# Subtest: an approval opens and closes one namespaced request and carries no reason
+ok 9 - an approval opens and closes one namespaced request and carries no reason
+  ---
+  duration_ms: 467.580417
+  type: 'test'
+  ...
+# Subtest: a denial closes the approval exactly as an allow does
+ok 10 - a denial closes the approval exactly as an allow does
+  ---
+  duration_ms: 473.524
+  type: 'test'
+  ...
+# Subtest: an approval from another session id or with none emits nothing
+ok 11 - an approval from another session id or with none emits nothing
+  ---
+  duration_ms: 1.17375
+  type: 'test'
+  ...
+# Subtest: two approvals overlap: each frame carries its own tool call id
+ok 12 - two approvals overlap: each frame carries its own tool call id
+  ---
+  duration_ms: 479.5665
+  type: 'test'
+  ...
+# Subtest: the ask tool's lifetime is one question request keyed by its tool call id
+ok 13 - the ask tool's lifetime is one question request keyed by its tool call id
+  ---
+  duration_ms: 297.960875
+  type: 'test'
+  ...
+# Subtest: a tool that is not ask emits nothing
+ok 14 - a tool that is not ask emits nothing
+  ---
+  duration_ms: 1.598625
+  type: 'test'
+  ...
+# Subtest: an approval opened during a question keeps both requests and their order
+ok 15 - an approval opened during a question keeps both requests and their order
+  ---
+  duration_ms: 464.679208
+  type: 'test'
+  ...
+# Subtest: an end that failed, timed out or aborted still closes the question
+ok 16 - an end that failed, timed out or aborted still closes the question
+  ---
+  duration_ms: 301.394125
+  type: 'test'
+  ...
+# Subtest: an approval requested and resolved in one tick is delivered open before close
+ok 17 - an approval requested and resolved in one tick is delivered open before close
+  ---
+  duration_ms: 306.352042
+  type: 'test'
+  ...
+# Subtest: an ask execution that starts and ends in one tick is delivered open before close
+ok 18 - an ask execution that starts and ends in one tick is delivered open before close
+  ---
+  duration_ms: 471.90525
+  type: 'test'
+  ...
+# Subtest: a print-mode child emits no approval or question frames
+ok 19 - a print-mode child emits no approval or question frames
+  ---
+  duration_ms: 0.984375
+  type: 'test'
+  ...
+# Subtest: an end that will continue keeps the cycle open; the final end settles it as observed work
+ok 20 - an end that will continue keeps the cycle open; the final end settles it as observed work
+  ---
+  duration_ms: 483.172667
+  type: 'test'
+  ...
+# Subtest: error and aborted ends settle as error and aborted; no assistant message is none
+ok 21 - error and aborted ends settle as error and aborted; no assistant message is none
+  ---
+  duration_ms: 318.897833
+  type: 'test'
+  ...
+# Subtest: a tool error followed by a successful assistant response is a successful cycle
+ok 22 - a tool error followed by a successful assistant response is a successful cycle
+  ---
+  duration_ms: 453.755292
+  type: 'test'
+  ...
+# Subtest: an in-place session switch re-announces the conversation and closes any open cycle
+ok 23 - an in-place session switch re-announces the conversation and closes any open cycle
+  ---
+  duration_ms: 469.163834
+  type: 'test'
+  ...
+# Subtest: shutdown reports once with reason quit and disables
+ok 24 - shutdown reports once with reason quit and disables
+  ---
+  duration_ms: 301.073041
+  type: 'test'
+  ...
+# Subtest: a next start racing an un-awaited end opens a new cycle; the settled end keeps run 1
+ok 25 - a next start racing an un-awaited end opens a new cycle; the settled end keeps run 1
+  ---
+  duration_ms: 324.762833
+  type: 'test'
+  ...
+# Subtest: reports the current model from getModel and model_select
+ok 26 - reports the current model from getModel and model_select
+  ---
+  duration_ms: 302.069709
+  type: 'test'
+  ...
+# Subtest: a session switch re-announces the model for the new conversation
+ok 27 - a session switch re-announces the model for the new conversation
+  ---
+  duration_ms: 304.827458
+  type: 'test'
+  ...
+# Subtest: actual startup and both compaction outcomes reconcile the original workflow without effects
+ok 28 - actual startup and both compaction outcomes reconcile the original workflow without effects
+  ---
+  duration_ms: 1.873916
+  type: 'test'
+  ...
+# Subtest: fork cannot inherit a copied pointer
+ok 29 - fork cannot inherit a copied pointer
+  ---
+  duration_ms: 0.106
+  type: 'test'
+  ...
+# Subtest: new cannot inherit a copied pointer
+ok 30 - new cannot inherit a copied pointer
+  ---
+  duration_ms: 0.269708
+  type: 'test'
+  ...
+# Subtest: malformed or overflowing pointers report a gap without contacting control
+ok 31 - malformed or overflowing pointers report a gap without contacting control
+  ---
+  duration_ms: 0.348791
+  type: 'test'
+  ...
+# Subtest: failed publication preserves original pointer and unresolved assignments
+ok 32 - failed publication preserves original pointer and unresolved assignments
+  ---
+  duration_ms: 0.325125
+  type: 'test'
+  ...
+# Subtest: a late startup reply cannot restore a retired factory
+ok 33 - a late startup reply cannot restore a retired factory
+  ---
+  duration_ms: 0.105584
+  type: 'test'
+  ...
+# Subtest: current continuation and scoped legacy gaps both reach startup context
+ok 34 - current continuation and scoped legacy gaps both reach startup context
+  ---
+  duration_ms: 0.174625
+  type: 'test'
+  ...
+# Subtest: a pointer with only legacy gaps preserves the real gap without invented authority
+ok 35 - a pointer with only legacy gaps preserves the real gap without invented authority
+  ---
+  duration_ms: 0.141375
+  type: 'test'
+  ...
+# Subtest: explicit new retires an older recovery reply without clearing the new context
+ok 36 - explicit new retires an older recovery reply without clearing the new context
+  ---
+  duration_ms: 0.322
+  type: 'test'
+  ...
+# Subtest: ordinary failed or ambiguous recovery never asks for fresh logical routing
+ok 37 - ordinary failed or ambiguous recovery never asks for fresh logical routing
+  ---
+  duration_ms: 0.360125
+  type: 'test'
+  ...
+# Subtest: managed Pi exposes research assignment and explicit collection tools
+ok 38 - managed Pi exposes research assignment and explicit collection tools
+  ---
+  duration_ms: 45.3155
+  type: 'test'
+  ...
+# Subtest: acceptance exclusivity rejects direct registered callbacks before transport
+ok 39 - acceptance exclusivity rejects direct registered callbacks before transport
+  ---
+  duration_ms: 8.944
+  type: 'test'
+  ...
+# Subtest: registered start rejects invalid action authority before intent or transport
+ok 40 - registered start rejects invalid action authority before intent or transport
+  ---
+  duration_ms: 7.987042
+  type: 'test'
+  ...
+# Subtest: original intent recovers a lost Prepare before persistence
+ok 41 - original intent recovers a lost Prepare before persistence
+  ---
+  duration_ms: 682.853375
+  type: 'test'
+  ...
+# Subtest: original intent recovers a lost Prepare after persistence
+ok 42 - original intent recovers a lost Prepare after persistence
+  ---
+  duration_ms: 811.698708
+  type: 'test'
+  ...
+# Subtest: followup recovery retains exact private request after a lost reply
+ok 43 - followup recovery retains exact private request after a lost reply
+  ---
+  duration_ms: 651.118291
+  type: 'test'
+  ...
+# Subtest: failed registered collection releases pending follow-up without accepting either result
+ok 44 - failed registered collection releases pending follow-up without accepting either result
+  ---
+  duration_ms: 565.0055
+  type: 'test'
+  ...
+# Subtest: retry rejects a FIFO intent before a blocking open can wait for a writer
+ok 45 - retry rejects a FIFO intent before a blocking open can wait for a writer
+  ---
+  duration_ms: 12.63075
+  type: 'test'
+  ...
+# Subtest: tool queued on old recovery cannot start work after explicit new
+ok 46 - tool queued on old recovery cannot start work after explicit new
+  ---
+  duration_ms: 516.8655
+  type: 'test'
+  ...
+# Subtest: an awaited old private intent cannot reacquire auth after fork
+ok 47 - an awaited old private intent cannot reacquire auth after fork
+  ---
+  duration_ms: 404.00575
+  type: 'test'
+  ...
+# Subtest: DeclareDelivery persists an exact private intent before transport and reconciles a lost reply
+ok 48 - DeclareDelivery persists an exact private intent before transport and reconciles a lost reply
+  ---
+  duration_ms: 404.25225
+  type: 'test'
+  ...
+# Subtest: Archive persists an exact private intent before transport and reconciles a lost reply
+ok 49 - Archive persists an exact private intent before transport and reconciles a lost reply
+  ---
+  duration_ms: 461.237375
+  type: 'test'
+  ...
+# Subtest: prepare-only registered start reserves without effects and recovers none Prepare loss
+ok 50 - prepare-only registered start reserves without effects and recovers none Prepare loss
+  ---
+  duration_ms: 440.201875
+  type: 'test'
+  ...
+# Subtest: prepare-only registered start reserves without effects and recovers before Prepare loss
+ok 51 - prepare-only registered start reserves without effects and recovers before Prepare loss
+  ---
+  duration_ms: 627.829708
+  type: 'test'
+  ...
+# Subtest: prepare-only registered start reserves without effects and recovers after Prepare loss
+ok 52 - prepare-only registered start reserves without effects and recovers after Prepare loss
+  ---
+  duration_ms: 620.418209
+  type: 'test'
+  ...
+# Subtest: prepare-only invalid flags refuse before control or private intent effects
+ok 53 - prepare-only invalid flags refuse before control or private intent effects
+  ---
+  duration_ms: 369.872625
+  type: 'test'
+  ...
+# Subtest: Codex coding and resolved-default review refuse before intent or Prepare
+ok 54 - Codex coding and resolved-default review refuse before intent or Prepare
+  ---
+  duration_ms: 524.309042
+  type: 'test'
+  ...
+# Subtest: only the loaded native Escape binding is supported
+ok 55 - only the loaded native Escape binding is supported
+  ---
+  duration_ms: 1.480791
+  type: 'test'
+  ...
+# Subtest: higher-priority clipboard and fullscreen bindings refuse Escape
+ok 56 - higher-priority clipboard and fullscreen bindings refuse Escape
+  ---
+  duration_ms: 0.241333
+  type: 'test'
+  ...
+# Subtest: missing, uninitialized or broken optional APIs produce a bounded unavailable result
+ok 57 - missing, uninitialized or broken optional APIs produce a bounded unavailable result
+  ---
+  duration_ms: 0.125667
+  type: 'test'
+  ...
+# Subtest: each turn samples current loaded bindings; config drift alone has no authority
+ok 58 - each turn samples current loaded bindings; config drift alone has no authority
+  ---
+  duration_ms: 0.076792
+  type: 'test'
+  ...
+# Subtest: question-only observations coalesce/reconnect without exposing bodies or answering
+ok 59 - question-only observations coalesce/reconnect without exposing bodies or answering
+  ---
+  duration_ms: 106.714584
+  type: 'test'
+  ...
+# Subtest: native gaps are bounded signals and never inferred question text
+ok 60 - native gaps are bounded signals and never inferred question text
+  ---
+  duration_ms: 0.318458
+  type: 'test'
+  ...
+# Subtest: content-free publication wake uses Pi followUp API and coalesces outstanding work
+ok 61 - content-free publication wake uses Pi followUp API and coalesces outstanding work
+  ---
+  duration_ms: 77.784458
+  type: 'test'
+  ...
+# Subtest: observer reconnect reconciles unhandled publications without treating wake as handling
+ok 62 - observer reconnect reconciles unhandled publications without treating wake as handling
+  ---
+  duration_ms: 0.519958
+  type: 'test'
+  ...
+# Subtest: wait AbortSignal cancels observation only and disconnection wake carries no error body
+ok 63 - wait AbortSignal cancels observation only and disconnection wake carries no error body
+  ---
+  duration_ms: 0.740042
+  type: 'test'
+  ...
+# Subtest: 65 pending identities drain in bounded batches without a new state change
+ok 64 - 65 pending identities drain in bounded batches without a new state change
+  ---
+  duration_ms: 77.789958
+  type: 'test'
+  ...
+# Subtest: synchronous Pi delivery failure retains identities for retry
+ok 65 - synchronous Pi delivery failure retains identities for retry
+  ---
+  duration_ms: 26.633708
+  type: 'test'
+  ...
+# Subtest: handled publication suppresses its old Ready after reconnect
+ok 66 - handled publication suppresses its old Ready after reconnect
+  ---
+  duration_ms: 52.221708
+  type: 'test'
+  ...
+# Subtest: handling result1 never suppresses a new result in the same contract
+ok 67 - handling result1 never suppresses a new result in the same contract
+  ---
+  duration_ms: 26.380583
+  type: 'test'
+  ...
+# Subtest: returned control wakes reconciliation once without accepting or confirming
+ok 68 - returned control wakes reconciliation once without accepting or confirming
+  ---
+  duration_ms: 51.936708
+  type: 'test'
+  ...
+# Subtest: new-context reset clears queued old handles and fences an in-flight explicit wait
+ok 69 - new-context reset clears queued old handles and fences an in-flight explicit wait
+  ---
+  duration_ms: 26.696583
+  type: 'test'
+  ...
+# Subtest: standalone package diagnoses managed launch without manufacturing tools
+ok 70 - standalone package diagnoses managed launch without manufacturing tools
+  ---
+  duration_ms: 2.098
+  type: 'test'
+  ...
+# Subtest: credentials without a selected injected entry do not become an owner
+ok 71 - credentials without a selected injected entry do not become an owner
+  ---
+  duration_ms: 0.310709
+  type: 'test'
+  ...
+# Subtest: malformed or incompatible owner metadata refuses (8 bytes)
+ok 72 - malformed or incompatible owner metadata refuses (8 bytes)
+  ---
+  duration_ms: 0.214917
+  type: 'test'
+  ...
+# Subtest: malformed or incompatible owner metadata refuses (2 bytes)
+ok 73 - malformed or incompatible owner metadata refuses (2 bytes)
+  ---
+  duration_ms: 0.116041
+  type: 'test'
+  ...
+# Subtest: malformed or incompatible owner metadata refuses (39 bytes)
+ok 74 - malformed or incompatible owner metadata refuses (39 bytes)
+  ---
+  duration_ms: 0.137542
+  type: 'test'
+  ...
+# Subtest: malformed or incompatible owner metadata refuses (33 bytes)
+ok 75 - malformed or incompatible owner metadata refuses (33 bytes)
+  ---
+  duration_ms: 0.140625
+  type: 'test'
+  ...
+# Subtest: malformed or incompatible owner metadata refuses (8193 bytes)
+ok 76 - malformed or incompatible owner metadata refuses (8193 bytes)
+  ---
+  duration_ms: 0.241
+  type: 'test'
+  ...
+# Subtest: stale, symlinked and unloaded entry markers cannot certify a factory
+ok 77 - stale, symlinked and unloaded entry markers cannot certify a factory
+  ---
+  duration_ms: 2.267042
+  type: 'test'
+  ...
+# Subtest: injected initialization rejects an unbound relative helper binary before registration
+ok 78 - injected initialization rejects an unbound relative helper binary before registration
+  ---
+  duration_ms: 0.435541
+  type: 'test'
+  ...
+# Subtest: question tools expose exact nested references and explicit fresh/recovery alternatives
+ok 79 - question tools expose exact nested references and explicit fresh/recovery alternatives
+  ---
+  duration_ms: 360.138583
+  type: 'test'
+  ...
+# Subtest: lost scoped answer reply retains exact private payload and captured parent epoch
+ok 80 - lost scoped answer reply retains exact private payload and captured parent epoch
+  ---
+  duration_ms: 705.652583
+  type: 'test'
+  ...
+# Subtest: missing basis, blank content, UTF-8 byte overflow and mixed recovery refuse before transport
+ok 81 - missing basis, blank content, UTF-8 byte overflow and mixed recovery refuse before transport
+  ---
+  duration_ms: 579.283542
+  type: 'test'
+  ...
+# Subtest: fixture result receipt appears only after its complete JSON is written
+ok 82 - fixture result receipt appears only after its complete JSON is written
+  ---
+  duration_ms: 41.929541
+  type: 'test'
+  ...
+# Subtest: captures exact native history at each conversation boundary
+ok 83 - captures exact native history at each conversation boundary
+  ---
+  duration_ms: 610.328458
+  type: 'test'
+  ...
+# Subtest: inert outside a managed invocation: registers nothing
+ok 84 - inert outside a managed invocation: registers nothing
+  ---
+  duration_ms: 6.876583
+  type: 'test'
+  ...
+# Subtest: an unavailable optional Pi API preserves ordinary reporting
+ok 85 - an unavailable optional Pi API preserves ordinary reporting
+  ---
+  duration_ms: 503.673291
+  type: 'test'
+  ...
+# Subtest: one response cycle: start, end, settled carry run, outcome and ordered sequence
+ok 86 - one response cycle: start, end, settled carry run, outcome and ordered sequence
+  ---
+  duration_ms: 625.533334
+  type: 'test'
+  ...
+# Subtest: error and aborted outcomes come from the last assistant message; a second run increments
+ok 87 - error and aborted outcomes come from the last assistant message; a second run increments
+  ---
+  duration_ms: 471.481459
+  type: 'test'
+  ...
+# Subtest: continuations inside one cycle keep the run; the last end before settled decides the outcome
+ok 88 - continuations inside one cycle keep the run; the last end before settled decides the outcome
+  ---
+  duration_ms: 465.208792
+  type: 'test'
+  ...
+# Subtest: non-tui modes never spawn a helper; shutdown reports once then disables
+ok 89 - non-tui modes never spawn a helper; shutdown reports once then disables
+  ---
+  duration_ms: 299.423125
+  type: 'test'
+  ...
+# Subtest: a print-mode shutdown drains nothing and spawns no helper
+ok 90 - a print-mode shutdown drains nothing and spawns no helper
+  ---
+  duration_ms: 7.038333
+  type: 'test'
+  ...
+# Subtest: a hung helper is killed at the deadline and the handler still resolves
+ok 91 - a hung helper is killed at the deadline and the handler still resolves
+  ---
+  duration_ms: 908.189625
+  type: 'test'
+  ...
+# Subtest: queue overflow disables reporting and sends one content-free unavailable notice
+ok 92 - queue overflow disables reporting and sends one content-free unavailable notice
+  ---
+  duration_ms: 910.41325
+  type: 'test'
+  ...
+# Subtest: a tool error followed by a successful assistant response is a successful cycle
+ok 93 - a tool error followed by a successful assistant response is a successful cycle
+  ---
+  duration_ms: 193.330875
+  type: 'test'
+  ...
+# Subtest: resume and fork announce the conversation without a cycle; a run whose last assistant errored is an error
+ok 94 - resume and fork announce the conversation without a cycle; a run whose last assistant errored is an error
+  ---
+  duration_ms: 473.170625
+  type: 'test'
+  ...
+# Subtest: an outer prompt span opens and closes one Input request; the title never leaves
+ok 95 - an outer prompt span opens and closes one Input request; the title never leaves
+  ---
+  duration_ms: 315.963083
+  type: 'test'
+  ...
+# Subtest: a prompt can open while no cycle is running and never touches the cycle
+ok 96 - a prompt can open while no cycle is running and never touches the cycle
+  ---
+  duration_ms: 465.0875
+  type: 'test'
+  ...
+# Subtest: a transition names the conversation it left by id, never by its file path
+ok 97 - a transition names the conversation it left by id, never by its file path
+  ---
+  duration_ms: 463.771625
+  type: 'test'
+  ...
+# Subtest: tree navigation invalidates the response cycle and carries only idleness
+ok 98 - tree navigation invalidates the response cycle and carries only idleness
+  ---
+  duration_ms: 457.924917
+  type: 'test'
+  ...
+# Subtest: the reattach command re-announces a disabled producer once and says so
+ok 99 - the reattach command re-announces a disabled producer once and says so
+  ---
+  duration_ms: 334.9575
+  type: 'test'
+  ...
+# Subtest: a shutdown drain discards the queue and delivers only the final frame in one deadline
+ok 100 - a shutdown drain discards the queue and delivers only the final frame in one deadline
+  ---
+  duration_ms: 299.236917
+  type: 'test'
+  ...
+# Subtest: a replacement factory is a new instance that names the conversation it replaced
+ok 101 - a replacement factory is a new instance that names the conversation it replaced
+  ---
+  duration_ms: 320.579833
+  type: 'test'
+  ...
+# Subtest: reports the current model from getModel and model_select
+ok 102 - reports the current model from getModel and model_select
+  ---
+  duration_ms: 302.755291
+  type: 'test'
+  ...
+# Subtest: omits model until the session reports one
+ok 103 - omits model until the session reports one
+  ---
+  duration_ms: 297.158666
+  type: 'test'
+  ...
+# Subtest: reporting fixture publishes one complete EOF-terminated Unicode frame before interruption
+ok 104 - reporting fixture publishes one complete EOF-terminated Unicode frame before interruption
+  ---
+  duration_ms: 171.155791
+  type: 'test'
+  ...
+# Subtest: lost create reply is attributable through ordinary issue list without a duplicate publication
+ok 105 - lost create reply is attributable through ordinary issue list without a duplicate publication
+  ---
+  duration_ms: 58.222083
+  type: 'test'
+  ...
+# Subtest: the bounded tracker stub exposes duplicate attempts and refuses parent modification
+ok 106 - the bounded tracker stub exposes duplicate attempts and refuses parent modification
+  ---
+  duration_ms: 101.793209
+  type: 'test'
+  ...
+1..106
+# tests 106
+# suites 0
+# pass 106
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 9011.230125

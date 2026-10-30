@@ -1,0 +1,22 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.91s
+     Running tests/operator_e2e.rs (target/debug/deps/operator_e2e-f479b6b0494d9072)
+
+running 1 test
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp0bPzVC server=34496
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp0bPzVC pgid=35684
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp0bPzVC pgid=35737
+
+thread 'compiled_worker::operator_close_archive_restores_history_without_replay' (138525179) panicked at tests/operator_e2e.rs:1304:25:
+real Bash child did not publish PID
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test compiled_worker::operator_close_archive_restores_history_without_replay ... FAILED
+
+failures:
+
+failures:
+    compiled_worker::operator_close_archive_restores_history_without_replay
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 14 filtered out; finished in 20.39s
+
+error: test failed, to rerun pass `-p ovrcr --test operator_e2e`

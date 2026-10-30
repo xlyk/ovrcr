@@ -1,0 +1,52 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]       [Ctrl-o]         [Actions] [Menu]
+ OPERATOR ─────────────── [+]│B inspec… · grok /  · complete
+┌ Archived sessions ───────────────────────────────────────┐
+│Search: ▏                                                 │
+│› Unarchive: Operator / operator-2 (#14)                  │
+│  /private/tmp/ovrcr-layout-native2-rsilv0bh/temp/ovrcr-gu│
+│                                                          │
+│                                                          │
+│                      
+		3 text (settable) 󰚩 OVRCR Operator [o]       [Ctrl-o]         [Actions] [Menu]
+		4 text (settable)  OPERATOR ─────────────── [+]│B inspec… · grok /  · complete
+		5 text (settable) ┌ Archived sessions ───────────────────────────────────────┐
+		6 text (settable) │Search: ▏                                                 │
+		7 text (settable) │› Unarchive: Operator / operator-2 (#14)                  │
+		8 text (settable) │  /private/tmp/ovrcr-layout-native2-rsilv0bh/temp/ovrcr-gu│
+		9 text (settable) │                                                          │
+		10 text (settable) │                                                          │
+		11 text (settable) │                                                          │
+		12 text (settable) │                                                          │
+		13 text (settable) │                                                          │
+		14 text (settable) │                                                          │
+		15 text (settable) │                                                          │
+		16 text (settable) │                                                          │
+		17 text (settable) │                                                          │
+		18 text (settable) │↑/↓ select · Enter continue · Esc cancel                  │
+		19 text (settable) │                                                          │
+		20 text (settable) │                                                          │
+		21 text (settable) │                                                          │
+		22 text (settable) │[Open] [Cancel]                                           │
+		23 text (settable) └──────────────────────────────────────────────────────────┘
+		24 text (settable) Cursor · usage off           │·                             
+		25 text (settable)                              │                              
+		26 text (settable) BROWSE  Space Menu  : Search  ? Help                        
+	27 close button
+	28 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	29 minimize button
+	30 text OVRCR GUI
+31 menu bar
+	32 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]       [Ctrl-o]         [Actions] [Menu]
+ OPERATOR ─────────────── [+]│B inspec… · grok /  · complete
+┌ Archived sessions ───────────────────────────────────────┐
+│Search: ▏                                                 │
+│› Unarchive: Operator / operator-2 (#14)                  │
+│  /private/tmp/ovrcr-layout-native2-rsilv0bh/temp/ovrcr-gu│
+│                                                          │
+│                                                          │
+│                      

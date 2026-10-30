@@ -1,0 +1,6 @@
+38212 38165 38212 /Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr server
+80355 80354 80353 /Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui
+80376 80355 80353 /Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr server
+38123 80604 38123 rtk proxy sh /private/tmp/ovrcr-layout-native-6lbcvrzq/nested.sh
+38124 38123 38123 /bin/sh /private/tmp/ovrcr-layout-native-6lbcvrzq/nested.sh
+38165 38164 38123 /Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr

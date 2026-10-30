@@ -1,0 +1,20 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.09s
+     Running tests/terminal_acceptance.rs (target/debug/deps/terminal_acceptance-e2880800c2dce517)
+
+running 1 test
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpdxecU8 server=34957
+2
+3
+4
+Error: operator list
+test operator_quick_outer_pty_modifiers_paste_escape_restore_terminal ... FAILED
+
+failures:
+
+failures:
+    operator_quick_outer_pty_modifiers_paste_escape_restore_terminal
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 18 filtered out; finished in 5.67s
+
+error: test failed, to rerun pass `-p ovrcr --test terminal_acceptance`

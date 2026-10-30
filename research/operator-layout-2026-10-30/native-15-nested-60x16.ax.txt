@@ -1,0 +1,45 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o] · 2 un[Ctrl-o]                             [Actions] [Menu]
+pid: 80604  elapsed: 5m  agent unknown  local (#1)                              
+local (#1)                                                                      
+󰚩 OVRCR Operator [o]       [Ctrl-o]         [Actions] [Menu]                    
+┌ Quick message · Ctrl-o ──────────────────────────────────────────────────────┐
+│grok / fixture-quick · consigint / main / #1 run 1                            │
+│                       
+		3 text (settable) 󰚩 OVRCR Operator [o] · 2 un[Ctrl-o]                             [Actions] [Menu]
+		4 text (settable) pid: 80604  elapsed: 5m  agent unknown  local (#1)                              
+		5 text (settable) local (#1)                                                                      
+		6 text (settable) 󰚩 OVRCR Operator [o]       [Ctrl-o]         [Actions] [Menu]                    
+		7 text (settable) ┌ Quick message · Ctrl-o ──────────────────────────────────────────────────────┐
+		8 text (settable) │grok / fixture-quick · consigint / main / #1 run 1                            │
+		9 text (settable) │                                                                              │
+		10 text (settable) │▏                                                                             │
+		11 text (settable) │                                                                              │
+		12 text (settable) │                                                                              │
+		13 text (settable) │                                                                              │
+		14 text (settable) │                                                                              │
+		15 text (settable) │                                                                              │
+		16 text (settable) │                                                                              │
+		17 text (settable) │                                                                              │
+		18 text (settable) │                                                                              │
+		19 text (settable) │                                                                              │
+		20 text (settable) │                                                                              │
+		21 text (settable) │Enter Send · Shift-Enter Newline · Esc Dismiss                                │
+		22 text (settable) └──────────────────────────────────────────────────────────────────────────────┘
+		23 text (settable) Terminal mode  Ctrl-g browse  then s Agents                                     
+	24 close button
+	25 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	26 minimize button
+	27 text OVRCR GUI
+28 menu bar
+	29 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o] · 2 un[Ctrl-o]                             [Actions] [Menu]
+pid: 80604  elapsed: 5m  agent unknown  local (#1)                              
+local (#1)                                                                      
+󰚩 OVRCR Operator [o]       [Ctrl-o]         [Actions] [Menu]                    
+┌ Quick message · Ctrl-o ──────────────────────────────────────────────────────┐
+│grok / fixture-quick · consigint / main / #1 run 1                            │
+│                       

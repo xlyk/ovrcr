@@ -1,0 +1,26 @@
+{
+  "command": [
+    "rtk",
+    "proxy",
+    "git",
+    "diff",
+    "--check"
+  ],
+  "exit": 0,
+  "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+  "private_root": "/private/tmp/operator-layout-gate-ys3kcvx8",
+  "isolated_environment_keys": [
+    "CARGO_HOME",
+    "CARGO_NET_OFFLINE",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_NOSYSTEM",
+    "HOME",
+    "NO_PROXY",
+    "PATH",
+    "RUSTUP_HOME",
+    "SHELL",
+    "TMPDIR",
+    "no_proxy"
+  ],
+  "utc": "2026-10-30T11:37:52.616193+00:00"
+}

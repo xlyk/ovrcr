@@ -1,0 +1,34 @@
+{
+  "command": [
+    "rtk",
+    "proxy",
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--all-features",
+    "--test",
+    "client_startup_server",
+    "captured_build_survives_atomic_executable_replacement_and_decline",
+    "--",
+    "--exact",
+    "--nocapture"
+  ],
+  "exit": 0,
+  "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+  "private_root": "/private/tmp/operator-layout-gate-zwebxcqs",
+  "isolated_environment_keys": [
+    "CARGO_HOME",
+    "CARGO_NET_OFFLINE",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_NOSYSTEM",
+    "HOME",
+    "NO_PROXY",
+    "PATH",
+    "RUSTUP_HOME",
+    "SHELL",
+    "TMPDIR",
+    "no_proxy"
+  ],
+  "utc": "2026-10-30T11:37:30.790448+00:00"
+}

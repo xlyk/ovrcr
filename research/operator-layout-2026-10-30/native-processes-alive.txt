@@ -1,0 +1,3 @@
+80355 80354 80353 /Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui
+80376 80355 80353 /Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr server
+82142 80355 82142 /private/tmp/ovrcr-layout-native-6lbcvrzq/temp/ovrcr-gui-6VJqah/dashboard-client/ovrcr

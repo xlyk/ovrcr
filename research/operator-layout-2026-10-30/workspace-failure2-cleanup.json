@@ -1,0 +1,8 @@
+{
+  "recorded_server_pid": 69350,
+  "kernel_state": "absent",
+  "original_live_shutdown": "TimedOut; no successful Server wait claimed",
+  "matching_owned_root_processes": [],
+  "stale_socket_existed": true,
+  "owned_root_removed": "/private/tmp/operator-layout-gate-_q_bvvs6"
+}

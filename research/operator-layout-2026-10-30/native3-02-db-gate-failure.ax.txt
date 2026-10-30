@@ -1,0 +1,88 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                              [Actions] [Menu]
+ OPERATOR ───────────────────────── [+]│pid: 8473  elapsed: 1m  agent unknown  local (#1)                                                                             
+ CONSIGINT ────────────────────────────│local (#1)                                                                                                                    
+  󰘬 main 
+		3 text (settable) 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                              [Actions] [Menu]
+		4 text (settable)  OPERATOR ───────────────────────── [+]│pid: 8473  elapsed: 1m  agent unknown  local (#1)                                                                             
+		5 text (settable)  CONSIGINT ────────────────────────────│local (#1)                                                                                                                    
+		6 text (settable)   󰘬 main                          root │consigint ›                                                                                                                   
+		7 text (settable) ▌    $ local                           │                                                                                                                              
+		8 text (settable)   󰘬 gui-consigint-auth-handoff         │                                                                                                                              
+		9 text (settable)      $ local                           │                                                                                                                              
+		10 text (settable)      - review auth handoff    grok:4.6 │                                                                                                                              
+		11 text (settable)   󰘬 gui-consigint-worktree-lifecycle   │                                                                                                                              
+		12 text (settable)      $ local                           │                                                                                                                              
+		13 text (settable)      - implement lif…  claude:sonnet-4 │                                                                                                                              
+		14 text (settable)      - review websocke…  codex:gpt-5.4 │                                                                                                                              
+		15 text (settable)      - plan snapshot res…  pi:grok-4.6 │                                                                                                                              
+		16 text (settable)                                        │                                                                                                                              
+		17 text (settable)  SPACELIFT-AGENT ──────────────────────│                                                                                                                              
+		18 text (settable)   󰘬 main                          root │                                                                                                                              
+		19 text (settable)      $ local                           │                                                                                                                              
+		20 text (settable)   󰘬 gui-spacelift-agent-pipeline-progr…│                                                                                                                              
+		21 text (settable)      $ local                           │                                                                                                                              
+		22 text (settable)      - build pipeline …  claude:opus-4 │                                                                                                                              
+		23 text (settable)   󰘬 gui-spacelift-agent-scope-quality  │                                                                                                                              
+		24 text (settable)      $ local                           │                                                                                                                              
+		25 text (settable)      - review scope qu…  codex:gpt-5.4 │                                                                                                                              
+		26 text (settable)                                        │                                                                                                                              
+		27 text (settable)                                        │                                                                                                                              
+		28 text (settable)                                        │                                                                                                                              
+		29 text (settable)                                        │                                                                                                                              
+		30 text (settable)                                        │   ┌ Quick message · Ctrl-o ──────────────────────────────────────────────────────┐                                           
+		31 text (settable)                                        │   │grok / fixture-quick · consigint / main / #1 run 1                            │                                           
+		32 text (settable)                                        │   │                                                                              │                                           
+		33 text (settable)                                        │   │Native delayed receipt keeps terminal focus▏                                  │                                           
+		34 text (settable)                                        │   │                                                                              │                                           
+		35 text (settable)                                        │   │                                                                              │                                           
+		36 text (settable)                                        │   │                                                                              │                                           
+		37 text (settable)                                        │   │                                                                              │                                           
+		38 text (settable)                                        │   │                                                                              │                                           
+		39 text (settable)                                        │   │                                                                              │                                           
+		40 text (settable)                                        │   │                                                                              │                                           
+		41 text (settable)                                        │   │                                                                              │                                           
+		42 text (settable)                                        │   │                                                                              │                                           
+		43 text (settable)                                        │   │database is locked: Error code 5: database is locked                          │                                           
+		44 text (settable)                                        │   │Enter Send · Shift-Enter Newline · Esc Dismiss                                │                                           
+		45 text (settable)                                        │   └──────────────────────────────────────────────────────────────────────────────┘                                           
+		46 text (settable)                                        │                                                                                                                              
+		47 text (settable)                                        │                                                                                                                              
+		48 text (settable)                                        │                                                                                                                              
+		49 text (settable)                                        │                                                                                                                              
+		50 text (settable)                                        │                                                                                                                              
+		51 text (settable)                                        │                                                                                                                              
+		52 text (settable)                                        │                                                                                                                              
+		53 text (settable)                                        │                                                                                                                              
+		54 text (settable)                                        │                                                                                                                              
+		55 text (settable)                                        │                                                                                                                              
+		56 text (settable)                                        │                                                                                                                              
+		57 text (settable)                                        │                                                                                                                              
+		58 text (settable)                                        │                                                                                                                              
+		59 text (settable)                                        │                                                                                                                              
+		60 text (settable)                                        │                                                                                                                              
+		61 text (settable)                                        │                                                                                                                              
+		62 text (settable)                                        │                                                                                                                              
+		63 text (settable)                                        │                                                                                                                              
+		64 text (settable)                                        │                                                                                                                              
+		65 text (settable)                                        │                                                                                                                              
+		66 text (settable)  QUOTA LEFT ───────────────────────────│                                                                                                                              
+		67 text (settable) Claude · unavailable                   │                                                                                                                              
+		68 text (settable) Codex · not signed in · retry 9m       │                                                                                                                              
+		69 text (settable) Grok · not signed in · retry 9m        │                                                                                                                              
+		70 text (settable) Cursor · usage off                     │                                                                                                                              
+		71 text (settable)                                        │                                                                                                                              
+		72 text (settable) Terminal mode  Ctrl-g browse  then s Agents                                                                                                                           
+	73 close button
+	74 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	75 minimize button
+	76 text OVRCR GUI
+77 menu bar
+	78 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                              [Actions] [Menu]
+ OPERATOR ───────────────────────── [+]│pid: 8473  elapsed: 1m  agent unknown  local (#1)                                                                             
+ CONSIGINT ────────────────────────────│local (#1)                                                                                                                    
+  󰘬 main 

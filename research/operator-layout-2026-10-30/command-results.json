@@ -1,0 +1,1327 @@
+[
+  {
+    "name": "affected-crates-current",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr-protocol",
+      "-p",
+      "ovrcr-runtime",
+      "-p",
+      "ovrcr-tui",
+      "--all-targets",
+      "--all-features"
+    ],
+    "exit": 101,
+    "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+    "private_root": "/private/tmp/operator-layout-gate-1eqek2fb",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:42:41.317217+00:00",
+    "suite_results": [
+      {
+        "passed": 101,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 433,
+        "failed": 0,
+        "ignored": 1
+      },
+      {
+        "passed": 12,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 23,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 17,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 3,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 328,
+        "failed": 2,
+        "ignored": 0
+      }
+    ]
+  },
+  {
+    "name": "check-current",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "check",
+      "--workspace",
+      "--all-targets",
+      "--all-features"
+    ],
+    "exit": 0,
+    "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+    "private_root": "/private/tmp/operator-layout-gate-8bmoznb7",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:37:27.816370+00:00",
+    "suite_results": []
+  },
+  {
+    "name": "check-final",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "check",
+      "--workspace",
+      "--all-targets",
+      "--all-features"
+    ],
+    "exit": 0,
+    "revision": "dc9b49dd47fd0eaa690ec65efe1f9e2019a4aec9",
+    "private_root": "/private/tmp/operator-layout-gate-n_mwbs2k",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:50:37.021596+00:00",
+    "suite_results": []
+  },
+  {
+    "name": "clippy-current",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "clippy",
+      "--workspace",
+      "--all-targets",
+      "--all-features",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "exit": 0,
+    "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+    "private_root": "/private/tmp/operator-layout-gate-zceev3yh",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:37:15.014582+00:00",
+    "suite_results": []
+  },
+  {
+    "name": "clippy-final",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "clippy",
+      "--workspace",
+      "--all-targets",
+      "--all-features",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "exit": 0,
+    "revision": "dc9b49dd47fd0eaa690ec65efe1f9e2019a4aec9",
+    "private_root": "/private/tmp/operator-layout-gate-sd7jr_qt",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:50:15.225612+00:00",
+    "suite_results": []
+  },
+  {
+    "name": "close-e2e-attempt1",
+    "command": [
+      "rtk",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--features",
+      "acceptance-diagnostics",
+      "--test",
+      "operator_e2e",
+      "operator_close_archive_restores_history_without_replay",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 101,
+    "revision": "dc5e8cb01f84dd2cb68089af2497830078e46b41",
+    "utc": "2026-10-30T11:19:15.857392+00:00",
+    "suite_results": [
+      {
+        "passed": 0,
+        "failed": 1,
+        "ignored": 0
+      }
+    ]
+  },
+  {
+    "name": "close-e2e-attempt2",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--features",
+      "acceptance-diagnostics",
+      "--test",
+      "operator_e2e",
+      "operator_close_archive_restores_history_without_replay",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 101,
+    "revision": "dc5e8cb01f84dd2cb68089af2497830078e46b41",
+    "utc": "2026-10-30T11:19:59.319207+00:00",
+    "suite_results": [
+      {
+        "passed": 0,
+        "failed": 1,
+        "ignored": 0
+      }
+    ]
+  },
+  {
+    "name": "close-e2e-attempt3",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--features",
+      "acceptance-diagnostics",
+      "--test",
+      "operator_e2e",
+      "operator_close_archive_restores_history_without_replay",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "revision": "dc5e8cb01f84dd2cb68089af2497830078e46b41",
+    "utc": "2026-10-30T11:20:26.441831+00:00",
+    "suite_results": [
+      {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      }
+    ]
+  },
+  {
+    "name": "close-e2e-progress",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--features",
+      "acceptance-diagnostics",
+      "--test",
+      "operator_e2e",
+      "operator_close_archive_restores_history_without_replay",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "revision": "479ceb2715259cb24dc7bd8368518383b81c694e",
+    "utc": "2026-10-30T11:31:32.908178+00:00",
+    "suite_results": [
+      {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      }
+    ]
+  },
+  {
+    "name": "compiled-worker-attempt1",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--features",
+      "acceptance-diagnostics",
+      "--test",
+      "operator_e2e",
+      "compiled_worker::",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 101,
+    "revision": "dc5e8cb01f84dd2cb68089af2497830078e46b41",
+    "utc": "2026-10-30T11:21:05.858241+00:00",
+    "suite_results": [
+      {
+        "passed": 11,
+        "failed": 1,
+        "ignored": 2
+      }
+    ]
+  },
+  {
+    "name": "compiled-worker-attempt2",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--features",
+      "acceptance-diagnostics",
+      "--test",
+      "operator_e2e",
+      "compiled_worker::",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "revision": "dc5e8cb01f84dd2cb68089af2497830078e46b41",
+    "utc": "2026-10-30T11:21:28.970051+00:00",
+    "suite_results": [
+      {
+        "passed": 12,
+        "failed": 0,
+        "ignored": 2
+      }
+    ]
+  },
+  {
+    "name": "compiled-worker-final",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--features",
+      "acceptance-diagnostics",
+      "--test",
+      "operator_e2e",
+      "compiled_worker::",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "revision": "dc9b49dd47fd0eaa690ec65efe1f9e2019a4aec9",
+    "private_root": "/private/tmp/operator-layout-gate-q000zmun",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:49:36.600315+00:00",
+    "suite_results": [
+      {
+        "passed": 12,
+        "failed": 0,
+        "ignored": 2
+      }
+    ]
+  },
+  {
+    "name": "diff-check-current",
+    "command": [
+      "rtk",
+      "proxy",
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit": 0,
+    "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+    "private_root": "/private/tmp/operator-layout-gate-ys3kcvx8",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:37:52.616193+00:00",
+    "suite_results": []
+  },
+  {
+    "name": "diff-check-final",
+    "command": [
+      "rtk",
+      "proxy",
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit": 0,
+    "revision": "dc9b49dd47fd0eaa690ec65efe1f9e2019a4aec9",
+    "private_root": "/private/tmp/operator-layout-gate-m9ijwq0g",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:50:13.140132+00:00",
+    "suite_results": []
+  },
+  {
+    "name": "fmt-current",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "fmt",
+      "--all",
+      "--",
+      "--check"
+    ],
+    "exit": 0,
+    "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+    "private_root": "/private/tmp/operator-layout-gate-3hb37ad2",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:32:26.247356+00:00",
+    "suite_results": []
+  },
+  {
+    "name": "fmt-final",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "fmt",
+      "--all",
+      "--",
+      "--check"
+    ],
+    "exit": 0,
+    "revision": "dc9b49dd47fd0eaa690ec65efe1f9e2019a4aec9",
+    "private_root": "/private/tmp/operator-layout-gate-pg79ckmf",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:50:14.036652+00:00",
+    "suite_results": []
+  },
+  {
+    "name": "native-build-attempt1",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "build",
+      "-p",
+      "ovrcr",
+      "--bins",
+      "--features",
+      "gui,acceptance-diagnostics",
+      "--locked",
+      "--offline"
+    ],
+    "exit": 0,
+    "revision": "dc5e8cb01f84dd2cb68089af2497830078e46b41",
+    "utc": "2026-10-30T11:20:11.952921+00:00",
+    "suite_results": []
+  },
+  {
+    "name": "native-build-current",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "build",
+      "-p",
+      "ovrcr",
+      "--bins",
+      "--features",
+      "gui,acceptance-diagnostics",
+      "--locked",
+      "--offline"
+    ],
+    "exit": 0,
+    "revision": "299c2890a2c094b23431a6a6818783c50d06982c",
+    "utc": "2026-10-30T11:22:12.353089+00:00",
+    "suite_results": []
+  },
+  {
+    "name": "native-holder-build",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--test",
+      "operator_e2e",
+      "--features",
+      "gui,acceptance-diagnostics",
+      "--no-run",
+      "--message-format=json",
+      "--offline"
+    ],
+    "exit": 0,
+    "revision": "299c2890a2c094b23431a6a6818783c50d06982c",
+    "utc": "2026-10-30T11:22:16.276468+00:00",
+    "suite_results": []
+  },
+  {
+    "name": "native2-build",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "build",
+      "-p",
+      "ovrcr",
+      "--bins",
+      "--features",
+      "gui,acceptance-diagnostics",
+      "--locked",
+      "--offline"
+    ],
+    "exit": 0,
+    "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+    "private_root": "/private/tmp/operator-layout-gate-poc5sni2",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:32:15.109047+00:00",
+    "suite_results": []
+  },
+  {
+    "name": "native2-holder-build",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--test",
+      "operator_e2e",
+      "--features",
+      "gui,acceptance-diagnostics",
+      "--no-run",
+      "--message-format=json",
+      "--offline"
+    ],
+    "exit": 0,
+    "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+    "private_root": "/private/tmp/operator-layout-gate-zy85jqk_",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:32:21.983267+00:00",
+    "suite_results": []
+  },
+  {
+    "name": "node-gates",
+    "command": [
+      "rtk",
+      "proxy",
+      "node",
+      "--test",
+      "tests/pi_package_bootstrap.mjs",
+      "tests/pi_reporting_extension.mjs",
+      "tests/omp_reporting_extension.mjs",
+      "tests/pi_delegation_extension.mjs",
+      "tests/pi_interrupt_extension.mjs",
+      "tests/pi_question_extension.mjs",
+      "tests/pi_continuation_records.mjs",
+      "tests/pi_observation_extension.mjs",
+      "tests/pi_workflow_tracker.mjs"
+    ],
+    "exit": 0,
+    "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+    "private_root": "/private/tmp/operator-layout-gate-xe0szb_5",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:32:33.696032+00:00",
+    "suite_results": []
+  },
+  {
+    "name": "operator-current",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--features",
+      "acceptance-diagnostics",
+      "--test",
+      "operator_e2e",
+      "--test",
+      "operator_scope",
+      "--test",
+      "operator_worker",
+      "--test",
+      "operator_auth"
+    ],
+    "exit": 0,
+    "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+    "private_root": "/private/tmp/operator-layout-gate-0jh3si_2",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:42:36.123906+00:00",
+    "suite_results": [
+      {
+        "passed": 21,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 13,
+        "failed": 0,
+        "ignored": 2
+      },
+      {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 4,
+        "failed": 0,
+        "ignored": 1
+      }
+    ]
+  },
+  {
+    "name": "python-offline-gates",
+    "command": [
+      "rtk",
+      "proxy",
+      "python3",
+      "-I",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "experiments/cursor-cloud",
+      "-p",
+      "test_client.py",
+      "-v"
+    ],
+    "exit": 0,
+    "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+    "private_root": "/private/tmp/operator-layout-gate-_daro_z8",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:45:37.444939+00:00",
+    "suite_results": []
+  },
+  {
+    "name": "quick-context-navigation",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--features",
+      "acceptance-diagnostics",
+      "--test",
+      "operator_e2e",
+      "operator_quick_message_records_one_captured_first_message",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+    "private_root": "/private/tmp/operator-layout-gate-p2olaxjc",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:46:19.375644+00:00",
+    "suite_results": [
+      {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      }
+    ]
+  },
+  {
+    "name": "quick-e2e-attempt1",
+    "command": [
+      "rtk",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--features",
+      "acceptance-diagnostics",
+      "--test",
+      "operator_e2e",
+      "operator_quick_message_records_one_captured_first_message",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "revision": "dc5e8cb01f84dd2cb68089af2497830078e46b41",
+    "utc": "2026-10-30T11:19:12.308075+00:00",
+    "suite_results": []
+  },
+  {
+    "name": "quick-pty-attempt1",
+    "command": [
+      "rtk",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--test",
+      "terminal_acceptance",
+      "operator_quick",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 101,
+    "revision": "dc5e8cb01f84dd2cb68089af2497830078e46b41",
+    "utc": "2026-10-30T11:19:22.812755+00:00",
+    "suite_results": [
+      {
+        "passed": 0,
+        "failed": 1,
+        "ignored": 0
+      }
+    ]
+  },
+  {
+    "name": "quick-pty-attempt2",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--test",
+      "terminal_acceptance",
+      "operator_quick",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 101,
+    "revision": "dc5e8cb01f84dd2cb68089af2497830078e46b41",
+    "utc": "2026-10-30T11:19:47.696813+00:00",
+    "suite_results": [
+      {
+        "passed": 0,
+        "failed": 1,
+        "ignored": 0
+      }
+    ]
+  },
+  {
+    "name": "quick-pty-attempt3",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--test",
+      "terminal_acceptance",
+      "operator_quick",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "revision": "dc5e8cb01f84dd2cb68089af2497830078e46b41",
+    "utc": "2026-10-30T11:20:39.186178+00:00",
+    "suite_results": [
+      {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      }
+    ]
+  },
+  {
+    "name": "quick-pty-attempt4",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--test",
+      "terminal_acceptance",
+      "operator_quick",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "revision": "dc5e8cb01f84dd2cb68089af2497830078e46b41",
+    "utc": "2026-10-30T11:21:51.716433+00:00",
+    "suite_results": [
+      {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      }
+    ]
+  },
+  {
+    "name": "quick-pty-current",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--test",
+      "terminal_acceptance",
+      "operator_quick",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+    "private_root": "/private/tmp/operator-layout-gate-sumblvtj",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:45:02.905851+00:00",
+    "suite_results": [
+      {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      }
+    ]
+  },
+  {
+    "name": "root-tui-current",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--test",
+      "tui"
+    ],
+    "exit": 0,
+    "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+    "private_root": "/private/tmp/operator-layout-gate-akj6prro",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:45:03.958186+00:00",
+    "suite_results": [
+      {
+        "passed": 329,
+        "failed": 0,
+        "ignored": 0
+      }
+    ]
+  },
+  {
+    "name": "startup-failure-targeted",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--all-features",
+      "--test",
+      "client_startup_server",
+      "captured_build_survives_atomic_executable_replacement_and_decline",
+      "--",
+      "--exact",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+    "private_root": "/private/tmp/operator-layout-gate-zwebxcqs",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:37:30.790448+00:00",
+    "suite_results": [
+      {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      }
+    ]
+  },
+  {
+    "name": "terminal-and-tui-current",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr",
+      "--test",
+      "terminal_acceptance",
+      "--test",
+      "tui"
+    ],
+    "exit": 101,
+    "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+    "private_root": "/private/tmp/operator-layout-gate-3wngnlqq",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:43:50.149006+00:00",
+    "suite_results": [
+      {
+        "passed": 11,
+        "failed": 7,
+        "ignored": 1
+      }
+    ]
+  },
+  {
+    "name": "tui-crate-serial",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "-p",
+      "ovrcr-tui",
+      "--all-targets",
+      "--all-features",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit": 101,
+    "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+    "private_root": "/private/tmp/operator-layout-gate-49n2k6lk",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:43:51.957882+00:00",
+    "suite_results": [
+      {
+        "passed": 328,
+        "failed": 2,
+        "ignored": 0
+      }
+    ]
+  },
+  {
+    "name": "workspace-all-attempt1",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "--workspace",
+      "--all-targets",
+      "--all-features"
+    ],
+    "exit": 101,
+    "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+    "private_root": "/private/tmp/operator-layout-gate-ix6z3v2e",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:35:43.960543+00:00",
+    "suite_results": [
+      {
+        "passed": 139,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 65,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 19,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 33,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 13,
+        "failed": 0,
+        "ignored": 1
+      },
+      {
+        "passed": 18,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 0,
+        "failed": 0,
+        "ignored": 2
+      },
+      {
+        "passed": 49,
+        "failed": 0,
+        "ignored": 1
+      },
+      {
+        "passed": 3,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 19,
+        "failed": 1,
+        "ignored": 2
+      }
+    ]
+  },
+  {
+    "name": "workspace-all-attempt2",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "--workspace",
+      "--all-targets",
+      "--all-features"
+    ],
+    "exit": 101,
+    "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+    "private_root": "/private/tmp/operator-layout-gate-_q_bvvs6",
+    "isolated_environment_keys": [
+      "CARGO_HOME",
+      "CARGO_NET_OFFLINE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "NO_PROXY",
+      "PATH",
+      "RUSTUP_HOME",
+      "SHELL",
+      "TMPDIR",
+      "no_proxy"
+    ],
+    "utc": "2026-10-30T11:40:19.258774+00:00",
+    "suite_results": [
+      {
+        "passed": 139,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 65,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 19,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 33,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 13,
+        "failed": 0,
+        "ignored": 1
+      },
+      {
+        "passed": 18,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 0,
+        "failed": 0,
+        "ignored": 2
+      },
+      {
+        "passed": 49,
+        "failed": 0,
+        "ignored": 1
+      },
+      {
+        "passed": 3,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 19,
+        "failed": 1,
+        "ignored": 2
+      }
+    ]
+  }
+]

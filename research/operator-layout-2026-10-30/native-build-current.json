@@ -1,0 +1,18 @@
+{
+  "command": [
+    "rtk",
+    "proxy",
+    "cargo",
+    "build",
+    "-p",
+    "ovrcr",
+    "--bins",
+    "--features",
+    "gui,acceptance-diagnostics",
+    "--locked",
+    "--offline"
+  ],
+  "exit": 0,
+  "revision": "299c2890a2c094b23431a6a6818783c50d06982c",
+  "utc": "2026-10-30T11:22:12.353089+00:00"
+}

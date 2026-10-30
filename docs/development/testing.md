@@ -197,6 +197,17 @@ native acceptance; they are not passing product cases merely because ignored.
 Keep actual native screenshots/accessibility and live subscription acceptance
 separate from loopback evidence.
 
+Layout acceptance also holds real Create/Submit receipts outside the Dashboard to
+prove a dismissed quick message keeps its captured text and context, submits once,
+and preserves terminal focus while another chat completes. The close/archive case
+records two real Bash child groups, closes A, completes B and receives terminal
+output, then restarts and restores A without replay before an explicit new turn.
+The outer-PTY `operator_quick` case sends Ctrl+O, CSI-u Shift+Enter and bracketed
+paste through the compiled Dashboard, checks separate editor lines, dismisses to
+the original terminal, and verifies no conversation was created.
+See the [2026-10-30 layout acceptance record](../../research/operator-layout-2026-10-30/README.md)
+for exact revisions, native JPEG/AX evidence, commands, failures and platform gaps.
+
 The [2026-10-29–30 Operator acceptance record](../../research/rig-operator-2026-10-29/README.md)
 contains real ChatGPT GUI turns and a separate controlled concurrent-chat run,
 with executable hashes, cleanup receipts and remaining gate limitations.

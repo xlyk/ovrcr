@@ -1,0 +1,423 @@
+    Blocking waiting for file lock on build directory
+   Compiling ovrcr v0.1.0 (/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.42s
+     Running tests/terminal_acceptance.rs (target/debug/deps/terminal_acceptance-e2880800c2dce517)
+
+running 19 tests
+test mouse_fixture_child ... ignored
+test acceptance_cli_uses_fixture_environment ... ok
+2
+3
+2
+2
+2
+2
+2
+2
+3
+4
+3
+2
+3
+3
+3
+2
+2
+test outer_dashboard_reports_early_child_exit_with_fixture_environment ... ok
+3
+test empty_dashboard_start_screen_reports_isolated_paths ... ok
+2
+3
+4
+3
+4
+3
+4
+4
+3
+4
+4
+4
+4
+4
+5
+4
+5
+5
+2
+2
+3
+3
+4
+4
+test default_dashboard_acceptance_wrapper_exercises_pty_controls ... FAILED
+test copy_mode_acceptance_emits_selected_text_and_reattaches ... FAILED
+test agent_search_selects_and_types_through_real_dashboard ... FAILED
+test external_pause_resume_and_exit_redraw_the_live_dashboard ... FAILED
+test history_keyboard_reads_old_output_during_live_session ... FAILED
+test operator_quick_outer_pty_modifiers_paste_escape_restore_terminal ... FAILED
+test mouse_forwarding_outer_pty_round_trip ... FAILED
+test agent_search_real_loading_input_is_discarded_and_never_replayed ... ok
+test agent_attention_ranks_accepted_reports_and_selects_the_real_destination ... ok
+test pause_resume_dashboard_round_trip ... ok
+2
+3
+test split_terminal_acceptance_preserves_input_and_geometry ... ok
+4
+test assignment_control::assigned_child_is_view_only_until_explicit_dashboard_takeover_and_return ... ok
+test workspace_shortcut_creates_and_attaches_through_real_dashboard ... ok
+test copy_history_acceptance_emits_across_page_and_tile_boundaries ... ok
+test agent_search_navigates_fifty_live_sessions_through_real_dashboard ... ok
+
+failures:
+
+---- default_dashboard_acceptance_wrapper_exercises_pty_controls stdout ----
+LIVE_OWNED_SERVER root=/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpJhGwmT server=28562
+Error: outer dashboard timed out before readiness; child_status=Some(Ok(None)); size=(30, 100), alternate_screen=false; screen: ; startup output: 
+
+---- copy_mode_acceptance_emits_selected_text_and_reattaches stdout ----
+LIVE_OWNED_SERVER root=/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpxZIIHh server=28535
+copy acceptance fixture root: /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpxZIIHh
+copy acceptance fixture session process groups while alive: [31627, 34978, 36820, 39604]
+Error: outer dashboard timed out before readiness; child_status=Some(Ok(None)); size=(30, 100), alternate_screen=false; screen:  OVRCR · startup                                                                
+
+  Claude reporting hooks
+  Install or repair hooks in:
+  /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpxZIIHh/.claude/settings.json
+  
+  Shows Claude activity and usage in OVRCR.
+  Keeps your existing status-line renderer.
+  Native approvals and trust are preserved.
+  Review native hook trust and delivery before relying on tracking.
+
+  [y/n] Enter skips · default n  › n
+
+ OVRCR · startup                                                                
+
+  Codex reporting hooks
+  Install or repair hooks in:
+  /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpxZIIHh/.codex/config.toml
+  
+  Shows Codex activity and usage in OVRCR.
+  Review and trust hooks in native Codex before tracking.
+  Native approvals and trust are preserved.
+  Review native hook trust and delivery before relying on tracking.
+
+  [y/n] Enter skips · default n  › n
+  OVRCR Bridge is not installed, and its startup assets are missing at /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/lib/ovrcr. From an OVRCR checkout, run `just install-startup-assets /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/bin/ovrcr`, then restart OVRCR to review the install offer.; startup output: 
+[48;2;203;166;247m[38;2;30;30;46m[1m OVRCR · startup                                                                [0m
+
+  [38;2;203;166;247m[1mClaude reporting hooks[0m
+  [38;2;166;173;200mInstall or repair hooks in:[39m
+  [38;2;166;173;200m/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpxZIIHh/.claude/settings.json[39m
+  [38;2;166;173;200m[39m
+  [38;2;166;173;200mShows Claude activity and usage in OVRCR.[39m
+  [38;2;166;173;200mKeeps your existing status-line renderer.[39m
+  [38;2;166;173;200mNative approvals and trust are preserved.[39m
+  [38;2;166;173;200mReview native hook trust and delivery before relying on tracking.[39m
+
+  [48;2;49;50;68m[38;2;137;180;250m[1m[y/n][0m [38;2;166;173;200mEnter skips · default n  ›[39m n
+
+[48;2;203;166;247m[38;2;30;30;46m[1m OVRCR · startup                                                                [0m
+
+  [38;2;203;166;247m[1mCodex reporting hooks[0m
+  [38;2;166;173;200mInstall or repair hooks in:[39m
+  [38;2;166;173;200m/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpxZIIHh/.codex/config.toml[39m
+  [38;2;166;173;200m[39m
+  [38;2;166;173;200mShows Codex activity and usage in OVRCR.[39m
+  [38;2;166;173;200mReview and trust hooks in native Codex before tracking.[39m
+  [38;2;166;173;200mNative approvals and trust are preserved.[39m
+  [38;2;166;173;200mReview native hook trust and delivery before relying on tracking.[39m
+
+  [48;2;49;50;68m[38;2;137;180;250m[1m[y/n][0m [38;2;166;173;200mEnter skips · default n  ›[39m n
+  [38;2;249;226;175mOVRCR Bridge is not installed, and its startup assets are missing at /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/lib/ovrcr. From an OVRCR checkout, run `just install-startup-assets /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/bin/ovrcr`, then restart OVRCR to review the install offer.[39m
+
+
+---- agent_search_selects_and_types_through_real_dashboard stdout ----
+LIVE_OWNED_SERVER root=/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpnfqHRI server=28527
+Error: outer dashboard timed out before readiness; child_status=Some(Ok(None)); size=(40, 120), alternate_screen=false; screen: 
+ OVRCR · startup                                                                
+
+  Claude reporting hooks
+  Install or repair hooks in:
+  /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpnfqHRI/.claude/settings.json
+  
+  Shows Claude activity and usage in OVRCR.
+  Keeps your existing status-line renderer.
+  Native approvals and trust are preserved.
+  Review native hook trust and delivery before relying on tracking.
+
+  [y/n] Enter skips · default n  › n
+
+ OVRCR · startup                                                                
+
+  Codex reporting hooks
+  Install or repair hooks in:
+  /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpnfqHRI/.codex/config.toml
+  
+  Shows Codex activity and usage in OVRCR.
+  Review and trust hooks in native Codex before tracking.
+  Native approvals and trust are preserved.
+  Review native hook trust and delivery before relying on tracking.
+
+  [y/n] Enter skips · default n  › n
+  OVRCR Bridge is not installed, and its startup assets are missing at /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/lib/ovrcr. From an OVRCR checkout, run `just install-startup-assets /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/bin/ovrcr`, then restart OVRCR to review the install offer.; startup output: 
+[48;2;203;166;247m[38;2;30;30;46m[1m OVRCR · startup                                                                [0m
+
+  [38;2;203;166;247m[1mClaude reporting hooks[0m
+  [38;2;166;173;200mInstall or repair hooks in:[39m
+  [38;2;166;173;200m/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpnfqHRI/.claude/settings.json[39m
+  [38;2;166;173;200m[39m
+  [38;2;166;173;200mShows Claude activity and usage in OVRCR.[39m
+  [38;2;166;173;200mKeeps your existing status-line renderer.[39m
+  [38;2;166;173;200mNative approvals and trust are preserved.[39m
+  [38;2;166;173;200mReview native hook trust and delivery before relying on tracking.[39m
+
+  [48;2;49;50;68m[38;2;137;180;250m[1m[y/n][0m [38;2;166;173;200mEnter skips · default n  ›[39m n
+
+[48;2;203;166;247m[38;2;30;30;46m[1m OVRCR · startup                                                                [0m
+
+  [38;2;203;166;247m[1mCodex reporting hooks[0m
+  [38;2;166;173;200mInstall or repair hooks in:[39m
+  [38;2;166;173;200m/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpnfqHRI/.codex/config.toml[39m
+  [38;2;166;173;200m[39m
+  [38;2;166;173;200mShows Codex activity and usage in OVRCR.[39m
+  [38;2;166;173;200mReview and trust hooks in native Codex before tracking.[39m
+  [38;2;166;173;200mNative approvals and trust are preserved.[39m
+  [38;2;166;173;200mReview native hook trust and delivery before relying on tracking.[39m
+
+  [48;2;49;50;68m[38;2;137;180;250m[1m[y/n][0m [38;2;166;173;200mEnter skips · default n  ›[39m n
+  [38;2;249;226;175mOVRCR Bridge is not installed, and its startup assets are missing at /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/lib/ovrcr. From an OVRCR checkout, run `just install-startup-assets /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/bin/ovrcr`, then restart OVRCR to review the install offer.[39m
+
+
+---- external_pause_resume_and_exit_redraw_the_live_dashboard stdout ----
+LIVE_OWNED_SERVER root=/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpG2r7i3 server=28553
+Error: outer dashboard timed out before readiness; child_status=Some(Ok(None)); size=(30, 100), alternate_screen=false; screen:  OVRCR · startup                                                                
+
+  Claude reporting hooks
+  Install or repair hooks in:
+  /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpG2r7i3/.claude/settings.json
+  
+  Shows Claude activity and usage in OVRCR.
+  Keeps your existing status-line renderer.
+  Native approvals and trust are preserved.
+  Review native hook trust and delivery before relying on tracking.
+
+  [y/n] Enter skips · default n  › n
+
+ OVRCR · startup                                                                
+
+  Codex reporting hooks
+  Install or repair hooks in:
+  /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpG2r7i3/.codex/config.toml
+  
+  Shows Codex activity and usage in OVRCR.
+  Review and trust hooks in native Codex before tracking.
+  Native approvals and trust are preserved.
+  Review native hook trust and delivery before relying on tracking.
+
+  [y/n] Enter skips · default n  › n
+  OVRCR Bridge is not installed, and its startup assets are missing at /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/lib/ovrcr. From an OVRCR checkout, run `just install-startup-assets /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/bin/ovrcr`, then restart OVRCR to review the install offer.; startup output: 
+[48;2;203;166;247m[38;2;30;30;46m[1m OVRCR · startup                                                                [0m
+
+  [38;2;203;166;247m[1mClaude reporting hooks[0m
+  [38;2;166;173;200mInstall or repair hooks in:[39m
+  [38;2;166;173;200m/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpG2r7i3/.claude/settings.json[39m
+  [38;2;166;173;200m[39m
+  [38;2;166;173;200mShows Claude activity and usage in OVRCR.[39m
+  [38;2;166;173;200mKeeps your existing status-line renderer.[39m
+  [38;2;166;173;200mNative approvals and trust are preserved.[39m
+  [38;2;166;173;200mReview native hook trust and delivery before relying on tracking.[39m
+
+  [48;2;49;50;68m[38;2;137;180;250m[1m[y/n][0m [38;2;166;173;200mEnter skips · default n  ›[39m n
+
+[48;2;203;166;247m[38;2;30;30;46m[1m OVRCR · startup                                                                [0m
+
+  [38;2;203;166;247m[1mCodex reporting hooks[0m
+  [38;2;166;173;200mInstall or repair hooks in:[39m
+  [38;2;166;173;200m/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpG2r7i3/.codex/config.toml[39m
+  [38;2;166;173;200m[39m
+  [38;2;166;173;200mShows Codex activity and usage in OVRCR.[39m
+  [38;2;166;173;200mReview and trust hooks in native Codex before tracking.[39m
+  [38;2;166;173;200mNative approvals and trust are preserved.[39m
+  [38;2;166;173;200mReview native hook trust and delivery before relying on tracking.[39m
+
+  [48;2;49;50;68m[38;2;137;180;250m[1m[y/n][0m [38;2;166;173;200mEnter skips · default n  ›[39m n
+  [38;2;249;226;175mOVRCR Bridge is not installed, and its startup assets are missing at /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/lib/ovrcr. From an OVRCR checkout, run `just install-startup-assets /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/bin/ovrcr`, then restart OVRCR to review the install offer.[39m
+
+
+---- history_keyboard_reads_old_output_during_live_session stdout ----
+LIVE_OWNED_SERVER root=/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpgYF9pC server=28552
+Error: outer dashboard timed out before readiness; child_status=Some(Ok(None)); size=(30, 100), alternate_screen=false; screen:  OVRCR · startup                                                                
+
+  Claude reporting hooks
+  Install or repair hooks in:
+  /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpgYF9pC/.claude/settings.json
+  
+  Shows Claude activity and usage in OVRCR.
+  Keeps your existing status-line renderer.
+  Native approvals and trust are preserved.
+  Review native hook trust and delivery before relying on tracking.
+
+  [y/n] Enter skips · default n  › n
+
+ OVRCR · startup                                                                
+
+  Codex reporting hooks
+  Install or repair hooks in:
+  /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpgYF9pC/.codex/config.toml
+  
+  Shows Codex activity and usage in OVRCR.
+  Review and trust hooks in native Codex before tracking.
+  Native approvals and trust are preserved.
+  Review native hook trust and delivery before relying on tracking.
+
+  [y/n] Enter skips · default n  › n
+  OVRCR Bridge is not installed, and its startup assets are missing at /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/lib/ovrcr. From an OVRCR checkout, run `just install-startup-assets /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/bin/ovrcr`, then restart OVRCR to review the install offer.; startup output: 
+[48;2;203;166;247m[38;2;30;30;46m[1m OVRCR · startup                                                                [0m
+
+  [38;2;203;166;247m[1mClaude reporting hooks[0m
+  [38;2;166;173;200mInstall or repair hooks in:[39m
+  [38;2;166;173;200m/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpgYF9pC/.claude/settings.json[39m
+  [38;2;166;173;200m[39m
+  [38;2;166;173;200mShows Claude activity and usage in OVRCR.[39m
+  [38;2;166;173;200mKeeps your existing status-line renderer.[39m
+  [38;2;166;173;200mNative approvals and trust are preserved.[39m
+  [38;2;166;173;200mReview native hook trust and delivery before relying on tracking.[39m
+
+  [48;2;49;50;68m[38;2;137;180;250m[1m[y/n][0m [38;2;166;173;200mEnter skips · default n  ›[39m n
+
+[48;2;203;166;247m[38;2;30;30;46m[1m OVRCR · startup                                                                [0m
+
+  [38;2;203;166;247m[1mCodex reporting hooks[0m
+  [38;2;166;173;200mInstall or repair hooks in:[39m
+  [38;2;166;173;200m/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpgYF9pC/.codex/config.toml[39m
+  [38;2;166;173;200m[39m
+  [38;2;166;173;200mShows Codex activity and usage in OVRCR.[39m
+  [38;2;166;173;200mReview and trust hooks in native Codex before tracking.[39m
+  [38;2;166;173;200mNative approvals and trust are preserved.[39m
+  [38;2;166;173;200mReview native hook trust and delivery before relying on tracking.[39m
+
+  [48;2;49;50;68m[38;2;137;180;250m[1m[y/n][0m [38;2;166;173;200mEnter skips · default n  ›[39m n
+  [38;2;249;226;175mOVRCR Bridge is not installed, and its startup assets are missing at /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/lib/ovrcr. From an OVRCR checkout, run `just install-startup-assets /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/bin/ovrcr`, then restart OVRCR to review the install offer.[39m
+
+
+---- operator_quick_outer_pty_modifiers_paste_escape_restore_terminal stdout ----
+LIVE_OWNED_SERVER root=/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpn54vDp server=28551
+Error: outer dashboard timed out before readiness; child_status=Some(Ok(None)); size=(24, 80), alternate_screen=false; screen:   Shows Claude activity and usage in OVRCR.
+  Keeps your existing status-line renderer.
+  Native approvals and trust are preserved.
+  Review native hook trust and delivery before relying on tracking.
+
+  [y/n] Enter skips · default n  › n
+
+ OVRCR · startup                                                                
+
+  Codex reporting hooks
+  Install or repair hooks in:
+  /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpn54vDp/.codex/config.toml
+  
+  Shows Codex activity and usage in OVRCR.
+  Review and trust hooks in native Codex before tracking.
+  Native approvals and trust are preserved.
+  Review native hook trust and delivery before relying on tracking.
+
+  [y/n] Enter skips · default n  › n
+  OVRCR Bridge is not installed, and its startup assets are missing at /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/lib/ovrcr. From an OVRCR checkout, run `just install-startup-assets /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/bin/ovrcr`, then restart OVRCR to review the install offer.; startup output: 
+[48;2;203;166;247m[38;2;30;30;46m[1m OVRCR · startup                                                                [0m
+
+  [38;2;203;166;247m[1mClaude reporting hooks[0m
+  [38;2;166;173;200mInstall or repair hooks in:[39m
+  [38;2;166;173;200m/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpn54vDp/.claude/settings.json[39m
+  [38;2;166;173;200m[39m
+  [38;2;166;173;200mShows Claude activity and usage in OVRCR.[39m
+  [38;2;166;173;200mKeeps your existing status-line renderer.[39m
+  [38;2;166;173;200mNative approvals and trust are preserved.[39m
+  [38;2;166;173;200mReview native hook trust and delivery before relying on tracking.[39m
+
+  [48;2;49;50;68m[38;2;137;180;250m[1m[y/n][0m [38;2;166;173;200mEnter skips · default n  ›[39m n
+
+[48;2;203;166;247m[38;2;30;30;46m[1m OVRCR · startup                                                                [0m
+
+  [38;2;203;166;247m[1mCodex reporting hooks[0m
+  [38;2;166;173;200mInstall or repair hooks in:[39m
+  [38;2;166;173;200m/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpn54vDp/.codex/config.toml[39m
+  [38;2;166;173;200m[39m
+  [38;2;166;173;200mShows Codex activity and usage in OVRCR.[39m
+  [38;2;166;173;200mReview and trust hooks in native Codex before tracking.[39m
+  [38;2;166;173;200mNative approvals and trust are preserved.[39m
+  [38;2;166;173;200mReview native hook trust and delivery before relying on tracking.[39m
+
+  [48;2;49;50;68m[38;2;137;180;250m[1m[y/n][0m [38;2;166;173;200mEnter skips · default n  ›[39m n
+  [38;2;249;226;175mOVRCR Bridge is not installed, and its startup assets are missing at /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/lib/ovrcr. From an OVRCR checkout, run `just install-startup-assets /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/bin/ovrcr`, then restart OVRCR to review the install offer.[39m
+
+
+---- mouse_forwarding_outer_pty_round_trip stdout ----
+LIVE_OWNED_SERVER root=/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpEGazvV server=28537
+Error: outer dashboard timed out before readiness; child_status=Some(Ok(None)); size=(30, 100), alternate_screen=false; screen:  OVRCR · startup                                                                
+
+  Claude reporting hooks
+  Install or repair hooks in:
+  /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpEGazvV/.claude/settings.json
+  
+  Shows Claude activity and usage in OVRCR.
+  Keeps your existing status-line renderer.
+  Native approvals and trust are preserved.
+  Review native hook trust and delivery before relying on tracking.
+
+  [y/n] Enter skips · default n  › n
+
+ OVRCR · startup                                                                
+
+  Codex reporting hooks
+  Install or repair hooks in:
+  /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpEGazvV/.codex/config.toml
+  
+  Shows Codex activity and usage in OVRCR.
+  Review and trust hooks in native Codex before tracking.
+  Native approvals and trust are preserved.
+  Review native hook trust and delivery before relying on tracking.
+
+  [y/n] Enter skips · default n  › n
+  OVRCR Bridge is not installed, and its startup assets are missing at /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/lib/ovrcr. From an OVRCR checkout, run `just install-startup-assets /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/bin/ovrcr`, then restart OVRCR to review the install offer.; startup output: 
+[48;2;203;166;247m[38;2;30;30;46m[1m OVRCR · startup                                                                [0m
+
+  [38;2;203;166;247m[1mClaude reporting hooks[0m
+  [38;2;166;173;200mInstall or repair hooks in:[39m
+  [38;2;166;173;200m/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpEGazvV/.claude/settings.json[39m
+  [38;2;166;173;200m[39m
+  [38;2;166;173;200mShows Claude activity and usage in OVRCR.[39m
+  [38;2;166;173;200mKeeps your existing status-line renderer.[39m
+  [38;2;166;173;200mNative approvals and trust are preserved.[39m
+  [38;2;166;173;200mReview native hook trust and delivery before relying on tracking.[39m
+
+  [48;2;49;50;68m[38;2;137;180;250m[1m[y/n][0m [38;2;166;173;200mEnter skips · default n  ›[39m n
+
+[48;2;203;166;247m[38;2;30;30;46m[1m OVRCR · startup                                                                [0m
+
+  [38;2;203;166;247m[1mCodex reporting hooks[0m
+  [38;2;166;173;200mInstall or repair hooks in:[39m
+  [38;2;166;173;200m/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpEGazvV/.codex/config.toml[39m
+  [38;2;166;173;200m[39m
+  [38;2;166;173;200mShows Codex activity and usage in OVRCR.[39m
+  [38;2;166;173;200mReview and trust hooks in native Codex before tracking.[39m
+  [38;2;166;173;200mNative approvals and trust are preserved.[39m
+  [38;2;166;173;200mReview native hook trust and delivery before relying on tracking.[39m
+
+  [48;2;49;50;68m[38;2;137;180;250m[1m[y/n][0m [38;2;166;173;200mEnter skips · default n  ›[39m n
+  [38;2;249;226;175mOVRCR Bridge is not installed, and its startup assets are missing at /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/lib/ovrcr. From an OVRCR checkout, run `just install-startup-assets /private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpTWvl22/bin/ovrcr`, then restart OVRCR to review the install offer.[39m
+
+
+
+failures:
+    agent_search_selects_and_types_through_real_dashboard
+    copy_mode_acceptance_emits_selected_text_and_reattaches
+    default_dashboard_acceptance_wrapper_exercises_pty_controls
+    external_pause_resume_and_exit_redraw_the_live_dashboard
+    history_keyboard_reads_old_output_during_live_session
+    mouse_forwarding_outer_pty_round_trip
+    operator_quick_outer_pty_modifiers_paste_escape_restore_terminal
+
+test result: FAILED. 11 passed; 7 failed; 1 ignored; 0 measured; 0 filtered out; finished in 17.21s
+
+error: test failed, to rerun pass `-p ovrcr --test terminal_acceptance`

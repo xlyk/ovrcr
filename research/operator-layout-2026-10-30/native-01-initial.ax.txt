@@ -1,0 +1,45 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 
+ OVRCR · startup                                                                
+
+  Codex reporting hooks
+  Install or repair hooks in:
+  /private/tmp/ovrcr-layout-native-6lbcvrzq/home/.codex/config.toml
+  
+  Shows Codex activity and usage in OVRCR.
+  Review and trust hooks in native Codex before tracking.
+  Native approvals and trust are preserved.
+  Review native hook trust and delivery before relying on tracking.
+
+  [y/n] Enter skips · default n  › 
+		3 text (settable)  OVRCR · startup                                                                
+		4 text (settable)   Codex reporting hooks
+		5 text (settable)   Install or repair hooks in:
+		6 text (settable)   /private/tmp/ovrcr-layout-native-6lbcvrzq/home/.codex/config.toml
+		7 text (settable)   Shows Codex activity and usage in OVRCR.
+		8 text (settable)   Review and trust hooks in native Codex before tracking.
+		9 text (settable)   Native approvals and trust are preserved.
+		10 text (settable)   Review native hook trust and delivery before relying on tracking.
+		11 text (settable)   [y/n] Enter skips · default n  › 
+	12 close button
+	13 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	14 minimize button
+	15 text OVRCR GUI
+16 menu bar
+	17 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 
+ OVRCR · startup                                                                
+
+  Codex reporting hooks
+  Install or repair hooks in:
+  /private/tmp/ovrcr-layout-native-6lbcvrzq/home/.codex/config.toml
+  
+  Shows Codex activity and usage in OVRCR.
+  Review and trust hooks in native Codex before tracking.
+  Native approvals and trust are preserved.
+  Review native hook trust and delivery before relying on tracking.
+
+  [y/n] Enter skips · default n  › 

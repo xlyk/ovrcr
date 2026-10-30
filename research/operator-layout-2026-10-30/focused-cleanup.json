@@ -1,0 +1,748 @@
+[
+  {
+    "log": "terminal-and-tui-current.log",
+    "roots": [
+      {
+        "path": "/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpEGazvV",
+        "exists": false
+      },
+      {
+        "path": "/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpG2r7i3",
+        "exists": false
+      },
+      {
+        "path": "/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpJhGwmT",
+        "exists": false
+      },
+      {
+        "path": "/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpgYF9pC",
+        "exists": false
+      },
+      {
+        "path": "/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpn54vDp",
+        "exists": false
+      },
+      {
+        "path": "/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpnfqHRI",
+        "exists": false
+      },
+      {
+        "path": "/private/tmp/operator-layout-gate-3wngnlqq/temp/.tmpxZIIHh",
+        "exists": false
+      }
+    ],
+    "groups": []
+  },
+  {
+    "log": "close-e2e-attempt2.log",
+    "roots": [
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp0bPzVC",
+        "exists": false
+      }
+    ],
+    "groups": [
+      {
+        "pgid": 35737,
+        "state": "absent"
+      },
+      {
+        "pgid": 35684,
+        "state": "absent"
+      }
+    ]
+  },
+  {
+    "log": "compiled-worker-attempt2.log",
+    "roots": [
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp11UMh3",
+        "exists": false
+      },
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp4R7OyU",
+        "exists": false
+      },
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6ytCZp",
+        "exists": false
+      },
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpGatKSr",
+        "exists": false
+      },
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpThu7RV",
+        "exists": false
+      },
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpVRluhJ",
+        "exists": false
+      },
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpcSDUQo",
+        "exists": false
+      },
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpefjdAb",
+        "exists": false
+      },
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpkpJ4lh",
+        "exists": false
+      },
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpxWWv8u",
+        "exists": false
+      },
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpxpMcQQ",
+        "exists": false
+      }
+    ],
+    "groups": [
+      {
+        "pgid": 63746,
+        "state": "absent"
+      },
+      {
+        "pgid": 63108,
+        "state": "absent"
+      },
+      {
+        "pgid": 63372,
+        "state": "absent"
+      },
+      {
+        "pgid": 64145,
+        "state": "absent"
+      },
+      {
+        "pgid": 64147,
+        "state": "absent"
+      },
+      {
+        "pgid": 65051,
+        "state": "absent"
+      },
+      {
+        "pgid": 63644,
+        "state": "absent"
+      },
+      {
+        "pgid": 66460,
+        "state": "absent"
+      },
+      {
+        "pgid": 63138,
+        "state": "absent"
+      },
+      {
+        "pgid": 63139,
+        "state": "absent"
+      },
+      {
+        "pgid": 63274,
+        "state": "absent"
+      },
+      {
+        "pgid": 65195,
+        "state": "absent"
+      },
+      {
+        "pgid": 63660,
+        "state": "absent"
+      },
+      {
+        "pgid": 64176,
+        "state": "absent"
+      },
+      {
+        "pgid": 63154,
+        "state": "absent"
+      },
+      {
+        "pgid": 64062,
+        "state": "absent"
+      },
+      {
+        "pgid": 63039,
+        "state": "absent"
+      },
+      {
+        "pgid": 64191,
+        "state": "absent"
+      },
+      {
+        "pgid": 63307,
+        "state": "absent"
+      },
+      {
+        "pgid": 64207,
+        "state": "absent"
+      },
+      {
+        "pgid": 64089,
+        "state": "absent"
+      },
+      {
+        "pgid": 63067,
+        "state": "absent"
+      },
+      {
+        "pgid": 63845,
+        "state": "absent"
+      },
+      {
+        "pgid": 63085,
+        "state": "absent"
+      },
+      {
+        "pgid": 63086,
+        "state": "absent"
+      },
+      {
+        "pgid": 63091,
+        "state": "absent"
+      },
+      {
+        "pgid": 63092,
+        "state": "absent"
+      },
+      {
+        "pgid": 63860,
+        "state": "absent"
+      },
+      {
+        "pgid": 63094,
+        "state": "absent"
+      },
+      {
+        "pgid": 65141,
+        "state": "absent"
+      },
+      {
+        "pgid": 65661,
+        "state": "absent"
+      }
+    ]
+  },
+  {
+    "log": "quick-context-navigation.log",
+    "roots": [
+      {
+        "path": "/private/tmp/operator-layout-gate-p2olaxjc/temp/.tmpLOrFf2",
+        "exists": false
+      }
+    ],
+    "groups": [
+      {
+        "pgid": 2281,
+        "state": "absent"
+      },
+      {
+        "pgid": 2559,
+        "state": "absent"
+      }
+    ]
+  },
+  {
+    "log": "close-e2e-attempt3.log",
+    "roots": [
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp9QmtF4",
+        "exists": false
+      }
+    ],
+    "groups": [
+      {
+        "pgid": 46760,
+        "state": "absent"
+      },
+      {
+        "pgid": 45833,
+        "state": "absent"
+      },
+      {
+        "pgid": 45886,
+        "state": "absent"
+      }
+    ]
+  },
+  {
+    "log": "compiled-worker-attempt1.log",
+    "roots": [
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp1jauj5",
+        "exists": false
+      },
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp1wr1Wc",
+        "exists": false
+      },
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpDrMOKO",
+        "exists": false
+      },
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpEELwIk",
+        "exists": false
+      },
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpJ0n7B6",
+        "exists": false
+      },
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpPKgWOH",
+        "exists": false
+      },
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpPTbKV2",
+        "exists": false
+      },
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpT72Q8S",
+        "exists": false
+      },
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpYYTWec",
+        "exists": false
+      },
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmplzGhyZ",
+        "exists": false
+      },
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvB5Nns",
+        "exists": false
+      }
+    ],
+    "groups": [
+      {
+        "pgid": 55171,
+        "state": "absent"
+      },
+      {
+        "pgid": 55172,
+        "state": "absent"
+      },
+      {
+        "pgid": 55174,
+        "state": "absent"
+      },
+      {
+        "pgid": 56327,
+        "state": "absent"
+      },
+      {
+        "pgid": 56200,
+        "state": "absent"
+      },
+      {
+        "pgid": 56076,
+        "state": "absent"
+      },
+      {
+        "pgid": 55824,
+        "state": "absent"
+      },
+      {
+        "pgid": 55320,
+        "state": "absent"
+      },
+      {
+        "pgid": 57512,
+        "state": "absent"
+      },
+      {
+        "pgid": 55213,
+        "state": "absent"
+      },
+      {
+        "pgid": 55217,
+        "state": "absent"
+      },
+      {
+        "pgid": 56241,
+        "state": "absent"
+      },
+      {
+        "pgid": 55605,
+        "state": "absent"
+      },
+      {
+        "pgid": 55606,
+        "state": "absent"
+      },
+      {
+        "pgid": 56312,
+        "state": "absent"
+      },
+      {
+        "pgid": 55870,
+        "state": "absent"
+      },
+      {
+        "pgid": 56007,
+        "state": "absent"
+      },
+      {
+        "pgid": 57671,
+        "state": "absent"
+      },
+      {
+        "pgid": 55249,
+        "state": "absent"
+      },
+      {
+        "pgid": 55250,
+        "state": "absent"
+      },
+      {
+        "pgid": 57591,
+        "state": "absent"
+      },
+      {
+        "pgid": 58593,
+        "state": "absent"
+      },
+      {
+        "pgid": 55145,
+        "state": "absent"
+      },
+      {
+        "pgid": 56297,
+        "state": "absent"
+      },
+      {
+        "pgid": 55147,
+        "state": "absent"
+      },
+      {
+        "pgid": 58217,
+        "state": "absent"
+      },
+      {
+        "pgid": 55149,
+        "state": "absent"
+      },
+      {
+        "pgid": 55155,
+        "state": "absent"
+      },
+      {
+        "pgid": 55671,
+        "state": "absent"
+      },
+      {
+        "pgid": 55672,
+        "state": "absent"
+      },
+      {
+        "pgid": 55167,
+        "state": "absent"
+      }
+    ]
+  },
+  {
+    "log": "close-e2e-attempt1-raw.log",
+    "roots": [
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpNYgVL8",
+        "exists": false
+      }
+    ],
+    "groups": [
+      {
+        "pgid": 28532,
+        "state": "absent"
+      },
+      {
+        "pgid": 27617,
+        "state": "absent"
+      },
+      {
+        "pgid": 27564,
+        "state": "absent"
+      }
+    ]
+  },
+  {
+    "log": "quick-pty-attempt1-raw.log",
+    "roots": [
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp5HQ9h6",
+        "exists": false
+      }
+    ],
+    "groups": []
+  },
+  {
+    "log": "startup-failure-targeted.log",
+    "roots": [
+      {
+        "path": "/private/tmp/operator-layout-gate-zwebxcqs/temp/.tmp1SUl5T",
+        "exists": false
+      }
+    ],
+    "groups": []
+  },
+  {
+    "log": "quick-pty-attempt4.log",
+    "roots": [
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp1jjQO5",
+        "exists": false
+      }
+    ],
+    "groups": []
+  },
+  {
+    "log": "workspace-all-attempt1.log",
+    "roots": [
+      {
+        "path": "/private/tmp/operator-layout-gate-ix6z3v2e/temp/.tmp3gjQ4c",
+        "exists": false
+      }
+    ],
+    "groups": []
+  },
+  {
+    "log": "compiled-worker-final.log",
+    "roots": [
+      {
+        "path": "/private/tmp/operator-layout-gate-q000zmun/temp/.tmp7IRt3J",
+        "exists": false
+      },
+      {
+        "path": "/private/tmp/operator-layout-gate-q000zmun/temp/.tmpIZrDyO",
+        "exists": false
+      },
+      {
+        "path": "/private/tmp/operator-layout-gate-q000zmun/temp/.tmpOHmMtB",
+        "exists": false
+      },
+      {
+        "path": "/private/tmp/operator-layout-gate-q000zmun/temp/.tmpVU789T",
+        "exists": false
+      },
+      {
+        "path": "/private/tmp/operator-layout-gate-q000zmun/temp/.tmpYoM7Af",
+        "exists": false
+      },
+      {
+        "path": "/private/tmp/operator-layout-gate-q000zmun/temp/.tmpgT6OG3",
+        "exists": false
+      },
+      {
+        "path": "/private/tmp/operator-layout-gate-q000zmun/temp/.tmphrmFHf",
+        "exists": false
+      },
+      {
+        "path": "/private/tmp/operator-layout-gate-q000zmun/temp/.tmpkzM2UL",
+        "exists": false
+      },
+      {
+        "path": "/private/tmp/operator-layout-gate-q000zmun/temp/.tmpnEDMKo",
+        "exists": false
+      },
+      {
+        "path": "/private/tmp/operator-layout-gate-q000zmun/temp/.tmpsaFgWT",
+        "exists": false
+      },
+      {
+        "path": "/private/tmp/operator-layout-gate-q000zmun/temp/.tmpuFm6pd",
+        "exists": false
+      }
+    ],
+    "groups": [
+      {
+        "pgid": 41730,
+        "state": "absent"
+      },
+      {
+        "pgid": 41732,
+        "state": "absent"
+      },
+      {
+        "pgid": 41734,
+        "state": "absent"
+      },
+      {
+        "pgid": 42505,
+        "state": "absent"
+      },
+      {
+        "pgid": 42889,
+        "state": "absent"
+      },
+      {
+        "pgid": 44179,
+        "state": "absent"
+      },
+      {
+        "pgid": 41751,
+        "state": "absent"
+      },
+      {
+        "pgid": 42264,
+        "state": "absent"
+      },
+      {
+        "pgid": 41754,
+        "state": "absent"
+      },
+      {
+        "pgid": 41755,
+        "state": "absent"
+      },
+      {
+        "pgid": 41758,
+        "state": "absent"
+      },
+      {
+        "pgid": 43807,
+        "state": "absent"
+      },
+      {
+        "pgid": 41761,
+        "state": "absent"
+      },
+      {
+        "pgid": 41762,
+        "state": "absent"
+      },
+      {
+        "pgid": 43948,
+        "state": "absent"
+      },
+      {
+        "pgid": 42291,
+        "state": "absent"
+      },
+      {
+        "pgid": 42677,
+        "state": "absent"
+      },
+      {
+        "pgid": 42041,
+        "state": "absent"
+      },
+      {
+        "pgid": 44869,
+        "state": "absent"
+      },
+      {
+        "pgid": 42829,
+        "state": "absent"
+      },
+      {
+        "pgid": 42830,
+        "state": "absent"
+      },
+      {
+        "pgid": 45263,
+        "state": "absent"
+      },
+      {
+        "pgid": 41822,
+        "state": "absent"
+      },
+      {
+        "pgid": 41823,
+        "state": "absent"
+      },
+      {
+        "pgid": 41824,
+        "state": "absent"
+      },
+      {
+        "pgid": 42718,
+        "state": "absent"
+      },
+      {
+        "pgid": 42859,
+        "state": "absent"
+      },
+      {
+        "pgid": 41966,
+        "state": "absent"
+      },
+      {
+        "pgid": 42223,
+        "state": "absent"
+      },
+      {
+        "pgid": 42478,
+        "state": "absent"
+      },
+      {
+        "pgid": 42874,
+        "state": "absent"
+      }
+    ]
+  },
+  {
+    "log": "quick-pty-attempt2.log",
+    "roots": [
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpdxecU8",
+        "exists": false
+      }
+    ],
+    "groups": []
+  },
+  {
+    "log": "close-e2e-progress.log",
+    "roots": [
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpOeHdeb",
+        "exists": false
+      }
+    ],
+    "groups": [
+      {
+        "pgid": 75905,
+        "state": "absent"
+      },
+      {
+        "pgid": 76004,
+        "state": "absent"
+      },
+      {
+        "pgid": 76470,
+        "state": "absent"
+      }
+    ]
+  },
+  {
+    "log": "workspace-all-attempt2.log",
+    "roots": [
+      {
+        "path": "/private/tmp/operator-layout-gate-_q_bvvs6/temp/.tmpjiIYze",
+        "exists": false
+      }
+    ],
+    "groups": []
+  },
+  {
+    "log": "quick-pty-current.log",
+    "roots": [
+      {
+        "path": "/private/tmp/operator-layout-gate-sumblvtj/temp/.tmph2dgun",
+        "exists": false
+      }
+    ],
+    "groups": []
+  },
+  {
+    "log": "quick-pty-attempt3.log",
+    "roots": [
+      {
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpdpIrEP",
+        "exists": false
+      }
+    ],
+    "groups": []
+  }
+]

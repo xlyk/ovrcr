@@ -1,0 +1,13 @@
+{
+  "pid": 6741,
+  "command": [
+    "/private/tmp/ovrcr-layout-native3-0ikk77nr/operator_e2e",
+    "--exact",
+    "compiled_worker::native_provider_holder",
+    "--ignored",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "root": "/private/tmp/ovrcr-layout-native3-0ikk77nr",
+  "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e"
+}
