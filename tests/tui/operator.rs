@@ -61,6 +61,8 @@ fn native_operator_submission_captures_stable_context_and_never_pty_input() {
         })
     );
     let conversation = OperatorConversationSummary {
+        run: SessionRunId(0),
+        archived: false,
         worker_stopped: true,
         id: OperatorConversationId(7),
         session: SessionId(99),

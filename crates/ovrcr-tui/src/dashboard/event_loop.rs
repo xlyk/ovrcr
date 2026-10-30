@@ -1368,6 +1368,8 @@ mod operator_loop_tests {
     }
     fn summary(id: u64) -> OperatorConversationSummary {
         OperatorConversationSummary {
+            run: SessionRunId(1),
+            archived: false,
             worker_stopped: false,
             id: OperatorConversationId(id),
             session: SessionId(id + 10),

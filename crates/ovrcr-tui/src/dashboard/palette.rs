@@ -1482,37 +1482,53 @@ impl Dashboard {
                 .filter(|row| {
                     let place = session_workspace_heading(self, row);
                     let label = format!(
-                        "{} {} {} {} {}",
+                        "{} {} {} {} {} {}",
                         row.display_name(),
                         place,
                         row.project,
                         row.workspace,
-                        row.cwd.display()
+                        row.cwd.display(),
+                        if matches!(
+                            row.scope,
+                            ovrcr_protocol::SessionScope::OperatorConversation { .. }
+                        ) {
+                            "Operator"
+                        } else {
+                            ""
+                        }
                     )
                     .to_lowercase();
                     query.split_whitespace().all(|word| label.contains(word))
                 })
                 .flat_map(|row| {
-                    let label = format!(
-                        "{} / {} (#{})",
-                        session_workspace_heading(self, row),
-                        row.display_name(),
-                        row.id.0
+                    let operator = matches!(
+                        row.scope,
+                        ovrcr_protocol::SessionScope::OperatorConversation { .. }
                     );
-                    let mut entries = vec![
-                        Entry {
-                            label: format!("Unarchive: {label}"),
-                            command: Command::Unarchive(row.id, row.run),
-                        },
-                        Entry {
+                    let label = if operator {
+                        format!("Operator / {} (#{})", row.display_name(), row.id.0)
+                    } else {
+                        format!(
+                            "{} / {} (#{})",
+                            session_workspace_heading(self, row),
+                            row.display_name(),
+                            row.id.0
+                        )
+                    };
+                    let mut entries = vec![Entry {
+                        label: format!("Unarchive: {label}"),
+                        command: Command::Unarchive(row.id, row.run),
+                    }];
+                    if !operator {
+                        entries.push(Entry {
                             label: format!("Delete record: {label}"),
                             command: Command::DeleteArchived(
                                 row.id,
                                 row.run,
                                 row.display_name().to_owned(),
                             ),
-                        },
-                    ];
+                        });
+                    }
                     // Filing a row keeps its ownership uncertainty, which blocks
                     // workspace removal; the archive must offer the acknowledgement.
                     if row
@@ -5666,6 +5682,23 @@ mod launch_tests {
             ),
             "must not send CloseTerminal for the old confirmation without a new explicit confirm"
         );
+    }
+
+    #[test]
+    fn operator_delete_refused_preserves_journal() {
+        let d = dashboard();
+        let mut row = summary(9);
+        row.archived = true;
+        row.scope = ovrcr_protocol::SessionScope::OperatorConversation {
+            conversation: ovrcr_protocol::OperatorConversationId(3),
+        };
+        let entries = d.palette_entries("", Some(&[row]), None, None);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].label.starts_with("Unarchive: Operator / "));
+        assert!(matches!(
+            entries[0].command,
+            Command::Unarchive(SessionId(9), _)
+        ));
     }
 
     #[test]

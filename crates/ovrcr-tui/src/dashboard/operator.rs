@@ -77,7 +77,8 @@ impl Chat {
         }
     }
     fn can_submit(&self) -> bool {
-        !self.submitting
+        !self.summary.archived
+            && !self.submitting
             && self.summary.worker_stopped
             && self
                 .summary
@@ -493,11 +494,7 @@ impl Dashboard {
         }
         let text = chat.draft.clone();
         let context = chat.context.clone();
-        let expected_run = chat
-            .summary
-            .current_turn
-            .as_ref()
-            .map_or(SessionRunId(0), |turn| turn.identity.run);
+        let expected_run = chat.summary.run;
         let session = chat.summary.session;
         chat.submitting = true;
         chat.error = None;
@@ -852,12 +849,15 @@ impl Dashboard {
                         chat.cursor = TextCursor::default();
                     }
                     let current = chat.summary.current_turn.as_ref();
-                    if current.is_none_or(|current| {
-                        current.identity.run.0 < turn.identity.run.0
-                            || (current.identity == turn.identity
-                                && current.sequence <= turn.sequence
-                                && !chat.summary.worker_stopped)
-                    }) {
+                    if chat.summary.run.0 <= turn.identity.run.0
+                        && current.is_none_or(|current| {
+                            current.identity.run.0 < turn.identity.run.0
+                                || (current.identity == turn.identity
+                                    && current.sequence <= turn.sequence
+                                    && !chat.summary.worker_stopped)
+                        })
+                    {
+                        chat.summary.run = turn.identity.run;
                         chat.summary.current_turn = Some(turn.clone());
                         chat.summary.worker_stopped = false;
                     }
@@ -892,6 +892,7 @@ impl Dashboard {
             turn.identity.validate().is_err()
                 || turn.identity.conversation != id
                 || turn.identity.session != summary.session
+                || turn.identity.run.0 > summary.run.0
         }) {
             return;
         }
@@ -900,6 +901,9 @@ impl Dashboard {
                 || chat.summary.provider != summary.provider
                 || chat.summary.model != summary.model
             {
+                return;
+            }
+            if summary.run.0 < chat.summary.run.0 {
                 return;
             }
             if chat.summary.current_turn.is_some() && summary.current_turn.is_none() {
@@ -1231,6 +1235,8 @@ mod tests {
     };
     fn summary(id: u64, run: u64, state: OperatorTurnState, stopped: bool) -> Summary {
         Summary {
+            run: SessionRunId(run),
+            archived: false,
             id: Id(id),
             session: SessionId(id + 10),
             provider: OperatorProvider::ChatGpt,
@@ -1564,6 +1570,58 @@ mod tests {
             SessionRunId(2)
         );
     }
+    #[test]
+    fn restored_summary_submits_current_retained_run_and_late_receipt_cannot_unarchive() {
+        let (mut d, _) = setup();
+        let mut restored = summary(1, 1, OperatorTurnState::Complete, true);
+        restored.run = SessionRunId(3);
+        d.operator_summary(restored.clone());
+        d.operator_insert("next");
+        d.operator_submit();
+        let requests = d.drain_outbox();
+        let submit = requests
+            .iter()
+            .find(|message| {
+                matches!(
+                    message.request,
+                    Request::Operator(OperatorRequest::Submit { .. })
+                )
+            })
+            .unwrap();
+        assert!(matches!(
+            submit.request,
+            Request::Operator(OperatorRequest::Submit {
+                expected_run: SessionRunId(3),
+                ..
+            })
+        ));
+        let mut archived = restored;
+        archived.run = SessionRunId(5);
+        archived.archived = true;
+        archived.current_turn = Some(OperatorTurn {
+            identity: OperatorTurnIdentity {
+                run: SessionRunId(4),
+                turn: OperatorTurnId(2),
+                ..archived.current_turn.as_ref().unwrap().identity
+            },
+            state: OperatorTurnState::Complete,
+            sequence: 2,
+        });
+        let accepted = OperatorTurn {
+            state: OperatorTurnState::Running,
+            sequence: 0,
+            ..archived.current_turn.clone().unwrap()
+        };
+        d.operator_summary(archived.clone());
+        d.operator_summary(summary(1, 1, OperatorTurnState::Complete, true));
+        d.handle_server_message(ServerMessage::Response {
+            request_id: submit.request_id,
+            response: Response::Operator(OperatorResponse::Submitted(accepted)),
+        });
+        assert_eq!(d.operator.chats[&1].summary, archived);
+        assert!(!d.operator.chats[&1].can_submit());
+    }
+
     #[test]
     fn tool_result_including_empty_success_and_controls_is_native_text() {
         let (mut d, reads) = setup();

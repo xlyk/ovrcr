@@ -2116,6 +2116,8 @@ mod wire_snapshot {
             sequence: 0,
         };
         let summary = OperatorConversationSummary {
+            run: identity.run,
+            archived: false,
             worker_stopped: false,
             id: identity.conversation,
             session: identity.session,
@@ -2170,6 +2172,13 @@ mod wire_snapshot {
                 },
             ),
             ("Stop", OperatorRequest::Stop { identity }),
+            (
+                "Close",
+                OperatorRequest::Close {
+                    conversation: identity.conversation,
+                    expected_run: SessionRunId(0),
+                },
+            ),
         ] {
             all.push((
                 format!("Request::Operator::{name}"),
@@ -2235,7 +2244,7 @@ mod wire_snapshot {
             (
                 "History",
                 OperatorResponse::History(OperatorHistory {
-                    conversation: summary,
+                    conversation: summary.clone(),
                     messages: vec![OperatorMessage {
                         ordinal: 1,
                         turn: identity.turn,
@@ -2247,6 +2256,7 @@ mod wire_snapshot {
                     next_after: Some(1),
                 }),
             ),
+            ("Closed", OperatorResponse::Closed(summary)),
             ("Submitted", OperatorResponse::Submitted(turn.clone())),
             (
                 "Stopped",
@@ -3370,13 +3380,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0443017301630168016c0104",
+            "2a0444017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0443017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0444017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -3407,18 +3417,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04430000"),
+        ("Response::NotificationNavigation", "0d04440000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0443017301630168016c0104",
+            "0e01016e0444017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010443017301630168016c0164",
+            "0f0107080901016901010444017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004430107080901016901010443017301630168016c0164",
+            "1004440107080901016901010444017301630168016c0164",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -3442,7 +3452,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0443017301630168016c0104",
+            "08016e0444017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -3895,6 +3905,7 @@ mod wire_snapshot {
             "390301000568656c6c6f01017001056c6162656c0106737461626c6501022f7701050106",
         ),
         ("Request::Operator::Stop", "390401020304"),
+        ("Request::Operator::Close", "39050100"),
         (
             "Request::OperatorExchange::AssistantDelta",
             "3a030707070707070707070707070707070707070707070707070707070707070707010203040101000568656c6c6f",
@@ -3929,15 +3940,19 @@ mod wire_snapshot {
         ),
         (
             "Response::Operator::Created",
-            "190000010300056d6f64656c0568656c6c6f01010203040000",
+            "1900040000010300056d6f64656c0568656c6c6f01010203040000",
         ),
         (
             "Response::Operator::Conversations",
-            "19010100010300056d6f64656c0568656c6c6f01010203040000",
+            "190101040000010300056d6f64656c0568656c6c6f01010203040000",
         ),
         (
             "Response::Operator::History",
-            "190200010300056d6f64656c0568656c6c6f01010203040000010102000568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060101",
+            "1902040000010300056d6f64656c0568656c6c6f01010203040000010102000568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060101",
+        ),
+        (
+            "Response::Operator::Closed",
+            "1905040000010300056d6f64656c0568656c6c6f01010203040000",
         ),
         ("Response::Operator::Submitted", "1903010203040000"),
         ("Response::Operator::Stopped", "1904010203040200"),

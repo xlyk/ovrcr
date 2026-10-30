@@ -126,7 +126,7 @@ builds use the fixed production endpoints above.
 ## Ownership and wire identity
 
 The existing SessionStore owns conversation rows, turns, visible messages and
-versioned completed model context. Protocol 67 carries conversation/turn/session/run
+versioned completed model context. Protocol 68 carries conversation/turn/session/run
 identities and bounded sequenced worker batches. Schema 26 retains global
 OperatorConversation sessions without registering a project or workspace.
 
@@ -141,6 +141,24 @@ interrupts any unfinished turn before recording ownership proof. Live workers an
 stale runs remain refused.
 
 The Dashboard receives coalesced dirty notifications and reads durable history.
+A summary's `run` is the current retained authority, which can advance beyond
+its historical latest turn on archive and restore; `archived` reuses retained
+disposition. Native `Close { conversation, expected_run }` uses per-conversation
+control admission, validates the current Dashboard owner and exact retained run,
+then confirms owned worker termination before archiving. Never-run and already
+stopped conversations need no invented turn. Close preserves messages and completed
+model history; active work first receives the ordinary durable interruption.
+Stop/journal failures leave the conversation unarchived and readable. Termination
+runs outside mutation/retained/Session locks, and the final archive revalidates
+owner, retained run and stopped proof under retained → Dashboard lock order.
+
+Active listing filters archived rows before pagination; Read remains available.
+The Archived sessions palette offers Operator Unarchive, which advances the
+retained run without launching a worker. Only a fresh explicit Submit using that
+restored run atomically activates the returned record and adds a new turn/message.
+Permanent Operator deletion is refused by both the palette and Server.
+Archive and Unarchive publish `OperatorChanged` for durable catch-up.
+
 A summary's `worker_stopped` comes from retained controlled-stop proof. Natural
 exit, terminal turn state and socket loss do not establish that proof. Model and
 Bash waits run in per-turn workers; process termination stays outside dispatcher
