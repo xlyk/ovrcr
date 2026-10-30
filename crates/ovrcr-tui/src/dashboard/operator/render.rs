@@ -36,6 +36,16 @@ impl Dashboard {
         self.operator_select(id);
         DashboardAction::Redraw
     }
+    pub(super) fn operator_reconcile_tree(&mut self, previous: Rect) {
+        if previous != self.sidebar_rects(self.outer_area).tree {
+            self.ensure_selection_visible(&self.visible_rows());
+        }
+    }
+    pub(super) fn operator_set_collapsed(&mut self, collapsed: bool) {
+        let previous = self.sidebar_rects(self.outer_area).tree;
+        self.operator.collapsed = collapsed;
+        self.operator_reconcile_tree(previous);
+    }
     pub(in crate::dashboard) fn operator_ensure_visible(&mut self) {
         let height = usize::from(
             self.sidebar_rects(self.outer_area)
@@ -197,7 +207,7 @@ impl Dashboard {
                     self.open_operator();
                     self.operator_new();
                 } else {
-                    self.operator.collapsed = !self.operator.collapsed;
+                    self.operator_set_collapsed(!self.operator.collapsed);
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {

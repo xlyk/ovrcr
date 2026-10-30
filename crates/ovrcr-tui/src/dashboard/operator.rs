@@ -593,7 +593,7 @@ impl Dashboard {
                     }
                     if self.operator.list_focus && self.operator.selected.is_some() {
                         self.operator.new = None;
-                        self.operator.collapsed = false;
+                        self.operator_set_collapsed(false);
                         self.operator_ensure_visible();
                     }
                 }
@@ -623,11 +623,11 @@ impl Dashboard {
                     return DashboardAction::None;
                 }
                 KeyCode::Left => {
-                    self.operator.collapsed = true;
+                    self.operator_set_collapsed(true);
                     return DashboardAction::Redraw;
                 }
                 KeyCode::Right => {
-                    self.operator.collapsed = false;
+                    self.operator_set_collapsed(false);
                     return DashboardAction::Redraw;
                 }
                 KeyCode::Enter => {
@@ -640,7 +640,7 @@ impl Dashboard {
             };
             if let Some(id) = ids.get(next) {
                 self.operator.selected = Some(*id);
-                self.operator.collapsed = false;
+                self.operator_set_collapsed(false);
                 self.operator.new = None;
                 self.operator_ensure_visible();
             }
@@ -993,6 +993,7 @@ impl Dashboard {
         true
     }
     fn operator_summary(&mut self, summary: Summary) {
+        let previous_tree = self.sidebar_rects(self.outer_area).tree;
         let id = summary.id;
         if summary.current_turn.as_ref().is_some_and(|turn| {
             turn.identity.validate().is_err()
@@ -1036,6 +1037,7 @@ impl Dashboard {
         {
             self.operator.selected = Some(id);
         }
+        self.operator_reconcile_tree(previous_tree);
     }
     fn operator_history(&mut self, id: Id, after: u64, history: &OperatorHistory) {
         self.operator_summary(history.conversation.clone());

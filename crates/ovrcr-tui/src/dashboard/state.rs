@@ -1441,12 +1441,14 @@ impl Dashboard {
         tree_row_heights(self, rows, usize::from(width))
     }
 
-    fn ensure_selection_visible(&mut self, rows: &[TreeRow]) {
+    pub(super) fn ensure_selection_visible(&mut self, rows: &[TreeRow]) {
+        let heights = self.tree_heights(rows);
+        let height = self.tree_viewport_height();
+        let max_offset = tree_line_count(rows, &heights).saturating_sub(height);
+        self.tree_offset = self.tree_offset.min(max_offset);
         let Some(index) = self.visible_selection_index(rows) else {
             return;
         };
-        let heights = self.tree_heights(rows);
-        let height = self.tree_viewport_height();
         let selected_start = tree_row_start(rows, &heights, index);
         let selected_end = selected_start.saturating_add(heights[index]);
         if selected_start < self.tree_offset {
@@ -1454,7 +1456,6 @@ impl Dashboard {
         } else if selected_end > self.tree_offset.saturating_add(height) {
             self.tree_offset = selected_end.saturating_sub(height);
         }
-        let max_offset = tree_line_count(rows, &heights).saturating_sub(height);
         self.tree_offset = self.tree_offset.min(max_offset);
     }
 
