@@ -43,6 +43,7 @@ struct Chat {
     context: OperatorContext,
     messages: Vec<OperatorMessage>,
     ordinal: u64,
+    confirmed_tail: Option<u64>,
     reading: bool,
     dirty: bool,
     submitting: bool,
@@ -62,6 +63,7 @@ impl Chat {
             context,
             messages: Vec::new(),
             ordinal: 0,
+            confirmed_tail: None,
             reading: false,
             dirty: true,
             submitting: false,
@@ -419,6 +421,7 @@ impl Dashboard {
             let chat = self.operator.chats.get_mut(&id.0).unwrap();
             chat.dirty = false;
             chat.reading = true;
+            chat.confirmed_tail = None;
             let after = chat.ordinal;
             self.operator_request(
                 Pending::Read { id, after },
@@ -433,6 +436,7 @@ impl Dashboard {
     pub(super) fn operator_changed(&mut self, id: Id) {
         if let Some(chat) = self.operator.chats.get_mut(&id.0) {
             chat.dirty = true;
+            chat.confirmed_tail = None;
         }
         self.operator_list(0);
         self.operator_catch_up();
@@ -922,6 +926,8 @@ impl Dashboard {
         }
         if history.next_after.is_some() {
             chat.dirty = true;
+        } else if !chat.dirty {
+            chat.confirmed_tail = Some(chat.ordinal);
         }
     }
     pub(super) fn operator_commit_presented(&mut self) {
@@ -940,7 +946,11 @@ impl Dashboard {
             .selected
             .and_then(|id| self.operator.chats.get_mut(&id.0))
             && chat.follow
+            && !chat.reading
+            && !chat.dirty
+            && chat.confirmed_tail == Some(chat.ordinal)
         {
+            // A drawn page is reviewable only after the durable tail has been confirmed.
             chat.reviewed = chat.unread.take().or(chat.reviewed);
         }
     }
@@ -1109,9 +1119,11 @@ impl Dashboard {
             ),
             stop_rect(transcript),
         );
+        let cursor = chat.cursor.position(&chat.draft);
+        let cursor_visible = self.operator.editing && !self.operator.list_focus;
         let mut draft = chat.draft.clone();
-        if self.operator.editing && !self.operator.list_focus {
-            draft.insert(chat.cursor.position(&draft), '▏');
+        if cursor_visible {
+            draft.insert(cursor, '▏');
         }
         let draft = display_text(&draft);
         let title = format!(
@@ -1134,9 +1146,13 @@ impl Dashboard {
                 .collect(),
             composer.width.saturating_sub(2),
         );
-        let before_cursor = display_text(&chat.draft[..chat.cursor.position(&chat.draft)]);
+        let mut through_cursor = chat.draft[..cursor].to_owned();
+        if cursor_visible {
+            through_cursor.push('▏');
+        }
+        let through_cursor = display_text(&through_cursor);
         let cursor_row = wrapped_lines(
-            before_cursor
+            through_cursor
                 .split('\n')
                 .map(|line| Line::raw(line.to_owned()))
                 .collect(),
@@ -1827,5 +1843,103 @@ mod tests {
             message.request,
             Request::Operator(OperatorRequest::Stop { .. })
         )));
+    }
+    #[test]
+    fn operator_review_round1_unread_waits_for_the_final_durable_page_to_be_drawn() {
+        let (mut d, reads) = setup();
+        let later = summary(1, 2, OperatorTurnState::Running, false);
+        let more = history(
+            &mut d,
+            request_id(&reads, 1),
+            later.clone(),
+            vec![completed(1)],
+            Some(1),
+        );
+        assert!(draw(&mut d, 140, 24).contains("Turn complete"));
+        assert_eq!(
+            d.operator.chats[&1].unread,
+            Some(OperatorTurnId(1)),
+            "an older completion is not a caught-up durable tail"
+        );
+        assert_eq!(d.operator.chats[&1].reviewed, None);
+        let mut next_user = message(
+            2,
+            OperatorMessageContent::User {
+                text: "next turn".into(),
+                context: OperatorContext::default(),
+            },
+        );
+        next_user.turn = OperatorTurnId(2);
+        let mut next_delta = delta(3, "LATER_DURABLE_OUTPUT");
+        next_delta.turn = OperatorTurnId(2);
+        history(
+            &mut d,
+            request_id(&more, 1),
+            later,
+            vec![next_user, next_delta],
+            None,
+        );
+        assert!(draw(&mut d, 140, 24).contains("LATER_DURABLE_OUTPUT"));
+        assert_eq!(d.operator.chats[&1].unread, None);
+        assert_eq!(d.operator.chats[&1].reviewed, Some(OperatorTurnId(1)));
+    }
+    #[test]
+    fn operator_review_round1_unread_waits_for_dirty_read_confirmation_even_after_failure() {
+        let (mut d, reads) = setup();
+        let complete = summary(1, 1, OperatorTurnState::Complete, true);
+        history(
+            &mut d,
+            request_id(&reads, 1),
+            complete.clone(),
+            vec![completed(1)],
+            None,
+        );
+        let catchup =
+            d.handle_server_message(ServerMessage::Event(ServerEvent::OperatorChanged(Id(1))));
+        let request = request_id(&catchup, 1);
+        d.handle_server_message(ServerMessage::Event(ServerEvent::OperatorChanged(Id(1))));
+        assert!(d.operator.chats[&1].reading && d.operator.chats[&1].dirty);
+        draw(&mut d, 140, 24);
+        assert_eq!(
+            d.operator.chats[&1].unread,
+            Some(OperatorTurnId(1)),
+            "a dirty-triggered read must confirm the durable tail before review"
+        );
+        d.handle_server_message(ServerMessage::Response {
+            request_id: request,
+            response: Response::Error {
+                code: ovrcr_protocol::ErrorCode::Conflict,
+                message: "read unavailable".into(),
+            },
+        });
+        draw(&mut d, 140, 24);
+        assert_eq!(
+            d.operator.chats[&1].unread,
+            Some(OperatorTurnId(1)),
+            "a failed read is not tail confirmation"
+        );
+        let retry =
+            d.handle_server_message(ServerMessage::Event(ServerEvent::OperatorChanged(Id(1))));
+        history(&mut d, request_id(&retry, 1), complete, vec![], None);
+        draw(&mut d, 140, 24);
+        assert_eq!(d.operator.chats[&1].unread, None);
+    }
+    #[test]
+    fn operator_review_round1_exact_width_multiline_draft_keeps_cursor_visible() {
+        for cols in [55, 140] {
+            let (mut d, _) = setup();
+            d.install_area(Rect::new(0, 0, cols, 24));
+            let (_, right) = split(content_area(&d, d.outer_area), false);
+            let width = right.width.saturating_sub(2) as usize;
+            let line = "界".repeat(width / 2) + &"x".repeat(width % 2);
+            let draft = std::iter::repeat_n(line, 5).collect::<Vec<_>>().join("\n");
+            d.event_action(Event::Paste(draft.clone()));
+            let rendered = draw(&mut d, cols, 24);
+            assert_eq!(d.operator.chats[&1].draft, draft);
+            assert!(
+                rendered.contains('▏'),
+                "cursor must remain visible after five full composer rows at width {cols}"
+            );
+        }
     }
 }
