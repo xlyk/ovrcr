@@ -266,7 +266,14 @@ fn serve(
         .to_owned();
     if !matches!(
         model.as_str(),
-        "fixture-a" | "fixture-b" | "fixture-timeout" | "fixture-incomplete" | "fixture-lifecycle"
+        "fixture-a"
+            | "fixture-b"
+            | "fixture-timeout"
+            | "fixture-incomplete"
+            | "fixture-lifecycle"
+            | "fixture-quick"
+            | "fixture-close-a"
+            | "fixture-close-b"
     ) && !model.starts_with("fixture-error-")
         && !model.starts_with("fixture-siwc-")
         || request["stream"] != true
@@ -384,7 +391,28 @@ fn serve(
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
     )?;
     let label = model.strip_prefix("fixture-").unwrap().to_ascii_uppercase();
-    if model == "fixture-lifecycle" {
+    if model == "fixture-quick" || (model.starts_with("fixture-close-") && ordinal > 1) {
+        if model == "fixture-quick" && ordinal != 1 {
+            return Err(io::Error::other("quick first message retried"));
+        }
+        let text = message(&model, "QUICK final");
+        if !wait_release(shared, &model, gate_budget)? {
+            return Ok(());
+        }
+        event(
+            &mut stream,
+            json!({"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":format!("msg-{model}"),"role":"assistant","content":[]}}),
+        )?;
+        event(
+            &mut stream,
+            json!({"type":"response.output_text.delta","output_index":0,"item_id":format!("msg-{model}"),"content_index":0,"delta":"QUICK final"}),
+        )?;
+        event(
+            &mut stream,
+            json!({"type":"response.output_item.done","output_index":0,"item":text}),
+        )?;
+        complete(&mut stream, &model, vec![text])
+    } else if model == "fixture-lifecycle" {
         let text = message(&model, "LIFECYCLE waiting");
         event(
             &mut stream,
@@ -428,7 +456,14 @@ fn serve(
         )
     } else if ordinal == 1 {
         let timeout = model == "fixture-timeout";
-        let command = if timeout {
+        let closing = model.starts_with("fixture-close-");
+        let command = if closing {
+            format!(
+                "printf 'started\n' >> {}; printf '%s\n' \"$$\" > {}; exec /bin/sleep 30",
+                shell_quote(&workdir.join(format!("{model}.executions"))),
+                shell_quote(&workdir.join(format!("{model}.pid")))
+            )
+        } else if timeout {
             format!(
                 "printf 'started\n' >> {}; printf '%s\n' \"$$\" > {}; exec /bin/sleep 30",
                 shell_quote(&workdir.join("timeout.executions")),
