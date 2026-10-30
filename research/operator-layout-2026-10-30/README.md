@@ -58,9 +58,10 @@ was added. Existing event-loop coverage remains intact.
 ## Native source and executable identity
 
 [Current wide Original layout](native2-01-wide-original.jpg) has paired
-[full accessibility text](native2-01-wide-original.ax.txt). It shows B's completed
+[full accessibility text](native2-01-wide-original.ax.txt.gz). It shows B's completed
 real Bash/tool turn beside A's independently running turn. Every JPEG in this
-folder has matching `.ax.txt` from the same capture; bytes have JPEG signatures.
+folder has matching `.ax.txt.gz` containing the full AX text from the same capture;
+image bytes have JPEG signatures.
 Screenshots were inspected as pixels, including header contrast, one-line rows,
 selection, Unicode spacing, clipping and cursor position.
 
@@ -119,11 +120,49 @@ native executable bytes frozen while the build directory changed.
   `workspace-failure-cleanup.json` preserves that unqualified wait and the later
   kernel/process-root absence before removal of its owned root.
 
+## Raw capture archive format
+
+The [raw artifact manifest](raw-artifacts-manifest.json) maps each original
+repository-relative `.ax.txt` or `.log` logical filename to its stored `.gz` path.
+`sha256` is the SHA256 of the exact original bytes; `stored_sha256` covers the gzip
+object. Existing command/metadata JSON remains unchanged as capture-time evidence,
+including historical filenames. Resolve those names through the manifest.
+
+The one-off conversion stored 73 captures (27 AX and 46 logs): 1,326,617 original
+bytes in 168,098 gzip bytes. Every archive has mtime 0, an empty filename header,
+and compression level 9. Before removing each tracked raw copy, the conversion
+compared it with Git revision `e27a4ff174431e2ba7a89b869585c9ca76350456`,
+verified its SHA256 and exact gzip round trip, and checked repeated compression
+produced identical bytes. All 89 pre-existing JSON files remained byte-identical.
+[Conversion results](archive-conversion.json) record these counts and self-checks.
+No dependency, product script, attribute exemption or check disabling was added.
+
+From the repository root, this standard-library command verifies and prints one
+original logical artifact. Substitute any original path from the manifest:
+
+```sh
+rtk proxy python3 - research/operator-layout-2026-10-30/native2-01-wide-original.ax.txt <<'PY'
+import gzip, hashlib, json, pathlib, sys
+manifest = json.loads(pathlib.Path("research/operator-layout-2026-10-30/raw-artifacts-manifest.json").read_text())
+entry = manifest["files"][sys.argv[1]]
+stored = pathlib.Path(entry["stored_path"]).read_bytes()
+assert hashlib.sha256(stored).hexdigest() == entry["stored_sha256"]
+original = gzip.decompress(stored)
+assert hashlib.sha256(original).hexdigest() == entry["sha256"]
+sys.stdout.buffer.write(original)
+PY
+```
+
+The `c9207e2` whitespace failure remains a retained historical attempt. Archive
+conversion and the current feature-range diff check are recorded separately;
+none of the application-test failures below is relabeled.
+
 ## Command results
 
 `command-results.json` contains each exact command, original exit, revision,
 private environment keys/root and executed Rust suite counts. Each command has
-its own full `.log` and `.json`; failures are retained beside later attempts.
+its own full `.log.gz` and original `.json`; failures are retained beside later
+attempts. Original capture-time log filenames resolve through the archive manifest.
 Node 22.23.2 and Rust 1.98.0 meet the project prerequisites.
 
 | Gate | Revision | Actual result |
@@ -150,9 +189,10 @@ CARGO_HOME/RUSTUP_HOME for the existing compiler cache, offline Cargo mode,
 `SHELL=/bin/zsh`, loopback proxy exclusions and a synthetic private Git identity.
 Every other inherited variable was absent. The copied Server fixture discards
 child stdout/stderr in unchanged `Live::start_binary`, so neither failed copied
-child has retained stderr or a qualified successful wait. The evidence commit has an additional artifact-only whitespace check failure,
-recorded in `artifact-diff-check.json`. Source/prose checks passed before staging
-raw captures. The exact application-test failures
+child has retained stderr or a qualified successful wait. The original evidence commit also had an artifact-only whitespace check failure,
+recorded unchanged in `artifact-diff-check.json`. Lossless gzip storage now preserves
+those bytes without placing padded AX or raw logs in the text diff. Source/prose
+checks passed before the original raw captures were staged. The exact application-test failures
 remain unexplained; no timing/contention or permission cause is asserted.
 
 Attempt 2 failed `accepted_restart_runs_changed_binary_with_same_protocol_and_package_version`.

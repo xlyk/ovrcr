@@ -11,10 +11,10 @@ The first run showed an invisible title-bar Ctrl+O control: its accessibility
 text existed, while mauve foreground inherited a mauve header background.
 The Operator section heading also used mauve instead of Projects' blue.
 [Original pixels](native-03-quick-multiline.jpg) and
-[paired AX](native-03-quick-multiline.ax.txt) retain that failure.
+[paired AX](native-03-quick-multiline.ax.txt.gz) retain that failure.
 The separate product correction sets the control background and heading color.
 [Current wide view](native2-01-wide-original.jpg) and
-[paired AX](native2-01-wide-original.ax.txt) show both corrections.
+[paired AX](native2-01-wide-original.ax.txt.gz) show both corrections.
 Clicking the now-readable title-bar control opened the real quick editor.
 
 ## Current native outcomes
@@ -49,3 +49,12 @@ and printed `NATIVE3_TERMINAL_OK` through background completion. The determinist
 real-socket test proves delayed-receipt focus behavior; no delayed native focus
 claim is made. See [the acceptance record](README.md) for command failures,
 executed counts and the still-pending hosted/platform delivery gates.
+
+## Lossless archive packaging
+
+Raw AX and command logs are stored as deterministic `.gz` files. The
+[manifest](raw-artifacts-manifest.json) maps original logical filenames and SHA256
+to stored paths and hashes. All original command/metadata JSON remains unchanged.
+The [acceptance record](README.md#raw-capture-archive-format) gives a standard-library
+decompression and hash-check command. The original raw-artifact whitespace failure
+is retained; conversion does not change any native or application-test outcome.
