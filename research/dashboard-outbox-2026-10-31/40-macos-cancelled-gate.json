@@ -1,0 +1,32 @@
+{
+  "root": 68367,
+  "wrapper": 68366,
+  "owned_tree": [
+    {
+      "pid": 920,
+      "ppid": 23493,
+      "pgid": 68366
+    },
+    {
+      "pid": 23493,
+      "ppid": 68367,
+      "pgid": 68366
+    },
+    {
+      "pid": 68367,
+      "ppid": 68366,
+      "pgid": 68366
+    },
+    {
+      "pid": 1151,
+      "ppid": 920,
+      "pgid": 1151
+    }
+  ],
+  "groups": [
+    1151,
+    68366
+  ],
+  "reason": "cancel obsolete tests after demonstrated fixture corrections; no product change",
+  "remaining_groups": []
+}

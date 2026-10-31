@@ -30,8 +30,8 @@
 
 **Files:**
 - Core: `crates/ovrcr-tui/src/dashboard/outbox.rs`, `state.rs`, `mod.rs`, `event_loop.rs`.
-- Producers: Dashboard `palette.rs`, `lifecycle_ui.rs`, `assignment_control.rs`, `settings_editor.rs`, `desktop.rs`, `events.rs`, `iterm.rs`, `quota.rs`; preserve already-queued navigation and Operator producers.
-- Tests: Dashboard internal tests, `crates/ovrcr-tui/tests/settings_theme_preview.rs`, `tests/tui/**`, `tests/operator_e2e.rs`, `tests/server_lifecycle.rs`, `tests/terminal_acceptance.rs`.
+- Producers: Dashboard `palette.rs`, `lifecycle_ui.rs`, `assignment_control.rs`, `settings_editor.rs`, `desktop.rs`, `events.rs`, `iterm.rs`, `quota.rs`, `operator.rs`; preserve already-queued navigation and Operator producers.
+- Tests: Dashboard internal tests, `crates/ovrcr-tui/tests/settings_theme_preview.rs`, `tests/tui/**`, `tests/operator_e2e.rs`, `tests/server_lifecycle.rs`, `tests/terminal_acceptance.rs`; two observed fixture races corrected separately in `tests/pi_delegation.rs` and `tests/provider_quota.rs`.
 - Documentation: `docs/development/tui.md`; clarify existing Outbox vocabulary only where needed.
 
 **Interfaces:**
@@ -45,11 +45,13 @@
 - [x] Run baseline `cargo test --locked --offline -p ovrcr-tui --lib` with isolated HOME: 341 passed, 0 failed.
 - [x] Run the new `outbox_dispatch_tests` on original production code: public palette key then outgoing drain failed behaviorally (Inspect count 0 instead of 1); both socket-order characterizations passed. Log: `02-red-outbox-dispatch.log` (2 passed, 1 failed).
 - [x] Run `outbox_retarget_releases_original_mouse_child_before_fresh_input` through the compiled binary, real Server and outer Dashboard on original production code: 1 passed, with replacement INPUT_ACK and the original child's exact cleanup checkpoint. Log: `03-baseline-real-dashboard.log`.
-- [ ] Implement the private queue coordination, remove request-carrying action variants and migrate all producers/consumers/assertions together. Re-run the focused ownership/order tests, TUI suite and real application case. Repeat only after meaningful changes/failures.
-- [ ] Update the owning docs, then run workspace checks, required regression/lint gates and a scoped native GUI pass from this checkout. Save logs and screenshots/AX; verify task-owned roots, sockets and groups are gone.
-- [ ] Commit the coherent change, run independent Standards and Spec code reviews against the fixed base, resolve blockers and verify any corrections. Update the work diary with exact revision/results/gaps. Do not merge.
+- [x] Implement the private queue coordination, remove request-carrying action variants and migrate all producers/consumers/assertions together. Focused ownership/order, owning TUI and root TUI suites pass; the post-refactor real application case passes within the 19-case terminal acceptance suite (log `18-macos-workspace.log`).
+- [x] Update owning docs; complete local macOS/Linux Rust CI-profile, typecheck, lint, formatting, doc steps and scoped native GUI acceptance. Preserve failed Cargo attempts, two macOS flaky cases, ignored/skipped counts and cleanup limits in the verification report. Native original-launcher exit 0 and all twelve owned groups/root/socket absence are recorded; the Linux runner and custom image are removed.
+- [x] Commit source (`4cb02011`) and scoped fixture corrections (`8a588000`); independent Standards and Spec reviews of both have no blocking findings. Extend the existing work diary with exact revisions, results and gaps. Keep delivery local; no push, PR or merge.
 
 ## Evidence
 
 Root-owned logs and receipts: `/private/tmp/ovrcr-384-evidence/`.
 Each attempt uses a distinct log. Application, native and platform evidence remain separate.
+
+Final record: [`research/dashboard-outbox-2026-10-31/verification.md`](../../../research/dashboard-outbox-2026-10-31/verification.md). Both local Rust CI-profile waits exited 0: macOS 2431 passed (two flaky cases), Linux 2182 passed (no retries). Earlier Cargo failures remain failed; hosted CI and the explicitly listed native/provider checks remain unrun.

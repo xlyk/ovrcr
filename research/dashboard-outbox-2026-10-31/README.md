@@ -2,11 +2,13 @@
 
 Native evidence for [specification #383](https://github.com/xlyk/ovrcr/issues/383) and [implementation #384](https://github.com/xlyk/ovrcr/issues/384). The actual reviewed checkout’s GUI accepted input before and after frozen History release and a terminal retarget.
 
+The [verification report](verification.md) records automated checks, reviews, earlier failures and remaining limits.
+
 Tested source identity:
 
 - Base: `07b792fb9854e38db671ec51fc81ecee25d70907`.
-- Frozen Outbox production patch SHA256: `ac33661614537a86e1d1ee0c8126cd59348d27137202735afa527cabad20a8a5`.
-- Hash input: exact stdout bytes of `git diff 07b792fb9854e38db671ec51fc81ecee25d70907 -- crates/ovrcr-tui/src` (run through `rtk proxy`). This identifies the production source frozen before the native build; it excludes tests and documentation.
+- Frozen Dashboard source patch SHA256: `ac33661614537a86e1d1ee0c8126cd59348d27137202735afa527cabad20a8a5`.
+- Hash input: exact stdout bytes of `git diff 07b792fb9854e38db671ec51fc81ecee25d70907 -- crates/ovrcr-tui/src` (run through `rtk proxy`). This identifies the owning-crate source frozen before the native build, including embedded test modules; it excludes integration tests and documentation.
 - [Binary receipt](binaries.json): exact CLI/GUI bundle identities used for the proof. Final revision and regression-gate receipts are recorded separately by the task owner.
 
 ## Visible native outcomes

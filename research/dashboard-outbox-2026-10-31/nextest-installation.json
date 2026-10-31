@@ -1,0 +1,18 @@
+[
+  {
+    "platform": "mac",
+    "tag": "cargo-nextest-0.9.150",
+    "asset": "cargo-nextest-0.9.150-universal-apple-darwin.tar.gz",
+    "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.150/cargo-nextest-0.9.150-universal-apple-darwin.tar.gz",
+    "digest": "sha256:82a759b4d218d38359424196ab244c470e8f7c7d149c814fbbeef4d67c3c301a",
+    "binary": "/private/tmp/ovrcr-384-evidence/nextest-bin/mac/cargo-nextest"
+  },
+  {
+    "platform": "linux",
+    "tag": "cargo-nextest-0.9.150",
+    "asset": "cargo-nextest-0.9.150-aarch64-unknown-linux-musl.tar.gz",
+    "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.150/cargo-nextest-0.9.150-aarch64-unknown-linux-musl.tar.gz",
+    "digest": "sha256:5a7fe62b64a9006e1e47422021df7b1d308cc76c528c9eaf4649a488615ed6fb",
+    "binary": "/private/tmp/ovrcr-384-evidence/nextest-bin/linux/cargo-nextest"
+  }
+]

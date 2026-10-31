@@ -96,6 +96,12 @@ and omit `--all-features`.
 - Nothing starts on boot. Drive the CLI with an isolated `OVRCR_HOME` and
   `OVRCR_SOCKET`.
 
+Container runners also need an unprivileged test user, a reaping init (Docker
+`--init`), `SHELL` pointing to an installed shell, and a writable disposable
+checkout. Root bypasses permission-denial cases; a non-reaping PID 1 retains
+orphan zombies; relative-socket tests bind in the package working directory.
+A private source copy keeps these writes separate from the host checkout.
+
 ## Commands and isolated acceptance
 
 Operator activity regressions exercise derived state/cadence in the owning TUI
