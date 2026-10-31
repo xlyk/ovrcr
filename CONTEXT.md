@@ -150,7 +150,8 @@ Any change to what a pane shows: split, focus, close, select, container, cleared
 _Avoid_: calling the release steps individually
 
 **Outbox**:
-The Dashboard's queue of requests to send, drained once per event-loop pass in push order.
+The Dashboard's one queue of fully formed steady-state requests to send, preserving
+their enqueue order. Fresh PTY input and the startup handshake retain their own authority.
 _Avoid_: private slots that hold a request
 
 **Setting**:

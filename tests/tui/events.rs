@@ -18,9 +18,8 @@ fn event(component: EventComponent, subject: Option<&str>, message: &str) -> Rec
 }
 
 fn deliver(dashboard: &mut Dashboard, action: DashboardAction, events: Vec<Recorded>) {
-    let DashboardAction::Request(message) = action else {
-        panic!("expected an Events request, got {action:?}");
-    };
+    assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
+    let message = only_request(dashboard.drain_outbox());
     assert!(
         matches!(message.request, Request::Events { follow: false }),
         "the popup reads the ring, not a follow connection: {:?}",
@@ -50,6 +49,8 @@ fn open_from_menu(dashboard: &mut Dashboard) -> DashboardAction {
 
 fn open_from_palette(dashboard: &mut Dashboard) -> DashboardAction {
     dashboard.key(KeyCode::Char(':'));
+    let inspect = only_request(dashboard.drain_outbox());
+    assert_eq!(inspect.request, Request::Inspect);
     dashboard.event_action(Event::Paste("events".into()));
     dashboard.key(KeyCode::Enter)
 }

@@ -241,10 +241,12 @@ impl Dashboard {
     /// validates and republishes, so nothing is applied here.
     pub(super) fn quota_request(&mut self, request: Request) -> DashboardAction {
         self.palette = None;
-        DashboardAction::Request(ClientMessage {
-            request_id: self.error_owning_request_id(),
+        let request_id = self.error_owning_request_id();
+        self.enqueue_request(ClientMessage {
+            request_id,
             request,
-        })
+        });
+        DashboardAction::Redraw
     }
 
     /// Rendering and every tree interaction share this reduced rectangle.

@@ -58,18 +58,20 @@ fn unread_review_key_captures_visible_observation_without_optimistic_clear() {
     );
     d.ctrl('g');
     for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
-        assert!(!matches!(
-            d.key_action(KeyEvent::new_with_kind(
+        assert!({
+            let _ = d.key_action(KeyEvent::new_with_kind(
                 KeyCode::Char('R'),
                 KeyModifiers::NONE,
-                kind
-            )),
-            DashboardAction::Request(_)
-        ));
+                kind,
+            ));
+            d.drain_outbox().is_empty()
+        });
     }
-    let DashboardAction::Request(message) = d.key(KeyCode::Char('R')) else {
-        panic!("Browse R must submit mark-reviewed");
-    };
+    assert_eq!(
+        d.key(KeyCode::Char('R')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(d.drain_outbox());
     assert_eq!(
         message.request,
         Request::MarkReviewed {
@@ -85,9 +87,11 @@ fn unread_review_key_captures_visible_observation_without_optimistic_clear() {
         response: Response::Ok,
     });
     draw(&mut d, 120, 30);
-    let DashboardAction::Request(later) = d.key(KeyCode::Char('R')) else {
-        panic!("new unread must stay reviewable after a late ack");
-    };
+    assert_eq!(
+        d.key(KeyCode::Char('R')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let later = only_request(d.drain_outbox());
     assert_eq!(
         later.request,
         Request::MarkReviewed {
@@ -97,14 +101,15 @@ fn unread_review_key_captures_visible_observation_without_optimistic_clear() {
         "late acknowledgement cannot clear new snapshot"
     );
     d.key(KeyCode::Char(':'));
+    let inspect = only_request(d.drain_outbox());
+    assert_eq!(inspect.request, Request::Inspect);
     assert!(
-        !matches!(
-            d.key(KeyCode::Char('R')),
-            DashboardAction::Request(ClientMessage {
-                request: Request::MarkReviewed { .. },
-                ..
-            })
-        ),
+        !{
+            let _ = d.key(KeyCode::Char('R'));
+            d.drain_outbox()
+                .iter()
+                .any(|message| matches!(message.request, Request::MarkReviewed { .. }))
+        },
         "palette owns keys"
     );
 }
@@ -151,27 +156,35 @@ fn unread_review_action_is_discoverable_in_palette_and_terminal_keys() {
     publish_session(&mut d, summary);
     draw(&mut d, 120, 30);
     d.key(KeyCode::Char(':'));
+    let inspect = only_request(d.drain_outbox());
+    assert_eq!(inspect.request, Request::Inspect);
     for ch in "Mark reviewed".chars() {
         d.key(KeyCode::Char(ch));
     }
     assert!(palette_text(&d).contains("Mark reviewed"));
-    assert!(matches!(
-        d.key(KeyCode::Enter),
-        DashboardAction::Request(ClientMessage {
-            request: Request::MarkReviewed { .. },
-            ..
-        })
-    ));
+    assert!({
+        let _ = d.key(KeyCode::Enter);
+        matches!(
+            d.drain_outbox().as_slice(),
+            [ClientMessage {
+                request: Request::MarkReviewed { .. },
+                ..
+            }]
+        )
+    });
     d.key(KeyCode::Char(' '));
     d.key(KeyCode::Char('t'));
     assert!(palette_text(&d).contains("Mark reviewed"));
-    assert!(matches!(
-        d.key(KeyCode::Char('R')),
-        DashboardAction::Request(ClientMessage {
-            request: Request::MarkReviewed { .. },
-            ..
-        })
-    ));
+    assert!({
+        let _ = d.key(KeyCode::Char('R'));
+        matches!(
+            d.drain_outbox().as_slice(),
+            [ClientMessage {
+                request: Request::MarkReviewed { .. },
+                ..
+            }]
+        )
+    });
 }
 
 #[test]
@@ -181,9 +194,11 @@ fn pi_unread_is_reviewable_with_the_same_key_and_identity() {
     summary.unread = Some(observation_for(AgentProvider::Pi, "cycle-1", 3));
     publish_session(&mut dashboard, summary.clone());
     draw(&mut dashboard, 120, 30);
-    let DashboardAction::Request(message) = dashboard.key(KeyCode::Char('R')) else {
-        panic!("R did not mint a request");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Char('R')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     assert_eq!(
         message.request,
         Request::MarkReviewed {
@@ -236,9 +251,11 @@ fn an_input_request_never_changes_unread_or_the_review_target() {
     publish_session(&mut d, summary.clone());
     draw(&mut d, 120, 30);
     let id = d.focused_session().unwrap();
-    let DashboardAction::Request(message) = d.key(KeyCode::Char('R')) else {
-        panic!("an open Input request must not hide the presented unread");
-    };
+    assert_eq!(
+        d.key(KeyCode::Char('R')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(d.drain_outbox());
     assert_eq!(
         message.request,
         Request::MarkReviewed {
@@ -252,9 +269,11 @@ fn an_input_request_never_changes_unread_or_the_review_target() {
     partial.agent.as_mut().unwrap().input_requests.remove(0);
     publish_session(&mut d, partial);
     draw(&mut d, 120, 30);
-    let DashboardAction::Request(between) = d.key(KeyCode::Char('R')) else {
-        panic!("closing one member of the set must not clear the unread");
-    };
+    assert_eq!(
+        d.key(KeyCode::Char('R')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let between = only_request(d.drain_outbox());
     assert_eq!(
         between.request,
         Request::MarkReviewed {
@@ -266,9 +285,11 @@ fn an_input_request_never_changes_unread_or_the_review_target() {
     closed.agent.as_mut().unwrap().input_requests.clear();
     publish_session(&mut d, closed);
     draw(&mut d, 120, 30);
-    let DashboardAction::Request(after) = d.key(KeyCode::Char('R')) else {
-        panic!("closing a request must not clear the unread");
-    };
+    assert_eq!(
+        d.key(KeyCode::Char('R')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let after = only_request(d.drain_outbox());
     assert_eq!(
         after.request,
         Request::MarkReviewed {

@@ -563,9 +563,7 @@ fn send_dashboard_action<W: Write>(
     mouse_enabled: &mut bool,
     action: DashboardAction,
 ) -> Result<bool> {
-    // Whatever producing the action queued — a synthetic release, the history end a browse
-    // return owes — leads the request the action itself carries, as it did when each had its
-    // own slot written here.
+    // Flush captured cleanup and fully formed requests before authorizing fresh PTY input.
     flush(stream, dashboard)?;
     let result = match action {
         DashboardAction::None | DashboardAction::Redraw => Ok(false),
@@ -581,16 +579,6 @@ fn send_dashboard_action<W: Write>(
         DashboardAction::CopyText(text) => {
             let result = write_clipboard(terminal.backend_mut(), &text);
             dashboard.finish_copy(result);
-            Ok(false)
-        }
-        DashboardAction::Request(request) => {
-            write_frame(stream, &request)?;
-            Ok(false)
-        }
-        DashboardAction::RequestBatch(requests) => {
-            for request in requests {
-                write_frame(stream, &request)?;
-            }
             Ok(false)
         }
     };
@@ -863,6 +851,166 @@ fn terminal_size() -> Result<TerminalSize> {
 }
 
 #[cfg(test)]
+mod outbox_dispatch_tests {
+    use super::*;
+    use crate::dashboard::{HeldMouse, state::HistoryView};
+    use crate::protocol::{HistoryOpened, HistorySnapshotId, SessionId, SessionRunId};
+    use crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
+    use ratatui::{TerminalOptions, Viewport};
+
+    fn due_history_dashboard() -> Dashboard {
+        let (mut dashboard, _) = super::unread_review_tests::fixture();
+        dashboard.install_area(Rect::new(0, 0, 120, 20));
+        let mut history = HistoryView::new(
+            HistoryOpened {
+                session: SessionId(1),
+                snapshot: HistorySnapshotId(7),
+                revision: 1,
+                size: TerminalSize {
+                    rows: 20,
+                    cols: 120,
+                },
+                history_rows: 20,
+                total_rows: 40,
+            },
+            0,
+        );
+        history.cursor_target = None;
+        dashboard.history = Some(history);
+        dashboard
+    }
+
+    fn socket_pair() -> (UnixStream, UnixStream) {
+        let (stream, peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        (stream, peer)
+    }
+
+    fn assert_empty(peer: &mut UnixStream) {
+        let result = crate::protocol::read_frame::<ClientMessage>(peer);
+        assert!(result.is_err(), "unexpected duplicate request: {result:?}");
+    }
+
+    #[test]
+    fn public_palette_key_publishes_inspect_through_outbox_once() {
+        let (mut dashboard, _) = super::unread_review_tests::fixture();
+        dashboard.event_action(Event::Key(KeyEvent::new(
+            KeyCode::Char(':'),
+            KeyModifiers::NONE,
+        )));
+        let requests = dashboard.drain_outbox();
+        assert_eq!(
+            requests.len(),
+            1,
+            "the fully formed Inspect belongs to the Outbox"
+        );
+        assert_eq!(requests[0].request, Request::Inspect);
+        assert!(
+            dashboard.drain_outbox().is_empty(),
+            "a second drain must not replay Inspect"
+        );
+    }
+
+    #[test]
+    fn production_dispatch_keeps_cleanup_and_due_history_before_palette_request() {
+        let mut dashboard = due_history_dashboard();
+        let revision = dashboard.view_revision();
+        dashboard.mouse.held[0] = Some(HeldMouse {
+            session: SessionId(1),
+            run: SessionRunId(1),
+            control_epoch: Some(13),
+            view_revision: revision,
+            event: MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 10,
+                row: 5,
+                modifiers: KeyModifiers::NONE,
+            },
+            mode: ovrcr_terminal::vt100::MouseProtocolMode::PressRelease,
+            encoding: ovrcr_terminal::vt100::MouseProtocolEncoding::Sgr,
+        });
+        let (mut stream, mut peer) = socket_pair();
+        let mut bytes = Vec::new();
+        let mut terminal = Terminal::with_options(
+            CrosstermBackend::new(&mut bytes),
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 120, 20)),
+            },
+        )
+        .unwrap();
+        let mut mouse_enabled = false;
+        assert!(
+            !dispatch_dashboard_event(
+                &mut terminal,
+                &mut stream,
+                &mut dashboard,
+                &mut mouse_enabled,
+                Event::Key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE)),
+            )
+            .unwrap()
+        );
+        let cleanup: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+        let page: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+        let inspect: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+        assert!(
+            matches!(cleanup.request, Request::AssignedHumanInput { session: SessionId(1), run: SessionRunId(1), control_epoch: 13, view_revision, ref bytes } if view_revision == revision && bytes == b"\x1b[<0;11;6m")
+        );
+        assert!(matches!(
+            page.request,
+            Request::HistoryPage {
+                session: SessionId(1),
+                snapshot: HistorySnapshotId(7),
+                start_row: 0,
+                ..
+            }
+        ));
+        assert_eq!(inspect.request, Request::Inspect);
+        assert_ne!(cleanup.request_id, page.request_id);
+        assert_ne!(page.request_id, inspect.request_id);
+        flush(&mut stream, &mut dashboard).unwrap();
+        assert_empty(&mut peer);
+    }
+
+    #[test]
+    fn production_dispatch_keeps_due_history_after_queued_view_and_ignores_no_drain_response() {
+        let mut dashboard = due_history_dashboard();
+        dashboard.request_view_at(Rect::new(0, 0, 120, 20));
+        dashboard.ignored_responses.insert(800);
+        let (mut stream, mut peer) = socket_pair();
+        let (sender, messages) = dashboard_message_channel();
+        sender
+            .send(ServerMessage::Response {
+                request_id: 800,
+                response: Response::Ok,
+            })
+            .unwrap();
+        assert!(next_dashboard_messages(&messages, &mut dashboard, &mut stream).unwrap());
+        assert_empty(&mut peer);
+        sender
+            .send(ServerMessage::Event(
+                crate::protocol::ServerEvent::QuotaChanged(Box::default()),
+            ))
+            .unwrap();
+        assert!(next_dashboard_messages(&messages, &mut dashboard, &mut stream).unwrap());
+        let view: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+        let page: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+        assert!(matches!(view.request, Request::SetView { .. }));
+        assert!(matches!(
+            page.request,
+            Request::HistoryPage {
+                snapshot: HistorySnapshotId(7),
+                ..
+            }
+        ));
+        flush(&mut stream, &mut dashboard).unwrap();
+        assert_empty(&mut peer);
+    }
+}
+
+#[cfg(test)]
 mod unread_review_tests {
     use super::*;
     use crate::protocol::{
@@ -1084,7 +1232,10 @@ mod unread_review_tests {
                 .sessions
                 .push(agent);
             dashboard.key(KeyCode::Char('s'));
-            let DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
+            let Some(request) = ({
+                dashboard.key(KeyCode::Enter);
+                dashboard.drain_one_request()
+            }) else {
                 panic!("Agent confirmation must request view");
             };
             let Request::SetView { view } = request.request else {
@@ -1318,7 +1469,10 @@ mod unread_review_tests {
         fail.store(true, Ordering::SeqCst);
         assert!(dashboard.draw(&mut terminal).is_err());
         fail.store(false, Ordering::SeqCst);
-        let DashboardAction::Request(sent) = dashboard.key(KeyCode::Char('R')) else {
+        let Some(sent) = ({
+            dashboard.key(KeyCode::Char('R'));
+            dashboard.drain_one_request()
+        }) else {
             panic!("expected review request");
         };
         assert_eq!(
@@ -1329,9 +1483,16 @@ mod unread_review_tests {
             }
         );
         dashboard.key(KeyCode::Char(':'));
+        assert_eq!(
+            dashboard.drain_one_request().unwrap().request,
+            Request::Inspect
+        );
         dashboard.draw(&mut terminal).unwrap();
         dashboard.key(KeyCode::Esc);
-        let DashboardAction::Request(sent) = dashboard.key(KeyCode::Char('R')) else {
+        let Some(sent) = ({
+            dashboard.key(KeyCode::Char('R'));
+            dashboard.drain_one_request()
+        }) else {
             panic!("expected review request");
         };
         assert_eq!(

@@ -152,7 +152,10 @@ impl Dashboard {
             });
             let request_id = self.next_request_id();
             return match self.view_request(self.outer_area, request_id) {
-                Ok(Some(message)) => DashboardAction::Request(message),
+                Ok(Some(message)) => {
+                    self.enqueue_request(message);
+                    DashboardAction::Redraw
+                }
                 _ => DashboardAction::Redraw,
             };
         }
@@ -365,23 +368,19 @@ impl Dashboard {
         self.select_session(session.id);
         self.mode = super::InputMode::Terminal;
         let request_id = self.next_request_id();
-        let mut outgoing = match self.view_request(self.outer_area, request_id) {
-            Ok(Some(message)) => vec![message],
-            _ => Vec::new(),
-        };
+        if let Ok(Some(message)) = self.view_request(self.outer_area, request_id) {
+            self.enqueue_request(message);
+        }
         if let Some((project, choice)) = self.lifecycle_preference.take() {
             let request = super::settings::launch_choice_request(&project, &choice);
             self.settings.launch_choices.insert(project, choice);
-            outgoing.push(crate::protocol::ClientMessage {
+            let message = crate::protocol::ClientMessage {
                 request_id: self.error_owning_request_id(),
                 request,
-            });
+            };
+            self.enqueue_request(message);
         }
-        match outgoing.len() {
-            0 => DashboardAction::Redraw,
-            1 => DashboardAction::Request(outgoing.pop().unwrap()),
-            _ => DashboardAction::RequestBatch(outgoing),
-        }
+        DashboardAction::Redraw
     }
 
     pub(super) fn provisional_tree_rows(&self) -> Vec<(TreeRow, String)> {
@@ -571,11 +570,10 @@ mod tests {
         );
         assert!(d.provisional.is_none());
         assert_eq!(d.focused_session(), Some(crate::protocol::SessionId(42)));
+        assert_eq!(action, DashboardAction::Redraw);
         assert!(matches!(
-            action,
-            DashboardAction::Request(_)
-                | DashboardAction::RequestBatch(_)
-                | DashboardAction::Redraw
+            d.drain_one_request().unwrap().request,
+            Request::SetView { .. }
         ));
     }
 

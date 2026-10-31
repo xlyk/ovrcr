@@ -149,10 +149,11 @@ impl Dashboard {
         self.cancel_mouse_gesture();
         self.outbox.discard_input();
         self.navigation.input_epoch = self.navigation.input_epoch.wrapping_add(1);
-        DashboardAction::Request(ClientMessage {
+        self.enqueue_request(ClientMessage {
             request_id,
             request: Request::AssignmentControl(transition),
-        })
+        });
+        DashboardAction::Redraw
     }
 }
 

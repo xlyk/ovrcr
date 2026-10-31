@@ -2665,3 +2665,69 @@ fn mouse_forwarding_outer_pty_round_trip() -> Result<()> {
     fixture.shutdown()?;
     Ok(())
 }
+
+#[test]
+fn outbox_retarget_releases_original_mouse_child_before_fresh_input() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    fixture.start_mouse_fixture()?;
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    dashboard.click_visible_text("     - mouse-protocol")?;
+    dashboard.wait_until(
+        |screen| screen.contains("MOUSE_FIXTURE_READY") && !screen.contains("loading"),
+        wait_deadline(),
+    )?;
+    dashboard.send(b"\r")?;
+    dashboard.wait_until(|screen| screen.contains("Terminal mode"), wait_deadline())?;
+    dashboard.send(b"E")?;
+    dashboard.wait_for(b"MOUSE_ENABLED", wait_deadline())?;
+    dashboard.wait_for_mouse_capture(true, wait_deadline())?;
+    let inner = ovrcr::tui::pane_rects(ratatui::layout::Rect::new(0, 0, 100, 30), 1, 0)
+        .into_iter()
+        .next()
+        .context("focused pane rect")?
+        .terminal;
+    dashboard.send(format!("\x1b[<0;{};{}MQ", inner.x + 3, inner.y + 4).as_bytes())?;
+    // Q reports bytes read by the raw child, without releasing the held button.
+    dashboard.wait_for(b"MOUSE_CHECK_1:1b5b3c303b333b344d:END", wait_deadline())?;
+
+    dashboard.click_visible_text("     - waiting")?;
+    dashboard.wait_until(
+        |screen| screen.contains("WAITING_READY") && !screen.contains("loading"),
+        wait_deadline(),
+    )?;
+    dashboard.send(b"\r")?;
+    dashboard.wait_until(|screen| screen.contains("Terminal mode"), wait_deadline())?;
+    dashboard.send(b"INPUT_TOKEN\r")?;
+    dashboard.wait_for(b"INPUT_ACK", wait_deadline())?;
+
+    dashboard.click_visible_text("     - mouse-protocol")?;
+    dashboard.wait_until(
+        |screen| screen.contains("MOUSE_FIXTURE_READY") && !screen.contains("loading"),
+        wait_deadline(),
+    )?;
+    dashboard.send(b"\r")?;
+    dashboard.wait_until(|screen| screen.contains("Terminal mode"), wait_deadline())?;
+    dashboard.send(b"Q")?;
+    // The old child must receive exactly its captured release, never the new input.
+    dashboard.wait_for(b"MOUSE_CHECK_2:1b5b3c303b333b346d:END", wait_deadline())?;
+    dashboard.send(b"Q")?;
+    dashboard.wait_for(b"MOUSE_CHECK_3::END", wait_deadline())?;
+    eprintln!(
+        "Outbox retarget fixture: root={} socket={} groups={:?} replacement=INPUT_ACK original=MOUSE_CHECK_2:1b5b3c303b333b346d:END",
+        fixture.root.path().display(),
+        fixture.socket.display(),
+        fixture.managed_pgids
+    );
+    dashboard.detach()?;
+    fixture.shutdown()?;
+    Ok(())
+}

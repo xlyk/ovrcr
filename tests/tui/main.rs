@@ -177,21 +177,33 @@ fn dashboard_fixture() -> Dashboard {
     dashboard
 }
 
-fn pump_view(dashboard: &mut Dashboard, action: DashboardAction) {
-    match action {
-        DashboardAction::Request(request) => {
-            if matches!(request.request, Request::SetView { .. }) {
-                acknowledge_all_view_targets(dashboard, request);
-            }
+fn only_request(mut requests: Vec<ClientMessage>) -> ClientMessage {
+    assert_eq!(
+        requests.len(),
+        1,
+        "expected one outgoing request: {requests:?}"
+    );
+    requests.pop().unwrap()
+}
+
+fn optional_request(mut requests: Vec<ClientMessage>) -> Option<ClientMessage> {
+    assert!(
+        requests.len() <= 1,
+        "expected at most one outgoing request: {requests:?}"
+    );
+    requests.pop()
+}
+
+fn pump_view(dashboard: &mut Dashboard, _action: DashboardAction) {
+    let requests = dashboard.drain_outbox();
+    pump_view_requests(dashboard, requests);
+}
+
+fn pump_view_requests(dashboard: &mut Dashboard, requests: Vec<ClientMessage>) {
+    for request in requests {
+        if matches!(request.request, Request::SetView { .. }) {
+            acknowledge_all_view_targets(dashboard, request);
         }
-        DashboardAction::RequestBatch(requests) => {
-            for request in requests {
-                if matches!(request.request, Request::SetView { .. }) {
-                    acknowledge_all_view_targets(dashboard, request);
-                }
-            }
-        }
-        _ => {}
     }
 }
 
@@ -297,19 +309,17 @@ fn palette_search(dashboard: &mut Dashboard, query: &str) {
     dashboard.event_action(Event::Paste(query.into()));
 }
 
-fn answer_palette_inspect(dashboard: &mut Dashboard, action: ovrcr::tui::DashboardAction) {
-    if let ovrcr::tui::DashboardAction::Request(ClientMessage {
-        request_id,
-        request: Request::Inspect,
-    }) = action
-    {
-        dashboard.handle_server_message(ServerMessage::Response {
-            request_id,
-            response: Response::Inventory {
-                registry: Default::default(),
-                sessions: Vec::new(),
-            },
-        });
+fn answer_palette_inspect(dashboard: &mut Dashboard, _action: DashboardAction) {
+    for message in dashboard.drain_outbox() {
+        if let Request::Inspect = message.request {
+            dashboard.handle_server_message(ServerMessage::Response {
+                request_id: message.request_id,
+                response: Response::Inventory {
+                    registry: Default::default(),
+                    sessions: Vec::new(),
+                },
+            });
+        }
     }
 }
 
@@ -370,9 +380,11 @@ fn answer_workspace_inspect(dashboard: &mut Dashboard, request_id: u64, repo: &s
 /// Drives the create-workspace form to a deferred submit on a typed branch.
 fn type_existing_branch_and_submit(dashboard: &mut Dashboard, branch: &str) -> u64 {
     use ovrcr::tui::DashboardAction;
-    let DashboardAction::Request(inspect) = dashboard.key(KeyCode::Char('w')) else {
-        panic!("leader workspace must request repository inspection");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Char('w')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let inspect = only_request(dashboard.drain_outbox());
     assert_eq!(inspect.request, Request::Inspect);
     dashboard.key(KeyCode::Tab); // branch mode
     dashboard.key(KeyCode::Right); // existing

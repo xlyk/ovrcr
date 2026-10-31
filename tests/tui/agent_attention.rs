@@ -224,9 +224,11 @@ fn attention_live_status_and_titles_refresh_without_reordering_or_reviewing() {
     )));
     assert!(palette_text(&dashboard).contains("› new highlighted title (#8)"));
     assert!(palette_text(&dashboard).contains("Unread Unavailable"));
-    let DashboardAction::Request(chosen) = dashboard.key(KeyCode::Enter) else {
-        panic!("live-updated highlighted destination");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let chosen = only_request(dashboard.drain_outbox());
     assert!(
         matches!(&chosen.request, Request::SetView { view } if view.focused == Some(SessionId(8)))
     );
@@ -235,9 +237,11 @@ fn attention_live_status_and_titles_refresh_without_reordering_or_reviewing() {
         .draw(&mut Terminal::new(TestBackend::new(88, 38)).unwrap())
         .unwrap();
     dashboard.ctrl('g');
-    let DashboardAction::Request(review) = dashboard.key(KeyCode::Char('R')) else {
-        panic!("selection cannot mark Unread reviewed");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Char('R')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let review = only_request(dashboard.drain_outbox());
     assert_eq!(
         review.request,
         Request::MarkReviewed {
@@ -255,9 +259,11 @@ fn attention_live_status_and_titles_refresh_without_reordering_or_reviewing() {
     );
     dashboard.ctrl('u');
     dashboard.event_action(Event::Paste("new highlighted title".into()));
-    let DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
-        panic!("ranked destination request");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let request = only_request(dashboard.drain_outbox());
     assert!(
         matches!(&request.request, Request::SetView { view } if view.focused == Some(SessionId(8)))
     );
@@ -267,9 +273,11 @@ fn attention_live_status_and_titles_refresh_without_reordering_or_reviewing() {
         .draw(&mut Terminal::new(TestBackend::new(88, 38)).unwrap())
         .unwrap();
     dashboard.ctrl('g');
-    let DashboardAction::Request(review) = dashboard.key(KeyCode::Char('R')) else {
-        panic!("Unread must remain reviewable after opening and selection");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Char('R')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let review = only_request(dashboard.drain_outbox());
     assert_eq!(
         review.request,
         Request::MarkReviewed {
@@ -429,9 +437,11 @@ fn attention_maximum_population_offscreen_filter_and_compact_duplicate_identity(
         assert!(text.contains("OK") || text.contains("Open"));
     }
     dashboard.event_action(Event::Paste("nEeDlE #50".into()));
-    let DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
-        panic!("last of49 eligible agents remains reachable");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let request = only_request(dashboard.drain_outbox());
     assert!(
         matches!(&request.request, Request::SetView { view } if view.focused == Some(SessionId(50)))
     );

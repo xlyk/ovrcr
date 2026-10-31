@@ -27,6 +27,17 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+impl Dashboard {
+    pub(super) fn drain_one_request(&mut self) -> Option<crate::protocol::ClientMessage> {
+        let mut requests = self.drain_outbox();
+        assert!(
+            requests.len() <= 1,
+            "expected at most one request: {requests:?}"
+        );
+        requests.pop()
+    }
+}
+
 #[test]
 fn sidebar_maps_each_line_to_its_visible_tree_row() {
     use super::TreeRow;
@@ -1013,10 +1024,10 @@ fn failed_history_copy_writer_preserves_selection_for_retry() {
         assert_eq!(view.anchor, Some(HistoryCopyPoint { row: 0, col: 0 }));
         assert!(view.copy_completion.is_none());
     }
-    let retry = match dashboard.key(KeyCode::Char('y')) {
-        super::DashboardAction::Request(request) => request,
-        action => panic!("expected writer retry request, got {action:?}"),
-    };
+    dashboard.key(KeyCode::Char('y'));
+    let retry = dashboard
+        .drain_one_request()
+        .expect("expected writer retry request");
     let follow_up = dashboard.handle_server_message(ServerMessage::Response {
         request_id: retry.request_id,
         response: Response::HistoryRows(HistoryRows {
@@ -2177,7 +2188,6 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
 
 #[test]
 fn ready_sound_action_is_opt_in_and_discoverable() {
-    use super::DashboardAction;
     let mut dashboard = Dashboard::new(TerminalSize {
         rows: 24,
         cols: 120,
@@ -2191,8 +2201,8 @@ fn ready_sound_action_is_opt_in_and_discoverable() {
     };
     assert!(names(&dashboard).contains(&("S".into(), "Enable ready sound".into())));
     assert!(matches!(
-        press_setting(&mut dashboard, 'S'),
-        DashboardAction::Request(_)
+        press_setting(&mut dashboard, 'S').request,
+        Request::SetSetting { .. }
     ));
     assert!(names(&dashboard).contains(&("S".into(), "Disable ready sound".into())));
     assert!(
@@ -2226,14 +2236,13 @@ fn ready_sound_action_is_opt_in_and_discoverable() {
 
 #[test]
 fn desktop_notification_action_is_opt_in_and_discoverable() {
-    use super::DashboardAction;
     let mut dashboard = Dashboard::new(TerminalSize {
         rows: 24,
         cols: 120,
     });
     assert!(matches!(
-        press_setting(&mut dashboard, 'N'),
-        DashboardAction::Request(_)
+        press_setting(&mut dashboard, 'N').request,
+        Request::SetSetting { .. }
     ));
     let hints = super::keymap::keymap(&dashboard);
     assert!(
@@ -2243,8 +2252,8 @@ fn desktop_notification_action_is_opt_in_and_discoverable() {
             .any(|hint| { hint.name == "Disable desktop notifications" && hint.key == "N" })
     );
     assert!(matches!(
-        press_setting(&mut dashboard, 'N'),
-        DashboardAction::Request(_)
+        press_setting(&mut dashboard, 'N').request,
+        Request::SetSetting { .. }
     ));
     let hints = super::keymap::keymap(&dashboard);
     assert!(
@@ -2966,7 +2975,6 @@ fn binding_named(dashboard: &Dashboard, key: &str) -> super::keymap::KeyBinding 
 
 #[test]
 fn agent_confirmation_enters_terminal_only_after_complete_acknowledgement() {
-    use crate::DashboardAction;
     use crate::protocol::{Request, Response, ServerMessage, SessionKind, SessionPhase};
     for cancel in 0..3 {
         let mut dashboard = keymap_dashboard(SessionPhase::Running);
@@ -2978,7 +2986,10 @@ fn agent_confirmation_enters_terminal_only_after_complete_acknowledgement() {
             .sessions
             .push(agent);
         dashboard.key(KeyCode::Char('s'));
-        let DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
+        let Some(request) = ({
+            dashboard.key(KeyCode::Enter);
+            dashboard.drain_one_request()
+        }) else {
             panic!("confirmation must request a view, never PTY bytes");
         };
         let Request::SetView { view } = request.request else {
@@ -3424,15 +3435,19 @@ pub(super) fn settings_reading(settings: super::settings::Settings) -> ServerMes
 
 /// Press `N` or `S` in Browse and answer as the Server does: save, publish
 /// the new reading, then acknowledge. Returns what the key produced.
-pub(super) fn press_setting(dashboard: &mut Dashboard, key: char) -> super::DashboardAction {
+pub(super) fn press_setting(
+    dashboard: &mut Dashboard,
+    key: char,
+) -> crate::protocol::ClientMessage {
     if dashboard.settings_report.is_none() {
         dashboard.handle_server_message(settings_reading(dashboard.settings.clone()));
     }
-    let action = dashboard.key(KeyCode::Char(key));
-    if let super::DashboardAction::Request(crate::protocol::ClientMessage {
+    dashboard.key(KeyCode::Char(key));
+    let request = dashboard.drain_one_request().expect("setting request");
+    if let crate::protocol::ClientMessage {
         request_id,
         request: Request::SetSetting { path, value },
-    }) = &action
+    } = &request
     {
         let mut settings = dashboard.settings.clone();
         let on = value.as_deref() == Some("true");
@@ -3447,13 +3462,14 @@ pub(super) fn press_setting(dashboard: &mut Dashboard, key: char) -> super::Dash
             response: Response::Ok,
         });
     }
-    action
+    request
 }
 
 /// The `SetSetting` a key produced, as `(request id, path, value)`.
-fn set_setting(action: super::DashboardAction) -> (u64, String, Option<String>) {
-    match action {
-        super::DashboardAction::Request(crate::protocol::ClientMessage {
+fn set_setting(dashboard: &mut Dashboard, key: char) -> (u64, String, Option<String>) {
+    dashboard.key(KeyCode::Char(key));
+    match dashboard.drain_one_request() {
+        Some(crate::protocol::ClientMessage {
             request_id,
             request: Request::SetSetting { path, value },
         }) => (request_id, path, value),
@@ -3478,7 +3494,7 @@ fn automatic_local_terminal_binding_asks_the_server_and_follows_its_reading() {
         ),
     ] {
         let before = dashboard.settings.automatic_local_terminals;
-        let (_, path, sent) = set_setting(dashboard.key(KeyCode::Char('L')));
+        let (_, path, sent) = set_setting(&mut dashboard, 'L');
         assert_eq!(path, AutomaticLocalTerminals::KEY);
         assert_eq!(sent.as_deref(), Some(value));
         assert_eq!(
@@ -3495,7 +3511,7 @@ fn automatic_local_terminal_binding_asks_the_server_and_follows_its_reading() {
         );
     }
     // A refused save is the footer error and leaves the setting.
-    let (request_id, ..) = set_setting(dashboard.key(KeyCode::Char('L')));
+    let (request_id, ..) = set_setting(&mut dashboard, 'L');
     dashboard.handle_server_message(ServerMessage::Response {
         request_id,
         response: Response::Error {
@@ -3524,12 +3540,12 @@ fn alert_toggles_ask_the_server_and_apply_only_its_reading() {
         cols: 120,
     });
     dashboard.handle_server_message(settings_reading(dashboard.settings.clone()));
-    let (_, path, value) = set_setting(dashboard.key(KeyCode::Char('N')));
+    let (_, path, value) = set_setting(&mut dashboard, 'N');
     assert_eq!(
         (path.as_str(), value.as_deref()),
         ("desktop_notifications", Some("true"))
     );
-    let (_, path, value) = set_setting(dashboard.key(KeyCode::Char('S')));
+    let (_, path, value) = set_setting(&mut dashboard, 'S');
     assert_eq!(
         (path.as_str(), value.as_deref()),
         ("ready_sound", Some("true"))
@@ -3552,9 +3568,9 @@ fn alert_toggles_ask_the_server_and_apply_only_its_reading() {
     assert_eq!(dashboard.alert_channels(), 0b11);
 
     // With both on, the toggles ask for off.
-    let (_, _, value) = set_setting(dashboard.key(KeyCode::Char('N')));
+    let (_, _, value) = set_setting(&mut dashboard, 'N');
     assert_eq!(value.as_deref(), Some("false"));
-    let (request_id, _, value) = set_setting(dashboard.key(KeyCode::Char('S')));
+    let (request_id, _, value) = set_setting(&mut dashboard, 'S');
     assert_eq!(value.as_deref(), Some("false"));
     dashboard.handle_server_message(ServerMessage::Response {
         request_id,
@@ -4021,9 +4037,10 @@ fn assigned_child_focus_stays_passive_and_explicit_actions_share_the_keymap() {
         summary
     );
     assert!(dashboard.input_request(b"FORBIDDEN".to_vec(), 80).is_none());
-    let super::DashboardAction::Request(request) =
-        dashboard.run(super::keymap::Action::TakeControl)
-    else {
+    let Some(request) = ({
+        dashboard.run(super::keymap::Action::TakeControl);
+        dashboard.drain_one_request()
+    }) else {
         panic!("take control must be explicit request");
     };
     assert!(matches!(
@@ -4185,13 +4202,15 @@ fn operator_hub_opens_without_terminal_input_and_paste_never_submits() {
         DashboardAction::None,
         "o must open the native Operator hub"
     );
+    dashboard.drain_outbox();
     let action = dashboard.event_action(Event::Paste("first\nsecond".into()));
     assert!(
-        !matches!(
-            action,
-            DashboardAction::PtyBytes(_) | DashboardAction::Request(_)
-        ),
+        !matches!(action, DashboardAction::PtyBytes(_)),
         "paste only edits a native draft"
+    );
+    assert!(
+        dashboard.drain_outbox().is_empty(),
+        "draft paste must not publish a request"
     );
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
     dashboard.draw(&mut terminal).unwrap();

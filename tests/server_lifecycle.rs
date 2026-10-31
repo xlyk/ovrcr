@@ -19364,11 +19364,13 @@ fn dashboard_hello_carries_the_servers_settings_and_toggles_save_through_the_req
         ('N', "desktop_notifications = true\n"),
         ('L', "automatic_local_terminals = \"on\"\n"),
     ] {
-        let ovrcr::tui::DashboardAction::Request(message) =
-            dashboard.key(crossterm::event::KeyCode::Char(key))
-        else {
-            panic!("{key} sent no request");
-        };
+        assert_eq!(
+            dashboard.key(crossterm::event::KeyCode::Char(key)),
+            ovrcr::tui::DashboardAction::Redraw
+        );
+        let mut requests = dashboard.drain_outbox();
+        assert_eq!(requests.len(), 1, "{key} sent no unique request");
+        let message = requests.pop().unwrap();
         assert!(
             matches!(message.request, Request::SetSetting { .. }),
             "{key}: {:?}",

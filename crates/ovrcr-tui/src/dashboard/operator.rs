@@ -2317,6 +2317,10 @@ mod tests {
         d.event_action(Event::Paste("e\u{301}界".into()));
         d.key(KeyCode::Left);
         d.key(KeyCode::Backspace);
+        assert!(
+            d.drain_outbox().is_empty(),
+            "draft paste must not publish a request"
+        );
         d.key_action(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
         assert_eq!(d.operator.quick.as_ref().unwrap().text, "\n界");
         d.key(KeyCode::Esc);
@@ -4200,7 +4204,7 @@ mod tests {
         let (mut d, _) = setup();
         assert!(!matches!(
             d.event_action(Event::Paste("one\r\n界e\u{301}\u{1b}[31m".into())),
-            DashboardAction::PtyBytes(_) | DashboardAction::Request(_)
+            DashboardAction::PtyBytes(_)
         ));
         d.key_action(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
         d.key(KeyCode::Char('z'));

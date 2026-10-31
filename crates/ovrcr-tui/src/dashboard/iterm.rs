@@ -55,10 +55,11 @@ impl Dashboard {
         let request_id = self.error_owning_request_id();
         self.desktop.iterm.request = Some(request_id);
         self.show_notice("Preparing current Dashboard iTerm setup");
-        DashboardAction::Request(ClientMessage {
+        self.enqueue_request(ClientMessage {
             request_id,
             request: Request::PrepareITermFocus,
-        })
+        });
+        DashboardAction::Redraw
     }
 
     pub(super) fn handle_iterm_setup_message(&mut self, message: &ServerMessage) -> bool {
@@ -216,10 +217,10 @@ mod tests {
         assert!(!dashboard.settings.desktop_notifications);
         assert!(!dashboard.settings.ready_sound);
         dashboard.settings.iterm_focus = true;
-        let action = dashboard.begin_iterm_setup();
+        assert_eq!(dashboard.begin_iterm_setup(), DashboardAction::Redraw);
         assert!(matches!(
-            action,
-            DashboardAction::Request(ClientMessage {
+            dashboard.drain_one_request(),
+            Some(ClientMessage {
                 request: Request::PrepareITermFocus,
                 ..
             })
