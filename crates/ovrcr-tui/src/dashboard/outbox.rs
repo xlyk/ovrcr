@@ -1,5 +1,6 @@
-//! Every request the Dashboard wants sent, in the order it decided to send it. The event
-//! loop drains it once per pass; nothing else holds a request in a private slot.
+//! Fully formed steady-state Dashboard requests have one queue and leave it in order.
+//! Existing event/message cutpoints drain it; fresh PTY input is authorized after that
+//! drain, and startup retains its reserved handshake requests outside this queue.
 use ovrcr_protocol::ClientMessage;
 use std::collections::VecDeque;
 

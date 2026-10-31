@@ -209,13 +209,15 @@ impl Dashboard {
     /// Ask the Server to save one setting. Nothing changes here until the
     /// Server's next reading arrives; a refusal shows as the footer error.
     fn set_setting(&mut self, path: &str, value: String) -> DashboardAction {
-        DashboardAction::Request(ClientMessage {
+        let message = ClientMessage {
             request_id: self.error_owning_request_id(),
             request: Request::SetSetting {
                 path: path.into(),
                 value: Some(value),
             },
-        })
+        };
+        self.enqueue_request(message);
+        DashboardAction::Redraw
     }
 
     /// Footer notice for an alert or automatic-terminal setting a new Server
@@ -2518,8 +2520,8 @@ mod tests {
     fn ready_sound_toggle_is_independent_and_only_disabling_both_cancels_pending() {
         let mut d = dashboard();
         assert!(matches!(
-            super::super::tests::press_setting(&mut d, 'S'),
-            DashboardAction::Request(_)
+            super::super::tests::press_setting(&mut d, 'S').request,
+            Request::SetSetting { .. }
         ));
         assert!(d.settings.ready_sound && d.settings.desktop_notifications);
         assert_eq!(d.desktop.notice.as_deref(), Some("Ready sound: on"));
@@ -2929,7 +2931,10 @@ printf '{{"schema":{},"server_wire":{},"status":"%s"%s}}\n' "$status" "$extra"
             2,
             "unchanged accepted settings never reauthorize"
         );
-        let DashboardAction::Request(request) = d.key(KeyCode::Char('N')) else {
+        let Some(request) = ({
+            d.key(KeyCode::Char('N'));
+            d.drain_one_request()
+        }) else {
             panic!("expected Server save");
         };
         assert!(

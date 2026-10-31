@@ -83,9 +83,11 @@ fn agent_search_excludes_current_shells_and_inactive_agents_across_projects() {
     assert!(!rows.contains("(#5)"));
     dashboard.event_action(Event::Paste("SPACELIFT progress AGENT-title-3".into()));
     assert!(!agent_results(&dashboard).contains("(#2)"));
-    let DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
-        panic!("selection must request the existing view");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let request = only_request(dashboard.drain_outbox());
     assert!(
         matches!(&request.request, Request::SetView { view } if view.focused == Some(SessionId(3)))
     );
@@ -133,9 +135,11 @@ fn agent_search_snapshot_disables_paused_and_replaced_runs_without_substitution(
             "a disabled candidate cannot silently revive"
         );
         dashboard.key(KeyCode::Down);
-        let DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
-            panic!("another deliberate selection should succeed");
-        };
+        assert_eq!(
+            dashboard.key(KeyCode::Enter),
+            ovrcr::tui::DashboardAction::Redraw
+        );
+        let request = only_request(dashboard.drain_outbox());
         assert!(
             matches!(request.request, Request::SetView { view } if view.focused == Some(SessionId(3)))
         );
@@ -214,9 +218,11 @@ fn confirm_agent(dashboard: &mut Dashboard, id: u64) -> DashboardAction {
 #[test]
 fn agent_search_one_enter_waits_for_matching_screens_and_final_ack() {
     let mut dashboard = agents_dashboard();
-    let DashboardAction::Request(request) = confirm_agent(&mut dashboard, 3) else {
-        panic!("agent view request");
-    };
+    assert_eq!(
+        confirm_agent(&mut dashboard, 3),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let request = only_request(dashboard.drain_outbox());
     let Request::SetView { view } = &request.request else {
         panic!("SetView");
     };
@@ -297,13 +303,16 @@ fn agent_search_one_enter_waits_for_matching_screens_and_final_ack() {
 #[test]
 fn agent_search_cancelled_history_begin_does_not_block_new_typing() {
     let mut dashboard = agents_dashboard();
-    assert!(matches!(
-        dashboard.key(KeyCode::PageUp),
-        DashboardAction::Request(ClientMessage {
-            request: Request::HistoryBegin { .. },
-            ..
-        })
-    ));
+    assert!({
+        let _ = dashboard.key(KeyCode::PageUp);
+        matches!(
+            dashboard.drain_outbox().as_slice(),
+            [ClientMessage {
+                request: Request::HistoryBegin { .. },
+                ..
+            }]
+        )
+    });
     let action = confirm_agent(&mut dashboard, 3);
     pump_view(&mut dashboard, action);
     assert_eq!(
@@ -316,9 +325,11 @@ fn agent_search_cancelled_history_begin_does_not_block_new_typing() {
 #[test]
 fn agent_search_browse_cancels_auto_entry_but_a_fresh_choice_can_succeed() {
     let mut dashboard = agents_dashboard();
-    let DashboardAction::Request(request) = confirm_agent(&mut dashboard, 2) else {
-        panic!("agent view request");
-    };
+    assert_eq!(
+        confirm_agent(&mut dashboard, 2),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let request = only_request(dashboard.drain_outbox());
     dashboard.ctrl('g');
     acknowledge_all_view_targets(&mut dashboard, request);
     assert!(rendered_footer(&dashboard, 120).contains("BROWSE"));
@@ -335,9 +346,11 @@ fn agent_search_browse_cancels_auto_entry_but_a_fresh_choice_can_succeed() {
 fn agent_search_late_lifecycle_completion_cannot_reenable_typing() {
     for change in 0..3 {
         let mut dashboard = agents_dashboard();
-        let DashboardAction::Request(request) = confirm_agent(&mut dashboard, 2) else {
-            panic!("agent view request");
-        };
+        assert_eq!(
+            confirm_agent(&mut dashboard, 2),
+            ovrcr::tui::DashboardAction::Redraw
+        );
+        let request = only_request(dashboard.drain_outbox());
         let mut hierarchy = agents_hierarchy();
         let sessions = &mut hierarchy.projects[1].workspaces[0].sessions;
         match change {
@@ -360,9 +373,11 @@ fn agent_search_late_lifecycle_completion_cannot_reenable_typing() {
 #[test]
 fn agent_search_rapid_choices_coalesce_and_require_a_fresh_a_to_b_to_a_view() {
     let mut dashboard = agents_dashboard();
-    let DashboardAction::Request(first) = confirm_agent(&mut dashboard, 2) else {
-        panic!("first view request");
-    };
+    assert_eq!(
+        confirm_agent(&mut dashboard, 2),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let first = only_request(dashboard.drain_outbox());
     assert_eq!(confirm_agent(&mut dashboard, 3), DashboardAction::Redraw);
     assert_eq!(confirm_agent(&mut dashboard, 2), DashboardAction::Redraw);
     let Request::SetView { view } = &first.request else {
@@ -403,9 +418,11 @@ fn wide_agent_pair() -> Dashboard {
 #[test]
 fn agent_search_focus_only_round_trip_requires_a_fresh_view() {
     let mut dashboard = wide_agent_pair();
-    let DashboardAction::Request(first) = confirm_agent(&mut dashboard, 3) else {
-        panic!("first focus-only view");
-    };
+    assert_eq!(
+        confirm_agent(&mut dashboard, 3),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let first = only_request(dashboard.drain_outbox());
     let Request::SetView { view } = &first.request else {
         panic!("SetView");
     };
@@ -442,9 +459,11 @@ fn agent_search_focus_only_round_trip_requires_a_fresh_view() {
 fn agent_search_sibling_updates_superseding_the_view_cancel_pending_typing() {
     for replace_run in [true, false] {
         let mut dashboard = wide_agent_pair();
-        let DashboardAction::Request(first) = confirm_agent(&mut dashboard, 3) else {
-            panic!("two-agent view");
-        };
+        assert_eq!(
+            confirm_agent(&mut dashboard, 3),
+            ovrcr::tui::DashboardAction::Redraw
+        );
+        let first = only_request(dashboard.drain_outbox());
         let Request::SetView { view } = &first.request else {
             panic!("SetView");
         };
@@ -491,12 +510,8 @@ fn agent_search_sibling_updates_superseding_the_view_cancel_pending_typing() {
         assert!(rendered_footer(&dashboard, 120).contains("cancelled"));
         assert_eq!(dashboard.key(KeyCode::Char('z')), DashboardAction::None);
         let action = confirm_agent(&mut dashboard, 1);
-        let DashboardAction::Request(retry) = action else {
-            panic!(
-                "fresh choice after cancellation: {action:?}\n{}",
-                palette_text(&dashboard)
-            );
-        };
+        assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
+        let retry = only_request(dashboard.drain_outbox());
         acknowledge_all_view_targets(&mut dashboard, retry);
         assert_eq!(
             dashboard.key(KeyCode::Char('z')),
@@ -509,9 +524,11 @@ fn agent_search_sibling_updates_superseding_the_view_cancel_pending_typing() {
 fn agent_search_failed_or_incomplete_view_cancels_auto_entry() {
     for incomplete in [false, true] {
         let mut dashboard = agents_dashboard();
-        let DashboardAction::Request(request) = confirm_agent(&mut dashboard, 2) else {
-            panic!("view request");
-        };
+        assert_eq!(
+            confirm_agent(&mut dashboard, 2),
+            ovrcr::tui::DashboardAction::Redraw
+        );
+        let request = only_request(dashboard.drain_outbox());
         let response = if incomplete {
             Response::Ok
         } else {
@@ -524,9 +541,7 @@ fn agent_search_failed_or_incomplete_view_cancels_auto_entry() {
             request_id: request.request_id,
             response,
         });
-        for request in follow {
-            pump_view(&mut dashboard, DashboardAction::Request(request));
-        }
+        pump_view_requests(&mut dashboard, follow);
         open_agents(&mut dashboard);
         assert!(
             palette_text(&dashboard).contains("Agents"),
@@ -583,9 +598,11 @@ fn agent_search_filtered_title_change_keeps_selected_identity() {
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
         hierarchy,
     )));
-    let DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
-        panic!("original destination must remain selectable");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let request = only_request(dashboard.drain_outbox());
     assert!(
         matches!(request.request, Request::SetView { view } if view.focused == Some(SessionId(3))),
         "title update must not choose its neighbor"
@@ -607,9 +624,7 @@ fn agent_search_removal_fallback_disables_newly_focused_candidate() {
     let messages = dashboard.handle_server_message(ServerMessage::Event(
         ServerEvent::HierarchyChanged(hierarchy),
     ));
-    for message in messages {
-        pump_view(&mut dashboard, DashboardAction::Request(message));
-    }
+    pump_view_requests(&mut dashboard, messages);
     assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
     let text = palette_text(&dashboard);
     assert!(
@@ -627,6 +642,8 @@ fn agent_search_is_reachable_from_view_menu_and_full_palette() {
     assert!(palette_text(&dashboard).contains("Agents"));
     dashboard.key(KeyCode::Esc);
     dashboard.key(KeyCode::Char(':'));
+    let inspect = only_request(dashboard.drain_outbox());
+    assert_eq!(inspect.request, Request::Inspect);
     dashboard.event_action(Event::Paste("Agents".into()));
     dashboard.key(KeyCode::Enter);
     let text = palette_text(&dashboard);
@@ -643,9 +660,11 @@ fn agent_search_reaches_collapsed_workspace() {
     dashboard.key(KeyCode::Enter);
     open_agents(&mut dashboard);
     dashboard.event_action(Event::Paste("agent-title-1".into()));
-    let DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
-        panic!("collapsed agent remains searchable");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let request = only_request(dashboard.drain_outbox());
     assert!(
         matches!(request.request, Request::SetView { view } if view.focused == Some(SessionId(1)))
     );
@@ -684,9 +703,11 @@ fn agent_search_reaches_hidden_sidebar_and_reuses_other_pane() {
     dashboard.key(KeyCode::Char('b'));
     open_agents(&mut dashboard);
     dashboard.event_action(Event::Paste("agent-title-1".into()));
-    let DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
-        panic!("other-pane choice must request a focus change");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let request = only_request(dashboard.drain_outbox());
     assert!(
         matches!(&request.request, Request::SetView { view } if view.focused == Some(SessionId(1)) && view.panes.len() == 2)
     );

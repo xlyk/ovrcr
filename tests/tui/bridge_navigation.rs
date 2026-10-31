@@ -388,7 +388,8 @@ fn bridge_navigation_discards_unsent_palette_draft_and_ignores_submitted_complet
     submitted.key(KeyCode::Char('n'));
     let mut request = None;
     for _ in 0..6 {
-        if let DashboardAction::Request(message) = submitted.key(KeyCode::Enter) {
+        let _ = submitted.key(KeyCode::Enter);
+        if let Some(message) = optional_request(submitted.drain_outbox()) {
             request = Some(message);
             break;
         }
@@ -434,9 +435,11 @@ fn bridge_navigation_discards_unsent_palette_draft_and_ignores_submitted_complet
 #[test]
 fn bridge_navigation_cancels_pending_history_and_releases_late_original_capture() {
     let mut dashboard = ready_dashboard();
-    let DashboardAction::Request(begin) = dashboard.key(KeyCode::PageUp) else {
-        panic!("real History entry must request a snapshot");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::PageUp),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let begin = only_request(dashboard.drain_outbox());
     assert_eq!(
         begin.request,
         Request::HistoryBegin {
@@ -483,9 +486,11 @@ fn bridge_navigation_cancels_pending_history_and_releases_late_original_capture(
 fn bridge_navigation_releases_active_history_and_rejects_late_original_rows() {
     for target in [SessionId(1), SessionId(3)] {
         let mut dashboard = ready_dashboard();
-        let DashboardAction::Request(begin) = dashboard.key(KeyCode::PageUp) else {
-            panic!("History entry must use the production snapshot request");
-        };
+        assert_eq!(
+            dashboard.key(KeyCode::PageUp),
+            ovrcr::tui::DashboardAction::Redraw
+        );
+        let begin = only_request(dashboard.drain_outbox());
         let pages = dashboard.handle_server_message(ServerMessage::Response {
             request_id: begin.request_id,
             response: Response::HistoryOpened(HistoryOpened {

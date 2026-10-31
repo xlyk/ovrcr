@@ -609,9 +609,8 @@ fn wheel_over_a_pane_without_tracking_opens_history_at_the_tail() {
     let area = Rect::new(0, 0, 120, 40);
     let inner = terminal_rect(&dashboard, area);
     let action = dashboard.mouse_action(click_in(inner, MouseEventKind::ScrollUp, 2, 3), area);
-    let ovrcr::tui::DashboardAction::Request(begin) = action else {
-        panic!("expected history begin, got {action:?}");
-    };
+    assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
+    let begin = only_request(dashboard.drain_outbox());
     assert_eq!(
         begin.request,
         Request::HistoryBegin {
@@ -636,11 +635,11 @@ fn wheel_down_at_newest_row_returns_to_live() {
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
     let inner = terminal_rect(&dashboard, area);
-    let ovrcr::tui::DashboardAction::Request(begin) =
-        dashboard.mouse_action(click_in(inner, MouseEventKind::ScrollUp, 2, 3), area)
-    else {
-        panic!("expected history begin");
-    };
+    assert_eq!(
+        dashboard.mouse_action(click_in(inner, MouseEventKind::ScrollUp, 2, 3), area),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let begin = only_request(dashboard.drain_outbox());
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: begin.request_id,
         response: Response::HistoryOpened(history_opened(80)),
@@ -649,12 +648,16 @@ fn wheel_down_at_newest_row_returns_to_live() {
     assert!(
         matches!(
             action,
-            ovrcr::tui::DashboardAction::EnterBrowse
-                | ovrcr::tui::DashboardAction::Request(_)
-                | ovrcr::tui::DashboardAction::RequestBatch(_)
+            ovrcr::tui::DashboardAction::EnterBrowse | ovrcr::tui::DashboardAction::Redraw
         ),
         "{action:?}"
     );
+    let requests = dashboard.drain_outbox();
+    assert!(!requests.is_empty());
+    assert!(requests.iter().all(|message| matches!(
+        message.request,
+        Request::HistoryEnd { .. } | Request::HistoryPage { .. }
+    )));
 }
 
 #[test]

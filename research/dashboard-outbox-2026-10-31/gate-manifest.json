@@ -1,0 +1,300 @@
+{
+  "branch": "codex/384-dashboard-outbox",
+  "base": "07b792fb9854e38db671ec51fc81ecee25d70907",
+  "macos": {
+    "typecheck": {
+      "log": "15-workspace-check.log",
+      "exit": 0
+    },
+    "fmt": {
+      "log": "48-final-fmt.log",
+      "exit": 0
+    },
+    "tui": {
+      "log": "14-root-tui.log",
+      "exit": 0,
+      "passed": 330
+    },
+    "workspace": {
+      "log": "18-macos-workspace.log",
+      "exit": 101,
+      "binaries": 53,
+      "passed": 2429,
+      "failed": 3,
+      "ignored": 32
+    },
+    "serial_owning_rerun": {
+      "log": "32-macos-startup-gui-serial.log",
+      "exit": 0,
+      "passed": 30,
+      "ignored": 2
+    },
+    "clippy": {
+      "log": "46-macos-fixture-clippy.log",
+      "exit": 0
+    },
+    "final_workspace": {
+      "log": "49-macos-workspace-final.log",
+      "exit": 101,
+      "binaries": 53,
+      "passed": 2431,
+      "failed": 1,
+      "ignored": 32,
+      "failure": "runtime listing-failure close returned Conflict instead of OwnershipUncertain; source unchanged"
+    },
+    "ci_profile": {
+      "log": "60-macos-nextest-ci.log",
+      "status": "completed",
+      "test_threads": 2,
+      "configured_retries": 2,
+      "filter": "not test(partial_resize_connection_delivers_error_before_owner_close)",
+      "recorded_retried_cases": [
+        {
+          "test": "doctor_interrupt_cleans_its_owned_version_probe_before_exit",
+          "failed_attempts": 1,
+          "passed_attempt": 2,
+          "failure": "probe readiness deadline"
+        },
+        {
+          "test": "pause_resume_dashboard_round_trip",
+          "failed_attempts": 2,
+          "passed_attempt": 3,
+          "failure": "Dashboard readiness deadline before test actions"
+        }
+      ],
+      "exit": 0,
+      "run_id": "264abf53-7a71-4ea9-9e05-d8b7a2aefe26",
+      "binaries": 53,
+      "tests_run": 2431,
+      "passed": 2431,
+      "flaky": 2,
+      "failed_attempts": 3,
+      "slow": 2,
+      "skipped": 33,
+      "elapsed_seconds": 2098.577,
+      "cargo_arguments": [
+        "nextest",
+        "run",
+        "--locked",
+        "--offline",
+        "--workspace",
+        "--all-targets",
+        "--all-features",
+        "--profile",
+        "ci",
+        "--test-threads",
+        "2",
+        "-E",
+        "not test(partial_resize_connection_delivers_error_before_owner_close)"
+      ]
+    },
+    "doc_tests": {
+      "log": "65-macos-doc.log",
+      "exit": 0,
+      "crates": 5,
+      "examples": 0,
+      "cargo_arguments": [
+        "test",
+        "--locked",
+        "--offline",
+        "--workspace",
+        "--doc"
+      ]
+    }
+  },
+  "linux": {
+    "tui": {
+      "log": "10-linux-tui.log",
+      "exit": 0,
+      "lib_passed": 321,
+      "public_integration_passed": 10
+    },
+    "workspace": {
+      "log": "50-linux-workspace-final.log",
+      "exit": 101,
+      "binaries": 52,
+      "passed": 2173,
+      "failed": 10,
+      "ignored": 30,
+      "qualified": false,
+      "runner_gaps": [
+        "SHELL unset",
+        "read-only cwd"
+      ],
+      "other_failures": [
+        "protocol preamble timeout",
+        "terminal abort before Dashboard ready"
+      ]
+    },
+    "container": {
+      "name": "ovrcr-384-linux",
+      "id": "cb7f22ecded4d2aa21f81bbddfc4ef79933d08ed365b8996efa1ba29abacd4a0",
+      "status": "removed",
+      "cleanup_receipt": "linux-runner-cleanup.json"
+    },
+    "invalid_attempts": [
+      {
+        "log": "16-linux-workspace.log",
+        "exit": 101,
+        "reason": "parallel linkers killed signal9"
+      },
+      {
+        "log": "19-linux-workspace-j1.log",
+        "exit": 137,
+        "reason": "aborted nonreaping init"
+      },
+      {
+        "log": "27-linux-workspace-init.log",
+        "exit": 143,
+        "reason": "aborted root UID permission semantics"
+      },
+      {
+        "log": "30-linux-workspace-unprivileged.log",
+        "exit": 143,
+        "reason": "aborted missing Node prerequisite"
+      }
+    ],
+    "clippy": {
+      "log": "47-linux-clippy.log",
+      "exit": 0
+    },
+    "final_workspace": {
+      "log": "57-linux-workspace-private-final.log",
+      "exit": 101,
+      "binaries": 52,
+      "passed": 2182,
+      "failed": 1,
+      "ignored": 30,
+      "test_threads": 2,
+      "failure": "copy_mode_acceptance_emits_selected_text_and_reattaches: fork-child setup/exec error-reporting abort before Dashboard readiness; errno unknown"
+    },
+    "ci_profile": {
+      "log": "64-linux-nextest-ci.log",
+      "status": "completed",
+      "test_threads": 4,
+      "configured_retries": 2,
+      "filter": "not test(partial_resize_connection_delivers_error_before_owner_close)",
+      "network_mode": "none",
+      "uid": "1000:1000",
+      "init": true,
+      "build_jobs": 1,
+      "cargo_arguments": [
+        "nextest",
+        "run",
+        "--locked",
+        "--offline",
+        "--workspace",
+        "--all-targets",
+        "--profile",
+        "ci",
+        "--test-threads",
+        "4",
+        "-E",
+        "not test(partial_resize_connection_delivers_error_before_owner_close)"
+      ],
+      "exit": 0,
+      "run_id": "5430f34b-7bab-4f45-b83d-4c21eb9100df",
+      "binaries": 52,
+      "tests_run": 2182,
+      "passed": 2182,
+      "flaky": 0,
+      "failed_attempts": 0,
+      "slow": 2,
+      "skipped": 31,
+      "elapsed_seconds": 1016.724
+    },
+    "doc_tests": {
+      "log": "61-linux-doc.log",
+      "exit": 0,
+      "crates": 5,
+      "examples": 0,
+      "cargo_arguments": [
+        "test",
+        "--locked",
+        "--offline",
+        "--workspace",
+        "--doc"
+      ]
+    },
+    "nextest_metadata_bootstrap": {
+      "failed_log": "62-linux-nextest-ci.log",
+      "exit": 102,
+      "tests_executed": 0,
+      "fetch_log": "63-linux-nextest-metadata.log",
+      "fetch_exit": 0,
+      "cache": "task-only",
+      "container_network_changed": false
+    }
+  },
+  "code_revision": "4cb02011febebf7b2da46620d80acd309a294ffa",
+  "product_revision": "4cb02011febebf7b2da46620d80acd309a294ffa",
+  "test_revision": "8a58800084ca32b9e98c083a52829e0a74c26184",
+  "gate_revision": "8a58800084ca32b9e98c083a52829e0a74c26184",
+  "fixture_correction": {
+    "commit": "8a58800084ca32b9e98c083a52829e0a74c26184",
+    "focus_logs": [
+      42,
+      43,
+      44,
+      45
+    ],
+    "each_case_passed": 1,
+    "each_case_failed": 0,
+    "each_exit": 0,
+    "scoped_standards": "PASS",
+    "scoped_spec": "PASS"
+  },
+  "cancelled_for_fixture_correction": [
+    {
+      "log": "36-macos-workspace-serial.log",
+      "exit": 137,
+      "qualified": false,
+      "cleanup": "40-macos-cancelled-gate.json"
+    },
+    {
+      "log": "39-linux-workspace-node.log",
+      "exit": 143,
+      "qualified": false,
+      "cleanup": "41-linux-fixture-reset.log",
+      "failure_bodies_captured": 2,
+      "failing_names_observed": 3,
+      "additional_body_unavailable": "client_with_wrong_protocol_version_is_refused"
+    }
+  ],
+  "source_and_configuration": {
+    "rust_and_config_diff_from_gate_revision": "empty before closeout; only docs and evidence dirty",
+    "ci_profile_modified": false,
+    "ci_filter_modified": false,
+    "test_assertions_relaxed": false,
+    "dependency_files_modified": false
+  },
+  "delivery": {
+    "local_branch": "codex/384-dashboard-outbox",
+    "push": false,
+    "pull_request": false,
+    "hosted_ci": false,
+    "merge": false
+  },
+  "qualification": "Both local Rust CI-profile runs exited 0; macOS had 2 flaky cases and 3 failed attempts, Linux no retries. Earlier direct Cargo failures remain failed. Hosted CI was not run.",
+  "code_reviews": {
+    "core": {
+      "base": "07b792fb9854e38db671ec51fc81ecee25d70907",
+      "head": "4cb02011febebf7b2da46620d80acd309a294ffa",
+      "standards": "PASS; zero blocking; optional P3 naming FYI",
+      "spec": "PASS; no findings"
+    },
+    "fixture_correction": {
+      "base": "4cb02011febebf7b2da46620d80acd309a294ffa",
+      "head": "8a58800084ca32b9e98c083a52829e0a74c26184",
+      "standards": "PASS; no new findings",
+      "spec": "PASS; no new findings"
+    }
+  },
+  "cleanup": {
+    "linux": "linux-runner-cleanup.json",
+    "native": "cleanup.json",
+    "macos_failed_ci_servers": "macos-ci-attempt-cleanup.json",
+    "unrecorded_failed_attempt_limits": "failed-attempt-cleanup-audit.md"
+  },
+  "work_diary_updated": true
+}

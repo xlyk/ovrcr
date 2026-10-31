@@ -904,6 +904,18 @@ fn public_pi_preflight_refusal_refunds_execution_but_post_spawn_failure_does_not
 
 #[test]
 fn ordinary_input_and_view_continue_while_workspace_lifecycle_is_busy() {
+    // Shell redirection creates each marker before printf writes its contents.
+    let wait_written = |path: &Path, expected: &str| {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while fs::read_to_string(path).ok().as_deref() != Some(expected) {
+            assert!(
+                Instant::now() < deadline,
+                "{} never contained {expected:?}",
+                path.display()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    };
     let live = Live::binary();
     live.ready("input-progress");
     let Response::Inventory { sessions, .. } = live.request(Request::Inspect) else {
@@ -984,7 +996,7 @@ fn ordinary_input_and_view_continue_while_workspace_lifecycle_is_busy() {
         .unwrap(),
         Response::Ok
     );
-    wait_file(&marker);
+    wait_written(&marker, "delivered");
     assert_eq!(fs::read_to_string(marker).unwrap(), "delivered");
     assert!(
         !release.exists(),
@@ -1004,7 +1016,8 @@ fn ordinary_input_and_view_continue_while_workspace_lifecycle_is_busy() {
         ),
         Some(Response::Ok)
     );
-    wait_file(&pasted);
+    wait_written(&pasted, "pasted");
+    assert_eq!(fs::read_to_string(pasted).unwrap(), "pasted");
     assert!(matches!(
         live::request_with_timeout(
             &live.socket,

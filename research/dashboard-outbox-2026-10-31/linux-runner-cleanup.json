@@ -1,0 +1,43 @@
+{
+  "container": "cb7f22ecded4d2aa21f81bbddfc4ef79933d08ed365b8996efa1ba29abacd4a0",
+  "image": "sha256:739160df66f3a3e61350015aed47a4b03de79b70c5c84a0f9aea036ed9ea595b",
+  "ownership_restore": {
+    "exit": 0,
+    "uid": 501,
+    "gid": 20,
+    "paths": [
+      "/target",
+      "/cargo/isolated"
+    ],
+    "global_registry_changed": false
+  },
+  "original_linux_test_waits": {
+    "cargo57": 101,
+    "doc61": 0,
+    "nextest64": 0
+  },
+  "stop": {
+    "exit": 0,
+    "output": "Flag --time has been deprecated, use --timeout instead\ncb7f22ecded4d2aa21f81bbddfc4ef79933d08ed365b8996efa1ba29abacd4a0\n"
+  },
+  "container_readback": {
+    "exit": 0,
+    "output": ""
+  },
+  "image_removal": {
+    "exit": 0,
+    "output": "Untagged: ovrcr-384-linux-runner:01a18fe5\nDeleted: sha256:739160df66f3a3e61350015aed47a4b03de79b70c5c84a0f9aea036ed9ea595b\n"
+  },
+  "image_readback": {
+    "exit": 1,
+    "output": "\nError response from daemon: No such image: sha256:739160df66f3a3e61350015aed47a4b03de79b70c5c84a0f9aea036ed9ea595b\n"
+  },
+  "retained_recovery_paths": [
+    "/private/tmp/ovrcr-384-evidence/linux-target",
+    "/private/tmp/ovrcr-384-evidence/linux-cargo",
+    "/private/tmp/ovrcr-384-evidence/linux-source-8a588000.tar",
+    "/private/tmp/ovrcr-384-evidence/nextest-bin"
+  ],
+  "retained_worktree": "/Users/xlyk/.codex/worktrees/architecture-survey/ovrcr",
+  "scope": "Only the task-owned container and custom image removed; no shared image prune, host source mutation, or termination signal to an unknown host process."
+}

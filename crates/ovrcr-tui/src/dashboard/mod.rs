@@ -42,7 +42,7 @@ pub(crate) use state::{HistoryView, PendingHistoryBegin};
 
 use crate::task_tui::TasksView;
 use crossterm::event::MouseEvent;
-use ovrcr_protocol::{ClientMessage, HierarchySnapshot, SessionId, TerminalSize};
+use ovrcr_protocol::{HierarchySnapshot, SessionId, TerminalSize};
 use ovrcr_terminal::vt100;
 use ratatui::layout::Rect;
 use std::collections::{HashSet, VecDeque};
@@ -97,8 +97,6 @@ pub enum DashboardAction {
     EnterBrowse,
     PtyBytes(Vec<u8>),
     CopyText(String),
-    Request(ClientMessage),
-    RequestBatch(Vec<ClientMessage>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

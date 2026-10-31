@@ -1,0 +1,17 @@
+{
+  "source_base": "07b792fb9854e38db671ec51fc81ecee25d70907",
+  "source_branch": "codex/384-dashboard-outbox",
+  "source_state": "Uncommitted Outbox implementation; production frozen before native build and proof. Root owns final revision receipt.",
+  "binaries": [
+    {
+      "path": "/Users/xlyk/.codex/worktrees/architecture-survey/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr",
+      "bytes": 115801432,
+      "sha256": "9dbc6800af10c451ca8e24a3944b404943742758e31b9b8d9a78c64c8a68d8de"
+    },
+    {
+      "path": "/Users/xlyk/.codex/worktrees/architecture-survey/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui",
+      "bytes": 46009848,
+      "sha256": "5baec863e40487b648098598b2e6c2877f4637dd44f3720e515d13a10d3e6a10"
+    }
+  ]
+}

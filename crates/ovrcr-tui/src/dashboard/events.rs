@@ -142,10 +142,11 @@ impl Dashboard {
         self.open_details(super::quota::Details::Events);
         let request_id = self.next_request_id();
         self.events = View::loading(request_id);
-        DashboardAction::Request(ClientMessage {
+        self.enqueue_request(ClientMessage {
             request_id,
             request: Request::Events { follow: false },
-        })
+        });
+        DashboardAction::Redraw
     }
 
     pub(super) fn close_events(&mut self) {
