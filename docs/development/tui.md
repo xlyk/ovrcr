@@ -27,6 +27,20 @@ that blocks shutdown.
 Readiness is derived by `ViewHandshake::is_ready`; pane changes go through `retarget(PaneChange)`; outbound requests go through the outbox and are drained by `drain_outbox`. Session status — the glyph and the process, paused, activity, Unread and elapsed clauses, with an Unread replacing a header line outright — is decided once by `dashboard::status::SessionStatus`, which the sidebar row, both pane headers and the spinner redraw cadence read; each surface still arranges and clips the clauses for its own width, and readiness itself is still decided in `dashboard::ready`. The Ready checkmark is drawn only while that response is Unread; after review the glyph is blank and the activity clause may still say ready. The sidebar agent label appends the current model after a colon when one is known. A session row is one or two sidebar lines: `render::tree_row_heights` decides, for the whole visible tree at the current sidebar width, whether every agent label fits inline or every one takes a second line, and rendering, scrolling, selection visibility and mouse hit-testing all read those heights through `tree_line_at`, `tree_line_count` and `tree_row_start`, so the extra line always resolves to the same session.
 Key bindings live in one table, `dashboard::keymap`: it holds each key's label, action and the reason it is unavailable, and `key_action`, the footer, the key popup and the palette all read it rather than repeating a guard.
 
+The Outbox owns every fully formed steady-state request. Producers enqueue once;
+Dashboard actions carry only local effects or fresh PTY bytes. `drain_outbox`
+schedules due History work after requests already queued. Producers that formerly
+carried a request in an action schedule due History before enqueueing that request,
+preserving cleanup → History page → request order. Deferred palette submission
+keeps its existing request-before-History order through the ordinary queued path.
+History key/cursor/copy paths
+also keep their active scheduling points and pending-page suppression. Each Server
+message drains its follow-ups before the next message, except ignored responses;
+navigation keeps its bounded input-discard break. Fresh PTY bytes are authorized
+only after queued requests flush; captured cleanup keeps its original target and
+authority. Clipboard effects retain the input boundary, and startup keeps reserved
+request IDs 1/2 and its interleaved handshake outside this steady-state ownership.
+
 `Ctrl-o` is reserved globally by `keymap::is_operator_quick_key`. Key dispatch,
 event dispatch before Tasks, and the production mouse path give the Hub-owned
 quick form priority. The form layers above existing views without taking their

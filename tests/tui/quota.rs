@@ -487,12 +487,9 @@ fn quota_details_show_off_sentence_reason_local_times_and_next_check() {
 }
 
 fn palette_request(dashboard: &mut Dashboard, query: &str) -> ClientMessage {
-    dashboard.key(KeyCode::Char(':'));
-    dashboard.event_action(Event::Paste(query.into()));
-    match dashboard.key(KeyCode::Enter) {
-        DashboardAction::Request(message) => message,
-        other => panic!("{query} sent no request: {other:?}"),
-    }
+    palette_search(dashboard, query);
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    only_request(dashboard.drain_outbox())
 }
 
 #[test]
@@ -528,6 +525,8 @@ fn palette_refresh_quota_sends_refresh_and_shows_cooldown_in_footer() {
 fn palette_enable_usage_asks_the_server_and_applies_nothing() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char(':'));
+    let inspect = only_request(dashboard.drain_outbox());
+    assert_eq!(inspect.request, Request::Inspect);
     dashboard.event_action(Event::Paste("enable native".into()));
     let listed = sidebar_rows(&dashboard, 120, NOW).join("\n");
     assert!(listed.contains("Enable native account usage"), "{listed}");
@@ -552,6 +551,8 @@ fn palette_enable_usage_asks_the_server_and_applies_nothing() {
     // Once the Server republishes the setting on, the command is gone.
     publish_quota(&mut dashboard, mixed_snapshot());
     dashboard.key(KeyCode::Char(':'));
+    let inspect = only_request(dashboard.drain_outbox());
+    assert_eq!(inspect.request, Request::Inspect);
     dashboard.event_action(Event::Paste("enable native".into()));
     let rows = sidebar_rows(&dashboard, 120, NOW).join("\n");
     assert!(!rows.contains("Enable native account usage"), "{rows}");

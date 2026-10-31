@@ -1486,10 +1486,73 @@ fn claude_auth_status_sets_the_claude_row_and_keeps_no_identifier() {
 fn no_claude_on_path_is_unavailable_with_its_reason() {
     let fixture = live::Live::idle().bounded();
     fixture.start_binary_env(&[("PATH", std::ffi::OsStr::new("/usr/bin:/bin"))]);
-    let mut socket = attach(&fixture);
-    let snapshot = quota_until(&mut socket, "no Claude row at hello", |snapshot| {
-        snapshot.claude.state == QuotaState::Unavailable
-    });
+    let retry_deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let mut early_quota = Vec::new();
+    let mut socket = 'attach: loop {
+        early_quota.clear();
+        let mut socket = connect_server(&fixture.socket).unwrap();
+        write_frame(
+            &mut socket,
+            &ClientMessage {
+                request_id: 1,
+                request: Request::DashboardHello,
+            },
+        )
+        .unwrap();
+        let hello_deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let remaining = hello_deadline
+                .checked_duration_since(std::time::Instant::now())
+                .expect("dashboard hello timed out");
+            socket.set_read_timeout(Some(remaining)).unwrap();
+            match read_frame::<ServerMessage>(&mut socket).unwrap() {
+                ServerMessage::Response {
+                    request_id: 1,
+                    response: Response::Hierarchy(_),
+                } => break 'attach socket,
+                ServerMessage::Response {
+                    request_id: 1,
+                    response:
+                        Response::Error {
+                            code: ErrorCode::Conflict,
+                            ..
+                        },
+                } => {
+                    assert!(
+                        std::time::Instant::now() < retry_deadline,
+                        "dashboard slot was not released"
+                    );
+                    std::thread::park_timeout(Duration::from_millis(10));
+                    continue 'attach;
+                }
+                // Collection starts when the slot is claimed, before Hello is queued.
+                ServerMessage::Event(ServerEvent::QuotaChanged(snapshot)) => {
+                    early_quota.push(*snapshot);
+                }
+                other => panic!("unexpected greeting: {other:?}"),
+            }
+        }
+    };
+    socket
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    for snapshot in &early_quota {
+        for row in [&snapshot.claude, &snapshot.codex, &snapshot.grok] {
+            let reason = row.reason.as_deref().unwrap_or_default();
+            assert!(
+                !reason.contains("fixture") && !reason.contains("overloaded"),
+                "a Quota reason echoed native bytes: {reason}"
+            );
+        }
+    }
+    let snapshot = early_quota
+        .into_iter()
+        .find(|snapshot| snapshot.claude.state == QuotaState::Unavailable)
+        .unwrap_or_else(|| {
+            quota_until(&mut socket, "no Claude row at hello", |snapshot| {
+                snapshot.claude.state == QuotaState::Unavailable
+            })
+        });
     assert_eq!(snapshot.claude.state, QuotaState::Unavailable);
     assert_eq!(
         snapshot.claude.reason.as_deref(),

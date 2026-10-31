@@ -776,10 +776,11 @@ impl Dashboard {
         let mut palette = Palette::new();
         palette.suggestions.inspect = Some(request_id);
         self.palette = Some(palette);
-        DashboardAction::Request(ClientMessage {
+        self.enqueue_request(ClientMessage {
             request_id,
             request: Request::Inspect,
-        })
+        });
+        DashboardAction::Redraw
     }
 
     pub(super) fn open_create_terminal(&mut self) -> DashboardAction {
@@ -1000,13 +1001,14 @@ impl Dashboard {
             }
         }
         self.palette = Some(palette);
-        if let Some(submit_all) = submit
-            && let DashboardAction::Request(request) = self.palette_key_with_submit(
+        if let Some(submit_all) = submit {
+            // Deferred submission was already queued before the writer scheduled History.
+            self.palette_key_inner(
                 KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
                 submit_all,
-            )
-        {
-            self.push_request(request);
+                false,
+            );
+            self.refresh_active_path_listing();
         }
         was_loading || submit.is_some() || refused
     }
@@ -1067,6 +1069,7 @@ impl Dashboard {
                     session: id,
                     expected_run: run,
                 },
+                true,
             )
         } else {
             DashboardAction::Redraw
@@ -1912,12 +1915,17 @@ impl Dashboard {
     }
 
     fn palette_key_with_submit(&mut self, key: KeyEvent, submit: bool) -> DashboardAction {
-        let action = self.palette_key_inner(key, submit);
+        let action = self.palette_key_inner(key, submit, true);
         self.refresh_active_path_listing();
         action
     }
 
-    fn palette_key_inner(&mut self, key: KeyEvent, submit: bool) -> DashboardAction {
+    fn palette_key_inner(
+        &mut self,
+        key: KeyEvent,
+        submit: bool,
+        history_before_request: bool,
+    ) -> DashboardAction {
         let mut palette = self.palette.take().unwrap();
         if key.code == KeyCode::Esc || is_browse_key(key) {
             if let Page::Confirm {
@@ -1933,7 +1941,7 @@ impl Dashboard {
                     workspace: workspace.clone(),
                     save: false,
                 };
-                let action = self.palette_submit(&mut palette, request);
+                let action = self.palette_submit(&mut palette, request, history_before_request);
                 self.palette = Some(palette);
                 return action;
             }
@@ -2188,6 +2196,7 @@ impl Dashboard {
                                             run,
                                         },
                                     ),
+                                    history_before_request,
                                 );
                             }
                             Command::TransferWorkflow(transfer) => {
@@ -2281,7 +2290,11 @@ impl Dashboard {
                                     query: String::new(),
                                     selected: 0,
                                 };
-                                action = self.palette_submit(&mut palette, Request::Inspect);
+                                action = self.palette_submit(
+                                    &mut palette,
+                                    Request::Inspect,
+                                    history_before_request,
+                                );
                             }
                             Command::Unarchive(session, expected_run) => {
                                 action = self.palette_submit(
@@ -2290,6 +2303,7 @@ impl Dashboard {
                                         session,
                                         expected_run,
                                     },
+                                    history_before_request,
                                 );
                             }
                             Command::DeleteArchived(session, expected_run, title) => {
@@ -2316,6 +2330,7 @@ impl Dashboard {
                                         session: id,
                                         expected_run: run,
                                     },
+                                    history_before_request,
                                 );
                             }
                             command => {
@@ -2389,8 +2404,11 @@ impl Dashboard {
                             }
                             _ => {}
                         }
-                        action =
-                            self.palette_submit(&mut palette, Request::CreateSession(previous));
+                        action = self.palette_submit(
+                            &mut palette,
+                            Request::CreateSession(previous),
+                            history_before_request,
+                        );
                         self.palette = Some(palette);
                         return action;
                     }
@@ -2567,7 +2585,8 @@ impl Dashboard {
                             };
                             palette.page = removal_confirmation(request, &display);
                         } else {
-                            action = self.palette_submit(&mut palette, request);
+                            action =
+                                self.palette_submit(&mut palette, request, history_before_request);
                         }
                     }
                 }
@@ -2582,7 +2601,7 @@ impl Dashboard {
                             self.palette = None;
                             return DashboardAction::Redraw;
                         }
-                        action = self.palette_submit(&mut palette, request);
+                        action = self.palette_submit(&mut palette, request, history_before_request);
                     } else {
                         self.palette = None;
                         return DashboardAction::Redraw;
@@ -2801,7 +2820,12 @@ impl Dashboard {
         }
     }
 
-    fn palette_submit(&mut self, palette: &mut Palette, request: Request) -> DashboardAction {
+    fn palette_submit(
+        &mut self,
+        palette: &mut Palette,
+        request: Request,
+        history_before_request: bool,
+    ) -> DashboardAction {
         if self.lifecycle_busy()
             && super::lifecycle_ui::Provisional::from_request(0, &request).is_some()
         {
@@ -2841,10 +2865,14 @@ impl Dashboard {
         palette.pending = Some(request_id);
         palette.error = None;
         self.begin_lifecycle_pending(request_id, &request);
-        DashboardAction::Request(ClientMessage {
+        if history_before_request {
+            self.queue_history_request();
+        }
+        self.push_request(ClientMessage {
             request_id,
             request,
-        })
+        });
+        DashboardAction::Redraw
     }
 
     fn palette_form(&self, command: Command) -> Page {
@@ -3012,12 +3040,8 @@ impl Dashboard {
         {
             match response {
                 Response::Ok => {
-                    let attach = self.accept_lifecycle_job(request_id);
-                    return Some(match attach {
-                        Some(DashboardAction::Request(message)) => vec![message],
-                        Some(DashboardAction::RequestBatch(messages)) => messages,
-                        _ => Vec::new(),
-                    });
+                    self.accept_lifecycle_job(request_id);
+                    return Some(Vec::new());
                 }
                 Response::Error { code, message }
                     if *code == crate::protocol::ErrorCode::Conflict
@@ -4072,6 +4096,7 @@ mod mouse_tests {
         let mut d = dashboard();
         d.mode = InputMode::Terminal;
         click(&mut d, "[Actions]", 1, 100, 30);
+        assert_eq!(d.drain_one_request().unwrap().request, Request::Inspect);
         click(&mut d, "Register project", 1, 100, 30);
         assert!(matches!(
             d.palette.as_ref().unwrap().page,
@@ -4089,7 +4114,10 @@ mod mouse_tests {
             ),
             ..Palette::new()
         });
-        let DashboardAction::Request(message) = click(&mut d, "[Confirm]", 1, 100, 30) else {
+        let Some(message) = ({
+            click(&mut d, "[Confirm]", 1, 100, 30);
+            d.drain_one_request()
+        }) else {
             panic!("confirm must submit")
         };
         assert_eq!(
@@ -4098,10 +4126,11 @@ mod mouse_tests {
                 name: "demo".into()
             }
         );
-        assert!(!matches!(
-            click(&mut d, "[Confirm]", 1, 100, 30),
-            DashboardAction::Request(_)
-        ));
+        click(&mut d, "[Confirm]", 1, 100, 30);
+        assert!(
+            d.drain_outbox().is_empty(),
+            "pending confirmation cannot repeat"
+        );
         click(&mut d, "[Cancel]", 1, 100, 30);
         assert!(d.ignored_responses.contains(&message.request_id));
     }
@@ -4195,7 +4224,10 @@ mod mouse_tests {
             Rect::new(0, 0, 100, 30),
         );
         assert!(d.palette.is_some());
-        let DashboardAction::Request(message) = click(&mut d, "[Submit]", 1, 100, 30) else {
+        let Some(message) = ({
+            click(&mut d, "[Submit]", 1, 100, 30);
+            d.drain_one_request()
+        }) else {
             panic!("submit must validate all fields from first field")
         };
         assert!(matches!(message.request, Request::AddProject { name, .. } if name == "demo"));
@@ -4326,9 +4358,13 @@ mod mouse_tests {
         assert_eq!(fields[1].value, "aZ");
     }
     #[test]
-    fn mouse_submit_from_project_survives_waiting_for_git_suggestions_once() {
+    fn deferred_palette_poll_keeps_submission_before_due_history() {
+        use crate::dashboard::state::HistoryView;
+        use crate::protocol::{HistoryOpened, HistorySnapshotId, TerminalSize};
+
         let mut d = dashboard();
         d.open_create_workspace();
+        d.drain_outbox();
         let Page::Form { fields, .. } = &mut d.palette.as_mut().unwrap().page else {
             panic!()
         };
@@ -4339,10 +4375,72 @@ mod mouse_tests {
         }]));
         d.palette_paste("deferred");
         click(&mut d, "Project", 0, 100, 30);
-        assert!(!matches!(
-            click(&mut d, "[Submit]", 1, 100, 30),
-            DashboardAction::Request(_)
+        click(&mut d, "[Submit]", 1, 100, 30);
+        assert!(d.drain_outbox().is_empty());
+        let palette = d.palette.as_mut().unwrap();
+        palette.suggestions.cache.insert(
+            "demo".into(),
+            Ok(super::super::git_hints::Hints {
+                branches: vec!["develop".into()],
+                base: "develop".into(),
+            }),
+        );
+        palette.suggestions.inspect = None;
+        let mut history = HistoryView::new(
+            HistoryOpened {
+                session: SessionId(1),
+                snapshot: HistorySnapshotId(7),
+                revision: 1,
+                size: TerminalSize { rows: 20, cols: 80 },
+                history_rows: 0,
+                total_rows: 1,
+            },
+            0,
+        );
+        history.cursor_target = None;
+        d.history = Some(history);
+
+        assert!(d.poll_palette());
+        let requests = d.drain_outbox();
+        assert_eq!(requests.len(), 2, "{requests:?}");
+        assert!(matches!(
+            requests[0].request,
+            Request::CreateWorkspaceWithLaunch { .. }
         ));
+        assert!(matches!(
+            requests[1].request,
+            Request::HistoryPage {
+                snapshot: HistorySnapshotId(7),
+                ..
+            }
+        ));
+        d.poll_palette();
+        assert!(d.drain_outbox().is_empty(), "neither request may replay");
+    }
+
+    #[test]
+    fn mouse_submit_from_project_survives_waiting_for_git_suggestions_once() {
+        let mut d = dashboard();
+        d.open_create_workspace();
+        assert!(matches!(
+            d.drain_one_request().unwrap().request,
+            Request::Inspect
+        ));
+        let Page::Form { fields, .. } = &mut d.palette.as_mut().unwrap().page else {
+            panic!()
+        };
+        fields[0].value = "demo".into();
+        fields[0].kind = FieldKind::Pick(PickList::new(vec![PickItem {
+            label: "demo".into(),
+            value: "demo".into(),
+        }]));
+        d.palette_paste("deferred");
+        click(&mut d, "Project", 0, 100, 30);
+        click(&mut d, "[Submit]", 1, 100, 30);
+        assert!(
+            d.drain_outbox().is_empty(),
+            "submission waits for inspection"
+        );
         d.poll_palette();
         assert!(d.drain_outbox().is_empty(), "inspection is still pending");
         let palette = d.palette.as_mut().unwrap();
@@ -4370,11 +4468,9 @@ mod mouse_tests {
             d.drain_outbox().is_empty(),
             "later polls cannot repeat the request"
         );
+        click(&mut d, "[Submit]", 1, 100, 30);
         assert!(
-            !matches!(
-                click(&mut d, "[Submit]", 1, 100, 30),
-                DashboardAction::Request(_)
-            ),
+            d.drain_outbox().is_empty(),
             "pending request cannot repeat on click"
         );
     }
@@ -4472,7 +4568,10 @@ mod launch_tests {
         d.palette_key_with_submit(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), true)
     }
     fn request(d: &mut Dashboard) -> ClientMessage {
-        let DashboardAction::Request(message) = submit(d) else {
+        let Some(message) = ({
+            submit(d);
+            d.drain_one_request()
+        }) else {
             panic!(
                 "expected request: {:?}",
                 d.palette.as_ref().and_then(|p| p.error.as_ref())
@@ -4539,9 +4638,10 @@ mod launch_tests {
                 .collect::<Vec<_>>(),
             vec![SessionId(3), SessionId(2)]
         );
-        let DashboardAction::Request(request) =
-            d.palette_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
-        else {
+        let Some(request) = ({
+            d.palette_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            d.drain_one_request()
+        }) else {
             panic!("first attention result must select");
         };
         assert!(
@@ -4552,7 +4652,12 @@ mod launch_tests {
     }
 
     fn start_workspace(d: &mut Dashboard, start: &str) {
+        let opens_palette = d.palette.is_none();
         d.open_create_workspace();
+        assert_eq!(
+            d.drain_one_request().map(|message| message.request),
+            opens_palette.then_some(Request::Inspect)
+        );
         let p = d.palette.as_mut().unwrap();
         p.suggestions.inspect = None;
         p.suggestions
@@ -5475,7 +5580,8 @@ mod launch_tests {
             },
         });
         assert_eq!(d.focused_session(), None);
-        if let DashboardAction::Request(message) = submit(&mut d) {
+        submit(&mut d);
+        if let Some(message) = d.drain_one_request() {
             match message.request {
                 Request::CreateSession(_) | Request::AcknowledgeSessionStopped { .. } => {
                     panic!("uncertain create must not replay creation or acknowledge a guessed row")
@@ -5578,7 +5684,8 @@ mod launch_tests {
             },
         });
         assert_eq!(d.focused_session(), Some(SessionId(1)));
-        if let DashboardAction::Request(message) = submit(&mut d) {
+        submit(&mut d);
+        if let Some(message) = d.drain_one_request() {
             match message.request {
                 Request::CreateSession(_) | Request::AcknowledgeSessionStopped { .. } => {
                     panic!("uncertain create must not replay creation or acknowledge a guessed row")
@@ -5634,7 +5741,8 @@ mod launch_tests {
             matches!(palette.page, Page::Confirm { request: None, .. }),
             "uncertain create must keep a request-less notice"
         );
-        if let DashboardAction::Request(message) = submit(&mut d) {
+        submit(&mut d);
+        if let Some(message) = d.drain_one_request() {
             match message.request {
                 Request::CreateSession(_)
                 | Request::AcknowledgeSessionStopped { .. }
@@ -5717,15 +5825,13 @@ mod launch_tests {
         d.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
             advanced,
         )));
-        let action = if d.palette.is_some() {
-            submit(&mut d)
-        } else {
-            DashboardAction::None
-        };
+        if d.palette.is_some() {
+            submit(&mut d);
+        }
         assert!(
             !matches!(
-                action,
-                DashboardAction::Request(ClientMessage {
+                { d.drain_one_request() },
+                Some(ClientMessage {
                     request: Request::CloseTerminal { .. },
                     ..
                 })
@@ -6019,7 +6125,7 @@ mod close_confirm_tests {
         );
         assert!(d.palette.is_some());
         let action = click(&mut d, layout.confirm.x, layout.confirm.y);
-        let DashboardAction::Request(message) = action else {
+        let Some(message) = ({ d.drain_one_request() }) else {
             panic!("confirm hit target must submit, got {action:?}");
         };
         assert_eq!(
@@ -6045,10 +6151,10 @@ mod close_confirm_tests {
         d.palette_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert!(d.palette.is_none());
         d.open_close_terminal_for(SessionId(1));
-        let action = d.palette_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        d.palette_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(matches!(
-            action,
-            DashboardAction::Request(crate::protocol::ClientMessage {
+            d.drain_one_request(),
+            Some(crate::protocol::ClientMessage {
                 request: Request::CloseTerminal { .. },
                 ..
             })

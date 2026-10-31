@@ -1,0 +1,73 @@
+{
+  "checked_at_utc": "2026-10-31T08:38:30.931613+00:00",
+  "method": "os.kill(-pgid, 0); only ProcessLookupError qualifies absence",
+  "groups": [
+    {
+      "pid": 10363,
+      "pgid": 10363,
+      "status": "absent"
+    },
+    {
+      "pid": 10635,
+      "pgid": 10635,
+      "status": "absent"
+    },
+    {
+      "pid": 10856,
+      "pgid": 10856,
+      "status": "absent"
+    },
+    {
+      "pid": 11277,
+      "pgid": 11277,
+      "status": "absent"
+    },
+    {
+      "pid": 11699,
+      "pgid": 11699,
+      "status": "absent"
+    },
+    {
+      "pid": 11957,
+      "pgid": 11957,
+      "status": "absent"
+    },
+    {
+      "pid": 12248,
+      "pgid": 12248,
+      "status": "absent"
+    },
+    {
+      "pid": 12539,
+      "pgid": 12539,
+      "status": "absent"
+    },
+    {
+      "pid": 12830,
+      "pgid": 12830,
+      "status": "absent"
+    },
+    {
+      "pid": 13120,
+      "pgid": 13120,
+      "status": "absent"
+    },
+    {
+      "pid": 13418,
+      "pgid": 13418,
+      "status": "absent"
+    },
+    {
+      "pid": 13711,
+      "pgid": 13711,
+      "status": "absent"
+    }
+  ],
+  "fixture_root": "/private/tmp/ovrcr-384-evidence/gui-tmp/ovrcr-gui-8i3QBX",
+  "fixture_root_absent": true,
+  "socket": "/private/tmp/ovrcr-384-evidence/gui-tmp/ovrcr-gui-8i3QBX/server.sock",
+  "socket_absent": true,
+  "launcher_session": 33617,
+  "launcher_exit_status": 0,
+  "launcher_status_source": "Original write_stdin result preserved in launcher-wait.json, call_7094e3ab76cd4cf5877fa2ece8fee269."
+}

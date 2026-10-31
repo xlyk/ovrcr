@@ -1,0 +1,23 @@
+{
+  "checked_utc": "2026-10-31T11:00:18.821271+00:00",
+  "source": "60-macos-nextest-ci.log failed pause/resume startup attempts",
+  "operation": "signal 0 only; no termination signals",
+  "server_group_identity": "not assumed from PID",
+  "attempts": [
+    {
+      "logged_server_pid": 99980,
+      "pid_probe": "ESRCH",
+      "root": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpjWLAMj",
+      "root_exists": false,
+      "socket_exists": false
+    },
+    {
+      "logged_server_pid": 5010,
+      "pid_probe": "ESRCH",
+      "root": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmplh6d2P",
+      "root_exists": false,
+      "socket_exists": false
+    }
+  ],
+  "other_failed_attempt_group_limits": "failed-attempt-cleanup-audit.md"
+}

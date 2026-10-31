@@ -36,9 +36,11 @@ fn leader_workspace_uses_inspection_and_name_first_picker_defaults() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char(' '));
     dashboard.key(KeyCode::Char('p'));
-    let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Char('n')) else {
-        panic!("leader workspace must request repository inspection");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Char('n')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     assert_eq!(message.request, Request::Inspect);
     dashboard.event_action(Event::Paste("leader-workspace".into()));
     let text = palette_text(&dashboard);
@@ -51,9 +53,11 @@ fn leader_workspace_uses_inspection_and_name_first_picker_defaults() {
 #[test]
 fn palette_hint_action_ignores_late_inspection_error() {
     let mut dashboard = dashboard_fixture();
-    let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Char(':')) else {
-        panic!("palette must request inspection");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Char(':')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     assert_eq!(message.request, Request::Inspect);
     dashboard.event_action(Event::Paste("focus".into()));
     // macOS also offers "Set up iTerm focus" before the existing Focus hint.
@@ -469,8 +473,8 @@ fn keyboard_overlays_cancel_divider_gesture_before_consuming_release() {
         ),
         DashboardAction::PtyBytes(b"\x1b[<2;3;4M".to_vec())
     );
-    assert!(matches!(
-        dashboard.mouse_action(
+    assert!({
+        let _ = dashboard.mouse_action(
             mouse_event(
                 MouseEventKind::Down(MouseButton::Left),
                 105,
@@ -478,9 +482,12 @@ fn keyboard_overlays_cancel_divider_gesture_before_consuming_release() {
                 KeyModifiers::NONE,
             ),
             area,
-        ),
-        DashboardAction::Request(_)
-    ));
+        );
+        matches!(dashboard.drain_outbox().as_slice(), [
+            ClientMessage { request: Request::Input { session: SessionId(1), bytes, .. }, .. },
+            ClientMessage { request: Request::Inspect, .. }
+        ] if bytes == b"\x1b[<2;3;4m")
+    });
     assert!(
         palette_text(&dashboard).contains("Search"),
         "opening Actions should capture the overlay"
@@ -491,13 +498,15 @@ fn keyboard_overlays_cancel_divider_gesture_before_consuming_release() {
 fn tasks_hotkey_cancels_pending_history_like_control_t() {
     let mut dashboard = dashboard_fixture();
     let begin = dashboard.key(KeyCode::PageUp);
-    assert!(matches!(begin, ovrcr::tui::DashboardAction::Request(_)));
+    assert_eq!(begin, DashboardAction::Redraw);
+    let message = only_request(dashboard.drain_outbox());
+    assert!(matches!(message.request, Request::HistoryBegin { .. }));
     dashboard.key(KeyCode::Char('t'));
     assert!(
         palette_text(&dashboard).contains("OVRCR  Tasks"),
         "tasks hotkey must open the tasks overlay"
     );
-    if let ovrcr::tui::DashboardAction::Request(message) = begin {
+    {
         dashboard.handle_server_message(ServerMessage::Response {
             request_id: message.request_id,
             response: Response::HistoryOpened(history_opened(20)),
@@ -669,16 +678,17 @@ fn whichkey_tiny_layouts_and_last_disabled_detail_remain_browsable() {
 
 #[test]
 fn uppercase_x_confirms_session_close_without_closing_pane() {
-    use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char('X'));
     let text = palette_text(&dashboard);
     assert!(text.contains("Close terminal?"));
     assert!(text.contains("review (#1)"));
     assert_eq!(dashboard.pane_rects(Rect::new(0, 0, 88, 38)).len(), 1);
-    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-        panic!("close confirmation did not submit");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     assert_eq!(
         message.request,
         Request::CloseTerminal {
@@ -719,9 +729,11 @@ fn palette_filters_and_captures_input_without_sending_it_to_terminal() {
     dashboard.ctrl('u');
     dashboard.event_action(Event::Paste("palette-shell".into()));
     dashboard.key(KeyCode::Tab);
-    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-        panic!("form did not submit");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     let ovrcr::protocol::Request::CreateSession(request) = message.request else {
         panic!("wrong request");
     };
@@ -767,9 +779,11 @@ fn palette_switches_by_search_and_confirms_exact_close_target() {
     use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();
     palette_search(&mut dashboard, "spacelift-agent progress local");
-    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-        panic!("switch missing");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     assert!(matches!(
         message.request,
         Request::SetView { view }
@@ -784,9 +798,11 @@ fn palette_switches_by_search_and_confirms_exact_close_target() {
     dashboard.key(KeyCode::Esc);
     palette_search(&mut dashboard, "close terminal");
     dashboard.key(KeyCode::Enter);
-    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-        panic!("close missing");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     assert_eq!(
         message.request,
         Request::CloseTerminal {
@@ -864,9 +880,8 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
             assert_eq!(action, DashboardAction::Redraw);
             action = dashboard.key(KeyCode::Enter);
         }
-        let DashboardAction::Request(message) = action else {
-            panic!("{query}: did not submit");
-        };
+        assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
+        let message = only_request(dashboard.drain_outbox());
         assert_eq!(message.request, expected);
     }
 }
@@ -874,7 +889,6 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
 #[test]
 fn create_workspace_form_submits_branch_without_name() {
     use ovrcr::protocol::{BranchRequest, Request};
-    use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();
     palette_search(&mut dashboard, "create workspace");
     dashboard.key(KeyCode::Enter);
@@ -893,9 +907,11 @@ fn create_workspace_form_submits_branch_without_name() {
     dashboard.event_action(Event::Paste("main".into()));
     dashboard.key(KeyCode::BackTab); // mode
     dashboard.key(KeyCode::BackTab); // branch
-    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-        panic!("create workspace did not submit");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     let Request::CreateWorkspaceWithLaunch {
         project,
         id,
@@ -920,7 +936,6 @@ fn create_workspace_form_submits_branch_without_name() {
 #[test]
 fn create_workspace_existing_branch_keeps_generated_id() {
     use ovrcr::protocol::{BranchRequest, Request};
-    use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();
     palette_search(&mut dashboard, "create workspace");
     dashboard.key(KeyCode::Enter);
@@ -929,9 +944,11 @@ fn create_workspace_existing_branch_keeps_generated_id() {
     dashboard.key(KeyCode::BackTab); // branch
     dashboard.ctrl('u');
     dashboard.event_action(Event::Paste("topic".into()));
-    let DashboardAction::Request(first) = dashboard.key(KeyCode::Enter) else {
-        panic!("existing branch did not submit");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let first = only_request(dashboard.drain_outbox());
     let Request::CreateWorkspaceWithLaunch {
         id: first_id,
         branch,
@@ -954,9 +971,11 @@ fn create_workspace_existing_branch_keeps_generated_id() {
             message: "retry me".into(),
         },
     });
-    let DashboardAction::Request(retry) = dashboard.key(KeyCode::Enter) else {
-        panic!("retry did not submit");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let retry = only_request(dashboard.drain_outbox());
     let Request::CreateWorkspaceWithLaunch { id: retry_id, .. } = retry.request else {
         panic!("{:?}", retry.request);
     };
@@ -966,7 +985,6 @@ fn create_workspace_existing_branch_keeps_generated_id() {
 #[test]
 fn w_opens_workspace_form_with_project_and_derived_branch() {
     use ovrcr::protocol::BranchRequest;
-    use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();
     let action = dashboard.key(KeyCode::Char('w'));
     answer_palette_inspect(&mut dashboard, action);
@@ -976,9 +994,11 @@ fn w_opens_workspace_form_with_project_and_derived_branch() {
     assert!(text.contains("consigint"), "{text}");
     assert!(text.contains("feature/pick-demo"), "{text}");
     assert!(!text.contains("Name"), "{text}");
-    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-        panic!("Enter on Branch must submit with defaults");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     let Request::CreateWorkspaceWithLaunch {
         project,
         id,
@@ -1003,7 +1023,6 @@ fn w_opens_workspace_form_with_project_and_derived_branch() {
 #[test]
 fn workspace_branch_mode_uses_local_branches_and_preserves_edits() {
     use ovrcr::config::{ProjectRecord, Registry};
-    use ovrcr::tui::DashboardAction;
     use std::process::Command;
     let repo = tempfile::tempdir().unwrap();
     for args in [
@@ -1045,9 +1064,11 @@ fn workspace_branch_mode_uses_local_branches_and_preserves_edits() {
         );
     }
     let mut dashboard = dashboard_fixture();
-    let DashboardAction::Request(inspect) = dashboard.key(KeyCode::Char('w')) else {
-        panic!("Inspect missing");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Char('w')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let inspect = only_request(dashboard.drain_outbox());
     assert_eq!(inspect.request, Request::Inspect);
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: inspect.request_id,
@@ -1095,9 +1116,11 @@ fn workspace_branch_mode_uses_local_branches_and_preserves_edits() {
         "selected branch must remain visible: {text}"
     );
     dashboard.event_action(Event::Paste("topic".into()));
-    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-        panic!("existing branch did not submit");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     let Request::CreateWorkspaceWithLaunch {
         project,
         id,
@@ -1164,7 +1187,6 @@ fn typed_existing_branch_survives_hint_arrival() {
 #[test]
 fn fuzzy_matched_branch_is_not_submitted_without_confirmation() {
     use ovrcr::protocol::BranchRequest;
-    use ovrcr::tui::DashboardAction;
     let repo = hint_repository(&["release-2-old"]);
     let mut dashboard = dashboard_fixture();
     let inspect_id = type_existing_branch_and_submit(&mut dashboard, "release-2");
@@ -1178,9 +1200,11 @@ fn fuzzy_matched_branch_is_not_submitted_without_confirmation() {
     // The refusal is not a dead end: the filtered list is now on screen, so a
     // second Enter accepts the near match the user can finally see.
     assert!(text.contains("release-2-old"), "{text}");
-    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-        panic!("confirming the filtered branch must submit");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     let Request::CreateWorkspaceWithLaunch {
         project,
         id,
@@ -1235,14 +1259,15 @@ fn typed_branch_missing_from_hints_is_refused_not_replaced() {
 
 #[test]
 fn workspace_created_with_exited_local_shell_closes_palette() {
-    use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();
     let action = dashboard.key(KeyCode::Char('w'));
     answer_palette_inspect(&mut dashboard, action);
     dashboard.event_action(Event::Paste("pick-demo".into()));
-    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-        panic!("workspace form did not submit");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     let Request::CreateWorkspaceWithLaunch { id, .. } = &message.request else {
         panic!("{:?}", message.request);
     };
@@ -1302,11 +1327,12 @@ fn workspace_created_with_exited_local_shell_closes_palette() {
 
 #[test]
 fn palette_switch_drops_late_inventory_without_clearing_current_error() {
-    use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();
-    let DashboardAction::Request(inspect) = dashboard.key(KeyCode::Char(':')) else {
-        panic!("no Inspect");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Char(':')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let inspect = only_request(dashboard.drain_outbox());
     dashboard.event_action(Event::Paste("spacelift-agent progress local".into()));
     dashboard.key(KeyCode::Enter);
     dashboard.handle_server_message(ServerMessage::Response {
@@ -1330,14 +1356,15 @@ fn palette_switch_drops_late_inventory_without_clearing_current_error() {
 
 #[test]
 fn workspace_creation_cancel_and_failure_do_not_attach_late() {
-    use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();
     let action = dashboard.key(KeyCode::Char('w'));
     answer_palette_inspect(&mut dashboard, action);
     dashboard.event_action(Event::Paste("pick-demo".into()));
-    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-        panic!("no create request");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: message.request_id + 1,
         response: Response::Ok,
@@ -1357,9 +1384,11 @@ fn workspace_creation_cancel_and_failure_do_not_attach_late() {
         },
     });
     assert!(palette_text(&dashboard).contains("creation refused"));
-    let DashboardAction::Request(retry) = dashboard.key(KeyCode::Enter) else {
-        panic!("no retry");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let retry = only_request(dashboard.drain_outbox());
     dashboard.key(KeyCode::Esc);
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: retry.request_id,
@@ -1385,9 +1414,11 @@ fn workspace_creation_attaches_to_its_local_shell() {
         let action = dashboard.key(KeyCode::Char('w'));
         answer_palette_inspect(&mut dashboard, action);
         dashboard.event_action(Event::Paste("pick-demo".into()));
-        let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-            panic!("workspace form did not submit");
-        };
+        assert_eq!(
+            dashboard.key(KeyCode::Enter),
+            ovrcr::tui::DashboardAction::Redraw
+        );
+        let message = only_request(dashboard.drain_outbox());
         let created_id = match &message.request {
             Request::CreateWorkspaceWithLaunch { id, .. } => id.clone(),
             other => panic!("expected create workspace: {other:?}"),
@@ -1437,15 +1468,16 @@ fn n_opens_terminal_form_prefilled_for_selected_workspace() {
 
 #[test]
 fn created_session_enters_terminal_mode() {
-    use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char('n'));
     dashboard.key(KeyCode::Enter);
     dashboard.key(KeyCode::Enter);
     dashboard.key(KeyCode::Enter);
-    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-        panic!("form did not submit");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     let Request::CreateSession(request) = &message.request else {
         panic!("wrong request");
     };
@@ -1624,7 +1656,10 @@ fn search_selection_clamps_when_entries_shrink() {
         hierarchy,
     )));
     let action = dashboard.key(KeyCode::Enter);
-    assert!(matches!(action, ovrcr::tui::DashboardAction::Request(_)));
+    assert!({
+        let _ = action;
+        matches!(dashboard.drain_outbox().as_slice(), [_])
+    });
     assert_eq!(dashboard.focused_session(), Some(SessionId(2)));
 }
 
@@ -1656,9 +1691,11 @@ fn palette_close_updates_selection_and_clears_removed_screen() {
     dashboard.install_screen(SessionId(1), b"removed terminal output");
     palette_search(&mut dashboard, "close terminal");
     dashboard.key(KeyCode::Enter);
-    let ovrcr::tui::DashboardAction::Request(close) = dashboard.key(KeyCode::Enter) else {
-        panic!("close missing");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let close = only_request(dashboard.drain_outbox());
     let mut hierarchy = fixture_hierarchy();
     for workspace in hierarchy
         .projects
@@ -1719,7 +1756,8 @@ fn palette_escape_cancels_pending_request() {
     let mut submitted = None;
     for value in ["late-project", "/tmp/late-repo", "/tmp/late-root"] {
         dashboard.event_action(Event::Paste(value.into()));
-        if let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) {
+        let _ = dashboard.key(KeyCode::Enter);
+        if let Some(message) = optional_request(dashboard.drain_outbox()) {
             submitted = Some(message);
         }
     }
@@ -1760,9 +1798,11 @@ fn nested_whichkey_terminal_group_waits_for_action_and_backspace_returns() {
     assert!(text.contains("t  Terminal"));
     assert!(!text.contains("x  Close terminal"));
     dashboard.key(KeyCode::Char('t'));
-    let DashboardAction::Request(message) = dashboard.key(KeyCode::Char('p')) else {
-        panic!("pause must emit a request");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Char('p')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     assert_eq!(
         message.request,
         Request::PauseSession {
@@ -1819,9 +1859,11 @@ fn nested_whichkey_removal_confirms_the_selected_target_and_can_cancel() {
                 assert!(text.contains("original paths"), "{text}");
             }
             if confirm {
-                let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-                    panic!("confirmation must emit removal request");
-                };
+                assert_eq!(
+                    dashboard.key(KeyCode::Enter),
+                    ovrcr::tui::DashboardAction::Redraw
+                );
+                let message = only_request(dashboard.drain_outbox());
                 assert_eq!(message.request, expected);
             } else {
                 assert_eq!(dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
@@ -1920,9 +1962,11 @@ fn nested_whichkey_container_selection_limits_groups_and_removal_target() {
         dashboard.key(KeyCode::Char('x'));
         assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
         assert!(palette_text(&dashboard).contains("Confirm action"));
-        let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-            panic!("removal must require confirmation");
-        };
+        assert_eq!(
+            dashboard.key(KeyCode::Enter),
+            ovrcr::tui::DashboardAction::Redraw
+        );
+        let message = only_request(dashboard.drain_outbox());
         assert_eq!(message.request, expected);
         dashboard.handle_server_message(ServerMessage::Response {
             request_id: message.request_id,
@@ -1987,9 +2031,11 @@ fn nested_whichkey_live_phase_updates_pause_resume_and_ignores_invalid_keys() {
         DashboardAction::Redraw
     );
     assert!(whichkey_menu_text(&dashboard).contains("r  Resume"));
-    let DashboardAction::Request(message) = dashboard.key(KeyCode::Char('r')) else {
-        panic!("resume must emit a request");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Char('r')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     assert_eq!(
         message.request,
         Request::ResumeSession {
@@ -2143,9 +2189,11 @@ fn removal_pickers_filter_and_confirm_a_different_target() {
         let text = palette_text(&dashboard);
         assert!(text.contains("Confirm action"), "{text}");
         assert!(text.contains("spacelift-agent"));
-        let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-            panic!("confirmation must submit the picked target");
-        };
+        assert_eq!(
+            dashboard.key(KeyCode::Enter),
+            ovrcr::tui::DashboardAction::Redraw
+        );
+        let message = only_request(dashboard.drain_outbox());
         assert_eq!(message.request, expected);
     }
 }
@@ -2203,10 +2251,10 @@ fn removal_pickers_with_empty_hierarchy_never_confirm() {
         palette_search(&mut dashboard, query);
         dashboard.key(KeyCode::Enter);
         for key in [KeyCode::Down, KeyCode::Tab, KeyCode::Enter] {
-            assert!(!matches!(
-                dashboard.key(key),
-                ovrcr::tui::DashboardAction::Request(_)
-            ));
+            assert!({
+                let _ = dashboard.key(key);
+                dashboard.drain_outbox().is_empty()
+            });
         }
         let text = palette_text(&dashboard);
         assert!(text.contains("No matches"), "{text}");
@@ -2308,9 +2356,11 @@ fn manual_title_events_update_sidebar_pane_and_palette_without_identity_change()
     assert!(rename_text.contains("original name"), "{rename_text}");
     assert!(!rename_text.contains("Automatic"), "{rename_text}");
     dashboard.event_action(Event::Paste("Pinned by user".into()));
-    let ovrcr::tui::DashboardAction::Request(pin) = dashboard.key(KeyCode::Enter) else {
-        panic!()
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let pin = only_request(dashboard.drain_outbox());
     assert_eq!(
         pin.request,
         Request::SetSessionTitle {
@@ -2325,9 +2375,11 @@ fn manual_title_events_update_sidebar_pane_and_palette_without_identity_change()
     palette_search(&mut dashboard, "Rename terminal");
     dashboard.key(KeyCode::Enter);
     dashboard.ctrl('u');
-    let ovrcr::tui::DashboardAction::Request(reset) = dashboard.key(KeyCode::Enter) else {
-        panic!()
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let reset = only_request(dashboard.drain_outbox());
     assert_eq!(
         reset.request,
         Request::SetSessionTitle {
@@ -2339,7 +2391,6 @@ fn manual_title_events_update_sidebar_pane_and_palette_without_identity_change()
 
 #[test]
 fn empty_workspace_creation_selects_its_empty_state_in_either_response_order() {
-    use ovrcr::tui::DashboardAction;
     for hierarchy_first in [false, true] {
         let mut dashboard = dashboard_fixture();
         let action = dashboard.key(KeyCode::Char('w'));
@@ -2350,9 +2401,11 @@ fn empty_workspace_creation_selects_its_empty_state_in_either_response_order() {
         }
         dashboard.ctrl('u');
         dashboard.event_action(Event::Paste("Nothing yet".into()));
-        let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-            panic!("empty workspace form did not submit")
-        };
+        assert_eq!(
+            dashboard.key(KeyCode::Enter),
+            ovrcr::tui::DashboardAction::Redraw
+        );
+        let message = only_request(dashboard.drain_outbox());
         let Request::CreateWorkspaceWithLaunch { id, launch, .. } = &message.request else {
             panic!("{:?}", message.request);
         };
@@ -2410,7 +2463,6 @@ fn empty_workspace_creation_selects_its_empty_state_in_either_response_order() {
 
 #[test]
 fn reopen_confirm_names_stopped_processes_and_does_not_treat_retry_as_ack() {
-    use ovrcr::tui::DashboardAction;
     let mut hierarchy = fixture_hierarchy();
     hierarchy.projects[1].workspaces[0].sessions[0].recovery =
         Some(ovrcr::protocol::SessionRecovery {
@@ -2430,9 +2482,11 @@ fn reopen_confirm_names_stopped_processes_and_does_not_treat_retry_as_ack() {
         text.contains("Previous agent or background processes"),
         "{text}"
     );
-    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-        panic!("confirming reopen must send a request");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     assert_eq!(
         message.request,
         Request::ReopenSession {
@@ -2445,14 +2499,15 @@ fn reopen_confirm_names_stopped_processes_and_does_not_treat_retry_as_ack() {
 
 #[test]
 fn failed_reopen_retries_the_current_run_from_the_confirm() {
-    use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();
     dashboard.install_focus(SessionId(2));
     palette_search(&mut dashboard, "Reopen in a fresh shell");
     dashboard.key(KeyCode::Enter);
-    let DashboardAction::Request(first) = dashboard.key(KeyCode::Enter) else {
-        panic!("reopen confirm must send");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let first = only_request(dashboard.drain_outbox());
     assert_eq!(
         first.request,
         Request::ReopenSession {
@@ -2481,9 +2536,11 @@ fn failed_reopen_retries_the_current_run_from_the_confirm() {
             message: "reopen failed".into(),
         },
     });
-    let DashboardAction::Request(retry) = dashboard.key(KeyCode::Enter) else {
-        panic!("failed reopen must offer an explicit retry");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let retry = only_request(dashboard.drain_outbox());
     assert_eq!(
         retry.request,
         Request::ReopenSession {
@@ -2496,15 +2553,16 @@ fn failed_reopen_retries_the_current_run_from_the_confirm() {
 
 #[test]
 fn ownership_uncertain_create_does_not_create_another_row_on_enter() {
-    use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char('n'));
     dashboard.key(KeyCode::Enter);
     dashboard.key(KeyCode::Enter);
     dashboard.key(KeyCode::Enter);
-    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-        panic!("form did not submit");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     let Request::CreateSession(request) = &message.request else {
         panic!("wrong request");
     };
@@ -2570,7 +2628,8 @@ fn ownership_uncertain_create_does_not_create_another_row_on_enter() {
         text.contains("previous agent or background processes") || text.contains("Acknowledge"),
         "{text}"
     );
-    if let DashboardAction::Request(next) = dashboard.key(KeyCode::Enter) {
+    let _ = dashboard.key(KeyCode::Enter);
+    if let Some(next) = optional_request(dashboard.drain_outbox()) {
         match next.request {
             Request::CreateSession(_) | Request::AcknowledgeSessionStopped { .. } => {
                 panic!("uncertain create must not replay creation or acknowledge a guessed row")
@@ -2581,9 +2640,11 @@ fn ownership_uncertain_create_does_not_create_another_row_on_enter() {
     dashboard.install_focus(SessionId(99));
     palette_search(&mut dashboard, "Acknowledge stopped without reopening");
     dashboard.key(KeyCode::Enter);
-    let DashboardAction::Request(next) = dashboard.key(KeyCode::Enter) else {
-        panic!("explicit ack after selecting the retained row");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let next = only_request(dashboard.drain_outbox());
     assert_eq!(
         next.request,
         Request::AcknowledgeSessionStopped {
@@ -2596,16 +2657,17 @@ fn ownership_uncertain_create_does_not_create_another_row_on_enter() {
 
 #[test]
 fn ownership_uncertain_create_does_not_guess_among_two_rows() {
-    use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();
     let focused = dashboard.focused_session();
     dashboard.key(KeyCode::Char('n'));
     dashboard.key(KeyCode::Enter);
     dashboard.key(KeyCode::Enter);
     dashboard.key(KeyCode::Enter);
-    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-        panic!("form did not submit");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     let Request::CreateSession(request) = &message.request else {
         panic!("wrong request");
     };
@@ -2664,7 +2726,8 @@ fn ownership_uncertain_create_does_not_guess_among_two_rows() {
         },
     });
     assert_eq!(dashboard.focused_session(), focused);
-    if let DashboardAction::Request(next) = dashboard.key(KeyCode::Enter) {
+    let _ = dashboard.key(KeyCode::Enter);
+    if let Some(next) = optional_request(dashboard.drain_outbox()) {
         match next.request {
             Request::CreateSession(_) | Request::AcknowledgeSessionStopped { .. } => {
                 panic!("uncertain create must not replay creation or acknowledge a guessed row")
@@ -2676,7 +2739,6 @@ fn ownership_uncertain_create_does_not_guess_among_two_rows() {
 
 #[test]
 fn reopen_confirm_keeps_captured_run_when_hierarchy_advances() {
-    use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();
     dashboard.install_focus(SessionId(2));
     palette_search(&mut dashboard, "Reopen in a fresh shell");
@@ -2686,9 +2748,11 @@ fn reopen_confirm_keeps_captured_run_when_hierarchy_advances() {
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
         hierarchy,
     )));
-    let DashboardAction::Request(first) = dashboard.key(KeyCode::Enter) else {
-        panic!("confirming reopen must send a request");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let first = only_request(dashboard.drain_outbox());
     assert_eq!(
         first.request,
         Request::ReopenSession {
@@ -2704,9 +2768,11 @@ fn reopen_confirm_keeps_captured_run_when_hierarchy_advances() {
             message: "run moved".into(),
         },
     });
-    let DashboardAction::Request(second) = dashboard.key(KeyCode::Enter) else {
-        panic!("Conflict must wait for another Enter");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let second = only_request(dashboard.drain_outbox());
     assert_eq!(
         second.request,
         Request::ReopenSession {
@@ -2725,9 +2791,11 @@ fn refused_workspace_removal_offers_force_and_sends_it_only_on_explicit_confirm(
         palette_search(&mut dashboard, "remove workspace");
         dashboard.key(KeyCode::Enter);
         dashboard.key(KeyCode::Enter);
-        let ovrcr::tui::DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
-            panic!("expected confirmed removal")
-        };
+        assert_eq!(
+            dashboard.key(KeyCode::Enter),
+            ovrcr::tui::DashboardAction::Redraw
+        );
+        let request = only_request(dashboard.drain_outbox());
         let Request::RemoveWorkspace {
             project,
             name,
@@ -2746,9 +2814,11 @@ fn refused_workspace_removal_offers_force_and_sends_it_only_on_explicit_confirm(
         let text = palette_text(&dashboard);
         assert!(text.contains("Force remove workspace"), "{code:?}: {text}");
         assert!(text.contains("refused"), "{code:?}: {text}");
-        let ovrcr::tui::DashboardAction::Request(forced) = dashboard.key(KeyCode::Enter) else {
-            panic!("{code:?}: forced removal needs another explicit Confirm")
-        };
+        assert_eq!(
+            dashboard.key(KeyCode::Enter),
+            ovrcr::tui::DashboardAction::Redraw
+        );
+        let forced = only_request(dashboard.drain_outbox());
         assert_eq!(
             forced.request,
             Request::RemoveWorkspace {
@@ -2766,10 +2836,10 @@ fn refused_workspace_removal_offers_force_and_sends_it_only_on_explicit_confirm(
             },
         });
         assert!(palette_text(&dashboard).contains("live sessions remain"));
-        assert!(!matches!(
-            dashboard.key(KeyCode::Esc),
-            ovrcr::tui::DashboardAction::Request(_)
-        ));
+        assert!({
+            let _ = dashboard.key(KeyCode::Esc);
+            dashboard.drain_outbox().is_empty()
+        });
     }
 }
 
@@ -2779,9 +2849,11 @@ fn dirty_workspace_removal_asks_to_save_then_removes_only_after_yes() {
     palette_search(&mut dashboard, "remove workspace");
     dashboard.key(KeyCode::Enter);
     dashboard.key(KeyCode::Enter);
-    let ovrcr::tui::DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
-        panic!("expected confirmed removal")
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let request = only_request(dashboard.drain_outbox());
     let Request::RemoveWorkspace {
         project,
         name,
@@ -2804,9 +2876,11 @@ fn dirty_workspace_removal_asks_to_save_then_removes_only_after_yes() {
     );
     assert!(text.contains("worktree has changes"), "{text}");
     assert!(!text.contains("Force remove workspace"), "{text}");
-    let ovrcr::tui::DashboardAction::Request(save) = dashboard.key(KeyCode::Enter) else {
-        panic!("yes must send the save")
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let save = only_request(dashboard.drain_outbox());
     assert_eq!(
         save.request,
         Request::SaveWorkspaceWip {
@@ -2837,9 +2911,11 @@ fn declining_the_save_does_not_remove_the_workspace() {
     palette_search(&mut dashboard, "remove workspace");
     dashboard.key(KeyCode::Enter);
     dashboard.key(KeyCode::Enter);
-    let ovrcr::tui::DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
-        panic!("expected confirmed removal")
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let request = only_request(dashboard.drain_outbox());
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: request.request_id,
         response: Response::Error {
@@ -2847,10 +2923,10 @@ fn declining_the_save_does_not_remove_the_workspace() {
             message: "worktree has changes".into(),
         },
     });
-    assert!(!matches!(
-        dashboard.key(KeyCode::Esc),
-        ovrcr::tui::DashboardAction::Request(_)
-    ));
+    assert!({
+        let _ = dashboard.key(KeyCode::Esc);
+        dashboard.drain_outbox().is_empty()
+    });
     assert!(
         !palette_text(&dashboard).contains("Save uncommitted work"),
         "no leaves the save question"
@@ -2876,9 +2952,11 @@ fn shutdown_asks_once_per_dirty_worktree() {
         "{text}"
     );
     assert!(!text.contains("feature/two"), "{text}");
-    let ovrcr::tui::DashboardAction::Request(first) = dashboard.key(KeyCode::Enter) else {
-        panic!("first yes")
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let first = only_request(dashboard.drain_outbox());
     assert_eq!(
         first.request,
         Request::AnswerWipSave {
@@ -2896,9 +2974,11 @@ fn shutdown_asks_once_per_dirty_worktree() {
         text.contains("Save uncommitted work to origin/wip/feature/two?"),
         "{text}"
     );
-    let ovrcr::tui::DashboardAction::Request(second) = dashboard.key(KeyCode::Esc) else {
-        panic!("second no")
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Esc),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let second = only_request(dashboard.drain_outbox());
     assert_eq!(
         second.request,
         Request::AnswerWipSave {
@@ -2999,11 +3079,11 @@ fn assert_shutdown_question(dashboard: &Dashboard, name: &str, hidden: &str) {
 }
 
 fn answer_shutdown_question(dashboard: &mut Dashboard, name: &str, save: bool) -> ClientMessage {
-    let DashboardAction::Request(answer) =
-        dashboard.key(if save { KeyCode::Enter } else { KeyCode::Esc })
-    else {
-        panic!("shutdown question must require its explicit answer");
-    };
+    assert_eq!(
+        dashboard.key(if save { KeyCode::Enter } else { KeyCode::Esc }),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let answer = only_request(dashboard.drain_outbox());
     assert_eq!(
         answer.request,
         Request::AnswerWipSave {
@@ -3211,9 +3291,11 @@ fn operator_quick_preserves_workspace_save_chain_and_exact_pending_response() {
     palette_search(&mut dashboard, "remove workspace");
     dashboard.key(KeyCode::Enter);
     dashboard.key(KeyCode::Enter);
-    let DashboardAction::Request(remove) = dashboard.key(KeyCode::Enter) else {
-        panic!("removal request")
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let remove = only_request(dashboard.drain_outbox());
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: remove.request_id,
         response: Response::Error {
@@ -3226,9 +3308,11 @@ fn operator_quick_preserves_workspace_save_chain_and_exact_pending_response() {
     dashboard.key(KeyCode::Esc);
     assert!(dashboard.drain_outbox().is_empty());
     assert!(palette_text(&dashboard).contains("Save uncommitted work"));
-    let DashboardAction::Request(save) = dashboard.key(KeyCode::Enter) else {
-        panic!("save request")
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let save = only_request(dashboard.drain_outbox());
     assert!(matches!(save.request, Request::SaveWorkspaceWip { .. }));
     dashboard.ctrl('o');
     dashboard.key(KeyCode::Esc);
@@ -3428,9 +3512,11 @@ fn force_removal_prompt_survives_unchanged_hierarchy_then_needs_consent_after_re
         dashboard.key(KeyCode::Enter),
         ovrcr::tui::DashboardAction::Redraw
     );
-    let ovrcr::tui::DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
-        panic!("expected confirmed removal")
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let request = only_request(dashboard.drain_outbox());
     let Request::RemoveWorkspace {
         project,
         name,
@@ -3490,7 +3576,8 @@ fn force_removal_prompt_survives_unchanged_hierarchy_then_needs_consent_after_re
         text.contains("consigint / feature/auth"),
         "picker must show the current branch: {text}"
     );
-    if let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) {
+    let _ = dashboard.key(KeyCode::Enter);
+    if let Some(message) = optional_request(dashboard.drain_outbox()) {
         panic!(
             "relabelled force confirmation must not submit: {:?}",
             message.request
@@ -3518,9 +3605,11 @@ fn workspace_removal_errors_keep_confirmation_and_session_context_visible() {
         palette_search(&mut dashboard, "remove workspace");
         dashboard.key(KeyCode::Enter);
         dashboard.key(KeyCode::Enter);
-        let ovrcr::tui::DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
-            panic!("expected confirmed removal")
-        };
+        assert_eq!(
+            dashboard.key(KeyCode::Enter),
+            ovrcr::tui::DashboardAction::Redraw
+        );
+        let request = only_request(dashboard.drain_outbox());
         assert!(matches!(request.request, Request::RemoveWorkspace { .. }));
         dashboard.handle_server_message(ServerMessage::Response {
             request_id: request.request_id,
@@ -3532,10 +3621,10 @@ fn workspace_removal_errors_keep_confirmation_and_session_context_visible() {
         let text = palette_text(&dashboard);
         assert!(text.contains(message), "{text}");
         assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
-        assert!(!matches!(
-            dashboard.key(KeyCode::Esc),
-            ovrcr::tui::DashboardAction::Request(_)
-        ));
+        assert!({
+            let _ = dashboard.key(KeyCode::Esc);
+            dashboard.drain_outbox().is_empty()
+        });
     }
 }
 
@@ -3543,10 +3632,14 @@ fn workspace_removal_errors_keep_confirmation_and_session_context_visible() {
 fn archive_search_unarchives_without_launching() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char(':'));
+    let inspect = only_request(dashboard.drain_outbox());
+    assert_eq!(inspect.request, Request::Inspect);
     dashboard.event_action(Event::Paste("Archived sessions".into()));
-    let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-        panic!("archive must load inventory");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     assert_eq!(message.request, Request::Inspect);
     let mut row = fixture_hierarchy().projects[0].workspaces[0].sessions[0].clone();
     row.archived = true;
@@ -3565,9 +3658,11 @@ fn archive_search_unarchives_without_launching() {
     dashboard.event_action(Event::Paste("archive-workspace removed-worktree".into()));
     assert!(palette_text(&dashboard).contains("Archive needle"));
     assert!(palette_text(&dashboard).contains("/original/removed-worktree"));
-    let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-        panic!("unarchive must issue a record operation");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     assert_eq!(
         message.request,
         Request::UnarchiveSession {
@@ -3581,11 +3676,16 @@ fn archive_search_unarchives_without_launching() {
 fn close_confirms_live_work_but_archives_exited_work_immediately() {
     let mut dashboard = dashboard_fixture();
     let action = dashboard.key(KeyCode::Char('X'));
-    assert!(!matches!(action, ovrcr::tui::DashboardAction::Request(_)));
+    assert!({
+        let _ = action;
+        dashboard.drain_outbox().is_empty()
+    });
     assert!(palette_text(&dashboard).contains("archives its record"));
-    let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-        panic!("confirm must close");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     let Request::CloseTerminal {
         session,
         expected_run,
@@ -3612,9 +3712,11 @@ fn close_confirms_live_work_but_archives_exited_work_immediately() {
         hierarchy,
     )));
     // Select the same initial row; the fixture begins on this session.
-    let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Char('X')) else {
-        panic!("exited close must be immediate");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Char('X')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     assert_eq!(
         message.request,
         Request::CloseTerminal {
@@ -3808,7 +3910,8 @@ fn slash_branch_picker_does_not_split_on_slashes() {
     assert!(text.contains("consigint / feature/auth"), "{text}");
     let mut submitted = None;
     for _ in 0..6 {
-        if let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) {
+        let _ = dashboard.key(KeyCode::Enter);
+        if let Some(message) = optional_request(dashboard.drain_outbox()) {
             submitted = Some(message);
             break;
         }
@@ -3850,7 +3953,8 @@ fn shared_internal_ids_are_resolved_with_project() {
     assert!(text.contains("spacelift-agent / feature/other"), "{text}");
     let mut submitted = None;
     for _ in 0..6 {
-        if let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) {
+        let _ = dashboard.key(KeyCode::Enter);
+        if let Some(message) = optional_request(dashboard.drain_outbox()) {
             submitted = Some(message);
             break;
         }
@@ -3891,7 +3995,8 @@ fn terminal_workspace_picker_shows_current_branch_and_keeps_stable_target() {
 
     let mut submitted = None;
     for _ in 0..6 {
-        if let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) {
+        let _ = dashboard.key(KeyCode::Enter);
+        if let Some(message) = optional_request(dashboard.drain_outbox()) {
             submitted = Some(message);
             break;
         }
@@ -3938,7 +4043,8 @@ fn workspace_removal_confirmation_cannot_submit_after_branch_relabel() {
         text.contains("consigint / feature/auth"),
         "picker must show the current branch: {text}"
     );
-    if let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) {
+    let _ = dashboard.key(KeyCode::Enter);
+    if let Some(message) = optional_request(dashboard.drain_outbox()) {
         panic!("stale confirmation must not submit: {:?}", message.request);
     }
 }
@@ -3963,17 +4069,18 @@ fn relabeled_workspace_filter_requires_reselection_before_retargeting() {
     )));
     for _ in 0..6 {
         assert!(
-            !matches!(
-                dashboard.key(KeyCode::Enter),
-                ovrcr::tui::DashboardAction::Request(_)
-            ),
+            {
+                let _ = dashboard.key(KeyCode::Enter);
+                dashboard.drain_outbox().is_empty()
+            },
             "a stale filtered selection must not target the workspace that acquired its branch"
         );
     }
     dashboard.key(KeyCode::Down);
     let mut submitted = None;
     for _ in 0..6 {
-        if let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) {
+        let _ = dashboard.key(KeyCode::Enter);
+        if let Some(message) = optional_request(dashboard.drain_outbox()) {
             submitted = Some(message.request);
             break;
         }
@@ -4014,13 +4121,18 @@ fn cloud_close_warns_before_archiving_live_and_exited_rows_from_key_and_palette(
             )));
             let action = if palette {
                 dashboard.key(KeyCode::Char(':'));
+                let inspect = only_request(dashboard.drain_outbox());
+                assert_eq!(inspect.request, Request::Inspect);
                 dashboard.event_action(Event::Paste("Close terminal".into()));
                 dashboard.key(KeyCode::Enter)
             } else {
                 dashboard.key(KeyCode::Char('X'))
             };
             assert!(
-                !matches!(action, ovrcr::tui::DashboardAction::Request(_)),
+                {
+                    let _ = action;
+                    dashboard.drain_outbox().is_empty()
+                },
                 "cloud close requires visible warning before dispatch"
             );
             let text = palette_text(&dashboard);
@@ -4028,10 +4140,11 @@ fn cloud_close_warns_before_archiving_live_and_exited_rows_from_key_and_palette(
                 text.contains("Remote work and charges may continue"),
                 "{text}"
             );
-            let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter)
-            else {
-                panic!("confirm close")
-            };
+            assert_eq!(
+                dashboard.key(KeyCode::Enter),
+                ovrcr::tui::DashboardAction::Redraw
+            );
+            let message = only_request(dashboard.drain_outbox());
             assert_eq!(
                 message.request,
                 Request::CloseTerminal {

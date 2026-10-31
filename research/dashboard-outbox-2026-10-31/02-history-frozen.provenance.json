@@ -1,0 +1,19 @@
+{
+  "source_rollout": "/Users/xlyk/.codex/sessions/2026/10/30/rollout-2026-10-30T19-59-33-01a18fe5-f10d-78b1-8b0d-7be58bc03c48.jsonl",
+  "call_id": "call_be019e340e8f4ace926607906b2324e7",
+  "namespace": "mcp__cua_repl",
+  "tool": "js",
+  "call_timestamp": "2026-10-31T08:34:57.690Z",
+  "output_timestamp": "2026-10-31T08:35:00.868Z",
+  "arguments": {
+    "code": "await outboxApp.pressKey(\"ctrl+g\"); await outboxApp.pressKey(\"Prior\"); await outboxApp.getAXStateAndScreenshot({disableDiffing:true});",
+    "timeout_ms": 30000,
+    "title": "Enter Browse and verify the frozen History view"
+  },
+  "images": [
+    "02-history-frozen-0.jpg"
+  ],
+  "image_processing": "Base64 decoded verbatim; image bytes unchanged.",
+  "accessibility_file": "02-history-frozen.ax.txt",
+  "accessibility_processing": "Complete tool output input_text blocks in original order."
+}

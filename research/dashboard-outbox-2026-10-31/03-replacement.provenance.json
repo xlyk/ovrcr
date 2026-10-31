@@ -1,0 +1,19 @@
+{
+  "source_rollout": "/Users/xlyk/.codex/sessions/2026/10/30/rollout-2026-10-30T19-59-33-01a18fe5-f10d-78b1-8b0d-7be58bc03c48.jsonl",
+  "call_id": "call_5cd1c4a1ebad452e999f5296ec0afcc9",
+  "namespace": "mcp__cua_repl",
+  "tool": "js",
+  "call_timestamp": "2026-10-31T08:35:30.708Z",
+  "output_timestamp": "2026-10-31T08:35:36.102Z",
+  "arguments": {
+    "code": "await outboxApp.paste(\"rtk proxy printf 'OUTBOX_%s\\\\n' REPLACEMENT_OK\",{format:\"text\"}); await outboxApp.pressKey(\"Return\"); await outboxApp.getAXStateAndScreenshot({disableDiffing:true});",
+    "timeout_ms": 30000,
+    "title": "Prove fresh input reaches the replacement terminal after History release"
+  },
+  "images": [
+    "03-replacement-0.jpg"
+  ],
+  "image_processing": "Base64 decoded verbatim; image bytes unchanged.",
+  "accessibility_file": "03-replacement.ax.txt",
+  "accessibility_processing": "Complete tool output input_text blocks in original order."
+}

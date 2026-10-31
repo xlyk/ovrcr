@@ -26,17 +26,16 @@ fn publish_report(dashboard: &mut Dashboard, report: SettingsReport) {
 /// refusal comes back as the error, and nothing is published.
 fn serve(dashboard: &mut Dashboard, document: &Path, key: KeyCode) -> (String, Option<String>) {
     let action = dashboard.key(key);
-    answer(dashboard, document, action)
+    assert_eq!(action, DashboardAction::Redraw);
+    let message = only_request(dashboard.drain_outbox());
+    answer(dashboard, document, message)
 }
 
 fn answer(
     dashboard: &mut Dashboard,
     document: &Path,
-    action: DashboardAction,
+    message: ClientMessage,
 ) -> (String, Option<String>) {
-    let DashboardAction::Request(message) = action else {
-        panic!("expected a SetSetting request, got {action:?}");
-    };
     let Request::SetSetting { path, value } = message.request else {
         panic!("expected SetSetting, got {:?}", message.request);
     };
@@ -78,6 +77,8 @@ fn editor(contents: &str) -> (Dashboard, tempfile::TempDir, PathBuf) {
     let mut dashboard = dashboard_fixture();
     publish(&mut dashboard, &document);
     dashboard.key(KeyCode::Char(':'));
+    let inspect = only_request(dashboard.drain_outbox());
+    assert_eq!(inspect.request, Request::Inspect);
     dashboard.event_action(Event::Paste("settings".into()));
     dashboard.key(KeyCode::Enter);
     (dashboard, root, document)
@@ -271,9 +272,8 @@ fn toggle_saves_at_once_and_applies_only_the_servers_reading() {
     let (mut dashboard, _root, document) = editor("ready_sound = true # mine\n");
     select(&mut dashboard, "desktop");
     let action = dashboard.key(KeyCode::Enter);
-    let DashboardAction::Request(message) = &action else {
-        panic!("Enter on a toggle saves at once: {action:?}");
-    };
+    assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
+    let message = only_request(dashboard.drain_outbox());
     assert_eq!(
         message.request,
         Request::SetSetting {
@@ -284,7 +284,7 @@ fn toggle_saves_at_once_and_applies_only_the_servers_reading() {
     // Nothing changes until the Server's reading arrives; no confirmation.
     assert!(line_with(&dashboard, "Desktop notifications").contains("off  default"));
     assert!(line_with(&dashboard, "Desktop notifications").contains("saving…"));
-    answer(&mut dashboard, &document, action);
+    answer(&mut dashboard, &document, message);
     assert!(
         line_with(&dashboard, "Desktop notifications").contains("on  set  (default: off)"),
         "{}",
@@ -409,13 +409,17 @@ enabled = false
                 dashboard.handle_server_message(frame);
             }
             dashboard.key(KeyCode::Char(':'));
+            let inspect = only_request(dashboard.drain_outbox());
+            assert_eq!(inspect.request, Request::Inspect);
             dashboard.event_action(Event::Paste("settings".into()));
             dashboard.key(KeyCode::Enter);
 
             select(&mut dashboard, "picker_roots[1]");
-            let DashboardAction::Request(root_move) = dashboard.key(KeyCode::Char(']')) else {
-                panic!("moving a picker root sent no request");
-            };
+            assert_eq!(
+                dashboard.key(KeyCode::Char(']')),
+                ovrcr::tui::DashboardAction::Redraw
+            );
+            let root_move = only_request(dashboard.drain_outbox());
             assert_eq!(
                 root_move.request,
                 Request::SetSetting {
@@ -430,9 +434,11 @@ enabled = false
             select(&mut dashboard, "ready_sound_choice");
             assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
             dashboard.event_action(Event::Paste("Rise".into()));
-            let DashboardAction::Request(sound_save) = dashboard.key(KeyCode::Enter) else {
-                panic!("choosing a tone sent no request");
-            };
+            assert_eq!(
+                dashboard.key(KeyCode::Enter),
+                ovrcr::tui::DashboardAction::Redraw
+            );
+            let sound_save = only_request(dashboard.drain_outbox());
             assert_eq!(
                 sound_save.request,
                 Request::SetSetting {

@@ -164,11 +164,7 @@ mod compiled_worker {
                 !matches!(action, DashboardAction::PtyBytes(_)),
                 "native chat emitted terminal input"
             );
-            match action {
-                DashboardAction::Request(message) => self.pending.push_back(message),
-                DashboardAction::RequestBatch(messages) => self.pending.extend(messages),
-                _ => {}
-            }
+            self.pending.extend(self.dashboard.drain_outbox());
         }
         fn ctrl(&mut self, code: char) {
             let action = self.dashboard.ctrl(code);
@@ -179,8 +175,6 @@ mod compiled_worker {
                 !matches!(
                     self.dashboard.event_action(Event::Paste(text.into())),
                     DashboardAction::PtyBytes(_)
-                        | DashboardAction::Request(_)
-                        | DashboardAction::RequestBatch(_)
                 ),
                 "paste must only edit the native draft"
             );

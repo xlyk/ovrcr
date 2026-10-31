@@ -116,10 +116,13 @@ fn all_80_highlighted_choices_repaint_without_sending_a_save() {
         );
     }
     let last = *choices.last().unwrap();
-    let DashboardAction::Request(ClientMessage {
+    dashboard.key(KeyCode::Enter);
+    let mut requests = dashboard.drain_outbox();
+    assert_eq!(requests.len(), 1, "Enter sends one save");
+    let ClientMessage {
         request: Request::SetSetting { path, value },
         ..
-    }) = dashboard.key(KeyCode::Enter)
+    } = requests.remove(0)
     else {
         panic!("Enter must send the save request")
     };
@@ -198,10 +201,13 @@ fn assert_preview(dashboard: &Dashboard, theme: ThemeId) {
 
 fn save_theme(dashboard: &mut Dashboard, theme: ThemeId) -> u64 {
     assert!(dashboard.drain_outbox().is_empty());
-    let DashboardAction::Request(ClientMessage {
+    dashboard.key(KeyCode::Enter);
+    let mut requests = dashboard.drain_outbox();
+    assert_eq!(requests.len(), 1, "Enter sends one save");
+    let ClientMessage {
         request_id,
         request: Request::SetSetting { path, value },
-    }) = dashboard.key(KeyCode::Enter)
+    } = requests.remove(0)
     else {
         panic!("Enter must save {theme}");
     };

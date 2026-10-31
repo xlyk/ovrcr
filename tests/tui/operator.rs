@@ -263,7 +263,8 @@ fn operator_quick_opens_over_every_input_mode_without_pty_bytes() {
             }
             "History" => {
                 let request = d.key(KeyCode::PageUp);
-                if let DashboardAction::Request(request) = request {
+                let _ = request;
+                if let Some(request) = optional_request(d.drain_outbox()) {
                     d.handle_server_message(ServerMessage::Response {
                         request_id: request.request_id,
                         response: Response::HistoryOpened(history_opened(20)),
@@ -278,6 +279,8 @@ fn operator_quick_opens_over_every_input_mode_without_pty_bytes() {
             }
             "Palette" => {
                 d.key(KeyCode::Char(':'));
+                let inspect = only_request(d.drain_outbox());
+                assert_eq!(inspect.request, Request::Inspect);
             }
             "Which-key" => {
                 d.key(KeyCode::Char(' '));

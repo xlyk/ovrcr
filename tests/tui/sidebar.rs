@@ -1240,7 +1240,10 @@ fn collapse_and_mouse_hits_use_current_visible_tree() {
     let action = dashboard.mouse_action(mouse(2, 3), area);
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
     let action = dashboard.mouse_action(mouse(4, 5), area);
-    assert!(matches!(action, ovrcr::tui::DashboardAction::Request(_)));
+    assert!({
+        let _ = action;
+        matches!(dashboard.drain_outbox().as_slice(), [_])
+    });
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
     let action = dashboard.mouse_action(mouse(0, 2), area);
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
@@ -1328,10 +1331,10 @@ fn sidebar_labels_select_without_toggling_and_work_in_terminal_mode() {
 
     let mut session = dashboard_fixture();
     enter_terminal(&mut session);
-    assert!(matches!(
-        session.mouse_action(click(6, 4), area),
-        ovrcr::tui::DashboardAction::Request(_)
-    ));
+    assert!({
+        let _ = session.mouse_action(click(6, 4), area);
+        matches!(session.drain_outbox().as_slice(), [_])
+    });
     assert_eq!(session.focused_session(), Some(SessionId(5)));
 }
 
@@ -1415,9 +1418,11 @@ fn sidebar_container_click_keeps_focus_on_another_assigned_pane() {
     dashboard.ctrl('u');
     dashboard.event_action(Event::Paste("container-target".into()));
     dashboard.key(KeyCode::Tab);
-    let ovrcr::tui::DashboardAction::Request(create) = dashboard.key(KeyCode::Enter) else {
-        panic!("selected workspace should keep the create-terminal action");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let create = only_request(dashboard.drain_outbox());
     let Request::CreateSession(create) = create.request else {
         panic!("expected CreateSession");
     };
@@ -1649,7 +1654,10 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
             Rect::new(0, 0, 120, 40),
         );
         if index == 0 {
-            assert!(matches!(action, ovrcr::tui::DashboardAction::Request(_)));
+            assert!({
+                let _ = action;
+                matches!(dashboard.drain_outbox().as_slice(), [_])
+            });
         } else {
             assert!(matches!(
                 action,
@@ -1694,10 +1702,13 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
         },
         Rect::new(0, 0, 120, 40),
     );
-    assert!(matches!(
-        action,
-        ovrcr::tui::DashboardAction::Request(_) | ovrcr::tui::DashboardAction::Redraw
-    ));
+    assert_eq!(action, DashboardAction::Redraw);
+    assert!(
+        dashboard
+            .drain_outbox()
+            .iter()
+            .all(|message| matches!(message.request, Request::SetView { .. }))
+    );
     assert_eq!(dashboard.focused_session(), Some(SessionId(6)));
 }
 
@@ -1914,15 +1925,16 @@ fn enter_toggles_selected_container_fold_and_still_focuses_sessions() {
 fn browse_jk_requests_a_view_only_for_session_rows() {
     let mut dashboard = dashboard_fixture();
     let to_session = dashboard.key(KeyCode::Char('k'));
-    assert!(matches!(to_session, DashboardAction::Request(_)));
-    pump_view(&mut dashboard, to_session);
+    assert_eq!(to_session, DashboardAction::Redraw);
+    let request = only_request(dashboard.drain_outbox());
+    acknowledge_view_request(&mut dashboard, request);
     assert_eq!(dashboard.focused_session(), Some(SessionId(5)));
     assert_eq!(dashboard.key(KeyCode::Char('k')), DashboardAction::Redraw);
     assert!(dashboard.focused_session().is_none());
-    assert!(matches!(
-        dashboard.key(KeyCode::Char('j')),
-        DashboardAction::Request(_)
-    ));
+    assert!({
+        let _ = dashboard.key(KeyCode::Char('j'));
+        matches!(dashboard.drain_outbox().as_slice(), [_])
+    });
     assert_eq!(dashboard.focused_session(), Some(SessionId(5)));
 }
 
@@ -2200,9 +2212,11 @@ fn clicking_the_close_mark_confirms_archive_of_the_highlighted_session() {
     );
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
     assert_eq!(dashboard.pane_rects(area).len(), 1);
-    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-        panic!("confirming the close mark must archive");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     assert_eq!(
         message.request,
         Request::CloseTerminal {
@@ -2516,9 +2530,11 @@ fn history_and_copy_hide_the_session_close_mark() {
     );
 
     let mut dashboard = dashboard_fixture();
-    let DashboardAction::Request(begin) = dashboard.key(KeyCode::PageUp) else {
-        panic!("history must request a capture");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::PageUp),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let begin = only_request(dashboard.drain_outbox());
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: begin.request_id,
         response: Response::HistoryOpened(ovrcr::protocol::HistoryOpened {
@@ -2568,17 +2584,19 @@ fn clicking_the_close_mark_archives_an_exited_session_immediately() {
     let mut dashboard = dashboard_fixture();
     dashboard.install_focus(SessionId(2));
     hover(&mut dashboard, 10, 8, Rect::new(0, 0, 120, 40));
-    let DashboardAction::Request(message) = dashboard.mouse_action(
-        MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: 36,
-            row: 8,
-            modifiers: KeyModifiers::NONE,
-        },
-        Rect::new(0, 0, 120, 40),
-    ) else {
-        panic!("exited close mark must archive immediately");
-    };
+    assert_eq!(
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 36,
+                row: 8,
+                modifiers: KeyModifiers::NONE,
+            },
+            Rect::new(0, 0, 120, 40),
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
     assert_eq!(
         message.request,
         Request::CloseTerminal {
@@ -2603,13 +2621,16 @@ fn clicking_beside_the_close_mark_still_opens_the_session() {
         Rect::new(0, 0, 120, 40),
     );
     assert!(
-        matches!(
-            action,
-            DashboardAction::Request(ClientMessage {
-                request: Request::SetView { .. },
-                ..
-            })
-        ),
+        {
+            let _ = action;
+            matches!(
+                dashboard.drain_outbox().as_slice(),
+                [ClientMessage {
+                    request: Request::SetView { .. },
+                    ..
+                }]
+            )
+        },
         "title click must open the session, got {action:?}"
     );
     assert!(

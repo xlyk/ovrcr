@@ -942,21 +942,20 @@ impl Dashboard {
     /// set a history page error as a side effect; a pending page suppresses it, so repeating
     /// the call is idempotent.
     pub fn drain_outbox(&mut self) -> Vec<ClientMessage> {
-        let mut batch = self.outbox.drain();
-        if let Some(request) = self.history_request_if_needed() {
-            batch.push(request);
-        }
-        batch
+        self.queue_history_request();
+        self.outbox.drain()
     }
 
-    /// The drained batch as the action a key or mouse path returns.
-    pub(super) fn drained_action(&mut self) -> DashboardAction {
-        let mut batch = self.drain_outbox();
-        match batch.len() {
-            0 => DashboardAction::Redraw,
-            1 => DashboardAction::Request(batch.remove(0)),
-            _ => DashboardAction::RequestBatch(batch),
+    pub(super) fn queue_history_request(&mut self) {
+        if let Some(request) = self.history_request_if_needed() {
+            self.push_request(request);
         }
+    }
+
+    /// The writer used to drain due History before sending action-carried requests.
+    pub(super) fn enqueue_request(&mut self, message: ClientMessage) {
+        self.queue_history_request();
+        self.push_request(message);
     }
 
     pub fn request_view_at(&mut self, area: Rect) -> Option<ClientMessage> {
@@ -1765,10 +1764,11 @@ impl Dashboard {
             cancelled: false,
             at_tail,
         });
-        DashboardAction::Request(ClientMessage {
+        self.enqueue_request(ClientMessage {
             request_id,
             request: Request::HistoryBegin { session },
-        })
+        });
+        DashboardAction::Redraw
     }
 
     pub(super) fn history_key_action(&mut self, key: KeyEvent) -> DashboardAction {
@@ -1826,9 +1826,8 @@ impl Dashboard {
                 self.history_page_error = false;
                 self.dismiss_error_banner();
                 self.copy_notice = Some("Waiting for history cell".into());
-                return self
-                    .history_request_if_needed()
-                    .map_or(DashboardAction::Redraw, DashboardAction::Request);
+                self.queue_history_request();
+                return DashboardAction::Redraw;
             }
             return DashboardAction::None;
         }
@@ -1901,9 +1900,8 @@ impl Dashboard {
             self.history_page_error = false;
             self.dismiss_error_banner();
             self.copy_notice = None;
-            return self
-                .history_request_if_needed()
-                .map_or(DashboardAction::Redraw, DashboardAction::Request);
+            self.queue_history_request();
+            return DashboardAction::Redraw;
         }
         match key.code {
             KeyCode::Char('v') => self.anchor_history_cursor(),
@@ -1920,9 +1918,8 @@ impl Dashboard {
             .is_some_and(|view| view.cursor_target.is_some())
         {
             self.copy_notice = Some("Waiting for history cell".into());
-            return self
-                .history_request_if_needed()
-                .map_or(DashboardAction::Redraw, DashboardAction::Request);
+            self.queue_history_request();
+            return DashboardAction::Redraw;
         }
         let Some(cursor) = self.history.as_ref().and_then(|view| view.cursor) else {
             self.copy_notice = Some("Nothing to select on this row".into());
@@ -1943,9 +1940,8 @@ impl Dashboard {
         };
         if view.cursor_target.is_some() {
             self.copy_notice = Some("Waiting for history cell".into());
-            return self
-                .history_request_if_needed()
-                .map_or(DashboardAction::Redraw, DashboardAction::Request);
+            self.queue_history_request();
+            return DashboardAction::Redraw;
         }
         let Some(range) = view.copy_range() else {
             self.copy_notice = Some("Set an anchor with v".into());
@@ -1958,8 +1954,8 @@ impl Dashboard {
         self.history_page_error = false;
         self.dismiss_error_banner();
         self.copy_notice = None;
-        self.history_request_if_needed()
-            .map_or(DashboardAction::Redraw, DashboardAction::Request)
+        self.queue_history_request();
+        DashboardAction::Redraw
     }
 
     fn move_history_cursor(&mut self, code: KeyCode, size: TerminalSize) -> DashboardAction {
@@ -2018,8 +2014,8 @@ impl Dashboard {
         self.history_page_error = false;
         self.dismiss_error_banner();
         self.copy_notice = None;
-        self.history_request_if_needed()
-            .map_or(DashboardAction::Redraw, DashboardAction::Request)
+        self.queue_history_request();
+        DashboardAction::Redraw
     }
 
     fn leave_history(&mut self) -> DashboardAction {
@@ -2921,16 +2917,20 @@ impl Dashboard {
             return DashboardAction::None;
         };
         match held.control_epoch {
-            Some(control_epoch) => DashboardAction::Request(ClientMessage {
-                request_id: self.next_request_id(),
-                request: Request::AssignedHumanInput {
-                    session: held.session,
-                    run: held.run,
-                    control_epoch,
-                    view_revision: held.view_revision,
-                    bytes,
-                },
-            }),
+            Some(control_epoch) => {
+                let request_id = self.next_request_id();
+                self.enqueue_request(ClientMessage {
+                    request_id,
+                    request: Request::AssignedHumanInput {
+                        session: held.session,
+                        run: held.run,
+                        control_epoch,
+                        view_revision: held.view_revision,
+                        bytes,
+                    },
+                });
+                DashboardAction::Redraw
+            }
             None => DashboardAction::PtyBytes(bytes),
         }
     }
@@ -2952,19 +2952,18 @@ impl Dashboard {
     }
 
     /// Opens the history a wheel tick asked for once its pane became ready and stayed focused.
-    pub(super) fn take_deferred_history_request(&mut self) -> Option<ClientMessage> {
-        let index = self.deferred_history_at_tail.take()?;
+    pub(super) fn queue_deferred_history_request(&mut self) {
+        let Some(index) = self.deferred_history_at_tail.take() else {
+            return;
+        };
         if index != self.focused_pane
             || !self
                 .focused_pane()
                 .is_some_and(|pane| self.pane_ready(pane))
         {
-            return None;
+            return;
         }
-        match self.begin_history_request(true) {
-            DashboardAction::Request(request) => Some(request),
-            _ => None,
-        }
+        self.begin_history_request(true);
     }
 
     fn capture_mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
@@ -3096,8 +3095,8 @@ impl Dashboard {
         self.history_page_error = false;
         self.dismiss_error_banner();
         self.copy_notice = None;
-        self.history_request_if_needed()
-            .map_or(DashboardAction::Redraw, DashboardAction::Request)
+        self.queue_history_request();
+        DashboardAction::Redraw
     }
 
     fn history_wheel_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
@@ -3155,8 +3154,8 @@ impl Dashboard {
         self.history_page_error = false;
         self.dismiss_error_banner();
         self.copy_notice = None;
-        self.history_request_if_needed()
-            .map_or(DashboardAction::Redraw, DashboardAction::Request)
+        self.queue_history_request();
+        DashboardAction::Redraw
     }
 
     fn queue_held_releases(&mut self) {
@@ -3239,7 +3238,8 @@ impl Dashboard {
 
     pub(super) fn request_selected(&mut self) -> DashboardAction {
         let _ = self.request_view_at(self.outer_area);
-        self.drained_action()
+        self.queue_history_request();
+        DashboardAction::Redraw
     }
 
     pub(super) fn pause_request(&mut self, paused: bool) -> DashboardAction {
@@ -3253,14 +3253,15 @@ impl Dashboard {
         }
         let session = session.id;
         let request_id = self.error_owning_request_id();
-        DashboardAction::Request(ClientMessage {
+        self.enqueue_request(ClientMessage {
             request_id,
             request: if paused {
                 Request::PauseSession { session }
             } else {
                 Request::ResumeSession { session }
             },
-        })
+        });
+        DashboardAction::Redraw
     }
 
     pub fn handle_server_message(&mut self, message: ServerMessage) -> Vec<ClientMessage> {
@@ -3392,9 +3393,7 @@ impl Dashboard {
                                 self.dismiss_error_banner();
                                 self.error_owned_by_view = false;
                             }
-                            if let Some(request) = self.take_deferred_history_request() {
-                                self.push_request(request);
-                            }
+                            self.queue_deferred_history_request();
                         }
                         Some(Acknowledged::Incomplete { view }) => {
                             if self
@@ -3567,29 +3566,14 @@ impl Dashboard {
                     for request in self.update_hierarchy(hierarchy) {
                         self.push_request(request);
                     }
-                    if let Some(action) = self.try_attach_lifecycle_workspace_from_hierarchy() {
-                        if let DashboardAction::Request(message) = action {
-                            self.push_request(message);
-                        } else if let DashboardAction::RequestBatch(messages) = action {
-                            for message in messages {
-                                self.push_request(message);
-                            }
-                        }
-                    }
+                    self.try_attach_lifecycle_workspace_from_hierarchy();
                 }
                 ServerEvent::LifecycleCompleted {
                     client_token,
                     op,
                     outcome,
                 } => {
-                    let action = self.on_lifecycle_completed(client_token, op, outcome);
-                    if let DashboardAction::Request(message) = action {
-                        self.push_request(message);
-                    } else if let DashboardAction::RequestBatch(messages) = action {
-                        for message in messages {
-                            self.push_request(message);
-                        }
-                    }
+                    self.on_lifecycle_completed(client_token, op, outcome);
                 }
                 ServerEvent::Output {
                     session,
@@ -3944,10 +3928,12 @@ impl Dashboard {
         let Some(expected) = self.unread.review_target(session) else {
             return DashboardAction::None;
         };
-        DashboardAction::Request(ClientMessage {
-            request_id: self.error_owning_request_id(),
+        let request_id = self.error_owning_request_id();
+        self.enqueue_request(ClientMessage {
+            request_id,
             request: Request::MarkReviewed { session, expected },
-        })
+        });
+        DashboardAction::Redraw
     }
 
     pub fn input_request(&mut self, bytes: Vec<u8>, request_id: u64) -> Option<ClientMessage> {

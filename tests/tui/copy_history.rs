@@ -132,16 +132,9 @@ fn history_page_from_request(request: &ClientMessage, marker: &str) -> HistoryRo
     }
 }
 
-fn take_request(action: DashboardAction) -> ClientMessage {
-    match action {
-        DashboardAction::Request(request) => request,
-        DashboardAction::RequestBatch(mut requests) if !requests.is_empty() => requests.remove(0),
-        other => panic!("expected request, got {other:?}"),
-    }
-}
-
 fn history_begin(dashboard: &mut Dashboard) -> ClientMessage {
-    let request = take_request(dashboard.key(KeyCode::PageUp));
+    assert_eq!(dashboard.key(KeyCode::PageUp), DashboardAction::Redraw);
+    let request = only_request(dashboard.drain_outbox());
     assert!(matches!(
         request.request,
         Request::HistoryBegin {
@@ -211,11 +204,11 @@ fn pump_frozen_action(
     frozen: &mut ovrcr_terminal::history::FrozenHistory,
     action: DashboardAction,
 ) {
-    let requests = match action {
-        DashboardAction::Request(request) => vec![request],
-        DashboardAction::RequestBatch(requests) => requests,
-        _ => return,
-    };
+    assert!(!matches!(
+        action,
+        DashboardAction::PtyBytes(_) | DashboardAction::Detach
+    ));
+    let requests = dashboard.drain_outbox();
     pump_frozen(dashboard, frozen, requests);
 }
 
@@ -473,7 +466,8 @@ fn copy_mode_routes_keys_and_freezes_output() {
 #[test]
 fn matching_history_open_clears_resize_notice_but_stale_response_does_not() {
     let mut dashboard = copy_ready();
-    let begin = take_request(dashboard.key(KeyCode::PageUp));
+    assert_eq!(dashboard.key(KeyCode::PageUp), DashboardAction::Redraw);
+    let begin = only_request(dashboard.drain_outbox());
     let stale = dashboard.handle_server_message(ServerMessage::Response {
         request_id: begin.request_id + 1,
         response: Response::HistoryOpened(history_opened(100)),
@@ -590,10 +584,10 @@ fn copy_mode_cancels_at_identity_boundaries() {
     assert_eq!(dashboard.key(KeyCode::Char('q')), DashboardAction::Detach);
 
     let mut dashboard = copy_ready();
-    assert!(matches!(
-        dashboard.key(KeyCode::PageUp),
-        DashboardAction::Request(_)
-    ));
+    assert!({
+        let _ = dashboard.key(KeyCode::PageUp);
+        matches!(dashboard.drain_outbox().as_slice(), [_])
+    });
     dashboard.key(KeyCode::Char('['));
     let release = dashboard.handle_server_message(ServerMessage::Response {
         request_id: 1,
@@ -609,7 +603,9 @@ fn copy_mode_cancels_at_identity_boundaries() {
     assert!(footer(&dashboard, 120, 40).starts_with("COPY"));
 
     let mut dashboard = copy_ready();
-    dashboard.key(KeyCode::PageUp);
+    assert_eq!(dashboard.key(KeyCode::PageUp), DashboardAction::Redraw);
+    let begin = only_request(dashboard.drain_outbox());
+    assert!(matches!(begin.request, Request::HistoryBegin { .. }));
     dashboard.key(KeyCode::Char('['));
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: 1,
@@ -750,23 +746,25 @@ fn pause_resume_browse_keys_send_explicit_requests() {
     dashboard.install_focus(SessionId(5));
     dashboard.install_screen(SessionId(5), &[]);
 
+    assert_eq!(dashboard.key(KeyCode::Char('p')), DashboardAction::Redraw);
     assert_eq!(
-        dashboard.key(KeyCode::Char('p')),
-        DashboardAction::Request(ClientMessage {
+        only_request(dashboard.drain_outbox()),
+        ClientMessage {
             request_id: 1,
             request: Request::PauseSession {
                 session: SessionId(5),
             },
-        })
+        }
     );
+    assert_eq!(dashboard.key(KeyCode::Char('p')), DashboardAction::Redraw);
     assert_eq!(
-        dashboard.key(KeyCode::Char('p')),
-        DashboardAction::Request(ClientMessage {
+        only_request(dashboard.drain_outbox()),
+        ClientMessage {
             request_id: 2,
             request: Request::PauseSession {
                 session: SessionId(5),
             },
-        })
+        }
     );
 
     let mut paused = session_summary(5, "consigint", "auth", "local", "zsh", Some(555), 0);
@@ -774,14 +772,15 @@ fn pause_resume_browse_keys_send_explicit_requests() {
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
         paused,
     ))));
+    assert_eq!(dashboard.key(KeyCode::Char('r')), DashboardAction::Redraw);
     assert_eq!(
-        dashboard.key(KeyCode::Char('r')),
-        DashboardAction::Request(ClientMessage {
+        only_request(dashboard.drain_outbox()),
+        ClientMessage {
             request_id: 3,
             request: Request::ResumeSession {
                 session: SessionId(5),
             },
-        })
+        }
     );
 
     dashboard.install_focus(SessionId(2));
@@ -858,14 +857,15 @@ fn pause_resume_input_and_paste_stay_guarded() {
 fn history_navigation_never_writes_to_pty() {
     let mut dashboard = dashboard_fixture();
     let begin = dashboard.key(KeyCode::PageUp);
+    assert_eq!(begin, DashboardAction::Redraw);
     assert_eq!(
-        begin,
-        DashboardAction::Request(ClientMessage {
+        only_request(dashboard.drain_outbox()),
+        ClientMessage {
             request_id: 1,
             request: Request::HistoryBegin {
                 session: SessionId(1),
             },
-        })
+        }
     );
     assert_eq!(dashboard.key(KeyCode::Char('q')), DashboardAction::Detach);
 
@@ -915,23 +915,29 @@ fn history_navigation_never_writes_to_pty() {
 fn history_begin_is_cancelled_and_captured_by_active_overlays() {
     for overlay in ["palette", "tasks"] {
         let mut dashboard = dashboard_fixture();
-        assert!(matches!(
-            dashboard.key(KeyCode::PageUp),
-            DashboardAction::Request(ClientMessage {
-                request: Request::HistoryBegin {
-                    session: SessionId(1)
-                },
-                ..
-            })
-        ));
-        if overlay == "palette" {
-            assert!(matches!(
-                dashboard.key(KeyCode::Char(':')),
-                DashboardAction::Request(ClientMessage {
-                    request: Request::Inspect,
+        assert!({
+            let _ = dashboard.key(KeyCode::PageUp);
+            matches!(
+                dashboard.drain_outbox().as_slice(),
+                [ClientMessage {
+                    request: Request::HistoryBegin {
+                        session: SessionId(1)
+                    },
                     ..
-                })
-            ));
+                }]
+            )
+        });
+        if overlay == "palette" {
+            assert!({
+                let _ = dashboard.key(KeyCode::Char(':'));
+                matches!(
+                    dashboard.drain_outbox().as_slice(),
+                    [ClientMessage {
+                        request: Request::Inspect,
+                        ..
+                    }]
+                )
+            });
         } else {
             assert_eq!(dashboard.ctrl('t'), DashboardAction::Redraw);
         }
@@ -1175,10 +1181,10 @@ fn history_pending_keys_coalesce() {
         DashboardAction::None
     ));
     for _ in 0..100 {
-        assert!(!matches!(
-            dashboard.key(KeyCode::PageUp),
-            DashboardAction::Request(_)
-        ));
+        assert!({
+            let _ = dashboard.key(KeyCode::PageUp);
+            dashboard.drain_outbox().is_empty()
+        });
     }
     let follow_up = dashboard.handle_server_message(ServerMessage::Response {
         request_id: page_request.request_id,
@@ -1200,10 +1206,10 @@ fn history_pending_keys_coalesce() {
         response: Response::Ok,
     });
     assert!(footer(&dashboard, 120, 40).contains("missing"));
-    assert!(matches!(
-        dashboard.key(KeyCode::Down),
-        DashboardAction::Request(_)
-    ));
+    assert!({
+        let _ = dashboard.key(KeyCode::Down);
+        matches!(dashboard.drain_outbox().as_slice(), [_])
+    });
     assert!(!footer(&dashboard, 120, 40).contains("missing"));
 }
 
@@ -1250,16 +1256,15 @@ fn history_unanchored_retry_keys_reissue_failed_cursor_request() {
                     })
                     .is_empty()
             );
-            let retry = match dashboard.key_action(KeyEvent::new_with_kind(
-                retry_key,
-                KeyModifiers::NONE,
-                KeyEventKind::Press,
-            )) {
-                DashboardAction::Request(request) => request,
-                action => {
-                    panic!("expected explicit cursor retry for {retry_key:?}, got {action:?}")
-                }
-            };
+            assert_eq!(
+                dashboard.key_action(KeyEvent::new_with_kind(
+                    retry_key,
+                    KeyModifiers::NONE,
+                    KeyEventKind::Press,
+                )),
+                DashboardAction::Redraw
+            );
+            let retry = only_request(dashboard.drain_outbox());
             assert!(matches!(retry.request, Request::HistoryPage { .. }));
             let follow_up = dashboard.handle_server_message(ServerMessage::Response {
                 request_id: retry.request_id,
@@ -1300,13 +1305,16 @@ fn copy_history_range_survives_live_eviction() {
     assert!(rendered.contains("HISTORY · frozen"));
     assert!(!rendered.contains("LIVE_MARKER"));
     let yank = dashboard.key(KeyCode::Char('y'));
-    assert!(matches!(
-        yank,
-        DashboardAction::Request(ClientMessage {
-            request: Request::HistoryPage { .. },
-            ..
-        })
-    ));
+    assert!({
+        let _ = yank;
+        matches!(
+            dashboard.drain_outbox().as_slice(),
+            [ClientMessage {
+                request: Request::HistoryPage { .. },
+                ..
+            }]
+        )
+    });
     assert!(draw_text(&dashboard, 180, 40).contains("copying"));
 }
 
@@ -1317,7 +1325,8 @@ fn copy_history_invalid_snapshot_never_emits_partial_text() {
         let requests = open_history(&mut dashboard, history_opened(2));
         answer_pages(&mut dashboard, requests, "A");
         dashboard.key(KeyCode::Char('v'));
-        let yank = take_request(dashboard.key(KeyCode::Char('y')));
+        assert_eq!(dashboard.key(KeyCode::Char('y')), DashboardAction::Redraw);
+        let yank = only_request(dashboard.drain_outbox());
         let release = dashboard.handle_server_message(ServerMessage::Response {
             request_id: yank.request_id,
             response: Response::Error {
@@ -1343,7 +1352,8 @@ fn copy_history_invalid_snapshot_never_emits_partial_text() {
     let requests = open_history(&mut internal, history_opened(2));
     answer_pages(&mut internal, requests, "A");
     internal.key(KeyCode::Char('v'));
-    let yank = take_request(internal.key(KeyCode::Char('y')));
+    assert_eq!(internal.key(KeyCode::Char('y')), DashboardAction::Redraw);
+    let yank = only_request(internal.drain_outbox());
     let internal_release = internal.handle_server_message(ServerMessage::Response {
         request_id: yank.request_id,
         response: Response::Error {
@@ -1353,7 +1363,8 @@ fn copy_history_invalid_snapshot_never_emits_partial_text() {
     });
     assert!(internal_release.is_empty());
     assert!(draw_text(&internal, 180, 40).contains("HISTORY"));
-    let retry = take_request(internal.key(KeyCode::Char('y')));
+    assert_eq!(internal.key(KeyCode::Char('y')), DashboardAction::Redraw);
+    let retry = only_request(internal.drain_outbox());
     assert!(matches!(retry.request, Request::HistoryPage { .. }));
 }
 
@@ -1427,10 +1438,10 @@ fn history_render_preserves_cells_and_clips() {
 #[test]
 fn history_cancelled_begin_releases_late_snapshot() {
     let mut dashboard = dashboard_fixture();
-    assert!(matches!(
-        dashboard.key(KeyCode::PageUp),
-        DashboardAction::Request(_)
-    ));
+    assert!({
+        let _ = dashboard.key(KeyCode::PageUp);
+        matches!(dashboard.drain_outbox().as_slice(), [_])
+    });
     assert_eq!(dashboard.key(KeyCode::Esc), DashboardAction::EnterBrowse);
     let release = dashboard.handle_server_message(ServerMessage::Response {
         request_id: 1,
@@ -1445,19 +1456,22 @@ fn history_cancelled_begin_releases_late_snapshot() {
             snapshot: HistorySnapshotId(7),
         }
     ));
-    assert!(matches!(
-        dashboard.key(KeyCode::PageUp),
-        DashboardAction::Request(ClientMessage {
-            request: Request::HistoryBegin { .. },
-            ..
-        })
-    ));
+    assert!({
+        let _ = dashboard.key(KeyCode::PageUp);
+        matches!(
+            dashboard.drain_outbox().as_slice(),
+            [ClientMessage {
+                request: Request::HistoryBegin { .. },
+                ..
+            }]
+        )
+    });
 
     let mut dashboard = dashboard_fixture();
-    assert!(matches!(
-        dashboard.key(KeyCode::PageUp),
-        DashboardAction::Request(_)
-    ));
+    assert!({
+        let _ = dashboard.key(KeyCode::PageUp);
+        matches!(dashboard.drain_outbox().as_slice(), [_])
+    });
     assert_eq!(dashboard.ctrl('g'), DashboardAction::EnterBrowse);
     let release = dashboard.handle_server_message(ServerMessage::Response {
         request_id: 1,
@@ -1472,10 +1486,10 @@ fn history_cancelled_begin_releases_late_snapshot() {
     ));
 
     let mut dashboard = dashboard_fixture();
-    assert!(matches!(
-        dashboard.key(KeyCode::PageUp),
-        DashboardAction::Request(_)
-    ));
+    assert!({
+        let _ = dashboard.key(KeyCode::PageUp);
+        matches!(dashboard.drain_outbox().as_slice(), [_])
+    });
     assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
     assert_eq!(
         dashboard.key(KeyCode::Char('z')),
@@ -1546,9 +1560,11 @@ fn history_waits_for_coalesced_focus_view_before_capture() {
         .expect("expected split SetView");
     dashboard.drain_outbox();
     acknowledge_all_view_targets(&mut dashboard, view);
-    let DashboardAction::Request(begin) = dashboard.key(KeyCode::PageUp) else {
-        panic!("history must open after the committed focus is acknowledged");
-    };
+    assert_eq!(
+        dashboard.key(KeyCode::PageUp),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let begin = only_request(dashboard.drain_outbox());
     assert_eq!(
         begin.request,
         Request::HistoryBegin {
@@ -1564,13 +1580,16 @@ fn ux_history_footer_names_the_actual_escape_action() {
     answer_pages(&mut dashboard, requests, "AB");
     dashboard.key(KeyCode::Char('v'));
     let yank = dashboard.key(KeyCode::Char('y'));
-    assert!(matches!(
-        yank,
-        DashboardAction::Request(ClientMessage {
-            request: Request::HistoryPage { .. },
-            ..
-        })
-    ));
+    assert!({
+        let _ = yank;
+        matches!(
+            dashboard.drain_outbox().as_slice(),
+            [ClientMessage {
+                request: Request::HistoryPage { .. },
+                ..
+            }]
+        )
+    });
     for width in [40, 80, 120] {
         let text = footer(&dashboard, width, 24);
         assert!(text.contains("Esc Cancel copy"), "{text}");
@@ -1672,7 +1691,8 @@ fn history_mouse_drag_uses_frozen_offsets_and_cancels_stale_completion() {
         ),
         area,
     );
-    if let DashboardAction::Request(request) = action {
+    let _ = action;
+    if let Some(request) = optional_request(d.drain_outbox()) {
         pump_frozen(&mut d, &mut frozen, vec![request]);
     }
     assert!(draw_text(&d, 180, 40).contains("copying"));
@@ -1842,13 +1862,12 @@ fn history_mouse_bounds_match_offset_painted_cells_and_resize_keeps_capture() {
         area,
     );
     let yank = d.key(KeyCode::Char('y'));
-    assert!(matches!(
-        yank,
-        DashboardAction::Request(ClientMessage {
-            request: Request::HistoryPage { .. },
-            ..
-        }) | DashboardAction::Redraw
-    ));
+    assert_eq!(yank, DashboardAction::Redraw);
+    assert!(
+        d.drain_outbox()
+            .iter()
+            .all(|message| matches!(message.request, Request::HistoryPage { .. }))
+    );
     for (x, y) in [
         (pane.x, pane.y.saturating_sub(1)),
         (pane.x, pane.y.saturating_add(pane.height)),
@@ -1936,7 +1955,8 @@ fn history_copy_joins_soft_wrap_without_hard_newline() {
                 "soft wrap must not insert a hard newline: {text:?}"
             );
         }
-        DashboardAction::Request(request) => {
+        DashboardAction::Redraw => {
+            let request = only_request(dashboard.drain_outbox());
             assert!(matches!(request.request, Request::HistoryPage { .. }));
         }
         other => panic!("expected CopyText or HistoryPage, got {other:?}"),

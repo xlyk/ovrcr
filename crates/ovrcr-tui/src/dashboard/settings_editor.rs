@@ -586,10 +586,11 @@ impl Dashboard {
         self.settings_editor
             .pending
             .insert(request_id, row.to_string());
-        DashboardAction::Request(ClientMessage {
+        self.enqueue_request(ClientMessage {
             request_id,
             request: Request::SetSetting { path, value },
-        })
+        });
+        DashboardAction::Redraw
     }
 
     fn editing_disabled(&mut self) -> bool {
@@ -1311,10 +1312,13 @@ mod tests {
         let drawn = text(&terminal);
         assert!(drawn.contains("an integer from 1 to 86400000"), "{drawn}");
         assert!(!drawn.contains("TOML array"), "{drawn}");
-        let DashboardAction::Request(ClientMessage {
+        let Some(ClientMessage {
             request: Request::SetSetting { path, value },
             ..
-        }) = d.key(KeyCode::Enter)
+        }) = ({
+            d.key(KeyCode::Enter);
+            d.drain_one_request()
+        })
         else {
             panic!("expected typed setting request");
         };
@@ -1452,9 +1456,10 @@ mod tests {
         dashboard
     }
 
-    fn setting_write(action: DashboardAction) -> (String, Option<String>) {
-        match action {
-            DashboardAction::Request(ClientMessage {
+    fn setting_write(dashboard: &mut Dashboard, key: KeyCode) -> (String, Option<String>) {
+        dashboard.key(key);
+        match dashboard.drain_one_request() {
+            Some(ClientMessage {
                 request: Request::SetSetting { path, value },
                 ..
             }) => (path, value),
@@ -1487,7 +1492,10 @@ mod tests {
                 d.key(KeyCode::Backspace);
             }
             d.settings_editor_paste(value);
-            let DashboardAction::Request(message) = d.key(KeyCode::Enter) else {
+            let Some(message) = ({
+                d.key(KeyCode::Enter);
+                d.drain_one_request()
+            }) else {
                 panic!("typed edit must send request")
             };
             let Request::SetSetting {
@@ -1585,7 +1593,7 @@ mod tests {
                 d.key(KeyCode::Backspace);
             }
             d.settings_editor_paste(value);
-            let (path, written) = setting_write(d.key(KeyCode::Enter));
+            let (path, written) = setting_write(&mut d, KeyCode::Enter);
             assert_eq!(path, expected_path);
             assert_eq!(
                 written.as_deref(),
@@ -1768,10 +1776,13 @@ mod tests {
         // Enter sends the ordinary SetSetting request without optimistic
         // mutation; the transient preview remains until the Server reading.
         let candidate = choose_next_theme(&mut d);
-        let DashboardAction::Request(ClientMessage {
+        let Some(ClientMessage {
             request_id,
             request: Request::SetSetting { path, value },
-        }) = d.key(KeyCode::Enter)
+        }) = ({
+            d.key(KeyCode::Enter);
+            d.drain_one_request()
+        })
         else {
             panic!("expected theme setting request");
         };
@@ -1830,7 +1841,10 @@ mod tests {
             KeyCode::Down
         });
         let candidate = d.settings_editor.preview_theme.unwrap();
-        let DashboardAction::Request(ClientMessage { .. }) = d.key(KeyCode::Enter) else {
+        let Some(ClientMessage { .. }) = ({
+            d.key(KeyCode::Enter);
+            d.drain_one_request()
+        }) else {
             panic!("expected theme setting request");
         };
         let mut saved = d.settings.clone();
@@ -1899,20 +1913,26 @@ mod tests {
 
         let mut d = editor(false);
         let candidate = choose_next_theme(&mut d);
-        let DashboardAction::Request(ClientMessage {
+        let Some(ClientMessage {
             request_id: theme_request,
             ..
-        }) = d.key(KeyCode::Enter)
+        }) = ({
+            d.key(KeyCode::Enter);
+            d.drain_one_request()
+        })
         else {
             panic!("expected theme setting request");
         };
         assert_eq!(d.settings_editor.preview_request, Some(theme_request));
 
         d.settings_editor.selected = Some("desktop_notifications".into());
-        let DashboardAction::Request(ClientMessage {
+        let Some(ClientMessage {
             request_id: other_request,
             request: Request::SetSetting { path, .. },
-        }) = d.key(KeyCode::Enter)
+        }) = ({
+            d.key(KeyCode::Enter);
+            d.drain_one_request()
+        })
         else {
             panic!("expected non-theme setting request");
         };
@@ -1938,14 +1958,14 @@ mod tests {
         for document in [true, false] {
             let mut dashboard = editor(document);
             dashboard.settings_editor.selected = Some("picker_roots[1]".into());
-            let (path, value) = setting_write(dashboard.key(KeyCode::Char(']')));
+            let (path, value) = setting_write(&mut dashboard, KeyCode::Char(']'));
             assert_eq!(path, "picker_roots", "document={document}");
             assert_eq!(
                 value.as_deref(),
                 Some("[\"/a\", \"/c\", \"/b\"]"),
                 "move down, document={document}"
             );
-            let (path, value) = setting_write(dashboard.key(KeyCode::Char('[')));
+            let (path, value) = setting_write(&mut dashboard, KeyCode::Char('['));
             assert_eq!(path, "picker_roots");
             assert_eq!(
                 value.as_deref(),
@@ -2086,10 +2106,13 @@ mod tests {
             for _ in 0..index.abs_diff(2) {
                 d.key(arrows);
             }
-            let DashboardAction::Request(ClientMessage {
+            let Some(ClientMessage {
                 request_id,
                 request: Request::SetSetting { path, value },
-            }) = d.key(KeyCode::Enter)
+            }) = ({
+                d.key(KeyCode::Enter);
+                d.drain_one_request()
+            })
             else {
                 panic!("expected Server setting request");
             };

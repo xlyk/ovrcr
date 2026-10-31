@@ -230,7 +230,7 @@ fn sidebar_border_drag_resizes_the_sidebar_and_the_pane() {
     );
     let resized = request_view(&mut dashboard, area, revision);
     assert_eq!(set_view(&resized).panes[0].size.cols, 60);
-    pump_view(&mut dashboard, DashboardAction::Request(resized));
+    acknowledge_view_request(&mut dashboard, resized);
     assert_eq!(
         dashboard.mouse_action(
             mouse_event(
@@ -1000,7 +1000,8 @@ fn split_layout_renders_independent_cells_and_cursor() {
     dashboard.key(KeyCode::Esc);
     dashboard.key(KeyCode::Esc);
     let begin = dashboard.key(KeyCode::PageUp);
-    if let DashboardAction::Request(request) = begin {
+    let _ = begin;
+    if let Some(request) = optional_request(dashboard.drain_outbox()) {
         dashboard.handle_server_message(ServerMessage::Response {
             request_id: request.request_id,
             response: Response::HistoryOpened(history_opened(1)),
@@ -2392,10 +2393,9 @@ fn split_error_is_cleared_by_the_view_the_next_selection_requests() {
     );
     assert!(banner(&dashboard).contains("No other visible session to split"));
     let request = (0..16)
-        .find_map(|_| match dashboard.key(KeyCode::Char('j')) {
-            ovrcr::tui::DashboardAction::Request(request) => Some(request),
-            ovrcr::tui::DashboardAction::Redraw => None,
-            action => panic!("a selection change should request a view: {action:?}"),
+        .find_map(|_| {
+            assert_eq!(dashboard.key(KeyCode::Char('j')), DashboardAction::Redraw);
+            optional_request(dashboard.drain_outbox())
         })
         .expect("j/k should reach a visible session and request its view");
     acknowledge_view_request(&mut dashboard, request);
@@ -2455,10 +2455,8 @@ fn split_error_survives_mouse_cleanup_ack() {
         banner(&dashboard).contains("No other visible session to split"),
         "a synthetic mouse release must not clear a fresh error"
     );
-    let pause = match dashboard.key(KeyCode::Char('p')) {
-        DashboardAction::Request(request) => request,
-        action => panic!("pause should own the banner: {action:?}"),
-    };
+    dashboard.key(KeyCode::Char('p'));
+    let pause = only_request(dashboard.drain_outbox());
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: pause.request_id,
         response: Response::Ok,
@@ -2592,14 +2590,10 @@ fn split_review_keeps_history_a_while_b_changes_and_cancels_late_work() {
         .find(|pane| pane.session != a)
         .map(|pane| pane.session)
         .expect("other pane");
-    let begin = dashboard.key(KeyCode::PageUp);
-    let begin_id = match begin {
-        ovrcr::tui::DashboardAction::Request(ClientMessage {
-            request: Request::HistoryBegin { session },
-            request_id,
-        }) if session == a => request_id,
-        action => panic!("expected HistoryBegin for focused pane, got {action:?}"),
-    };
+    dashboard.key(KeyCode::PageUp);
+    let begin = only_request(dashboard.drain_outbox());
+    assert_eq!(begin.request, Request::HistoryBegin { session: a });
+    let begin_id = begin.request_id;
     let opened = HistoryOpened {
         session: a,
         snapshot: HistorySnapshotId(77),
@@ -2625,11 +2619,18 @@ fn split_review_keeps_history_a_while_b_changes_and_cancels_late_work() {
         dashboard.key(KeyCode::Esc),
         ovrcr::tui::DashboardAction::EnterBrowse
     );
-    let begin = dashboard.key(KeyCode::PageUp);
-    let begin_request_id = match begin {
-        ovrcr::tui::DashboardAction::Request(request) => request.request_id,
-        action => panic!("expected second history begin, got {action:?}"),
-    };
+    let end = only_request(dashboard.drain_outbox());
+    assert_eq!(
+        end.request,
+        Request::HistoryEnd {
+            session: a,
+            snapshot: HistorySnapshotId(77)
+        }
+    );
+    dashboard.key(KeyCode::PageUp);
+    let begin = only_request(dashboard.drain_outbox());
+    assert_eq!(begin.request, Request::HistoryBegin { session: a });
+    let begin_request_id = begin.request_id;
     tab_pane(&mut dashboard);
     assert!(!rendered_footer(&dashboard, 120).contains("HISTORY"));
     let late = dashboard.handle_server_message(ServerMessage::Response {
@@ -2647,10 +2648,8 @@ fn split_review_keeps_history_a_while_b_changes_and_cancels_late_work() {
 
     let focused_view = request_view(&mut dashboard, area, revision);
     acknowledge_all_view_targets(&mut dashboard, focused_view);
-    let begin_b = match dashboard.key(KeyCode::PageUp) {
-        ovrcr::tui::DashboardAction::Request(request) => request,
-        action => panic!("expected B history begin, got {action:?}"),
-    };
+    dashboard.key(KeyCode::PageUp);
+    let begin_b = only_request(dashboard.drain_outbox());
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: begin_b.request_id,
         response: Response::HistoryOpened(HistoryOpened {
@@ -2679,10 +2678,8 @@ fn split_review_cancels_inflight_history_copy_before_focus_change() {
     let split_req = request_view(&mut dashboard, area, 1);
     acknowledge_all_view_targets(&mut dashboard, split_req);
     let session = dashboard.focused_session().unwrap();
-    let begin = match dashboard.key(KeyCode::PageUp) {
-        ovrcr::tui::DashboardAction::Request(request) => request,
-        action => panic!("expected history begin request, got {action:?}"),
-    };
+    dashboard.key(KeyCode::PageUp);
+    let begin = only_request(dashboard.drain_outbox());
     let open_follow_up = dashboard.handle_server_message(ServerMessage::Response {
         request_id: begin.request_id,
         response: Response::HistoryOpened(HistoryOpened {
@@ -2721,10 +2718,8 @@ fn split_review_cancels_inflight_history_copy_before_focus_change() {
         dashboard.key(KeyCode::Char('v')),
         ovrcr::tui::DashboardAction::Redraw
     );
-    let copy_request = match dashboard.key(KeyCode::Char('y')) {
-        ovrcr::tui::DashboardAction::Request(request) => request,
-        action => panic!("expected history copy page request, got {action:?}"),
-    };
+    dashboard.key(KeyCode::Char('y'));
+    let copy_request = only_request(dashboard.drain_outbox());
     tab_pane(&mut dashboard);
     assert!(!rendered_footer(&dashboard, 120).contains("HISTORY"));
     dashboard.handle_server_message(ServerMessage::Response {
@@ -2766,10 +2761,8 @@ fn split_review_unfocused_removal_preserves_focused_history_capture() {
     let focused = request_view(&mut dashboard, area, split_view.revision);
     acknowledge_all_view_targets(&mut dashboard, focused);
     let session = dashboard.focused_session().unwrap();
-    let begin = match dashboard.key(KeyCode::PageUp) {
-        ovrcr::tui::DashboardAction::Request(request) => request,
-        action => panic!("expected history begin request, got {action:?}"),
-    };
+    dashboard.key(KeyCode::PageUp);
+    let begin = only_request(dashboard.drain_outbox());
     let viewport_requests = dashboard.handle_server_message(ServerMessage::Response {
         request_id: begin.request_id,
         response: Response::HistoryOpened(HistoryOpened {
@@ -2811,10 +2804,8 @@ fn split_review_unfocused_removal_preserves_focused_history_capture() {
         dashboard.key(KeyCode::Char('v')),
         ovrcr::tui::DashboardAction::Redraw
     );
-    let copy_request = match dashboard.key(KeyCode::Char('y')) {
-        ovrcr::tui::DashboardAction::Request(request) => request,
-        action => panic!("expected in-flight History copy request, got {action:?}"),
-    };
+    dashboard.key(KeyCode::Char('y'));
+    let copy_request = only_request(dashboard.drain_outbox());
     let removed = split_view
         .panes
         .iter()
