@@ -96,7 +96,19 @@ impl ClaudeFixture {
     }
 
     fn started(&self) -> AssignmentSnapshot {
-        let reply = self.start_claude();
+        self.started_policy(false)
+    }
+
+    fn started_policy(&self, helpers: bool) -> AssignmentSnapshot {
+        let reply = if helpers {
+            self.tool("ovrcr_start", serde_json::json!({
+                "project":PROJECT,"workspace":self.workspace,"provider":"claude","model_provider":"native","model":"fixture-model",
+                "scope":"Read README using the assigned native research helper.","acceptance_evidence":["README citation"],
+                "mandatory_capabilities":["read","result_file","native_helpers"]
+            }))
+        } else {
+            self.start_claude()
+        };
         assert_eq!(reply["dispatch"], "Applied", "{reply}");
         let snapshot: AssignmentSnapshot = serde_json::from_value(reply).unwrap();
         wait_file(&snapshot.brief.with_extension("json.started"));
@@ -107,8 +119,28 @@ impl ClaudeFixture {
         assert!(args.iter().any(|arg| arg == "--permission-mode"));
         assert_eq!(
             args[args.iter().position(|arg| arg == "--tools").unwrap() + 1],
-            ""
+            if helpers { "Agent" } else { "" }
         );
+        let grants: Vec<_> = args
+            .windows(2)
+            .filter(|pair| pair[0] == "--allowedTools")
+            .collect();
+        if helpers {
+            assert!(
+                grants.is_empty(),
+                "helper-v1 must not gain native approvals"
+            );
+        } else {
+            assert_eq!(
+                grants.len(),
+                1,
+                "default Research requires the exact scoped grant recipe"
+            );
+            assert_eq!(
+                grants[0][1],
+                "mcp__ovrcr_child__ovrcr_read,mcp__ovrcr_child__ovrcr_publish,mcp__ovrcr_child__ovrcr_publish_question"
+            );
+        }
         assert!(args.iter().any(|arg| arg == "--strict-mcp-config"));
         let mcp: serde_json::Value = serde_json::from_slice(
             &fs::read(
@@ -121,6 +153,15 @@ impl ClaudeFixture {
         .unwrap();
         assert_eq!(mcp["mcpServers"].as_object().unwrap().len(), 1);
         assert!(mcp["mcpServers"].get("ovrcr_child").is_some());
+        assert_eq!(
+            mcp["mcpServers"]["ovrcr_child"]["alwaysLoad"],
+            if helpers {
+                serde_json::Value::Null
+            } else {
+                serde_json::json!(true)
+            },
+            "default assigned MCP tools must be required before the first query; helper-v1 stays unchanged"
+        );
         assert!(!args.iter().any(|arg| {
             [
                 "--dangerously-skip-permissions",
@@ -177,6 +218,115 @@ impl ClaudeFixture {
             })
             .count()
     }
+}
+
+#[test]
+fn public_claude_native_helper_opt_in_seals_read_only_recipe_and_preserves_recovery() {
+    let f = ClaudeFixture::new("no-stop");
+    let capabilities = f.tool(
+        "ovrcr_capabilities",
+        serde_json::json!({"provider":"claude","model_provider":"native","model":"fixture-model"}),
+    );
+    assert_eq!(capabilities["native_helpers"], true);
+    assert_eq!(capabilities["native_descendant_usage"], false);
+    let first = f.started_policy(true);
+    let launch: serde_json::Value =
+        serde_json::from_slice(&fs::read(f.profile.join("delegation-launch.json")).unwrap())
+            .unwrap();
+    let args: Vec<std::ffi::OsString> = launch["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|arg| arg.as_str().unwrap().into())
+        .collect();
+    let agents = args.windows(2).find(|a| a[0] == "--agents").unwrap()[1]
+        .to_str()
+        .unwrap();
+    assert_eq!(
+        ovrcr_runtime::claude_delegation::helper_model(agents).unwrap(),
+        "fixture-model-resolved"
+    );
+    let definitions: serde_json::Value = serde_json::from_str(agents).unwrap();
+    assert_eq!(
+        definitions["ovrcr-assigned-research"]["tools"],
+        serde_json::json!(["mcp__ovrcr_child__ovrcr_read"])
+    );
+    let root = first.brief.parent().unwrap();
+    let settings: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("claude-settings.json")).unwrap()).unwrap();
+    assert_eq!(
+        settings["env"]["CLAUDE_CODE_SUBAGENT_MODEL"],
+        "fixture-model-resolved"
+    );
+    assert_eq!(
+        settings["permissions"]["deny"],
+        serde_json::json!(["Agent(fork)"])
+    );
+    let options = ovrcr_runtime::claude_recovery::launch_options(
+        &[
+            vec![f.live.claude.command.clone().into_os_string()],
+            args.clone(),
+        ]
+        .concat(),
+    )
+    .unwrap();
+    assert!(
+        options
+            .windows(2)
+            .any(|a| a[0] == "--agents" && a[1] == agents)
+    );
+    // Actual Reporter admission must retain the same recipe, not silently drop recovery.
+    let db = rusqlite::Connection::open(f.live.config.join("registry.sqlite3")).unwrap();
+    let metadata: String = db
+        .query_row(
+            "SELECT reference FROM agent_conversations WHERE session=?1",
+            [i64::try_from(first.identity.session.unwrap().0).unwrap()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let recovery: ovrcr_protocol::ConversationReference = serde_json::from_str(&metadata).unwrap();
+    let ovrcr_protocol::ConversationReference::Claude(recovery) = recovery else {
+        panic!("wrong recovery provider")
+    };
+    assert_eq!(
+        recovery.options, options,
+        "native admission lost generated recovery"
+    );
+    ovrcr_runtime::claude_recovery::validate(&recovery).unwrap();
+    let result = complete(&f, &first);
+    assert_eq!(result.acceptance, "pending");
+    assert_eq!(
+        f.child_count(),
+        1,
+        "native helper policy adds no OVRCR Session"
+    );
+    // All later production effects recheck the sealed force-model/fork policy.
+    let mut changed = settings.clone();
+    changed["env"]["CLAUDE_CODE_SUBAGENT_MODEL"] = "foreign-model".into();
+    fs::write(
+        root.join("claude-settings.json"),
+        serde_json::to_vec(&changed).unwrap(),
+    )
+    .unwrap();
+    let before = f.input_count(&result);
+    let refused = followup(&f, &result, None);
+    assert!(
+        refused.get("error").is_some() || refused["dispatch"] != "Applied",
+        "{refused}"
+    );
+    assert_eq!(f.input_count(&result), before);
+}
+
+#[test]
+fn public_claude_default_research_preapproves_only_scoped_mcp_tools() {
+    let f = ClaudeFixture::new("no-stop");
+    let started = f.started();
+    let result = complete(&f, &started);
+    assert_eq!(result.identity, started.identity);
+    assert_eq!(result.conversation, started.conversation);
+    assert_eq!(result.submission.as_ref().unwrap().version, 1);
+    assert_eq!(result.acceptance, "pending");
+    assert_eq!(f.input_count(&result), 1);
 }
 
 #[test]
@@ -314,6 +464,280 @@ fn public_claude_missing_or_wrong_native_model_never_receives_initial_input() {
         assert_eq!(f.input_count(&current), 0);
         assert_eq!(f.byte_count(&current), 0);
     }
+}
+
+#[test]
+fn public_claude_startup_model_bootstraps_source_created_by_first_input() {
+    let f = ClaudeFixture::new("startup-bootstrap");
+    let reply = f.start_claude();
+    let pending: AssignmentSnapshot = serde_json::from_value(reply).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let current = loop {
+        let current = f.reconcile(&pending.handle);
+        let Response::Inventory { sessions, .. } = f.live.request(Request::Inspect) else {
+            panic!("inventory")
+        };
+        let source_observed = sessions
+            .iter()
+            .find(|child| Some(child.id) == current.identity.session)
+            .and_then(|child| child.agent.as_ref())
+            .is_some_and(|agent| {
+                agent.health.state == ovrcr_protocol::ReporterHealth::Connected
+                    && agent.metrics.as_ref().is_some_and(|metrics| {
+                        metrics.sample.usage.value.input_tokens == Some(7)
+                            && metrics.sample.usage.value.coverage
+                                == ovrcr_protocol::UsageCoverage::Partial
+                    })
+            });
+        if f.input_count(&current) == 1
+            && current.brief.with_extension("json.source-created").exists()
+            && source_observed
+        {
+            break current;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "initial input remained queued without a startup source: {current:?}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(current.identity, pending.identity);
+    assert_eq!(current.dispatch, DispatchStatus::Applied);
+    assert_eq!(f.input_count(&current), 1);
+    assert!(f.byte_count(&current) > 0);
+    assert!(current.submission.is_none());
+    assert_eq!(current.acceptance, "pending");
+    let Response::Inventory { sessions, .. } = f.live.request(Request::Inspect) else {
+        panic!("inventory")
+    };
+    let child = sessions
+        .iter()
+        .find(|s| Some(s.id) == current.identity.session)
+        .unwrap();
+    let agent = child.agent.as_ref().unwrap();
+    assert_eq!(agent.binding.provider, AgentProvider::Claude);
+    assert_eq!(child.run, current.identity.run.unwrap());
+    assert_eq!(
+        agent.metrics.as_ref().unwrap().sample.model.as_deref(),
+        Some("fixture-model-resolved")
+    );
+    assert!(
+        agent.native_control.is_none(),
+        "Claude does not certify settled completion"
+    );
+}
+
+#[test]
+fn public_claude_first_source_can_be_created_after_prompt_but_established_loss_fences() {
+    let f = ClaudeFixture::new("startup-bootstrap-after-prompt");
+    let pending: AssignmentSnapshot = serde_json::from_value(f.start_claude()).unwrap();
+    wait_file(&pending.brief.with_extension("json.prompt-submitted"));
+    let before = f.reconcile(&pending.handle);
+    assert_eq!(f.input_count(&before), 1);
+    assert_eq!(before.identity, pending.identity);
+    assert_eq!(before.acceptance, "pending");
+    assert!(!before.control.attribution_invalidated);
+    fs::write(f.profile.join("bootstrap-create-source"), "create now").unwrap();
+    wait_file(&pending.brief.with_extension("json.source-created"));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let current = loop {
+        let current = f.reconcile(&pending.handle);
+        assert!(
+            !current.control.attribution_invalidated,
+            "initial source creation fenced: {current:?}"
+        );
+        let Response::Inventory { sessions, .. } = f.live.request(Request::Inspect) else {
+            panic!("inventory")
+        };
+        if sessions
+            .iter()
+            .find(|child| Some(child.id) == pending.identity.session)
+            .and_then(|child| child.agent.as_ref())
+            .is_some_and(|agent| {
+                agent.health.state == ovrcr_protocol::ReporterHealth::Connected
+                    && agent
+                        .metrics
+                        .as_ref()
+                        .is_some_and(|metrics| metrics.sample.usage.value.input_tokens == Some(7))
+            })
+        {
+            break current;
+        }
+        assert!(Instant::now() < deadline, "created source was not ingested");
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(current.dispatch, DispatchStatus::Applied);
+    assert_eq!(current.acceptance, "pending");
+    assert_eq!(f.input_count(&current), 1);
+    assert_eq!(current.identity, pending.identity);
+    assert!(current.submission.is_none());
+
+    // After an authentic source was opened/ingested, removal is still a strict error.
+    let conversation = current.conversation.as_ref().unwrap().as_str();
+    fs::remove_file(
+        f.profile
+            .join("projects/fixture")
+            .join(format!("{conversation}.jsonl")),
+    )
+    .unwrap();
+    loop {
+        let fenced = f.reconcile(&pending.handle);
+        if fenced.control.attribution_invalidated {
+            assert_eq!(fenced.acceptance, "suspended");
+            assert_eq!(f.input_count(&fenced), 1);
+            assert_eq!(fenced.identity, pending.identity);
+            assert!(fenced.submission.is_none());
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "established source loss did not fence attribution"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let prefix = format!(
+        "Assignment attribution suspended: session={} expected_run=1 current_run=1 control_epoch=2 cause=HealthUnavailable reason=SourceUnavailable health_revision=",
+        pending.identity.session.unwrap().0
+    );
+    loop {
+        let log = fs::read_to_string(f.live.root.path().join("server.log")).unwrap();
+        if let Some(line) = log.lines().find(|line| line.starts_with(&prefix)) {
+            assert!(line[prefix.len()..].parse::<u64>().unwrap() > 0);
+            assert!(!line.contains(f.profile.to_str().unwrap()));
+            assert_eq!(
+                log.lines().filter(|line| line.starts_with(&prefix)).count(),
+                1
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "strict source-loss diagnostic missing"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn public_claude_wrong_startup_model_cannot_bootstrap_initial_input() {
+    let f = ClaudeFixture::new("startup-bootstrap-wrong-model");
+    let reply = f.start_claude();
+    let pending: AssignmentSnapshot = serde_json::from_value(reply).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let Response::Inventory { sessions, .. } = f.live.request(Request::Inspect) else {
+            panic!("inventory")
+        };
+        let wrong_observed = sessions
+            .iter()
+            .find(|child| Some(child.id) == pending.identity.session)
+            .and_then(|child| child.agent.as_ref())
+            .is_some_and(|agent| {
+                agent.metrics.as_ref().is_some_and(|metrics| {
+                    metrics.sample.model.as_deref() == Some("different-model")
+                })
+            });
+        if wrong_observed {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "actual wrong startup model was not reported"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let current = f.reconcile(&pending.handle);
+    assert_eq!(current.identity, pending.identity);
+    assert_eq!(current.dispatch, DispatchStatus::Launched);
+    assert_eq!(f.input_count(&current), 0);
+    assert_eq!(f.byte_count(&current), 0);
+    assert!(current.submission.is_none());
+}
+
+#[test]
+fn public_claude_missing_startup_source_reports_cause_without_releasing_input() {
+    let f = ClaudeFixture::new("source-not-created");
+    let reply = f.start_claude();
+    assert_eq!(reply["dispatch"], "Launched", "{reply}");
+    let pending: AssignmentSnapshot = serde_json::from_value(reply).unwrap();
+    let session = pending.identity.session.unwrap();
+    let retained_binding = || {
+        let db = rusqlite::Connection::open(f.live.config.join("registry.sqlite3")).unwrap();
+        let raw: String = db
+            .query_row(
+                "SELECT metadata FROM delegations WHERE handle=?1",
+                [&pending.handle],
+                |row| row.get(0),
+            )
+            .unwrap();
+        serde_json::from_str::<serde_json::Value>(&raw).unwrap()["binding"].clone()
+    };
+    // No SessionStart can arrive during the first Start's bounded SendInitial loop.
+    // Once Unavailable is observed below, later SendInitial cannot capture a binding.
+    assert!(retained_binding().is_null());
+    fs::write(f.profile.join("startup-source-release"), "release").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let Response::TerminalText { text, .. } = f.live.request(Request::ReadTerminal {
+            session,
+            max_lines: Some(100),
+        }) else {
+            panic!("native startup output");
+        };
+        let Response::Inventory { sessions, .. } = f.live.request(Request::Inspect) else {
+            panic!("inventory");
+        };
+        let source_unavailable = sessions
+            .iter()
+            .find(|child| child.id == session)
+            .and_then(|child| child.agent.as_ref())
+            .is_some_and(|agent| {
+                agent.health.reason.as_deref() == Some("source_not_created")
+                    && agent.health.state == ovrcr_protocol::ReporterHealth::Unavailable
+            });
+        if source_unavailable
+            && text.contains("Claude transcript source: stage=metadata kind=NotFound")
+        {
+            assert!(text.contains("previously_opened=false"), "{text}");
+            assert!(
+                !text.contains("projects/fixture"),
+                "diagnostic exposed source path"
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "source diagnostic missing: {text}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let Response::Inventory { sessions, .. } = f.live.request(Request::Inspect) else {
+        panic!("inventory");
+    };
+    let child = sessions.iter().find(|child| child.id == session).unwrap();
+    let agent = child.agent.as_ref().unwrap();
+    assert!(
+        retained_binding().is_null(),
+        "unavailable source never grants capture authority"
+    );
+    assert_eq!(agent.health.reason.as_deref(), Some("source_not_created"));
+    assert_eq!(
+        agent.health.state,
+        ovrcr_protocol::ReporterHealth::Unavailable
+    );
+    let current = f.reconcile(&pending.handle);
+    assert_eq!(current.identity, pending.identity);
+    assert_eq!(current.dispatch, DispatchStatus::Launched);
+    let initial = current
+        .receipts
+        .iter()
+        .find(|receipt| receipt.operation == DispatchOperation::InitialInput)
+        .unwrap();
+    assert_eq!(initial.outcome, DispatchOutcome::Accepted);
+    assert_eq!(f.input_count(&current), 0);
+    assert_eq!(f.byte_count(&current), 0);
+    assert!(current.submission.is_none());
+    assert_eq!(current.acceptance, "pending");
 }
 
 #[test]
@@ -627,6 +1051,60 @@ fn public_claude_mcp_read_confines_actual_workspace_and_authority() {
 }
 
 #[test]
+fn public_claude_mcp_read_supports_registered_repository_root_without_expanding_scope() {
+    use std::os::unix::fs::symlink;
+    let f = ClaudeFixture::new("no-stop");
+    let root = cli_json(
+        &f.live,
+        &["workspace", "get", "--project", PROJECT, "--branch", "main"],
+    );
+    assert_eq!(root["path"], f.live.repo.to_str().unwrap());
+    fs::write(f.live.repo.join("README.md"), "CLAUDE_REGISTERED_ROOT_READ").unwrap();
+    let outside = f.live.root.path().join("root-read-outside");
+    fs::write(&outside, "NEVER_RETURN_ROOT_READ_OUTSIDE").unwrap();
+    symlink(&outside, f.live.repo.join("root-escape")).unwrap();
+    let cases = serde_json::json!([
+        {"target":{"Workspace":{"path":"../root-read-outside"}}},
+        {"target":{"Workspace":{"path":"root-escape"}}},
+        {"target":{"Workspace":{"path":outside}}},
+        {"result_version":999}, {"control_epoch":999},
+        {"identity":{"instance":"foreign"}}
+    ]);
+    fs::write(
+        f.profile.join("delegation-read-cases.json"),
+        serde_json::to_vec(&cases).unwrap(),
+    )
+    .unwrap();
+    let reply = f.tool("ovrcr_start", serde_json::json!({
+        "project":PROJECT,"workspace":root["id"],"provider":"claude","model_provider":"native","model":"fixture-model",
+        "scope":"Read README in the registered repository root without edits.","acceptance_evidence":["README citation"]
+    }));
+    assert_eq!(reply["dispatch"], "Applied", "{reply}");
+    let started: AssignmentSnapshot = serde_json::from_value(reply).unwrap();
+    wait_file(&started.brief.with_extension("json.started"));
+    let positive: serde_json::Value =
+        serde_json::from_slice(&fs::read(started.brief.with_extension("json.read")).unwrap())
+            .unwrap();
+    assert_eq!(positive["status"], "read", "{positive}");
+    assert_eq!(positive["read"]["text"], "CLAUDE_REGISTERED_ROOT_READ");
+    assert_eq!(
+        positive["read"]["identity"],
+        serde_json::to_value(&started.identity).unwrap()
+    );
+    let denied: Vec<serde_json::Value> =
+        serde_json::from_slice(&fs::read(started.brief.with_extension("json.read-cases")).unwrap())
+            .unwrap();
+    assert_eq!(denied.len(), cases.as_array().unwrap().len());
+    for reply in denied {
+        assert_eq!(reply["status"], "refused", "{reply}");
+        assert!(!reply.to_string().contains("NEVER_RETURN_ROOT_READ_OUTSIDE"));
+    }
+    let completed = complete(&f, &started);
+    assert!(!completed.control.attribution_invalidated);
+    assert_eq!(completed.control.epoch, 1);
+}
+
+#[test]
 fn public_claude_explicit_foreign_backend_refuses_before_native_discovery_or_allocation() {
     let f = ClaudeFixture::new("result");
     for backend in ["anthropic", "custom"] {
@@ -791,29 +1269,32 @@ fn public_claude_coding_and_valid_review_refuse_without_discovery_or_intent() {
 
 #[test]
 fn public_claude_sealed_policy_replacement_refuses_real_read_and_publication() {
-    let f = ClaudeFixture::new("policy-before-publish");
-    let started = f.started();
-    fs::write(f.live.root.path().join("allow-result"), b"go").unwrap();
-    wait_file(&started.brief.with_extension("json.published"));
-    let read: serde_json::Value = serde_json::from_slice(
-        &fs::read(started.brief.with_extension("json.replaced-read")).unwrap(),
-    )
-    .unwrap();
-    let published: serde_json::Value =
-        serde_json::from_slice(&fs::read(started.brief.with_extension("json.published")).unwrap())
-            .unwrap();
-    assert_eq!(read["status"], "refused", "{read}");
-    assert_eq!(published["error"], "refused", "{published}");
-    assert_eq!(published["details"]["status"], "refused");
-    assert_eq!(published["details"]["code"], "Conflict");
-    assert!(published["details"].get("sent").is_none());
-    let current = f.reconcile(&started.handle);
-    assert_eq!(current.identity, started.identity);
-    assert!(current.submission.is_none());
-    assert!(current.publication.is_none());
-    assert!(current.acceptance_ref.is_none());
-    assert!(!started.result_path.exists());
-    assert_eq!(current.acceptance, "pending");
+    for helpers in [false, true] {
+        let f = ClaudeFixture::new("policy-before-publish");
+        let started = f.started_policy(helpers);
+        fs::write(f.live.root.path().join("allow-result"), b"go").unwrap();
+        wait_file(&started.brief.with_extension("json.published"));
+        let read: serde_json::Value = serde_json::from_slice(
+            &fs::read(started.brief.with_extension("json.replaced-read")).unwrap(),
+        )
+        .unwrap();
+        let published: serde_json::Value = serde_json::from_slice(
+            &fs::read(started.brief.with_extension("json.published")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(read["status"], "refused", "{read}");
+        assert_eq!(published["error"], "refused", "{published}");
+        assert_eq!(published["details"]["status"], "refused");
+        assert_eq!(published["details"]["code"], "Conflict");
+        assert!(published["details"].get("sent").is_none());
+        let current = f.reconcile(&started.handle);
+        assert_eq!(current.identity, started.identity);
+        assert!(current.submission.is_none());
+        assert!(current.publication.is_none());
+        assert!(current.acceptance_ref.is_none());
+        assert!(!started.result_path.exists());
+        assert_eq!(current.acceptance, "pending");
+    }
 }
 
 #[test]

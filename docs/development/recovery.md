@@ -34,6 +34,19 @@ new pane's error. No persistence schema or provider registration changes are nee
 
 Native automatic-recovery acceptance belongs to #127, separate from development.
 
+## Claude generated helper policy
+
+Ordinary Claude references and no-helper launch options are unchanged. Explicit
+assigned native-helper research additionally retains only the fixed canonical
+OVRCR-generated `--agents` recipe, including its validated exact model. Both
+initial capture and later validation reject arbitrary inline JSON, changed tools,
+system/task text and oversized options. Resume reconstructs the same nonsecret
+recipe and existing settings/MCP file references within the32-option/4096-byte
+bounds. The Server rechecks the sealed contract/model policy at its existing
+assignment read/effect gates; retained recovery alone grants no assignment input
+or publication authority. Installed helper recovery/enforcement remains a separate
+native acceptance gap; see [Claude research delegation](../pi-claude-delegation.md).
+
 ## Codex adapter
 
 Compatible stable Codex CLI 0.153.x managed fresh launches retain authenticated root startup

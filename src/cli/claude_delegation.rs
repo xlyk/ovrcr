@@ -89,9 +89,24 @@ fn prepare_assigned(argv: &[OsString]) -> Result<()> {
                 == Some(contract.request.as_str()),
         "unsupported or foreign Claude research policy"
     );
+    let helper_model = if contract.native_helpers() {
+        let value = argv
+            .windows(2)
+            .find(|args| args[0] == "--agents")
+            .and_then(|args| args[1].to_str())
+            .context("native helper recipe missing")?;
+        Some(claude_delegation::helper_model(value)?)
+    } else {
+        None
+    };
     let executable = claude_delegation::executable()?;
     ensure!(
-        argv == claude_delegation::launch_argv(&executable, &contract.model, &artifacts),
+        argv == claude_delegation::launch_argv(
+            &executable,
+            &contract.model,
+            &artifacts,
+            helper_model.as_deref()
+        ),
         "native Claude argv differs from assigned read-only policy"
     );
     ensure!(
@@ -100,10 +115,13 @@ fn prepare_assigned(argv: &[OsString]) -> Result<()> {
         "managed Claude child authority unavailable"
     );
     let binary = std::env::current_exe()?.canonicalize()?;
-    let reporter =
-        super::agent_setup::compose("{}", binary.to_str().context("non-UTF8 Reporter path")?)?;
+    let reporter = super::agent_setup::compose(
+        &claude_delegation::helper_settings(helper_model.as_deref()).to_string(),
+        binary.to_str().context("non-UTF8 Reporter path")?,
+    )?;
     immutable(&artifacts.join("claude-settings.json"), reporter.as_bytes())?;
-    let files = claude_delegation::policy_files(&binary, &contract.request)?;
+    let files =
+        claude_delegation::policy_files(&binary, &contract.request, helper_model.as_deref())?;
     ensure!(
         files.settings == reporter.as_bytes(),
         "assigned settings differ from the trusted Reporter recipe"
@@ -116,6 +134,30 @@ fn prepare_assigned(argv: &[OsString]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn assigned_helper_policy_matches_actual_reporter_composer() {
+        let binary = Path::new("/bin/sh").canonicalize().unwrap();
+        for model in [None, Some("claude-exact-1")] {
+            let reporter = super::super::agent_setup::compose(
+                &claude_delegation::helper_settings(model).to_string(),
+                binary.to_str().unwrap(),
+            )
+            .unwrap();
+            let files = claude_delegation::policy_files(&binary, "request", model).unwrap();
+            assert_eq!(
+                files.settings,
+                reporter.as_bytes(),
+                "sealed settings must match the actual launch composer for {model:?}"
+            );
+            use sha2::{Digest, Sha256};
+            let manifest: serde_json::Value = serde_json::from_slice(&files.manifest).unwrap();
+            assert_eq!(
+                manifest["settings"],
+                format!("{:x}", Sha256::digest(reporter.as_bytes()))
+            );
+        }
+    }
+
     #[test]
     fn assigned_policy_replay_refuses_changed_or_symlinked_configuration() {
         let temp = tempfile::tempdir().unwrap();

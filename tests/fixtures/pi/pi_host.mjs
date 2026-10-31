@@ -448,6 +448,9 @@ async function main() {
         const messages = a === "none" ? [] : [assistant(a === "ok" ? "stop" : a)];
         await host.emit({ type: "agent_end", messages, ...(b === "continue" ? { willContinue: true } : {}) });
       } else if (command === "ui_prompt_start" || command === "ui_prompt_end") {
+        // Exercise queued tools behind slow, serial native reporting without changing tool deadlines.
+        const delay = Number(process.env.OVRCR_TEST_PI_PROMPT_DELAY_MS ?? 0);
+        if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
         // The title is a deliberate secret: no frame may carry it.
         await host.emit({ type: command, reason: "ui_prompt", kind: a, title: "PROMPT_TITLE_SECRET" });
       } else if (command === "tool_approval_requested") {

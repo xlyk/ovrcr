@@ -1090,6 +1090,8 @@ fn configure_proxy_stream(stream: &std::os::unix::net::UnixStream) -> std::io::R
     }
 }
 
+// A disconnect before any frame bytes is a legitimate status/cancellation probe.
+// Every nonempty/truncated/invalid frame stays on the strict error path.
 fn read_proxy_message(
     stream: &mut std::os::unix::net::UnixStream,
 ) -> anyhow::Result<Option<ClientMessage>> {
@@ -1136,6 +1138,167 @@ fn control_proxy_closed_peer_does_not_prevent_the_next_valid_frame() {
     assert!(
         read_frame::<ClientMessage>(&mut queued).is_err(),
         "positively closed peer reaches EOF after its original queued frame"
+    );
+}
+
+#[test]
+fn control_proxy_preamble_only_disconnect_then_next_frame_reaches_real_server() -> anyhow::Result<()>
+{
+    let live = Live::binary();
+    let mut proxy = ControlProxy::new(
+        live.root.path().join("preamble-proxy.sock"),
+        live.socket.clone(),
+        live.root.path().join("unused-fault"),
+    );
+    let probe = connect_server(&proxy.path)?;
+    drop(probe);
+    let request = DelegationRequest::Capabilities {
+        auth: DelegationAuth {
+            session: SessionId(999),
+            capability: "fixture-not-authority".into(),
+            controller: None,
+            source: None,
+        },
+        selection: DelegationSelection::default(),
+    };
+    let expected = live.request(Request::Delegation(Box::new(request.clone())));
+    let mut next = std::os::unix::net::UnixStream::connect(&proxy.path)?;
+    next.set_read_timeout(Some(live::wait_deadline()))?;
+    exchange_preamble(&mut next)?;
+    let actual = client::request(
+        &mut next,
+        1007,
+        Request::Delegation(Box::new(request.clone())),
+    )?;
+    assert_eq!(
+        actual, expected,
+        "same real Server response after the empty connection"
+    );
+    let recorded = proxy.requests.lock().unwrap();
+    assert_eq!(
+        recorded.len(),
+        1,
+        "the empty connection forwards no request"
+    );
+    assert_eq!(
+        serde_json::to_value(&recorded[0])?,
+        serde_json::to_value(&request)?
+    );
+    drop(recorded);
+    drop(next);
+    proxy.retire();
+    assert_eq!(
+        live.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    let stopped = live.join_within(live::wait_deadline());
+    assert!(
+        stopped.is_finished(),
+        "original binary Server wait: {stopped:?}"
+    );
+    eprintln!("CONTROL_PROXY_PREAMBLE_REPLAY server_wait={stopped:?} forwarded=1");
+    Ok(())
+}
+
+#[test]
+fn control_proxy_reader_keeps_queued_frames_and_rejects_bad_or_timed_out_frames() {
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+    let (mut reader, peer) = UnixStream::pair().unwrap();
+    drop(peer);
+    assert!(read_proxy_message(&mut reader).unwrap().is_none());
+    let expected = ClientMessage {
+        request_id: 1008,
+        request: Request::Inspect,
+    };
+    let (mut reader, mut peer) = UnixStream::pair().unwrap();
+    write_frame(&mut peer, &expected).unwrap();
+    drop(peer);
+    let actual = read_proxy_message(&mut reader).unwrap().unwrap();
+    assert_eq!(actual.request_id, expected.request_id);
+    assert!(matches!(actual.request, Request::Inspect));
+    assert!(read_proxy_message(&mut reader).unwrap().is_none());
+    for bytes in [
+        vec![0],               // partial length header
+        vec![0, 0, 0, 4, 0],   // partial payload
+        vec![0, 0, 0, 1, 255], // malformed bincode
+        ((MAX_FRAME_BYTES as u32) + 1).to_be_bytes().to_vec(),
+    ] {
+        let (mut reader, mut peer) = UnixStream::pair().unwrap();
+        peer.write_all(&bytes).unwrap();
+        drop(peer);
+        assert!(
+            read_proxy_message(&mut reader).is_err(),
+            "invalid frame {bytes:?}"
+        );
+    }
+    let (mut reader, _open_peer) = UnixStream::pair().unwrap();
+    reader
+        .set_read_timeout(Some(Duration::from_millis(25)))
+        .unwrap();
+    let timeout = read_proxy_message(&mut reader).unwrap_err();
+    assert!(
+        timeout
+            .chain()
+            .any(|cause| cause
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                )))
+    );
+}
+
+fn fail_proxy_with_malformed_frame(proxy: &ControlProxy) {
+    use std::io::Write;
+    let mut peer = std::os::unix::net::UnixStream::connect(&proxy.path).unwrap();
+    peer.set_read_timeout(Some(live::wait_deadline())).unwrap();
+    exchange_preamble(&mut peer).unwrap();
+    peer.write_all(&[0, 0, 0, 1, 255]).unwrap();
+    drop(peer);
+    let deadline = Instant::now() + live::wait_deadline();
+    while !proxy.thread.as_ref().unwrap().is_finished() {
+        assert!(
+            Instant::now() < deadline,
+            "malformed frame did not fail the proxy worker"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn control_proxy_unexpected_worker_failure_still_fails_normal_retirement() {
+    let root = tempfile::tempdir().unwrap();
+    let mut proxy = ControlProxy::new(
+        root.path().join("proxy.sock"),
+        root.path().join("unused-server"),
+        root.path().join("fault"),
+    );
+    fail_proxy_with_malformed_frame(&proxy);
+    let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| proxy.retire()));
+    assert!(
+        failure.is_err(),
+        "unexpected worker failures must never become success"
+    );
+    assert!(proxy.thread.is_none());
+}
+
+#[test]
+fn control_proxy_worker_failure_during_unwind_preserves_original_diagnostic() {
+    let root = tempfile::tempdir().unwrap();
+    let failure = std::panic::catch_unwind(|| {
+        let proxy = ControlProxy::new(
+            root.path().join("proxy.sock"),
+            root.path().join("unused-server"),
+            root.path().join("fault"),
+        );
+        fail_proxy_with_malformed_frame(&proxy);
+        panic!("original fixture assertion");
+    })
+    .unwrap_err();
+    assert_eq!(
+        failure.downcast_ref::<&str>(),
+        Some(&"original fixture assertion")
     );
 }
 
@@ -1463,7 +1626,14 @@ impl ControlProxy {
         if let Some(thread) = self.thread.take() {
             self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
             let _ = std::os::unix::net::UnixStream::connect(&self.path);
-            thread.join().unwrap();
+            if let Err(panic) = thread.join() {
+                if std::thread::panicking() {
+                    // Keep the original test failure and allow the owned Server to drop.
+                    eprintln!("CONTROL_PROXY_WORKER_PANICKED_DURING_UNWIND");
+                } else {
+                    std::panic::resume_unwind(panic);
+                }
+            }
         }
     }
 }
@@ -1557,7 +1727,7 @@ impl RecoveryFixture {
             fs::write(&model_gate, "initially ready").unwrap();
             environment.push(("OVRCR_TEST_DELEGATION_MODEL_GATE", model_gate.as_os_str()));
         }
-        live.start_binary_env(&environment);
+        live.start_binary_logged(&environment, &live.root.path().join("server.log"));
         live.ready("recovery");
         let workspace = cli_json(
             &live,
