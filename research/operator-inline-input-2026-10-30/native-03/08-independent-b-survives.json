@@ -1,0 +1,8 @@
+{
+  "source_revision": "8a141c71c0e3ccd6928b463ac24d6b9eb66ffff2",
+  "call": "getAXStateAndScreenshot",
+  "start_unix_ms": 1793388550552,
+  "end_unix_ms": 1793388551267,
+  "jpg_sha256": "23d10aebde0164bb234342ca657cb7b7bc12368fc6950c39008c25a508a8a560",
+  "ax_sha256": "94b9ab43ab9aa623593b1cebcef81cb8df8167462247d4d42ab9f6a26fe97c97"
+}

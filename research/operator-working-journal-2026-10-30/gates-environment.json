@@ -1,0 +1,19 @@
+{
+  "root": "/private/tmp/ovrcr-journal-gates-83a_s_6i",
+  "env": {
+    "PATH": "/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/xlyk/.local/bin:/opt/homebrew/share/android-commandlinetools/emulator:/opt/homebrew/share/android-commandlinetools/platform-tools:/opt/homebrew/share/android-commandlinetools/cmdline-tools/latest/bin:/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home/bin:/Users/xlyk/.local/bin:/Users/xlyk/.grok/bin:/Users/xlyk/.local/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/share/dotnet:~/.dotnet/tools:/opt/homebrew/bin:/Users/xlyk/.codex/tmp/arg0-macos/codex-arg0b9Opib:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/xlyk/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/xlyk/.local/bin:/opt/homebrew/share/android-commandlinetools/emulator:/opt/homebrew/share/android-commandlinetools/platform-tools:/opt/homebrew/share/android-commandlinetools/cmdline-tools/latest/bin:/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home/bin:/Users/xlyk/.grok/bin:/Users/xlyk/.docker/bin:/Users/xlyk/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS:/Users/xlyk/.docker/bin",
+    "HOME": "/private/tmp/ovrcr-journal-gates-83a_s_6i/home",
+    "TMPDIR": "/private/tmp/ovrcr-journal-gates-83a_s_6i/tmp",
+    "XDG_CONFIG_HOME": "/private/tmp/ovrcr-journal-gates-83a_s_6i/config",
+    "XDG_CACHE_HOME": "/private/tmp/ovrcr-journal-gates-83a_s_6i/cache",
+    "OVRCR_HOME": "/private/tmp/ovrcr-journal-gates-83a_s_6i/instance",
+    "OVRCR_SOCKET": "/private/tmp/ovrcr-journal-gates-83a_s_6i/instance/server.sock",
+    "RUSTUP_HOME": "/Users/xlyk/.rustup",
+    "CARGO_HOME": "/Users/xlyk/.cargo",
+    "SHELL": "/bin/zsh",
+    "NO_PROXY": "*",
+    "no_proxy": "*",
+    "GIT_CONFIG_NOSYSTEM": "1"
+  },
+  "source_revision": "271a1d6b497344484108f7b559dd40317e6c352e"
+}

@@ -696,6 +696,10 @@ impl Dashboard {
 
     pub fn install_area(&mut self, area: Rect) {
         self.outer_area = area;
+        if self.sidebar_preference() == Some(0) {
+            self.operator_clear_hover();
+        }
+        self.operator_ensure_visible();
         for rect in self.pane_rects(area) {
             if let Some(pane) = self.panes.get_mut(rect.pane_index) {
                 pane.desired_size = TerminalSize {
@@ -1125,6 +1129,9 @@ impl Dashboard {
             self.cancel_copy(Some("Copy cancelled: terminal resized"));
         }
         self.outer_area = area;
+        if geometry_changed {
+            self.operator_ensure_visible();
+        }
         let desired = self.desired_view();
         let current_runs: HashSet<_> = self
             .hierarchy
@@ -1239,14 +1246,17 @@ impl Dashboard {
         if self.tasks.is_some() {
             return Duration::from_millis(50);
         }
-        if self.hierarchy.projects.iter().any(|project| {
-            project.workspaces.iter().any(|workspace| {
-                workspace
-                    .sessions
-                    .iter()
-                    .any(|session| self.session_is_busy(session.id))
+        if self.operator_sidebar_busy()
+            || self.operator_conversation_busy()
+            || self.hierarchy.projects.iter().any(|project| {
+                project.workspaces.iter().any(|workspace| {
+                    workspace
+                        .sessions
+                        .iter()
+                        .any(|session| self.session_is_busy(session.id))
+                })
             })
-        }) {
+        {
             SPINNER_INTERVAL
         } else {
             DASHBOARD_IDLE_REDRAW_INTERVAL
@@ -1397,7 +1407,7 @@ impl Dashboard {
     }
 
     pub(super) fn tree_viewport_height(&self) -> usize {
-        usize::from(self.sidebar_rects(self.outer_area).0.height)
+        usize::from(self.sidebar_rects(self.outer_area).tree.height)
     }
 
     fn visible_selection_index(&self, rows: &[TreeRow]) -> Option<usize> {
@@ -1431,16 +1441,18 @@ impl Dashboard {
 
     /// Lines each visible row takes in the sidebar drawn for `self.outer_area`.
     fn tree_heights(&self, rows: &[TreeRow]) -> Vec<usize> {
-        let width = self.sidebar_rects(self.outer_area).0.width;
+        let width = self.sidebar_rects(self.outer_area).tree.width;
         tree_row_heights(self, rows, usize::from(width))
     }
 
-    fn ensure_selection_visible(&mut self, rows: &[TreeRow]) {
+    pub(super) fn ensure_selection_visible(&mut self, rows: &[TreeRow]) {
+        let heights = self.tree_heights(rows);
+        let height = self.tree_viewport_height();
+        let max_offset = tree_line_count(rows, &heights).saturating_sub(height);
+        self.tree_offset = self.tree_offset.min(max_offset);
         let Some(index) = self.visible_selection_index(rows) else {
             return;
         };
-        let heights = self.tree_heights(rows);
-        let height = self.tree_viewport_height();
         let selected_start = tree_row_start(rows, &heights, index);
         let selected_end = selected_start.saturating_add(heights[index]);
         if selected_start < self.tree_offset {
@@ -1448,7 +1460,6 @@ impl Dashboard {
         } else if selected_end > self.tree_offset.saturating_add(height) {
             self.tree_offset = selected_end.saturating_sub(height);
         }
-        let max_offset = tree_line_count(rows, &heights).saturating_sub(height);
         self.tree_offset = self.tree_offset.min(max_offset);
     }
 
@@ -1484,6 +1495,16 @@ impl Dashboard {
     }
 
     fn dispatch_key(&mut self, key: KeyEvent) -> DashboardAction {
+        if super::keymap::is_operator_quick_key(key) {
+            return if key.kind == KeyEventKind::Press {
+                self.open_operator_quick_message()
+            } else {
+                DashboardAction::None
+            };
+        }
+        if self.operator_quick_visible() {
+            return self.operator_quick_key(key);
+        }
         if key.kind == KeyEventKind::Press {
             self.desktop.notice = None;
         }
@@ -2251,6 +2272,21 @@ impl Dashboard {
         if self.navigation.discard_input {
             return DashboardAction::None;
         }
+        if let Event::Key(key) = event
+            && (super::keymap::is_operator_quick_key(key) || self.operator_quick_visible())
+        {
+            return self.key_action(key);
+        }
+        if self.operator_quick_visible() {
+            match &event {
+                Event::Paste(text) => return self.operator_quick_paste(text),
+                Event::Mouse(mouse) => {
+                    return self.operator_quick_mouse(*mouse, self.outer_area).unwrap();
+                }
+                Event::Resize(_, _) => return DashboardAction::Redraw,
+                _ => {}
+            }
+        }
         if let Some(tasks) = &mut self.tasks {
             if tasks.event(event) {
                 self.tasks = None;
@@ -2302,6 +2338,7 @@ impl Dashboard {
                 self.agent_typing = None;
                 self.cancel_mouse_gesture();
                 self.mouse.hovered = None;
+                self.operator_clear_hover();
                 self.mouse_focused = false;
                 DashboardAction::Redraw
             }
@@ -2318,6 +2355,9 @@ impl Dashboard {
     }
 
     pub fn mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
+        if let Some(action) = self.operator_quick_mouse(mouse, area) {
+            return action;
+        }
         if self.details.is_some() {
             return self.details_mouse(mouse);
         }
@@ -2335,6 +2375,13 @@ impl Dashboard {
         }
         if !self.mouse_focused {
             return DashboardAction::None;
+        }
+        if self
+            .operator_quick_header_rect(area)
+            .contains(ratatui::layout::Position::new(mouse.column, mouse.row))
+            && mouse.kind == MouseEventKind::Down(MouseButton::Left)
+        {
+            return self.open_operator_quick_message();
         }
         if matches!(self.mode, InputMode::Browse | InputMode::Terminal)
             && mouse.kind == MouseEventKind::Down(MouseButton::Left)
@@ -2385,7 +2432,7 @@ impl Dashboard {
     }
 
     pub(crate) fn mouse_capture_required(&self) -> bool {
-        if self.operator.visible {
+        if self.operator.visible || self.operator_quick_visible() {
             return true;
         }
         if self.details.is_some() {
@@ -2422,7 +2469,9 @@ impl Dashboard {
     /// The sidebar width every layout reads: zero while hidden, else the
     /// dragged preference.
     pub(super) fn sidebar_preference(&self) -> Option<u16> {
-        if self.sidebar_hidden {
+        if !self.operator_sidebar_requested()
+            && (self.sidebar_hidden || self.operator_sidebar_on_demand())
+        {
             Some(0)
         } else {
             self.sidebar_width
@@ -2433,6 +2482,7 @@ impl Dashboard {
     pub(super) fn toggle_sidebar(&mut self) -> DashboardAction {
         self.sidebar_hidden = !self.sidebar_hidden;
         self.mouse.hovered = None;
+        self.operator_clear_hover();
         self.apply_pane_sizes(self.outer_area);
         DashboardAction::Redraw
     }
@@ -2482,10 +2532,12 @@ impl Dashboard {
     }
 
     fn sidebar_mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> Option<DashboardAction> {
-        if !matches!(self.mode, InputMode::Browse | InputMode::Terminal) || self.sidebar_hidden {
+        if !matches!(self.mode, InputMode::Browse | InputMode::Terminal)
+            || self.sidebar_preference() == Some(0)
+        {
             return None;
         }
-        let sidebar = self.sidebar_rects(area).0;
+        let sidebar = self.sidebar_rects(area).tree;
         if mouse.kind == MouseEventKind::Moved {
             let inside = point_in_rect(mouse, sidebar);
             let next = inside
@@ -2628,7 +2680,7 @@ impl Dashboard {
         {
             // The sidebar's border column sits just past its content; a hidden
             // sidebar has no border.
-            if !self.sidebar_hidden && mouse.column == sidebar.right() {
+            if self.sidebar_preference() != Some(0) && mouse.column == sidebar.right() {
                 self.queue_held_releases();
                 self.mouse.sidebar_dragging = true;
                 return Some(DashboardAction::Redraw);

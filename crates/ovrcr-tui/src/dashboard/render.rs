@@ -393,6 +393,7 @@ impl Dashboard {
         let area = terminal.draw(|frame| draw_dashboard(frame, self))?.area;
         // Overlays may obscure the response; keep the last unobscured Presented Unread.
         if self.tasks.is_none()
+            && !self.operator_quick_visible()
             && self.palette.is_none()
             && self.whichkey.is_none()
             && self.details.is_none()
@@ -428,6 +429,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     let _theme = crate::theme::ThemeScope::enter(dashboard.theme_tokens());
     if let Some(tasks) = &dashboard.tasks {
         draw_tasks(frame, tasks);
+        dashboard.draw_operator_quick_message(frame);
         return;
     }
     let layout = dashboard_layout(frame.area(), dashboard.sidebar_preference());
@@ -435,19 +437,29 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         Block::default().style(Style::default().bg(BASE())),
         frame.area(),
     );
+    let title_fg = if dashboard.operator.visible {
+        SUBTEXT()
+    } else {
+        CRUST()
+    };
+    let title_bg = if dashboard.operator.visible {
+        BASE()
+    } else {
+        MAUVE()
+    };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("󰚩 ", Style::default().fg(CRUST())),
+            Span::styled("󰚩 ", Style::default().fg(title_fg)),
             Span::styled(
                 "OVRCR",
-                Style::default().fg(CRUST()).add_modifier(Modifier::BOLD),
+                Style::default().fg(title_fg).add_modifier(Modifier::BOLD),
             ),
         ]))
-        .style(Style::default().bg(MAUVE())),
+        .style(Style::default().bg(title_bg)),
         layout.title,
     );
 
-    if !dashboard.sidebar_hidden {
+    if dashboard.sidebar_preference() != Some(0) {
         frame.render_widget(
             Block::default()
                 .borders(Borders::RIGHT)
@@ -457,11 +469,11 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         );
     }
     let rows = dashboard.visible_rows();
-    let (tree, _) = dashboard.sidebar_rects(frame.area());
+    let tree = dashboard.sidebar_rects(frame.area()).tree;
     let width = usize::from(tree.width);
     let heights = tree_row_heights(dashboard, &rows, width);
     let stacked = heights.contains(&2);
-    let viewport_height = if dashboard.sidebar_hidden {
+    let viewport_height = if dashboard.sidebar_preference() == Some(0) {
         0
     } else {
         usize::from(tree.height)
@@ -480,6 +492,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     }
 
     dashboard.draw_operator_header(frame);
+    dashboard.draw_operator_sidebar(frame, now_unix_ms);
     dashboard.draw_quota(frame, now_unix_ms);
 
     let rects = dashboard.pane_rects(frame.area());
@@ -732,10 +745,11 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     if !dashboard.operator.visible {
         dashboard.draw_start_screen(frame);
     }
-    dashboard.draw_operator(frame);
+    dashboard.draw_operator(frame, now_unix_ms);
     dashboard.draw_palette(frame);
     dashboard.draw_whichkey(frame);
     dashboard.draw_details(frame, now_unix_ms);
+    dashboard.draw_operator_quick_message(frame);
 }
 
 impl Dashboard {
@@ -1046,16 +1060,19 @@ fn tree_line_text(
     width: usize,
     now_unix_ms: u64,
 ) -> (Line<'static>, Style) {
-    let selected = match row {
-        TreeRow::Session { id } => dashboard
-            .close_confirm_session()
-            .map(|closing| closing == *id)
-            .unwrap_or_else(|| dashboard.action_session() == Some(*id)),
-        TreeRow::Project { .. }
-        | TreeRow::Workspace { .. }
-        | TreeRow::ProvisionalWorkspace { .. }
-        | TreeRow::ProvisionalSession { .. } => dashboard.selected_container.as_ref() == Some(row),
-    };
+    let selected = !dashboard.operator.visible
+        && match row {
+            TreeRow::Session { id } => dashboard
+                .close_confirm_session()
+                .map(|closing| closing == *id)
+                .unwrap_or_else(|| dashboard.action_session() == Some(*id)),
+            TreeRow::Project { .. }
+            | TreeRow::Workspace { .. }
+            | TreeRow::ProvisionalWorkspace { .. }
+            | TreeRow::ProvisionalSession { .. } => {
+                dashboard.selected_container.as_ref() == Some(row)
+            }
+        };
     let style = Style::default()
         .fg(TEXT())
         .bg(if selected { SURFACE0() } else { BASE() });

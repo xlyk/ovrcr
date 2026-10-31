@@ -1,0 +1,116 @@
+[
+  {
+    "pid": 81708,
+    "ppid": 81707,
+    "pgid": 81706,
+    "command": "/private/tmp/ovrcr-inline-native3-jog29a41/operator_e2e --exact compiled_worker::native_provider_holder --ignored --nocapture --test-threads=1"
+  },
+  {
+    "pid": 82807,
+    "ppid": 82806,
+    "pgid": 82805,
+    "command": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+  },
+  {
+    "pid": 82826,
+    "ppid": 82807,
+    "pgid": 82805,
+    "command": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+  },
+  {
+    "pid": 14489,
+    "ppid": 83249,
+    "pgid": 14489,
+    "command": "rtk proxy sleep 30"
+  },
+  {
+    "pid": 14490,
+    "ppid": 14489,
+    "pgid": 14489,
+    "command": "/bin/sleep 30"
+  },
+  {
+    "pid": 83249,
+    "ppid": 82826,
+    "pgid": 83249,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 83324,
+    "ppid": 82826,
+    "pgid": 83324,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 83383,
+    "ppid": 82826,
+    "pgid": 83383,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 83445,
+    "ppid": 82826,
+    "pgid": 83445,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 83510,
+    "ppid": 82826,
+    "pgid": 83510,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 83589,
+    "ppid": 82826,
+    "pgid": 83589,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 83875,
+    "ppid": 82826,
+    "pgid": 83875,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 84092,
+    "ppid": 82826,
+    "pgid": 84092,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 84166,
+    "ppid": 82826,
+    "pgid": 84166,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 84242,
+    "ppid": 82826,
+    "pgid": 84242,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 84319,
+    "ppid": 82826,
+    "pgid": 84319,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 84409,
+    "ppid": 82826,
+    "pgid": 84409,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 84454,
+    "ppid": 82807,
+    "pgid": 84454,
+    "command": "/private/tmp/ovrcr-inline-native3-jog29a41/temp/ovrcr-gui-JCIIfF/dashboard-client/ovrcr"
+  },
+  {
+    "pid": 94226,
+    "ppid": 82826,
+    "pgid": 94226,
+    "command": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr operator worker --conversation 2 --turn 2 --session 14 --run 1"
+  }
+]

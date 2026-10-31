@@ -96,6 +96,9 @@ pub struct OperatorTurn {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperatorConversationSummary {
+    /// Current retained authority; the latest turn can belong to an older run.
+    pub run: SessionRunId,
+    pub archived: bool,
     /// Derived only from the retained exact-run controlled-stop proof.
     pub worker_stopped: bool,
     pub id: OperatorConversationId,
@@ -280,6 +283,10 @@ pub enum OperatorRequest {
     Stop {
         identity: OperatorTurnIdentity,
     },
+    Close {
+        conversation: OperatorConversationId,
+        expected_run: SessionRunId,
+    },
 }
 impl OperatorRequest {
     pub fn validate(&self) -> Result<(), String> {
@@ -290,7 +297,9 @@ impl OperatorRequest {
             {
                 Err("invalid operator page limit".into())
             }
-            Self::Read { conversation, .. } if conversation.0 == 0 => {
+            Self::Read { conversation, .. } | Self::Close { conversation, .. }
+                if conversation.0 == 0 =>
+            {
                 Err("zero conversation identity".into())
             }
             Self::Submit {
@@ -320,6 +329,7 @@ pub enum OperatorResponse {
     History(OperatorHistory),
     Submitted(OperatorTurn),
     Stopped(OperatorTurn),
+    Closed(OperatorConversationSummary),
 }
 /// Auth must be verified against the current owned worker by the Server.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -387,6 +397,26 @@ pub enum OperatorWorkerResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn close_validates_conversation_and_accepts_never_run_zero() {
+        assert!(
+            OperatorRequest::Close {
+                conversation: OperatorConversationId(1),
+                expected_run: SessionRunId(0)
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            OperatorRequest::Close {
+                conversation: OperatorConversationId(0),
+                expected_run: SessionRunId(0)
+            }
+            .validate()
+            .is_err()
+        );
+    }
+
     #[test]
     fn operator_validation_rejects_zero_ids_gaps_oversize_and_terminal_followups() {
         let mut batch = OperatorEventBatch {

@@ -1,0 +1,104 @@
+[
+  {
+    "pid": 70230,
+    "ppid": 70207,
+    "pgid": 70173,
+    "command": "/private/tmp/ovrcr-journal-final-leuqyl3n/operator_e2e --exact compiled_worker::native_provider_holder --ignored --nocapture --test-threads=1"
+  },
+  {
+    "pid": 70894,
+    "ppid": 70860,
+    "pgid": 70815,
+    "command": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+  },
+  {
+    "pid": 70924,
+    "ppid": 70894,
+    "pgid": 70815,
+    "command": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+  },
+  {
+    "pid": 71330,
+    "ppid": 70924,
+    "pgid": 71330,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 71434,
+    "ppid": 70924,
+    "pgid": 71434,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 71493,
+    "ppid": 70924,
+    "pgid": 71493,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 71555,
+    "ppid": 70924,
+    "pgid": 71555,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 71620,
+    "ppid": 70924,
+    "pgid": 71620,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 71688,
+    "ppid": 70924,
+    "pgid": 71688,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 71763,
+    "ppid": 70924,
+    "pgid": 71763,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 71838,
+    "ppid": 70924,
+    "pgid": 71838,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 71915,
+    "ppid": 70924,
+    "pgid": 71915,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 71989,
+    "ppid": 70924,
+    "pgid": 71989,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 72101,
+    "ppid": 70924,
+    "pgid": 72101,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 72430,
+    "ppid": 70924,
+    "pgid": 72430,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 72550,
+    "ppid": 70894,
+    "pgid": 72550,
+    "command": "/private/tmp/ovrcr-journal-final-leuqyl3n/temp/ovrcr-gui-44iCnX/dashboard-client/ovrcr"
+  },
+  {
+    "pid": 81257,
+    "ppid": 70924,
+    "pgid": 81257,
+    "command": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr operator worker --conversation 1 --turn 1 --session 13 --run 1"
+  }
+]

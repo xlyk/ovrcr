@@ -266,7 +266,15 @@ fn serve(
         .to_owned();
     if !matches!(
         model.as_str(),
-        "fixture-a" | "fixture-b" | "fixture-timeout" | "fixture-incomplete" | "fixture-lifecycle"
+        "fixture-a"
+            | "fixture-b"
+            | "fixture-timeout"
+            | "fixture-incomplete"
+            | "fixture-lifecycle"
+            | "fixture-quick"
+            | "fixture-close-a"
+            | "fixture-close-b"
+            | "fixture-activity"
     ) && !model.starts_with("fixture-error-")
         && !model.starts_with("fixture-siwc-")
         || request["stream"] != true
@@ -384,7 +392,44 @@ fn serve(
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
     )?;
     let label = model.strip_prefix("fixture-").unwrap().to_ascii_uppercase();
-    if model == "fixture-lifecycle" {
+    if model == "fixture-activity"
+        && ordinal == 1
+        && !wait_release(shared, "fixture-activity-start", gate_budget)?
+    {
+        return Ok(());
+    }
+    if model == "fixture-quick"
+        || ((model.starts_with("fixture-close-") || model == "fixture-activity") && ordinal > 1)
+    {
+        if (model == "fixture-quick" && ordinal != 1)
+            || ((model.starts_with("fixture-close-") || model == "fixture-activity")
+                && ordinal != 2)
+        {
+            return Err(io::Error::other("quick first message retried"));
+        }
+        let final_text = if model == "fixture-activity" {
+            "ACTIVITY final"
+        } else {
+            "QUICK final"
+        };
+        let text = message(&model, final_text);
+        if !wait_release(shared, &model, gate_budget)? {
+            return Ok(());
+        }
+        event(
+            &mut stream,
+            json!({"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":format!("msg-{model}"),"role":"assistant","content":[]}}),
+        )?;
+        event(
+            &mut stream,
+            json!({"type":"response.output_text.delta","output_index":0,"item_id":format!("msg-{model}"),"content_index":0,"delta":final_text}),
+        )?;
+        event(
+            &mut stream,
+            json!({"type":"response.output_item.done","output_index":0,"item":text}),
+        )?;
+        complete(&mut stream, &model, vec![text])
+    } else if model == "fixture-lifecycle" {
         let text = message(&model, "LIFECYCLE waiting");
         event(
             &mut stream,
@@ -428,7 +473,15 @@ fn serve(
         )
     } else if ordinal == 1 {
         let timeout = model == "fixture-timeout";
-        let command = if timeout {
+        let closing = model.starts_with("fixture-close-") || model == "fixture-activity";
+        let command = if closing {
+            format!(
+                "printf 'started\n' >> {}; printf '%s\n' \"$$\" > {}; while [ ! -e {} ]; do /bin/sleep 0.01; done; printf 'CLOSE_%s\n' BASH_OK",
+                shell_quote(&workdir.join(format!("{model}.executions"))),
+                shell_quote(&workdir.join(format!("{model}.pid"))),
+                shell_quote(&workdir.join(format!("{model}.bash-release")))
+            )
+        } else if timeout {
             format!(
                 "printf 'started\n' >> {}; printf '%s\n' \"$$\" > {}; exec /bin/sleep 30",
                 shell_quote(&workdir.join("timeout.executions")),
@@ -441,7 +494,7 @@ fn serve(
             )
         };
         let arguments =
-            json!({"command":command,"cwd":workdir,"timeout_seconds":if timeout {2} else {10}})
+            json!({"command":command,"cwd":workdir,"timeout_seconds":if timeout {2} else if model == "fixture-activity" {gate_budget.as_secs()} else {10}})
                 .to_string();
         let call = json!({"type":"function_call","id":format!("fc-{model}"),"call_id":format!("call-{model}"),"name":"bash","arguments":arguments,"status":"completed"});
         event(

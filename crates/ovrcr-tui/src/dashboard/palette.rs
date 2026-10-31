@@ -1109,6 +1109,43 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
+    pub(super) fn open_close_operator_for(
+        &mut self,
+        id: ovrcr_protocol::OperatorConversationId,
+    ) -> DashboardAction {
+        let Some((session, run, title, busy, draft)) = self.operator_close_target(id) else {
+            return DashboardAction::None;
+        };
+        self.whichkey = None;
+        self.palette = Some(Palette {
+            page: Page::Confirm {
+                request: Some(Request::Operator(ovrcr_protocol::OperatorRequest::Close {
+                    conversation: id,
+                    expected_run: run,
+                })),
+                target: format!(
+                    "Close Operator {} (#{} / session {} / run {}). {}Archive its history.{}",
+                    title,
+                    id.0,
+                    session.0,
+                    run.0,
+                    if busy {
+                        "Stop its live or unconfirmed work, then "
+                    } else {
+                        ""
+                    },
+                    if draft {
+                        " The draft will be discarded."
+                    } else {
+                        ""
+                    }
+                ),
+            },
+            ..Palette::new()
+        });
+        DashboardAction::Redraw
+    }
+
     pub(super) fn dismiss_close_confirm_for(&mut self, session: SessionId) {
         let matches_close = matches!(
             self.palette.as_ref().map(|palette| &palette.page),
@@ -1482,37 +1519,53 @@ impl Dashboard {
                 .filter(|row| {
                     let place = session_workspace_heading(self, row);
                     let label = format!(
-                        "{} {} {} {} {}",
+                        "{} {} {} {} {} {}",
                         row.display_name(),
                         place,
                         row.project,
                         row.workspace,
-                        row.cwd.display()
+                        row.cwd.display(),
+                        if matches!(
+                            row.scope,
+                            ovrcr_protocol::SessionScope::OperatorConversation { .. }
+                        ) {
+                            "Operator"
+                        } else {
+                            ""
+                        }
                     )
                     .to_lowercase();
                     query.split_whitespace().all(|word| label.contains(word))
                 })
                 .flat_map(|row| {
-                    let label = format!(
-                        "{} / {} (#{})",
-                        session_workspace_heading(self, row),
-                        row.display_name(),
-                        row.id.0
+                    let operator = matches!(
+                        row.scope,
+                        ovrcr_protocol::SessionScope::OperatorConversation { .. }
                     );
-                    let mut entries = vec![
-                        Entry {
-                            label: format!("Unarchive: {label}"),
-                            command: Command::Unarchive(row.id, row.run),
-                        },
-                        Entry {
+                    let label = if operator {
+                        format!("Operator / {} (#{})", row.display_name(), row.id.0)
+                    } else {
+                        format!(
+                            "{} / {} (#{})",
+                            session_workspace_heading(self, row),
+                            row.display_name(),
+                            row.id.0
+                        )
+                    };
+                    let mut entries = vec![Entry {
+                        label: format!("Unarchive: {label}"),
+                        command: Command::Unarchive(row.id, row.run),
+                    }];
+                    if !operator {
+                        entries.push(Entry {
                             label: format!("Delete record: {label}"),
                             command: Command::DeleteArchived(
                                 row.id,
                                 row.run,
                                 row.display_name().to_owned(),
                             ),
-                        },
-                    ];
+                        });
+                    }
                     // Filing a row keeps its ownership uncertainty, which blocks
                     // workspace removal; the archive must offer the acknowledgement.
                     if row
@@ -2212,6 +2265,10 @@ impl Dashboard {
                                     .command_hint(&entry.command)
                                     .is_some_and(|h| h.enabled())
                                 {
+                                    if action == Action::OperatorQuick {
+                                        self.palette = Some(palette);
+                                        return self.run(action);
+                                    }
                                     if let Some(request_id) = palette.suggestions.inspect {
                                         self.ignored_responses.insert(request_id);
                                     }
@@ -2516,6 +2573,15 @@ impl Dashboard {
                 }
                 Page::Confirm { request, .. } => {
                     if let Some(request) = request.clone() {
+                        if let Request::Operator(ovrcr_protocol::OperatorRequest::Close {
+                            conversation,
+                            expected_run,
+                        }) = request
+                        {
+                            self.operator_close(conversation, expected_run);
+                            self.palette = None;
+                            return DashboardAction::Redraw;
+                        }
                         action = self.palette_submit(&mut palette, request);
                     } else {
                         self.palette = None;
@@ -5666,6 +5732,23 @@ mod launch_tests {
             ),
             "must not send CloseTerminal for the old confirmation without a new explicit confirm"
         );
+    }
+
+    #[test]
+    fn operator_archive_palette_omits_delete() {
+        let d = dashboard();
+        let mut row = summary(9);
+        row.archived = true;
+        row.scope = ovrcr_protocol::SessionScope::OperatorConversation {
+            conversation: ovrcr_protocol::OperatorConversationId(3),
+        };
+        let entries = d.palette_entries("", Some(&[row]), None, None);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].label.starts_with("Unarchive: Operator / "));
+        assert!(matches!(
+            entries[0].command,
+            Command::Unarchive(SessionId(9), _)
+        ));
     }
 
     #[test]

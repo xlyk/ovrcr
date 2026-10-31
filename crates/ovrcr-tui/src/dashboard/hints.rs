@@ -46,14 +46,7 @@ pub(super) fn footer(dashboard: &Dashboard, width: u16) -> String {
     // Browse shows only the keys that open everything else; the menu and the
     // palette carry the per-action hints.
     let priority: &[&str] = if dashboard.operator_is_editing() {
-        &[
-            "Enter",
-            "Ctrl-g",
-            "Ctrl-l",
-            "Ctrl-n",
-            "Ctrl-x",
-            "Shift-Enter",
-        ]
+        &["Enter", "Shift-Enter", "Ctrl-g", "Ctrl-x"]
     } else if dashboard.mode == InputMode::Browse {
         &["Space", ":", "?"]
     } else {

@@ -131,6 +131,13 @@ impl PaneState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct SidebarRects {
+    pub operator: Rect,
+    pub tree: Rect,
+    pub quota: Rect,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PaneRects {
     pub pane_index: usize,
     pub metadata: Rect,

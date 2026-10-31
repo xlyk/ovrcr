@@ -1,0 +1,21 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--test",
+    "operator_e2e",
+    "--features",
+    "acceptance-diagnostics",
+    "compiled_worker::operator_activity_waits_for_real_model_and_tool",
+    "--",
+    "--exact",
+    "--test-threads=1"
+  ],
+  "exit": 0,
+  "source_revision": "5efc90909e4998bd134414033f067f8d9253a1a3",
+  "isolated_root_removed": "/private/tmp/ovrcr-activity-check-xzmhiw5z",
+  "bytes": 434,
+  "sha256": "320410bde71117b90c1a30df39714e2a01f76f732f68cb7bec24a12e1be1f2d5"
+}

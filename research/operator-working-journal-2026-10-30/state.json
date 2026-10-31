@@ -1,0 +1,27 @@
+{
+  "root": "/private/tmp/ovrcr-journal-native-cc6olqy2",
+  "bundle": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app",
+  "holder": "/private/tmp/ovrcr-journal-native-cc6olqy2/operator_e2e",
+  "source_revision": "271a1d6b497344484108f7b559dd40317e6c352e",
+  "features": [
+    "gui",
+    "acceptance-diagnostics"
+  ],
+  "sha256": {
+    "ovrcr": "3d7393bc5eff52e562d553f0268c18dc0984d8e56bf717d3253f7fbebe041298",
+    "ovrcr-gui": "7d3bba286f7a006c4ce235b381b8490430466d6e73149347dfb0aecdedf77d49"
+  },
+  "holder_sha256": "6a39be0964e0b17ea69c267d11d7bbe87440e36ce24c9c361bf9221652cb68d2",
+  "builds": [
+    {
+      "command": "rtk proxy cargo build -p ovrcr --features gui,acceptance-diagnostics --bins",
+      "exit": 0
+    },
+    {
+      "command": "rtk proxy cargo test -p ovrcr --test operator_e2e --features gui,acceptance-diagnostics --no-run --message-format=json",
+      "exit": 0
+    }
+  ],
+  "prior_live_process_preserved": 55305,
+  "demo": "/private/tmp/ovrcr-journal-native-cc6olqy2/temp/ovrcr-gui-2jIMZQ"
+}

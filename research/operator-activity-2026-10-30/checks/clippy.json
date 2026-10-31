@@ -1,0 +1,17 @@
+{
+  "command": [
+    "cargo",
+    "clippy",
+    "--workspace",
+    "--all-targets",
+    "--all-features",
+    "--",
+    "-D",
+    "warnings"
+  ],
+  "exit": 0,
+  "source_revision": "5efc90909e4998bd134414033f067f8d9253a1a3",
+  "isolated_root_removed": "/private/tmp/ovrcr-activity-check-4s0b52ql",
+  "bytes": 265,
+  "sha256": "d14f45294e08ff7b66c9fa2a0289db3032c8438a89d623ee449669d31f612f41"
+}

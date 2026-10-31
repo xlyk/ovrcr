@@ -1,0 +1,104 @@
+[
+  {
+    "pid": 39234,
+    "ppid": 39189,
+    "pgid": 39166,
+    "command": "/private/tmp/ovrcr-journal-native-cc6olqy2/operator_e2e --exact compiled_worker::native_provider_holder --ignored --nocapture --test-threads=1"
+  },
+  {
+    "pid": 39924,
+    "ppid": 39923,
+    "pgid": 39900,
+    "command": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+  },
+  {
+    "pid": 39944,
+    "ppid": 39924,
+    "pgid": 39900,
+    "command": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+  },
+  {
+    "pid": 40368,
+    "ppid": 39944,
+    "pgid": 40368,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 40439,
+    "ppid": 39944,
+    "pgid": 40439,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 40498,
+    "ppid": 39944,
+    "pgid": 40498,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 40563,
+    "ppid": 39944,
+    "pgid": 40563,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 40628,
+    "ppid": 39944,
+    "pgid": 40628,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 40697,
+    "ppid": 39944,
+    "pgid": 40697,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 40916,
+    "ppid": 39944,
+    "pgid": 40916,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 41210,
+    "ppid": 39944,
+    "pgid": 41210,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 41285,
+    "ppid": 39944,
+    "pgid": 41285,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 41359,
+    "ppid": 39944,
+    "pgid": 41359,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 41434,
+    "ppid": 39944,
+    "pgid": 41434,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 41508,
+    "ppid": 39944,
+    "pgid": 41508,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 56531,
+    "ppid": 39924,
+    "pgid": 56531,
+    "command": "/private/tmp/ovrcr-journal-native-cc6olqy2/temp/ovrcr-gui-2jIMZQ/dashboard-client/ovrcr"
+  },
+  {
+    "pid": 63884,
+    "ppid": 39944,
+    "pgid": 63884,
+    "command": "(ovrcr)"
+  }
+]

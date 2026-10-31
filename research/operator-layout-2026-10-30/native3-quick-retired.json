@@ -1,0 +1,11 @@
+{
+  "session": 13,
+  "pid": 29583,
+  "pgid": 29583,
+  "scope": {
+    "OperatorConversation": {
+      "conversation": 1
+    }
+  },
+  "kernel_group_state": "absent"
+}

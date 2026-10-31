@@ -1,0 +1,20 @@
+{
+  "command": [
+    "rtk",
+    "proxy",
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--features",
+    "acceptance-diagnostics",
+    "--test",
+    "operator_e2e",
+    "operator_close_archive_restores_history_without_replay",
+    "--",
+    "--nocapture"
+  ],
+  "exit": 0,
+  "revision": "479ceb2715259cb24dc7bd8368518383b81c694e",
+  "utc": "2026-10-30T11:31:32.908178+00:00"
+}

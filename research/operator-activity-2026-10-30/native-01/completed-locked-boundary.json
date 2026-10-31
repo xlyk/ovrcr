@@ -1,0 +1,67 @@
+{
+  "unix_ms": 1793381272974,
+  "control_markers": [
+    "auth-ready.json",
+    "base.json",
+    "demo-instance",
+    "fixture-activity.bash-release",
+    "fixture-activity.executions",
+    "fixture-activity.pid",
+    "release-activity",
+    "release-activity-start"
+  ],
+  "operator_conversations": [
+    {
+      "id": 1,
+      "session": 13,
+      "provider": "\"grok\"",
+      "model": "fixture-activity",
+      "title": "ACTIVITY hold one actual Bash result"
+    }
+  ],
+  "operator_turns": [
+    {
+      "id": 1,
+      "conversation": 1,
+      "run": 1,
+      "state": "Complete",
+      "sequence": 5
+    }
+  ],
+  "operator_messages": [
+    {
+      "ordinal": 1,
+      "conversation": 1,
+      "turn": 1,
+      "content": "{\"User\":{\"text\":\"ACTIVITY hold one actual Bash result\",\"context\":{\"project\":\"consigint\",\"workspace\":\"main\",\"workspace_id\":\"2064b4b0be6b00f6df3ac5a330ecca91\",\"cwd\":\"/private/tmp/ovrcr-activity-native-c2dyqojc/temp/ovrcr-gui-iiBKQn/repositories/consigint\",\"session\":1,\"run\":1}}}"
+    },
+    {
+      "ordinal": 2,
+      "conversation": 1,
+      "turn": 1,
+      "content": "{\"Worker\":{\"AssistantDelta\":\"ACTIVITY before tool\"}}"
+    },
+    {
+      "ordinal": 3,
+      "conversation": 1,
+      "turn": 1,
+      "content": "{\"Worker\":{\"ToolCall\":{\"id\":\"call-fixture-activity\",\"name\":\"bash\",\"arguments\":\"{\\\"command\\\":\\\"printf 'started\\\\n' >> '/private/tmp/ovrcr-activity-native-c2dyqojc/control/fixture-activity.executions'; printf '%s\\\\n' \\\\\\\"$$\\\\\\\" > '/private/tmp/ovrcr-activity-native-c2dyqojc/control/fixture-activity.pid'; while [ ! -e '/private/tmp/ovrcr-activity-native-c2dyqojc/control/fixture-activity.bash-release' ]; do /bin/sleep 0.01; done; printf 'CLOSE_%s\\\\n' BASH_OK\\\",\\\"cwd\\\":\\\"/private/tmp/ovrcr-activity-native-c2dyqojc/control\\\",\\\"timeout_seconds\\\":600}\"}}}"
+    },
+    {
+      "ordinal": 4,
+      "conversation": 1,
+      "turn": 1,
+      "content": "{\"Worker\":{\"ToolOutput\":{\"id\":\"call-fixture-activity\",\"output\":\"CLOSE_BASH_OK\\n\",\"truncated\":false,\"status\":\"Succeeded\"}}}"
+    },
+    {
+      "ordinal": 5,
+      "conversation": 1,
+      "turn": 1,
+      "content": "{\"Worker\":{\"AssistantDelta\":\"ACTIVITY final\"}}"
+    }
+  ],
+  "frozen_sha256": {
+    "ovrcr": "0c3806735e58e2242926dc3a2730007d36a042c28257ae2524dcafc708c5b4b2",
+    "ovrcr-gui": "cd7f49321d977b33c45c34bc9075091a3bfe700d95140e054ed50a92a87ad899"
+  }
+}

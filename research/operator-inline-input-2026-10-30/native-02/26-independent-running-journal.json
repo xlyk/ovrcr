@@ -1,0 +1,12 @@
+{
+  "call": "app.getAXStateAndScreenshot({disableDiffing:true,emit:false})",
+  "start_unix_ms": 1793387399725,
+  "end_unix_ms": 1793387400142,
+  "source_revision": "6e560817477ed9993c5806da958e39dd239b1511",
+  "jpg_sha256": "6f47874d3bbc9f9f841fb2dc6595b719408017e98714ba87fbe1cb3acef34ba3",
+  "ax_sha256": "ac34e8ef522c7199a04107238f1a4f8b7f8fa7f3e9cb6720c4d0e482418c3691",
+  "activity": [
+    "\t\t14 text (settable)   󰘬 gui-consigint-worktree-lifecycle   │  ⠏ Responding                                                                                                 ",
+    "\t\t33 text (settable) Claude · unavailable                   │ Managing consigint / main / #1 run 1                                                                          "
+  ]
+}

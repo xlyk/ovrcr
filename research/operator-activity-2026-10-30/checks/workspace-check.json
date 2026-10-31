@@ -1,0 +1,14 @@
+{
+  "command": [
+    "cargo",
+    "check",
+    "--workspace",
+    "--all-targets",
+    "--all-features"
+  ],
+  "exit": 0,
+  "source_revision": "5efc90909e4998bd134414033f067f8d9253a1a3",
+  "isolated_root_removed": "/private/tmp/ovrcr-activity-check-9zen6h40",
+  "bytes": 265,
+  "sha256": "0df182a5f75b8a6da564d95b83bbf6490fa4d6a03d8cce73c94c00d18f72c845"
+}

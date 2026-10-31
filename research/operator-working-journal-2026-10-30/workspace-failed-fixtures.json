@@ -1,0 +1,292 @@
+{
+  "/private/tmp/ovrcr-journal-gates-83a_s_6i/tmp/.tmphszYEy": {
+    "exists": true,
+    "files": [
+      {
+        "path": "ovrcr",
+        "bytes": 115573112
+      },
+      {
+        "path": "claude-auth-fixture/claude-auth-status.json",
+        "bytes": 129
+      },
+      {
+        "path": "claude-auth-fixture/claude",
+        "bytes": 227
+      },
+      {
+        "path": "private/.server.lock",
+        "bytes": 0
+      },
+      {
+        "path": "private/server.sock.build.json",
+        "bytes": 326
+      },
+      {
+        "path": "instance/registry.sqlite3",
+        "bytes": 131072
+      },
+      {
+        "path": "repo/README",
+        "bytes": 8
+      },
+      {
+        "path": "repo/.git/config",
+        "bytes": 195
+      },
+      {
+        "path": "repo/.git/HEAD",
+        "bytes": 21
+      },
+      {
+        "path": "repo/.git/description",
+        "bytes": 73
+      },
+      {
+        "path": "repo/.git/index",
+        "bytes": 137
+      },
+      {
+        "path": "repo/.git/COMMIT_EDITMSG",
+        "bytes": 8
+      },
+      {
+        "path": "repo/.git/info/exclude",
+        "bytes": 240
+      },
+      {
+        "path": "repo/.git/logs/HEAD",
+        "bytes": 161
+      },
+      {
+        "path": "repo/.git/hooks/commit-msg.sample",
+        "bytes": 896
+      },
+      {
+        "path": "repo/.git/hooks/pre-rebase.sample",
+        "bytes": 4898
+      },
+      {
+        "path": "repo/.git/hooks/sendemail-validate.sample",
+        "bytes": 2308
+      },
+      {
+        "path": "repo/.git/hooks/pre-commit.sample",
+        "bytes": 1649
+      },
+      {
+        "path": "repo/.git/hooks/applypatch-msg.sample",
+        "bytes": 478
+      },
+      {
+        "path": "repo/.git/hooks/fsmonitor-watchman.sample",
+        "bytes": 4726
+      },
+      {
+        "path": "repo/.git/hooks/pre-receive.sample",
+        "bytes": 544
+      },
+      {
+        "path": "repo/.git/hooks/prepare-commit-msg.sample",
+        "bytes": 1492
+      },
+      {
+        "path": "repo/.git/hooks/post-update.sample",
+        "bytes": 189
+      },
+      {
+        "path": "repo/.git/hooks/pre-merge-commit.sample",
+        "bytes": 416
+      },
+      {
+        "path": "repo/.git/hooks/pre-applypatch.sample",
+        "bytes": 424
+      },
+      {
+        "path": "repo/.git/hooks/pre-push.sample",
+        "bytes": 1374
+      },
+      {
+        "path": "repo/.git/hooks/update.sample",
+        "bytes": 3650
+      },
+      {
+        "path": "repo/.git/hooks/push-to-checkout.sample",
+        "bytes": 2783
+      },
+      {
+        "path": "repo/.git/refs/heads/main",
+        "bytes": 41
+      },
+      {
+        "path": "repo/.git/logs/refs/heads/main",
+        "bytes": 161
+      },
+      {
+        "path": "repo/.git/objects/ee/8c1ee49b4799bbd170233915a897c19e3b55e1",
+        "bytes": 23
+      },
+      {
+        "path": "repo/.git/objects/ed/e8b257aaaf1a7e18969113b28a8dfe9925308d",
+        "bytes": 133
+      },
+      {
+        "path": "repo/.git/objects/e8/e4b680151fc14b25dffdfd9db2478423cde1f5",
+        "bytes": 51
+      },
+      {
+        "path": "instance/tasks/state.toml",
+        "bytes": 73
+      },
+      {
+        "path": "instance/tasks/owner.lock",
+        "bytes": 0
+      }
+    ]
+  },
+  "/private/tmp/ovrcr-journal-gates-83a_s_6i/tmp/.tmpnWT7Ns": {
+    "exists": true,
+    "files": [
+      {
+        "path": "ovrcr",
+        "bytes": 115573112
+      },
+      {
+        "path": "claude-auth-fixture/claude-auth-status.json",
+        "bytes": 129
+      },
+      {
+        "path": "claude-auth-fixture/claude",
+        "bytes": 227
+      },
+      {
+        "path": "private/.server.lock",
+        "bytes": 0
+      },
+      {
+        "path": "private/server.sock.build.json",
+        "bytes": 326
+      },
+      {
+        "path": "instance/registry.sqlite3",
+        "bytes": 131072
+      },
+      {
+        "path": "repo/README",
+        "bytes": 8
+      },
+      {
+        "path": "repo/.git/config",
+        "bytes": 195
+      },
+      {
+        "path": "repo/.git/HEAD",
+        "bytes": 21
+      },
+      {
+        "path": "repo/.git/description",
+        "bytes": 73
+      },
+      {
+        "path": "repo/.git/index",
+        "bytes": 137
+      },
+      {
+        "path": "repo/.git/COMMIT_EDITMSG",
+        "bytes": 8
+      },
+      {
+        "path": "repo/.git/info/exclude",
+        "bytes": 240
+      },
+      {
+        "path": "repo/.git/logs/HEAD",
+        "bytes": 161
+      },
+      {
+        "path": "repo/.git/hooks/commit-msg.sample",
+        "bytes": 896
+      },
+      {
+        "path": "repo/.git/hooks/pre-rebase.sample",
+        "bytes": 4898
+      },
+      {
+        "path": "repo/.git/hooks/sendemail-validate.sample",
+        "bytes": 2308
+      },
+      {
+        "path": "repo/.git/hooks/pre-commit.sample",
+        "bytes": 1649
+      },
+      {
+        "path": "repo/.git/hooks/applypatch-msg.sample",
+        "bytes": 478
+      },
+      {
+        "path": "repo/.git/hooks/fsmonitor-watchman.sample",
+        "bytes": 4726
+      },
+      {
+        "path": "repo/.git/hooks/pre-receive.sample",
+        "bytes": 544
+      },
+      {
+        "path": "repo/.git/hooks/prepare-commit-msg.sample",
+        "bytes": 1492
+      },
+      {
+        "path": "repo/.git/hooks/post-update.sample",
+        "bytes": 189
+      },
+      {
+        "path": "repo/.git/hooks/pre-merge-commit.sample",
+        "bytes": 416
+      },
+      {
+        "path": "repo/.git/hooks/pre-applypatch.sample",
+        "bytes": 424
+      },
+      {
+        "path": "repo/.git/hooks/pre-push.sample",
+        "bytes": 1374
+      },
+      {
+        "path": "repo/.git/hooks/update.sample",
+        "bytes": 3650
+      },
+      {
+        "path": "repo/.git/hooks/push-to-checkout.sample",
+        "bytes": 2783
+      },
+      {
+        "path": "repo/.git/refs/heads/main",
+        "bytes": 41
+      },
+      {
+        "path": "repo/.git/logs/refs/heads/main",
+        "bytes": 161
+      },
+      {
+        "path": "repo/.git/objects/ee/8c1ee49b4799bbd170233915a897c19e3b55e1",
+        "bytes": 23
+      },
+      {
+        "path": "repo/.git/objects/ed/e8b257aaaf1a7e18969113b28a8dfe9925308d",
+        "bytes": 133
+      },
+      {
+        "path": "repo/.git/objects/e8/e4b680151fc14b25dffdfd9db2478423cde1f5",
+        "bytes": 51
+      },
+      {
+        "path": "instance/tasks/state.toml",
+        "bytes": 73
+      },
+      {
+        "path": "instance/tasks/owner.lock",
+        "bytes": 0
+      }
+    ]
+  }
+}

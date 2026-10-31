@@ -1,0 +1,17 @@
+{
+  "command": [
+    "rtk",
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--test",
+    "terminal_acceptance",
+    "operator_quick",
+    "--",
+    "--nocapture"
+  ],
+  "exit": 101,
+  "revision": "dc5e8cb01f84dd2cb68089af2497830078e46b41",
+  "utc": "2026-10-30T11:19:22.812755+00:00"
+}

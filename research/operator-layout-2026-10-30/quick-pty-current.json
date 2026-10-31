@@ -1,0 +1,32 @@
+{
+  "command": [
+    "rtk",
+    "proxy",
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--test",
+    "terminal_acceptance",
+    "operator_quick",
+    "--",
+    "--nocapture"
+  ],
+  "exit": 0,
+  "revision": "abd4793993c1b3d38951309c5e93ece078b0a42e",
+  "private_root": "/private/tmp/operator-layout-gate-sumblvtj",
+  "isolated_environment_keys": [
+    "CARGO_HOME",
+    "CARGO_NET_OFFLINE",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_NOSYSTEM",
+    "HOME",
+    "NO_PROXY",
+    "PATH",
+    "RUSTUP_HOME",
+    "SHELL",
+    "TMPDIR",
+    "no_proxy"
+  ],
+  "utc": "2026-10-30T11:45:02.905851+00:00"
+}

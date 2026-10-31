@@ -248,7 +248,7 @@ impl Dashboard {
     }
 
     /// Rendering and every tree interaction share this reduced rectangle.
-    pub(super) fn sidebar_rects(&self, area: Rect) -> (Rect, Rect) {
+    pub(super) fn sidebar_rects(&self, area: Rect) -> super::SidebarRects {
         let sidebar = sidebar_area(area, self.sidebar_preference());
         let desired = self.quotas.as_ref().map_or(0, |quota| {
             if sidebar.width < 8 {
@@ -263,26 +263,40 @@ impl Dashboard {
             }
         });
         let content = desired.saturating_sub(1);
-        // The ladder keeps three tree lines: full (blank optional), compact, pointer, then nothing.
-        let height = if desired == 0 || sidebar.height < 4 {
+        // The ladder keeps the Operator heading and three tree lines: full (blank optional), compact, pointer, then nothing.
+        let height = if desired == 0 || sidebar.height < 5 {
             0
-        } else if sidebar.height >= desired + 3 {
+        } else if sidebar.height >= desired + 4 {
             desired
-        } else if content > 0 && sidebar.height >= content + 3 {
+        } else if content > 0 && sidebar.height >= content + 4 {
             content
-        } else if sidebar.height >= 7 {
+        } else if sidebar.height >= 8 {
             4
         } else {
             1
         };
-        (
-            Rect::new(sidebar.x, sidebar.y, sidebar.width, sidebar.height - height),
-            Rect::new(sidebar.x, sidebar.bottom() - height, sidebar.width, height),
-        )
+        let available = sidebar.height - height;
+        let heading = u16::from(available > 0);
+        let rows = if self.operator.collapsed {
+            0
+        } else {
+            self.operator_ids().len().min(5) as u16
+        };
+        let operator_height = heading + rows.min(available.saturating_sub(heading + 3));
+        super::SidebarRects {
+            operator: Rect::new(sidebar.x, sidebar.y, sidebar.width, operator_height),
+            tree: Rect::new(
+                sidebar.x,
+                sidebar.y + operator_height,
+                sidebar.width,
+                available - operator_height,
+            ),
+            quota: Rect::new(sidebar.x, sidebar.bottom() - height, sidebar.width, height),
+        }
     }
 
     pub(super) fn draw_quota(&self, frame: &mut Frame<'_>, now: u64) {
-        let (_, area) = self.sidebar_rects(frame.area());
+        let area = self.sidebar_rects(frame.area()).quota;
         let Some(quota) = &self.quotas else { return };
         if area.is_empty() {
             return;

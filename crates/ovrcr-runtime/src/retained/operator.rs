@@ -158,14 +158,16 @@ impl SessionStore {
             )
             .optional()?
             .context("operator conversation not found")?;
+        let record = self
+            .records
+            .get(&SessionId(session))
+            .context("retained operator session missing")?;
         Ok(OperatorConversationSummary {
+            run: record.run,
+            archived: record.disposition == Disposition::Archived,
             id,
             session: SessionId(session),
-            worker_stopped: self
-                .records
-                .get(&SessionId(session))
-                .context("retained operator session missing")?
-                .stopped,
+            worker_stopped: record.stopped,
             provider: serde_json::from_str(&provider)?,
             model,
             title,
@@ -182,7 +184,7 @@ impl SessionStore {
             .map_err(anyhow::Error::msg)?;
         let ids: Vec<u64> = self
             .connection
-            .prepare("SELECT id FROM operator_conversations WHERE id>?1 ORDER BY id LIMIT ?2")?
+            .prepare("SELECT c.id FROM operator_conversations c JOIN retained_sessions s ON s.id=c.session WHERE c.id>?1 AND s.disposition!=1 ORDER BY c.id LIMIT ?2")?
             .query_map(params![sql_integer(after)?, limit], |r| read_integer(r, 0))?
             .collect::<rusqlite::Result<_>>()?;
         ids.into_iter()
@@ -274,7 +276,10 @@ impl SessionStore {
             .records
             .get(&conversation.session)
             .context("retained operator session missing")?;
-        if row.run != expected_run || row.disposition != Disposition::Active || !row.stopped {
+        if row.run != expected_run
+            || !matches!(row.disposition, Disposition::Active | Disposition::Returned)
+            || !row.stopped
+        {
             bail!("operator session run changed or ownership remains uncertain");
         }
         let run = SessionRunId(
@@ -284,7 +289,7 @@ impl SessionStore {
                 .context("session run exhausted")?,
         );
         let transaction = self.connection.transaction()?;
-        let changed=transaction.execute("UPDATE retained_sessions SET run=?1,boot_id=?2,stopped=0,failure=NULL,title_revision=0 WHERE id=?3 AND run=?4 AND stopped=1 AND disposition=0",params![sql_integer(run.0)?,self.boot_id,sql_integer(conversation.session.0)?,sql_integer(expected_run.0)?])?;
+        let changed=transaction.execute("UPDATE retained_sessions SET run=?1,boot_id=?2,stopped=0,failure=NULL,title_revision=0,disposition=0 WHERE id=?3 AND run=?4 AND stopped=1 AND disposition IN (0,2)",params![sql_integer(run.0)?,self.boot_id,sql_integer(conversation.session.0)?,sql_integer(expected_run.0)?])?;
         if changed != 1 {
             bail!("operator session run changed");
         }
@@ -318,6 +323,7 @@ impl SessionStore {
         transaction.commit()?;
         let row = self.records.get_mut(&conversation.session).unwrap();
         row.run = run;
+        row.disposition = Disposition::Active;
         row.stopped = false;
         row.boot_id = self.boot_id.clone();
         row.failure = None;
@@ -531,6 +537,59 @@ mod tests {
             events: vec![OperatorWorkerEvent::AssistantDelta(text.into())],
         }
     }
+    #[test]
+    fn operator_restore_uses_current_retained_run() {
+        let mut store = SessionStore::in_memory();
+        let c = create(&mut store);
+        let turn = submit(&mut store, &c);
+        store.interrupt_operator_turn(turn.identity).unwrap();
+        store.mark_stopped(c.session, turn.identity.run).unwrap();
+        let messages = store.read_operator_history(c.id, 0, 100).unwrap().messages;
+        store
+            .set_archived(c.session, turn.identity.run, true)
+            .unwrap();
+        let archived_run = store.get(c.session).unwrap().run;
+        assert_eq!(
+            store.read_operator_history(c.id, 0, 100).unwrap().messages,
+            messages
+        );
+        store.set_archived(c.session, archived_run, false).unwrap();
+        let restored_run = store.get(c.session).unwrap().run;
+        assert!(
+            store
+                .submit_operator_turn(c.id, turn.identity.run, "stale", OperatorContext::default())
+                .is_err()
+        );
+        let fresh = store
+            .submit_operator_turn(c.id, restored_run, "fresh", OperatorContext::default())
+            .unwrap();
+        assert_eq!(fresh.identity.run.0, restored_run.0 + 1);
+        assert!(
+            store
+                .apply_operator_batch(&batch(&turn, 1, "late"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn operator_active_list_filters_archives_before_pagination() {
+        let mut store = SessionStore::in_memory();
+        let a = create(&mut store);
+        let b = create(&mut store);
+        let c = create(&mut store);
+        store
+            .set_archived(a.session, SessionRunId(0), true)
+            .unwrap();
+        assert_eq!(
+            store.list_operator_conversations(0, 1).unwrap(),
+            vec![b.clone()]
+        );
+        assert_eq!(
+            store.list_operator_conversations(b.id.0, 1).unwrap(),
+            vec![c]
+        );
+    }
+
     #[test]
     fn idle_conversation_retains_one_stopped_global_session_and_no_process() {
         let mut store = SessionStore::in_memory();
@@ -803,114 +862,155 @@ mod tests {
     #[test]
     fn cloud_only_versions25_and26_upgrade_preserve_all_ordinary_session_metadata() {
         for version in [25, 26] {
+            for kind in [
+                SessionKind::Terminal,
+                SessionKind::Agent {
+                    name: "cursor".into(),
+                },
+            ] {
+                let root = tempfile::tempdir().unwrap();
+                let before = {
+                    let mut store = SessionStore::open(root.path()).unwrap();
+                    let row = store
+                        .create(SessionMetadata {
+                            scope: ovrcr_protocol::SessionScope::Workspace,
+                            project: "p".into(),
+                            workspace: "stable-w".into(),
+                            name: "term".into(),
+                            label: "label".into(),
+                            cwd: "/tmp/w".into(),
+                            kind,
+                            pinned_title: Some("title".into()),
+                            application_title: None,
+                        })
+                        .unwrap();
+                    let row = store.begin_run(row.id, row.run).unwrap();
+                    store.mark_stopped(row.id, row.run).unwrap();
+                    let row = store.get(row.id).unwrap().clone();
+                    store.connection.execute_batch("DROP TABLE operator_batches;DROP TABLE operator_model_history;DROP TABLE operator_messages;DROP TABLE operator_turns;DROP TABLE operator_conversations;ALTER TABLE retained_sessions DROP COLUMN scope;").unwrap();
+                    store
+                        .connection
+                        .pragma_update(None, "user_version", version)
+                        .unwrap();
+                    row.summary(None)
+                };
+                let store = SessionStore::open(root.path()).unwrap();
+                assert_eq!(store.get(before.id).unwrap().summary(None), before);
+                assert_eq!(store.records().count(), 1);
+                assert!(
+                    store
+                        .list_operator_conversations(0, 100)
+                        .unwrap()
+                        .is_empty()
+                );
+                let mut store = store;
+                let version: i64 = store
+                    .connection
+                    .pragma_query_value(None, "user_version", |row| row.get(0))
+                    .unwrap();
+                assert_eq!(version, 27);
+                let conversation = create(&mut store);
+                assert_eq!(
+                    store.get(conversation.session).unwrap().metadata.scope,
+                    ovrcr_protocol::SessionScope::OperatorConversation {
+                        conversation: conversation.id
+                    }
+                );
+            }
+        }
+    }
+    #[test]
+    fn version26_operator_upgrade_preserves_completed_journal_and_model_context() {
+        for archived in [false, true] {
             let root = tempfile::tempdir().unwrap();
-            let before = {
+            let (conversation, before, history, model_history) = {
                 let mut store = SessionStore::open(root.path()).unwrap();
-                let row = store
-                    .create(SessionMetadata {
-                        scope: ovrcr_protocol::SessionScope::Workspace,
-                        project: "p".into(),
-                        workspace: "stable-w".into(),
-                        name: "term".into(),
-                        label: "label".into(),
-                        cwd: "/tmp/w".into(),
-                        kind: SessionKind::Terminal,
-                        pinned_title: Some("title".into()),
-                        application_title: None,
+                let conversation = create(&mut store);
+                let turn = submit(&mut store, &conversation);
+                store
+                    .apply_operator_batch(&batch(&turn, 1, "saved reply"))
+                    .unwrap();
+                store
+                    .apply_operator_batch(&OperatorEventBatch {
+                        identity: turn.identity,
+                        sequence: 2,
+                        events: vec![OperatorWorkerEvent::Completed(OperatorModelHistory {
+                            version: 1,
+                            json: "[{\"role\":\"assistant\",\"content\":\"saved reply\"}]".into(),
+                        })],
                     })
                     .unwrap();
-                store.connection.execute_batch("DROP TABLE operator_batches;DROP TABLE operator_model_history;DROP TABLE operator_messages;DROP TABLE operator_turns;DROP TABLE operator_conversations;ALTER TABLE retained_sessions DROP COLUMN scope;").unwrap();
+                store
+                    .mark_stopped(conversation.session, turn.identity.run)
+                    .unwrap();
+                if archived {
+                    store
+                        .set_archived(conversation.session, turn.identity.run, true)
+                        .unwrap();
+                }
                 store
                     .connection
-                    .pragma_update(None, "user_version", version)
+                    .pragma_update(None, "user_version", 26)
                     .unwrap();
-                row.summary(None)
+                (
+                    conversation.clone(),
+                    store.get(conversation.session).unwrap().summary(None),
+                    store
+                        .read_operator_history(conversation.id, 0, 100)
+                        .unwrap(),
+                    store.operator_model_history(conversation.id).unwrap(),
+                )
             };
-            let store = SessionStore::open(root.path()).unwrap();
-            assert_eq!(store.get(before.id).unwrap().summary(None), before);
-            assert_eq!(store.records().count(), 1);
-            assert!(
-                store
-                    .list_operator_conversations(0, 100)
-                    .unwrap()
-                    .is_empty()
-            );
-            let mut store = store;
+            let mut store = SessionStore::open(root.path()).unwrap();
             let version: i64 = store
                 .connection
                 .pragma_query_value(None, "user_version", |row| row.get(0))
                 .unwrap();
             assert_eq!(version, 27);
-            let conversation = create(&mut store);
             assert_eq!(
-                store.get(conversation.session).unwrap().metadata.scope,
-                ovrcr_protocol::SessionScope::OperatorConversation {
-                    conversation: conversation.id
-                }
-            );
-        }
-    }
-    #[test]
-    fn version26_operator_upgrade_preserves_completed_journal_and_model_context() {
-        let root = tempfile::tempdir().unwrap();
-        let (conversation, before, history, model_history) = {
-            let mut store = SessionStore::open(root.path()).unwrap();
-            let conversation = create(&mut store);
-            let turn = submit(&mut store, &conversation);
-            store
-                .apply_operator_batch(&batch(&turn, 1, "saved reply"))
-                .unwrap();
-            store
-                .apply_operator_batch(&OperatorEventBatch {
-                    identity: turn.identity,
-                    sequence: 2,
-                    events: vec![OperatorWorkerEvent::Completed(OperatorModelHistory {
-                        version: 1,
-                        json: "[{\"role\":\"assistant\",\"content\":\"saved reply\"}]".into(),
-                    })],
-                })
-                .unwrap();
-            store
-                .mark_stopped(conversation.session, turn.identity.run)
-                .unwrap();
-            store
-                .connection
-                .pragma_update(None, "user_version", 26)
-                .unwrap();
-            (
-                conversation.clone(),
                 store.get(conversation.session).unwrap().summary(None),
+                before
+            );
+            assert_eq!(
                 store
                     .read_operator_history(conversation.id, 0, 100)
                     .unwrap(),
+                history
+            );
+            assert_eq!(
                 store.operator_model_history(conversation.id).unwrap(),
-            )
-        };
-        let mut store = SessionStore::open(root.path()).unwrap();
-        let version: i64 = store
-            .connection
-            .pragma_query_value(None, "user_version", |row| row.get(0))
-            .unwrap();
-        assert_eq!(version, 27);
-        assert_eq!(
-            store.get(conversation.session).unwrap().summary(None),
-            before
-        );
-        assert_eq!(
-            store
-                .read_operator_history(conversation.id, 0, 100)
-                .unwrap(),
-            history
-        );
-        assert_eq!(
-            store.operator_model_history(conversation.id).unwrap(),
-            model_history
-        );
-        let next = submit(&mut store, &conversation);
-        assert_eq!(
-            store.operator_worker_start(next.identity).unwrap().history,
-            model_history
-        );
+                model_history
+            );
+            let retained_run = store.get(conversation.session).unwrap().run;
+            let migrated = store.operator_conversation(conversation.id).unwrap();
+            assert_eq!(migrated.run, retained_run);
+            assert_eq!(migrated.archived, archived);
+            assert_eq!(
+                migrated.current_turn.as_ref().unwrap().identity.run,
+                SessionRunId(1)
+            );
+            if archived {
+                assert!(
+                    store
+                        .submit_operator_turn(
+                            conversation.id,
+                            retained_run,
+                            "closed",
+                            OperatorContext::default()
+                        )
+                        .is_err()
+                );
+                store
+                    .set_archived(conversation.session, retained_run, false)
+                    .unwrap();
+            }
+            let next = submit(&mut store, &conversation);
+            assert!(next.identity.run.0 > retained_run.0);
+            assert_eq!(
+                store.operator_worker_start(next.identity).unwrap().history,
+                model_history
+            );
+        }
     }
     #[test]
     fn invalid_inputs_do_not_create_turns_or_change_retained_run() {

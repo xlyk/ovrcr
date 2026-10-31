@@ -1,0 +1,6 @@
+{
+  "lines": [
+    "39234 39189 39166 /private/tmp/ovrcr-journal-native-cc6olqy2/operator_e2e --exact compiled_worker::native_provider_holder --ignored --nocapture --test-threads=1",
+    "56531 39924 56531 /private/tmp/ovrcr-journal-native-cc6olqy2/temp/ovrcr-gui-2jIMZQ/dashboard-client/ovrcr"
+  ]
+}

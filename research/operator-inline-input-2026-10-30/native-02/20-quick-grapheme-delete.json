@@ -1,0 +1,12 @@
+{
+  "call": "app.getAXStateAndScreenshot({disableDiffing:true,emit:false})",
+  "start_unix_ms": 1793387352581,
+  "end_unix_ms": 1793387353025,
+  "source_revision": "6e560817477ed9993c5806da958e39dd239b1511",
+  "jpg_sha256": "27ada2083086c60f450606e8fc2384edacccb280d867a3ce9281c0e347190e0d",
+  "ax_sha256": "02ea5f9b2b0ab846c0945f36a57e089aa99324944911bc225b729af00bfd9788",
+  "activity": [
+    "\t\t13 text (settable)   ⠇ Responding┌ Quick message · Ctrl-o ──────────────────────────────────────────────────────┐               ",
+    "\t\t20 text (settable)  Managing consigint / main / #1 run 1                                                                        "
+  ]
+}

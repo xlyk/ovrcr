@@ -1,0 +1,31 @@
+{
+  "command": [
+    "rtk",
+    "proxy",
+    "cargo",
+    "clippy",
+    "--workspace",
+    "--all-targets",
+    "--all-features",
+    "--",
+    "-D",
+    "warnings"
+  ],
+  "exit": 0,
+  "revision": "dc9b49dd47fd0eaa690ec65efe1f9e2019a4aec9",
+  "private_root": "/private/tmp/operator-layout-gate-sd7jr_qt",
+  "isolated_environment_keys": [
+    "CARGO_HOME",
+    "CARGO_NET_OFFLINE",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_NOSYSTEM",
+    "HOME",
+    "NO_PROXY",
+    "PATH",
+    "RUSTUP_HOME",
+    "SHELL",
+    "TMPDIR",
+    "no_proxy"
+  ],
+  "utc": "2026-10-30T11:50:15.225612+00:00"
+}

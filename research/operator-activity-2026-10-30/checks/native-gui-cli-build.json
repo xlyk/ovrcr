@@ -1,0 +1,16 @@
+{
+  "command": [
+    "cargo",
+    "build",
+    "-p",
+    "ovrcr",
+    "--bins",
+    "--features",
+    "gui,acceptance-diagnostics"
+  ],
+  "exit": 0,
+  "source_revision": "ace3077b0c6743648b96b6986c3cac9ce50e7a07",
+  "isolated_root_removed": "/private/tmp/ovrcr-activity-check-ujd83rkx",
+  "bytes": 265,
+  "sha256": "f3391fb882a04dd4dc026b0fb09d5d930cc71cb0bdc551cfbc8e3b82848598bf"
+}

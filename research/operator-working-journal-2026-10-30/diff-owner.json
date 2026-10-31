@@ -1,0 +1,8 @@
+{
+  "pid": 26645,
+  "command": [
+    "git",
+    "diff",
+    "--check"
+  ]
+}

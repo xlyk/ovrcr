@@ -1,0 +1,56 @@
+[
+  {
+    "pid": 80355,
+    "pgid": 80353,
+    "state": "absent",
+    "source": "native-processes-alive.txt"
+  },
+  {
+    "pid": 80376,
+    "pgid": 80353,
+    "state": "absent",
+    "source": "native-processes-alive.txt"
+  },
+  {
+    "pid": 82142,
+    "pgid": 82142,
+    "state": "absent",
+    "source": "native-processes-alive.txt"
+  },
+  {
+    "pid": 38212,
+    "pgid": 38212,
+    "state": "absent",
+    "source": "native-nested-processes-alive.txt"
+  },
+  {
+    "pid": 80355,
+    "pgid": 80353,
+    "state": "absent",
+    "source": "native-nested-processes-alive.txt"
+  },
+  {
+    "pid": 80376,
+    "pgid": 80353,
+    "state": "absent",
+    "source": "native-nested-processes-alive.txt"
+  },
+  {
+    "pid": 38123,
+    "pgid": 38123,
+    "state": "absent",
+    "source": "native-nested-processes-alive.txt"
+  },
+  {
+    "pid": 38124,
+    "pgid": 38123,
+    "state": "absent",
+    "source": "native-nested-processes-alive.txt"
+  },
+  {
+    "pid": 38165,
+    "pgid": 38123,
+    "state": "absent",
+    "source": "native-nested-processes-alive.txt"
+  }
+]

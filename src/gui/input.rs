@@ -67,11 +67,27 @@ pub fn encode_event(
         Event::Key {
             key,
             pressed: true,
+            repeat,
             modifiers,
             ..
         } if !modifiers.mac_cmd => {
             if modifiers.ctrl {
+                // Raw control bytes lose repeat identity before reaching the Dashboard.
+                if *key == Key::C && *repeat {
+                    return Vec::new();
+                }
                 let name = key.name();
+                if (modifiers.alt || modifiers.shift)
+                    && name.len() == 1
+                    && name.as_bytes()[0].is_ascii_alphabetic()
+                {
+                    return format!(
+                        "\x1b[{};{}u",
+                        name.as_bytes()[0].to_ascii_lowercase(),
+                        5 + u8::from(modifiers.shift) + 2 * u8::from(modifiers.alt)
+                    )
+                    .into_bytes();
+                }
                 let control = match key {
                     Key::Space | Key::Num2 => Some(0),
                     Key::OpenBracket => Some(27),
@@ -560,6 +576,87 @@ mod tests {
                 &mut mouse
             ),
             b"\x1b[<0;4;2m"
+        );
+    }
+
+    #[test]
+    fn mixed_alphabetic_controls_keep_alt_and_shift() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        for (alt, shift, parameter) in [(true, false, 7), (false, true, 6), (true, true, 8)] {
+            for key in [Key::C, Key::U, Key::K, Key::W] {
+                let modifiers = egui::Modifiers {
+                    ctrl: true,
+                    alt,
+                    shift,
+                    ..Default::default()
+                };
+                assert_eq!(
+                    encode(&press(key, modifiers), parser.screen()),
+                    format!(
+                        "\x1b[{};{parameter}u",
+                        key.name().as_bytes()[0].to_ascii_lowercase()
+                    )
+                    .as_bytes(),
+                    "{key:?} {modifiers:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ctrl_c_repeat_cannot_become_another_press() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        for (key, modifiers, pressed, repeat, expected) in [
+            (Key::C, egui::Modifiers::CTRL, true, false, vec![3]),
+            (Key::C, egui::Modifiers::CTRL, true, true, vec![]),
+            (Key::C, egui::Modifiers::CTRL, false, false, vec![]),
+            (Key::C, egui::Modifiers::CTRL, false, true, vec![]),
+            // A separate physical press still sends the normal terminal interrupt.
+            (Key::C, egui::Modifiers::CTRL, true, false, vec![3]),
+            (Key::A, egui::Modifiers::CTRL, true, true, vec![1]),
+            (Key::G, egui::Modifiers::CTRL, true, true, vec![7]),
+            (
+                Key::ArrowLeft,
+                egui::Modifiers::NONE,
+                true,
+                true,
+                b"\x1b[D".to_vec(),
+            ),
+            (Key::Backspace, egui::Modifiers::NONE, true, true, vec![127]),
+            (Key::Enter, egui::Modifiers::NONE, true, true, vec![13]),
+            (Key::B, egui::Modifiers::ALT, true, true, b"\x1bb".to_vec()),
+        ] {
+            let event = Event::Key {
+                key,
+                physical_key: None,
+                pressed,
+                repeat,
+                modifiers,
+            };
+            assert_eq!(
+                encode(&event, parser.screen()),
+                expected,
+                "{key:?} {modifiers:?} pressed={pressed} repeat={repeat}"
+            );
+        }
+        let events = [
+            press(Key::A, egui::Modifiers::NONE),
+            Event::Text("a".into()),
+            Event::Key {
+                key: Key::A,
+                physical_key: None,
+                pressed: true,
+                repeat: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            Event::Text("a".into()),
+        ];
+        let bytes: Vec<u8> = terminal_events(&events)
+            .flat_map(|event| encode(event, parser.screen()))
+            .collect();
+        assert_eq!(
+            bytes, b"aa",
+            "ordinary printable repetition remains text-driven"
         );
     }
 

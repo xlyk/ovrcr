@@ -651,11 +651,15 @@ impl ServerState {
     fn archive_session_locked(&self, id: SessionId, run: SessionRunId) -> Result<()> {
         self.reject_archive_lifecycle(id)?;
         self.retained.lock().set_archived(id, run, true)?;
+        self.forget_archived_session(id);
+        Ok(())
+    }
+
+    fn forget_archived_session(&self, id: SessionId) {
         if let Some(session) = self.sessions.lock().unwrap().remove(&id) {
             session.revoke_hook_capability();
         }
         self.dashboard.forget_session(id);
-        Ok(())
     }
 
     pub fn cancel_cloud_creation(&self, id: SessionId, expected: SessionRunId) -> Result<()> {
@@ -679,6 +683,15 @@ impl ServerState {
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+        if matches!(
+            summary.scope,
+            ovrcr_protocol::SessionScope::OperatorConversation { .. }
+        ) {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "Operator history deletion is unavailable",
+            ));
+        }
         if summary.run != expected || !summary.archived {
             return Err(lifecycle_error(
                 ErrorCode::Conflict,
@@ -707,6 +720,9 @@ impl ServerState {
             ));
         }
         self.retained.lock().set_archived(id, expected, false)?;
+        if let ovrcr_protocol::SessionScope::OperatorConversation { conversation } = summary.scope {
+            self.operator_changed(conversation);
+        }
         Ok(())
     }
 

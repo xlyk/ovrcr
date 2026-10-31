@@ -104,6 +104,7 @@ impl Dashboard {
     }
 
     fn apply_notification_navigation(&mut self, offer: &BridgeNavigationOffer) {
+        self.operator_dismiss_quick();
         // Select always releases capture, including a click on the same target.
         self.retarget(PaneChange::Select);
         self.cancel_notification_palette();

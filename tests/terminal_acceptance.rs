@@ -999,6 +999,73 @@ fn gate_agent_view(
 }
 
 #[test]
+fn operator_quick_outer_pty_modifiers_paste_escape_restore_terminal() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    let target = create_search_agent(&mut fixture, "quick-agent")?;
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    dashboard.send(b"squick-agent\r")?;
+    dashboard.wait_for_screen(
+        |s| s.contains("READY_quick-agent") && s.contains("Terminal mode"),
+        wait_deadline(),
+    )?;
+    dashboard.send(b"\x0f")?;
+    dashboard.wait_for_screen(
+        |s| s.contains("Quick message") && s.contains("Ctrl-o"),
+        wait_deadline(),
+    )?;
+    // CSI-u is the actual enhanced-keyboard Shift+Enter byte sequence.
+    dashboard.send(b"first\x1b[13;2u\x1b[200~second\nthird\x1b[201~")?;
+    dashboard.wait_for_screen(
+        |s| {
+            s.lines()
+                .any(|line| line.contains("first") && !line.contains("second"))
+                && s.lines().any(|line| {
+                    line.contains("second") && !line.contains("first") && !line.contains("third")
+                })
+                && s.lines()
+                    .any(|line| line.contains("third") && !line.contains("second"))
+        },
+        wait_deadline(),
+    )?;
+    dashboard.send(b"\x1b")?;
+    dashboard.wait_for_screen(
+        |s| !s.contains("Quick message") && s.contains("Terminal mode"),
+        wait_deadline(),
+    )?;
+    dashboard.send(b"AFTER_QUICK\r")?;
+    dashboard.wait_for(b"RECEIVED_quick-agent_AFTER_QUICK", wait_deadline())?;
+    let text = fixture.read_terminal(target.id)?;
+    assert!(
+        !text.contains("first") && !text.contains("second") && !text.contains("third"),
+        "quick bytes reached terminal: {text}"
+    );
+    let database = rusqlite::Connection::open_with_flags(
+        ovrcr::config::database_path(&fixture.config),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    let conversations: i64 =
+        database.query_row("SELECT count(*) FROM operator_conversations", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(
+        conversations, 0,
+        "paste/newline/Escape created a conversation"
+    );
+    dashboard.detach()?;
+    fixture.shutdown()?;
+    Ok(())
+}
+
+#[test]
 fn agent_search_real_loading_input_is_discarded_and_never_replayed() -> Result<()> {
     let mut fixture = AcceptanceFixture::new()?;
     fixture.setup()?;

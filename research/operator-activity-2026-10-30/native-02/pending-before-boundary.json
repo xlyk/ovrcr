@@ -1,0 +1,53 @@
+{
+  "unix_ms": 1793381801567,
+  "control_markers": [
+    "auth-ready.json",
+    "base.json",
+    "demo-instance",
+    "fixture-activity.executions",
+    "fixture-activity.pid",
+    "release-activity-start"
+  ],
+  "operator_conversations": [
+    {
+      "id": 1,
+      "session": 13,
+      "provider": "\"grok\"",
+      "model": "fixture-activity",
+      "title": "ACTIVITY hold the pending result for native proof"
+    }
+  ],
+  "operator_turns": [
+    {
+      "id": 1,
+      "conversation": 1,
+      "run": 1,
+      "state": "Running",
+      "sequence": 2
+    }
+  ],
+  "operator_messages": [
+    {
+      "ordinal": 1,
+      "conversation": 1,
+      "turn": 1,
+      "content": "{\"User\":{\"text\":\"ACTIVITY hold the pending result for native proof\",\"context\":{\"project\":\"consigint\",\"workspace\":\"main\",\"workspace_id\":\"57ca8e41b88acd38de50cbf5b983d324\",\"cwd\":\"/private/tmp/ovrcr-activity-native2-7w7dtpj5/temp/ovrcr-gui-VIyf3Z/repositories/consigint\",\"session\":1,\"run\":1}}}"
+    },
+    {
+      "ordinal": 2,
+      "conversation": 1,
+      "turn": 1,
+      "content": "{\"Worker\":{\"AssistantDelta\":\"ACTIVITY before tool\"}}"
+    },
+    {
+      "ordinal": 3,
+      "conversation": 1,
+      "turn": 1,
+      "content": "{\"Worker\":{\"ToolCall\":{\"id\":\"call-fixture-activity\",\"name\":\"bash\",\"arguments\":\"{\\\"command\\\":\\\"printf 'started\\\\n' >> '/private/tmp/ovrcr-activity-native2-7w7dtpj5/control/fixture-activity.executions'; printf '%s\\\\n' \\\\\\\"$$\\\\\\\" > '/private/tmp/ovrcr-activity-native2-7w7dtpj5/control/fixture-activity.pid'; while [ ! -e '/private/tmp/ovrcr-activity-native2-7w7dtpj5/control/fixture-activity.bash-release' ]; do /bin/sleep 0.01; done; printf 'CLOSE_%s\\\\n' BASH_OK\\\",\\\"cwd\\\":\\\"/private/tmp/ovrcr-activity-native2-7w7dtpj5/control\\\",\\\"timeout_seconds\\\":600}\"}}}"
+    }
+  ],
+  "frozen_sha256": {
+    "ovrcr": "0c3806735e58e2242926dc3a2730007d36a042c28257ae2524dcafc708c5b4b2",
+    "ovrcr-gui": "cd7f49321d977b33c45c34bc9075091a3bfe700d95140e054ed50a92a87ad899"
+  }
+}

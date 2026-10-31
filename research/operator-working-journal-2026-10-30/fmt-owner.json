@@ -1,0 +1,10 @@
+{
+  "pid": 26177,
+  "command": [
+    "cargo",
+    "fmt",
+    "--all",
+    "--",
+    "--check"
+  ]
+}

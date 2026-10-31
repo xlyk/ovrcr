@@ -1,0 +1,13 @@
+{
+  "command": [
+    "cargo",
+    "build",
+    "-p",
+    "ovrcr",
+    "--features",
+    "gui,acceptance-diagnostics",
+    "--bins"
+  ],
+  "exit": 0,
+  "sha256": "345ea19fbbe954fe0928683f8bbf9d059743667cbc3bdf45b38472616b4a64c4"
+}

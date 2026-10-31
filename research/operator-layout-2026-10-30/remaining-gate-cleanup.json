@@ -1,0 +1,20 @@
+[
+  {
+    "source": "terminal-and-tui-current.json",
+    "private_root": "/private/tmp/operator-layout-gate-3wngnlqq",
+    "root_processes": [],
+    "removed": true
+  },
+  {
+    "source": "tui-crate-serial.json",
+    "private_root": "/private/tmp/operator-layout-gate-49n2k6lk",
+    "root_processes": [],
+    "removed": true
+  },
+  {
+    "source": "affected-crates-current.json",
+    "private_root": "/private/tmp/operator-layout-gate-1eqek2fb",
+    "root_processes": [],
+    "removed": true
+  }
+]

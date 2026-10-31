@@ -1,0 +1,59 @@
+{
+  "unix_ms": 1793381304603,
+  "pids": {
+    "5866": "absent",
+    "5877": "absent",
+    "32199": "absent",
+    "32953": "absent",
+    "32972": "absent",
+    "33386": "absent",
+    "33457": "absent",
+    "33516": "absent",
+    "33579": "absent",
+    "33644": "absent",
+    "33714": "absent",
+    "33806": "absent",
+    "33911": "absent",
+    "34004": "absent",
+    "34258": "absent",
+    "34558": "absent",
+    "34632": "absent",
+    "34675": "absent",
+    "41681": "absent"
+  },
+  "groups": {
+    "32197": "absent",
+    "32949": "absent",
+    "33386": "absent",
+    "33457": "absent",
+    "33516": "absent",
+    "33579": "absent",
+    "33644": "absent",
+    "33714": "absent",
+    "33806": "absent",
+    "33911": "absent",
+    "34004": "absent",
+    "34258": "absent",
+    "34558": "absent",
+    "34632": "absent",
+    "34675": "absent",
+    "41681": "absent"
+  },
+  "demo_exists": true,
+  "socket_exists": false,
+  "holder_original_wait": {
+    "original_wait_exit": 0
+  },
+  "gui_original_wait": {
+    "original_wait_exit": -15
+  },
+  "gui_launcher_tool_exit": 241,
+  "holder_launcher_tool_exit": 0,
+  "frozen_hashes_after_close": {
+    "ovrcr": "0c3806735e58e2242926dc3a2730007d36a042c28257ae2524dcafc708c5b4b2",
+    "ovrcr-gui": "cd7f49321d977b33c45c34bc9075091a3bfe700d95140e054ed50a92a87ad899"
+  },
+  "demo_retained_by_forced_close": true,
+  "private_root_removed": true,
+  "demo_exists_after_owned_removal": false
+}

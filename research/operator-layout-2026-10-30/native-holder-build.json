@@ -1,0 +1,20 @@
+{
+  "command": [
+    "rtk",
+    "proxy",
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--test",
+    "operator_e2e",
+    "--features",
+    "gui,acceptance-diagnostics",
+    "--no-run",
+    "--message-format=json",
+    "--offline"
+  ],
+  "exit": 0,
+  "revision": "299c2890a2c094b23431a6a6818783c50d06982c",
+  "utc": "2026-10-30T11:22:16.276468+00:00"
+}

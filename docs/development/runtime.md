@@ -46,7 +46,7 @@ Stop release all retained/Session/mutation guards before the ordinary owned-grou
 termination chain. Stop first durably interrupts the turn, then revokes its lease.
 Only controlled stop or the existing explicit acknowledgment sets retained stopped
 proof; natural exit remains uncertain. `worker_stopped` derives directly from that
-proof, so Complete with false means finishing or stop-unconfirmed. Protocol 69
+proof, so Complete with false means finishing or stop-unconfirmed. Protocol 70
 coalesces per-conversation `OperatorChanged` notifications on the sole writer;
 paged durable history supplies catch-up. Retirement, Stop and acknowledgment
 publish the proof change as well as batch updates. Restart never launches or

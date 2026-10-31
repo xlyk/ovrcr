@@ -1,0 +1,104 @@
+[
+  {
+    "pid": 40926,
+    "ppid": 40924,
+    "pgid": 40915,
+    "command": "/private/tmp/ovrcr-inline-native2-ukewk5au/operator_e2e --exact compiled_worker::native_provider_holder --ignored --nocapture --test-threads=1"
+  },
+  {
+    "pid": 41798,
+    "ppid": 41781,
+    "pgid": 41772,
+    "command": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+  },
+  {
+    "pid": 42243,
+    "ppid": 41798,
+    "pgid": 41772,
+    "command": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+  },
+  {
+    "pid": 72532,
+    "ppid": 42243,
+    "pgid": 72532,
+    "command": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr operator worker --conversation 3 --turn 3 --session 15 --run 1"
+  },
+  {
+    "pid": 42670,
+    "ppid": 42243,
+    "pgid": 42670,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 42786,
+    "ppid": 42243,
+    "pgid": 42786,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 42931,
+    "ppid": 42243,
+    "pgid": 42931,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 43232,
+    "ppid": 42243,
+    "pgid": 43232,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 43481,
+    "ppid": 42243,
+    "pgid": 43481,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 43589,
+    "ppid": 42243,
+    "pgid": 43589,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 43705,
+    "ppid": 42243,
+    "pgid": 43705,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 43845,
+    "ppid": 42243,
+    "pgid": 43845,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 43960,
+    "ppid": 42243,
+    "pgid": 43960,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 44103,
+    "ppid": 42243,
+    "pgid": 44103,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 44217,
+    "ppid": 42243,
+    "pgid": 44217,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 44331,
+    "ppid": 42243,
+    "pgid": 44331,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 44402,
+    "ppid": 41798,
+    "pgid": 44402,
+    "command": "/private/tmp/ovrcr-inline-native2-ukewk5au/temp/ovrcr-gui-yhWah0/dashboard-client/ovrcr"
+  }
+]

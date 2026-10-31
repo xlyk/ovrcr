@@ -1,4 +1,4 @@
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{style::Style, text::Span};
 use unicode_width::UnicodeWidthStr;
 
@@ -106,6 +106,75 @@ impl TextCursor {
             }
             _ => position,
         });
+    }
+    /// Message-editor commands; other fields retain the basic `key` contract.
+    pub(crate) fn edit_key(&mut self, text: &mut String, key: KeyEvent) -> bool {
+        let control = key.modifiers == KeyModifiers::CONTROL;
+        let alt = key.modifiers == KeyModifiers::ALT;
+        if !control && !alt {
+            return key.modifiers != KeyModifiers::NONE && key.modifiers != KeyModifiers::SHIFT;
+        }
+        let position = self.position(text);
+        let start = text[..position].rfind('\n').map_or(0, |index| index + 1);
+        let end = text[position..]
+            .find('\n')
+            .map_or(text.len(), |index| position + index);
+        let KeyCode::Char(ch) = key.code else {
+            return true;
+        };
+        let basic = match (control, ch) {
+            (true, 'b') => Some(KeyCode::Left),
+            (true, 'f') => Some(KeyCode::Right),
+            (true, 'h') => Some(KeyCode::Backspace),
+            (true, 'd') => Some(KeyCode::Delete),
+            _ => None,
+        };
+        if let Some(code) = basic {
+            self.key(text, code);
+            return true;
+        }
+        let target = match (control, ch) {
+            (true, 'a' | 'u') => start,
+            (true, 'e' | 'k') => end,
+            (true, 'w') | (false, 'b') => {
+                let mut target = position;
+                let mut word = false;
+                for pair in boundaries(&text[start..position]).windows(2).rev() {
+                    let whitespace = text[start + pair[0]..start + pair[1]]
+                        .chars()
+                        .all(char::is_whitespace);
+                    if word && whitespace {
+                        break;
+                    }
+                    word |= !whitespace;
+                    target = start + pair[0];
+                }
+                target
+            }
+            (false, 'f') => {
+                let mut target = position;
+                let mut word = false;
+                for pair in boundaries(&text[position..end]).windows(2) {
+                    let whitespace = text[position + pair[0]..position + pair[1]]
+                        .chars()
+                        .all(char::is_whitespace);
+                    if word && whitespace {
+                        break;
+                    }
+                    word |= !whitespace;
+                    target = position + pair[1];
+                }
+                target
+            }
+            _ => return true,
+        };
+        if control && matches!(ch, 'u' | 'k' | 'w') {
+            text.replace_range(target.min(position)..target.max(position), "");
+            self.0 = Some(target.min(position));
+        } else {
+            self.0 = Some(target);
+        }
+        true
     }
     /// Returns the rendered text and its first visible byte. Always reserves
     /// a cell for the cursor, and never clips through a wide character.

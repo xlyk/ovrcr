@@ -1,0 +1,18 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--test",
+    "terminal",
+    "operator_quick",
+    "--",
+    "--nocapture"
+  ],
+  "exit": 101,
+  "seconds": 0.2814159393310547,
+  "raw_bytes": 825,
+  "raw_sha256": "23747bc7dbf9ceeb4a45e896d8e667bab5c736002bf367271850cc53eef384e3",
+  "stored_sha256": "f54db22a6b41967321c613a26fc20bc01db510003789a0ecdf98cb0b2e6d2b09"
+}

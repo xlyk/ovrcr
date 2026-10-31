@@ -114,7 +114,8 @@ pub(super) fn dispatch_control(
     request: OperatorRequest,
 ) -> Option<Response> {
     let conversation = match &request {
-        OperatorRequest::Submit { conversation, .. } => *conversation,
+        OperatorRequest::Submit { conversation, .. }
+        | OperatorRequest::Close { conversation, .. } => *conversation,
         OperatorRequest::Stop { identity } => identity.conversation,
         _ => return None,
     };
@@ -179,6 +180,12 @@ impl ServerState {
             .validate()
             .map_err(|error| lifecycle_error(ErrorCode::InvalidRequest, error))?;
         match request {
+            OperatorRequest::Close {
+                conversation,
+                expected_run,
+            } => self
+                .close_operator_conversation(owner, conversation, expected_run)
+                .map(OperatorResponse::Closed),
             OperatorRequest::Stop { identity } => {
                 // Acceptance is fenced to the owner; subsequent stop proof belongs to that turn.
                 #[cfg(test)]
@@ -279,6 +286,74 @@ impl ServerState {
                     .context("dashboard owner changed")?
             }
         }
+    }
+
+    pub(super) fn close_operator_conversation(
+        &self,
+        owner: &Arc<()>,
+        conversation: OperatorConversationId,
+        expected_run: SessionRunId,
+    ) -> Result<OperatorConversationSummary> {
+        let current = {
+            let _mutation = self.mutation_lock.lock().unwrap();
+            self.reject_if_stopping()?;
+            #[cfg(test)]
+            if let Some(hook) = self.operator.before_retained.lock().unwrap().clone() {
+                hook();
+            }
+            let retained = self.retained.lock();
+            self.dashboard
+                .with_owned(owner, |_| -> Result<_> {
+                    let summary = retained.operator_conversation(conversation)?;
+                    let record = retained
+                        .get(summary.session)
+                        .context("retained operator session missing")?;
+                    if summary.run != expected_run
+                        || summary.archived
+                        || record.metadata.scope
+                            != (ovrcr_protocol::SessionScope::OperatorConversation { conversation })
+                    {
+                        bail!("operator conversation run or archive state changed");
+                    }
+                    Ok(summary)
+                })
+                .context("dashboard owner changed")??
+        };
+        if !current.worker_stopped {
+            #[cfg(test)]
+            if let Some(hook) = self.operator.before_stop.lock().unwrap().clone() {
+                hook();
+            }
+            let turn = current
+                .current_turn
+                .context("operator stop proof unavailable")?;
+            if turn.identity.run != expected_run {
+                bail!("operator turn does not own the retained run");
+            }
+            self.stop_operator(turn.identity, None, false, Some(owner))?;
+        }
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        let mut retained = self.retained.lock();
+        let closed = self
+            .dashboard
+            .with_owned(owner, |_| -> Result<_> {
+                let summary = retained.operator_conversation(conversation)?;
+                if summary.session != current.session
+                    || summary.run != expected_run
+                    || summary.archived
+                    || !summary.worker_stopped
+                {
+                    bail!("operator close lost current stopped-run authority");
+                }
+                retained.set_archived(summary.session, expected_run, true)?;
+                retained.operator_conversation(conversation)
+            })
+            .context("dashboard owner changed")??;
+        drop(retained);
+        self.forget_archived_session(current.session);
+        self.operator_changed(conversation);
+        Ok(closed)
     }
 
     fn validate_operator_context(&self, context: &OperatorContext) -> Result<()> {

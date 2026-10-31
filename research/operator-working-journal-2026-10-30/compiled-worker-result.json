@@ -1,0 +1,20 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--test",
+    "operator_e2e",
+    "--features",
+    "gui,acceptance-diagnostics",
+    "compiled_worker",
+    "--",
+    "--nocapture"
+  ],
+  "exit": 0,
+  "seconds": 11.785015106201172,
+  "raw_bytes": 6040,
+  "raw_sha256": "26535d9fd2106b874e08ff30987e7f32847b25f4286edfd65792ccd83f5ff5fe",
+  "stored_sha256": "fc79d936c23db941231744c5f14ff5887eb76c024389469b684949f09574df03"
+}

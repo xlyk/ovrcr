@@ -1,0 +1,38 @@
+{
+  "server_build_identity": {
+    "schema": 1,
+    "pid": 15289,
+    "socket_device": 16777229,
+    "socket_inode": 278131712,
+    "executable": "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr",
+    "build": {
+      "algorithm": {
+        "kind": "ahash0812_seed0_block64k_v1",
+        "arch": "aarch64",
+        "aes": true,
+        "ssse3": false,
+        "endian": "little"
+      },
+      "bytes": 115826424,
+      "fingerprint": 16192055368920057394
+    }
+  },
+  "pragma_user_version": 27,
+  "handshake": {
+    "unix_ms": 1793401632286,
+    "sent_hex": "4f56524300000046",
+    "received_hex": "4f56524300000046",
+    "server_protocol": 70
+  },
+  "normal_cli": {
+    "command": [
+      "rtk",
+      "proxy",
+      "/Users/xlyk/.codex/worktrees/operator-layout-design/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr",
+      "--json",
+      "list"
+    ],
+    "exit": 0,
+    "stdout_sha256": "f521f6aed7996d767df09e14dc2b9461e17d96cb810c02617cce13b608916c9d"
+  }
+}

@@ -107,6 +107,34 @@ mod compiled_worker {
                 }
             }
         }
+        /// Hold a real mutation receipt outside the Dashboard until the test releases it.
+        fn hold(&mut self, request: ClientMessage) -> ServerMessage {
+            protocol::write_frame(&mut self.stream, &request).unwrap();
+            loop {
+                let message: ServerMessage = protocol::read_frame(&mut self.stream).unwrap();
+                if matches!(&message, ServerMessage::Response { request_id, .. } if *request_id == request.request_id)
+                {
+                    return message;
+                }
+                self.receive(message);
+            }
+        }
+        fn take_operator_request(&mut self) -> ClientMessage {
+            self.pending.extend(self.dashboard.drain_outbox());
+            let index = self
+                .pending
+                .iter()
+                .position(|message| {
+                    matches!(
+                        message.request,
+                        Request::Operator(
+                            OperatorRequest::Create { .. } | OperatorRequest::Submit { .. }
+                        )
+                    )
+                })
+                .expect("public input emitted mutation");
+            self.pending.remove(index).unwrap()
+        }
         fn flush(&mut self) -> Vec<Response> {
             self.pending.extend(self.dashboard.drain_outbox());
             let mut replies = Vec::new();
@@ -440,6 +468,9 @@ mod compiled_worker {
                 ("release-a", "fixture-a"),
                 ("release-b", "fixture-b"),
                 ("release-b-followup", "fixture-b-followup"),
+                ("release-quick", "fixture-quick"),
+                ("release-activity-start", "fixture-activity-start"),
+                ("release-activity", "fixture-activity"),
             ] {
                 if control.join(marker).exists() {
                     provider.release(model);
@@ -448,7 +479,7 @@ mod compiled_worker {
             provider.assert_healthy();
             thread::sleep(Duration::from_millis(25));
         }
-        fs::write(control.join("finished.json"), serde_json::json!({"seeded":seeded,"a_requests":provider.requests("fixture-a").len(),"b_requests":provider.requests("fixture-b").len()}).to_string()).unwrap();
+        fs::write(control.join("finished.json"), serde_json::json!({"seeded":seeded,"a_requests":provider.requests("fixture-a").len(),"b_requests":provider.requests("fixture-b").len(),"quick_requests":provider.requests("fixture-quick").len(),"activity_requests":provider.requests("fixture-activity").len()}).to_string()).unwrap();
     }
 
     #[test]
@@ -924,7 +955,7 @@ mod compiled_worker {
         )));
         assert_retired(&live, &done, group);
         assert!(
-            ui.rendered().contains("● A durable success pagination"),
+            ui.rendered().contains("✓ A durable success pagination"),
             "background successful journal reply has no Unread marker"
         );
         drop(ui);
@@ -951,7 +982,7 @@ mod compiled_worker {
                 let screen = ui.rendered();
                 if history.next_after.is_some() {
                     assert!(
-                        screen.contains("● A durable success pagination"),
+                        screen.contains("✓ A durable success pagination"),
                         "intermediate durable page cleared Unread"
                     );
                 }
@@ -959,7 +990,7 @@ mod compiled_worker {
         }
         assert!(pages > 2, "real journal pagination must run");
         assert!(
-            !ui.rendered().contains("● A durable success pagination"),
+            !ui.rendered().contains("✓ A durable success pagination"),
             "presented confirmed tail retained Unread"
         );
         provider.assert_healthy();
@@ -1098,6 +1129,375 @@ mod compiled_worker {
     }
 
     #[test]
+    fn operator_quick_message_records_one_captured_first_message() {
+        let live = live::Live::idle().bounded();
+        let provider = Provider::new(live.root.path(), BUDGET);
+        provider.sign_in(&live.config);
+        start(&live, &provider);
+        live.ready("feature/quick");
+        let Response::CreatedSession(other) =
+            live.request(Request::CreateSession(protocol::CreateSessionRequest {
+                project: live::PROJECT.into(),
+                workspace: live::WORKSPACE.into(),
+                name: "other".into(),
+                label: None,
+                argv: vec!["/bin/sh".into()],
+                kind: protocol::SessionKind::Terminal,
+            }))
+        else {
+            panic!("second real terminal")
+        };
+        let mut ui = DashboardClient::connect(&live);
+        let background = ui.create("fixture-b", true);
+        ui.submit("Background completion while quick receipts wait");
+        let background_group = own_worker(&live, &background);
+        ui.wait_history(&provider, background.id, |history| {
+            has_text(history, "B partial waiting")
+        });
+        ui.key(KeyCode::Esc);
+        let Response::Hierarchy(hierarchy) = live.request(Request::List) else {
+            panic!("hierarchy")
+        };
+        let terminal = hierarchy
+            .projects
+            .iter()
+            .flat_map(|p| &p.workspaces)
+            .flat_map(|w| &w.sessions)
+            .find(|s| s.name == "local")
+            .unwrap()
+            .clone();
+        ui.dashboard.install_hierarchy(hierarchy);
+        ui.dashboard.install_focus(terminal.id);
+        ui.flush();
+        let mut settings = Settings::default();
+        settings.operator.provider = OperatorProvider::Grok;
+        settings.operator.grok_model = Some("fixture-quick".into());
+        ui.dashboard.install_settings(settings);
+        ui.ctrl('o');
+        ui.ctrl('c');
+        ui.paste("discard 界e\u{301}🙂");
+        ui.ctrl('w');
+        ui.ctrl('c');
+        assert!(!ui.rendered().contains("discard"));
+        assert!(ui.dashboard.drain_outbox().is_empty());
+        ui.paste("Frozen first\nmessage 界🙂");
+        ui.key(KeyCode::Enter);
+        let create = ui.take_operator_request();
+        assert!(matches!(
+            create.request,
+            Request::Operator(OperatorRequest::Create { .. })
+        ));
+        let created = ui.hold(create);
+        let ServerMessage::Response {
+            response: Response::Operator(OperatorResponse::Created(summary)),
+            ..
+        } = &created
+        else {
+            panic!("create receipt")
+        };
+        let conversation = summary.clone();
+        for ch in ['c', 'u', 'w'] {
+            ui.ctrl(ch);
+        }
+        assert!(ui.rendered().contains("Frozen first"));
+        assert!(ui.dashboard.drain_outbox().is_empty());
+        ui.key(KeyCode::Esc);
+        assert!(!ui.rendered().contains("Quick message · Ctrl-o"));
+        ui.dashboard.install_focus(other.id);
+        ui.flush();
+        assert_eq!(ui.dashboard.focused_session(), Some(other.id));
+        provider.release("fixture-b");
+        let completed =
+            ui.wait_history(&provider, background.id, |h| h.conversation.worker_stopped);
+        assert_retired(&live, &completed, background_group);
+        assert!(
+            ui.history(conversation.id).messages.is_empty(),
+            "held Create must not submit"
+        );
+        ui.receive(created);
+        let submit = ui.take_operator_request();
+        let Request::Operator(OperatorRequest::Submit { text, context, .. }) = &submit.request
+        else {
+            panic!("quick submit")
+        };
+        assert_eq!(text, "Frozen first\nmessage 界🙂");
+        let frozen = context.clone();
+        assert_eq!(
+            frozen,
+            protocol::OperatorContext {
+                project: Some(live::PROJECT.into()),
+                workspace: Some("feature/quick".into()),
+                workspace_id: Some(live::WORKSPACE.into()),
+                cwd: Some(terminal.cwd.clone()),
+                session: Some(terminal.id),
+                run: Some(terminal.run),
+            },
+            "late Create recaptured the newly selected terminal"
+        );
+        let submitted = ui.hold(submit);
+        let group = own_worker(&live, &conversation);
+        ui.ctrl('o');
+        for ch in ['c', 'u', 'w'] {
+            ui.ctrl(ch);
+        }
+        assert!(ui.rendered().contains("Frozen first"));
+        ui.key(KeyCode::Enter);
+        ui.key(KeyCode::Esc);
+        assert!(
+            ui.dashboard.drain_outbox().is_empty(),
+            "pending Enter must not create/submit again"
+        );
+        provider.release("fixture-quick");
+        let done = ui.wait_history(&provider, conversation.id, |h| {
+            h.conversation.worker_stopped
+        });
+        assert_retired(&live, &done, group);
+        ui.receive(submitted);
+        ui.flush();
+        let users: Vec<_> = done
+            .messages
+            .iter()
+            .filter_map(|m| {
+                if let OperatorMessageContent::User { text, context } = &m.content {
+                    Some((text.as_str(), context))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(users, vec![("Frozen first\nmessage 界🙂", &frozen)]);
+        assert_eq!(provider.requests("fixture-quick").len(), 1);
+        assert_eq!(
+            provider.inference_attempts(),
+            3,
+            "two B tool requests plus one quick inference"
+        );
+        let Response::TerminalText { text, .. } = live.request(Request::ReadTerminal {
+            session: terminal.id,
+            max_lines: None,
+        }) else {
+            panic!("terminal read")
+        };
+        assert!(!text.contains("Frozen first") && !text.contains("message 界🙂"));
+        assert_eq!(
+            ui.dashboard.focused_session(),
+            Some(other.id),
+            "late receipts stole terminal focus"
+        );
+        // Real create failure is delivered after dismissal without retry or focus theft.
+        ui.ctrl('o');
+        ui.paste("failed create");
+        ui.key(KeyCode::Enter);
+        let mut rejected = ui.take_operator_request();
+        let Request::Operator(OperatorRequest::Create { model, .. }) = &mut rejected.request else {
+            panic!("create")
+        };
+        *model = " ".into();
+        let failure = ui.hold(rejected);
+        assert!(matches!(
+            &failure,
+            ServerMessage::Response {
+                response: Response::Error { .. },
+                ..
+            }
+        ));
+        ui.key(KeyCode::Esc);
+        ui.receive(failure);
+        ui.flush();
+        assert_eq!(provider.requests("fixture-quick").len(), 1);
+        provider.assert_healthy();
+        assert_eq!(ui.request(Request::Shutdown { kill: true }), Response::Ok);
+        drop(ui);
+        assert!(live.join_within(BUDGET).is_finished());
+    }
+
+    #[test]
+    fn operator_close_archive_restores_history_without_replay() {
+        let live = live::Live::idle().bounded();
+        let provider = Provider::new(live.root.path(), BUDGET);
+        provider.sign_in(&live.config);
+        start(&live, &provider);
+        live.ready("feature/close");
+        let mut ui = DashboardClient::connect(&live);
+        let a = ui.create("fixture-close-a", true);
+        let first = ui.submit("A hold a real Bash child");
+        let a_group = own_worker(&live, &a);
+        let b = ui.create("fixture-close-b", false);
+        ui.submit("B hold a separate real Bash child");
+        let b_group = own_worker(&live, &b);
+        let children: Vec<libc::pid_t> =
+            [("fixture-close-a", a_group), ("fixture-close-b", b_group)]
+                .into_iter()
+                .map(|(model, group)| {
+                    let deadline = Instant::now() + BUDGET;
+                    loop {
+                        if let Ok(text) =
+                            std::fs::read_to_string(live.root.path().join(format!("{model}.pid")))
+                            && let Ok(pid) = text.trim().parse::<libc::pid_t>()
+                        {
+                            assert!(pid > 1 && pid != group);
+                            assert_eq!(unsafe { libc::getpgid(pid) }, group);
+                            eprintln!(
+                                "OPERATOR_CLOSE_OWNED_CHILD model={model} pid={pid} pgid={group}"
+                            );
+                            break pid;
+                        }
+                        provider.assert_healthy();
+                        assert!(
+                            Instant::now() < deadline,
+                            "real Bash child did not publish PID"
+                        );
+                        thread::yield_now();
+                    }
+                })
+                .collect();
+        let closed = ui.request(Request::Operator(OperatorRequest::Close {
+            conversation: a.id,
+            expected_run: first.identity.run,
+        }));
+        let Response::Operator(OperatorResponse::Closed(closed)) = closed else {
+            panic!("close receipt")
+        };
+        assert!(closed.archived && closed.worker_stopped);
+        let archived = ui.history(a.id);
+        assert_retired(&live, &archived, a_group);
+        assert_eq!(unsafe { libc::kill(children[0], 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+        assert_eq!(
+            unsafe { libc::kill(children[1], 0) },
+            0,
+            "close A killed B's Bash child"
+        );
+        assert!(live::group_exists(b_group));
+        assert!(!ui.history(b.id).conversation.worker_stopped);
+        let Response::Hierarchy(hierarchy) = live.request(Request::List) else {
+            panic!("hierarchy")
+        };
+        let terminal = hierarchy
+            .projects
+            .iter()
+            .flat_map(|p| &p.workspaces)
+            .flat_map(|w| &w.sessions)
+            .find(|s| s.name == "local")
+            .unwrap()
+            .id;
+        let output = live
+            .command()
+            .args([
+                "terminal",
+                "send",
+                &terminal.0.to_string(),
+                "--text",
+                "printf 'CLOSE_%s\n' TERMINAL_OK\n",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "unrelated terminal input refused: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let deadline = Instant::now() + BUDGET;
+        loop {
+            let Response::TerminalText { text, .. } = live.request(Request::ReadTerminal {
+                session: terminal,
+                max_lines: None,
+            }) else {
+                panic!("terminal read")
+            };
+            if text.lines().any(|line| line.trim() == "CLOSE_TERMINAL_OK") {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "unrelated terminal did not answer: {text}"
+            );
+            thread::yield_now();
+        }
+        std::fs::write(
+            live.root.path().join("fixture-close-b.bash-release"),
+            b"release",
+        )
+        .unwrap();
+        provider.release("fixture-close-b");
+        let completed_b = ui.wait_history(&provider, b.id, |h| h.conversation.worker_stopped);
+        assert_eq!(
+            completed_b
+                .conversation
+                .current_turn
+                .as_ref()
+                .unwrap()
+                .state,
+            OperatorTurnState::Complete,
+            "B did not continue after A close: {completed_b:?}"
+        );
+        assert!(completed_b.messages.iter().any(|m| matches!(&m.content, OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput { output, status: OperatorToolStatus::Succeeded, .. }) if output.contains("CLOSE_BASH_OK"))), "actual B Bash result was not committed");
+        assert_eq!(provider.requests("fixture-close-b").len(), 2);
+        assert_retired(&live, &completed_b, b_group);
+        assert_eq!(unsafe { libc::kill(children[1], 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+        assert_eq!(ui.request(Request::Shutdown { kill: true }), Response::Ok);
+        drop(ui);
+        assert!(live.join_within(BUDGET).is_finished());
+        start(&live, &provider);
+        let mut ui = DashboardClient::connect(&live);
+        assert_eq!(ui.history(a.id), archived);
+        assert_eq!(provider.requests("fixture-close-a").len(), 1);
+        assert_eq!(
+            ui.request(Request::UnarchiveSession {
+                session: a.session,
+                expected_run: closed.run
+            }),
+            Response::Ok
+        );
+        let restored = ui.history(a.id);
+        assert!(!restored.conversation.archived && restored.conversation.worker_stopped);
+        assert_eq!(restored.messages, archived.messages);
+        assert_eq!(
+            provider.requests("fixture-close-a").len(),
+            1,
+            "restore replayed inference"
+        );
+        let Response::Operator(OperatorResponse::Submitted(next)) =
+            ui.request(Request::Operator(OperatorRequest::Submit {
+                conversation: a.id,
+                expected_run: restored.conversation.run,
+                text: "Explicit retained follow-up".into(),
+                context: Default::default(),
+            }))
+        else {
+            panic!("explicit submit")
+        };
+        assert_eq!(next.identity.session, a.session);
+        assert!(next.identity.run.0 > first.identity.run.0);
+        let group = own_worker(&live, &a);
+        provider.release("fixture-close-a");
+        let done = ui.wait_history(&provider, a.id, |h| h.conversation.worker_stopped);
+        assert_retired(&live, &done, group);
+        assert_eq!(done.messages.iter().filter(|m| matches!(&m.content, OperatorMessageContent::User { text, .. } if text == "Explicit retained follow-up")).count(), 1);
+        assert_eq!(
+            provider.requests("fixture-close-a").len(),
+            2,
+            "restored result: {done:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(live.root.path().join("fixture-close-a.executions")).unwrap(),
+            "started\n",
+            "restoration replayed Bash"
+        );
+        provider.assert_healthy();
+        assert_eq!(ui.request(Request::Shutdown { kill: false }), Response::Ok);
+        drop(ui);
+        assert!(live.join_within(BUDGET).is_finished());
+    }
+
+    #[test]
     fn compiled_worker_timeout_stops_the_actual_bash_descendant_without_retry() {
         let live = live::Live::idle().bounded();
         let provider = Provider::new(live.root.path(), BUDGET);
@@ -1199,6 +1599,90 @@ mod compiled_worker {
     }
 
     #[test]
+    fn operator_activity_waits_for_real_model_and_tool() {
+        let live = live::Live::idle().bounded();
+        let provider = Provider::new(live.root.path(), BUDGET);
+        provider.sign_in(&live.config);
+        start(&live, &provider);
+        let mut ui = DashboardClient::connect(&live);
+        let conversation = ui.create("fixture-activity", true);
+        ui.paste("ACTIVITY run one held Bash");
+        ui.key(KeyCode::Enter);
+        let submit = ui.take_operator_request();
+        let receipt = ui.hold(submit);
+        assert!(ui.rendered().contains("Sending"));
+        ui.receive(receipt);
+        ui.flush();
+        let group = own_worker(&live, &conversation);
+        let running = ui.wait_history(&provider, conversation.id, |history| {
+            !provider.requests("fixture-activity").is_empty()
+                && history
+                    .conversation
+                    .current_turn
+                    .as_ref()
+                    .is_some_and(|turn| turn.state == OperatorTurnState::Running)
+        });
+        assert!(!running.messages.iter().any(|message| matches!(
+            message.content,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(_))
+        )));
+        assert!(ui.rendered().contains("Responding"));
+        provider.release("fixture-activity-start");
+        let pending = ui.wait_history(&provider, conversation.id, |history| {
+            history.messages.iter().any(|message| {
+                matches!(
+                    message.content,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall { .. })
+                )
+            })
+        });
+        assert!(!pending.messages.iter().any(|message| matches!(
+            message.content,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput { .. })
+        )));
+        assert!(ui.rendered().contains("Waiting for bash result"));
+        std::fs::write(
+            live.root.path().join("fixture-activity.bash-release"),
+            b"release",
+        )
+        .unwrap();
+        let matched = ui.wait_history(&provider, conversation.id, |history| {
+            history.messages.iter().any(|message| matches!(&message.content,
+                OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput { output, status: OperatorToolStatus::Succeeded, .. }) if output.contains("CLOSE_BASH_OK")))
+        });
+        assert_eq!(
+            matched.conversation.current_turn.as_ref().unwrap().state,
+            OperatorTurnState::Running
+        );
+        assert!(ui.rendered().contains("Responding"));
+        provider.release("fixture-activity");
+        let complete = ui.wait_history(&provider, conversation.id, |history| {
+            history.conversation.worker_stopped && has_text(history, "ACTIVITY final")
+        });
+        assert_eq!(
+            complete.conversation.current_turn.as_ref().unwrap().state,
+            OperatorTurnState::Complete
+        );
+        let rendered = ui.rendered();
+        assert!(
+            !rendered.contains("Responding")
+                && !rendered.contains("Waiting for")
+                && !rendered.contains("Sending"),
+            "{rendered}"
+        );
+        assert_eq!(provider.requests("fixture-activity").len(), 2);
+        provider.assert_healthy();
+        assert_eq!(ui.request(Request::Shutdown { kill: true }), Response::Ok);
+        drop(ui);
+        assert!(live.join_within(BUDGET).is_finished());
+        assert_eq!(unsafe { libc::kill(-group, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+
+    #[test]
     fn compiled_workers_stream_tools_stop_independently_and_restart_without_replay() {
         let live = live::Live::idle().bounded();
         let provider = Provider::new(live.root.path(), BUDGET);
@@ -1254,7 +1738,15 @@ mod compiled_worker {
             "A transcript/draft lost: {a_view}"
         );
         assert!(!a_view.contains("B partial waiting"));
-        ui.ctrl('x');
+        ui.ctrl('c');
+        assert!(!ui.rendered().contains("A retained draft"));
+        assert!(
+            ui.flush()
+                .iter()
+                .all(|reply| !matches!(reply, Response::Operator(OperatorResponse::Stopped(_))))
+        );
+        assert!(live::group_exists(a_group) && live::group_exists(b_group));
+        ui.ctrl('c');
         let stopped = ui.flush();
         assert!(stopped.iter().any(|reply| matches!(reply,
             Response::Operator(OperatorResponse::Stopped(turn)) if turn.identity == turn_a.identity)));
@@ -1280,6 +1772,56 @@ mod compiled_worker {
             OperatorTurnState::Running
         );
         assert!(!still_b.conversation.worker_stopped && live::group_exists(b_group));
+        live.ready("feature/stop");
+        let Response::Hierarchy(hierarchy) = live.request(Request::List) else {
+            panic!("hierarchy")
+        };
+        let terminal = hierarchy
+            .projects
+            .iter()
+            .flat_map(|p| &p.workspaces)
+            .flat_map(|w| &w.sessions)
+            .find(|s| s.name == "local")
+            .unwrap()
+            .id;
+        let output = live
+            .command()
+            .args([
+                "terminal",
+                "send",
+                &terminal.0.to_string(),
+                "--text",
+                "printf 'STOP_%s\n' TERMINAL_OK\n",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "unrelated terminal input refused: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let deadline = std::time::Instant::now() + BUDGET;
+        loop {
+            let Response::TerminalText { text, .. } = live.request(Request::ReadTerminal {
+                session: terminal,
+                max_lines: None,
+            }) else {
+                panic!("terminal read")
+            };
+            if text.lines().any(|line| line.trim() == "STOP_TERMINAL_OK") {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "unrelated terminal did not answer: {text}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(live::group_exists(b_group), "terminal use cannot retire B");
+        assert_eq!(
+            live.request(Request::KillSession { session: terminal }),
+            Response::Ok
+        );
         provider.release("fixture-b");
         let b_done = ui.wait_history(&provider, b.id, |history| {
             history.conversation.worker_stopped

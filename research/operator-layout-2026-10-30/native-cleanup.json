@@ -1,0 +1,73 @@
+{
+  "gui": {
+    "pid": 80355,
+    "state": "absent",
+    "original_wait": {
+      "original_wait_exit": 0
+    }
+  },
+  "holder": {
+    "pid": 79480,
+    "state": "absent",
+    "original_wait": {
+      "original_wait_exit": 0
+    }
+  },
+  "groups": [
+    {
+      "pgid": 80604,
+      "state": "absent"
+    },
+    {
+      "pgid": 80896,
+      "state": "absent"
+    },
+    {
+      "pgid": 80955,
+      "state": "absent"
+    },
+    {
+      "pgid": 81017,
+      "state": "absent"
+    },
+    {
+      "pgid": 81084,
+      "state": "absent"
+    },
+    {
+      "pgid": 81170,
+      "state": "absent"
+    },
+    {
+      "pgid": 81279,
+      "state": "absent"
+    },
+    {
+      "pgid": 81359,
+      "state": "absent"
+    },
+    {
+      "pgid": 81503,
+      "state": "absent"
+    },
+    {
+      "pgid": 81577,
+      "state": "absent"
+    },
+    {
+      "pgid": 81673,
+      "state": "absent"
+    },
+    {
+      "pgid": 81989,
+      "state": "absent"
+    },
+    {
+      "pgid": 93841,
+      "state": "absent"
+    }
+  ],
+  "demo_exists": false,
+  "demo_socket_exists": false,
+  "nested_socket_exists": false
+}

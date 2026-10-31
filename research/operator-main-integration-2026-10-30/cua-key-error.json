@@ -1,0 +1,6 @@
+{
+  "action": "pressKey",
+  "value": ":",
+  "error": "Computer Use server error -10005: keyNotFound(\":\")",
+  "preceding_ctrl_g_completed": true
+}
