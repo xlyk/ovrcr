@@ -831,6 +831,7 @@ impl ServerState {
                 } else {
                     crate::claude_delegation::discover(
                         selection.model.as_deref().unwrap_or("default"),
+                        false,
                     )
                     .map(|(models, _)| {
                         models
@@ -1518,6 +1519,7 @@ impl ServerState {
                                 &proof.executable,
                                 &contract.model,
                                 &record.root,
+                                contract.native_helpers().then_some(proof.resolved.as_str()),
                             ));
                             argv
                         } else if contract.provider == "codex" {
@@ -2720,7 +2722,24 @@ fn read_contract(record: &Record) -> Result<ResearchContract> {
 }
 
 fn read_native_policy(record: &Record) -> Result<crate::claude_delegation::PolicyManifest> {
-    let files = crate::claude_delegation::policy_files(&std::env::current_exe()?, &record.handle)?;
+    let contract = read_contract(record)?;
+    let helper_model = if contract.native_helpers() {
+        Some(
+            record
+                .native_model
+                .as_ref()
+                .context("native model proof missing")?
+                .resolved
+                .as_str(),
+        )
+    } else {
+        None
+    };
+    let files = crate::claude_delegation::policy_files(
+        &std::env::current_exe()?,
+        &record.handle,
+        helper_model,
+    )?;
     let directory = Directory::open(&record.root, false)?;
     if directory.read("claude-settings.json")? != files.settings
         || directory.read("claude-mcp.json")? != files.mcp
@@ -2841,7 +2860,8 @@ fn available_model(
 ) -> Result<Option<crate::claude_delegation::ModelProof>> {
     if contract.provider == "claude" {
         contract.validate().map_err(anyhow::Error::msg)?;
-        return crate::claude_delegation::discover(&contract.model).map(|(_, proof)| Some(proof));
+        return crate::claude_delegation::discover(&contract.model, contract.native_helpers())
+            .map(|(_, proof)| Some(proof));
     }
     let inventory = match contract.provider.as_str() {
         "pi" => available_models()?,

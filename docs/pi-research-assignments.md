@@ -630,12 +630,15 @@ An assignment may require `min_free_slots_after_launch` (0 through 49) in
 `required_limits`. Admission checks that threshold atomically with the existing
 lifecycle lock; it does not reserve those slots against later ordinary creators.
 Requested limits cannot loosen Server policy. Native descendants are not separate
-inventoried OVRCR sessions. This Pi research flow advertises no native-helper capability because its managed
-launch restricts the built-in tools and disables discovered extensions and skills.
-This is an adapter capability gap, not a global policy ban. Later provider
-adapters can permit verified helpers within their child contracts while applying
-the same settings policy. Native helper use and descendant accounting require
-separate provider acceptance.
+inventoried OVRCR sessions. The Pi research launch advertises no native-helper capability because it restricts
+built-in tools and disables discovered extensions and skills. The Claude adapter's
+explicit `native_helpers` mandatory capability selects its sealed read-only native
+helper-v1 recipe, which gains no new native approvals. Default no-helper Claude Research uses the versioned v3 invocation-only permissions for its exact assigned read/publish/question tools; all existing Server authority checks remain in force, and old v1/v2 proofs require fresh Prepare. See
+[Claude helper boundaries and installed acceptance gap](pi-claude-delegation.md#explicit-native-research-helpers-unaccepted-source-candidate).
+This is provider-specific worker evidence, not independent review. Native helper
+use requires separate installed-provider acceptance; descendant accounting remains
+partial and `native_descendant_usage` false. Unsupported mandatory native-child,
+token and cost limits remain refused.
 
 `max_execution_attempts` is an optional positive integer for one logical task.
 Known zero-effect refusals, including a full instance, consume no execution

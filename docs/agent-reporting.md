@@ -70,6 +70,20 @@ minutes or its session exits; a fresh component carries no label.
 
 Inspect the complete observation with `ovrcr session usage SESSION_ID` or terminal
 inventory. Both retain the raw binding, activity, metrics, and source health.
+If the managed Claude transcript cannot be attached or read, its PTY includes a
+content-free `Claude transcript source` diagnostic: operation stage, error kind
+and OS code, whether this collector previously opened the source, and the
+conversation identity. Repeated identical failures are not printed again until
+a successful read. Paths, error messages and transcript bodies are excluded.
+This adds diagnostics only; source health and delegation input gates are unchanged.
+
+When an assigned binding loses attribution, the Server emits one fixed-field
+`Assignment attribution suspended` diagnostic after saving the suspension. It
+records the first failed existing predicate under the same Session lock, run and
+control identifiers, and a bounded health-reason category/revision. The disposable
+GUI writes Server stderr to its owned `server.log`; this is separate from GUI
+launcher output. Diagnostic writes are best effort and never alter the fence.
+No source path, native text, arbitrary error message or account data is included.
 Reporting transport can be connected while usage or cost is unknown. Supported in-process conversation replacements (`/clear`, in-process resume, and
 foreground `/branch` when native leave + `SessionStart(source=fork)` evidence is
 present) rebind the same managed invocation to the new foreground identity and
@@ -423,3 +437,43 @@ uses `context_window.current_usage.input_tokens`,
 present, and sums those counters as `used_tokens`. It does not use output tokens, a
 provider percentage, a model-name capacity fallback, or `total_input_tokens` as a
 cumulative billing counter.
+
+### Claude before its first transcript record
+
+A certified fresh Claude startup may announce a transcript before creating it.
+Only an initial metadata NotFound before the collector has ever opened that source
+can remain pending, and only when the same admitted root SessionStart supplied a
+valid observed model. That model is published only after a successful source check
+or this specific initial NotFound result; a missing path or strict source error
+does not expose the new model proof. Requested aliases and discovery results do not supply it.
+The existing exact-model and assignment input checks still decide whether input
+may be sent. No transcript EOF, Ready, settled completion or zero usage is inferred: usage remains unknown/Partial.
+The allowance spans the first attributable root prompt because that hook is not
+a filesystem creation barrier for the initial transcript. Repeated delivery of the same
+prompt ID neither rearms nor retires it. It ends permanently on the first successful
+source check, a different root prompt ID, matching Stop/StopFailure, conversation
+transition, SessionEnd or native completion. Only the exact never-opened metadata
+NotFound is pending; established-source loss and all other errors remain strict.
+A missing resumed source, absent model or incompatible actual model retains the
+existing refusal. No timer, attribution repair or new readiness claim is added.
+An omitted optional transcript path preserves existing hook/statusline-only
+reporting, including actual session quota. It does not publish the held startup
+model, create a collector, or grant the pending-source bootstrap. Errors for an
+announced source remain strict as described above.
+
+SessionStart.model is optional in the [native hook contract](https://code.claude.com/docs/en/hooks#sessionstart-input); installations without that observation remain unverified.
+
+A single already-requested `source_not_created` response from before the boundary
+that retires the allowance is not evidence of a missing source after that boundary.
+The receiver consumes that one stale pending frame without publishing metrics or
+health, then requests a new scan. Other errors apply immediately. A fresh missing
+source after retirement remains unavailable and fences attribution, even if it
+subsequently appears. Source observations and hook delivery do not certify exact
+filesystem-versus-hook timestamps.
+
+When a fresh missing-source observation is unavailable, its health reason retains
+`source_not_created` for the collector's exact metadata-NotFound/never-opened
+case. Other refresh failures retain `source_unavailable`. Both remain Unavailable
+and fence attribution; a later source recovery does not clear that fence. Doctor
+and the fixed suspension diagnostic expose only these known reason categories,
+never source paths or native bodies.

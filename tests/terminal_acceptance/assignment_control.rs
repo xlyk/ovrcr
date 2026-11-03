@@ -161,7 +161,26 @@ fn assigned_child_is_view_only_until_explicit_dashboard_takeover_and_return() ->
             current.assignment_control.as_ref().unwrap().control,
             published.assignment_control.as_ref().unwrap().control
         );
-        if current.activity == AgentActivity::ResponseReady {
+        if current.activity == AgentActivity::ResponseReady
+            && current.agent.as_ref().is_some_and(|agent| {
+                Some(agent.binding.conversation.as_str()) == assignment.conversation.as_deref()
+                    && agent.native_control.as_ref().is_some_and(|native| {
+                        native.settled
+                            && agent.activity.as_ref().is_some_and(|activity| {
+                                activity.state == AgentActivity::ResponseReady
+                                    && activity.turn.as_deref() == Some(native.turn.as_str())
+                            })
+                    })
+            })
+        {
+            let agent = current.agent.as_ref().unwrap();
+            eprintln!(
+                "ASSIGNMENT_BASELINE_SETTLED session={} run={} activity_revision={} turn={}",
+                current.id.0,
+                current.run.0,
+                agent.activity_revision,
+                agent.native_control.as_ref().unwrap().turn
+            );
             break current;
         }
         if Instant::now() >= deadline {

@@ -419,6 +419,23 @@ pub fn create_worktree(
     })
 }
 
+/// Verify an assigned checkout for confined reads without granting worktree mutations.
+/// The registered repository root has a generation too, but is never removable worktree ownership.
+pub(crate) fn verify_read_checkout(
+    project: &ProjectRecord,
+    workspace: &WorkspaceRecord,
+) -> Result<()> {
+    if is_repository_checkout(&project.repo, &workspace.path) {
+        let repo = validate_repo(&project.repo)?;
+        if workspace.path != repo {
+            bail!("read repository root is not its registered canonical path");
+        }
+        verify_git_identity(workspace, &repo)
+    } else {
+        inspect_worktree(project, workspace).map(|_| ())
+    }
+}
+
 pub fn inspect_worktree(
     project: &ProjectRecord,
     workspace: &WorkspaceRecord,
@@ -1042,5 +1059,92 @@ mod output_semantics_tests {
                 .code(),
             Some(9)
         );
+    }
+}
+
+#[cfg(test)]
+mod read_checkout_tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn registered_root_reads_verify_generation_without_granting_mutation_ownership() {
+        let temporary = tempfile::tempdir().unwrap();
+        let directory = temporary.path().canonicalize().unwrap();
+        let repo = directory.join("repo");
+        fs::create_dir(&repo).unwrap();
+        assert!(
+            Command::new("git")
+                .args(["init", "--quiet"])
+                .arg(&repo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let workspace = WorkspaceRecord {
+            id: "root".into(),
+            path: repo.clone(),
+            branch: "main".into(),
+            git_identity: Some(capture_worktree_identity(&repo).unwrap()),
+            setup_pending: false,
+        };
+        let project = ProjectRecord {
+            name: "read".into(),
+            repo: repo.clone(),
+            workspace_root: directory.join("worktrees"),
+            workspaces: vec![workspace.clone()],
+        };
+        fs::create_dir(&project.workspace_root).unwrap();
+        verify_read_checkout(&project, &workspace).unwrap();
+        assert!(
+            inspect_worktree(&project, &workspace)
+                .unwrap_err()
+                .to_string()
+                .contains("repository checkout")
+        );
+        assert!(
+            remove_worktree(&project, &workspace, true)
+                .unwrap_err()
+                .to_string()
+                .contains("repository checkout")
+        );
+        let alias = directory.join("alias");
+        symlink(&repo, &alias).unwrap();
+        assert!(
+            verify_read_checkout(
+                &project,
+                &WorkspaceRecord {
+                    path: alias,
+                    ..workspace.clone()
+                }
+            )
+            .is_err()
+        );
+        let marker = generation_file(&absolute_git_dir(&repo).unwrap());
+        fs::write(&marker, "replacement-generation").unwrap();
+        assert!(
+            verify_read_checkout(&project, &workspace)
+                .unwrap_err()
+                .to_string()
+                .contains("replacement")
+        );
+        fs::remove_file(&marker).unwrap();
+        assert!(verify_read_checkout(&project, &workspace).is_err());
+        assert!(
+            !marker.exists(),
+            "verification never captures a new generation"
+        );
+        fs::rename(&repo, directory.join("old-repo")).unwrap();
+        fs::create_dir(&repo).unwrap();
+        assert!(
+            Command::new("git")
+                .args(["init", "--quiet"])
+                .arg(&repo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        capture_worktree_identity(&repo).unwrap();
+        assert!(verify_read_checkout(&project, &workspace).is_err());
     }
 }

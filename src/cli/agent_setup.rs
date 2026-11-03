@@ -557,6 +557,7 @@ pub(super) fn public_health_reason(reason: Option<&str>) -> Option<&str> {
             *reason,
             "identity_transition_unavailable"
                 | "collector_unavailable"
+                | "source_not_created"
                 | "source_unavailable"
                 | "read_unavailable"
                 | "source_rebuilding"
@@ -700,6 +701,7 @@ mod tests {
         for code in [
             "identity_transition_unavailable",
             "invalid_usage_record",
+            "source_not_created",
             "source_unavailable",
         ] {
             assert_eq!(public_health_reason(Some(code)), Some(code));

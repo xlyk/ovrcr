@@ -70,7 +70,7 @@ if (mode() === "policy-before-bind") writeFileSync(option("--mcp-config"), JSON.
 let conversation = option("--session-id");
 const transcript = join(profile, "projects", "fixture", `${conversation}.jsonl`);
 mkdirSync(dirname(transcript), { recursive: true });
-writeFileSync(transcript, "", { mode: 0o600 });
+if (mode() !== "source-not-created" && !mode().startsWith("startup-bootstrap")) writeFileSync(transcript, "", { mode: 0o600 });
 let turn = 0;
 let active;
 let questionReference;
@@ -84,7 +84,7 @@ function hook(event, extra = {}) {
 }
 
 function statusline() {
-  if (mode() === "missing-model") return;
+  if (["missing-model", "source-not-created"].includes(mode()) || mode().startsWith("startup-bootstrap")) return;
   const model = mode() === "wrong-model" ? "different-model" : `${option("--model")}-resolved`;
   const command = settings.statusLine?.command;
   if (!command?.includes("report claude-statusline --stdin-json")) throw new Error("missing production statusline command");
@@ -171,7 +171,15 @@ async function finish(path, brief) {
   process.stdout.write("CLAUDE_CHILD_RESULT_PUBLISHED\n");
 }
 
-hook("SessionStart", { source: "startup" });
+if (mode() === "source-not-created") {
+  // Pin the diagnostic test's uncaptured-input ordering, not a wall-clock race.
+  const deadline = performance.now() + 60000;
+  while (!existsSync(config("startup-source-release"))) {
+    if (performance.now() > deadline) throw new Error("owned startup source gate timed out");
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+}
+hook("SessionStart", { source: "startup", ...(mode().startsWith("startup-bootstrap") ? { model: mode() === "startup-bootstrap-wrong-model" ? "different-model" : `${option("--model")}-resolved` } : {}) });
 if (mode() === "pre-input-prompt") {
   hook("UserPromptSubmit", { prompt_id: "native-startup" });
   hook("Notification", { prompt_id: "native-startup", notification_type: "permission_prompt" });
@@ -205,7 +213,21 @@ for await (const line of createInterface({ input: process.stdin })) {
     turn++;
     appendFileSync(`${briefPath}.input-count`, "1\n");
     atomic(`${briefPath}.started`, { conversation, turn, pid: process.pid });
+    const createSource = () => {
+      appendFileSync(transcript, JSON.stringify({ type: "assistant", sessionId: conversation, isSidechain: false, requestId: "bootstrap-fixture", message: { id: "bootstrap-fixture", usage: { input_tokens: 7, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 1 } } }) + "\n", { mode: 0o600 });
+      atomic(`${briefPath}.source-created`, { conversation });
+    };
+    if (mode() === "startup-bootstrap") createSource();
     hook("UserPromptSubmit", { prompt_id: `turn-${turn}` });
+    if (mode() === "startup-bootstrap-after-prompt") {
+      atomic(`${briefPath}.prompt-submitted`, { conversation, turn });
+      const deadline = performance.now() + 10000;
+      while (!existsSync(config("bootstrap-create-source"))) {
+        if (performance.now() > deadline) throw new Error("source creation gate timed out");
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      createSource();
+    }
     process.stdout.write("CLAUDE_CHILD_INPUT_CONSUMED\n");
     if (mode() === "native-prompt") {
       hook("Notification", { prompt_id: `turn-${turn}`, notification_type: "permission_prompt" });

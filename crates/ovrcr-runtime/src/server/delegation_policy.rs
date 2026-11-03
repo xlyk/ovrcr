@@ -81,7 +81,8 @@ pub(super) fn resolve(
     };
     let harness = selection.provider.unwrap_or(policy.default_harness);
     if harness == ovrcr_protocol::DelegationHarness::Claude {
-        response.capabilities = vec!["read".into(), "result_file".into()];
+        response.capabilities = vec!["read".into(), "result_file".into(), "native_helpers".into()];
+        response.native_helpers = true;
     }
     if let Some(reason) = unavailable {
         response.reason = Some(reason);
@@ -331,6 +332,37 @@ mod tests {
         );
         assert!(report.resolved_choice.is_none());
         assert_eq!(report.available_slots, 0);
+    }
+
+    #[test]
+    fn claude_advertises_helpers_without_descendant_accounting_or_limits() {
+        let policy = DelegationSettings {
+            allowed_harnesses: vec![DelegationHarness::Claude],
+            ..Default::default()
+        };
+        let selection = DelegationSelection {
+            provider: Some(DelegationHarness::Claude),
+            model_provider: Some("native".into()),
+            model: Some("exact-model".into()),
+            ..Default::default()
+        };
+        let native = DelegationChoice {
+            provider: DelegationHarness::Claude,
+            model_provider: "native".into(),
+            model: "exact-model".into(),
+        };
+        let report = resolve(&policy, &selection, vec![native], 1, 0, None);
+        assert!(report.native_helpers && !report.native_descendant_usage);
+        assert_eq!(
+            report.capabilities,
+            ["read", "result_file", "native_helpers"]
+        );
+        assert!(
+            !report
+                .enforceable_limits
+                .iter()
+                .any(|value| value.contains("native"))
+        );
     }
 
     #[test]

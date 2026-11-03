@@ -8,6 +8,7 @@ pub struct ClaudeEvent {
     pub session: String,
     pub prompt: Option<String>,
     pub transcript_path: Option<String>,
+    pub model: Option<String>,
     pub kind: ClaudeEventKind,
 }
 #[derive(Debug, PartialEq, Eq)]
@@ -81,10 +82,20 @@ pub fn parse_claude_hook(input: &[u8]) -> Result<Option<ClaudeEvent>> {
         },
         _ => return Ok(None),
     };
+    let model = if matches!(kind, ClaudeEventKind::SessionStart { .. }) {
+        let model = optional_string(input, "model")?;
+        if let Some(model) = &model {
+            ovrcr_protocol::validate_agent_id(model)?;
+        }
+        model
+    } else {
+        None
+    };
     Ok(Some(ClaudeEvent {
         session,
         prompt,
         transcript_path,
+        model,
         kind,
     }))
 }
@@ -117,6 +128,43 @@ mod tests {
                 .is_none()
         );
     }
+    #[test]
+    fn claude_startup_model_is_optional_observed_and_validated() {
+        let mut payload = serde_json::json!({"session_id":"root","hook_event_name":"SessionStart","source":"startup"});
+        assert_eq!(
+            parse_claude_hook(&serde_json::to_vec(&payload).unwrap())
+                .unwrap()
+                .unwrap()
+                .model,
+            None
+        );
+        payload["model"] = "native-exact-model".into();
+        assert_eq!(
+            parse_claude_hook(&serde_json::to_vec(&payload).unwrap())
+                .unwrap()
+                .unwrap()
+                .model
+                .as_deref(),
+            Some("native-exact-model")
+        );
+        for bad in [
+            Value::Null,
+            Value::from(3),
+            Value::from(""),
+            Value::from("bad\nmodel"),
+            Value::from("x".repeat(257)),
+        ] {
+            payload["model"] = bad;
+            assert!(parse_claude_hook(&serde_json::to_vec(&payload).unwrap()).is_err());
+        }
+        payload["agent_id"] = "child".into();
+        assert!(
+            parse_claude_hook(&serde_json::to_vec(&payload).unwrap())
+                .unwrap()
+                .is_none()
+        );
+    }
+
     #[test]
     fn claude_protocol_ids_validate_before_receiver_mutation() {
         for field in ["session_id", "prompt_id"] {

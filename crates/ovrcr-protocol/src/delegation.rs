@@ -155,6 +155,15 @@ impl Serialize for ResearchContract {
 }
 
 impl ResearchContract {
+    /// Explicit native helper authority is part of the immutable research contract.
+    pub fn native_helpers(&self) -> bool {
+        self.provider == "claude"
+            && self
+                .mandatory_capabilities
+                .iter()
+                .any(|value| value == "native_helpers")
+    }
+
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.schema != DELEGATION_SCHEMA {
             return Err("unsupported contract schema");
@@ -232,6 +241,10 @@ impl ResearchContract {
         if self.mandatory_capabilities.iter().any(|value| {
             value != "read"
                 && value != "result_file"
+                && !(value == "native_helpers"
+                    && self.provider == "claude"
+                    && self.coding.is_none()
+                    && self.review.is_none())
                 && !(self.coding.is_some()
                     && [
                         "isolated_workspace",
@@ -1100,6 +1113,12 @@ mod tests {
         native.model = "requested-alias".into();
         assert!(native.validate().is_ok());
         assert_eq!(native.model, "requested-alias");
+        native.mandatory_capabilities.push("native_helpers".into());
+        assert!(native.native_helpers() && native.validate().is_ok());
+        c.mandatory_capabilities.push("native_helpers".into());
+        assert!(!c.native_helpers() && c.validate().is_err());
+        c.mandatory_capabilities.pop();
+        native.mandatory_capabilities.pop();
         for backend in ["anthropic", "custom"] {
             native.model_provider = backend.into();
             assert_eq!(
