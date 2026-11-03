@@ -127,7 +127,12 @@ Escape cancels. Repeat with `Space p x` for projects, then `Space t x` for direc
 terminal-close confirmation, cancelling both. Open tasks with `Ctrl-t`, press
 `n`, and Tab to Project; check the same filtering, Up/Down, and Tab/Enter controls.
 Escape cancels the editor, then Escape returns to the dashboard. Click project and workspace sidebar rows and
-confirm `Space` shows only their applicable groups. Resize the window and scroll to
+confirm `Space` shows only their applicable groups. The pane must show a card,
+never a blank screen: the project card lists the repository path and each
+workspace with its session count; the workspace card shows `project / branch`,
+the `~` path, its sessions with status, title, agent and state, and the next
+keys. With a workspace selected, press `j` and confirm it opens the session the
+card's `j open …` line names. Resize the window and scroll to
 the last entry; confirm it remains visible and clickable. Press Escape.
 Press Space then `w` then `n`; confirm the key popup closes and the terminal form opens.
 On Start, choose Terminal. Confirm Workspace shows the selected `consigint / gui-consigint-auth-handoff`, Name is optional and blank, and Command is optional. Submit with both blank. Confirm terminal mode on the new session, then paste this command and press Return:
@@ -155,11 +160,21 @@ process group with the other fixture processes before cleanup. Return to
 
 Return to browse with `Ctrl-g`. Press `a`. Tab through a configured `picker_roots` directory to the demo repository (a `git` marker sorts it first). Confirm Name is the repository basename and Workspace root is `<config dir>/workspaces/<name>`. Escape without submitting if this run should not register a project.
 
+For the first run, start a second Dashboard with its own empty `OVRCR_HOME` and
+`OVRCR_SOCKET` in a fixture shell, as `nested-ladder.sh` does. Confirm the
+welcome card shows `1  a  Register a repository`, `2  w  Start an agent in a new
+workspace` and `Space actions · : commands · ? keys`, and no Home or Socket
+path. Press `Space v e` and confirm `Home:` and `Socket:` head the Events list
+and name that fixture's directories. Escape, register a disposable repository
+with `a`, and confirm the pane then shows its project card leading with
+`Next: press w to start your first agent`.
+
 ### Workspace launch and titles
 
 In the disposable fixture, also verify:
 
-1. Create a workspace with Nothing yet from Branch only (no Name field); confirm it is selected and has no sessions.
+1. Create a workspace with Nothing yet from Branch only (no Name field); confirm it is selected and has no sessions,
+   and that its card says `No sessions yet` and offers `n new agent or terminal here`.
 2. Create a workspace with Terminal and a custom command that prints a unique
    marker and waits for input. Confirm exactly one session and its actual output.
 3. In that session emit `printf '\033]2;CUA title 界\007'` followed by a unique

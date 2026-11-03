@@ -693,11 +693,36 @@ restored. It does not switch Git.
 
 ## Empty states
 
-With no project registered, the dashboard shows `Welcome to OVRCR`, the `a`, `:`,
-and `?` shortcuts, and the resolved config and socket paths. Clicking an empty
-workspace shows how to start a terminal there and prefills that workspace in the
-terminal form. A root-workspace warning disables `n` and other new launches
-there; existing sessions stay usable. OVRCR does not switch the checkout.
+A pane with no session shows a card instead of a blank screen. Cards only
+display the hierarchy the Dashboard already has; they send no request and do
+not change which keys work or what input a pane accepts. Every key a card
+names comes from the same key table as the footer and the menu.
+
+- **No project registered:** `Welcome to OVRCR` with two numbered steps,
+  `1  a  Register a repository` and `2  w  Start an agent in a new workspace`,
+  then `Space actions · : commands · ? keys`. The instance directory and
+  socket paths are at the top of [Events](#events).
+- **Workspace row selected:** `project / branch` (with `· root` on the
+  repository-root workspace), its path with `~` for your home directory, any
+  root warning, and its sessions in sidebar order: status glyph, title,
+  `agent:model`, the state words the pane header uses, and elapsed time. Then
+  the next steps: `j open <session>` while the row below is that workspace's
+  first session (`j` selects the next row), `Enter expand…` when the workspace
+  is collapsed, `n new agent or terminal here`, `w new workspace` and
+  `Space w more`. A key that is unavailable there is left out; a root warning
+  removes `n`, because new launches are blocked until the checkout is back on
+  the default branch. Existing sessions stay usable; OVRCR does not switch the
+  checkout. `n` prefills that workspace in the terminal form.
+- **Project row selected:** the project's repository path, its workspace root
+  (read from where its worktrees are, so it appears once the project has one),
+  and each workspace with its session count and attention: `✓ 1 ready` for
+  an Unread reply, `? 1 needs input` for a running agent waiting on you. Then
+  `w new workspace` and `a register another project`. While the project has no
+  agent yet, the card leads with `Next: press w to start your first agent`.
+- **Nothing selected,** for example right after registering a project: every
+  project's card, then the same two keys.
+
+Enter on a project or workspace row still collapses or expands it.
 
 ## Dashboard settings
 

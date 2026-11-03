@@ -36,6 +36,7 @@ use std::sync::mpsc::TrySendError;
 mod agent_attention;
 mod agent_search;
 mod bridge_navigation;
+mod cards;
 mod copy_history;
 mod events;
 mod mouse;

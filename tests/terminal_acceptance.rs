@@ -2242,7 +2242,7 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
 }
 
 #[test]
-fn empty_dashboard_start_screen_reports_isolated_paths() -> Result<()> {
+fn empty_dashboard_welcome_and_events_report_isolated_paths() -> Result<()> {
     let mut fixture = AcceptanceFixture::new()?;
     let mut dashboard = OuterDashboard::start(
         &fixture,
@@ -2264,11 +2264,32 @@ fn empty_dashboard_start_screen_reports_isolated_paths() -> Result<()> {
     dashboard.wait_for_screen(
         |screen| {
             screen.contains("Welcome to OVRCR")
-                && screen.contains(fixture.config.to_str().unwrap())
-                && screen.contains(fixture.socket.to_str().unwrap())
+                && screen.contains("1  a  Register a repository")
+                && !screen.contains("Socket:")
         },
         wait_deadline(),
     )?;
+    // The instance paths head the Events list. The Dashboard runs with the
+    // fixture root as HOME, so `~` stands for that root.
+    let shown = |label: &str, path: &Path| {
+        let relative = path.strip_prefix(fixture.root.path()).unwrap();
+        format!("{label}: ~/{}", relative.display())
+    };
+    let (home, socket) = (
+        shown("Home", &fixture.config),
+        shown("Socket", &fixture.socket),
+    );
+    dashboard.send(b" ")?;
+    dashboard.wait_for_screen(|screen| screen.contains("Which key"), wait_deadline())?;
+    dashboard.send(b"v")?;
+    dashboard.wait_for_screen(|screen| screen.contains("e  Events"), wait_deadline())?;
+    dashboard.send(b"e")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains(&home) && screen.contains(&socket),
+        wait_deadline(),
+    )?;
+    dashboard.send(b"\x1b")?;
+    dashboard.wait_for_screen(|screen| !screen.contains(&socket), wait_deadline())?;
     dashboard.send(b"a")?;
     dashboard.wait_for_screen(
         |screen| screen.contains("Repository") && screen.contains("Workspace root"),
