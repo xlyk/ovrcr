@@ -1,5 +1,5 @@
 󰚩 OVRCR Operator [o]       [Ctrl-o]                             [Actions] [Menu]
-chat-1 · chat_gpt / fixture · complete
+chat-1 · ChatGPT / fixture · complete
 ❯ You
   ▸ Context · global
   Review this workspace.

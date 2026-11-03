@@ -22,6 +22,22 @@ impl OperatorProvider {
             Self::Grok => "grok",
         }
     }
+
+    /// The name people know the provider by; `as_str` stays the saved identifier.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ChatGpt => "ChatGPT",
+            Self::Grok => "Grok",
+        }
+    }
+
+    /// The display name for a saved identifier, or the identifier itself.
+    pub fn label_of(text: &str) -> &str {
+        [Self::ChatGpt, Self::Grok]
+            .into_iter()
+            .find(|provider| provider.as_str() == text)
+            .map_or(text, |provider| provider.label())
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct OperatorConversationId(pub u64);

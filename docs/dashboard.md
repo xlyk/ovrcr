@@ -28,6 +28,8 @@ or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts
 
 Browse `o` or the pinned Operator title-bar control opens native chat. It has its
 own multiline composer and conversation history, independent of terminal panes.
+`Ctrl-g` or `Esc` leaves it for the terminal panes in Browse; every draft stays
+with its conversation for the next `o`.
 Conversations stream concurrently and continue while another view is selected.
 See [Operator setup and controls](operator.md).
 

@@ -837,8 +837,10 @@ impl Dashboard {
             return DashboardAction::None;
         }
         if super::input::is_browse_key(key) || key.code == KeyCode::Esc {
+            // Back to the terminal panes; each chat keeps its draft.
             self.operator.editing = false;
-            self.mode = InputMode::Browse;
+            self.operator.visible = false;
+            self.retarget(super::state::PaneChange::Focus);
             return DashboardAction::EnterBrowse;
         }
         if self.operator.new.is_none()
@@ -1727,7 +1729,7 @@ impl Dashboard {
             let model = display_text(&model);
             let text = format!(
                 "New Conversation\n\nProvider: {} {}\nModel: {model}\n\nTab: provider/model · ←/→: choose provider\nCtrl-l: conversations\nEnter: create · Ctrl-g: Browse\nSubscription sign-in: ovrcr operator login {}\n\n{}",
-                form.provider.as_str(),
+                form.provider.label(),
                 if form.provider_focus { "◀" } else { "" },
                 match form.provider {
                     OperatorProvider::ChatGpt => "chatgpt",
@@ -2813,7 +2815,8 @@ mod tests {
         let buffer = terminal.backend().buffer();
         let header: String = (40..140).map(|x| buffer[(x, 1)].symbol()).collect();
         assert!(
-            header.contains("chat_gpt")
+            header.contains("ChatGPT")
+                && !header.contains("chat_gpt")
                 && header.contains("running")
                 && header.contains("Stop Ctrl-x"),
             "long header: {header}"
@@ -4536,7 +4539,9 @@ mod tests {
         assert!(!d.operator.chats[&1].stopping);
         assert_eq!(d.operator.chats[&1].draft, "");
         d.key(KeyCode::Esc);
-        d.key(KeyCode::Enter);
+        // Ctrl-g left Operator for the terminals; `o` returns to the same draft.
+        assert!(!d.operator.visible);
+        d.key(KeyCode::Char('o'));
         assert!(d.operator_is_editing());
         for key in [
             KeyCode::Char('a'),

@@ -1556,9 +1556,6 @@ impl Dashboard {
         if self.operator_is_editing() {
             return self.operator_key(key);
         }
-        if self.operator.visible && key.code == KeyCode::Enter {
-            return self.open_operator();
-        }
         match self.mode {
             InputMode::Browse => {
                 // Esc and Ctrl-g cancel a history request that has not opened

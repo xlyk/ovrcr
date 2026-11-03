@@ -1,5 +1,5 @@
 󰚩 OVRCR Operator [o]            [Ctrl-o]                                            [Actions] [Menu]
- OPERATOR ───────────────────────── [+]│Operator · chat_gpt / fixture · complete
+ OPERATOR ───────────────────────── [+]│Operator · ChatGPT / fixture · complete
 ▌  chat-1                              │❯ You
    chat-2                              │  ▸ Context · global
                                        │  Review this workspace.

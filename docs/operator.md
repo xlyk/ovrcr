@@ -113,7 +113,8 @@ remain explicit. Expanded details retain full IDs, command, cwd, captured contex
 and output. With the sidebar hidden, the local header retains the selected chat's
 title. This also applies when its sidebar row is collapsed or scrolled out of view;
 a rendered selected row supplies that identity at wider sizes.
-`Ctrl-g` returns to Browse while preserving the draft. Completed background replies stay Unread until their
+`Ctrl-g` or `Esc` leaves Operator for the terminal panes in Browse, keeping every
+draft; `o` returns to it. Completed background replies stay Unread until their
 loaded tail is actually shown.
 
 The borderless prompt starts at two text rows and grows with the draft, up to six

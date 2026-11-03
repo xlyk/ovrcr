@@ -96,7 +96,9 @@ production handshake and initial terminal attachment, without opening Operator.
 
 Browse `o` and the clickable title-bar control open the native hub. Terminal pane
 assignments survive, but the desired terminal view is empty while the hub is visible
-and native composer input never produces PTY bytes. Existing overlays retain input
+and native composer input never produces PTY bytes. Leaving the hub (Ctrl-g or Esc)
+hides it through `retarget(PaneChange::Focus)`, so the next view request
+re-subscribes the unchanged panes. Existing overlays retain input
 priority; spaces and punctuation in an active composer remain ordinary text.
 
 `dashboard::operator` owns per-conversation drafts, context, grapheme cursor,
@@ -147,8 +149,9 @@ Unread review requires an unobscured, actually drawn, adequately sized transcrip
 at its confirmed durable tail; empty, new, too-small and sidebar-only views cannot
 acknowledge it.
 `Ctrl-n` opens creation, Enter sends, Shift-Enter inserts a newline, paste only edits,
-Ctrl-g returns to Browse retaining drafts, and Ctrl-x stops only the selected exact
-current turn. A pending submission clears only its captured draft after acceptance;
+Ctrl-g or Esc returns to the terminal panes in Browse retaining drafts, and Ctrl-x
+stops only the selected exact current turn. Provider names display through
+`OperatorProvider::label` (`ChatGPT`, `Grok`); `as_str` stays the saved identifier. A pending submission clears only its captured draft after acceptance;
 refusal or later typing preserves the draft.
 
 Sidebar `x` and `[x]` open the native confirmation for that conversation's retained

@@ -63,7 +63,7 @@ impl Dashboard {
         }
         let caption = format!(
             "{} / {} · {}",
-            quick.provider.as_str(),
+            quick.provider.label(),
             display_text(&quick.model),
             context_label(&quick.context)
         );
@@ -864,7 +864,7 @@ impl Dashboard {
             .width
             .saturating_sub(if stop { 13 } else { 0 });
         let width = usize::from(title_width);
-        let provider = chat.summary.provider.as_str();
+        let provider = chat.summary.provider.label();
         let state = status(chat);
         let sidebar = self.sidebar_rects(frame.area()).operator;
         let selected_visible = self.sidebar_preference() != Some(0)
