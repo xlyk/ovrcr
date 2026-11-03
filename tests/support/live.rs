@@ -385,6 +385,19 @@ impl Live {
         *ready = Some(branch.to_owned());
     }
 
+    /// Workspace `id`'s registered checkout directory, read offline. New worktrees are named
+    /// after their branch, so a test never derives the directory from the id.
+    pub fn workspace_path(&self, id: &str) -> PathBuf {
+        ovrcr::config::load_registry(&self.config)
+            .unwrap()
+            .projects
+            .into_iter()
+            .flat_map(|project| project.workspaces)
+            .find(|workspace| workspace.id == id)
+            .unwrap_or_else(|| panic!("workspace {id} is not registered"))
+            .path
+    }
+
     /// Feature-workspace fixtures do not need the separately tested initial root shell.
     pub fn clear_root_shell(&self) {
         let Response::Hierarchy(hierarchy) = self.request(Request::List) else {

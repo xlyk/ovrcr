@@ -1635,7 +1635,12 @@ fn workspace_remove_succeeds_after_directory_deleted() {
         }),
         Response::Ok
     );
-    let workspace_dir = fixture.workspace_root.join("work");
+    let workspace_dir = fixture.workspace_path("work");
+    assert_eq!(
+        workspace_dir,
+        fixture.workspace_root.join("feature-vanished-dir"),
+        "the folder is named after the branch"
+    );
     std::fs::remove_dir_all(&workspace_dir).unwrap();
 
     delete_fixture_archive(&fixture);
@@ -1941,7 +1946,7 @@ fn forced_workspace_removal_acknowledges_uncertain_rows_but_never_live_ones() {
         }),
         Response::Ok
     );
-    let worktree = fixture.workspace_root.join("work");
+    let worktree = fixture.workspace_path("work");
     std::fs::write(worktree.join("dirty"), "discard me").unwrap();
     let remove = |force: bool| Request::RemoveWorkspace {
         project: "fixture".into(),
