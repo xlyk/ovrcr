@@ -137,9 +137,10 @@ It does not mark Unread reviewed or change process or conversation state.
 
 A managed Codex, Pi or Oh My Pi terminal keeps one Unread fact for its latest unreviewed
 root Ready response. The sidebar does not draw a circle for it. While it is present, the
-sidebar shows the Ready checkmark and the pane header says Unread. Mark reviewed clears
-both of those marks. The Agent's reported activity stays Ready, so the header may still
-say the session is ready. A new Busy report does not clear an earlier Unread response.
+sidebar shows the Ready checkmark and the pane header adds `unread reply` after the state
+(`Ready · unread reply`). Mark reviewed clears both of those marks. The Agent's reported
+activity stays Ready, so the header still says `Ready`. A new Busy report does not clear
+an earlier Unread response; the header then reads `Working · unread reply`.
 Selecting a terminal, viewing its output or receiving a notification does not acknowledge it.
 
 Press `R` in Browse mode, or choose **Mark reviewed** in the terminal action
@@ -211,7 +212,8 @@ in the same tick as its request, or an ask execution aborted with no interactive
 UI — can still deliver one alert for a wait you will not find on screen.
 
 Read `agent.input_requests` from a terminal's JSON row for the open set, oldest
-first. The metadata line labels the oldest one.
+first. The pane header says `Waiting for input`, or `Waiting for approval` when the
+oldest one is a tool approval.
 
 ## Copy keys
 
@@ -344,17 +346,49 @@ While the sidebar is hidden, `j` and `k` still move the selection, and
 | `P` | Paused |
 | `·` | Exited (the row is dimmed) |
 
-An unavailable reporter draws the glyph in the muted colour. The literal state,
-quality, and reporter health (`agent busy confirmed`, `response ready ·
-observed`, `unavailable`) appear on the selected session's metadata line, not
-in the sidebar. While an input request is open the metadata line reads
-`input needed · select` (or `confirm`, `input`, `editor`, `custom`) in place of
-the activity underneath it; the question itself never appears.
+An unavailable reporter draws the glyph in the muted colour. The state in words
+appears in the [pane header](#pane-header), not in the sidebar.
 
-The selected metadata line shows `pid: closed` after the managed process exits.
-Live metadata labels the same observation as `agent unknown`, `agent idle`,
-`agent busy`, `agent waiting input`, or `agent error`. Paused sessions keep their
-last label and add `paused`; exited sessions omit the live activity label.
+### Pane header
+
+Each pane has a two-line header. The first line reads, left to right: the
+session title, the agent and model (`claude:opus-5-5`; `shell` for a terminal
+without an agent label), the state in words and the elapsed time, for example
+`verify spinner  claude:opus-5-5  Working · 2m` or `local  shell · 16m`. The
+process id follows, muted, at the far right while the line has room.
+
+| State | Meaning |
+| --- | --- |
+| `Working` | Busy |
+| `Waiting for input` | Waiting for you, including an open [input request](#input-requests); `Waiting for approval` for a tool approval. The question itself never appears. |
+| `Ready` | The response is done; `Ready · unread reply` until you [mark it reviewed](#unread-responses) |
+| `Idle` | Idle |
+| `Error` | Reported error |
+| `Paused`, `Exited`, `Stopped`, `Interrupted` | The process phase, which outranks the activity |
+
+A terminal that reports nothing shows no state. Reporting health appears only
+when it matters, muted after the state: `starting…` while an agent has not
+reported yet (for up to a minute after launch), and `status off` when an agent's
+reporting is lost, was never set up, or is not supported, or when an Unread
+reply has no reporter left behind it. Report quality (observed, confirmed) and
+the reporter's own reasons stay out of the header; `ovrcr terminal list --json`
+keeps them. Recovery and control explanations follow the state after ` · `.
+
+A narrow pane gives up the process id first, then the elapsed time, the model,
+the agent label, and then clips the title, so the state stays readable. Narrower
+still, a short `Unread` leads and the activity word yields to it
+(`Unread · status off`), since the sidebar glyph still shows the activity.
+
+The second line shows the agent's metrics when it reports them:
+`ctx 6% · 417k tokens · ~$0.37` — context used, tokens in and out, and cost, `~`
+marking an estimate. Unknown values are left out. A value older than five
+minutes, or any value once the process has exited, is muted and followed by its
+own age, such as `417k tokens (12m ago)`. A narrow pane drops the ages first,
+then values from the right. Without metrics the second line is a plain rule; in
+History it shows the History position instead. Split panes carry the same words
+on one colour band, `> ` marking the focused pane and `loading` until its screen
+arrives.
+
 Terminal output, elapsed silence, keyboard input, and process liveness do not
 imply that an agent is busy or idle. See [agent reporting](agent-reporting.md)
 for provider reporting behavior.
@@ -549,7 +583,8 @@ deliver Ready/Unread on their supported readiness paths (Claude Ready is Observe
 never Confirmed settling). Claude/Codex Input-request support remains unavailable
 until their dependent tickets. Missing hook configuration shows
 a persistent Dashboard banner with the exact setup command; observed reporting loss
-keeps an `unavailable` status with its published reason.
+shows `status off` in the pane header, and the terminal's JSON row keeps the
+published reason.
 
 Hermes uses the same process supervisor with native arguments unchanged. Its row
 shows unknown activity; reporting, Ready/Unread, Input requests, metrics, generated

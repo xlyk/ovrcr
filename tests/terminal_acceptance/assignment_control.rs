@@ -251,16 +251,11 @@ fn assigned_child_is_view_only_until_explicit_dashboard_takeover_and_return() ->
     dashboard.send(b"\x07")?;
     dashboard.wait_for_screen(|screen| screen.contains("BROWSE"), wait_deadline())?;
     dashboard.send(b"\x1b[200~FORBIDDEN_BEFORE_TAKEOVER\x1b[201~")?;
-    // Passive split/focus/resize/hide affects only view subscriptions. The
-    // unread child metadata hides geometry, so use the local pane's ready
-    // dimensions: the global handshake acknowledges all target snapshots.
+    // Passive split/focus/resize/hide affects only view subscriptions. Use the
+    // local pane's ready header (its title without `loading`, read at the layout's own
+    // position): the global handshake acknowledges all target snapshots.
     let split = ovrcr::tui::pane_rects(ratatui::layout::Rect::new(0, 0, 160, 40), 2, 0);
-    let other_ready = format!(
-        "{} {}x{}",
-        other.display_name(),
-        split[1].terminal.width,
-        split[1].terminal.height
-    );
+    let other_ready = format!("{}  ", other.display_name());
     let metadata = |screen: &str, rect: ratatui::layout::Rect| -> String {
         screen
             .lines()
@@ -295,12 +290,7 @@ fn assigned_child_is_view_only_until_explicit_dashboard_takeover_and_return() ->
     dashboard.find_text_in_rect(split[0].terminal, "CHILD_RESULT_PUBLISHED")?;
     dashboard.resize(42, 170)?;
     let resized = ovrcr::tui::pane_rects(ratatui::layout::Rect::new(0, 0, 170, 42), 2, 0);
-    let resized_other = format!(
-        "  {} {}x{}",
-        other.display_name(),
-        resized[1].terminal.width,
-        resized[1].terminal.height
-    );
+    let resized_other = format!("  {}  ", other.display_name());
     dashboard.wait_for_screen(
         |screen| {
             metadata(screen, resized[1].metadata).starts_with(&resized_other)
@@ -315,7 +305,7 @@ fn assigned_child_is_view_only_until_explicit_dashboard_takeover_and_return() ->
         |screen| {
             screen.contains("BROWSE")
                 && screen.contains(other.display_name())
-                && screen.contains(&format!("pid: {other_pid}"))
+                && screen.contains(&format!("pid {other_pid}"))
                 && !screen.contains("CHILD_RESULT_PUBLISHED")
                 && screen.lines().all(|line| {
                     line.chars().nth(usize::from(resized[0].terminal.right())) != Some('│')

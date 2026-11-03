@@ -757,7 +757,7 @@ fn compact_line(provider: &ProviderQuota, now: u64) -> Line<'static> {
 }
 
 /// Whole minutes as the largest unit that keeps them short: 12m, 5h, 3d.
-fn span(minutes: u64) -> String {
+pub(super) fn span(minutes: u64) -> String {
     match minutes {
         0 => "<1m".into(),
         1..60 => format!("{minutes}m"),

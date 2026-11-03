@@ -744,8 +744,23 @@ fn split_layout_renders_independent_cells_and_cursor() {
     let right_metadata = (80..120)
         .map(|x| buffer[(x, 1)].symbol())
         .collect::<String>();
-    assert!(left_metadata.starts_with("  review 39x36"));
-    assert!(right_metadata.starts_with("> local 40x36"));
+    // Each pane header carries its own session in words; the sizes are the SetView ones.
+    assert!(
+        left_metadata.starts_with("  review  claude · 0m"),
+        "{left_metadata}"
+    );
+    assert!(
+        right_metadata.starts_with("> local  shell · 0m"),
+        "{right_metadata}"
+    );
+    assert!(
+        left_metadata.trim_end().ends_with("pid 111"),
+        "{left_metadata}"
+    );
+    assert!(
+        right_metadata.trim_end().ends_with("pid 444"),
+        "{right_metadata}"
+    );
     assert_eq!(buffer[(40, 3)].symbol(), "L");
     assert_eq!(buffer[(80, 3)].symbol(), "R");
     assert_eq!(buffer[(40, 3 + 35)].symbol(), "<");

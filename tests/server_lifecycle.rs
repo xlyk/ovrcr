@@ -14065,14 +14065,14 @@ fn codex_unread_real_cli_and_dashboard_review_preserve_native_reporting() {
 
     let mut dashboard = DesktopAlertDashboard::start(&fixture, None);
     dashboard.select("codex-hooks", "CODEX_CALLBACK=1");
-    dashboard.wait_screen(|screen| screen.contains("Unread"));
+    dashboard.wait_screen(|screen| screen.contains("Ready · unread reply"));
     assert_eq!(
         fixture.session_summary(summary.id),
         first,
         "opening the response does not acknowledge it"
     );
     dashboard.send(b"\x07R");
-    dashboard.wait_screen(|screen| !screen.contains("Unread") && screen.contains("response ready"));
+    dashboard.wait_screen(|screen| !screen.contains("unread reply") && screen.contains("Ready · "));
     let mut reviewed = first.clone();
     reviewed.unread = None;
     assert_eq!(
@@ -14153,7 +14153,7 @@ fn codex_unread_real_cli_and_dashboard_review_preserve_native_reporting() {
     assert_eq!(fixture.session_summary(summary.id), busy);
     let mut dashboard = DesktopAlertDashboard::start(&fixture, None);
     dashboard.select("codex-hooks", "CODEX_CALLBACK=7");
-    dashboard.wait_screen(|screen| screen.contains("Unread") && screen.contains("busy observed"));
+    dashboard.wait_screen(|screen| screen.contains("Working · unread reply"));
     assert_eq!(
         fixture.session_summary(summary.id),
         busy,
@@ -14168,8 +14168,9 @@ fn codex_unread_real_cli_and_dashboard_review_preserve_native_reporting() {
         Response::Ok
     );
     fixture.wait_terminal_contains(summary.id, "CODEX_NATIVE_EXIT=17");
+    // A narrow header lets the activity word yield: the Unread and the lost reporting stay.
     dashboard.resize(80);
-    dashboard.wait_screen(|screen| screen.contains("Unread Unavailable"));
+    dashboard.wait_screen(|screen| screen.contains("Unread · status off"));
     let lost = fixture.session_summary(summary.id);
     assert_eq!(lost.unread, busy.unread);
     assert_eq!(
@@ -14178,10 +14179,10 @@ fn codex_unread_real_cli_and_dashboard_review_preserve_native_reporting() {
     );
     dashboard.send(b"\x07R");
     dashboard.wait_screen(|screen| {
-        !screen.contains("Unread") && screen.contains("CODEX_NATIVE_EXIT=17")
+        !screen.to_lowercase().contains("unread reply") && screen.contains("CODEX_NATIVE_EXIT=17")
     });
     dashboard.resize(180);
-    dashboard.wait_screen(|screen| screen.contains("unavailable"));
+    dashboard.wait_screen(|screen| screen.contains("Working · status off"));
     let mut expected = lost;
     expected.unread = None;
     assert_eq!(
@@ -14312,14 +14313,14 @@ fn pi_ready_alerts_once_creates_unread_and_explicit_review_clears_only_presented
     dashboard.wait_named_calls(1, summary.id, "pi-hooks");
     // Opening the pane does not acknowledge; R reviews exactly the presented identity.
     dashboard.select("pi-hooks", "PI_CALLBACK=4");
-    dashboard.wait_screen(|screen| screen.contains("Unread"));
+    dashboard.wait_screen(|screen| screen.contains("Ready · unread reply"));
     assert_eq!(
         fixture.session_summary(summary.id),
         first,
         "viewing does not acknowledge"
     );
     dashboard.send(b"\x07R");
-    dashboard.wait_screen(|screen| !screen.contains("Unread") && screen.contains("response ready"));
+    dashboard.wait_screen(|screen| !screen.contains("unread reply") && screen.contains("Ready · "));
     let mut reviewed = first.clone();
     reviewed.unread = None;
     assert_eq!(fixture.session_summary(summary.id), reviewed);
@@ -16431,10 +16432,10 @@ fn claude_ready_alerts_once_per_root_turn_with_unread_and_continuation() {
 
     // Explicit review clears only the presented identity; viewing does not.
     dashboard.select("claude-hooks", "ADMISSION_CALLBACK=12");
-    dashboard.wait_screen(|screen| screen.contains("Unread"));
+    dashboard.wait_screen(|screen| screen.contains("Ready · unread reply"));
     assert_eq!(fixture.session_summary(summary.id), second);
     dashboard.send(b"\x07R");
-    dashboard.wait_screen(|screen| !screen.contains("Unread") && screen.contains("response ready"));
+    dashboard.wait_screen(|screen| !screen.contains("unread reply") && screen.contains("Ready · "));
     let mut reviewed = second.clone();
     reviewed.unread = None;
     assert_eq!(fixture.session_summary(summary.id), reviewed);

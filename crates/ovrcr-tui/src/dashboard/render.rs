@@ -6,9 +6,7 @@ use super::status::SessionStatus;
 use super::{Dashboard, HistoryView, InputMode, PaneRects, PaneState, TreeRow, history_view_size};
 use crate::session::{SessionPhase, TerminalSize};
 use crate::task_tui::draw_tasks;
-use ovrcr_protocol::{
-    CostKind, HistoryColor, SessionKind, SessionSummary, UsageCoverage, UsageScope,
-};
+use ovrcr_protocol::{CostKind, HistoryColor, SessionKind, SessionSummary};
 use ovrcr_terminal::vt100;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -537,6 +535,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         let selected = dashboard
             .focused_session()
             .and_then(|id| find_session(dashboard, id));
+        let width = usize::from(rect.metadata.width);
         let metadata = selected.map_or_else(
             || {
                 Line::from(Span::styled(
@@ -545,67 +544,12 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 ))
             },
             |session| {
-                let status = SessionStatus::of(session, now_unix_ms);
-                let width = usize::from(rect.metadata.width);
-                if let Some(unread) = &status.unread {
-                    return Line::from(Span::styled(
-                        clip_text(unread, width),
-                        Style::default().fg(TEAL()),
-                    ));
-                }
-                if status.ready {
-                    let paused = if status.paused { " paused" } else { "" };
-                    let mut text = clip_text(
-                        &format!("pid: {}{paused}{}", status.pid, status.activity),
-                        width,
-                    );
-                    if !status.elapsed.is_empty() {
-                        append_metadata_field(
-                            &mut text,
-                            &format!("elapsed: {}", status.elapsed),
-                            rect.metadata.width,
-                        );
-                    }
-                    append_metadata_field(
-                        &mut text,
-                        &dashboard.session_display_name(session),
-                        rect.metadata.width,
-                    );
-                    return Line::from(Span::styled(text, Style::default().fg(TEAL())));
-                }
-                let activity = if status.exited && !status.recovery_diagnostic {
-                    Span::raw("")
-                } else if !status.live {
-                    Span::styled(format!(" {}", status.activity), Style::default().fg(TEAL()))
-                } else {
-                    Span::styled(
-                        format!("  agent{}", status.activity),
-                        Style::default().fg(TEAL()),
-                    )
-                };
-                Line::from(vec![
-                    Span::styled("pid: ", Style::default().fg(MUTED())),
-                    Span::styled(status.pid, Style::default().fg(TEAL())),
-                    Span::styled(
-                        if status.elapsed.is_empty() {
-                            ""
-                        } else {
-                            "  elapsed: "
-                        },
-                        Style::default().fg(MUTED()),
-                    ),
-                    Span::styled(status.elapsed, Style::default().fg(TEAL())),
-                    activity,
-                    if status.paused {
-                        Span::styled("  paused", Style::default().fg(PEACH()))
-                    } else {
-                        Span::raw("")
-                    },
-                    Span::styled(
-                        format!("  {}", dashboard.session_display_name(session)),
-                        Style::default().fg(TEXT()),
-                    ),
-                ])
+                pane_header(
+                    dashboard,
+                    session,
+                    &SessionStatus::of(session, now_unix_ms),
+                    width,
+                )
             },
         );
         frame.render_widget(
@@ -613,30 +557,12 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
             Rect::new(rect.metadata.x, rect.metadata.y, rect.metadata.width, 1),
         );
         if rect.metadata.height > 1 {
-            let metadata_hint = dashboard.history.as_ref().map_or_else(
-                || {
-                    selected
-                        .map(|session| {
-                            let width = usize::from(rect.metadata.width);
-                            if provider_metrics(session, now_unix_ms, width).is_some() {
-                                let title = clipped_session_title(
-                                    dashboard,
-                                    session,
-                                    (width / 3).clamp(1, 24),
-                                );
-                                let metrics_width =
-                                    width.saturating_sub(Line::raw(&title).width() + 3);
-                                let metrics = provider_metrics(session, now_unix_ms, metrics_width)
-                                    .unwrap_or_default();
-                                format!("{title} · {metrics}")
-                            } else {
-                                clipped_session_title(dashboard, session, width)
-                            }
-                        })
-                        .unwrap_or_else(|| "─".repeat(usize::from(rect.metadata.width)))
-                },
-                |view| history_hint(view, dashboard.focused_size()),
-            );
+            let metadata_hint = match dashboard.history.as_ref() {
+                Some(view) => Line::from(history_hint(view, dashboard.focused_size())),
+                None => selected
+                    .and_then(|session| provider_metrics(session, now_unix_ms, width))
+                    .unwrap_or_else(|| Line::from("─".repeat(width))),
+            };
             frame.render_widget(
                 Paragraph::new(metadata_hint).style(Style::default().fg(MUTED()).bg(BASE())),
                 Rect::new(
@@ -843,78 +769,43 @@ fn render_split_metadata(
     if rect.metadata.is_empty() {
         return;
     }
+    let width = usize::from(rect.metadata.width);
     let session = pane.session.and_then(|id| find_session(dashboard, id));
-    let name =
-        session.map_or_else(
-            || "no session".into(),
-            |session| {
-                clipped_session_title(
-                    dashboard,
-                    session,
-                    usize::from(rect.metadata.width)
-                        .saturating_sub(if dashboard.pane_ready(pane) { 2 } else { 10 }),
-                )
-            },
-        );
     let prefix = if focused { "> " } else { "  " };
-    let mut text = if dashboard.pane_ready(pane) {
-        format!(
-            "{prefix}{name} {}x{}",
-            rect.terminal.width, rect.terminal.height
-        )
-    } else {
-        format!("{prefix}loading {name}")
-    };
-    let status = session.map(|session| SessionStatus::of(session, now_unix_ms));
-    if let Some(status) = &status
-        && (dashboard.pane_ready(pane) || status.ready)
-    {
-        if status.ready {
-            // Reserve process and health status before clipping activity quality.
-            // At intermediate widths, identity/geometry yields to these statuses.
-            let field = format!("pid: {}{}", status.pid, status.activity);
-            let with_identity = format!("{text}  {field}");
-            text = if Line::raw(&with_identity).width() <= usize::from(rect.metadata.width) {
-                with_identity
+    // The split header is one colour band, so it carries the same words as plain text.
+    let text = match session {
+        None => format!("{prefix}no session"),
+        Some(session) => {
+            let loading = if dashboard.pane_ready(pane) {
+                ""
             } else {
-                clip_text(&field, usize::from(rect.metadata.width))
+                "loading "
             };
-        } else {
-            append_metadata_field(
-                &mut text,
-                &format!("pid: {}", status.pid),
-                rect.metadata.width,
+            let header = pane_header(
+                dashboard,
+                session,
+                &SessionStatus::of(session, now_unix_ms),
+                width.saturating_sub(prefix.len() + loading.len()),
             );
+            let words: String = header.spans.iter().map(|span| &*span.content).collect();
+            format!("{prefix}{loading}{words}")
         }
-        if !status.elapsed.is_empty() {
-            append_metadata_field(
-                &mut text,
-                &format!("elapsed: {}", status.elapsed),
-                rect.metadata.width,
-            );
-        }
-    }
-    if let Some(unread) = status.as_ref().and_then(|status| status.unread.as_deref()) {
-        // Keep both unread and reporting availability ahead of names, PID and geometry.
-        text = clip_text(unread, usize::from(rect.metadata.width));
-    }
+    };
     let style = if focused {
         Style::default().fg(CRUST()).bg(MAUVE())
     } else {
         Style::default().fg(TEXT()).bg(BASE())
     };
     frame.render_widget(
-        Paragraph::new(clip_text(&text, usize::from(rect.metadata.width))).style(style),
+        Paragraph::new(clip_text(&text, width)).style(style),
         Rect::new(rect.metadata.x, rect.metadata.y, rect.metadata.width, 1),
     );
     if rect.metadata.height > 1 {
         frame.render_widget(
             Paragraph::new(
                 session
-                    .and_then(|session| {
-                        provider_metrics(session, now_unix_ms, usize::from(rect.metadata.width))
-                    })
-                    .unwrap_or_else(|| "─".repeat(usize::from(rect.metadata.width))),
+                    .and_then(|session| provider_metrics(session, now_unix_ms, width))
+                    .unwrap_or_else(|| Line::from("─".repeat(width))),
             )
             .style(Style::default().fg(MUTED()).bg(BASE())),
             Rect::new(
@@ -927,11 +818,114 @@ fn render_split_metadata(
     }
 }
 
-fn append_metadata_field(text: &mut String, field: &str, width: u16) {
-    let candidate = format!("{text}  {field}");
-    if Line::raw(&candidate).width() <= usize::from(width) {
-        *text = candidate;
+/// Line 1 of a pane header: the title, the agent label (`claude:opus-5-5`, or `shell` for a
+/// terminal without one), the state in words with its reporting health and elapsed time
+/// (`Working · 2m`, `shell · 16m`), and the pid muted at the far right while it fits. A
+/// narrow pane drops the pid, then the elapsed time, the model and the label, then clips
+/// the title while it stays recognisable, first beside the state and then beside its narrow
+/// form, where an Unread reply leads; below that the narrow state stands alone.
+fn pane_header(
+    dashboard: &Dashboard,
+    session: &SessionSummary,
+    status: &SessionStatus,
+    width: usize,
+) -> Line<'static> {
+    const MIN_TITLE: usize = 8;
+    let muted = Style::default().fg(MUTED());
+    let title = dashboard.session_display_name(session);
+    let (agent, model, agent_color) = match sidebar_agent_label(session) {
+        Some((agent, model)) => {
+            let color = label_color(harness_agent_name(session).unwrap_or(&agent));
+            (agent, model, color)
+        }
+        None => ("shell".to_string(), String::new(), SUBTEXT()),
+    };
+    let tone = if status.color == MUTED() {
+        SUBTEXT()
+    } else {
+        status.color
+    };
+    // `model` is `None` when the label is dropped and empty when only the agent is kept.
+    let compose = |title: &str, model: Option<&str>, state: &str, elapsed: bool| {
+        let mut spans = vec![Span::styled(title.to_string(), Style::default().fg(TEXT()))];
+        if let Some(model) = model {
+            spans.push(Span::styled("  ", muted));
+            spans.push(Span::styled(
+                agent.clone(),
+                Style::default().fg(agent_color),
+            ));
+            if !model.is_empty() {
+                spans.push(Span::styled(model.to_string(), muted));
+            }
+        }
+        let mut tail = Vec::new();
+        if !state.is_empty() {
+            tail.push((state.to_string(), Style::default().fg(tone)));
+        }
+        if let Some(words) = status.reporting {
+            tail.push((words.to_string(), muted));
+        }
+        // Elapsed time alone reads as the label's: `shell · 16m`.
+        let joined_to_label = tail.is_empty() && model.is_some();
+        if elapsed && !status.elapsed.is_empty() {
+            tail.push((status.elapsed.clone(), Style::default().fg(SUBTEXT())));
+        }
+        for (index, (text, style)) in tail.into_iter().enumerate() {
+            let separator = if index > 0 || joined_to_label {
+                " · "
+            } else {
+                "  "
+            };
+            spans.push(Span::styled(separator, muted));
+            spans.push(Span::styled(text, style));
+        }
+        spans
+    };
+    let cells = |spans: &[Span<'static>]| spans.iter().map(Span::width).sum::<usize>();
+    let (state, narrow) = (status.state.as_str(), status.narrow_state.as_str());
+    // The pid is the first thing a narrow pane gives up: only the full line carries it.
+    let full = compose(&title, Some(&model), state, true);
+    if let Some(pid) = status.pid.map(|pid| format!("pid {pid}"))
+        && cells(&full) + 2 + pid.len() <= width
+    {
+        let mut spans = full;
+        spans.push(Span::raw(" ".repeat(width - cells(&spans) - pid.len())));
+        spans.push(Span::styled(pid, muted));
+        return Line::from(spans);
     }
+    let clipped_title = |state: &str| {
+        let room = width.checked_sub(cells(&compose("", None, state, false)))?;
+        (room >= MIN_TITLE).then(|| compose(&clip_text(&title, room), None, state, false))
+    };
+    let spans = [
+        (Some(model.as_str()), true),
+        (Some(""), true),
+        (Some(""), false),
+        (None, false),
+    ]
+    .into_iter()
+    .map(|(model, elapsed)| compose(&title, model, state, elapsed))
+    .chain([state, narrow].into_iter().filter_map(clipped_title))
+    .find(|spans| cells(spans) <= width)
+    .unwrap_or_else(|| {
+        let words: String = compose("", None, narrow, false)
+            .iter()
+            .skip(2)
+            .map(|span| &*span.content)
+            .collect();
+        if words.is_empty() {
+            vec![Span::styled(
+                clip_text(&title, width),
+                Style::default().fg(TEXT()),
+            )]
+        } else {
+            vec![Span::styled(
+                clip_text(&words, width),
+                Style::default().fg(tone),
+            )]
+        }
+    });
+    Line::from(spans)
 }
 
 fn dashboard_layout(area: Rect, sidebar_width: Option<u16>) -> DashboardLayout {
@@ -1387,72 +1381,96 @@ pub(super) fn compose_row(
     Line::from(spans)
 }
 
-fn provider_metrics(session: &SessionSummary, now: u64, width: usize) -> Option<String> {
-    let agent = session.agent.as_ref()?;
-    let Some(metrics) = &agent.metrics else {
-        return Some("tokens —  cost —".into());
-    };
-    let scope = |scope| match scope {
-        UsageScope::Conversation => "conv",
-        UsageScope::Invocation => "inv",
-    };
-    let exited = matches!(session.phase, SessionPhase::Exited { .. });
-    let stale_label = |received| {
-        if ovrcr_protocol::freshness::is_stale(received, now, exited) {
-            " stale"
+/// Line 2 of a pane header for an agent that reports metrics: `ctx 6% · 417k tokens ·
+/// ~$0.37`, `~` marking an estimate. Unknown values are left out rather than shown as
+/// dashes. A stale value is muted and followed by its own age, so plain text still says
+/// which one is old. A narrow pane drops the ages, then values from the right, then clips.
+fn provider_metrics(session: &SessionSummary, now: u64, width: usize) -> Option<Line<'static>> {
+    let metrics = session.agent.as_ref()?.metrics.as_ref()?;
+    let mut values = Vec::new();
+    let context = &metrics.sample.context.value;
+    if let (Some(used), Some(capacity)) = (context.used_tokens, context.capacity_tokens)
+        && capacity > 0
+    {
+        let percent = if used > capacity {
+            ">100%".to_string()
+        } else {
+            format!("{}%", u128::from(used) * 100 / u128::from(capacity))
+        };
+        values.push((format!("ctx {percent}"), metrics.context_received_unix_ms));
+    }
+    let usage = &metrics.sample.usage.value;
+    // Input already includes cache subsets; reasoning is a subset of output.
+    if let (Some(input), Some(output)) = (usage.input_tokens, usage.output_tokens) {
+        let tokens = compact_count(u128::from(input) + u128::from(output));
+        values.push((format!("{tokens} tokens"), metrics.usage_received_unix_ms));
+    }
+    if let Some(cost) = &metrics.sample.cost.value {
+        let estimate = if cost.kind == CostKind::Estimated {
+            "~"
         } else {
             ""
-        }
-    };
-    let usage = &metrics.sample.usage;
-    // Input already includes cache subsets; reasoning is a subset of output.
-    let tokens = usage
-        .value
-        .input_tokens
-        .zip(usage.value.output_tokens)
-        .map(|(input, output)| (u128::from(input) + u128::from(output)).to_string())
-        .unwrap_or_else(|| "—".into());
-    let partial = if usage.value.coverage == UsageCoverage::Partial {
-        " partial"
-    } else {
-        ""
-    };
-    let cost = &metrics.sample.cost;
-    let amount = cost.value.as_ref().map_or_else(
-        || "—".into(),
-        |cost| {
-            let estimate = if cost.kind == CostKind::Estimated {
-                "estimate "
-            } else {
-                ""
-            };
-            let cents = (u128::from(cost.usd_ticks) + 50_000_000) / 100_000_000;
-            format!(
-                "{} {estimate}${}.{:02}",
-                scope(cost.scope),
-                cents / 100,
-                cents % 100
-            )
-        },
-    );
-    let full = format!(
-        "tokens {}{partial} {tokens}{}  cost {amount}{}",
-        scope(usage.value.scope),
-        stale_label(metrics.usage_received_unix_ms),
-        stale_label(metrics.cost_received_unix_ms)
-    );
-    if Line::raw(&full).width() <= width {
-        return Some(full);
+        };
+        let cents = (u128::from(cost.usd_ticks) + 50_000_000) / 100_000_000;
+        let amount = format!("{estimate}${}.{:02}", cents / 100, cents % 100);
+        values.push((amount, metrics.cost_received_unix_ms));
     }
-    let compact = full.replacen(" estimate ", " est ", 1);
-    if Line::raw(&compact).width() <= width {
-        Some(compact)
+    let exited = matches!(session.phase, SessionPhase::Exited { .. });
+    let age = |received| {
+        ovrcr_protocol::freshness::is_stale(received, now, exited).then(|| {
+            ovrcr_protocol::freshness::age_ms(received, now).map_or_else(
+                || "(age unknown)".to_string(),
+                |age| format!("({} ago)", super::quota::span(age / 60_000)),
+            )
+        })
+    };
+    let muted = Style::default().fg(MUTED());
+    let compose = |values: &[(String, u64)], ages: bool| -> Vec<Span<'static>> {
+        let mut spans = Vec::new();
+        for (index, (text, received)) in values.iter().enumerate() {
+            if index > 0 {
+                spans.push(Span::styled(" · ", muted));
+            }
+            let stale = age(*received);
+            let style = if stale.is_some() {
+                muted
+            } else {
+                Style::default().fg(SUBTEXT())
+            };
+            spans.push(Span::styled(text.clone(), style));
+            if let Some(stale) = stale.filter(|_| ages) {
+                spans.push(Span::styled(format!(" {stale}"), muted));
+            }
+        }
+        spans
+    };
+    let cells = |spans: &[Span<'static>]| spans.iter().map(Span::width).sum::<usize>();
+    let first = values.first()?.clone();
+    let spans = (1..=values.len())
+        .rev()
+        .flat_map(|count| [(count, true), (count, false)])
+        .map(|(count, ages)| compose(&values[..count], ages))
+        .find(|spans| cells(spans) <= width)
+        .unwrap_or_else(|| {
+            let style = if age(first.1).is_some() {
+                muted
+            } else {
+                Style::default().fg(SUBTEXT())
+            };
+            vec![Span::styled(clip_text(&first.0, width), style)]
+        });
+    Some(Line::from(spans))
+}
+
+/// `417181` as `417k` and `1234567` as `1.2M`: enough digits to compare at a glance.
+pub(super) fn compact_count(count: u128) -> String {
+    if count < 1_000 {
+        count.to_string()
+    } else if count < 999_500 {
+        format!("{}k", (count + 500) / 1_000)
     } else {
-        Some(
-            compact
-                .replacen("tokens ", "tok ", 1)
-                .replacen("  cost ", " cost ", 1),
-        )
+        let tenths = (count + 50_000) / 100_000;
+        format!("{}.{}M", tenths / 10, tenths % 10)
     }
 }
 

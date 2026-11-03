@@ -547,7 +547,10 @@ fn copy_render_tiny_pane_and_footer() {
     );
     assert!(copy_footer.contains("v Select  y Copy"));
     let rendered = draw_text(&dashboard, 120, 40);
-    assert!(initial.contains("pid: 111  elapsed: 0m"));
+    assert!(
+        initial.contains("review  claude · 0m") && initial.contains("pid 111"),
+        "{initial}"
+    );
     assert_eq!(buffer[(40, 3)].symbol(), "a");
     assert_eq!(buffer[(41, 3)].symbol(), "b");
     assert_eq!(buffer[(42, 3)].symbol(), "c");
@@ -1529,7 +1532,12 @@ fn pause_resume_dense_status_has_priority() {
     let row = |y| (0..39).map(|x| buffer[(x, y)].symbol()).collect::<String>();
     assert_eq!(row(4).trim_end(), "▌    P local");
     let rendered = draw_text(&dashboard, 120, 40);
-    assert!(rendered.contains("pid: 555  elapsed: 0m  agent busy  paused"));
+    // Paused outranks the activity it froze, in words, ahead of the elapsed time.
+    assert!(
+        rendered.contains("local  shell  Paused · 0m") && rendered.contains("pid 555"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("busy") && !rendered.contains("Working"));
     assert!(
         rendered
             .lines()

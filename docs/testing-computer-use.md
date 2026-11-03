@@ -245,6 +245,19 @@ Check duplicate titles, compact selected location and offscreen filtering at the
 fifty-session limit. Preserve screenshots, accessibility text and destination
 acknowledgements; opening or selecting must not clear Unread or resolve Input.
 
+### Pane header
+
+Select a root shell: the pane header reads `local  shell · <elapsed>` with the pid
+muted at the far right, and no `agent unknown`, `pid:` or `elapsed:` field. Select a
+fixture agent: its title, `agent:model`, the state in words (`Working`, `Ready`,
+`Waiting for input`, `Idle`) and the elapsed time; the second line shows `ctx`,
+tokens and cost when the fixture reports them, and never repeats the title. A
+just-launched agent says `starting…` until its first report; a reporter lost after
+that says `status off`, never its reason or `observed`/`confirmed`. Narrow the window
+until the header clips: the pid goes first, then the elapsed time, the model and the
+agent label, while the state stays readable. An Unread reply reads `Ready · unread
+reply`, and a narrow split pane still says `Unread`.
+
 ## 3. Mouse forwarding and wheel history
 
 ### Dashboard controls
