@@ -915,7 +915,10 @@ panel as Quota details. It lists the Server's event ring, oldest first and
 newest last. Opening it asks the Server for that ring. The Dashboard does not
 read `events.jsonl`, and this view does not change the file.
 
-Each line is the local time, the component (`titles`, `settings`, or `quota`),
+The list starts with the Dashboard's instance directory (`Home:`) and Server
+socket (`Socket:`), with `~` for your home directory. They scroll with the
+list; the Home key brings them back. Each event line is the local time, the
+component (`titles`, `settings`, or `quota`),
 the subject when there is one, and the message. While the popup is open, an
 event the Server records is appended. Events recorded while it is closed appear
 the next time it opens. The list opens on the newest line and stays there until

@@ -4,6 +4,7 @@
 //! asks for the ring when the popup opens and appends `ServerEvent::Recorded`
 //! while it stays open. It does not read or write `events.jsonl`.
 
+use super::picker::display_path;
 use super::quota::local_time;
 use super::render::{BASE, MAUVE, MUTED, PEACH, SUBTEXT, TEXT};
 use super::text_cursor::TextCursor;
@@ -340,7 +341,26 @@ impl Dashboard {
         lines
     }
 
+    /// Which instance these events come from, then the events themselves. The
+    /// paths scroll with the list; the Home key brings them back.
     fn events_body(&self) -> Vec<Line<'static>> {
+        let mut lines: Vec<_> = self
+            .configuration_paths
+            .iter()
+            .flat_map(|(home, socket)| {
+                [("Home", home), ("Socket", socket)].map(|(label, path)| {
+                    Line::styled(
+                        format!("{label}: {}", display_path(path)),
+                        Style::default().fg(MUTED()),
+                    )
+                })
+            })
+            .collect();
+        lines.extend(self.event_lines());
+        lines
+    }
+
+    fn event_lines(&self) -> Vec<Line<'static>> {
         let style = |color| Style::default().fg(color);
         if !self.events.loaded {
             return vec![Line::styled(
@@ -420,6 +440,39 @@ mod tests {
             subject: None,
             message: message.into(),
         }
+    }
+
+    #[test]
+    fn the_list_starts_with_the_instance_paths_the_dashboard_was_given() {
+        let mut dashboard = Dashboard::new(crate::protocol::TerminalSize {
+            rows: 40,
+            cols: 120,
+        });
+        let starts_with_paths = |dashboard: &Dashboard| {
+            dashboard
+                .events_body()
+                .iter()
+                .any(|line| line.to_string().starts_with("Socket:"))
+        };
+        // Fixtures without a real instance show the events alone.
+        assert!(!starts_with_paths(&dashboard));
+        dashboard.configuration_paths = Some((
+            "/srv/ovrcr-home".into(),
+            "/srv/ovrcr-home/server.sock".into(),
+        ));
+        let lines: Vec<_> = dashboard
+            .events_body()
+            .iter()
+            .map(|line| line.to_string())
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "Home: /srv/ovrcr-home",
+                "Socket: /srv/ovrcr-home/server.sock",
+                "Waiting for the Server's events.",
+            ]
+        );
     }
 
     #[test]
